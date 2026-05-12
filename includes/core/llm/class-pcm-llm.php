@@ -193,7 +193,8 @@ class PCM_LLM
 
         $result = self::invoke($messages, $options);
         $content = $result['content'] ?? '';
-        $parsed = json_decode($content, true);
+        $clean_json = self::extract_json($content);
+        $parsed = json_decode($clean_json, true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             throw new \RuntimeException(
@@ -202,6 +203,48 @@ class PCM_LLM
         }
 
         return $parsed;
+    }
+
+    /**
+     * Extract pure JSON from a string that might contain Markdown code blocks.
+     * LLMs (especially Anthropic and sometimes Google) often wrap JSON in ```json ... ```
+     * 
+     * @param string $content Raw content from LLM.
+     * @return string Extracted JSON string.
+     */
+    public static function extract_json(string $content): string
+    {
+        $content = trim($content);
+        
+        // Match content inside ```json ... ``` or just ``` ... ```
+        if (preg_match('/```(?:json)?\s*(.*?)\s*```/is', $content, $matches)) {
+            return trim($matches[1]);
+        }
+        
+        // If no markdown block found, assume the whole string is JSON (or attempt to find first { or [)
+        $start_obj = strpos($content, '{');
+        $start_arr = strpos($content, '[');
+        
+        $start = false;
+        if ($start_obj !== false && $start_arr !== false) {
+            $start = min($start_obj, $start_arr);
+        } elseif ($start_obj !== false) {
+            $start = $start_obj;
+        } elseif ($start_arr !== false) {
+            $start = $start_arr;
+        }
+        
+        if ($start !== false) {
+            // Find the matching end character
+            $end_char = $content[$start] === '{' ? '}' : ']';
+            $end = strrpos($content, $end_char);
+            
+            if ($end !== false && $end > $start) {
+                return substr($content, $start, $end - $start + 1);
+            }
+        }
+        
+        return $content;
     }
 
     /**

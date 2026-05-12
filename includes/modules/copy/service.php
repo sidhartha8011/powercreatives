@@ -671,7 +671,8 @@ class PCM_Copy_Service
             ));
 
             $content = $result['content'] ?? '';
-            $output = json_decode($content, true);
+            $clean_json = PCM_LLM::extract_json($content);
+            $output = json_decode($clean_json, true);
 
             if (json_last_error() === JSON_ERROR_NONE && is_array($output)) {
                 // Normalise body newlines: LLMs sometimes return literal \n (double-escaped)
