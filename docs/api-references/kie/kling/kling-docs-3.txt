@@ -1,0 +1,277 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.kie.ai/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Kling-2.6 - Text to Video
+
+> Generate high-quality videos from text descriptions with the advanced Kling-2.6 AI model
+
+## Query Task Status
+
+After submitting a task, you can check the task progress and retrieve generation results via the unified query endpoint:
+
+<Card title="Get Task Details" icon="magnifying-glass" href="/market/common/get-task-detail">
+  Learn how to query task status and obtain generation results
+</Card>
+
+<Tip>
+  In production environments, it is recommended to use the `callBackUrl` parameter to receive automatic notifications upon generation completion, rather than polling the status endpoint.
+</Tip>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Market Overview" icon="store" href="/market/quickstart">
+    Browse all available models
+  </Card>
+
+  <Card title="Common API" icon="gear" href="/common-api/get-account-credits">
+    Check account credits and usage status
+  </Card>
+</CardGroup>
+
+
+## OpenAPI
+
+````yaml market/kling/text-to-video.json post /api/v1/jobs/createTask
+openapi: 3.0.0
+info:
+  title: Kling-2.6 API
+  description: kie.ai Kling-2.6 API Documentation - Text to Video Generation
+  version: 1.0.0
+  contact:
+    name: Technical Support
+    email: support@kie.ai
+servers:
+  - url: https://api.kie.ai
+    description: API Server
+security:
+  - BearerAuth: []
+paths:
+  /api/v1/jobs/createTask:
+    post:
+      summary: Generate video from text using kling-2.6/text-to-video
+      operationId: kling-2-6-text-to-video
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+              properties:
+                model:
+                  type: string
+                  enum:
+                    - kling-2.6/text-to-video
+                  default: kling-2.6/text-to-video
+                  description: >-
+                    Name of the model used for the generation task. Required
+                    field.
+
+
+                    - This endpoint must use the `kling-2.6/text-to-video` model
+                  example: kling-2.6/text-to-video
+                callBackUrl:
+                  type: string
+                  format: uri
+                  description: >-
+                    Callback URL to receive notifications when the generation
+                    task is completed. Optional configuration, recommended for
+                    production environments.
+
+
+                    - After the task is completed, the system will POST the task
+                    status and results to this URL
+
+                    - The callback content includes the generated resource URL
+                    and task-related information
+
+                    - Your callback endpoint must support receiving POST
+                    requests with JSON payloads
+
+                    - You can also choose to call the task details endpoint to
+                    actively poll the task status
+
+                    - To ensure callback security, see [Webhook Verification
+                    Guide](/common-api/webhook-verification) for signature
+                    verification implementation
+                  example: https://your-domain.com/api/callback
+                input:
+                  type: object
+                  description: Input parameters for the generation task
+                  properties:
+                    prompt:
+                      description: >-
+                        Text prompt for video generation (maximum length: 1000
+                        characters)
+                      type: string
+                      maxLength: 1000
+                      example: >-
+                        Scene: A fashion live-streaming sales setting, with
+                        clothes hanging on racks and the host's figure reflected
+                        in a full-length mirror. Lines: [African female host]
+                        turns around to showcase the hoodie's cut. [African
+                        female host, in a cheerful tone] says: "360-degree
+                        flawless tailoring, slimming and versatile." She then
+                        [African female host] leans closer to the camera.
+                        [African female host, in a lively tone] says:
+                        "Double-sided fleece fabric, $30 off immediately when
+                        you order now."
+                    sound:
+                      description: >-
+                        This parameter specifies whether the generated video
+                        contains sound (boolean: true/false)
+                      type: boolean
+                      example: false
+                    aspect_ratio:
+                      description: This parameter defines the video aspect ratio
+                      type: string
+                      enum:
+                        - '1:1'
+                        - '16:9'
+                        - '9:16'
+                      default: '1:1'
+                      example: '1:1'
+                    duration:
+                      description: 'Video duration (unit: seconds)'
+                      type: string
+                      enum:
+                        - '5'
+                        - '10'
+                      default: '5'
+                      example: '5'
+                  required:
+                    - prompt
+                    - sound
+                    - aspect_ratio
+                    - duration
+            example:
+              model: kling-2.6/text-to-video
+              callBackUrl: https://your-domain.com/api/callback
+              input:
+                prompt: >-
+                  Scene: A fashion live-streaming sales setting, with clothes
+                  hanging on racks and the host's figure reflected in a
+                  full-length mirror. Lines: [African female host] turns around
+                  to showcase the hoodie's cut. [African female host, in a
+                  cheerful tone] says: "360-degree flawless tailoring, slimming
+                  and versatile." She then [African female host] leans closer to
+                  the camera. [African female host, in a lively tone] says:
+                  "Double-sided fleece fabric, $30 off immediately when you
+                  order now."
+                sound: false
+                aspect_ratio: '1:1'
+                duration: '5'
+      responses:
+        '200':
+          description: Request Successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          taskId:
+                            type: string
+                            description: >-
+                              Task ID, which can be used to call the task
+                              details endpoint to query the task status
+                            example: task_kling-2.6_1765182425861
+              example:
+                code: 200
+                msg: success
+                data:
+                  taskId: task_kling-2.6_1765182425861
+        '500':
+          $ref: '#/components/responses/Error'
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          enum:
+            - 200
+            - 401
+            - 402
+            - 404
+            - 422
+            - 429
+            - 455
+            - 500
+            - 501
+            - 505
+          description: >-
+            Response Status Code
+
+
+            - **200**: Success - Request processed successfully
+
+            - **401**: Unauthorized - Authentication credentials missing or
+            invalid
+
+            - **402**: Insufficient Credits - Account has insufficient credits
+            to perform the operation
+
+            - **404**: Not Found - The requested resource or endpoint does not
+            exist
+
+            - **422**: Validation Error - Request parameters failed validation
+
+            - **429**: Rate Limit Exceeded - Exceeded the request frequency
+            limit for the resource
+
+            - **455**: Service Unavailable - System is under maintenance
+
+            - **500**: Server Error - Unexpected failure occurred while
+            processing the request
+
+            - **501**: Generation Failed - Content generation task execution
+            failed
+
+            - **505**: Function Disabled - The requested function is temporarily
+            unavailable
+        msg:
+          type: string
+          description: Response message; error description if the request fails
+          example: success
+  responses:
+    Error:
+      description: Server Error
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: >-
+        All APIs require authentication via Bearer Token.
+
+
+        Obtaining an API Key:
+
+        1. Visit the [API Key Management Page](https://kie.ai/api-key) to get
+        your API Key
+
+
+        Usage Method:
+
+        Add the following to the request header:
+
+        Authorization: Bearer YOUR_API_KEY
+
+
+        Notes:
+
+        - Keep your API Key secure and do not disclose it to others
+
+        - If you suspect your API Key has been compromised, reset it immediately
+        in the management page
+
+````

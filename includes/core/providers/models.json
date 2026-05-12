@@ -1,0 +1,118 @@
+{
+    "_comment": "Data-driven model capability registry. Used by PCM_Models_Service::detect_capabilities() to determine what each model can do. To add a new model: add a pattern entry under the correct capability section.",
+    "_version": "1.0.0",
+    "capabilities": {
+        "canEditImage": {
+            "description": "Models that support image editing (in-painting, style transfer, variations)",
+            "patterns": [
+                "gemini-2.0-flash",
+                "gemini-2.0",
+                "gpt-4o",
+                "gpt-image",
+                "dall-e-3",
+                "imagen-3",
+                "imagen-4",
+                "nano-banana",
+                "flux-kontext"
+            ]
+        },
+        "canEditVideo": {
+            "description": "Models that support video editing",
+            "patterns": [
+                "veo-3",
+                "runway",
+                "kling",
+                "sora"
+            ]
+        },
+        "canVision": {
+            "description": "Text models with multimodal vision (image understanding)",
+            "patterns": [
+                "gemini",
+                "gpt-4",
+                "gpt-4o",
+                "claude",
+                "llava",
+                "pixtral"
+            ]
+        },
+        "canGenerateImage": {
+            "description": "Models that can generate images from text",
+            "patterns": [
+                "dall-e",
+                "imagen",
+                "stable-diffusion",
+                "midjourney",
+                "gpt-image",
+                "nano-banana",
+                "flux",
+                "recraft",
+                "ideogram"
+            ]
+        },
+        "canGenerateVideo": {
+            "description": "Models that can generate video from text/image",
+            "patterns": [
+                "veo",
+                "runway",
+                "kling",
+                "sora",
+                "pika"
+            ]
+        }
+    },
+    "typeDefaults": {
+        "_comment": "Default capabilities by primary model type (text, image, video)",
+        "text": {
+            "canGenerateImage": false,
+            "canEditImage": false,
+            "canGenerateVideo": false,
+            "canEditVideo": false,
+            "canGenerateText": true,
+            "canVision": false
+        },
+        "image": {
+            "canGenerateImage": true,
+            "canEditImage": false,
+            "canGenerateVideo": false,
+            "canEditVideo": false,
+            "canGenerateText": false,
+            "canVision": false
+        },
+        "video": {
+            "canGenerateImage": false,
+            "canEditImage": false,
+            "canGenerateVideo": true,
+            "canEditVideo": false,
+            "canGenerateText": false,
+            "canVision": false
+        }
+    },
+    "moduleOverrides": {
+        "_comment": "Override enabledModules for models matching these patterns. Applied during sync to prevent specialized models from appearing in wrong modules. E.g., deep-research only supports the Interactions API — not chat completions — so it must not be auto-selected for Copy generation.",
+        "rules": [
+            {
+                "patterns": [
+                    "deep-research"
+                ],
+                "enabledModules": {
+                    "copy": false,
+                    "image": false,
+                    "video": false
+                },
+                "reason": "Deep Research models use the Interactions API, not chat completions"
+            },
+            {
+                "patterns": [
+                    "learnlm"
+                ],
+                "enabledModules": {
+                    "copy": false,
+                    "image": false,
+                    "video": false
+                },
+                "reason": "LearnLM models use a specialized learning API"
+            }
+        ]
+    }
+}

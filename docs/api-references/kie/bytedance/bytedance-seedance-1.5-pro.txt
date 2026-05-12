@@ -1,0 +1,346 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.kie.ai/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Bytedance - Seedance 1.5 Pro
+
+> Generate high-quality videos from text or images with Seedance 1.5 Pro's advanced AI capabilities
+
+## Query Task Status
+
+After submitting a task, use the unified query endpoint to check progress and retrieve results:
+
+<Card title="Get Task Details" icon="magnifying-glass" href="/market/common/get-task-detail">
+  Learn how to query task status and retrieve generation results
+</Card>
+
+<Tip>
+  For production use, we recommend using the `callBackUrl` parameter to receive automatic notifications when generation completes, rather than polling the status endpoint.
+</Tip>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Text-to-Video" icon="wand-magic-sparkles">
+    Generate videos directly from text descriptions without input images
+  </Card>
+
+  <Card title="Image-to-Video" icon="images">
+    Animate static images with 0-2 input images support
+  </Card>
+
+  <Card title="Dynamic Camera" icon="camera">
+    Advanced camera movement with optional lens locking for stable shots
+  </Card>
+
+  <Card title="Audio Generation" icon="volume-high">
+    Optional audio generation for enhanced video content
+  </Card>
+</CardGroup>
+
+<Note>
+  **Audio Generation**: Enabling the `generate_audio` feature will increase the generation cost. Use it when audio is essential for your video content.
+</Note>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Market Overview" icon="store" href="/market/quickstart">
+    Explore all available models
+  </Card>
+
+  <Card title="Common API" icon="gear" href="/common-api/get-account-credits">
+    Check credits and account usage
+  </Card>
+</CardGroup>
+
+
+## OpenAPI
+
+````yaml market/bytedance/seedance-1.5-pro.json post /api/v1/jobs/createTask
+openapi: 3.0.0
+info:
+  title: Bytedance API
+  description: kie.ai Bytedance API Documentation - Seedance 1.5 Pro
+  version: 1.0.0
+  contact:
+    name: Technical Support
+    email: support@kie.ai
+servers:
+  - url: https://api.kie.ai
+    description: API Server
+security:
+  - BearerAuth: []
+paths:
+  /api/v1/jobs/createTask:
+    post:
+      summary: Generate videos from text or images using bytedance/seedance-1.5-pro
+      operationId: bytedance-seedance-1-5-pro
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+              properties:
+                model:
+                  type: string
+                  enum:
+                    - bytedance/seedance-1.5-pro
+                  default: bytedance/seedance-1.5-pro
+                  description: |-
+                    The model name to use for generation. Required field.
+
+                    - Must be `bytedance/seedance-1.5-pro` for this endpoint
+                  example: bytedance/seedance-1.5-pro
+                callBackUrl:
+                  type: string
+                  format: uri
+                  description: >-
+                    The URL to receive generation task completion updates.
+                    Optional but recommended for production use.
+
+
+                    - System will POST task status and results to this URL when
+                    generation completes
+
+                    - Callback includes generated content URLs and task
+                    information
+
+                    - Your callback endpoint should accept POST requests with
+                    JSON payload containing results
+
+                    - Alternatively, use the Get Task Details endpoint to poll
+                    task status
+
+                    - To ensure callback security, see [Webhook Verification
+                    Guide](/common-api/webhook-verification) for signature
+                    verification implementation
+                  example: https://your-domain.com/api/callback
+                input:
+                  type: object
+                  description: Input parameters for the generation task
+                  properties:
+                    prompt:
+                      description: >-
+                        The text prompt used to generate the video. Required
+                        field. (Min length: 3, Max length: 2500 characters)
+                      type: string
+                      minLength: 3
+                      maxLength: 2500
+                      example: >-
+                        A serene beach at sunset with waves gently crashing on
+                        the shore, palm trees swaying in the breeze, and
+                        seagulls flying across the orange sky
+                    input_urls:
+                      description: >-
+                        URLs of input images for image-to-video generation.
+                        Optional field.
+
+
+                        - Accepts 0-2 images
+
+                        - If not provided, the model will perform text-to-video
+                        generation
+
+                        - File URLs after upload, not file content
+
+                        - Accepted types: image/jpeg, image/png, image/webp
+
+                        - Max size per image: 10.0MB
+                      type: array
+                      items:
+                        type: string
+                        format: uri
+                      maxItems: 2
+                      example:
+                        - >-
+                          https://file.aiquickdraw.com/custom-page/akr/section-images/example1.png
+                    aspect_ratio:
+                      description: Video aspect ratio configuration. Required field.
+                      type: string
+                      enum:
+                        - '1:1'
+                        - '4:3'
+                        - '3:4'
+                        - '16:9'
+                        - '9:16'
+                        - '21:9'
+                      default: '1:1'
+                      example: '1:1'
+                    resolution:
+                      description: >-
+                        Video resolution - 480p for faster generation, 720p for
+                        balance, 1080p for higher quality
+                      type: string
+                      enum:
+                        - 480p
+                        - 720p
+                        - 1080p
+                      default: 720p
+                      example: 720p
+                    duration:
+                      description: Duration of the video in seconds
+                      type: string
+                      enum:
+                        - '4'
+                        - '8'
+                        - '12'
+                      default: '8'
+                      example: '8'
+                    fixed_lens:
+                      description: >-
+                        Seedance adds dynamic camera movement. Enable this
+                        feature to lock the camera for stable, static shots.
+
+
+                        - **true**: Lock camera for static shots
+
+                        - **false**: Allow dynamic camera movement
+                      type: boolean
+                      default: false
+                      example: false
+                    generate_audio:
+                      description: |-
+                        Whether to generate audio for the video.
+
+                        - **true**: Generate with audio (higher cost)
+                        - **false**: Generate without audio
+
+                        Note: Enabling audio will increase the generation cost
+                      type: boolean
+                      default: false
+                      example: false
+                  required:
+                    - prompt
+                    - aspect_ratio
+            example:
+              model: bytedance/seedance-1.5-pro
+              callBackUrl: https://your-domain.com/api/callback
+              input:
+                prompt: >-
+                  A serene beach at sunset with waves gently crashing on the
+                  shore, palm trees swaying in the breeze, and seagulls flying
+                  across the orange sky
+                input_urls:
+                  - >-
+                    https://file.aiquickdraw.com/custom-page/akr/section-images/example1.png
+                aspect_ratio: '1:1'
+                resolution: 720p
+                duration: '8'
+                fixed_lens: false
+                generate_audio: false
+      responses:
+        '200':
+          description: Request successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          taskId:
+                            type: string
+                            description: >-
+                              Task ID, can be used with Get Task Details
+                              endpoint to query task status
+                            example: task_bytedance_1765186743319
+              example:
+                code: 200
+                msg: success
+                data:
+                  taskId: task_bytedance_1765186743319
+        '500':
+          $ref: '#/components/responses/Error'
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          enum:
+            - 200
+            - 401
+            - 402
+            - 404
+            - 422
+            - 429
+            - 455
+            - 500
+            - 501
+            - 505
+          description: >-
+            Response status code
+
+
+            - **200**: Success - Request has been processed successfully
+
+            - **401**: Unauthorized - Authentication credentials are missing or
+            invalid
+
+            - **402**: Insufficient Credits - Account does not have enough
+            credits to perform the operation
+
+            - **404**: Not Found - The requested resource or endpoint does not
+            exist
+
+            - **422**: Validation Error - The request parameters failed
+            validation checks
+
+            - **429**: Rate Limited - Request limit has been exceeded for this
+            resource
+
+            - **455**: Service Unavailable - System is currently undergoing
+            maintenance
+
+            - **500**: Server Error - An unexpected error occurred while
+            processing the request
+
+            - **501**: Generation Failed - Content generation task failed
+
+            - **505**: Feature Disabled - The requested feature is currently
+            disabled
+        msg:
+          type: string
+          description: Response message, error description when failed
+          example: success
+  responses:
+    Error:
+      description: Server Error
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: >-
+        All APIs require authentication via Bearer Token.
+
+
+        Get API Key:
+
+        1. Visit [API Key Management Page](https://kie.ai/api-key) to get your
+        API Key
+
+
+        Usage:
+
+        Add to request header:
+
+        Authorization: Bearer YOUR_API_KEY
+
+
+        Note:
+
+        - Keep your API Key secure and do not share it with others
+
+        - If you suspect your API Key has been compromised, reset it immediately
+        in the management page
+
+````

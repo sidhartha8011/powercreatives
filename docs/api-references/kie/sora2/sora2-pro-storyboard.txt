@@ -1,0 +1,331 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.kie.ai/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# sora-2-pro-storyboard
+
+> Video generation using sora-2-pro-storyboard
+
+## Query Task Status
+
+After submitting a task, use the unified query endpoint to check progress and retrieve results:
+
+<Card title="Get Task Details" icon="magnifying-glass" href="/market/common/get-task-detail">
+  Learn how to query task status and retrieve generation results
+</Card>
+
+<Tip>
+  For production use, we recommend using the `callBackUrl` parameter to receive automatic notifications when generation completes, rather than polling the status endpoint.
+</Tip>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Market Overview" icon="store" href="/market/quickstart">
+    Explore all available models
+  </Card>
+
+  <Card title="Common API" icon="gear" href="/common-api/get-account-credits">
+    Check credits and account usage
+  </Card>
+</CardGroup>
+
+
+## OpenAPI
+
+````yaml market/sora-2-pro-storyboard/index.json post /api/v1/jobs/createTask
+openapi: 3.0.0
+info:
+  title: Sora-2-pro-storyboard API
+  description: kie.ai Sora-2-pro-storyboard API Documentation
+  version: 1.0.0
+  contact:
+    name: Technical Support
+    email: support@kie.ai
+servers:
+  - url: https://api.kie.ai
+    description: API Server
+security:
+  - BearerAuth: []
+paths:
+  /api/v1/jobs/createTask:
+    post:
+      summary: Generate storyboard video from image with shot sequences
+      operationId: sora-2-pro-storyboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+              properties:
+                model:
+                  type: string
+                  enum:
+                    - sora-2-pro-storyboard
+                  default: sora-2-pro-storyboard
+                  description: |-
+                    The model name to use for generation. Required field.
+
+                    - Must be `sora-2-pro-storyboard` for this endpoint
+                  example: sora-2-pro-storyboard
+                callBackUrl:
+                  type: string
+                  format: uri
+                  description: >-
+                    The URL to receive generation task completion updates.
+                    Optional but recommended for production use.
+
+
+                    - System will POST task status and results to this URL when
+                    generation completes
+
+                    - Callback includes generated content URLs and task
+                    information
+
+                    - Your callback endpoint should accept POST requests with
+                    JSON payload containing results
+
+                    - Alternatively, use the Get Task Details endpoint to poll
+                    task status
+
+                    - To ensure callback security, see [Webhook Verification
+                    Guide](/common-api/webhook-verification) for signature
+                    verification implementation
+                  example: https://your-domain.com/api/callback
+                input:
+                  type: object
+                  description: Input parameters for the generation task
+                  properties:
+                    shots:
+                      description: >-
+                        Array of shot descriptions with durations. Total
+                        duration of all shots cannot exceed the selected
+                        n_frames value.
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          Scene:
+                            type: string
+                            description: Detailed description of the scene/shot
+                            example: >-
+                              A cute fluffy orange-and-white kitten wearing
+                              orange headphones, sitting at a cozy indoor table
+                              with a small slice of cake on a plate, a toy fish
+                              and a silver microphone nearby, warm soft
+                              lighting, cinematic close-up, shallow depth of
+                              field, gentle ASMR atmosphere.
+                          duration:
+                            type: number
+                            description: >-
+                              Duration of this shot in seconds. Total duration
+                              of all shots cannot exceed n_frames.
+                            minimum: 0.1
+                            maximum: 15
+                            example: 7.5
+                        required:
+                          - Scene
+                          - duration
+                      minItems: 1
+                      maxItems: 10
+                      example:
+                        - Scene: >-
+                            A cute fluffy orange-and-white kitten wearing orange
+                            headphones, sitting at a cozy indoor table with a
+                            small slice of cake on a plate, a toy fish and a
+                            silver microphone nearby, warm soft lighting,
+                            cinematic close-up, shallow depth of field, gentle
+                            ASMR atmosphere.
+                          duration: 7.5
+                        - Scene: >-
+                            The same cute fluffy orange-and-white kitten wearing
+                            orange headphones, in the same cozy indoor ASMR
+                            setup with the toy fish and microphone, the cake now
+                            finished, the kitten gently licks its lips with a
+                            satisfied smile, warm ambient lighting, cinematic
+                            close-up, shallow depth of field, calm and content
+                            mood.
+                          duration: 7.5
+                    n_frames:
+                      description: Total length of the video
+                      type: string
+                      enum:
+                        - '10'
+                        - '15'
+                        - '25'
+                      default: '15'
+                      example: '15'
+                    image_urls:
+                      description: >-
+                        Upload an image file to use as input for the API (File
+                        URL after upload, not file content; Accepted types:
+                        image/jpeg, image/png, image/webp; Max size: 10.0MB).
+                        Limited to exactly 1 image.
+                      type: array
+                      items:
+                        type: string
+                        format: uri
+                      minItems: 1
+                      maxItems: 1
+                      example:
+                        - >-
+                          https://file.aiquickdraw.com/custom-page/akr/section-images/1760776438785hyue5ogz.png
+                    aspect_ratio:
+                      description: This parameter defines the aspect ratio of the image.
+                      type: string
+                      enum:
+                        - portrait
+                        - landscape
+                      default: landscape
+                      example: landscape
+                    upload_method:
+                      type: string
+                      enum:
+                        - s3
+                        - oss
+                      default: s3
+                      description: >-
+                        Upload destination. Defaults to s3; choose oss for
+                        Aliyun storage (better access within China).
+                      example: s3
+            example:
+              model: sora-2-pro-storyboard
+              callBackUrl: https://your-domain.com/api/callback
+              input:
+                n_frames: '15'
+                image_urls:
+                  - >-
+                    https://file.aiquickdraw.com/custom-page/akr/section-images/1760776438785hyue5ogz.png
+                aspect_ratio: landscape
+                upload_method: s3
+                shots:
+                  - Scene: >-
+                      A cute fluffy orange-and-white kitten wearing orange
+                      headphones, sitting at a cozy indoor table with a small
+                      slice of cake on a plate, a toy fish and a silver
+                      microphone nearby, warm soft lighting, cinematic close-up,
+                      shallow depth of field, gentle ASMR atmosphere.
+                    duration: 7.5
+                  - Scene: >-
+                      The same cute fluffy orange-and-white kitten wearing
+                      orange headphones, in the same cozy indoor ASMR setup with
+                      the toy fish and microphone, the cake now finished, the
+                      kitten gently licks its lips with a satisfied smile, warm
+                      ambient lighting, cinematic close-up, shallow depth of
+                      field, calm and content mood.
+                    duration: 7.5
+      responses:
+        '200':
+          description: Request successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          taskId:
+                            type: string
+                            description: >-
+                              Task ID, can be used with Get Task Details
+                              endpoint to query task status
+                            example: task_sora-2-pro-storyboard_1765188271139
+              example:
+                code: 200
+                msg: success
+                data:
+                  taskId: task_sora-2-pro-storyboard_1765188271139
+        '500':
+          $ref: '#/components/responses/Error'
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          enum:
+            - 200
+            - 401
+            - 402
+            - 404
+            - 422
+            - 429
+            - 455
+            - 500
+            - 501
+            - 505
+          description: >-
+            Response status code
+
+
+            - **200**: Success - Request has been processed successfully
+
+            - **401**: Unauthorized - Authentication credentials are missing or
+            invalid
+
+            - **402**: Insufficient Credits - Account does not have enough
+            credits to perform the operation
+
+            - **404**: Not Found - The requested resource or endpoint does not
+            exist
+
+            - **422**: Validation Error - The request parameters failed
+            validation checks
+
+            - **429**: Rate Limited - Request limit has been exceeded for this
+            resource
+
+            - **455**: Service Unavailable - System is currently undergoing
+            maintenance
+
+            - **500**: Server Error - An unexpected error occurred while
+            processing the request
+
+            - **501**: Generation Failed - Content generation task failed
+
+            - **505**: Feature Disabled - The requested feature is currently
+            disabled
+        msg:
+          type: string
+          description: Response message, error description when failed
+          example: success
+  responses:
+    Error:
+      description: Server Error
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: >-
+        All APIs require authentication via Bearer Token.
+
+
+        Get API Key:
+
+        1. Visit [API Key Management Page](https://kie.ai/api-key) to get your
+        API Key
+
+
+        Usage:
+
+        Add to request header:
+
+        Authorization: Bearer YOUR_API_KEY
+
+
+        Note:
+
+        - Keep your API Key secure and do not share it with others
+
+        - If you suspect your API Key has been compromised, reset it immediately
+        in the management page
+
+````

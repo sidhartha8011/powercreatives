@@ -1,0 +1,335 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.kie.ai/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Kling - V2.5 Turbo Image to Video Pro
+
+> Transform images into dynamic videos powered by Kling's advanced AI model
+
+## Query Task Status
+
+After submitting a task, use the unified query endpoint to check progress and retrieve results:
+
+<Card title="Get Task Details" icon="magnifying-glass" href="/market/common/get-task-detail">
+  Learn how to query task status and retrieve generation results
+</Card>
+
+<Tip>
+  For production use, we recommend using the `callBackUrl` parameter to receive automatic notifications when generation completes, rather than polling the status endpoint.
+</Tip>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Market Overview" icon="store" href="/market/quickstart">
+    Explore all available models
+  </Card>
+
+  <Card title="Common API" icon="gear" href="/common-api/get-account-credits">
+    Check credits and account usage
+  </Card>
+</CardGroup>
+
+
+## OpenAPI
+
+````yaml market/kling/v2-5-turbo-image-to-video-pro.json post /api/v1/jobs/createTask
+openapi: 3.0.0
+info:
+  title: Kling API
+  description: kie.ai Kling API Documentation - Image to Video
+  version: 1.0.0
+  contact:
+    name: Technical Support
+    email: support@kie.ai
+servers:
+  - url: https://api.kie.ai
+    description: API Server
+security:
+  - BearerAuth: []
+paths:
+  /api/v1/jobs/createTask:
+    post:
+      summary: Generate videos from images using kling/v2-5-turbo-image-to-video-pro
+      operationId: kling-v2-5-turbo-image-to-video-pro
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+              properties:
+                model:
+                  type: string
+                  enum:
+                    - kling/v2-5-turbo-image-to-video-pro
+                  default: kling/v2-5-turbo-image-to-video-pro
+                  description: >-
+                    The model name to use for generation. Required field.
+
+
+                    - Must be `kling/v2-5-turbo-image-to-video-pro` for this
+                    endpoint
+                  example: kling/v2-5-turbo-image-to-video-pro
+                callBackUrl:
+                  type: string
+                  format: uri
+                  description: >-
+                    The URL to receive generation task completion updates.
+                    Optional but recommended for production use.
+
+
+                    - System will POST task status and results to this URL when
+                    generation completes
+
+                    - Callback includes generated content URLs and task
+                    information
+
+                    - Your callback endpoint should accept POST requests with
+                    JSON payload containing results
+
+                    - Alternatively, use the Get Task Details endpoint to poll
+                    task status
+
+                    - To ensure callback security, see [Webhook Verification
+                    Guide](/common-api/webhook-verification) for signature
+                    verification implementation
+                  example: https://your-domain.com/api/callback
+                input:
+                  type: object
+                  description: Input parameters for the generation task
+                  properties:
+                    prompt:
+                      description: >-
+                        Text description for the video generation (Max length:
+                        2500 characters)
+                      type: string
+                      maxLength: 2500
+                      example: >-
+                        Astronaut instantly teleports through a glowing magical
+                        wooden door. Handheld tracking, camera stays 5–10 meters
+                        above and behind, smooth third-person chase.
+                        Hyper-realistic base, each scene with distinct art
+                        style, instant scene flashes with bright portal glow,
+                        high detail, 8K, epic orchestral undertones. High-frame
+                        interpolation for smooth motion and sharp instant
+                        transitions. Close-up: astronaut in white suit falls
+                        rapidly through glowing portal underfoot.
+
+                        First transition: LEGO Alps, high-saturation daylight,
+                        snowy peaks and valleys below, astronaut falls, next
+                        portal opens.
+
+                        Second transition: Amazon rainforest, dense canopy and
+                        rivers below, astronaut falls, next portal opens.
+
+                        Third transition: Ancient Egypt, Giza pyramids in mural
+                        style, desert and Nile below, astronaut falls, next
+                        portal opens.
+
+                        Fourth transition: abstract black-and-white ink style,
+                        Chinese Great Wall below, astronaut falls, final portal
+                        opens.
+
+                        Fifth transition: New York night, realistic dark
+                        skyline, glowing city lights, Empire State Building,
+                        astronaut hovers elegantly. Camera maintains constant
+                        distance, slight orbit, smooth third-person tracking
+                        throughout. Each portal transition is a sharp flash,
+                        emphasizing speed and magical journey, abrupt style and
+                        location shifts.
+                    image_url:
+                      description: >-
+                        URL of the image to be used for the video (File URL
+                        after upload, not file content; Accepted types:
+                        image/jpeg, image/png, image/webp; Max size: 10.0MB)
+                      type: string
+                      example: >-
+                        https://file.aiquickdraw.com/custom-page/akr/section-images/1759211376283gfcw5zcy.png
+                    tail_image_url:
+                      description: >-
+                        Tail frame image of video (File URL after upload, not
+                        file content; Accepted types: image/jpeg, image/png,
+                        image/webp; Max size: 10.0MB)
+                      type: string
+                      example: ''
+                    duration:
+                      description: The duration of the generated video in seconds
+                      type: string
+                      enum:
+                        - '5'
+                        - '10'
+                      default: '5'
+                      example: '5'
+                    negative_prompt:
+                      description: >-
+                        Elements to avoid in the video (Max length: 2496
+                        characters)
+                      type: string
+                      maxLength: 2496
+                      example: blur, distort, and low quality
+                    cfg_scale:
+                      description: >-
+                        The CFG (Classifier Free Guidance) scale is a measure of
+                        how close you want the model to stick to your prompt
+                        (Min: 0, Max: 1, Step: 0.1) (step: 0.1)
+                      type: number
+                      minimum: 0
+                      maximum: 1
+                      default: 0.5
+                      example: 0.5
+                  required:
+                    - prompt
+                    - image_url
+            example:
+              model: kling/v2-5-turbo-image-to-video-pro
+              callBackUrl: https://your-domain.com/api/callback
+              input:
+                prompt: >-
+                  Astronaut instantly teleports through a glowing magical wooden
+                  door. Handheld tracking, camera stays 5–10 meters above and
+                  behind, smooth third-person chase. Hyper-realistic base, each
+                  scene with distinct art style, instant scene flashes with
+                  bright portal glow, high detail, 8K, epic orchestral
+                  undertones. High-frame interpolation for smooth motion and
+                  sharp instant transitions. Close-up: astronaut in white suit
+                  falls rapidly through glowing portal underfoot.
+
+                  First transition: LEGO Alps, high-saturation daylight, snowy
+                  peaks and valleys below, astronaut falls, next portal opens.
+
+                  Second transition: Amazon rainforest, dense canopy and rivers
+                  below, astronaut falls, next portal opens.
+
+                  Third transition: Ancient Egypt, Giza pyramids in mural style,
+                  desert and Nile below, astronaut falls, next portal opens.
+
+                  Fourth transition: abstract black-and-white ink style, Chinese
+                  Great Wall below, astronaut falls, final portal opens.
+
+                  Fifth transition: New York night, realistic dark skyline,
+                  glowing city lights, Empire State Building, astronaut hovers
+                  elegantly. Camera maintains constant distance, slight orbit,
+                  smooth third-person tracking throughout. Each portal
+                  transition is a sharp flash, emphasizing speed and magical
+                  journey, abrupt style and location shifts.
+                image_url: >-
+                  https://file.aiquickdraw.com/custom-page/akr/section-images/1759211376283gfcw5zcy.png
+                tail_image_url: ''
+                duration: '5'
+                negative_prompt: blur, distort, and low quality
+                cfg_scale: 0.5
+      responses:
+        '200':
+          description: Request successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          taskId:
+                            type: string
+                            description: >-
+                              Task ID, can be used with Get Task Details
+                              endpoint to query task status
+                            example: task_kling_1765184408908
+              example:
+                code: 200
+                msg: success
+                data:
+                  taskId: task_kling_1765184408908
+        '500':
+          $ref: '#/components/responses/Error'
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          enum:
+            - 200
+            - 401
+            - 402
+            - 404
+            - 422
+            - 429
+            - 455
+            - 500
+            - 501
+            - 505
+          description: >-
+            Response status code
+
+
+            - **200**: Success - Request has been processed successfully
+
+            - **401**: Unauthorized - Authentication credentials are missing or
+            invalid
+
+            - **402**: Insufficient Credits - Account does not have enough
+            credits to perform the operation
+
+            - **404**: Not Found - The requested resource or endpoint does not
+            exist
+
+            - **422**: Validation Error - The request parameters failed
+            validation checks
+
+            - **429**: Rate Limited - Request limit has been exceeded for this
+            resource
+
+            - **455**: Service Unavailable - System is currently undergoing
+            maintenance
+
+            - **500**: Server Error - An unexpected error occurred while
+            processing the request
+
+            - **501**: Generation Failed - Content generation task failed
+
+            - **505**: Feature Disabled - The requested feature is currently
+            disabled
+        msg:
+          type: string
+          description: Response message, error description when failed
+          example: success
+  responses:
+    Error:
+      description: Server Error
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: >-
+        All APIs require authentication via Bearer Token.
+
+
+        Get API Key:
+
+        1. Visit [API Key Management Page](https://kie.ai/api-key) to get your
+        API Key
+
+
+        Usage:
+
+        Add to request header:
+
+        Authorization: Bearer YOUR_API_KEY
+
+
+        Note:
+
+        - Keep your API Key secure and do not share it with others
+
+        - If you suspect your API Key has been compromised, reset it immediately
+        in the management page
+
+````

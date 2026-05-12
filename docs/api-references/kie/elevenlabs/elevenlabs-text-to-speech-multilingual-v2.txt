@@ -1,0 +1,475 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.kie.ai/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# elevenlabs/text-to-speech-multilingual-v2
+
+> Content generation using elevenlabs/text-to-speech-multilingual-v2
+
+## Query Task Status
+
+After submitting a task, use the unified query endpoint to check progress and retrieve results:
+
+<Card title="Get Task Details" icon="magnifying-glass" href="/market/common/get-task-detail">
+  Learn how to query task status and retrieve generation results
+</Card>
+
+<Tip>
+  For production use, we recommend using the `callBackUrl` parameter to receive automatic notifications when generation completes, rather than polling the status endpoint.
+</Tip>
+
+## Related Resources
+
+<CardGroup cols={3}>
+  <Card title="Market Overview" icon="store" href="/market/quickstart">
+    Explore all available models
+  </Card>
+
+  <Card title="File Upload API" icon="upload" href="/file-upload-api/quickstart">
+    Learn how to upload and manage files
+  </Card>
+
+  <Card title="Common API" icon="gear" href="/common-api/get-account-credits">
+    Check credits and account usage
+  </Card>
+</CardGroup>
+
+
+## OpenAPI
+
+````yaml market/elevenlabs/text-to-speech-multilingual-v2.json post /api/v1/jobs/createTask
+openapi: 3.0.0
+info:
+  title: Elevenlabs API
+  description: kie.ai Elevenlabs API Documentation - undefined
+  version: 1.0.0
+  contact:
+    name: Technical Support
+    email: support@kie.ai
+servers:
+  - url: https://api.kie.ai
+    description: API Server
+security:
+  - BearerAuth: []
+paths:
+  /api/v1/jobs/createTask:
+    post:
+      summary: Generate content using elevenlabs/text-to-speech-multilingual-v2
+      operationId: elevenlabs-text-to-speech-multilingual-v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+              properties:
+                model:
+                  type: string
+                  enum:
+                    - elevenlabs/text-to-speech-multilingual-v2
+                  default: elevenlabs/text-to-speech-multilingual-v2
+                  description: >-
+                    The model name to use for generation. Required field.
+
+
+                    - Must be `elevenlabs/text-to-speech-multilingual-v2` for
+                    this endpoint
+                  example: elevenlabs/text-to-speech-multilingual-v2
+                callBackUrl:
+                  type: string
+                  format: uri
+                  description: >-
+                    The URL to receive generation task completion updates.
+                    Optional but recommended for production use.
+
+
+                    - System will POST task status and results to this URL when
+                    generation completes
+
+                    - Callback includes generated content URLs and task
+                    information
+
+                    - Your callback endpoint should accept POST requests with
+                    JSON payload containing results
+
+                    - Alternatively, use the Get Task Details endpoint to poll
+                    task status
+
+                    - To ensure callback security, see [Webhook Verification
+                    Guide](/common-api/webhook-verification) for signature
+                    verification implementation
+                  example: https://your-domain.com/api/callback
+                input:
+                  type: object
+                  description: Input parameters for the generation task
+                  properties:
+                    text:
+                      description: >-
+                        The text to convert to speech (Max length: 5000
+                        characters)
+                      type: string
+                      maxLength: 5000
+                      example: >-
+                        Unlock powerful API with Kie.ai! Affordable, scalable
+                        APl integration, free trial playground, and secure,
+                        reliable performance.
+                    voice:
+                      description: >-
+                        The voice to use for speech generation. Can be a preset
+                        voice name (e.g. Rachel, Adam) or a voice ID. You can
+                        preview a voice by opening
+                        `https://static.aiquickdraw.com/elevenlabs/voice/<voice_id>.mp3`
+                        in your browser (replace <voice_id> with the actual
+                        voice ID). For example:
+                        `https://static.aiquickdraw.com/elevenlabs/voice/BIvP0GN1cAtSRTxNHnWS.mp3`
+                      type: string
+                      enum:
+                        - Rachel
+                        - Aria
+                        - Roger
+                        - Sarah
+                        - Laura
+                        - Charlie
+                        - George
+                        - Callum
+                        - River
+                        - Liam
+                        - Charlotte
+                        - Alice
+                        - Matilda
+                        - Will
+                        - Jessica
+                        - Eric
+                        - Chris
+                        - Brian
+                        - Daniel
+                        - Lily
+                        - Bill
+                        - BIvP0GN1cAtSRTxNHnWS
+                        - aMSt68OGf4xUZAnLpTU8
+                        - RILOU7YmBhvwJGDGjNmP
+                        - EkK5I93UQWFDigLMpZcX
+                        - Z3R5wn05IrDiVCyEkUrK
+                        - tnSpp4vdxKPjI9w0GnoV
+                        - NNl6r8mD7vthiJatiJt1
+                        - YOq2y2Up4RgXP2HyXjE5
+                        - Bj9UqZbhQsanLzgalpEG
+                        - c6SfcYrb2t09NHXiT80T
+                        - B8gJV1IhpuegLxdpXFOE
+                        - exsUS4vynmxd379XN4yO
+                        - BpjGufoPiobT79j2vtj4
+                        - 2zRM7PkgwBPiau2jvVXc
+                        - 1SM7GgM6IMuvQlz2BwM3
+                        - ouL9IsyrSnUkCmfnD02u
+                        - 5l5f8iK3YPeGga21rQIX
+                        - scOwDtmlUjD3prqpp97I
+                        - NOpBlnGInO9m6vDvFkFC
+                        - BZgkqPqms7Kj9ulSkVzn
+                        - wo6udizrrtpIxWGp2qJk
+                        - yjJ45q8TVCrtMhEKurxY
+                        - gU0LNdkMOQCOrPrwtbee
+                        - DGzg6RaUqxGRTHSBjfgF
+                        - DGTOOUoGpoP6UZ9uSWfA
+                        - x70vRnQBMBu4FAYhjJbO
+                        - Sm1seazb4gs7RSlUVw7c
+                        - P1bg08DkjqiVEzOn76yG
+                        - qDuRKMlYmrm8trt5QyBn
+                        - kUUTqKQ05NMGulF08DDf
+                        - qXpMhyvQqiRxWQs4qSSB
+                        - TX3LPaxmHKxFdv7VOQHJ
+                        - iP95p4xoKVk53GoZ742B
+                        - SOYHLrjzK2X1ezoPC6cr
+                        - N2lVS1w4EtoT3dr4eOWO
+                        - FGY2WhTYpPnrIDTdsKH5
+                        - XB0fDUnXU5powFXDhCwa
+                        - cgSgspJ2msm6clMCkdW9
+                        - MnUw1cSnpiLoLhpd3Hqp
+                        - kPzsL2i3teMYv0FxEYQ6
+                        - UgBBYS2sOqTuMpoF3BR0
+                        - IjnA9kwZJHJ20Fp7Vmy6
+                        - KoQQbl9zjAdLgKZjm8Ol
+                        - hpp4J3VqNfWAUOO0d1Us
+                        - pNInz6obpgDQGcFmaJgB
+                        - nPczCjzI2devNBz1zQrb
+                        - L0Dsvb3SLTyegXwtm47J
+                        - uYXf8XasLslADfZ2MB4u
+                        - gs0tAILXbY5DNrJrsM6F
+                        - DTKMou8ccj1ZaWGBiotd
+                        - vBKc2FfBKJfcZNyEt1n6
+                        - TmNe0cCqkZBMwPWOd3RD
+                        - DYkrAHD8iwork3YSUBbs
+                        - 56AoDkrOh6qfVPDXZ7Pt
+                        - eR40ATw9ArzDf9h3v7t7
+                        - g6xIsTj2HwM6VR4iXFCw
+                        - lcMyyd2HUfFzxdCaC4Ta
+                        - 6aDn1KB0hjpdcocrUkmq
+                        - Sq93GQT4X1lKDXsQcixO
+                        - vfaqCOvlrKi4Zp7C2IAm
+                        - piI8Kku0DcvcL6TTSeQt
+                        - KTPVrSVAEUSJRClDzBw7
+                        - flHkNRp1BlvT73UL6gyz
+                        - 9yzdeviXkFddZ4Oz8Mok
+                        - pPdl9cQBQq4p6mRkZy2Z
+                        - 0SpgpJ4D3MpHCiWdyTg3
+                        - UFO0Yv86wqRxAt1DmXUu
+                        - oR4uRy4fHDUGGISL0Rev
+                        - zYcjlYFOd3taleS0gkk3
+                        - nzeAacJi50IvxcyDnMXa
+                        - ruirxsoakN0GWmGNIo04
+                        - 1KFdM0QCwQn4rmn5nn9C
+                        - TC0Zp7WVFzhA8zpTlRqV
+                        - ljo9gAlSqKOvF6D8sOsX
+                        - PPzYpIqttlTYA83688JI
+                        - ZF6FPAbjXT4488VcRRnw
+                        - 8JVbfL6oEdmuxKn5DK2C
+                        - iCrDUkL56s3C8sCRl7wb
+                        - 1hlpeD1ydbI2ow0Tt3EW
+                        - wJqPPQ618aTW29mptyoc
+                        - EiNlNiXeDU1pqqOPrYMO
+                        - FUfBrNit0NNZAwb58KWH
+                        - 4YYIPFl9wE5c4L2eu2Gb
+                        - OYWwCdDHouzDwiZJWOOu
+                        - 6F5Zhi321D3Oq7v1oNT4
+                        - qNkzaJoHLLdpvgh5tISm
+                        - YXpFCvM1S3JbWEJhoskW
+                        - 9PVP7ENhDskL0KYHAKtD
+                        - LG95yZDEHg6fCZdQjLqj
+                        - CeNX9CMwmxDxUF5Q2Inm
+                        - st7NwhTPEzqo2riw7qWC
+                        - aD6riP1btT197c6dACmy
+                        - FF7KdobWPaiR0vkcALHF
+                        - mtrellq69YZsNwzUSyXh
+                        - dHd5gvgSOzSfduK4CvEg
+                        - cTNP6ZM2mLTKj2BFhxEh
+                        - eVItLK1UvXctxuaRV2Oq
+                        - U1Vk2oyatMdYs096Ety7
+                        - esy0r39YPLQjOczyOib8
+                        - bwCXcoVxWNYMlC6Esa8u
+                        - D2jw4N9m4xePLTQ3IHjU
+                        - Tsns2HvNFKfGiNjllgqo
+                        - Atp5cNFg1Wj5gyKD7HWV
+                        - 1cxc5c3E9K6F1wlqOJGV
+                        - 1U02n4nD6AdIZ9CjF053
+                        - HgyIHe81F3nXywNwkraY
+                        - AeRdCCKzvd23BpJoofzx
+                        - LruHrtVF6PSyGItzMNHS
+                        - Qggl4b0xRMiqOwhPtVWT
+                        - zA6D7RyKdc2EClouEMkP
+                        - 1wGbFxmAM3Fgw63G1zZJ
+                        - hqfrgApggtO1785R4Fsn
+                        - sH0WdfE5fsKuM2otdQZr
+                        - MJ0RnG71ty4LH3dvNfSd
+                      default: Rachel
+                      example: Rachel
+                    stability:
+                      description: >-
+                        Voice stability (0-1) (Min: 0, Max: 1, Step: 0.01)
+                        (step: 0.01)
+                      type: number
+                      minimum: 0
+                      maximum: 1
+                      default: 0.5
+                      example: 0.5
+                    similarity_boost:
+                      description: >-
+                        Similarity boost (0-1) (Min: 0, Max: 1, Step: 0.01)
+                        (step: 0.01)
+                      type: number
+                      minimum: 0
+                      maximum: 1
+                      default: 0.75
+                      example: 0.75
+                    style:
+                      description: >-
+                        Style exaggeration (0-1) (Min: 0, Max: 1, Step: 0.01)
+                        (step: 0.01)
+                      type: number
+                      minimum: 0
+                      maximum: 1
+                      default: 0
+                      example: 0
+                    speed:
+                      description: >-
+                        Speech speed (0.7-1.2). Values below 1.0 slow down the
+                        speech, above 1.0 speed it up. Extreme values may affect
+                        quality. (Min: 0.7, Max: 1.2, Step: 0.01) (step: 0.01)
+                      type: number
+                      minimum: 0.7
+                      maximum: 1.2
+                      default: 1
+                      example: 1
+                    timestamps:
+                      description: >-
+                        Whether to return timestamps for each word in the
+                        generated speech (Boolean value (true/false))
+                      type: boolean
+                      example: false
+                    previous_text:
+                      description: >-
+                        The text that came before the text of the current
+                        request. Can be used to improve the speech's continuity
+                        when concatenating together multiple generations or to
+                        influence the speech's continuity in the current
+                        generation. (Max length: 5000 characters)
+                      type: string
+                      maxLength: 5000
+                      example: ''
+                    next_text:
+                      description: >-
+                        The text that comes after the text of the current
+                        request. Can be used to improve the speech's continuity
+                        when concatenating together multiple generations or to
+                        influence the speech's continuity in the current
+                        generation. (Max length: 5000 characters)
+                      type: string
+                      maxLength: 5000
+                      example: ''
+                    language_code:
+                      description: >-
+                        Language code (ISO 639-1) used to enforce a language for
+                        the model. Currently only Turbo v2.5 and Flash v2.5
+                        support language enforcement. For other models, an error
+                        will be returned if language code is provided. (Max
+                        length: 500 characters)
+                      type: string
+                      maxLength: 500
+                      example: ''
+                  required:
+                    - text
+                    - voice
+            example:
+              model: elevenlabs/text-to-speech-multilingual-v2
+              callBackUrl: https://your-domain.com/api/callback
+              input:
+                text: >-
+                  Unlock powerful API with Kie.ai! Affordable, scalable APl
+                  integration, free trial playground, and secure, reliable
+                  performance.
+                voice: Rachel
+                stability: 0.5
+                similarity_boost: 0.75
+                style: 0
+                speed: 1
+                timestamps: false
+                previous_text: ''
+                next_text: ''
+                language_code: ''
+      responses:
+        '200':
+          description: Request successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          taskId:
+                            type: string
+                            description: >-
+                              Task ID, can be used with Get Task Details
+                              endpoint to query task status
+                            example: task_elevenlabs_1765185448724
+                          recordId:
+                            type: string
+                            description: Record ID, can be used to get the record details
+                            example: elevenlabs_1765185448724
+              example:
+                code: 200
+                msg: success
+                data:
+                  taskId: task_elevenlabs_1765185448724
+                  recordId: elevenlabs_1765185448724
+        '500':
+          $ref: '#/components/responses/Error'
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          enum:
+            - 200
+            - 401
+            - 402
+            - 404
+            - 422
+            - 429
+            - 455
+            - 500
+            - 501
+            - 505
+          description: >-
+            Response status code
+
+
+            - **200**: Success - Request has been processed successfully
+
+            - **401**: Unauthorized - Authentication credentials are missing or
+            invalid
+
+            - **402**: Insufficient Credits - Account does not have enough
+            credits to perform the operation
+
+            - **404**: Not Found - The requested resource or endpoint does not
+            exist
+
+            - **422**: Validation Error - The request parameters failed
+            validation checks
+
+            - **429**: Rate Limited - Request limit has been exceeded for this
+            resource
+
+            - **455**: Service Unavailable - System is currently undergoing
+            maintenance
+
+            - **500**: Server Error - An unexpected error occurred while
+            processing the request
+
+            - **501**: Generation Failed - Content generation task failed
+
+            - **505**: Feature Disabled - The requested feature is currently
+            disabled
+        msg:
+          type: string
+          description: Response message, error description when failed
+          example: success
+  responses:
+    Error:
+      description: Server Error
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: >-
+        All APIs require authentication via Bearer Token.
+
+
+        Get API Key:
+
+        1. Visit [API Key Management Page](https://kie.ai/api-key) to get your
+        API Key
+
+
+        Usage:
+
+        Add to request header:
+
+        Authorization: Bearer YOUR_API_KEY
+
+
+        Note:
+
+        - Keep your API Key secure and do not share it with others
+
+        - If you suspect your API Key has been compromised, reset it immediately
+        in the management page
+
+````

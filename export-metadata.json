@@ -1,0 +1,26 @@
+{
+    "export_info": {
+        "exported_by": "Plugin Exporter v2.5.1",
+        "export_date": "2026-04-23 18:35:04",
+        "wordpress_version": "6.9.4",
+        "php_version": "8.2.27"
+    },
+    "plugin_info": {
+        "name": "Power Creatives",
+        "version": "1.2.0",
+        "description": "AI-powered creative generation platform \u2014 copy, images, video, brand management, and more. <cite>By <a href=\"https:\/\/powercreatives.io\">Power Creatives<\/a>.<\/cite>",
+        "author": "<a href=\"https:\/\/powercreatives.io\">Power Creatives<\/a>",
+        "plugin_uri": "https:\/\/powercreatives.io",
+        "author_uri": "https:\/\/powercreatives.io",
+        "text_domain": "power-creatives",
+        "requires_wp": "6.4",
+        "tested_up_to": null,
+        "requires_php": "8.1"
+    },
+    "installation_notes": [
+        "Upload this ZIP file through WordPress admin > Plugins > Add New > Upload Plugin",
+        "Alternatively, extract to wp-content\/plugins\/ directory",
+        "Activate the plugin after installation",
+        "If settings file is included, review before importing"
+    ]
+}

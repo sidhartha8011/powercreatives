@@ -1,0 +1,500 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.kie.ai/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# elevenlabs/text-to-dialogue-v3
+
+> Dialogue text-to-speech generation using elevenlabs/text-to-dialogue-v3
+
+## Query Task Status
+
+After submitting a task, use the unified query endpoint to check progress and retrieve results:
+
+<Card title="Get Task Details" icon="magnifying-glass" href="/market/common/get-task-detail">
+  Learn how to query task status and retrieve generation results
+</Card>
+
+<Tip>
+  For production use, we recommend using the `callBackUrl` parameter to receive automatic notifications when generation completes, rather than polling the status endpoint.
+</Tip>
+
+## Related Resources
+
+<CardGroup cols={3}>
+  <Card title="Market Overview" icon="store" href="/market/quickstart">
+    Explore all available models
+  </Card>
+
+  <Card title="File Upload API" icon="upload" href="/file-upload-api/quickstart">
+    Learn how to upload and manage files
+  </Card>
+
+  <Card title="Common API" icon="gear" href="/common-api/get-account-credits">
+    Check credits and account usage
+  </Card>
+</CardGroup>
+
+
+## OpenAPI
+
+````yaml market/elevenlabs/text-to-dialogue-v3.json post /api/v1/jobs/createTask
+openapi: 3.0.0
+info:
+  title: Elevenlabs API
+  description: kie.ai Elevenlabs API Documentation - Dialogue Text-to-Speech V3
+  version: 1.0.0
+  contact:
+    name: Technical Support
+    email: support@kie.ai
+servers:
+  - url: https://api.kie.ai
+    description: API Server
+security:
+  - BearerAuth: []
+paths:
+  /api/v1/jobs/createTask:
+    post:
+      summary: Generate dialogue speech using elevenlabs/text-to-dialogue-v3
+      operationId: elevenlabs-text-to-dialogue-v3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+                - input
+              properties:
+                model:
+                  type: string
+                  enum:
+                    - elevenlabs/text-to-dialogue-v3
+                  default: elevenlabs/text-to-dialogue-v3
+                  description: |-
+                    The model name to use for generation. Required field.
+
+                    - Must be `elevenlabs/text-to-dialogue-v3` for this endpoint
+                  example: elevenlabs/text-to-dialogue-v3
+                callBackUrl:
+                  type: string
+                  format: uri
+                  description: >-
+                    The URL to receive generation task completion updates.
+                    Optional but recommended for production use.
+
+
+                    - System will POST task status and results to this URL when
+                    generation completes
+
+                    - Callback includes generated content URLs and task
+                    information
+
+                    - Your callback endpoint should accept POST requests with
+                    JSON payload containing results
+
+                    - Alternatively, use the Get Task Details endpoint to poll
+                    task status
+
+                    - To ensure callback security, see [Webhook Verification
+                    Guide](/common-api/webhook-verification) for signature
+                    verification implementation
+                  example: https://your-domain.com/api/callback
+                input:
+                  type: object
+                  description: Input parameters for the generation task
+                  required:
+                    - dialogue
+                  properties:
+                    dialogue:
+                      type: array
+                      description: >-
+                        Array of dialogue items. Each item contains text and
+                        voice. The total character count of all text fields
+                        combined must not exceed 5000 characters.
+                      items:
+                        type: object
+                        required:
+                          - text
+                          - voice
+                        properties:
+                          text:
+                            type: string
+                            description: >-
+                              The dialogue text content. All text fields in the
+                              dialogue array combined must not exceed 5000
+                              characters.
+                            example: I have a pen, I have an apple, ah, Apple pen~
+                          voice:
+                            type: string
+                            description: >-
+                              The voice for this dialogue line. Can be a preset
+                              name (e.g. Adam, Brian) or a voice ID. You can
+                              preview a voice by opening
+                              `https://static.aiquickdraw.com/elevenlabs/voice/<voice_id>.mp3`
+                              in your browser (replace <voice_id> with the
+                              actual voice ID). For example:
+                              `https://static.aiquickdraw.com/elevenlabs/voice/BIvP0GN1cAtSRTxNHnWS.mp3`
+                            enum:
+                              - Adam
+                              - Alice
+                              - Bill
+                              - Brian
+                              - Callum
+                              - Charlie
+                              - Chris
+                              - Daniel
+                              - Eric
+                              - George
+                              - Harry
+                              - Jessica
+                              - Laura
+                              - Liam
+                              - Lily
+                              - Matilda
+                              - River
+                              - Roger
+                              - Sarah
+                              - Will
+                              - BIvP0GN1cAtSRTxNHnWS
+                              - aMSt68OGf4xUZAnLpTU8
+                              - RILOU7YmBhvwJGDGjNmP
+                              - EkK5I93UQWFDigLMpZcX
+                              - Z3R5wn05IrDiVCyEkUrK
+                              - tnSpp4vdxKPjI9w0GnoV
+                              - NNl6r8mD7vthiJatiJt1
+                              - YOq2y2Up4RgXP2HyXjE5
+                              - Bj9UqZbhQsanLzgalpEG
+                              - c6SfcYrb2t09NHXiT80T
+                              - B8gJV1IhpuegLxdpXFOE
+                              - exsUS4vynmxd379XN4yO
+                              - BpjGufoPiobT79j2vtj4
+                              - 2zRM7PkgwBPiau2jvVXc
+                              - 1SM7GgM6IMuvQlz2BwM3
+                              - ouL9IsyrSnUkCmfnD02u
+                              - 5l5f8iK3YPeGga21rQIX
+                              - scOwDtmlUjD3prqpp97I
+                              - NOpBlnGInO9m6vDvFkFC
+                              - BZgkqPqms7Kj9ulSkVzn
+                              - wo6udizrrtpIxWGp2qJk
+                              - yjJ45q8TVCrtMhEKurxY
+                              - gU0LNdkMOQCOrPrwtbee
+                              - DGzg6RaUqxGRTHSBjfgF
+                              - DGTOOUoGpoP6UZ9uSWfA
+                              - x70vRnQBMBu4FAYhjJbO
+                              - Sm1seazb4gs7RSlUVw7c
+                              - P1bg08DkjqiVEzOn76yG
+                              - qDuRKMlYmrm8trt5QyBn
+                              - kUUTqKQ05NMGulF08DDf
+                              - qXpMhyvQqiRxWQs4qSSB
+                              - TX3LPaxmHKxFdv7VOQHJ
+                              - iP95p4xoKVk53GoZ742B
+                              - SOYHLrjzK2X1ezoPC6cr
+                              - N2lVS1w4EtoT3dr4eOWO
+                              - FGY2WhTYpPnrIDTdsKH5
+                              - XB0fDUnXU5powFXDhCwa
+                              - cgSgspJ2msm6clMCkdW9
+                              - MnUw1cSnpiLoLhpd3Hqp
+                              - kPzsL2i3teMYv0FxEYQ6
+                              - UgBBYS2sOqTuMpoF3BR0
+                              - IjnA9kwZJHJ20Fp7Vmy6
+                              - KoQQbl9zjAdLgKZjm8Ol
+                              - hpp4J3VqNfWAUOO0d1Us
+                              - pNInz6obpgDQGcFmaJgB
+                              - nPczCjzI2devNBz1zQrb
+                              - L0Dsvb3SLTyegXwtm47J
+                              - uYXf8XasLslADfZ2MB4u
+                              - gs0tAILXbY5DNrJrsM6F
+                              - DTKMou8ccj1ZaWGBiotd
+                              - vBKc2FfBKJfcZNyEt1n6
+                              - TmNe0cCqkZBMwPWOd3RD
+                              - DYkrAHD8iwork3YSUBbs
+                              - 56AoDkrOh6qfVPDXZ7Pt
+                              - eR40ATw9ArzDf9h3v7t7
+                              - g6xIsTj2HwM6VR4iXFCw
+                              - lcMyyd2HUfFzxdCaC4Ta
+                              - 6aDn1KB0hjpdcocrUkmq
+                              - Sq93GQT4X1lKDXsQcixO
+                              - vfaqCOvlrKi4Zp7C2IAm
+                              - piI8Kku0DcvcL6TTSeQt
+                              - KTPVrSVAEUSJRClDzBw7
+                              - flHkNRp1BlvT73UL6gyz
+                              - 9yzdeviXkFddZ4Oz8Mok
+                              - pPdl9cQBQq4p6mRkZy2Z
+                              - 0SpgpJ4D3MpHCiWdyTg3
+                              - UFO0Yv86wqRxAt1DmXUu
+                              - oR4uRy4fHDUGGISL0Rev
+                              - zYcjlYFOd3taleS0gkk3
+                              - nzeAacJi50IvxcyDnMXa
+                              - ruirxsoakN0GWmGNIo04
+                              - 1KFdM0QCwQn4rmn5nn9C
+                              - TC0Zp7WVFzhA8zpTlRqV
+                              - ljo9gAlSqKOvF6D8sOsX
+                              - PPzYpIqttlTYA83688JI
+                              - ZF6FPAbjXT4488VcRRnw
+                              - 8JVbfL6oEdmuxKn5DK2C
+                              - iCrDUkL56s3C8sCRl7wb
+                              - 1hlpeD1ydbI2ow0Tt3EW
+                              - wJqPPQ618aTW29mptyoc
+                              - EiNlNiXeDU1pqqOPrYMO
+                              - FUfBrNit0NNZAwb58KWH
+                              - 4YYIPFl9wE5c4L2eu2Gb
+                              - OYWwCdDHouzDwiZJWOOu
+                              - 6F5Zhi321D3Oq7v1oNT4
+                              - qNkzaJoHLLdpvgh5tISm
+                              - YXpFCvM1S3JbWEJhoskW
+                              - 9PVP7ENhDskL0KYHAKtD
+                              - LG95yZDEHg6fCZdQjLqj
+                              - CeNX9CMwmxDxUF5Q2Inm
+                              - st7NwhTPEzqo2riw7qWC
+                              - aD6riP1btT197c6dACmy
+                              - FF7KdobWPaiR0vkcALHF
+                              - mtrellq69YZsNwzUSyXh
+                              - dHd5gvgSOzSfduK4CvEg
+                              - cTNP6ZM2mLTKj2BFhxEh
+                              - eVItLK1UvXctxuaRV2Oq
+                              - U1Vk2oyatMdYs096Ety7
+                              - esy0r39YPLQjOczyOib8
+                              - bwCXcoVxWNYMlC6Esa8u
+                              - D2jw4N9m4xePLTQ3IHjU
+                              - Tsns2HvNFKfGiNjllgqo
+                              - Atp5cNFg1Wj5gyKD7HWV
+                              - 1cxc5c3E9K6F1wlqOJGV
+                              - 1U02n4nD6AdIZ9CjF053
+                              - HgyIHe81F3nXywNwkraY
+                              - AeRdCCKzvd23BpJoofzx
+                              - LruHrtVF6PSyGItzMNHS
+                              - Qggl4b0xRMiqOwhPtVWT
+                              - zA6D7RyKdc2EClouEMkP
+                              - 1wGbFxmAM3Fgw63G1zZJ
+                              - hqfrgApggtO1785R4Fsn
+                              - sH0WdfE5fsKuM2otdQZr
+                              - MJ0RnG71ty4LH3dvNfSd
+                            example: Adam
+                      example:
+                        - text: I have a pen, I have an apple, ah, Apple pen~
+                          voice: Adam
+                        - text: a happy dog
+                          voice: Brian
+                        - text: a happy cat
+                          voice: Roger
+                    stability:
+                      type: number
+                      description: >-
+                        Voice stability parameter. Must be one of the following
+                        values: 0.0, 0.5, or 1.0
+                      enum:
+                        - 0
+                        - 0.5
+                        - 1
+                      default: 0.5
+                      example: 0.5
+                    language_code:
+                      type: string
+                      description: >-
+                        Language code for the speech. Default is empty string or
+                        omit the parameter for automatic language detection.
+                      enum:
+                        - af
+                        - ar
+                        - hy
+                        - as
+                        - az
+                        - be
+                        - bn
+                        - bs
+                        - bg
+                        - ca
+                        - ceb
+                        - ny
+                        - hr
+                        - cs
+                        - da
+                        - nl
+                        - en
+                        - et
+                        - fil
+                        - fi
+                        - fr
+                        - gl
+                        - ka
+                        - de
+                        - el
+                        - gu
+                        - ha
+                        - he
+                        - hi
+                        - hu
+                        - is
+                        - id
+                        - ga
+                        - it
+                        - ja
+                        - jv
+                        - kn
+                        - kk
+                        - ky
+                        - ko
+                        - lv
+                        - ln
+                        - lt
+                        - lb
+                        - mk
+                        - ms
+                        - ml
+                        - zh
+                        - mr
+                        - ne
+                        - 'no'
+                        - ps
+                        - fa
+                        - pl
+                        - pt
+                        - pa
+                        - ro
+                        - ru
+                        - sr
+                        - sd
+                        - sk
+                        - sl
+                        - so
+                        - es
+                        - sw
+                        - sv
+                        - ta
+                        - te
+                        - th
+                        - tr
+                        - uk
+                        - ur
+                        - vi
+                        - cy
+            example:
+              model: elevenlabs/text-to-dialogue-v3
+              callBackUrl: https://your-domain.com/api/callback
+              input:
+                dialogue:
+                  - text: I have a pen, I have an apple, ah, Apple pen~
+                    voice: Adam
+                  - text: a happy dog
+                    voice: Brian
+                  - text: a happy cat
+                    voice: Roger
+                stability: 0.5
+      responses:
+        '200':
+          description: Request successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          taskId:
+                            type: string
+                            description: >-
+                              Task ID, can be used with Get Task Details
+                              endpoint to query task status
+                            example: task_elevenlabs_1765185448724
+                          recordId:
+                            type: string
+                            description: Record ID, can be used to get the record details
+                            example: elevenlabs_1765185448724
+              example:
+                code: 200
+                msg: success
+                data:
+                  taskId: task_elevenlabs_1765185448724
+                  recordId: elevenlabs_1765185448724
+        '500':
+          $ref: '#/components/responses/Error'
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          enum:
+            - 200
+            - 401
+            - 402
+            - 404
+            - 422
+            - 429
+            - 455
+            - 500
+            - 501
+            - 505
+          description: >-
+            Response status code
+
+
+            - **200**: Success - Request has been processed successfully
+
+            - **401**: Unauthorized - Authentication credentials are missing or
+            invalid
+
+            - **402**: Insufficient Credits - Account does not have enough
+            credits to perform the operation
+
+            - **404**: Not Found - The requested resource or endpoint does not
+            exist
+
+            - **422**: Validation Error - The request parameters failed
+            validation checks
+
+            - **429**: Rate Limited - Request limit has been exceeded for this
+            resource
+
+            - **455**: Service Unavailable - System is currently undergoing
+            maintenance
+
+            - **500**: Server Error - An unexpected error occurred while
+            processing the request
+
+            - **501**: Generation Failed - Content generation task failed
+
+            - **505**: Feature Disabled - The requested feature is currently
+            disabled
+        msg:
+          type: string
+          description: Response message, error description when failed
+          example: success
+  responses:
+    Error:
+      description: Server Error
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: >-
+        All APIs require authentication via Bearer Token.
+
+
+        Get API Key:
+
+        1. Visit [API Key Management Page](https://kie.ai/api-key) to get your
+        API Key
+
+
+        Usage:
+
+        Add to request header:
+
+        Authorization: Bearer YOUR_API_KEY
+
+
+        Note:
+
+        - Keep your API Key secure and do not share it with others
+
+        - If you suspect your API Key has been compromised, reset it immediately
+        in the management page
+
+````

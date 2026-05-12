@@ -1,0 +1,123 @@
+<?php
+/**
+ * Plugin Name:       Power Creatives
+ * Plugin URI:        https://powercreatives.io
+ * Description:       AI-powered creative generation platform — copy, images, video, brand management, and more.
+ * Version:           1.2.0
+ * Requires at least: 6.4
+ * Requires PHP:      8.1
+ * Author:            Power Creatives
+ * Author URI:        https://powercreatives.io
+ * License:           GPL v2 or later
+ * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
+ * Text Domain:       power-creatives
+ * Domain Path:       /languages
+ *
+ * @package PowerCreatives
+ */
+
+// ── Security: Prevent direct file access ──
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+// ── Plugin Constants ──
+define('PCM_VERSION', '1.2.0');
+define('PCM_DB_VERSION', '1.3.0');
+define('PCM_PLUGIN_FILE', __FILE__);
+define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
+define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('PCM_PLUGIN_BASENAME', plugin_basename(__FILE__));
+
+// ── Core: Shared infrastructure (owned by no single module) ──
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-settings.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/db/class-pcm-schema.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/db/class-pcm-db.php';
+require_once PCM_PLUGIN_DIR . 'includes/class-pcm-admin.php';
+require_once PCM_PLUGIN_DIR . 'includes/class-pcm-shortcode.php';
+require_once PCM_PLUGIN_DIR . 'includes/class-pcm-activator.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-template-seeds.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-prompt-seeds.php';
+
+// ── Core: Provider metadata & image utilities ──
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-providers.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-image-utils.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-website-scraper.php';
+
+// ── Core: Base controller (abstract REST class) ──
+require_once PCM_PLUGIN_DIR . 'includes/core/base-controller.php';
+
+// ── Core: Infrastructure services ──
+require_once PCM_PLUGIN_DIR . 'includes/core/storage/class-pcm-storage.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/llm/class-pcm-llm.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/sse/class-pcm-sse.php';
+
+// ── Core: Kie.ai integration layer ──
+require_once PCM_PLUGIN_DIR . 'includes/core/kie/class-pcm-kie-input-mapper.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/kie/class-pcm-kie-marketplace.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-input-resolver.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/kie/class-pcm-kie-upload.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/kie/class-pcm-kie-api.php';
+
+// ── Core: Google integration layer ──
+require_once PCM_PLUGIN_DIR . 'includes/core/google/class-pcm-google-veo-api.php';
+
+// ── Core: Fal.ai integration layer ──
+require_once PCM_PLUGIN_DIR . 'includes/core/fal/class-pcm-fal-input-mapper.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/fal/class-pcm-fal-api.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/fal/class-pcm-fal-seed.php';
+
+// ── Core: Provider interface layer ──
+require_once PCM_PLUGIN_DIR . 'includes/core/providers/class-pcm-provider-interface.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/providers/class-pcm-provider-openai.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/providers/class-pcm-provider-google.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/providers/class-pcm-provider-kieai.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/providers/class-pcm-provider-fal.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/providers/class-pcm-provider-registry.php';
+
+// ── Module Loader: Auto-discovers modules in includes/modules/{name}/config.php ──
+require_once PCM_PLUGIN_DIR . 'includes/module-loader.php';
+PCM_Module_Loader::discover();
+
+// ── Activation / Deactivation Hooks ──
+register_activation_hook(__FILE__, array('PCM_Activator', 'activate'));
+register_deactivation_hook(__FILE__, array('PCM_Activator', 'deactivate'));
+
+/**
+ * Initialize the plugin after WordPress has loaded.
+ *
+ * Hooks into 'plugins_loaded' to ensure all WordPress APIs are available.
+ *
+ * @return void
+ */
+function pcm_init(): void
+{
+    // Check for DB schema upgrades on every load
+    PCM_Activator::maybe_upgrade();
+
+    // Initialize admin UI (only in wp-admin)
+    if (is_admin()) {
+        new PCM_Admin();
+    }
+
+    // Register [power_creatives] shortcode for frontend rendering
+    new PCM_Shortcode();
+
+    // Register REST API endpoints via module-loader
+    add_action('rest_api_init', 'pcm_register_rest_routes');
+}
+add_action('plugins_loaded', 'pcm_init');
+
+/**
+ * Register all REST API routes for the plugin.
+ *
+ * All modules are auto-discovered by the Module Loader.
+ * Each module's controller is instantiated and its register()
+ * method is called to wire up every route.
+ *
+ * @return void
+ */
+function pcm_register_rest_routes(): void
+{
+    PCM_Module_Loader::register_routes();
+}

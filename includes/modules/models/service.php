@@ -1,0 +1,499 @@
+<?php
+/**
+ * Models Service — Business Logic Layer
+ *
+ * Contains model management business logic: capability detection,
+ * sync orchestration, data formatting, module toggle logic.
+ *
+ * Extracted from PCM_REST_Models to enable:
+ * - Unit testing without WordPress/REST context
+ * - Reusability from CLI, cron, or other services
+ * - DRY sync logic (was duplicated across sync + resync endpoints)
+ *
+ * @package PowerCreatives
+ * @since   1.1.0
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+class PCM_Models_Service
+{
+
+    // =========================================================================
+    // CAPABILITY DETECTION
+    // =========================================================================
+
+    /**
+     * Loaded capability registry from models.json.
+     * Cached statically so the file is only read once per request.
+     *
+     * @var array|null
+     */
+    private static ?array $capability_registry = null;
+
+    /**
+     * Auto-detect capabilities based on model ID and primary type.
+     *
+     * Uses the data-driven registry at core/providers/models.json
+     * instead of hardcoded arrays. Users can still override via the UI.
+     *
+     * @param string $model_id Model identifier (e.g. 'dall-e-3', 'gpt-4o').
+     * @param string $type     Primary type (image, video, text).
+     *
+     * @return array Capability booleans { canGenerateImage, canEditImage, ... }
+     */
+    public function detect_capabilities(string $model_id, string $type): array
+    {
+        $registry = $this->load_registry();
+        $id_lower = strtolower($model_id);
+
+        // Start with type defaults from registry
+        $defaults = $registry['typeDefaults'][$type] ?? array();
+        $caps = array(
+            'canGenerateImage' => $defaults['canGenerateImage'] ?? ('image' === $type),
+            'canEditImage' => $defaults['canEditImage'] ?? false,
+            'canGenerateVideo' => $defaults['canGenerateVideo'] ?? ('video' === $type),
+            'canEditVideo' => $defaults['canEditVideo'] ?? false,
+            'canGenerateText' => $defaults['canGenerateText'] ?? ('text' === $type),
+            'canVision' => $defaults['canVision'] ?? false,
+        );
+
+        // Apply pattern matching from registry capabilities
+        $capability_defs = $registry['capabilities'] ?? array();
+
+        foreach ($capability_defs as $cap_name => $cap_config) {
+            // Only apply relevant capabilities based on type
+            if (!$this->is_capability_applicable($cap_name, $type)) {
+                continue;
+            }
+
+            $patterns = $cap_config['patterns'] ?? array();
+            foreach ($patterns as $pattern) {
+                if (str_contains($id_lower, strtolower($pattern))) {
+                    $caps[$cap_name] = true;
+                    break;
+                }
+            }
+        }
+
+        return $caps;
+    }
+
+    /**
+     * Determine if a capability should be checked for a given model type.
+     *
+     * Prevents vision capability from being applied to image models, etc.
+     *
+     * @param string $cap_name Capability name.
+     * @param string $type     Model type (text, image, video).
+     *
+     * @return bool Whether this capability is applicable.
+     */
+    private function is_capability_applicable(string $cap_name, string $type): bool
+    {
+        return match ($cap_name) {
+                'canEditImage' => 'image' === $type,
+                'canEditVideo' => 'video' === $type,
+                'canVision' => 'text' === $type,
+                'canGenerateImage' => 'image' === $type,
+                'canGenerateVideo' => 'video' === $type,
+                default => true,
+            };
+    }
+
+    /**
+     * Load the model capability registry from JSON file.
+     * Cached in static property so file is read only once per request.
+     *
+     * @return array Registry data.
+     */
+    private function load_registry(): array
+    {
+        if (null !== self::$capability_registry) {
+            return self::$capability_registry;
+        }
+
+        $path = PCM_PLUGIN_DIR . 'includes/core/providers/models.json';
+
+        if (!file_exists($path)) {
+            error_log('PCM: models.json registry not found at ' . $path);
+            self::$capability_registry = array();
+            return self::$capability_registry;
+        }
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+        $json = file_get_contents($path);
+        $data = json_decode($json, true);
+
+        if (!is_array($data)) {
+            error_log('PCM: Failed to parse models.json registry');
+            self::$capability_registry = array();
+            return self::$capability_registry;
+        }
+
+        self::$capability_registry = $data;
+        return self::$capability_registry;
+    }
+
+    // =========================================================================
+    // MODEL SYNC (consolidated — was duplicated in controller)
+    // =========================================================================
+
+    /**
+     * Sync models from a provider's API response.
+     *
+     * Validates API key, upserts discovered models with auto-detected capabilities,
+     * and marks models no longer in the API as unavailable.
+     *
+     * This method consolidates the previously duplicated logic from
+     * sync_from_integrations() and resync_provider().
+     *
+     * @param int    $user_id              PCM user ID.
+     * @param string $provider             Provider ID (openai, google, kieai).
+     * @param array  $validated_models     Array of models from PCM_Providers::validate_api_key().
+     * @param bool   $mark_available       Whether to set isAvailable=1 on synced models.
+     *
+     * @return array { created: int, total: int }
+     */
+    public function sync_models(int $user_id, string $provider, array $validated_models, bool $mark_available = false): array
+    {
+        global $wpdb;
+
+        $results = array('created' => 0, 'total' => count($validated_models));
+        $available_model_ids = array();
+
+        foreach ($validated_models as $model) {
+            $available_model_ids[] = $model['id'];
+            $model_type = $model['type'] ?? 'text';
+            $capabilities = $this->detect_capabilities($model['id'], $model_type);
+
+            $upsert_data = array(
+                'userId' => $user_id,
+                'modelId' => $model['id'],
+                'provider' => $provider,
+                'displayName' => $model['name'] ?? $model['id'],
+                'canGenerateImage' => (int)$capabilities['canGenerateImage'],
+                'canEditImage' => (int)$capabilities['canEditImage'],
+                'canGenerateVideo' => (int)$capabilities['canGenerateVideo'],
+                'canEditVideo' => (int)$capabilities['canEditVideo'],
+                'canGenerateText' => (int)$capabilities['canGenerateText'],
+                'canVision' => (int)$capabilities['canVision'],
+                'costTier' => $model['costTier'] ?? 'standard',
+                'status' => 'auto',
+                'isEnabled' => 1,
+            );
+
+            // Set enabledModules based on primary type, OR override from
+            // moduleOverrides rules in models.json (e.g., deep-research → all disabled).
+            $enabled_modules = $this->get_module_override($model['id']);
+            if (null === $enabled_modules) {
+                $enabled_modules = array(
+                    'copy' => ('text' === $model_type),
+                    'image' => ('image' === $model_type),
+                    'video' => ('video' === $model_type),
+                );
+            }
+            $upsert_data['enabledModules'] = wp_json_encode($enabled_modules);
+
+            // Resync explicitly marks models as available
+            if ($mark_available) {
+                $upsert_data['isAvailable'] = 1;
+            }
+
+            $model_id = PCM_DB::upsert_model($upsert_data);
+
+            if ($model_id) {
+                $results['created']++;
+            }
+        }
+
+        // Mark models no longer available from API
+        $this->mark_unavailable_models($user_id, $provider, $available_model_ids);
+
+        return $results;
+    }
+
+    /**
+     * Mark models that are no longer available from the provider's API.
+     * Sets isAvailable=0 for models that weren't in the latest sync.
+     *
+     * @param int    $user_id             PCM user ID.
+     * @param string $provider            Provider ID.
+     * @param array  $available_model_ids Model IDs that ARE still available.
+     *
+     * @return void
+     */
+    public function mark_unavailable_models(int $user_id, string $provider, array $available_model_ids): void
+    {
+        global $wpdb;
+
+        $table = PCM_Schema::table('models');
+        $all_user_models = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, modelId FROM {$table} WHERE userId = %d AND provider = %s",
+            $user_id,
+            $provider
+        ));
+
+        foreach ($all_user_models as $existing_model) {
+            if (!in_array($existing_model->modelId, $available_model_ids, true)) {
+                $wpdb->update(
+                    $table,
+                    array('isAvailable' => 0),
+                    array('id' => $existing_model->id)
+                );
+            }
+        }
+    }
+
+    // =========================================================================
+    // DATA QUERIES
+    // =========================================================================
+
+    /**
+     * Get models filtered by provider for a user.
+     *
+     * @param int    $user_id  PCM user ID.
+     * @param string $provider Provider ID.
+     *
+     * @return array Raw model DB rows.
+     */
+    public function get_by_provider(int $user_id, string $provider): array
+    {
+        global $wpdb;
+
+        $table = PCM_Schema::table('models');
+
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE userId = %d AND provider = %s ORDER BY sortOrder ASC",
+            $user_id,
+            $provider
+        ));
+    }
+
+    /**
+     * Get models capable of generating/editing a specific content type.
+     * Joins with integrations table to enforce isActive flag.
+     * Filters by enabledModules to respect per-module toggle settings.
+     *
+     * @param int    $user_id PCM user ID.
+     * @param string $type    Content type (image, video, text).
+     * @param string $action  Action (generate, edit).
+     *
+     * @return array Raw model DB rows.
+     */
+    public function get_by_capability(int $user_id, string $type, string $action): array
+    {
+        global $wpdb;
+
+        $capability_col = $this->type_to_capability_column($type, $action);
+        if (!$capability_col) {
+            return array();
+        }
+
+        $models_table = PCM_Schema::table('models');
+        $integrations_table = PCM_Schema::table('integrations');
+
+        $sql = $wpdb->prepare(
+            "SELECT m.* FROM {$models_table} m
+             INNER JOIN {$integrations_table} i ON m.provider = i.provider AND m.userId = i.userId
+             WHERE m.userId = %d AND m.isEnabled = 1 AND m.{$capability_col} = 1 AND i.isActive = 1
+             ORDER BY m.sortOrder ASC, m.displayName ASC",
+            $user_id
+        );
+
+        $models = $wpdb->get_results($sql);
+
+        // Filter by enabledModules — map content type to module name
+        // (text → copy, image → image, video → video)
+        $type_to_module = array(
+            'text' => 'copy',
+            'image' => 'image',
+            'video' => 'video',
+        );
+        $module = $type_to_module[$type] ?? null;
+
+        if ($module) {
+            $models = array_values(array_filter($models, function ($model) use ($module) {
+                $enabled = $this->parse_enabled_modules($model);
+                // If module key exists, use its value; otherwise default is true
+                // (backward compatible: models without explicit enabledModules
+                // fall back to capability-based defaults in parse_enabled_modules)
+                return $enabled[$module] ?? true;
+            }));
+        }
+
+        return $models;
+    }
+
+    // =========================================================================
+    // MODULE TOGGLE
+    // =========================================================================
+
+    /**
+     * Parse the enabledModules value from a model row.
+     * Handles JSON string, array, and null (derives from primary type).
+     *
+     * @param object $model Raw DB model row.
+     *
+     * @return array Associative array { copy: bool, image: bool, video: bool }
+     */
+    public function parse_enabled_modules(object $model): array
+    {
+        // Registry overrides take precedence over DB column — ensures models
+        // like deep-research are excluded even if DB has stale enabledModules.
+        $override = $this->get_module_override($model->modelId ?? '');
+        if (null !== $override) {
+            return $override;
+        }
+
+        $modules_raw = $model->enabledModules ?? null;
+
+        if (is_string($modules_raw) && !empty($modules_raw)) {
+            $parsed = json_decode($modules_raw, true);
+            if (is_array($parsed)) {
+                return $parsed;
+            }
+        }
+
+        if (is_array($modules_raw)) {
+            return $modules_raw;
+        }
+
+        // Default: derive from primary type using priority detection.
+        // A model with canGenerateVideo should NOT default to copy:true,
+        // even if it also has canGenerateText (stale data or multimodal).
+        // Priority: video > image > text (most specific first).
+        $is_video = (bool)($model->canGenerateVideo || $model->canEditVideo);
+        $is_image = (bool)($model->canGenerateImage || $model->canEditImage);
+        $is_text = (bool)$model->canGenerateText;
+
+        if ($is_video) {
+            return array('copy' => false, 'image' => false, 'video' => true);
+        }
+        if ($is_image) {
+            return array('copy' => false, 'image' => true, 'video' => false);
+        }
+        if ($is_text) {
+            return array('copy' => true, 'image' => false, 'video' => false);
+        }
+
+        // No capabilities — disabled for all modules
+        return array('copy' => false, 'image' => false, 'video' => false);
+    }
+
+    /**
+     * Apply a module toggle and return the updated modules array.
+     *
+     * @param object $model   Raw DB model row.
+     * @param string $module  Module name (copy, image, video).
+     * @param bool   $enabled Whether to enable or disable.
+     *
+     * @return array Updated enabledModules array.
+     */
+    public function apply_module_toggle(object $model, string $module, bool $enabled): array
+    {
+        $modules = $this->parse_enabled_modules($model);
+        $modules[$module] = $enabled;
+        return $modules;
+    }
+
+    // =========================================================================
+    // FORMATTING
+    // =========================================================================
+
+    /**
+     * Format a model DB row for JSON API output.
+     * Parses JSON fields and builds a typed response object.
+     *
+     * @param object $model Raw DB row.
+     *
+     * @return array Formatted model data for frontend consumption.
+     */
+    public function format_model(object $model): array
+    {
+        $metadata = json_decode($model->providerMetadata ?? '{}', true) ?: array();
+        $enabled_modules = $this->parse_enabled_modules($model);
+
+        return array(
+            'id' => (int)$model->id,
+            'modelId' => $model->modelId,
+            'provider' => $model->provider,
+            // Frontend expects originalName + customName (matches TS toModelData shape).
+            'originalName' => $model->displayName ?? $model->modelId,
+            'customName' => null,
+            'canGenerateImage' => (bool)$model->canGenerateImage,
+            'canEditImage' => (bool)$model->canEditImage,
+            'canGenerateVideo' => (bool)$model->canGenerateVideo,
+            'canEditVideo' => (bool)$model->canEditVideo,
+            'canGenerateText' => (bool)$model->canGenerateText,
+            'canVision' => (bool)$model->canVision,
+            'costTier' => $model->costTier,
+            'status' => $model->status,
+            'isEnabled' => (bool)$model->isEnabled,
+            'isAvailable' => (bool)($model->isAvailable ?? true),
+            'description' => $model->description ?? '',
+            'tags' => json_decode($model->tags ?? '[]', true) ?: array(),
+            'sortOrder' => (int)$model->sortOrder,
+            'enabledModules' => $enabled_modules,
+            'providerMetadata' => $metadata,
+            'createdAt' => $model->createdAt,
+            'updatedAt' => $model->updatedAt,
+        );
+    }
+
+    // =========================================================================
+    // HELPERS
+    // =========================================================================
+
+    /**
+     * Map content type + action to the corresponding DB capability column.
+     *
+     * @param string $type   Content type (image, video, text).
+     * @param string $action Action (generate, edit).
+     *
+     * @return string|null Column name or null if invalid.
+     */
+    public function type_to_capability_column(string $type, string $action): ?string
+    {
+        $map = array(
+            'image_generate' => 'canGenerateImage',
+            'image_edit' => 'canEditImage',
+            'video_generate' => 'canGenerateVideo',
+            'video_edit' => 'canEditVideo',
+            'text_generate' => 'canGenerateText',
+        );
+
+        return $map["{$type}_{$action}"] ?? null;
+    }
+
+    /**
+     * Check if a model has an enabledModules override in the registry.
+     *
+     * Reads `moduleOverrides.rules` from models.json. Each rule has a list
+     * of string patterns — if the model ID contains any of them, the rule's
+     * enabledModules value is returned.
+     *
+     * @param string $model_id Model identifier.
+     *
+     * @return array|null Override array { copy: bool, image: bool, video: bool } or null.
+     */
+    public function get_module_override(string $model_id): ?array
+    {
+        $registry = $this->load_registry();
+        $rules = $registry['moduleOverrides']['rules'] ?? array();
+        $id_lower = strtolower($model_id);
+
+        foreach ($rules as $rule) {
+            $patterns = $rule['patterns'] ?? array();
+            foreach ($patterns as $pattern) {
+                if (str_contains($id_lower, strtolower($pattern))) {
+                    return $rule['enabledModules'] ?? null;
+                }
+            }
+        }
+
+        return null;
+    }
+}

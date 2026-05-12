@@ -1,0 +1,912 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/**
+ * WordPress Admin CSS Isolation
+ *
+ * WordPress admin sets aggressive global styles on form elements and headings
+ * (e.g. input { font-size: 14px }, h1 { font-size: 23px }) that bleed into
+ * the React app. We scope the design-system base to #pcm-root and use a
+ * :where() reset to neutralize WP's overrides without raising specificity.
+ *
+ * Also resets color and line-height to prevent WP admin gray (#3c434a) from
+ * bleeding into the app's color scheme.
+ */
+#pcm-root {
+  font-size: 11.5px;
+  /* PowerKeys design system base — verified in browser */
+  color: var(--foreground);
+  /* Override WP admin color inheritance */
+  line-height: 1.5;
+  /* Standard line-height, WP admin uses variable heights */
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Scoped reset: prevent WordPress admin CSS from overriding form elements,
+   paragraphs, and headings inside the app. :where() keeps specificity at 0
+   so Tailwind classes (text-sm, text-xs etc.) still win when explicitly applied. */
+#pcm-root :where(input, textarea, select, button) {
+  font-size: inherit;
+  line-height: inherit;
+  font-family: inherit;
+}
+
+/* Force override WP Admin high-specificity borders on inputs and textareas */
+#pcm-root input:not([type="checkbox"]):not([type="radio"]),
+#pcm-root textarea,
+#pcm-root select {
+  border-color: var(--border) !important;
+}
+
+#pcm-root input[aria-invalid="true"],
+#pcm-root textarea[aria-invalid="true"],
+#pcm-root select[aria-invalid="true"] {
+  border-color: var(--destructive) !important;
+}
+
+#pcm-root input:focus-visible,
+#pcm-root textarea:focus-visible,
+#pcm-root select:focus-visible,
+#pcm-root input:not([type="checkbox"]):not([type="radio"]):focus-visible {
+  border-color: var(--ring) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent) !important;
+  outline: none !important;
+}
+
+#pcm-root :where(p) {
+  font-size: 0.7em;
+  /* Descriptions/hints smaller than labels/inputs */
+  line-height: 1.3;
+  margin: 0;
+  /* Remove WP's default paragraph margins */
+}
+
+#pcm-root :where(h1) {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+#pcm-root :where(h2) {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+#pcm-root :where(h3) {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+#pcm-root :where(h4, h5, h6) {
+  font-size: inherit;
+  font-weight: 600;
+  margin: 0;
+}
+
+@custom-variant dark (&:is(.dark *));
+
+/* 
+ * DESIGN SYSTEM: PowerKeys Style
+ * Exact match to PowerKeys prototype typography and sizing
+ * Base font size: 12.6px (from PowerKeys)
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* PowerKeys Font */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  /* PowerKeys Base Size: 12.6px */
+  font-size: 12.6px;
+
+  /* PowerKeys Color Palette */
+  --sidebar-bg: oklch(1 0 0);
+  /* #ffffff */
+  --main-bg: oklch(0.98 0.002 250);
+  /* #f8f9fa */
+  --text-primary: oklch(0.15 0.01 250);
+  /* #1a1a1a */
+  --text-secondary: oklch(0.45 0.01 250);
+  /* #666666 */
+  --nav-hover: oklch(0.96 0.002 250);
+  /* #f3f3f3 */
+  --border-color: oklch(0.94 0.002 250);
+  /* #ededed */
+
+  /* Primary - Blue accent like PowerKeys */
+  --primary: oklch(0.55 0.2 255);
+  /* #007bff */
+  --primary-foreground: oklch(0.98 0 0);
+  --sidebar-primary: oklch(0.55 0.2 255);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+
+  /* Chart colors */
+  --chart-1: oklch(0.7 0.15 255);
+  --chart-2: oklch(0.6 0.18 255);
+  --chart-3: oklch(0.5 0.2 255);
+  --chart-4: oklch(0.45 0.2 255);
+  --chart-5: oklch(0.4 0.2 255);
+
+  /* PowerKeys uses 8px border-radius */
+  --radius: 8px;
+
+  /* Background */
+  --background: oklch(0.98 0.002 250);
+  /* #f8f9fa */
+  --foreground: oklch(0.15 0.01 250);
+  /* #1a1a1a */
+
+  /* Cards - white */
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.15 0.01 250);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.15 0.01 250);
+
+  /* Secondary */
+  --secondary: oklch(0.94 0.002 250);
+  /* #e9ecef */
+  --secondary-foreground: oklch(0.15 0.01 250);
+
+  /* Muted */
+  --muted: oklch(0.94 0.002 250);
+  --muted-foreground: oklch(0.45 0.01 250);
+  /* #666 */
+
+  /* Accent - light blue for active states */
+  --accent: oklch(0.95 0.04 255);
+  /* #e7f5ff */
+  --accent-foreground: oklch(0.55 0.2 255);
+  /* #007bff */
+
+  /* Destructive */
+  --destructive: oklch(0.6 0.2 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  /* Borders */
+  --border: oklch(0.94 0.002 250);
+  /* #ededed */
+  --input: oklch(0.86 0.002 250);
+  /* #ced4da */
+  --ring: oklch(0.55 0.2 255);
+
+  /* Sidebar */
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.4 0.01 250);
+  /* #555 */
+  --sidebar-accent: oklch(0.95 0.04 255);
+  /* #e7f5ff */
+  --sidebar-accent-foreground: oklch(0.55 0.2 255);
+  /* #007bff */
+  --sidebar-border: oklch(0.94 0.002 250);
+  --sidebar-ring: oklch(0.55 0.2 255);
+
+  /* ── DR Badge Color Scale ──
+   * Pastel palette for Domain Rating badges.
+   * Low saturation (0.04-0.06) to stay subtle and match the app's
+   * neutral oklch palette. Uses hue wheel: green(155) → amber(85) → pink(15).
+   */
+  --dr-easy-bg: oklch(0.93 0.04 155);
+  --dr-easy-fg: oklch(0.35 0.12 155);
+  --dr-medium-bg: oklch(0.93 0.04 85);
+  --dr-medium-fg: oklch(0.4 0.12 85);
+  --dr-hard-bg: oklch(0.93 0.04 15);
+  --dr-hard-fg: oklch(0.45 0.12 15);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', sans-serif !important;
+  }
+
+  button,
+  input,
+  textarea,
+  select,
+  optgroup {
+    font-family: 'Inter', sans-serif !important;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    @apply cursor-pointer;
+  }
+}
+
+@layer components {
+  .container {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .flex {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  @media (min-width: 640px) {
+    .container {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container {
+      padding-left: 2rem;
+      padding-right: 2rem;
+      max-width: 1280px;
+    }
+  }
+
+  /* =========================================
+     PowerKeys Style Components
+     ========================================= */
+
+  /* Card - matches PowerKeys .card */
+  .card-powerkeys {
+    background: oklch(1 0 0);
+    /* white - matches --card */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  /* Sidebar navigation - matches PowerKeys .nav-item */
+  .nav-item-powerkeys {
+    background: transparent;
+    color: #555;
+    padding: 6px 14px;
+    border-radius: 999px;
+    /* Pill Shape */
+    font-size: 0.85rem;
+    margin-bottom: 1px;
+    border: 1px solid transparent;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    justify-content: flex-start;
+    text-decoration: none;
+    transition: background-color 0.2s, color 0.2s;
+  }
+
+  .nav-item-powerkeys:hover {
+    background: #f1f3f5;
+    color: #333;
+  }
+
+  .nav-item-powerkeys.active {
+    background: #e7f5ff;
+    color: #007bff;
+    font-weight: 600;
+  }
+
+  /* Logo - matches PowerKeys .logo */
+  .logo-powerkeys {
+    color: #1a1a1a;
+    font-weight: 700;
+    font-size: 1.1rem;
+    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  /* Header title - matches PowerKeys .top-header h2 */
+  .header-title-powerkeys {
+    font-size: 1.1rem;
+    margin: 0;
+    font-weight: 600;
+  }
+
+  /* Section label - matches PowerKeys .section-label */
+  .section-label-powerkeys {
+    font-size: 0.7rem;
+    color: #999;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    padding-left: 0.5rem;
+  }
+
+  /* Table title - matches PowerKeys .table-title */
+  .table-title-powerkeys {
+    font-size: 0.85rem;
+    color: #888;
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+    letter-spacing: 0.5px;
+  }
+
+  /* Primary button - matches PowerKeys .btn-primary */
+  .btn-primary-powerkeys {
+    background-color: #e9ecef;
+    color: #000000;
+    border: 1px solid #dee2e6;
+    font-weight: 700;
+    box-shadow: none;
+    border-radius: 50px;
+    padding: 0.5rem 1.5rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+  }
+
+  .btn-primary-powerkeys:hover {
+    background-color: #dde1e6;
+    border-color: #d0d6dc;
+  }
+
+  /* Input - matches PowerKeys .main-input */
+  .input-powerkeys {
+    flex: 1;
+    border-radius: 8px;
+    border: 1px solid #ced4da;
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .input-powerkeys:focus {
+    border-color: #aabbcc;
+  }
+
+  /* Status badges - matches PowerKeys .status-badge */
+  .status-badge-success {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: #d4edda;
+    color: #155724;
+  }
+
+  .status-badge-pending {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: #fff3cd;
+    color: #856404;
+  }
+
+  /* Avatar - matches PowerKeys .avatar */
+  .avatar-powerkeys {
+    width: 28px;
+    height: 28px;
+    background: #e9ecef;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #555;
+    border: 1px solid #dee2e6;
+  }
+
+  /* Compact title - matches PowerKeys .compact-title */
+  .compact-title-powerkeys {
+    font-size: 1.25rem;
+    margin-top: 0;
+    font-weight: 600;
+  }
+
+  /* Block header - matches PowerKeys .block-header */
+  .block-header-powerkeys {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: #37352f;
+  }
+
+  /* Callout - matches PowerKeys .notion-callout */
+  .callout-powerkeys {
+    background: #f1f3f5;
+    padding: 16px;
+    border-radius: 4px;
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .callout-powerkeys .callout-text {
+    font-size: 0.95rem;
+    color: #37352f;
+    line-height: 1.5;
+  }
+
+  /* Module container */
+  .module-container {
+    padding: 1.25rem;
+    height: 100%;
+    overflow: auto;
+    background-color: var(--main-bg);
+  }
+
+  /* Text utilities */
+  .text-muted-powerkeys {
+    color: #666;
+  }
+
+  .text-bold-powerkeys {
+    font-weight: 700 !important;
+    color: #000 !important;
+  }
+}
+
+/* Animation keyframes */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes zoomIn {
+  from {
+    transform: scale(0.98);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+.animate-zoom-in {
+  animation: zoomIn 0.2s ease-out forwards;
+}
+
+/* =========================================================
+   Writer Editor — Rich Text Typography
+   Scoped to .writer-editor to override global #pcm-root resets.
+   Follows Material Design 3 type scale ratios for visual hierarchy.
+   ========================================================= */
+
+/* Writer editor lives inside #pcm-root which resets all heading/paragraph
+   margins to 0 via :where() selectors (specificity 1,0,1). Our article
+   typography MUST include #pcm-root prefix to exceed that specificity. */
+
+#pcm-root .writer-editor {
+  /* Base font for article editing — 11px compact fit with admin UI */
+  font-size: 11px;
+  line-height: 1.7;
+  color: #1a1a2e;
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  max-width: none;
+  /* Editor area padding and minimum height */
+  padding: 40px 48px;
+  min-height: 500px;
+}
+
+/* ── Headings ── */
+#pcm-root .writer-editor h1 {
+  font-size: 2em;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 1.5em;
+  margin-bottom: 0.6em;
+  color: #0f0f1a;
+  letter-spacing: -0.02em;
+}
+
+#pcm-root .writer-editor h2 {
+  font-size: 1.5em;
+  font-weight: 650;
+  line-height: 1.35;
+  margin-top: 1.8em;
+  margin-bottom: 0.6em;
+  color: #1a1a2e;
+  letter-spacing: -0.01em;
+}
+
+#pcm-root .writer-editor h3 {
+  font-size: 1.25em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-top: 1.6em;
+  margin-bottom: 0.5em;
+  color: #2a2a3e;
+}
+
+#pcm-root .writer-editor h4 {
+  font-size: 1.1em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  color: #2a2a3e;
+}
+
+/* First heading should not have top margin (title is first element) */
+#pcm-root .writer-editor > h1:first-child,
+#pcm-root .writer-editor > h2:first-child,
+#pcm-root .writer-editor > h3:first-child,
+#pcm-root .writer-editor > h4:first-child {
+  margin-top: 0;
+}
+
+/* ── Paragraphs ── */
+#pcm-root .writer-editor p {
+  font-size: 1em;
+  line-height: 1.75;
+  margin-top: 0;
+  margin-bottom: 1em;
+  color: #2a2a3e;
+}
+
+#pcm-root .writer-editor p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── Bold & Italic ── */
+#pcm-root .writer-editor strong {
+  font-weight: 650;
+  color: #0f0f1a;
+}
+
+#pcm-root .writer-editor em {
+  font-style: italic;
+}
+
+/* ── Bullet Lists ── */
+#pcm-root .writer-editor ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin-top: 0.5em;
+  margin-bottom: 1em;
+}
+
+#pcm-root .writer-editor ul ul {
+  list-style-type: circle;
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+/* ── Ordered Lists ── */
+#pcm-root .writer-editor ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin-top: 0.5em;
+  margin-bottom: 1em;
+}
+
+#pcm-root .writer-editor ol ol {
+  list-style-type: lower-alpha;
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+/* ── List Items ── */
+#pcm-root .writer-editor li {
+  margin-bottom: 0.35em;
+  line-height: 1.65;
+}
+
+#pcm-root .writer-editor li p {
+  margin-bottom: 0.25em;
+}
+
+/* ── Placeholder ── */
+#pcm-root .writer-editor p.is-editor-empty:first-child::before {
+  color: #9ca3af;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ── Selection highlight ── */
+#pcm-root .writer-editor ::selection {
+  background: rgba(0, 123, 255, 0.15);
+}
+
+/* ── Blockquote ── */
+#pcm-root .writer-editor blockquote {
+  border-left: 3px solid #d1d5db;
+  padding-left: 1em;
+  margin-left: 0;
+  margin-right: 0;
+  margin-top: 0.75em;
+  margin-bottom: 1em;
+  font-style: italic;
+  color: #4a4a5e;
+}
+
+/* ── Inline Code ── */
+#pcm-root .writer-editor code {
+  background: #f3f4f6;
+  border-radius: 3px;
+  padding: 0.15em 0.35em;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.88em;
+  color: #c7254e;
+}
+
+/* ── Code Block ── */
+#pcm-root .writer-editor pre {
+  background: #1e1e2e;
+  border-radius: 6px;
+  padding: 1em 1.25em;
+  margin-top: 0.75em;
+  margin-bottom: 1em;
+  overflow-x: auto;
+}
+
+#pcm-root .writer-editor pre code {
+  background: none;
+  color: #cdd6f4;
+  padding: 0;
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+/* ── Horizontal Rule ── */
+#pcm-root .writer-editor hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin-top: 1.5em;
+  margin-bottom: 1.5em;
+}
+
+/* ── Underline ── */
+#pcm-root .writer-editor u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Strikethrough ── */
+#pcm-root .writer-editor s {
+  text-decoration: line-through;
+  color: #888;
+}
+
+/* ── Links ── */
+#pcm-root .writer-editor a {
+  color: oklch(0.55 0.2 255); /* matches --primary */
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+#pcm-root .writer-editor a:hover {
+  color: oklch(0.45 0.2 255); /* slightly darker primary */
+}
+
+/* ── Images ── */
+#pcm-root .writer-editor img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
+  display: block;
+}
+
+/* Skeleton placeholder — pulsing loading state while AI generates the image */
+#pcm-root .writer-editor img.pcm-skeleton {
+  min-height: 200px;
+  background: linear-gradient(110deg, #e2e8f0 30%, #f1f5f9 50%, #e2e8f0 70%);
+  background-size: 200% 100%;
+  animation: pcm-skeleton-pulse 1.5s ease-in-out infinite;
+  border: 1px solid #e2e8f0;
+}
+
+@keyframes pcm-skeleton-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Successfully generated AI image — smooth fade-in appearance */
+#pcm-root .writer-editor img.pcm-generated-image {
+  animation: pcm-image-reveal 0.6s ease-out;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+@keyframes pcm-image-reveal {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Error state — image generation failed */
+#pcm-root .writer-editor img.pcm-image-error {
+  min-height: 80px;
+  background: #fef2f2;
+  border: 1px dashed #fca5a5;
+  border-radius: 8px;
+}
+
+/* Broken image fallback — graceful placeholder instead of browser default */
+#pcm-root .writer-editor img[src=""],
+#pcm-root .writer-editor img:not([src]) {
+  min-height: 120px;
+  background: #f8f9fa;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Prevent alt text from inheriting link styles when img is inside <a> */
+#pcm-root .writer-editor a img {
+  text-decoration: none;
+}
+
+/* ── Tables ── */
+#pcm-root .writer-editor table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  border: 1px solid #e5e7eb;
+  table-layout: auto;
+}
+
+#pcm-root .writer-editor th {
+  background: #f1f3f5;
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid #e5e7eb;
+  font-size: 0.92em;
+  color: #1a1a2e;
+  min-width: 80px;
+}
+
+#pcm-root .writer-editor td {
+  padding: 10px 14px;
+  border: 1px solid #e5e7eb;
+  color: #2a2a3e;
+  vertical-align: top;
+  min-width: 80px;
+  min-height: 32px;
+}
+
+/* Alternating row background for readability */
+#pcm-root .writer-editor tr:nth-child(even) td {
+  background: #fafbfc;
+}
+
+/* Selected cell highlight (Tiptap adds .selectedCell class) */
+#pcm-root .writer-editor .selectedCell {
+  background: rgba(0, 123, 255, 0.08);
+}
+
+/* Table cell paragraph — remove default margins inside cells */
+#pcm-root .writer-editor td p,
+#pcm-root .writer-editor th p {
+  margin-bottom: 0;
+}
+
+/* ── Highlight (mark) ── */
+#pcm-root .writer-editor mark {
+  background: rgba(255, 213, 79, 0.4); /* warm yellow highlight */
+  border-radius: 2px;
+  padding: 0.1em 0.2em;
+}
+
+/* ── Superscript & Subscript ── */
+#pcm-root .writer-editor sup {
+  vertical-align: super;
+  font-size: 0.75em;
+  line-height: 0;
+}
+
+#pcm-root .writer-editor sub {
+  vertical-align: sub;
+  font-size: 0.75em;
+  line-height: 0;
+}
+
+/* ── Text Alignment (via Tiptap TextAlign extension) ── */
+#pcm-root .writer-editor [style*="text-align: center"] {
+  text-align: center;
+}
+
+#pcm-root .writer-editor [style*="text-align: right"] {
+  text-align: right;
+}
+
+#pcm-root .writer-editor [style*="text-align: justify"] {
+  text-align: justify;
+}
+
+/* ── AI Track Changes — Suggestion Marks ──
+   Used by AiSuggestionMark.ts for inline diff previews.
+   Colors defined as CSS custom properties for theming. */
+
+:root {
+  --ai-diff-deletion-bg: oklch(0.93 0.06 25);      /* soft red background */
+  --ai-diff-deletion-fg: oklch(0.50 0.18 25);       /* red text */
+  --ai-diff-insertion-bg: oklch(0.93 0.06 145);     /* soft green background */
+  --ai-diff-insertion-fg: oklch(0.35 0.14 145);     /* green text */
+  --ai-diff-insertion-border: oklch(0.60 0.16 145);  /* green underline */
+}
+
+#pcm-root .writer-editor .ai-diff-deletion {
+  background-color: var(--ai-diff-deletion-bg);
+  text-decoration: line-through;
+  color: var(--ai-diff-deletion-fg);
+  border-radius: 2px;
+  padding: 0.05em 0.1em;
+}
+
+#pcm-root .writer-editor .ai-diff-insertion {
+  background-color: var(--ai-diff-insertion-bg);
+  border-bottom: 2px solid var(--ai-diff-insertion-border);
+  color: var(--ai-diff-insertion-fg);
+  border-radius: 2px;
+  padding: 0.05em 0.1em;
+}

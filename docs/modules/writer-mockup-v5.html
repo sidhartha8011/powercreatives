@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PowerCreatives Writer (PowerKeys Minimalist)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; color: #1a1a1a; font-family: 'Inter', sans-serif; margin: 0; min-height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        
+        .border-subtle { border-color: #ededed; }
+        .text-main { color: #1a1a1a; }
+        .text-muted { color: #888; }
+        .text-primary { color: #007bff; }
+        .bg-primary-light { background-color: #e7f5ff; }
+
+        /* PowerKeys Minimalist Inputs */
+        input:focus, select:focus, textarea:focus { outline: none; border-color: #007bff; }
+        .app-input { width: 100%; border: 1px solid #dee2e6; border-radius: 6px; padding: 6px 10px; font-size: 0.85rem; color: #333; background: #fff; transition: border-color 0.2s; }
+        .app-input::placeholder { color: #adb5bd; }
+
+        /* Small Pill Buttons */
+        .pill-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 6px 14px; font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: all 0.2s; gap: 6px; }
+        .pill-primary { background: #e7f5ff; color: #007bff; border: 1px solid #b8daff; }
+        .pill-primary:hover { background: #cce5ff; border-color: #a3cfff; }
+        .pill-outline { background: transparent; color: #555; border: 1px solid #dee2e6; }
+        .pill-outline:hover { background: #f8f9fa; color: #333; }
+        .pill-ghost { background: transparent; color: #555; border: 1px solid transparent; }
+        .pill-ghost:hover { background: #f1f3f5; color: #333; }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #dee2e6; border-radius: 20px; }
+    </style>
+</head>
+<body class="flex flex-col h-screen overflow-hidden">
+
+    <!-- Top Action Bar -->
+    <header class="h-12 w-full border-b border-subtle bg-white flex items-center px-4 shrink-0 shadow-sm z-50">
+        <!-- Left Nav -->
+        <div class="flex items-center gap-3">
+            <button class="pill-btn pill-ghost !p-1.5 text-muted hover:text-main">
+                <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6.85355 3.14645C7.04882 3.34171 7.04882 3.65829 6.85355 3.85355L3.70711 7H12.5C12.7761 7 13 7.22386 13 7.5C13 7.77614 12.7761 8 12.5 8H3.70711L6.85355 11.1464C7.04882 11.3417 7.04882 11.6583 6.85355 11.8536C6.65829 12.0488 6.34171 12.0488 6.14645 11.8536L2.14645 7.85355C1.95118 7.65829 1.95118 7.34171 2.14645 7.14645L6.14645 3.14645C6.34171 2.95118 6.65829 2.95118 6.85355 3.14645Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
+            </button>
+            <div class="w-[1px] h-4 border-l border-subtle"></div>
+            <span class="text-[0.8rem] font-semibold text-main ml-1 tracking-tight">The Future of AI SEO 2026</span>
+            <span class="text-[0.65rem] font-medium text-[#f59f00] bg-[#fff9db] px-2 py-0.5 rounded-full ml-2 border border-[#ffe066]">Draft</span>
+        </div>
+
+        <!-- Right Actions -->
+        <div class="ml-auto flex items-center gap-2">
+            <div class="text-[0.7rem] text-muted mr-3">Last saved: 1m ago</div>
+            <button class="pill-btn pill-outline text-[0.75rem] !py-1">Copy Link</button>
+            <button class="pill-btn pill-primary text-[0.75rem] !py-1 ml-1">Publish to Queue</button>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 overflow-hidden flex bg-white w-full">
+        
+        <!-- FAR LEFT PANEL: Document Navigation (Queue) -->
+        <div class="h-full border-r border-subtle bg-[#fcfcfc] flex flex-col shrink-0 flex-shrink-0" style="width: 220px;">
+            <div class="px-3 py-3 border-b border-subtle flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-[0.65rem] font-medium text-[#888] uppercase tracking-wide">Queue</h3>
+                    <button class="text-muted hover:text-primary"><svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.5 2C7.77614 2 8 2.22386 8 2.5V7H12.5C12.7761 7 13 7.22386 13 7.5C13 7.77614 12.7761 8 12.5 8H8V12.5C8 12.7761 7.77614 13 7.5 13C7.22386 13 7 12.7761 7 12.5V8H2.5C2.22386 8 2 7.77614 2 7.5C2 7.22386 2.22386 7 2.5 7H7V2.5C7 2.22386 7.22386 2 7.5 2Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"></path></svg></button>
+                </div>
+                <!-- Project Dropdown -->
+                <button class="flex items-center justify-between w-full p-1.5 rounded-[4px] border border-subtle hover:bg-[#f1f3f5] transition-colors text-left bg-white shadow-sm mt-1">
+                    <div class="flex items-center gap-1.5 overflow-hidden">
+                        <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" class="text-primary shrink-0"><path d="M1.5 3C1.22386 3 1 3.22386 1 3.5V11.5C1 11.7761 1.22386 12 1.5 12H13.5C13.7761 12 14 11.7761 14 11.5V4.5C14 4.22386 13.7761 4 13.5 4H7.70711L6.20711 2.5H1.5Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
+                        <span class="text-[0.7rem] font-medium text-[#444] truncate">Project Alpha</span>
+                    </div>
+                    <svg width="12" height="12" viewBox="0 0 15 15" fill="none" class="text-muted shrink-0"><path d="M4 6H11L7.5 10.5L4 6Z" fill="currentColor"></path></svg>
+                </button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+                <!-- Active Document -->
+                <div class="px-2 py-1.5 rounded-[4px] bg-[#e7f5ff] cursor-pointer group">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-[#fff9db] border border-[#ffe066] shrink-0"></span>
+                        <span class="text-[0.75rem] font-medium text-[#007bff] truncate">The Future of AI SEO 2026</span>
+                    </div>
+                </div>
+
+                <!-- Regular Document -->
+                <div class="px-2 py-1.5 rounded-[4px] hover:bg-[#f1f3f5] cursor-pointer transition-colors group">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-[#ebfbee] border border-[#b2f2bb] shrink-0"></span>
+                        <span class="text-[0.75rem] font-normal text-[#555] truncate group-hover:text-[#333]">Understanding DeepSeek v3</span>
+                    </div>
+                </div>
+
+                <!-- Regular Document -->
+                <div class="px-2 py-1.5 rounded-[4px] hover:bg-[#f1f3f5] cursor-pointer transition-colors group">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-[#fff5f5] border border-[#ffc9c9] shrink-0"></span>
+                        <span class="text-[0.75rem] font-normal text-[#555] truncate group-hover:text-[#333]">Top 10 Programming Languages</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- LEFT PANEL: SEO & Metadata (Minimalist, Thin) -->
+        <div class="h-full border-r border-subtle bg-[#f8f9fa] flex flex-col shrink-0 flex-shrink-0" style="width: 240px;">
+            <div class="px-3 py-3 border-b border-subtle flex items-center justify-between">
+                <h3 class="text-[0.65rem] font-medium text-[#888] uppercase tracking-wide">SEO & Metadata</h3>
+                <button class="p-1 rounded-[4px] text-muted hover:text-main hover:bg-[#e9ecef] transition-colors" title="Collapse Panel">
+                    <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9.85355 3.14645C10.0488 3.34171 10.0488 3.65829 9.85355 3.85355L6.70711 7L9.85355 10.1464C10.0488 10.3417 10.0488 10.6583 9.85355 10.8536C9.65829 11.0488 9.34171 11.0488 9.14645 10.8536L5.64645 7.35355C5.45118 7.15829 5.45118 6.84171 5.64645 6.64645L9.14645 3.14645C9.34171 2.95118 9.65829 2.95118 9.85355 3.14645Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
+                </button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar">
+                
+                <div class="space-y-1.5">
+                    <div class="flex items-center justify-between">
+                        <label class="text-[0.75rem] font-medium text-[#555]">Meta Title</label>
+                        <button class="text-primary hover:text-[#0056b3]"><svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 3V7M3 5H7M6 17V21M4 19H8M11 7L13.286 13.857L21 16L15.286 18.143L13 25L10.714 18.143L5 16L10.714 13.857L13 7Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+                    </div>
+                    <input type="text" class="app-input" value="The Future of AI SEO 2026 | Analysis">
+                    <div class="text-[0.6rem] text-muted text-right">38/60</div>
+                </div>
+
+                <div class="space-y-1.5">
+                    <label class="text-[0.75rem] font-medium text-[#555]">Meta Description</label>
+                    <textarea class="app-input resize-none custom-scrollbar" rows="3">Discover how AI is shaping the future of technical SEO and content strategy for 2026.</textarea>
+                    <div class="text-[0.6rem] text-muted text-right">86/160</div>
+                </div>
+
+                <div class="space-y-1.5">
+                    <label class="text-[0.75rem] font-medium text-[#555]">Slug</label>
+                    <input type="text" class="app-input bg-gray-50 color-gray-400" value="future-ai-seo-2026">
+                </div>
+
+                <div class="h-[1px] w-full border-b border-subtle my-2"></div>
+
+                <!-- Featured Image -->
+                <div class="space-y-1.5">
+                    <label class="text-[0.75rem] font-medium text-[#555] flex items-center gap-1.5">
+                        Featured Image
+                    </label>
+                    <button class="w-full h-[70px] bg-white border-2 border-dashed border-[#dee2e6] rounded-[6px] flex flex-col items-center justify-center cursor-pointer hover:border-[#007bff] hover:bg-[#e7f5ff] transition-all group">
+                        <svg width="16" height="16" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" class="text-[#adb5bd] mb-1 group-hover:text-[#007bff]"><path d="M2.5 1C1.67157 1 1 1.67157 1 2.5V12.5C1 13.3284 1.67157 14 2.5 14H12.5C13.3284 14 14 13.3284 14 12.5V2.5C14 1.67157 13.3284 1 12.5 1H2.5ZM2.5 2H12.5C12.7761 2 13 2.22386 13 2.5V12.5C13 12.7761 12.7761 13 12.5 13H2.5C2.22386 13 2 12.7761 2 12.5V2.5C2 2.22386 2.22386 2 2.5 2ZM3.75 3.5C3.33579 3.5 3 3.83579 3 4.25C3 4.66421 3.33579 5 3.75 5C4.16421 5 4.5 4.66421 4.5 4.25C4.5 3.83579 4.16421 3.5 3.75 3.5Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
+                        <span class="text-[0.65rem] font-medium text-[#888] group-hover:text-[#007bff]">Upload</span>
+                    </button>
+                </div>
+
+                <div class="h-[1px] w-full border-b border-subtle my-2"></div>
+
+                <!-- Schema -->
+                <div class="space-y-3">
+                    <button class="pill-btn pill-outline w-full text-[0.75rem] py-1">Generate Schema</button>
+                    
+                    <div class="space-y-1 mt-2">
+                        <label class="text-[0.65rem] font-medium text-muted">Page Type</label>
+                        <select class="app-input py-1 text-[0.75rem]">
+                            <option>Article</option>
+                            <option>WebPage</option>
+                        </select>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- CENTER PANEL: Editor (Minimalist) -->
+        <div class="flex-1 flex flex-col items-center overflow-auto custom-scrollbar relative px-6 py-6 w-full mx-auto" style="background-color: #fff;">
+            
+            <div class="w-full max-w-[700px]">
+                <!-- Floating Toolbar simulation -->
+                <div class="w-full mb-6">
+                    <div class="inline-flex items-center p-1 rounded-full border border-subtle bg-white shadow-sm gap-1 overflow-x-auto custom-scrollbar px-2">
+                        <button class="pill-btn pill-ghost !px-2 !py-1 text-main"><strong class="text-[13px]">B</strong></button>
+                        <button class="pill-btn pill-ghost !px-2 !py-1 text-main italic"><span class="text-[13px]">I</span></button>
+                        <button class="pill-btn pill-ghost !px-2 !py-1 text-main underline"><span class="text-[13px] underline">U</span></button>
+                        <div class="w-[1px] h-3 border-l border-subtle mx-1"></div>
+                        <button class="pill-btn !px-2 !py-1 bg-primary-light text-primary border-none"><span class="text-[12px] font-semibold flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 3V7M3 5H7M6 17V21M4 19H8M11 7L13.286 13.857L21 16L15.286 18.143L13 25L10.714 18.143L5 16L10.714 13.857L13 7Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"></path></svg> AI Assist</span></button>
+                    </div>
+                </div>
+
+                <!-- Content Area -->
+                <article class="outline-none pb-32">
+                    <h1 class="text-[2rem] font-bold text-main leading-tight mb-6 outline-none" contenteditable="true">The Future of AI SEO 2026</h1>
+                    
+                    <div class="text-[0.95rem] leading-[1.7] text-[#333] outline-none" contenteditable="true">
+                        <p class="mb-4">
+                            The evolving landscape of digital content requires transparent and accurate implementation of new technologies.
+                        </p>
+                        
+                        <h2 class="text-[1.25rem] font-bold text-main mt-8 mb-3">Core Objectives</h2>
+                        
+                        <ul class="mb-5 ml-2 list-disc pl-4 space-y-1">
+                            <li>Eliminate silent failures in ranking.</li>
+                            <li>Prevent indexing issues across devices.</li>
+                            <li><span class="bg-[#ffe5e5] text-[#d32f2f] line-through px-1 rounded">Replace older tags.</span> <span class="bg-[#e5f8ec] text-[#1b5e20] font-medium px-1 rounded ml-1">Utilize dynamic schema injection instead of static tags.</span></li>
+                        </ul>
+
+                        <p class="mb-4">
+                            These adjustments verify that the UI remains stable and performant during scaling. By moving away from brittle DOM manipulation to semantic structures, consistency is maintained.
+                        </p>
+                    </div>
+                </article>
+            </div>
+        </div>
+
+        <!-- RIGHT PANEL: Revisions / Chat (Very Thin) -->
+        <div class="h-full border-l border-subtle bg-[#f8f9fa] flex flex-col shrink-0 flex-shrink-0" style="width: 250px;">
+            <!-- Tabs -->
+            <div class="flex items-center w-full border-b border-subtle">
+                <button class="flex-1 py-3 text-[0.75rem] font-medium text-primary border-b-2 border-primary text-center">AI Chat</button>
+                <button class="flex-1 py-3 text-[0.75rem] font-normal text-muted hover:text-[#555] text-center transition-colors">Revisions (1)</button>
+            </div>
+
+            <!-- Chat Body -->
+            <div class="flex-1 overflow-y-auto p-3 flex flex-col gap-3 custom-scrollbar">
+                
+                <div class="bg-white border border-subtle rounded-lg p-2.5 shadow-sm">
+                    <div class="flex items-center gap-1.5 mb-1.5">
+                        <div class="w-4 h-4 rounded-full bg-primary-light flex items-center justify-center text-primary">
+                            <span class="text-[8px] font-bold">AI</span>
+                        </div>
+                        <span class="text-[0.65rem] font-bold text-main">PowerCreatives</span>
+                    </div>
+                    <p class="text-[0.75rem] text-[#495057] leading-relaxed">
+                        I've updated the third bullet point to sound more modern and technical.
+                    </p>
+                </div>
+
+                <!-- Diff Card -->
+                <div class="rounded-[6px] border border-subtle bg-white shadow-sm overflow-hidden">
+                    <div class="bg-[#f1f3f5] p-2 border-b border-subtle flex justify-between items-center">
+                        <span class="text-[0.65rem] font-bold text-muted uppercase">Suggestion</span>
+                    </div>
+                    <div class="p-2.5 text-[0.75rem] flex flex-col gap-1 text-[#333]">
+                        <span class="bg-[#ffe5e5] text-[#d32f2f] line-through px-1 rounded">Replace older tags.</span>
+                        <span class="bg-[#e5f8ec] text-[#1b5e20] font-medium px-1 rounded">Utilize dynamic schema injection...</span>
+                    </div>
+                    <div class="p-2 pt-0 flex gap-1 justify-end border-t border-subtle border-opacity-50 mt-1 pt-1.5">
+                        <button class="pill-btn pill-outline text-[0.65rem] !px-2 !py-0.5 !h-[22px]">Reject</button>
+                        <button class="pill-btn pill-primary text-[0.65rem] !px-2 !py-0.5 !h-[22px]">Accept</button>
+                    </div>
+                </div>
+
+            </div>
+
+             <!-- Chat Input -->
+             <div class="p-3 border-t border-subtle bg-white">
+                <div class="relative flex w-full">
+                    <input class="app-input pr-8 text-[0.75rem]" placeholder="Ask AI...">
+                    <button class="absolute right-1 top-1 bottom-1 w-[26px] bg-primary text-white rounded-[4px] flex items-center justify-center hover:bg-[#0056b3]">
+                        <svg width="10" height="10" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14.7031 7.04312L1.20308 1.04312C1.00481 0.954998 0.772341 1.0048 0.627577 1.16641C0.482813 1.32802 0.458494 1.56455 0.567481 1.75196L3.92147 7.5L0.567481 13.248C0.458494 13.4354 0.482813 13.672 0.627577 13.8336C0.772341 13.9952 1.00481 14.045 1.20308 13.9569L14.7031 7.95688C14.8836 7.87668 15 7.69762 15 7.5C15 7.30238 14.8836 7.12332 14.7031 7.04312ZM4.84553 7.1L2.67328 3.36362L12.3874 7.5L2.67328 11.6364L4.84553 7.9H9C9.22091 7.9 9.4 7.72091 9.4 7.5C9.4 7.27909 9.22091 7.1 9 7.1H4.84553Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+</body>
+</html>

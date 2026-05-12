@@ -1,0 +1,298 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.kie.ai/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Hailuo Standard - Image to Video
+
+> Transform images into dynamic videos powered by Hailuo's advanced AI model
+
+## Query Task Status
+
+After submitting a task, use the unified query endpoint to check progress and retrieve results:
+
+<Card title="Get Task Details" icon="magnifying-glass" href="/market/common/get-task-detail">
+  Learn how to query task status and retrieve generation results
+</Card>
+
+<Tip>
+  For production use, we recommend using the `callBackUrl` parameter to receive automatic notifications when generation completes, rather than polling the status endpoint.
+</Tip>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Market Overview" icon="store" href="/market/quickstart">
+    Explore all available models
+  </Card>
+
+  <Card title="Common API" icon="gear" href="/common-api/get-account-credits">
+    Check credits and account usage
+  </Card>
+</CardGroup>
+
+
+## OpenAPI
+
+````yaml market/hailuo/02-image-to-video-standard.json post /api/v1/jobs/createTask
+openapi: 3.0.0
+info:
+  title: Hailuo API
+  description: kie.ai Hailuo API Documentation - Image to Video
+  version: 1.0.0
+  contact:
+    name: Technical Support
+    email: support@kie.ai
+servers:
+  - url: https://api.kie.ai
+    description: API Server
+security:
+  - BearerAuth: []
+paths:
+  /api/v1/jobs/createTask:
+    post:
+      summary: Generate videos from images using hailuo/02-image-to-video-standard
+      operationId: hailuo-02-image-to-video-standard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+              properties:
+                model:
+                  type: string
+                  enum:
+                    - hailuo/02-image-to-video-standard
+                  default: hailuo/02-image-to-video-standard
+                  description: >-
+                    The model name to use for generation. Required field.
+
+
+                    - Must be `hailuo/02-image-to-video-standard` for this
+                    endpoint
+                  example: hailuo/02-image-to-video-standard
+                callBackUrl:
+                  type: string
+                  format: uri
+                  description: >-
+                    The URL to receive generation task completion updates.
+                    Optional but recommended for production use.
+
+
+                    - System will POST task status and results to this URL when
+                    generation completes
+
+                    - Callback includes generated content URLs and task
+                    information
+
+                    - Your callback endpoint should accept POST requests with
+                    JSON payload containing results
+
+                    - Alternatively, use the Get Task Details endpoint to poll
+                    task status
+
+                    - To ensure callback security, see [Webhook Verification
+                    Guide](/common-api/webhook-verification) for signature
+                    verification implementation
+                  example: https://your-domain.com/api/callback
+                input:
+                  type: object
+                  description: Input parameters for the generation task
+                  properties:
+                    prompt:
+                      description: >-
+                        The text prompt describing the video to generate (Max
+                        length: 1500 characters)
+                      type: string
+                      maxLength: 1500
+                      example: >-
+                        Epic aerial shot: A lone samurai stands atop a jagged
+                        mountain peak as a storm of sakura petals is swept
+                        across the wind. Behind him, the sky is split in two —
+                        half daylight, half night. The shot pulls back to reveal
+                        that the mountain is actually the curved back of a
+                        sleeping dragon that spans across the horizon. Lightning
+                        crackles in the distance as the dragon's eye slowly
+                        opens, glowing with ancient magic. The samurai doesn’t
+                        flinch; he lowers his straw hat and places his hand on
+                        the hilt of his blade.
+                    image_url:
+                      description: >-
+                        The URL of the image to use as the first frame of the
+                        video (File URL after upload, not file content; Accepted
+                        types: image/jpeg, image/png, image/webp; Max size:
+                        10.0MB)
+                      type: string
+                      example: >-
+                        https://file.aiquickdraw.com/custom-page/akr/section-images/17585207681646umf3lz8.png
+                    end_image_url:
+                      description: >-
+                        Optional URL of the image to use as the last frame of
+                        the video (File URL after upload, not file content;
+                        Accepted types: image/jpeg, image/png, image/webp; Max
+                        size: 10.0MB)
+                      type: string
+                      example: >-
+                        https://file.aiquickdraw.com/custom-page/akr/section-images/1758521423357w8586uq8.png
+                    duration:
+                      description: >-
+                        The duration of the video in seconds. 10 seconds videos
+                        are not supported for 1080p resolution.
+                      type: string
+                      enum:
+                        - '6'
+                        - '10'
+                      default: '10'
+                      example: '10'
+                    resolution:
+                      description: The resolution of the generated video.
+                      type: string
+                      enum:
+                        - 512P
+                        - 768P
+                      default: 768P
+                      example: 768P
+                    prompt_optimizer:
+                      description: >-
+                        Whether to use the model's prompt optimizer (Boolean
+                        value (true/false))
+                      type: boolean
+                      example: true
+                  required:
+                    - prompt
+                    - image_url
+            example:
+              model: hailuo/02-image-to-video-standard
+              callBackUrl: https://your-domain.com/api/callback
+              input:
+                prompt: >-
+                  Epic aerial shot: A lone samurai stands atop a jagged mountain
+                  peak as a storm of sakura petals is swept across the wind.
+                  Behind him, the sky is split in two — half daylight, half
+                  night. The shot pulls back to reveal that the mountain is
+                  actually the curved back of a sleeping dragon that spans
+                  across the horizon. Lightning crackles in the distance as the
+                  dragon's eye slowly opens, glowing with ancient magic. The
+                  samurai doesn’t flinch; he lowers his straw hat and places his
+                  hand on the hilt of his blade.
+                image_url: >-
+                  https://file.aiquickdraw.com/custom-page/akr/section-images/17585207681646umf3lz8.png
+                end_image_url: >-
+                  https://file.aiquickdraw.com/custom-page/akr/section-images/1758521423357w8586uq8.png
+                duration: '10'
+                resolution: 768P
+                prompt_optimizer: true
+      responses:
+        '200':
+          description: Request successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          taskId:
+                            type: string
+                            description: >-
+                              Task ID, can be used with Get Task Details
+                              endpoint to query task status
+                            example: task_hailuo_1765185334551
+              example:
+                code: 200
+                msg: success
+                data:
+                  taskId: task_hailuo_1765185334551
+        '500':
+          $ref: '#/components/responses/Error'
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          enum:
+            - 200
+            - 401
+            - 402
+            - 404
+            - 422
+            - 429
+            - 455
+            - 500
+            - 501
+            - 505
+          description: >-
+            Response status code
+
+
+            - **200**: Success - Request has been processed successfully
+
+            - **401**: Unauthorized - Authentication credentials are missing or
+            invalid
+
+            - **402**: Insufficient Credits - Account does not have enough
+            credits to perform the operation
+
+            - **404**: Not Found - The requested resource or endpoint does not
+            exist
+
+            - **422**: Validation Error - The request parameters failed
+            validation checks
+
+            - **429**: Rate Limited - Request limit has been exceeded for this
+            resource
+
+            - **455**: Service Unavailable - System is currently undergoing
+            maintenance
+
+            - **500**: Server Error - An unexpected error occurred while
+            processing the request
+
+            - **501**: Generation Failed - Content generation task failed
+
+            - **505**: Feature Disabled - The requested feature is currently
+            disabled
+        msg:
+          type: string
+          description: Response message, error description when failed
+          example: success
+  responses:
+    Error:
+      description: Server Error
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: >-
+        All APIs require authentication via Bearer Token.
+
+
+        Get API Key:
+
+        1. Visit [API Key Management Page](https://kie.ai/api-key) to get your
+        API Key
+
+
+        Usage:
+
+        Add to request header:
+
+        Authorization: Bearer YOUR_API_KEY
+
+
+        Note:
+
+        - Keep your API Key secure and do not share it with others
+
+        - If you suspect your API Key has been compromised, reset it immediately
+        in the management page
+
+````
