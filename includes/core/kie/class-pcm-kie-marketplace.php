@@ -119,9 +119,15 @@ class PCM_Kie_Marketplace {
 
     public static function wait_for_task( string $api_key, string $task_id, int $max_wait_sec = 300, int $poll_interval = 5 ): array {
         $start_time = time();
+        $php_limit  = ini_get( 'max_execution_time' );
+        error_log( sprintf( '[Kie marketplace] Polling started: taskId=%s max_wait=%ds poll_interval=%ds php_max_execution_time=%s', $task_id, $max_wait_sec, $poll_interval, $php_limit ) );
+        $iteration = 0;
 
         while ( ( time() - $start_time ) < $max_wait_sec ) {
+            $iteration++;
+            $elapsed = time() - $start_time;
             $status = self::get_task_status( $api_key, $task_id );
+            error_log( sprintf( '[Kie marketplace] Poll #%d elapsed=%ds status=%s', $iteration, $elapsed, $status['status'] ) );
 
             if ( $status['status'] === 'completed' ) {
                 $result_url = $status['url'] ?? ( $status['urls'][0] ?? null );
@@ -138,12 +144,13 @@ class PCM_Kie_Marketplace {
             sleep( $poll_interval );
         }
 
+        error_log( sprintf( '[Kie marketplace] OUR timeout fired: taskId=%s after %ds', $task_id, time() - $start_time ) );
         throw new Exception( "Kie.ai task timed out after {$max_wait_sec}s" );
     }
 
     public static function generate_image( string $api_key, array $model_def, array $params ): array {
         $result = self::create_task( $api_key, $model_def, $params );
-        return self::wait_for_task( $api_key, $result['taskId'], 120, 3 );
+        return self::wait_for_task( $api_key, $result['taskId'], 800, 5 );
     }
 
     public static function generate_video( string $api_key, array $model_def, array $params ): array {

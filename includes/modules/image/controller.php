@@ -127,6 +127,10 @@ class PCM_REST_Image extends PCM_REST_Base
      */
     public function generate_single(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
+        // Verified: php_max_execution_time=1200, polling timeout=800s.
+        // Ensure PHP doesn't kill the process during long marketplace polls.
+        set_time_limit(900);
+
         $user = $this->get_current_pcm_user();
         $params = $request->get_json_params() ?? array();
 

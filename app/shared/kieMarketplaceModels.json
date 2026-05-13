@@ -302,9 +302,9 @@
     "supportsNegativePrompt": false,
     "maxImageInputs": 0,
     "description": "OpenAI GPT Image 1.5 text-to-image",
-    "quality": "medium",
+    "quality": "high",
     "extraRequiredFields": {
-      "quality": "medium"
+      "quality": "high"
     }
   },
   {
@@ -320,9 +320,9 @@
     "supportsNegativePrompt": false,
     "maxImageInputs": 16,
     "description": "OpenAI GPT Image 1.5 image-to-image (up to 16 images)",
-    "quality": "medium",
+    "quality": "high",
     "extraRequiredFields": {
-      "quality": "medium"
+      "quality": "high"
     }
   },
   {
@@ -338,9 +338,9 @@
     "supportsNegativePrompt": false,
     "maxImageInputs": 0,
     "description": "OpenAI GPT Image 2 text-to-image",
-    "quality": "medium",
+    "quality": "high",
     "extraRequiredFields": {
-      "quality": "medium"
+      "quality": "high"
     }
   },
   {
@@ -356,9 +356,9 @@
     "supportsNegativePrompt": false,
     "maxImageInputs": 16,
     "description": "OpenAI GPT Image 2 image-to-image (up to 16 images)",
-    "quality": "medium",
+    "quality": "high",
     "extraRequiredFields": {
-      "quality": "medium"
+      "quality": "high"
     }
   },
   {

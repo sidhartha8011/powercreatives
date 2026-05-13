@@ -411,7 +411,7 @@ export const KIE_MARKETPLACE_IMAGE_MODELS: readonly KieMarketplaceModel[] = [
     supportsNegativePrompt: false,
     maxImageInputs: 0,
     description: 'OpenAI GPT Image 1.5 text-to-image',
-    extraRequiredFields: { quality: 'medium' },
+    extraRequiredFields: { quality: 'high' },
   },
   {
     id: 'kie-gpt-image-1.5-i2i',
@@ -426,7 +426,7 @@ export const KIE_MARKETPLACE_IMAGE_MODELS: readonly KieMarketplaceModel[] = [
     supportsNegativePrompt: false,
     maxImageInputs: 16,
     description: 'OpenAI GPT Image 1.5 image-to-image (up to 16 images)',
-    extraRequiredFields: { quality: 'medium' },
+    extraRequiredFields: { quality: 'high' },
   },
 
   // --- GPT Image 2 (Market API version) ---
@@ -443,7 +443,7 @@ export const KIE_MARKETPLACE_IMAGE_MODELS: readonly KieMarketplaceModel[] = [
     supportsNegativePrompt: false,
     maxImageInputs: 0,
     description: 'OpenAI GPT Image 2 text-to-image',
-    extraRequiredFields: { quality: 'medium' },
+    extraRequiredFields: { quality: 'high' },
   },
   {
     id: 'kie-gpt-image-2-i2i',
@@ -458,7 +458,7 @@ export const KIE_MARKETPLACE_IMAGE_MODELS: readonly KieMarketplaceModel[] = [
     supportsNegativePrompt: false,
     maxImageInputs: 16,
     description: 'OpenAI GPT Image 2 image-to-image (up to 16 images)',
-    extraRequiredFields: { quality: 'medium' },
+    extraRequiredFields: { quality: 'high' },
   },
 
   // --- Ideogram ---

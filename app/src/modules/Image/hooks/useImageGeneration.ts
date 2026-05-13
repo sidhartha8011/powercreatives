@@ -217,27 +217,45 @@ export function useImageGeneration({
                 }
             }
 
-            // 1. Generate creative concepts (angles/versions)
-            setStatus((prev) => ({ ...prev, progress: 10, message: 'AI is conceptualizing creative angles...' }));
+            // 1. Build creative angles (concepts)
+            // Rule: Angle 1 = ALWAYS the user's exact prompt (raw or enhanced).
+            //        Angles 2..N = AI-generated creative variations.
+            //        This ensures the user's intent is always represented as-is.
 
-            const conceptsResult = await generateConceptsMutation.mutateAsync({
-                prompt: briefToUse,
-                count: numVersions,
-                // Menu Intelligence model selection
-                modelId: settings.defaultImageTextModel || undefined,
-                brandContext: contextData.brand ? {
-                    name: (contextData.brand as any).name,
-                    summary: (contextData.brand as any).businessSummary,
-                } : undefined,
-                referenceImages: sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent })),
-            });
-
-            const conceptsList = (conceptsResult as any).concepts ?? [];
-            const generatedVersions: AdVersion[] = conceptsList.map((concept: any) => ({
+            // Angle 1: the user's own prompt, no AI rewriting
+            const anchorVersion: AdVersion = {
                 id: crypto.randomUUID(),
-                name: concept.name,
-                description: concept.description,
-            }));
+                name: 'Original',
+                description: briefToUse,
+            };
+
+            let generatedVersions: AdVersion[] = [anchorVersion];
+
+            // Angles 2..N: AI-generated creative concepts (only if user wants >1 angle)
+            if (numVersions > 1) {
+                setStatus((prev) => ({ ...prev, progress: 10, message: 'AI is conceptualizing creative angles...' }));
+
+                const conceptsResult = await generateConceptsMutation.mutateAsync({
+                    prompt: briefToUse,
+                    count: numVersions - 1,
+                    // Menu Intelligence model selection
+                    modelId: settings.defaultImageTextModel || undefined,
+                    brandContext: contextData.brand ? {
+                        name: (contextData.brand as any).name,
+                        summary: (contextData.brand as any).businessSummary,
+                    } : undefined,
+                    referenceImages: sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent })),
+                });
+
+                const conceptsList = (conceptsResult as any).concepts ?? [];
+                const aiVersions: AdVersion[] = conceptsList.map((concept: any) => ({
+                    id: crypto.randomUUID(),
+                    name: concept.name,
+                    description: concept.description,
+                }));
+
+                generatedVersions = [anchorVersion, ...aiVersions];
+            }
 
             setAdVersions(generatedVersions);
             setActiveTab(generatedVersions[0]?.id ?? null);
@@ -260,13 +278,21 @@ export function useImageGeneration({
                             message: `Generating: ${version.name} (${model?.name ?? modelId})...`,
                         }));
 
+                        // Build the actual prompt that will be sent to the image model.
+                        // Anchor angle: description IS the prompt → send directly.
+                        // AI angles: combine concept description with product brief.
+                        const isAnchor = version.name === 'Original';
+                        const fullPrompt = isAnchor
+                            ? `${version.description}${colorCtx}`
+                            : `${version.description}. Product: ${productBrief}${colorCtx}`;
+
                         // Place a processing placeholder immediately for optimistic UI
                         const placeholderId = crypto.randomUUID();
                         const placeholder: GeneratedAsset = {
                             id: placeholderId,
                             versionId: version.id,
                             type: 'image',
-                            prompt: `${productBrief}: ${version.description}`,
+                            prompt: fullPrompt,
                             modelId,
                             modelName: model?.name ?? modelId,
                             status: 'processing',
@@ -275,7 +301,6 @@ export function useImageGeneration({
                         setAssets((prev) => [...prev, placeholder]);
 
                         try {
-                            const fullPrompt = `${version.description}. Product: ${productBrief}${colorCtx}`;
 
                             // Build asset pipeline context for the API payload
                             const pipelineExtra: Record<string, unknown> = {};
