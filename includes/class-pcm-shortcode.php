@@ -195,34 +195,31 @@ class PCM_Shortcode
             . esc_html($logout_text) . '</a>';
 
         if ($mode === 'fullscreen') {
-            // Full viewport takeover — move wrapper to <body> level via JS so it escapes
-            // any theme container that has `transform`/`filter` (which would otherwise
-            // break position:fixed). We tag EXISTING theme children with .pcm-fs-hide
-            // rather than blanket-hiding all body children, so React portals (Radix
-            // dropdowns, dialogs, sonner toasts) that mount to body later stay visible.
-            // z-index strategy:
-            //  - .pcm-fs-wrap sits at 99999 — high enough to cover ALL WordPress
-            //    chrome (admin bar is 99999, theme elements rarely exceed 1000)
-            //  - Radix UI portals mount to <body> with z-index:50 by default.
-            //    We lift them to 100000 so they always render ABOVE the wrapper.
-            //    This targets [data-radix-portal] direct children which carry
-            //    the actual overlay/content with position:fixed.
-            //  - Sonner toasts use the same portal pattern and are covered too.
-            //  - .pcm-fs-logout sits at 100001 so the sign-out link stays on top.
+            // Fullscreen takeover strategy:
+            //
+            // 1. The JS below moves .pcm-fs-wrap to <body> level (escaping any
+            //    theme container with transform/filter that would break position:fixed).
+            //
+            // 2. ALL existing body children at snapshot time get .pcm-fs-hide
+            //    (display:none !important) — this is what actually hides the theme.
+            //
+            // 3. .pcm-fs-wrap intentionally has NO z-index. This is critical:
+            //    Radix UI portals (Dialog, Select, DropdownMenu, Sheet, Popover,
+            //    Tooltip, etc.) and Sonner toasts mount directly onto <body> AFTER
+            //    the snapshot. They are NOT tagged with .pcm-fs-hide, so they stay
+            //    visible. Their own z-index:50 naturally layers them above the
+            //    wrapper, which sits in the normal stacking context.
+            //    A high z-index on the wrapper would create an opaque stacking
+            //    context that covers all portals — which is the exact bug we fixed.
+            //
+            // 4. .pcm-fs-logout uses z-index:51 — just above portal overlays so
+            //    the sign-out link is always reachable.
             return '<style>'
                 . 'html.pcm-fs-active,body.pcm-fs-active{margin:0 !important;padding:0 !important;overflow:hidden !important;height:100vh !important;}'
                 . 'body.pcm-fs-active .pcm-fs-hide{display:none !important;}'
                 . 'body.pcm-fs-active #wpadminbar{display:none !important;}'
-                . '.pcm-fs-wrap{position:fixed;inset:0;background:#fff;z-index:99999;overflow:auto;-webkit-overflow-scrolling:touch;}'
-                // Radix UI (this version) mounts portal elements DIRECTLY onto <body>
-                // without a [data-radix-portal] wrapper. They use data-slot attributes
-                // to identify themselves. We lift all portal-level overlays & content
-                // above .pcm-fs-wrap (99999) so dialogs, dropdowns, selects, sheets,
-                // drawers, popovers, tooltips, hover-cards, context-menus, menubar
-                // sub-menus, and alert-dialogs are all visible.
-                . 'body.pcm-fs-active>*[data-slot]{z-index:100000 !important;}'
-                . 'body.pcm-fs-active .sonner-toaster{z-index:100000 !important;}'
-                . '.pcm-fs-logout{position:fixed;bottom:12px;left:12px;z-index:100001;}'
+                . '.pcm-fs-wrap{position:fixed;inset:0;background:#fff;overflow:auto;-webkit-overflow-scrolling:touch;}'
+                . '.pcm-fs-logout{position:fixed;bottom:12px;left:12px;z-index:51;}'
                 . '</style>'
                 . '<div class="pcm-fs-wrap"><div id="pcm-root"></div></div>'
                 . '<div class="pcm-fs-logout">' . $logout_link . '</div>'
