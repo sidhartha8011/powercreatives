@@ -361,7 +361,7 @@ export const ImageSidebar = memo(function ImageSidebar({
                         <div>
                             <div className="flex items-center justify-between mb-2">
                                 <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                                    <Zap className="w-3 h-3" />Variations per Engine
+                                    <Zap className="w-3 h-3" />Images per Engine
                                 </label>
                                 <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">{variationsPerModel}</span>
                             </div>
