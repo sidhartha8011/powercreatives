@@ -28,7 +28,8 @@ import {
   FileEdit,
   Layers,
   Globe,
-  KanbanSquare
+  KanbanSquare,
+  LogOut,
 } from 'lucide-react';
 
 interface NavItem {
@@ -60,9 +61,56 @@ const configNavItems: NavItem[] = [
   { id: 'integrations', label: 'Integrations', icon: <Plug className="w-[1.2rem] h-[1.2rem]" /> },
 ];
 
+// ============================================
+// Helpers — user identity + logout
+// ============================================
+
+/** pcmConfig is injected by WordPress via wp_localize_script */
+interface PcmUser {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  avatarUrl: string;
+}
+
+function getPcmUser(): PcmUser {
+  const w = window as unknown as { pcmConfig?: { user?: PcmUser } };
+  return w.pcmConfig?.user ?? { id: 0, name: 'User', email: '', role: 'user', avatarUrl: '' };
+}
+
+/** First letter of the user's display name (uppercase) */
+function getInitial(name: string): string {
+  return (name.charAt(0) || 'U').toUpperCase();
+}
+
+/**
+ * Context-aware logout:
+ * - Shortcode gate users → clear gate cookie + reload (shows login form)
+ * - WP admin users → redirect back to wp-admin dashboard
+ */
+function handleLogout(): void {
+  // Clear the shortcode gate cookie
+  document.cookie = 'pcm_shortcode_auth=; path=/; max-age=0';
+  // Redirect to the current page (triggers gate login) or wp-admin
+  const user = getPcmUser();
+  if (user.role === 'admin') {
+    // Admin: go back to wp-admin
+    window.location.href = '/wp-admin/';
+  } else {
+    // Shortcode gate: reload to show login form
+    window.location.reload();
+  }
+}
+
+// ============================================
+// Component
+// ============================================
+
 export function Sidebar() {
   const { state, setActiveModule } = useApp();
   const { activeModule } = state;
+  const user = getPcmUser();
 
   return (
     <aside 
@@ -185,7 +233,7 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* Footer - User profile */}
+      {/* Footer — User identity */}
       <div 
         className="flex items-center gap-3"
         style={{ 
@@ -193,27 +241,76 @@ export function Sidebar() {
           borderTop: '1px solid #ededed'
         }}
       >
-        {/* Avatar - PowerKeys style */}
-        <div 
-          className="flex items-center justify-center"
-          style={{
-            width: '28px',
-            height: '28px',
-            background: '#e9ecef',
-            borderRadius: '50%',
-            fontSize: '0.75rem',
-            fontWeight: 600,
-            color: '#555',
-            border: '1px solid #dee2e6'
-          }}
-        >
-          U
-        </div>
+        {/* Avatar — shows Gravatar if available, otherwise first initial */}
+        {user.avatarUrl ? (
+          <img
+            src={user.avatarUrl}
+            alt={user.name}
+            style={{
+              width: '28px',
+              height: '28px',
+              borderRadius: '50%',
+              border: '1px solid #dee2e6',
+              objectFit: 'cover',
+            }}
+          />
+        ) : (
+          <div 
+            className="flex items-center justify-center"
+            style={{
+              width: '28px',
+              height: '28px',
+              background: '#e9ecef',
+              borderRadius: '50%',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              color: '#555',
+              border: '1px solid #dee2e6'
+            }}
+          >
+            {getInitial(user.name)}
+          </div>
+        )}
         <div className="flex-1 min-w-0">
-          <p style={{ fontSize: '0.85rem', fontWeight: 500, color: '#1a1a1a' }} className="truncate">User</p>
-          <p style={{ fontSize: '0.7rem', color: '#666' }} className="truncate">Free Plan</p>
+          <p style={{ fontSize: '0.85rem', fontWeight: 500, color: '#1a1a1a' }} className="truncate">
+            {user.name}
+          </p>
+          <p style={{ fontSize: '0.7rem', color: '#666' }} className="truncate">
+            {user.role === 'admin' ? 'Administrator' : 'Workspace User'}
+          </p>
         </div>
       </div>
+
+      {/* Logout — simple, flat, always visible */}
+      <button
+        onClick={handleLogout}
+        className="flex items-center justify-start text-left"
+        style={{
+          marginTop: '6px',
+          padding: '5px 14px',
+          borderRadius: '999px',
+          fontSize: '0.8rem',
+          color: '#888',
+          background: 'transparent',
+          border: '1px solid transparent',
+          gap: '8px',
+          fontWeight: 500,
+          transition: 'background-color 0.2s, color 0.2s',
+          cursor: 'pointer',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = '#fff0f0';
+          e.currentTarget.style.color = '#d32f2f';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = '#888';
+        }}
+      >
+        <LogOut className="w-[1rem] h-[1rem]" />
+        Sign Out
+      </button>
     </aside>
   );
 }
+
