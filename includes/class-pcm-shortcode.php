@@ -200,12 +200,29 @@ class PCM_Shortcode
             // break position:fixed). We tag EXISTING theme children with .pcm-fs-hide
             // rather than blanket-hiding all body children, so React portals (Radix
             // dropdowns, dialogs, sonner toasts) that mount to body later stay visible.
+            // z-index strategy:
+            //  - .pcm-fs-wrap sits at 99999 — high enough to cover ALL WordPress
+            //    chrome (admin bar is 99999, theme elements rarely exceed 1000)
+            //  - Radix UI portals mount to <body> with z-index:50 by default.
+            //    We lift them to 100000 so they always render ABOVE the wrapper.
+            //    This targets [data-radix-portal] direct children which carry
+            //    the actual overlay/content with position:fixed.
+            //  - Sonner toasts use the same portal pattern and are covered too.
+            //  - .pcm-fs-logout sits at 100001 so the sign-out link stays on top.
             return '<style>'
                 . 'html.pcm-fs-active,body.pcm-fs-active{margin:0 !important;padding:0 !important;overflow:hidden !important;height:100vh !important;}'
                 . 'body.pcm-fs-active .pcm-fs-hide{display:none !important;}'
                 . 'body.pcm-fs-active #wpadminbar{display:none !important;}'
-                . '.pcm-fs-wrap{position:fixed;inset:0;background:#fff;z-index:2147483646;overflow:auto;-webkit-overflow-scrolling:touch;}'
-                . '.pcm-fs-logout{position:fixed;bottom:12px;left:12px;z-index:2147483647;}'
+                . '.pcm-fs-wrap{position:fixed;inset:0;background:#fff;z-index:99999;overflow:auto;-webkit-overflow-scrolling:touch;}'
+                // Radix UI (this version) mounts portal elements DIRECTLY onto <body>
+                // without a [data-radix-portal] wrapper. They use data-slot attributes
+                // to identify themselves. We lift all portal-level overlays & content
+                // above .pcm-fs-wrap (99999) so dialogs, dropdowns, selects, sheets,
+                // drawers, popovers, tooltips, hover-cards, context-menus, menubar
+                // sub-menus, and alert-dialogs are all visible.
+                . 'body.pcm-fs-active>*[data-slot]{z-index:100000 !important;}'
+                . 'body.pcm-fs-active .sonner-toaster{z-index:100000 !important;}'
+                . '.pcm-fs-logout{position:fixed;bottom:12px;left:12px;z-index:100001;}'
                 . '</style>'
                 . '<div class="pcm-fs-wrap"><div id="pcm-root"></div></div>'
                 . '<div class="pcm-fs-logout">' . $logout_link . '</div>'
@@ -411,6 +428,25 @@ class PCM_Shortcode
             }
             return $tag;
         }, 10, 2);
+
+        // Polyfill crypto.randomUUID() for non-secure contexts (http:// local dev).
+        // The Web Crypto API's randomUUID() is only available in Secure Contexts
+        // (HTTPS or localhost). Local dev domains like http://powercreatives.local
+        // are NOT considered secure, causing TypeError crashes in the React app.
+        // This polyfill uses crypto.getRandomValues() which IS available everywhere.
+        // Mirrors the identical polyfill in PCM_Admin::enqueue_assets().
+        wp_add_inline_script('pcm-app', '
+            if (typeof crypto !== "undefined" && typeof crypto.randomUUID !== "function") {
+                crypto.randomUUID = function() {
+                    var a = new Uint8Array(16);
+                    crypto.getRandomValues(a);
+                    a[6] = (a[6] & 0x0f) | 0x40;
+                    a[8] = (a[8] & 0x3f) | 0x80;
+                    var h = Array.from(a, function(b) { return b.toString(16).padStart(2, "0"); }).join("");
+                    return h.slice(0,8) + "-" + h.slice(8,12) + "-" + h.slice(12,16) + "-" + h.slice(16,20) + "-" + h.slice(20);
+                };
+            }
+        ', 'before');
 
         wp_localize_script('pcm-app', 'pcmConfig', $this->get_js_config());
     }
