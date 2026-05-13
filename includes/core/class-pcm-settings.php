@@ -59,6 +59,12 @@ class PCM_Settings
         'token_budget_angle' => 8192, // Angle generation (output ~150 tokens)
         'token_budget_copy' => 16384, // Copy generation (output ~500-2000 tokens)
         'token_budget_video' => 4096, // Video prompt enrichment (output ~200 tokens)
+
+        // Shortcode password gate
+        'shortcode_password_hash' => '',
+        'shortcode_cookie_lifetime' => 604800,
+        // Whether to apply rate limiting (5 attempts / 15 min / IP) on the login form
+        'shortcode_rate_limit_enabled' => true,
     );
 
     /**

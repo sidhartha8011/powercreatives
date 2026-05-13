@@ -70,7 +70,17 @@ abstract class PCM_REST_Base
     // =========================================================================
 
     /**
-     * Create a permission callback that checks nonce + WP capability.
+     * Create a permission callback that checks nonce + auth source.
+     *
+     * Accepts two auth sources:
+     *  1. WP user with the required capability (existing admin flow)
+     *  2. Valid shortcode gate cookie — treated as having access to all
+     *     standard endpoints (`manage_options`/`read`). The gate visitor
+     *     operates inside the shared workspace, not as a WP user.
+     *
+     * The nonce check stays in place for both sources to provide CSRF
+     * protection — `wp_create_nonce('wp_rest')` works for anonymous users
+     * (uid 0) and the same uid context is used by `wp_verify_nonce`.
      *
      * @param string $capability WordPress capability to require.
      * @return callable
@@ -78,26 +88,35 @@ abstract class PCM_REST_Base
     protected function make_permission_callback(string $capability): callable
     {
         return function (WP_REST_Request $request) use ($capability) {
-            // Verify WP REST nonce (set by wp_localize_script in PCM_Admin)
             $nonce = $request->get_header('X-WP-Nonce');
             if (!$nonce || !wp_verify_nonce($nonce, 'wp_rest')) {
                 return new WP_Error(
                     'pcm_invalid_nonce',
                     __('Security check failed.', 'power-creatives'),
                     array('status' => 403)
-                    );
+                );
             }
 
-            // Check user capability
-            if (!current_user_can($capability)) {
-                return new WP_Error(
-                    'pcm_forbidden',
-                    __('You do not have permission to perform this action.', 'power-creatives'),
-                    array('status' => 403)
-                    );
+            // Source 1: WP user with required capability
+            if (current_user_can($capability)) {
+                return true;
             }
 
-            return true;
+            // Source 2: Gate-authenticated visitor — only treated as authorised
+            // for the standard read/write capability used across PCM endpoints.
+            if (
+                class_exists('PCM_Gate_Auth')
+                && PCM_Gate_Auth::is_authenticated()
+                && in_array($capability, array('manage_options', 'read', 'edit_posts'), true)
+            ) {
+                return true;
+            }
+
+            return new WP_Error(
+                'pcm_forbidden',
+                __('You do not have permission to perform this action.', 'power-creatives'),
+                array('status' => 403)
+            );
         };
     }
 
@@ -119,15 +138,30 @@ abstract class PCM_REST_Base
     // =========================================================================
 
     /**
-     * Get or create the PCM user row for the current WordPress user.
+     * Get or create the PCM user row for the current request.
      *
-     * Maps wp_users → pcm_users, using WP user ID as openId.
-     * This bridges WordPress auth with the PCM user system.
+     * Two paths:
+     *  1. If a gate-authenticated visitor is making the request (no WP login)
+     *     → return the shared workspace user (one shared row for all visitors).
+     *  2. Otherwise map wp_users → pcm_users, using WP user ID as openId.
      *
      * @return object PCM user row with id, openId, name, email, role.
      */
     protected function get_current_pcm_user(): object
     {
+        // Gate-authed visitor without a WP login → shared workspace user
+        if (
+            !is_user_logged_in()
+            && class_exists('PCM_Gate_Auth')
+            && PCM_Gate_Auth::is_authenticated()
+        ) {
+            $shared = PCM_Gate_Auth::get_shared_pcm_user();
+            if ($shared) {
+                return $shared;
+            }
+            // Fall through to existing logic if the shared user could not be created.
+        }
+
         $wp_user = wp_get_current_user();
 
         // Use WP user ID as the openId for the PCM user system

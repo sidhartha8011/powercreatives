@@ -35,6 +35,7 @@ require_once PCM_PLUGIN_DIR . 'includes/core/db/class-pcm-schema.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/db/class-pcm-db.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-admin.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-shortcode.php';
+require_once PCM_PLUGIN_DIR . 'includes/class-pcm-shortcode-admin.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-activator.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-template-seeds.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-prompt-seeds.php';
@@ -43,6 +44,9 @@ require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-prompt-seeds.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-providers.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-image-utils.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-website-scraper.php';
+
+// ── Core: Shortcode gate authentication ──
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-gate-auth.php';
 
 // ── Core: Base controller (abstract REST class) ──
 require_once PCM_PLUGIN_DIR . 'includes/core/base-controller.php';
@@ -98,6 +102,7 @@ function pcm_init(): void
     // Initialize admin UI (only in wp-admin)
     if (is_admin()) {
         new PCM_Admin();
+        new PCM_Shortcode_Admin();
     }
 
     // Register [power_creatives] shortcode for frontend rendering
