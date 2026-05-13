@@ -96,6 +96,10 @@ class PCM_Kie_Marketplace {
         $status    = self::normalize_state( $task_data['state'] ?? $task_data['status'] ?? '' );
         $result    = self::extract_result_urls( $task_data );
 
+        if ( 'completed' === $status || 'failed' === $status ) {
+            error_log( '[Kie marketplace] Task status=' . $status . ' raw=' . wp_json_encode( $task_data ) );
+        }
+
         return [
             'status'   => $status,
             'progress' => self::parse_progress( $task_data['progress'] ?? null ),
