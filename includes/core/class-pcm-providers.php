@@ -132,6 +132,9 @@ class PCM_Providers
                 // GPT Image 1.5
                     array('id' => 'kie-gpt-image-1.5-t2i', 'name' => 'GPT Image 1.5', 'type' => 'image'),
                     array('id' => 'kie-gpt-image-1.5-i2i', 'name' => 'GPT Image 1.5 I2I', 'type' => 'image'),
+                // GPT Image 2
+                    array('id' => 'kie-gpt-image-2-t2i', 'name' => 'GPT Image 2', 'type' => 'image'),
+                    array('id' => 'kie-gpt-image-2-i2i', 'name' => 'GPT Image 2 I2I', 'type' => 'image'),
                 // Ideogram
                     array('id' => 'kie-ideogram-character', 'name' => 'Ideogram Character', 'type' => 'image'),
                     array('id' => 'kie-ideogram-character-edit', 'name' => 'Ideogram Character Edit', 'type' => 'image'),
