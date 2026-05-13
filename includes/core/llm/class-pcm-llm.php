@@ -196,13 +196,45 @@ class PCM_LLM
         $clean_json = self::extract_json($content);
         $parsed = json_decode($clean_json, true);
 
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new \RuntimeException(
-                sprintf('LLM returned invalid JSON: %s — raw: %s', json_last_error_msg(), substr($content, 0, 500))
-                );
+        if (json_last_error() === JSON_ERROR_NONE) {
+            return $parsed;
         }
 
-        return $parsed;
+        // --- Retry: LLM returned non-JSON (common with Anthropic/Claude) ---
+        // Prepend an explicit JSON-only instruction to force structured output.
+        error_log(sprintf(
+            '[PCM_LLM] invoke_json failed on first attempt (model=%s). Retrying with explicit JSON instruction. Raw preview: %s',
+            $options['model'] ?? 'default',
+            substr($content, 0, 200)
+        ));
+
+        $schema_hint = '';
+        if (!empty($schema['schema']['properties'])) {
+            $schema_hint = ' The JSON must contain these top-level keys: ' . implode(', ', array_keys($schema['schema']['properties'])) . '.';
+        }
+
+        // Inject a hard JSON constraint into the first system message
+        $json_instruction = "CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no explanations, no code blocks. Output raw JSON only.{$schema_hint}";
+
+        $retry_messages = $messages;
+        if (!empty($retry_messages[0]) && ($retry_messages[0]['role'] ?? '') === 'system') {
+            $retry_messages[0]['content'] = $json_instruction . "\n\n" . $retry_messages[0]['content'];
+        } else {
+            array_unshift($retry_messages, array('role' => 'system', 'content' => $json_instruction));
+        }
+
+        $retry_result = self::invoke($retry_messages, $options);
+        $retry_content = $retry_result['content'] ?? '';
+        $retry_clean = self::extract_json($retry_content);
+        $retry_parsed = json_decode($retry_clean, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \RuntimeException(
+                sprintf('LLM returned invalid JSON after retry: %s — raw: %s', json_last_error_msg(), substr($retry_content, 0, 500))
+            );
+        }
+
+        return $retry_parsed;
     }
 
     /**

@@ -50,17 +50,25 @@ class PCM_Provider_KieAI implements PCM_Provider_Interface
      */
     public function generate_image(string $model_id, array $params): array
     {
+        // --- DEBUG: Log provider entry point ---
+        error_log( sprintf( '[KieAI Provider DEBUG] generate_image called: model_id=%s', $model_id ) );
+        error_log( sprintf( '[KieAI Provider DEBUG] raw params: %s', wp_json_encode( array_keys( $params ) ) ) );
+
         // Resolve base64 data URLs → HTTP URLs (same pattern as generate_video)
         $input_urls = $params['inputUrls'] ?? [];
         if (!empty($input_urls)) {
+            error_log( sprintf( '[KieAI Provider DEBUG] Resolving %d input URL(s)', count( $input_urls ) ) );
             $input_urls = PCM_Kie_Upload::resolve_input_urls($this->api_key, $input_urls);
         }
 
-        return PCM_Kie_Api::generate_image($this->api_key, $model_id, [
+        $mapped_params = [
             'prompt' => $params['prompt'] ?? '',
             'aspectRatio' => $params['aspectRatio'] ?? $params['format'] ?? '1:1',
             'inputUrls' => $input_urls,
-        ]);
+        ];
+        error_log( sprintf( '[KieAI Provider DEBUG] Mapped params: prompt_length=%d aspectRatio=%s inputUrls_count=%d', strlen( $mapped_params['prompt'] ), $mapped_params['aspectRatio'], count( $mapped_params['inputUrls'] ) ) );
+
+        return PCM_Kie_Api::generate_image($this->api_key, $model_id, $mapped_params);
     }
 
     /**

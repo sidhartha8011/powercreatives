@@ -103,11 +103,23 @@ class PCM_Kie_Api {
     }
 
     public static function generate_image( string $api_key, string $model_id, array $params ): array {
+        // --- DEBUG: Log entry point for image generation ---
+        error_log( sprintf( '[Kie API DEBUG] generate_image called with model_id=%s', $model_id ) );
+        error_log( sprintf( '[Kie API DEBUG] params keys: %s', implode( ', ', array_keys( $params ) ) ) );
+
         $model_def = self::get_marketplace_model( $model_id );
+
+        // --- DEBUG: Log whether model was found in marketplace registry ---
         if ( $model_def ) {
+            error_log( sprintf( '[Kie API DEBUG] Marketplace model FOUND: id=%s modelName=%s capability=%s', $model_def['id'] ?? 'n/a', $model_def['modelName'] ?? 'n/a', $model_def['capability'] ?? 'n/a' ) );
             $result = PCM_Kie_Marketplace::generate_image( $api_key, $model_def, $params );
+            error_log( sprintf( '[Kie API DEBUG] generate_image result: %s', wp_json_encode( $result ) ) );
             return [ 'url' => $result['url'] ];
         }
+
+        // --- DEBUG: Model NOT found in marketplace, trying dedicated ---
+        error_log( sprintf( '[Kie API DEBUG] Model NOT found in marketplace registry. is_dedicated=%s', self::is_dedicated_model( $model_id ) ? 'yes' : 'no' ) );
+
         $task   = self::create_task( $api_key, $model_id, $params );
         $result = self::wait_for_task( $api_key, $task['taskId'], $model_id, 120, 3 );
         if ( empty( $result['url'] ) ) {

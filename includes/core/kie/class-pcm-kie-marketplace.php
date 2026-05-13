@@ -46,6 +46,7 @@ class PCM_Kie_Marketplace {
         }
 
         error_log( sprintf( '[Kie marketplace] POST %s%s model=%s', self::API_BASE, self::CREATE_ENDPOINT, $model_def['modelName'] ) );
+        error_log( sprintf( '[Kie marketplace DEBUG] Full request body: %s', wp_json_encode( $body ) ) );
 
         $response = wp_remote_post( self::API_BASE . self::CREATE_ENDPOINT, [
             'headers' => self::build_headers( $api_key ),
@@ -57,19 +58,26 @@ class PCM_Kie_Marketplace {
             throw new Exception( 'Kie.ai API request failed: ' . $response->get_error_message() );
         }
 
-        $data = json_decode( wp_remote_retrieve_body( $response ), true );
+        $raw_body = wp_remote_retrieve_body( $response );
+        error_log( sprintf( '[Kie marketplace DEBUG] HTTP status: %d', wp_remote_retrieve_response_code( $response ) ) );
+        error_log( sprintf( '[Kie marketplace DEBUG] Response body: %s', substr( $raw_body, 0, 2000 ) ) );
+
+        $data = json_decode( $raw_body, true );
         $code = $data['code'] ?? wp_remote_retrieve_response_code( $response );
 
         if ( (int) $code !== 200 ) {
             $msg = $data['msg'] ?? self::ERROR_CODES[ (int) $code ] ?? "Unknown error (code {$code})";
+            error_log( sprintf( '[Kie marketplace DEBUG] API ERROR code=%s msg=%s', $code, $msg ) );
             throw new Exception( "Kie.ai marketplace error ({$code}): {$msg}" );
         }
 
         $task_id = $data['data']['taskId'] ?? null;
         if ( empty( $task_id ) ) {
+            error_log( '[Kie marketplace DEBUG] No taskId in response data: ' . wp_json_encode( $data ) );
             throw new Exception( 'Kie.ai returned success but no taskId' );
         }
 
+        error_log( sprintf( '[Kie marketplace DEBUG] Task created successfully: taskId=%s', $task_id ) );
         return [ 'taskId' => $task_id ];
     }
 

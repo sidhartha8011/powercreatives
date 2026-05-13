@@ -432,7 +432,7 @@ export const KIE_MARKETPLACE_IMAGE_MODELS: readonly KieMarketplaceModel[] = [
   // --- GPT Image 2 (Market API version) ---
   {
     id: 'kie-gpt-image-2-t2i',
-    modelName: 'gpt/gpt-image-2-text-to-image',
+    modelName: 'gpt-image-2-text-to-image',
     displayName: 'GPT Image 2',
     vendor: 'OpenAI',
     assetType: 'image',
@@ -447,7 +447,7 @@ export const KIE_MARKETPLACE_IMAGE_MODELS: readonly KieMarketplaceModel[] = [
   },
   {
     id: 'kie-gpt-image-2-i2i',
-    modelName: 'gpt/gpt-image-2-image-to-image',
+    modelName: 'gpt-image-2-image-to-image',
     displayName: 'GPT Image 2 I2I',
     vendor: 'OpenAI',
     assetType: 'image',
