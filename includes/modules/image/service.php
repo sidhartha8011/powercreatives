@@ -87,7 +87,8 @@ class PCM_Image_Service
         ?array $brand_context = null,
         array $ref_images = array(),
         ?string $system_prompt = null,
-        string $model_id = ''
+        string $model_id = '',
+        ?string $user_template = null
         ): array
     {
         // Gracefully fall back to a built-in system prompt when no override is configured.
@@ -105,14 +106,23 @@ class PCM_Image_Service
         );
         $system_prompt = $this->resolve_prompt_placeholders($system_prompt, $vars);
 
-        // Build context-aware user content
-        $user_content = $this->build_concept_user_content(
-            $prompt,
-            $count,
-            $style,
-            $brand_context,
-            $ref_images
-        );
+        // Resolve user prompt template — DB override or built-in default.
+        // Same pattern as suggest_prompts() — the user prompt is now fully
+        // editable via Settings → Prompt Editor → Image → Angles (Scenes) User.
+        if (!$user_template) {
+            $defaults = $defaults ?? self::get_default_prompts();
+            $user_template = $defaults['concept_suggestions_user'];
+        }
+
+        // Add concept-specific variables for the user template
+        $vars['brief'] = $prompt;
+        if ($style) {
+            $vars['style'] = 'Style: ' . $style;
+        }
+        $user_text = $this->resolve_prompt_placeholders($user_template, $vars);
+
+        // Build the user message — multimodal if reference images are provided
+        $user_content = $this->build_multimodal_user_message($user_text, $ref_images);
 
         $messages = array(
                 array('role' => 'system', 'content' => $system_prompt),
@@ -582,67 +592,7 @@ class PCM_Image_Service
     // PRIVATE HELPERS
     // =========================================================================
 
-    /**
-     * Build the user-turn content for concept suggestion LLM calls.
-     *
-     * Supports multimodal input: [{ type: 'text', text: '...' }, { type: 'image_url', ... }].
-     *
-     * @param string     $prompt        Product brief.
-     * @param int        $count         Number of concepts requested.
-     * @param string     $style         Optional style hint.
-     * @param array|null $brand_context Optional brand data.
-     * @param array      $ref_images    Reference images [{ url, intent }].
-     *
-     * @return array|string Multimodal content array or plain string.
-     */
-    private function build_concept_user_content(
-        string $prompt,
-        int $count,
-        string $style = '',
-        ?array $brand_context = null,
-        array $ref_images = array()
-        ): array |string
-    {
-        $text = "Generate {$count} creative image concepts for: {$prompt}\n";
 
-        if ($style) {
-            $text .= "Style: {$style}\n";
-        }
-        if (!empty($brand_context['name'])) {
-            $text .= "Brand: " . $brand_context['name'] . "\n";
-        }
-        if (!empty($brand_context['summary'])) {
-            $text .= "Brand summary: " . $brand_context['summary'] . "\n";
-        }
-
-        // Plain text if no reference images
-        if (empty($ref_images)) {
-            return $text;
-        }
-
-        // Build multimodal array (OpenAI vision format)
-        $content = array(array('type' => 'text', 'text' => $text));
-
-        foreach ($ref_images as $image) {
-            $image_url = $image['url'] ?? '';
-            $intent = $image['intent'] ?? 'reference';
-
-            if (empty($image_url)) {
-                continue;
-            }
-
-            $content[] = array(
-                'type' => 'text',
-                'text' => "Reference image (intent: {$intent}):",
-            );
-            $content[] = array(
-                'type' => 'image_url',
-                'image_url' => array('url' => $image_url),
-            );
-        }
-
-        return $content;
-    }
 
     /**
      * Determine the dominant intent from an array of reference image intents.
@@ -738,6 +688,14 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
             . "- If the user does not specify — default to creating variations that stay close to the reference image.\n\n"
             . "If no reference image (intent above is empty):\n"
             . '- Generate distinct creative concept angles freely with unique visual approaches.',
+
+            // ── Angles (Scenes) — User Prompt ──────────────
+            // Sent as role:user alongside the system prompt above.
+            // Previously hardcoded in build_concept_user_content().
+            'concept_suggestions_user' => "Generate {{count}} creative image concepts for: {{brief}}
+{{style}}
+{{brandName}}
+{{brandSummary}}",
 
             // ── Brief Optimization — System Prompt ───────────────
             'brief_optimization' => 'You are an expert AI image prompt engineer. '

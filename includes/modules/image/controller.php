@@ -92,6 +92,7 @@ class PCM_REST_Image extends PCM_REST_Base
 
         // Look up prompt override from prompt_overrides table
         $system_prompt = $this->get_prompt_override($user->id, 'image', 'concept_suggestions');
+        $user_template = $this->get_prompt_override($user->id, 'image', 'concept_suggestions_user');
 
         try {
             $concepts = $this->service->suggest_concepts(
@@ -102,7 +103,8 @@ class PCM_REST_Image extends PCM_REST_Base
                 $brand_context,
                 $ref_images,
                 $system_prompt,
-                $model_id
+                $model_id,
+                $user_template
             );
 
             return $this->success(array('concepts' => $concepts));
