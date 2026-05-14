@@ -35,7 +35,7 @@ export const PRODUCTION_DEFAULTS: {
 } = {
   numVersions: 3,
   variationsPerModel: 1,
-  autoOptimizeBrief: true,
+  autoOptimizeBrief: false,
 };
 
 // ─── LocalStorage Keys ──────────────────────────────────

@@ -19,7 +19,7 @@ import { memo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Checkbox } from '@/components/ui/checkbox';
+
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ContextPanel } from '@/components/shared/ContextPanel';
 import type { ContextData } from '@/components/shared/ContextPanel';
@@ -189,20 +189,34 @@ export const ImageSidebar = memo(function ImageSidebar({
                             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Product Brief</h3>
                         </div>
                         <div className="flex items-center gap-1.5">
-                            <Checkbox
-                                id="auto-optimize"
-                                checked={autoOptimizeBrief}
-                                onCheckedChange={(checked) => gen.setAutoOptimizeBrief(!!checked)}
-                                className="h-3.5 w-3.5"
-                            />
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                    <label
+                                        htmlFor="auto-optimize"
+                                        className={`flex items-center gap-1 text-[11px] font-medium cursor-pointer select-none transition-colors ${
+                                            autoOptimizeBrief
+                                                ? 'text-primary'
+                                                : 'text-muted-foreground hover:text-foreground'
+                                        }`}
+                                    >
+                                        <Sparkles className={`w-3.5 h-3.5 transition-all ${
+                                            autoOptimizeBrief
+                                                ? 'text-primary drop-shadow-[0_0_4px_hsl(var(--primary)/0.4)]'
+                                                : 'text-muted-foreground'
+                                        }`} />
+                                        AI Enhance
+                                    </label>
                                 </TooltipTrigger>
-                                <TooltipContent side="left" className="max-w-[200px] text-xs">
-                                    AI will automatically enhance your brief for better image generation
+                                <TooltipContent side="left" className="max-w-[220px] text-xs">
+                                    When enabled, AI rewrites your brief into a more detailed, optimized image prompt before generation
                                 </TooltipContent>
                             </Tooltip>
+                            <Switch
+                                id="auto-optimize"
+                                checked={autoOptimizeBrief}
+                                onCheckedChange={(checked) => gen.setAutoOptimizeBrief(checked)}
+                                className="h-4 w-7 data-[state=checked]:bg-primary"
+                            />
                         </div>
                     </div>
 
