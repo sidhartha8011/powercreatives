@@ -39,10 +39,12 @@ export interface UseImageAssetsReturn {
     logoConfig: LogoConfig;
     setLogoConfig: React.Dispatch<React.SetStateAction<LogoConfig>>;
     logoInputRef: RefObject<HTMLInputElement>;
+    clearLogo: () => void;
     // Subject
     subjectConfig: ReferenceAsset;
     setSubjectConfig: React.Dispatch<React.SetStateAction<ReferenceAsset>>;
     subjectInputRef: RefObject<HTMLInputElement>;
+    clearSubject: () => void;
     // Certifications
     certifications: CertificationConfig[];
     setCertifications: React.Dispatch<React.SetStateAction<CertificationConfig[]>>;
@@ -121,10 +123,20 @@ export function useImageAssets(): UseImageAssetsReturn {
         setCertifications((prev) => prev.filter((c) => c.id !== id));
     }, []);
 
+    // ── Clear handlers — reset logo/subject to initial empty state ──
+    const clearLogo = useCallback(() => {
+        setLogoConfig({ isActive: false, placement: 'in-image' as LogoPlacement });
+    }, []);
+
+    const clearSubject = useCallback(() => {
+        setSubjectConfig({ id: 'subject', type: 'product' as ReferenceAssetType, isActive: false });
+    }, []);
+
     // ── Asset pipeline payload — built from current state for generation hook ──
+    // Simplified: if base64 exists, asset is active. No separate isActive flag needed.
     const assetPipelinePayload = useMemo<AssetPipelinePayload>(() => ({
-        logoBase64: logoConfig.base64 && logoConfig.isActive ? logoConfig.base64 : undefined,
-        subjectBase64: subjectConfig.base64 && subjectConfig.isActive ? subjectConfig.base64 : undefined,
+        logoBase64: logoConfig.base64 || undefined,
+        subjectBase64: subjectConfig.base64 || undefined,
         textOverlay: textOverlay.isActive && textOverlay.text
             ? { text: textOverlay.text, placement: textOverlay.placement, optimize: textOverlay.optimize }
             : undefined,
@@ -168,9 +180,11 @@ export function useImageAssets(): UseImageAssetsReturn {
         logoConfig,
         setLogoConfig,
         logoInputRef,
+        clearLogo,
         subjectConfig,
         setSubjectConfig,
         subjectInputRef,
+        clearSubject,
         certifications,
         setCertifications,
         certInputRef,

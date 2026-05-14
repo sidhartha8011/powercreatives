@@ -361,13 +361,10 @@ export function useImageGeneration({
                         try {
 
                             // Build asset pipeline context for the API payload
+                            // NOTE: logoBase64 and subjectBase64 are intentionally NOT sent here.
+                            // No backend provider handles them — they were dead code. Brand asset
+                            // images reach the model via inputUrls (reference images pipeline).
                             const pipelineExtra: Record<string, unknown> = {};
-                            if (assetPipelinePayload.logoBase64) {
-                                pipelineExtra.logoBase64 = assetPipelinePayload.logoBase64;
-                            }
-                            if (assetPipelinePayload.subjectBase64) {
-                                pipelineExtra.subjectBase64 = assetPipelinePayload.subjectBase64;
-                            }
                             if (assetPipelinePayload.textOverlay?.text) {
                                 pipelineExtra.textOverlay = assetPipelinePayload.textOverlay;
                             }
@@ -385,7 +382,7 @@ export function useImageGeneration({
                             const result = await generateImageMutation.mutateAsync({
                                 prompt: fullPrompt,
                                 model: modelId,
-                                provider: model?.provider ?? '',
+                                provider: resolvedProvider,
                                 ...(refUrls.length > 0 ? { referenceImageUrls: refUrls, referenceImageIntents: refIntents } : {}),
                                 ...pipelineExtra,
                             });

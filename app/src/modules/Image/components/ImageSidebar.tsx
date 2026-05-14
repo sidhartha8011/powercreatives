@@ -77,8 +77,8 @@ interface ImageSidebarProps {
     // Asset pipeline hook
     asset: Pick<
         UseImageAssetsReturn,
-        | 'logoConfig' | 'logoInputRef'
-        | 'subjectConfig' | 'subjectInputRef'
+        | 'logoConfig' | 'logoInputRef' | 'clearLogo'
+        | 'subjectConfig' | 'subjectInputRef' | 'clearSubject'
         | 'certifications' | 'certInputRef' | 'removeCertification' | 'setCertifications'
         | 'textOverlay' | 'setTextOverlay'
         | 'handleFileUpload'
@@ -159,7 +159,7 @@ export const ImageSidebar = memo(function ImageSidebar({
         handleGenerateSuggestions, handleGenerateContextSuggestions,
         applySuggestion, applyContextSuggestion } = sug;
 
-    const { logoConfig, logoInputRef, subjectConfig, subjectInputRef,
+    const { logoConfig, logoInputRef, clearLogo, subjectConfig, subjectInputRef, clearSubject,
         certifications, certInputRef, removeCertification, setCertifications,
         textOverlay, setTextOverlay, handleFileUpload,
         setLogoConfig, setSubjectConfig } = asset;
@@ -230,6 +230,13 @@ export const ImageSidebar = memo(function ImageSidebar({
                                 <div className="flex items-center gap-2 mt-2">
                                     <img src={logoConfig.base64} alt="Logo" className="w-8 h-8 object-contain rounded border border-border" />
                                     <span className="text-xs text-muted-foreground">Logo uploaded</span>
+                                    <button
+                                        onClick={clearLogo}
+                                        className="ml-auto w-5 h-5 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground rounded-full flex items-center justify-center transition-colors"
+                                        title="Remove logo"
+                                    >
+                                        <X className="w-2.5 h-2.5" />
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -252,6 +259,13 @@ export const ImageSidebar = memo(function ImageSidebar({
                                 <div className="flex items-center gap-2 mt-2">
                                     <img src={subjectConfig.base64} alt="Subject" className="w-8 h-8 object-contain rounded border border-border" />
                                     <span className="text-xs text-muted-foreground">Subject uploaded</span>
+                                    <button
+                                        onClick={clearSubject}
+                                        className="ml-auto w-5 h-5 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground rounded-full flex items-center justify-center transition-colors"
+                                        title="Remove subject"
+                                    >
+                                        <X className="w-2.5 h-2.5" />
+                                    </button>
                                 </div>
                             )}
                         </div>
