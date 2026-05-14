@@ -44,6 +44,9 @@ interface ImageResultsGridProps {
     selectedAssetIds: Set<string>;
     onToggleAssetSelection: (id: string) => void;
     onSelectAllForModel: (modelId: string) => void;
+    onSelectAllForTab: () => void;
+    /** All assets array (unfiltered) — needed to compute tab-level selection state */
+    allAssets: GeneratedAsset[];
 }
 
 // ============================================================================
@@ -63,26 +66,49 @@ export const ImageResultsGrid = memo(function ImageResultsGrid({
     selectedAssetIds,
     onToggleAssetSelection,
     onSelectAllForModel,
+    onSelectAllForTab,
+    allAssets,
 }: ImageResultsGridProps) {
+    // Compute tab-level selection state for the active tab
+    const activeTabCompleted = allAssets.filter(
+        (a) => a.versionId === activeTab && a.status === 'complete',
+    );
+    const isAllTabSelected = activeTabCompleted.length > 0
+        && activeTabCompleted.every((a) => selectedAssetIds.has(a.id));
+
     return (
         <main className="flex-1 flex flex-col overflow-hidden">
             {/* Version Tabs */}
             {adVersions.length > 0 && (
                 <div className="shrink-0 border-b border-border bg-muted/20">
-                    <div className="flex overflow-x-auto">
-                        {adVersions.map((version) => (
-                            <button
-                                key={version.id}
-                                onClick={() => onTabChange(version.id)}
-                                className={`px-6 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${activeTab === version.id
-                                        ? 'border-primary text-primary bg-background'
-                                        : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-background/50'
-                                    }`}
-                            >
-                                {version.name}
-                            </button>
-                        ))}
-                    </div>
+                <div className="flex items-center overflow-x-auto">
+                    {/* Tab-level Select All — selects all completed assets across models for active tab */}
+                    {activeTabCompleted.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onSelectAllForTab(); }}
+                            className="flex items-center px-3 py-3 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                            title={isAllTabSelected ? 'Deselect all in this tab' : 'Select all in this tab'}
+                        >
+                            {isAllTabSelected
+                                ? <CheckSquare className="w-4 h-4 text-primary" />
+                                : <Square className="w-4 h-4" />
+                            }
+                        </button>
+                    )}
+                    {adVersions.map((version) => (
+                        <button
+                            key={version.id}
+                            onClick={() => onTabChange(version.id)}
+                            className={`px-6 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${activeTab === version.id
+                                    ? 'border-primary text-primary bg-background'
+                                    : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-background/50'
+                                }`}
+                        >
+                            {version.name}
+                        </button>
+                    ))}
+                </div>
                 </div>
             )}
 
