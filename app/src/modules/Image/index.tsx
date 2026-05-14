@@ -15,7 +15,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import { Image as ImageIcon, Play, RefreshCw } from 'lucide-react';
+import { Image as ImageIcon, Play, RefreshCw, Download, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AssetDetailView } from '@/components/AssetDetailView';
 import type { Asset } from '@/components/AssetDetailView';
@@ -35,6 +35,7 @@ import { useImageAssets } from './hooks/useImageAssets';
 // Components
 import { ImageSidebar } from './components/ImageSidebar';
 import { ImageResultsGrid } from './components/ImageResultsGrid';
+import { BulkActionBar } from '@/components/shared/BulkActionBar';
 
 // ============================================================================
 // Component
@@ -248,6 +249,9 @@ export function ImageModule() {
           onAssetClick={handleOpenDetailView}
           onDownload={genHook.downloadAsset}
           getModelInfo={getModelInfo}
+          selectedAssetIds={genHook.selectedAssetIds}
+          onToggleAssetSelection={genHook.toggleAssetSelection}
+          onSelectAllForModel={genHook.selectAllForModel}
         />
       </div>
 
@@ -280,6 +284,12 @@ export function ImageModule() {
           }}
         />
       )}
+
+      {/* Bulk Action Bar — slides in from bottom when assets are selected */}
+      <BulkActionBar count={genHook.selectedAssets.length} onClear={genHook.clearAssetSelection}>
+        <BulkActionBar.Action icon={Download} label="Download" onClick={genHook.bulkDownload} />
+        <BulkActionBar.Action icon={Trash2} label="Remove" onClick={genHook.bulkRemove} variant="destructive" />
+      </BulkActionBar>
     </div>
   );
 }

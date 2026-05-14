@@ -15,8 +15,9 @@ import { memo } from 'react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/shared/EmptyState';
 import {
-    Sparkles, Loader2, AlertCircle, Download,
+    Sparkles, Loader2, AlertCircle, Download, CheckSquare, Square,
 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import type { AdVersion, GeneratedAsset } from '@/types';
 
 // ============================================================================
@@ -39,6 +40,10 @@ interface ImageResultsGridProps {
     onAssetClick: (asset: GeneratedAsset) => void;
     onDownload: (url: string, filename: string) => void;
     getModelInfo: (modelId: string) => ModelInfo;
+    // Multi-select (bulk actions)
+    selectedAssetIds: Set<string>;
+    onToggleAssetSelection: (id: string) => void;
+    onSelectAllForModel: (modelId: string) => void;
 }
 
 // ============================================================================
@@ -55,6 +60,9 @@ export const ImageResultsGrid = memo(function ImageResultsGrid({
     onAssetClick,
     onDownload,
     getModelInfo,
+    selectedAssetIds,
+    onToggleAssetSelection,
+    onSelectAllForModel,
 }: ImageResultsGridProps) {
     return (
         <main className="flex-1 flex flex-col overflow-hidden">
@@ -94,11 +102,27 @@ export const ImageResultsGrid = memo(function ImageResultsGrid({
                             const modelInfo = getModelInfo(modelId);
                             const modelAssets = assetsByModel[modelId] ?? [];
                             const completed = modelAssets.filter((a) => a.status === 'complete').length;
+                            const completedAssets = modelAssets.filter((a) => a.status === 'complete');
+                            const allModelSelected = completedAssets.length > 0 && completedAssets.every((a) => selectedAssetIds.has(a.id));
 
                             return (
                                 <section key={modelId} className="space-y-3">
                                     {/* Model Header */}
                                     <div className="flex items-center gap-3 pb-2 border-b border-border">
+                                        {/* Select All toggle for this model */}
+                                        {completedAssets.length > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => onSelectAllForModel(modelId)}
+                                                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                                title={allModelSelected ? 'Deselect all' : 'Select all'}
+                                            >
+                                                {allModelSelected
+                                                    ? <CheckSquare className="w-4 h-4 text-primary" />
+                                                    : <Square className="w-4 h-4" />
+                                                }
+                                            </button>
+                                        )}
                                         <div>
                                             <h3 className="text-sm font-semibold">{modelInfo.name}</h3>
                                             <p className="text-xs text-muted-foreground capitalize">{modelInfo.provider}</p>
@@ -120,8 +144,10 @@ export const ImageResultsGrid = memo(function ImageResultsGrid({
                                                     key={asset.id}
                                                     asset={asset}
                                                     isSelected={selectedAsset?.id === asset.id}
+                                                    isMultiSelected={selectedAssetIds.has(asset.id)}
                                                     onClick={() => onAssetClick(asset)}
                                                     onDownload={onDownload}
+                                                    onToggleSelect={() => onToggleAssetSelection(asset.id)}
                                                 />
                                             ))
                                         )}
@@ -143,17 +169,24 @@ export const ImageResultsGrid = memo(function ImageResultsGrid({
 interface ImageTileProps {
     asset: GeneratedAsset;
     isSelected: boolean;
+    isMultiSelected: boolean;
     onClick: () => void;
     onDownload: (url: string, filename: string) => void;
+    onToggleSelect: () => void;
 }
 
-const ImageTile = memo(function ImageTile({ asset, isSelected, onClick, onDownload }: ImageTileProps) {
+const ImageTile = memo(function ImageTile({ asset, isSelected, isMultiSelected, onClick, onDownload, onToggleSelect }: ImageTileProps) {
+    const isComplete = asset.status === 'complete';
+
     return (
         <div
-            className={`flex-shrink-0 relative w-48 h-48 rounded-lg overflow-hidden border transition-all cursor-pointer ${isSelected
-                    ? 'border-primary ring-2 ring-primary/20'
-                    : 'border-border hover:border-primary/50'
-                }`}
+            className={`flex-shrink-0 relative w-48 h-48 rounded-lg overflow-hidden border transition-all cursor-pointer group ${
+                isMultiSelected
+                    ? 'border-primary ring-2 ring-primary/30'
+                    : isSelected
+                        ? 'border-primary ring-2 ring-primary/20'
+                        : 'border-border hover:border-primary/50'
+            }`}
             onClick={onClick}
         >
             {asset.status === 'processing' && (
@@ -172,18 +205,32 @@ const ImageTile = memo(function ImageTile({ asset, isSelected, onClick, onDownlo
                             className="text-[10px] text-muted-foreground text-center mt-1 line-clamp-3 px-1"
                             title={asset.errorMessage}
                         >
-                            {asset.errorMessage.length > 80 ? asset.errorMessage.slice(0, 80) + '…' : asset.errorMessage}
+                            {asset.errorMessage.length > 80 ? asset.errorMessage.slice(0, 80) + '...' : asset.errorMessage}
                         </p>
                     )}
                 </div>
             )}
 
-            {asset.status === 'complete' && asset.url && (
+            {isComplete && asset.url && (
                 <>
                     <img src={asset.url} alt={asset.prompt} className="w-full h-full object-cover" />
 
+                    {/* Selection checkbox — top-left, visible on hover or when selected */}
+                    <div
+                        className={`absolute top-2 left-2 z-10 transition-opacity ${
+                            isMultiSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                        }`}
+                    >
+                        <Checkbox
+                            checked={isMultiSelected}
+                            onCheckedChange={() => onToggleSelect()}
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-5 w-5 border-2 border-white bg-black/30 data-[state=checked]:bg-primary data-[state=checked]:border-primary shadow-sm"
+                        />
+                    </div>
+
                     {/* Download hover overlay */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 hover:opacity-100 transition-opacity pointer-events-none">
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                         <div className="absolute bottom-0 left-0 right-0 p-3 pointer-events-auto">
                             <Button
                                 size="sm"

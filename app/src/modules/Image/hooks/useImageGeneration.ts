@@ -71,6 +71,14 @@ export interface UseImageGenerationReturn {
     modelsByTier: Record<CostTier, Array<{ id: string; name: string; provider: string; costTier: CostTier }>>;
     isLoadingRegistry: boolean;
     hasIntegrations: boolean;
+    // Multi-select (bulk actions)
+    selectedAssetIds: Set<string>;
+    selectedAssets: GeneratedAsset[];
+    toggleAssetSelection: (id: string) => void;
+    clearAssetSelection: () => void;
+    selectAllForModel: (modelId: string) => void;
+    bulkDownload: () => void;
+    bulkRemove: () => void;
     // Actions
     handleGenerate: (productBrief: string) => Promise<void>;
     toggleModel: (modelId: string) => void;
@@ -139,6 +147,9 @@ export function useImageGeneration({
     const [activeTab, setActiveTab] = useState<string | null>(null);
     const [assets, setAssets] = useState<GeneratedAsset[]>([]);
 
+    // ── Multi-select state for bulk actions ──
+    const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
+
     // ── Derived: group assets by model for the active version tab ──
     const assetsByModel = useMemo<Record<string, GeneratedAsset[]>>(() => {
         const grouped: Record<string, GeneratedAsset[]> = {};
@@ -172,6 +183,65 @@ export function useImageGeneration({
         link.target = '_blank';
         link.click();
     }, []);
+
+    // ── Multi-select: derived selected assets ──
+    const selectedAssets = useMemo(
+        () => assets.filter((a) => selectedAssetIds.has(a.id)),
+        [assets, selectedAssetIds],
+    );
+
+    // ── Multi-select: toggle a single asset ──
+    const toggleAssetSelection = useCallback((id: string) => {
+        setSelectedAssetIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
+
+    // ── Multi-select: clear all selections ──
+    const clearAssetSelection = useCallback(() => {
+        setSelectedAssetIds(new Set());
+    }, []);
+
+    // ── Multi-select: select/deselect all completed assets for a model ──
+    const selectAllForModel = useCallback((modelId: string) => {
+        const modelAssets = (assetsByModel[modelId] ?? []).filter((a) => a.status === 'complete');
+        setSelectedAssetIds((prev) => {
+            const next = new Set(prev);
+            const allSelected = modelAssets.every((a) => next.has(a.id));
+            if (allSelected) {
+                // Deselect all for this model
+                modelAssets.forEach((a) => next.delete(a.id));
+            } else {
+                // Select all for this model
+                modelAssets.forEach((a) => next.add(a.id));
+            }
+            return next;
+        });
+    }, [assetsByModel]);
+
+    // ── Bulk download: sequentially download all selected assets ──
+    const bulkDownload = useCallback(() => {
+        const toDownload = selectedAssets.filter((a) => a.status === 'complete' && a.url);
+        if (toDownload.length === 0) return;
+        toDownload.forEach((asset, i) => {
+            // Stagger downloads slightly to avoid browser blocking
+            setTimeout(() => {
+                downloadAsset(asset.url!, `${asset.modelName}-${asset.id}.png`);
+            }, i * 200);
+        });
+        toast.success(`Downloading ${toDownload.length} images`);
+    }, [selectedAssets, downloadAsset]);
+
+    // ── Bulk remove: remove selected assets from session ──
+    const bulkRemove = useCallback(() => {
+        const idsToRemove = new Set(selectedAssetIds);
+        setAssets((prev) => prev.filter((a) => !idsToRemove.has(a.id)));
+        setSelectedAssetIds(new Set());
+        toast.success(`Removed ${idsToRemove.size} images`);
+    }, [selectedAssetIds]);
 
     // ── Build brand color context string ──
     const buildColorContext = useCallback((brand: ContextData['brand']): string => {
@@ -409,6 +479,14 @@ export function useImageGeneration({
         modelsByTier,
         isLoadingRegistry,
         hasIntegrations,
+        // Multi-select (bulk actions)
+        selectedAssetIds,
+        selectedAssets,
+        toggleAssetSelection,
+        clearAssetSelection,
+        selectAllForModel,
+        bulkDownload,
+        bulkRemove,
         // Actions
         handleGenerate,
         toggleModel,
