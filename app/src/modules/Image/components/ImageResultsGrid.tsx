@@ -11,7 +11,7 @@
  * Pure presentational component — all state and callbacks come from props.
  */
 
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/shared/EmptyState';
 import {
@@ -69,6 +69,19 @@ export const ImageResultsGrid = memo(function ImageResultsGrid({
     onSelectAllForTab,
     allAssets,
 }: ImageResultsGridProps) {
+    // Pre-compute completed assets per tab to avoid inline filter in render loop.
+    // Without this, allAssets.filter() runs per-tab per-render (O(tabs * assets)).
+    const completedByTab = useMemo(() => {
+        const map = new Map<string, GeneratedAsset[]>();
+        allAssets.forEach((a) => {
+            if (a.status !== 'complete') return;
+            const list = map.get(a.versionId) ?? [];
+            list.push(a);
+            map.set(a.versionId, list);
+        });
+        return map;
+    }, [allAssets]);
+
     return (
         <main className="flex-1 flex flex-col overflow-hidden">
             {/* Version Tabs */}
@@ -76,10 +89,8 @@ export const ImageResultsGrid = memo(function ImageResultsGrid({
                 <div className="shrink-0 border-b border-border bg-muted/20">
                 <div className="flex items-center overflow-x-auto">
                     {adVersions.map((version) => {
-                        // Per-tab selection state — independent of which tab is active
-                        const tabCompleted = allAssets.filter(
-                            (a) => a.versionId === version.id && a.status === 'complete',
-                        );
+                        // Use pre-computed map instead of inline filter
+                        const tabCompleted = completedByTab.get(version.id) ?? [];
                         const isThisTabAllSelected = tabCompleted.length > 0
                             && tabCompleted.every((a) => selectedAssetIds.has(a.id));
                         const isActive = activeTab === version.id;

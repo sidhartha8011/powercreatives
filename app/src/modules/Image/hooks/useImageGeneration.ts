@@ -13,6 +13,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
 import { useSettings } from '@/contexts/AppContext';
+import { useRowSelection } from '@/hooks/useRowSelection';
 import type {
     AdVersion,
     GeneratedAsset,
@@ -148,9 +149,6 @@ export function useImageGeneration({
     const [activeTab, setActiveTab] = useState<string | null>(null);
     const [assets, setAssets] = useState<GeneratedAsset[]>([]);
 
-    // ── Multi-select state for bulk actions ──
-    const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
-
     // ── Derived: group assets by model for the active version tab ──
     const assetsByModel = useMemo<Record<string, GeneratedAsset[]>>(() => {
         const grouped: Record<string, GeneratedAsset[]> = {};
@@ -185,61 +183,32 @@ export function useImageGeneration({
         link.click();
     }, []);
 
+    // ── Multi-select via shared useRowSelection hook ──
+    // Reuses the same selection primitive as Brands, Templates, Keywords.
+    // Domain-specific operations (selectAllForModel, selectAllForTab) compose on top.
+    const selection = useRowSelection<string>();
+
     // ── Multi-select: derived selected assets ──
     const selectedAssets = useMemo(
-        () => assets.filter((a) => selectedAssetIds.has(a.id)),
-        [assets, selectedAssetIds],
+        () => assets.filter((a) => selection.selectedIds.has(a.id)),
+        [assets, selection.selectedIds],
     );
-
-    // ── Multi-select: toggle a single asset ──
-    const toggleAssetSelection = useCallback((id: string) => {
-        setSelectedAssetIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
-    }, []);
-
-    // ── Multi-select: clear all selections ──
-    const clearAssetSelection = useCallback(() => {
-        setSelectedAssetIds(new Set());
-    }, []);
 
     // ── Multi-select: select/deselect all completed assets for a model ──
     const selectAllForModel = useCallback((modelId: string) => {
         const modelAssets = (assetsByModel[modelId] ?? []).filter((a) => a.status === 'complete');
-        setSelectedAssetIds((prev) => {
-            const next = new Set(prev);
-            const allSelected = modelAssets.every((a) => next.has(a.id));
-            if (allSelected) {
-                // Deselect all for this model
-                modelAssets.forEach((a) => next.delete(a.id));
-            } else {
-                // Select all for this model
-                modelAssets.forEach((a) => next.add(a.id));
-            }
-            return next;
-        });
-    }, [assetsByModel]);
+        const ids = modelAssets.map((a) => a.id);
+        selection.toggleAll(ids);
+    }, [assetsByModel, selection]);
 
     // ── Multi-select: select/deselect all completed assets for a given tab ──
     const selectAllForTab = useCallback((tabId: string) => {
-        // Gather all completed assets across all models for the requested version tab
         const tabAssets = assets.filter(
             (a) => a.versionId === tabId && a.status === 'complete',
         );
-        setSelectedAssetIds((prev) => {
-            const next = new Set(prev);
-            const allSelected = tabAssets.length > 0 && tabAssets.every((a) => next.has(a.id));
-            if (allSelected) {
-                tabAssets.forEach((a) => next.delete(a.id));
-            } else {
-                tabAssets.forEach((a) => next.add(a.id));
-            }
-            return next;
-        });
-    }, [assets]);
+        const ids = tabAssets.map((a) => a.id);
+        selection.toggleAll(ids);
+    }, [assets, selection]);
 
     // ── Bulk download: sequentially download all selected assets ──
     const bulkDownload = useCallback(() => {
@@ -256,11 +225,11 @@ export function useImageGeneration({
 
     // ── Bulk remove: remove selected assets from session ──
     const bulkRemove = useCallback(() => {
-        const idsToRemove = new Set(selectedAssetIds);
+        const idsToRemove = new Set(selection.selectedIds);
         setAssets((prev) => prev.filter((a) => !idsToRemove.has(a.id)));
-        setSelectedAssetIds(new Set());
+        selection.clearAll();
         toast.success(`Removed ${idsToRemove.size} images`);
-    }, [selectedAssetIds]);
+    }, [selection]);
 
     // ── Build brand color context string ──
     const buildColorContext = useCallback((brand: ContextData['brand']): string => {
@@ -498,11 +467,11 @@ export function useImageGeneration({
         modelsByTier,
         isLoadingRegistry,
         hasIntegrations,
-        // Multi-select (bulk actions)
-        selectedAssetIds,
+        // Multi-select (bulk actions) — delegated to shared useRowSelection<string>
+        selectedAssetIds: selection.selectedIds,
         selectedAssets,
-        toggleAssetSelection,
-        clearAssetSelection,
+        toggleAssetSelection: selection.toggle,
+        clearAssetSelection: selection.clearAll,
         selectAllForModel,
         selectAllForTab,
         bulkDownload,

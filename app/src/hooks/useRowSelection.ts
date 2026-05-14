@@ -1,7 +1,10 @@
 /**
- * useRowSelection — Reusable row selection hook for data tables.
+ * useRowSelection — Reusable row selection hook for data tables and asset grids.
  *
- * Manages a Set<number> of selected row IDs with:
+ * Generic over the ID type: `useRowSelection<string>()` for string IDs,
+ * `useRowSelection()` (defaults to number) for numeric IDs.
+ *
+ * Manages a Set<T> of selected row IDs with:
  *   - toggle(id)       — select/deselect a single row
  *   - selectAll(ids)   — select all visible rows
  *   - clearAll()       — deselect everything
@@ -11,8 +14,8 @@
  *   - selectedIds      — the current Set (stable reference via useMemo)
  *   - count            — number of selected rows
  *
- * Designed to be table-agnostic: works with Templates, Brands, or any
- * future table that uses numeric IDs.
+ * Designed to be table-agnostic: works with Templates, Brands, Keywords
+ * (numeric IDs) and Image assets (string IDs).
  *
  * Auto-clears selection when the underlying data changes (e.g. after
  * a bulk delete removes rows that were selected).
@@ -20,34 +23,38 @@
 
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
-interface UseRowSelectionReturn {
+interface UseRowSelectionReturn<T extends string | number> {
   /** The set of currently selected row IDs */
-  selectedIds: Set<number>;
+  selectedIds: Set<T>;
   /** Number of selected rows */
   count: number;
   /** Toggle a single row's selection */
-  toggle: (id: number) => void;
-  /** Select all provided IDs */
-  selectAll: (ids: number[]) => void;
+  toggle: (id: T) => void;
+  /** Select all provided IDs (replaces current selection) */
+  selectAll: (ids: T[]) => void;
+  /** Add all provided IDs to the current selection (merge, not replace) */
+  addAll: (ids: T[]) => void;
+  /** Remove all provided IDs from the current selection */
+  removeAll: (ids: T[]) => void;
   /** Clear all selections */
   clearAll: () => void;
   /** Check if a specific row is selected */
-  isSelected: (id: number) => boolean;
+  isSelected: (id: T) => boolean;
   /** True when all provided visible IDs are selected (and count > 0) */
-  isAllSelected: (visibleIds: number[]) => boolean;
+  isAllSelected: (visibleIds: T[]) => boolean;
   /** True when some but not all visible IDs are selected */
-  isIndeterminate: (visibleIds: number[]) => boolean;
+  isIndeterminate: (visibleIds: T[]) => boolean;
   /** Toggle between select-all and clear-all for a set of visible IDs */
-  toggleAll: (visibleIds: number[]) => void;
+  toggleAll: (visibleIds: T[]) => void;
 }
 
-export function useRowSelection(): UseRowSelectionReturn {
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+export function useRowSelection<T extends string | number = number>(): UseRowSelectionReturn<T> {
+  const [selectedIds, setSelectedIds] = useState<Set<T>>(new Set());
 
   // Stable reference for the count
   const count = selectedIds.size;
 
-  const toggle = useCallback((id: number) => {
+  const toggle = useCallback((id: T) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -59,8 +66,26 @@ export function useRowSelection(): UseRowSelectionReturn {
     });
   }, []);
 
-  const selectAll = useCallback((ids: number[]) => {
+  const selectAll = useCallback((ids: T[]) => {
     setSelectedIds(new Set(ids));
+  }, []);
+
+  /** Add IDs to the current selection without removing existing ones */
+  const addAll = useCallback((ids: T[]) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+  }, []);
+
+  /** Remove IDs from the current selection */
+  const removeAll = useCallback((ids: T[]) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
   }, []);
 
   const clearAll = useCallback(() => {
@@ -68,18 +93,18 @@ export function useRowSelection(): UseRowSelectionReturn {
   }, []);
 
   const isSelected = useCallback(
-    (id: number) => selectedIds.has(id),
+    (id: T) => selectedIds.has(id),
     [selectedIds]
   );
 
   const isAllSelected = useCallback(
-    (visibleIds: number[]) =>
+    (visibleIds: T[]) =>
       visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id)),
     [selectedIds]
   );
 
   const isIndeterminate = useCallback(
-    (visibleIds: number[]) => {
+    (visibleIds: T[]) => {
       if (visibleIds.length === 0) return false;
       const someSelected = visibleIds.some((id) => selectedIds.has(id));
       const allSelected = visibleIds.every((id) => selectedIds.has(id));
@@ -89,18 +114,19 @@ export function useRowSelection(): UseRowSelectionReturn {
   );
 
   const toggleAll = useCallback(
-    (visibleIds: number[]) => {
+    (visibleIds: T[]) => {
       const allCurrentlySelected =
         visibleIds.length > 0 &&
         visibleIds.every((id) => selectedIds.has(id));
 
       if (allCurrentlySelected) {
-        clearAll();
+        // Remove only these IDs (don't clear entire selection)
+        removeAll(visibleIds);
       } else {
-        selectAll(visibleIds);
+        addAll(visibleIds);
       }
     },
-    [selectedIds, clearAll, selectAll]
+    [selectedIds, removeAll, addAll]
   );
 
   return {
@@ -108,6 +134,8 @@ export function useRowSelection(): UseRowSelectionReturn {
     count,
     toggle,
     selectAll,
+    addAll,
+    removeAll,
     clearAll,
     isSelected,
     isAllSelected,

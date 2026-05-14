@@ -257,7 +257,10 @@ PROMPT;
             }
 
             $result = PCM_LLM::invoke($messages, $options);
-            $parsed = json_decode($result['content'] ?? '{}', true);
+            // Defensive: some providers (Claude, Gemini) wrap JSON in markdown
+            // despite response_format instructions. extract_json() is a no-op on clean JSON.
+            $clean_json = PCM_LLM::extract_json($result['content'] ?? '{}');
+            $parsed = json_decode($clean_json !== '' ? $clean_json : '{}', true);
 
             // Frontend expects a flat array: response.map(c => ...)
             return $this->success($parsed['concepts'] ?? array());
@@ -506,7 +509,9 @@ PROMPT;
 
             if ($count > 1) {
                 // Parse JSON response for multi-angle
-                $parsed = json_decode($content, true);
+                // Defensive: some providers wrap JSON in markdown code blocks.
+                $clean_json = PCM_LLM::extract_json($content);
+                $parsed = json_decode($clean_json !== '' ? $clean_json : '{}', true);
                 $prompts = $parsed['prompts'] ?? array($content);
             }
             else {
