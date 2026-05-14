@@ -22,6 +22,7 @@ import { Switch } from '@/components/ui/switch';
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ContextPanel } from '@/components/shared/ContextPanel';
 import type { ContextData } from '@/components/shared/ContextPanel';
 import { SessionReferenceImagePanel } from '@/components/shared/SessionReferenceImagePanel';
@@ -194,13 +195,27 @@ export const ImageSidebar = memo(function ImageSidebar({
                         </section>
                     )}
 
-                {/* 3. Session Reference Images */}
-                <section>
-                    <SessionReferenceImagePanel
-                        value={sessionReferenceImages}
-                        onChange={onSessionReferenceImagesChange}
-                    />
-                </section>
+                {/* 3. Session Reference Images — collapsed by default to keep brand info close to top */}
+                <Collapsible defaultOpen={false} className="group/refimgs">
+                    <CollapsibleTrigger className="flex items-center justify-between w-full py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
+                        <span className="flex items-center gap-2">
+                            <Sparkles className="w-3.5 h-3.5" />
+                            Reference Images
+                            <span className="text-[10px] font-normal normal-case text-muted-foreground/70">
+                                ({sessionReferenceImages.length})
+                            </span>
+                        </span>
+                        <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]/refimgs:rotate-180" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                        <section className="pt-2">
+                            <SessionReferenceImagePanel
+                                value={sessionReferenceImages}
+                                onChange={onSessionReferenceImagesChange}
+                            />
+                        </section>
+                    </CollapsibleContent>
+                </Collapsible>
 
                 {/* 4. Generate Suggestions from Context */}
                 <section>
@@ -446,13 +461,17 @@ export const ImageSidebar = memo(function ImageSidebar({
                     </div>
                 </section>
 
-                {/* 8. Asset Pipeline */}
-                <section>
-                    <div className="flex items-center gap-2 mb-3">
-                        <Settings2 className="w-4 h-4 text-muted-foreground" />
-                        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Asset Pipeline</h3>
-                    </div>
-                    <div className="space-y-3">
+                {/* 8. Asset Pipeline — collapsed by default; Logo / Subject / Trust Badges / Allow Text live inside */}
+                <Collapsible defaultOpen={false} className="group/pipeline">
+                    <CollapsibleTrigger className="flex items-center justify-between w-full py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
+                        <span className="flex items-center gap-2">
+                            <Settings2 className="w-4 h-4" />
+                            Asset Pipeline
+                        </span>
+                        <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]/pipeline:rotate-180" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                        <div className="space-y-3 pt-2">
                         {/* Logo */}
                         <div className="p-3 rounded-lg border border-border bg-background">
                             <div className="flex items-center justify-between mb-2">
@@ -581,8 +600,9 @@ export const ImageSidebar = memo(function ImageSidebar({
                                 </div>
                             )}
                         </div>
-                    </div>
-                </section>
+                        </div>
+                    </CollapsibleContent>
+                </Collapsible>
             </div>
         </aside>
     );
