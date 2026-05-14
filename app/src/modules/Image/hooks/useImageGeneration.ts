@@ -77,7 +77,7 @@ export interface UseImageGenerationReturn {
     toggleAssetSelection: (id: string) => void;
     clearAssetSelection: () => void;
     selectAllForModel: (modelId: string) => void;
-    selectAllForTab: () => void;
+    selectAllForTab: (tabId: string) => void;
     bulkDownload: () => void;
     bulkRemove: () => void;
     // Actions
@@ -223,11 +223,11 @@ export function useImageGeneration({
         });
     }, [assetsByModel]);
 
-    // ── Multi-select: select/deselect all completed assets for the active tab ──
-    const selectAllForTab = useCallback(() => {
-        // Gather all completed assets across all models for the active version tab
+    // ── Multi-select: select/deselect all completed assets for a given tab ──
+    const selectAllForTab = useCallback((tabId: string) => {
+        // Gather all completed assets across all models for the requested version tab
         const tabAssets = assets.filter(
-            (a) => a.versionId === activeTab && a.status === 'complete',
+            (a) => a.versionId === tabId && a.status === 'complete',
         );
         setSelectedAssetIds((prev) => {
             const next = new Set(prev);
@@ -239,7 +239,7 @@ export function useImageGeneration({
             }
             return next;
         });
-    }, [assets, activeTab]);
+    }, [assets]);
 
     // ── Bulk download: sequentially download all selected assets ──
     const bulkDownload = useCallback(() => {
