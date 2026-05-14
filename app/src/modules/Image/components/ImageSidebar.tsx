@@ -21,11 +21,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ContextPanel } from '@/components/shared/ContextPanel';
 import type { ContextData } from '@/components/shared/ContextPanel';
 import { SessionReferenceImagePanel } from '@/components/shared/SessionReferenceImagePanel';
 import { BrandColorSwatches } from '@/components/shared/BrandColorSwatches';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
+import type { BrandAsset } from '@shared/brandTypes';
 import { syncBrandAssetsToSession } from '@/lib/syncBrandAssetsToSession';
 import {
     Sparkles, Loader2, Wand2, Lightbulb, Cpu, SlidersHorizontal,
@@ -76,11 +78,61 @@ interface ImageSidebarProps {
         UseImageAssetsReturn,
         | 'logoConfig' | 'logoInputRef'
         | 'subjectConfig' | 'subjectInputRef'
-        | 'certifications' | 'certInputRef' | 'removeCertification'
+        | 'certifications' | 'certInputRef' | 'removeCertification' | 'setCertifications'
         | 'textOverlay' | 'setTextOverlay'
         | 'handleFileUpload'
         | 'setLogoConfig' | 'setSubjectConfig'
     >;
+}
+
+// ============================================================================
+// BrandAssetPicker — Inline popover for picking brand assets into pipeline slots
+// Renders only when brand has >= 1 asset. Converts remote URL to base64.
+// ============================================================================
+
+function BrandAssetPicker({ assets, onPick }: { assets: BrandAsset[]; onPick: (base64: string) => void }) {
+    if (assets.length === 0) return null;
+
+    /** Fetch a remote image URL and convert to base64 data URI */
+    const pickAsset = async (url: string) => {
+        try {
+            const res = await fetch(url);
+            const blob = await res.blob();
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                if (typeof reader.result === 'string') onPick(reader.result);
+            };
+            reader.readAsDataURL(blob);
+        } catch (err) {
+            console.warn('Failed to load brand asset:', err);
+        }
+    };
+
+    return (
+        <Popover>
+            <PopoverTrigger asChild>
+                <button type="button" className="text-xs text-muted-foreground hover:text-primary hover:underline transition-colors">
+                    From Brand
+                </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-52 p-2" side="left" align="start">
+                <p className="text-[10px] text-muted-foreground mb-1.5">Select brand asset</p>
+                <div className="grid grid-cols-3 gap-1.5">
+                    {assets.map((a) => (
+                        <button
+                            key={a.fileKey}
+                            type="button"
+                            onClick={() => pickAsset(a.url)}
+                            className="rounded border border-border hover:border-primary/50 overflow-hidden transition-colors"
+                            title={a.filename}
+                        >
+                            <img src={a.url} alt={a.filename} className="w-full h-12 object-contain bg-muted/30" />
+                        </button>
+                    ))}
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
 }
 
 // ============================================================================
@@ -107,11 +159,14 @@ export const ImageSidebar = memo(function ImageSidebar({
         applySuggestion, applyContextSuggestion } = sug;
 
     const { logoConfig, logoInputRef, subjectConfig, subjectInputRef,
-        certifications, certInputRef, removeCertification,
+        certifications, certInputRef, removeCertification, setCertifications,
         textOverlay, setTextOverlay, handleFileUpload,
         setLogoConfig, setSubjectConfig } = asset;
 
     const hasContext = !!(contextData.brand || contextData.url || contextData.seasonEvent || contextData.campaignTheme);
+
+    // Brand assets available for the From Brand picker in pipeline slots
+    const brandAssets: BrandAsset[] = ((contextData.brand as any)?.assets as BrandAsset[] | null) ?? [];
 
     return (
         <aside className="shrink-0 border-r border-border overflow-y-auto bg-muted/20" style={{ width: '22%', minWidth: '280px', maxWidth: '380px' }}>
@@ -402,7 +457,13 @@ export const ImageSidebar = memo(function ImageSidebar({
                         <div className="p-3 rounded-lg border border-border bg-background">
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-medium">Logo Branding</span>
-                                <button onClick={() => logoInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
+                                <div className="flex items-center gap-2">
+                                    <BrandAssetPicker
+                                        assets={brandAssets}
+                                        onPick={(b64) => setLogoConfig({ base64: b64 })}
+                                    />
+                                    <button onClick={() => logoInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
+                                </div>
                             </div>
                             <input ref={logoInputRef} type="file" accept="image/*" className="hidden"
                                 onChange={(e) => handleFileUpload('logo', e)} />
@@ -418,7 +479,13 @@ export const ImageSidebar = memo(function ImageSidebar({
                         <div className="p-3 rounded-lg border border-border bg-background">
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-medium">Reference Subject</span>
-                                <button onClick={() => subjectInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
+                                <div className="flex items-center gap-2">
+                                    <BrandAssetPicker
+                                        assets={brandAssets}
+                                        onPick={(b64) => setSubjectConfig({ base64: b64 })}
+                                    />
+                                    <button onClick={() => subjectInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
+                                </div>
                             </div>
                             <input ref={subjectInputRef} type="file" accept="image/*" className="hidden"
                                 onChange={(e) => handleFileUpload('subject', e)} />
@@ -436,7 +503,15 @@ export const ImageSidebar = memo(function ImageSidebar({
                                 <span className="text-xs font-medium flex items-center gap-1.5">
                                     <ShieldCheck className="w-3 h-3" />Trust Badges
                                 </span>
-                                <button onClick={() => certInputRef.current?.click()} className="text-xs text-primary hover:underline">Add</button>
+                                <div className="flex items-center gap-2">
+                                    <BrandAssetPicker
+                                        assets={brandAssets}
+                                        onPick={(b64) => {
+                                            setCertifications((prev) => [...prev, { id: crypto.randomUUID(), base64: b64 }]);
+                                        }}
+                                    />
+                                    <button onClick={() => certInputRef.current?.click()} className="text-xs text-primary hover:underline">Add</button>
+                                </div>
                             </div>
                             <input ref={certInputRef} type="file" accept="image/*" className="hidden"
                                 onChange={(e) => handleFileUpload('cert', e)} />
