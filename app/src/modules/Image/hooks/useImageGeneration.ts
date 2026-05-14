@@ -318,33 +318,45 @@ export function useImageGeneration({
             setAdVersions(generatedVersions);
             setActiveTab(generatedVersions[0]?.id ?? null);
 
-            // 2. Generate images for each concept × model × variation
+            // 2. Generate images: concepts sequential, models PARALLEL, variations sequential.
+            // This maximizes throughput — different providers run concurrently
+            // while respecting per-provider rate limits via sequential variations.
             const totalWork = generatedVersions.length * selectedModels.length * variationsPerModel;
             let completed = 0;
             const colorCtx = buildColorContext(contextData.brand);
             const refUrls = sessionReferenceImages.map((img) => img.url);
             const refIntents = sessionReferenceImages.map((img) => img.intent);
 
+            // Build asset pipeline context once (shared across all generations)
+            // NOTE: logoBase64 and subjectBase64 are intentionally NOT sent here.
+            // No backend provider handles them — they were dead code.
+            const pipelineExtra: Record<string, unknown> = {};
+            if (assetPipelinePayload.textOverlay?.text) {
+                pipelineExtra.textOverlay = assetPipelinePayload.textOverlay;
+            }
+
             for (const version of generatedVersions) {
-                for (const modelId of selectedModels) {
+                // Build prompt once per concept (shared across all models)
+                const isAnchor = version.name === 'Original';
+                const fullPrompt = isAnchor
+                    ? `${version.description}${colorCtx}`
+                    : `${version.description}. Product: ${productBrief}${colorCtx}`;
+
+                // Fire ALL models in parallel for this concept
+                const modelTasks = selectedModels.map(async (modelId) => {
                     const model = displayModels.find((m: { id: string; name: string; provider: string; costTier: CostTier }) => m.id === modelId);
 
+                    // Resolve provider once per model
+                    const resolvedProvider = model?.provider
+                        ?? imageModels.find((m: { id: string; provider: string }) => m.id === modelId)?.provider
+                        ?? '';
+
+                    if (!resolvedProvider) {
+                        throw new Error(`No provider found for model ${modelId}. Check the model registry.`);
+                    }
+
+                    // Variations run sequentially within each model (rate-limit safe)
                     for (let v = 0; v < variationsPerModel; v++) {
-                        setStatus((prev) => ({
-                            ...prev,
-                            progress: 10 + ((completed / totalWork) * 85),
-                            message: `Generating: ${version.name} (${model?.name ?? modelId})...`,
-                        }));
-
-                        // Build the actual prompt that will be sent to the image model.
-                        // Anchor angle: description IS the prompt → send directly.
-                        // AI angles: combine concept description with product brief.
-                        const isAnchor = version.name === 'Original';
-                        const fullPrompt = isAnchor
-                            ? `${version.description}${colorCtx}`
-                            : `${version.description}. Product: ${productBrief}${colorCtx}`;
-
-                        // Place a processing placeholder immediately for optimistic UI
                         const placeholderId = crypto.randomUUID();
                         const placeholder: GeneratedAsset = {
                             id: placeholderId,
@@ -359,26 +371,6 @@ export function useImageGeneration({
                         setAssets((prev) => [...prev, placeholder]);
 
                         try {
-
-                            // Build asset pipeline context for the API payload
-                            // NOTE: logoBase64 and subjectBase64 are intentionally NOT sent here.
-                            // No backend provider handles them — they were dead code. Brand asset
-                            // images reach the model via inputUrls (reference images pipeline).
-                            const pipelineExtra: Record<string, unknown> = {};
-                            if (assetPipelinePayload.textOverlay?.text) {
-                                pipelineExtra.textOverlay = assetPipelinePayload.textOverlay;
-                            }
-
-                            // Resolve provider — first from displayModels, then from full imageModels list.
-                            // An empty provider causes a PHP 400 error, so we must guard against it.
-                            const resolvedProvider = model?.provider
-                                ?? imageModels.find((m: { id: string; provider: string }) => m.id === modelId)?.provider
-                                ?? '';
-
-                            if (!resolvedProvider) {
-                                throw new Error(`No provider found for model ${modelId}. Check the model registry.`);
-                            }
-
                             const result = await generateImageMutation.mutateAsync({
                                 prompt: fullPrompt,
                                 model: modelId,
@@ -388,8 +380,6 @@ export function useImageGeneration({
                             });
 
                             // Replace placeholder with completed asset
-                            // CRITICAL: Capture result.id (DB autoincrement) so Save-to-Project
-                            // sends the real pcm_assets.id, not the frontend UUID placeholder.
                             const dbId = (result as any).id;
                             setAssets((prev) =>
                                 prev.map((a) =>
@@ -412,9 +402,19 @@ export function useImageGeneration({
                             );
                         }
 
+                        // Progress update — React batches setState so concurrent
+                        // updates to `completed` are safe via closure capture
                         completed++;
+                        setStatus((prev) => ({
+                            ...prev,
+                            progress: 10 + ((completed / totalWork) * 85),
+                            message: `Generating: ${version.name} (${model?.name ?? modelId})...`,
+                        }));
                     }
-                }
+                });
+
+                // Wait for all models to finish for this concept before moving to next
+                await Promise.allSettled(modelTasks);
             }
 
             setStatus({ isGenerating: false, progress: 100, message: 'Generation complete!' });

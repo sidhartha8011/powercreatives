@@ -86,6 +86,33 @@ export function ImageModule() {
     assetHook.persistVersions(genHook.adVersions);
   }, [genHook.adVersions]);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Auto-populate logo from brand assets when brand is selected ──
+  // When a brand is chosen and it has assets, automatically set the first
+  // asset as the logo. Clears logo when brand is deselected.
+  useEffect(() => {
+    const assets = ((contextData.brand as any)?.assets as BrandAsset[] | null) ?? [];
+    if (assets.length > 0 && !assetHook.logoConfig.base64) {
+      // Convert remote brand asset URL → base64 (same pattern as BrandAssetPicker)
+      const logoUrl = assets[0].url;
+      fetch(logoUrl)
+        .then((res) => res.blob())
+        .then((blob) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            if (typeof reader.result === 'string') {
+              assetHook.setLogoConfig((prev) => ({ ...prev, base64: reader.result as string, isActive: true }));
+            }
+          };
+          reader.readAsDataURL(blob);
+        })
+        .catch(() => { /* Non-fatal — user can still pick manually */ });
+    } else if (!contextData.brand) {
+      // Brand deselected → clear logo
+      assetHook.clearLogo();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextData.brand]);
+
   // ── Detail view handlers ──
   const handleOpenDetailView = useCallback((asset: GeneratedAsset) => {
     if (asset.url && asset.status === 'complete') {

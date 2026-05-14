@@ -1,5 +1,6 @@
 import { useContextPanel } from "./useContextPanel";
 import { BrandDropdown } from "./BrandDropdown";
+import { BrandSummaryCard } from "./BrandSummaryCard";
 import { UrlInput } from "./UrlInput";
 import { BrandConflictDialog } from "./BrandConflictDialog";
 import { ThemeSelector } from "@/components/shared/ThemeSelector";
@@ -26,6 +27,9 @@ export function ContextPanel(props: ContextPanelProps) {
           handleBrandSelect={actions.handleBrandSelect}
           handleBrandClear={actions.handleBrandClear}
         />
+
+        {/* Brand identity summary — auto-rendered when brand is selected */}
+        <BrandSummaryCard brand={value.brand} />
 
         {!hideUrl && (
           <UrlInput
