@@ -44,7 +44,7 @@ export function ContextPanel(props: ContextPanelProps) {
             campaignTheme={value.campaignTheme}
             onSeasonChange={actions.handleSeasonChange}
             onCampaignThemeChange={actions.handleCampaignThemeChange}
-            defaultExpanded={true}
+            defaultExpanded={false}
           />
         )}
       </div>

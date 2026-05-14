@@ -173,7 +173,10 @@ export const ImageSidebar = memo(function ImageSidebar({
         <aside className="shrink-0 border-r border-border overflow-y-auto bg-muted/20" style={{ width: '22%', minWidth: '280px', maxWidth: '380px' }}>
             <div className="p-4 space-y-6">
 
-                {/* 1. Brand / URL / Theme Context */}
+                {/* 1. Brand / URL / Theme Context
+                 * Theme is rendered inside ContextPanel but collapsed by default.
+                 * We do NOT pass hideTheme because ThemeSelector already has its own
+                 * accordion with defaultExpanded — we override that to false below. */}
                 <ContextPanel
                     value={contextData}
                     onChange={(newData) => {
@@ -184,38 +187,175 @@ export const ImageSidebar = memo(function ImageSidebar({
                     }}
                 />
 
-                {/* 2. Brand Colors */}
-                {contextData.brand && (contextData.brand as any).colors &&
-                    ((contextData.brand as any).colors as string[]).length > 0 && (
-                        <section>
-                            <div className="flex items-center gap-2 mb-2">
-                                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Brand Colors</h3>
-                            </div>
-                            <BrandColorSwatches colors={(contextData.brand as any).colors as string[]} size="md" />
-                        </section>
-                    )}
-
-                {/* 3. Session Reference Images — collapsed by default to keep brand info close to top */}
-                <Collapsible defaultOpen={false} className="group/refimgs">
+                {/* 2. Brand Assets (renamed from Asset Pipeline)
+                 * Positioned directly after brand selection for identity-first workflow.
+                 * Contains: Brand Colors + Logo + Subject + Trust Badges + Text Overlay */}
+                <Collapsible defaultOpen={false} className="group/pipeline">
                     <CollapsibleTrigger className="flex items-center justify-between w-full py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
                         <span className="flex items-center gap-2">
-                            <Sparkles className="w-3.5 h-3.5" />
-                            Reference Images
-                            <span className="text-[10px] font-normal normal-case text-muted-foreground/70">
-                                ({sessionReferenceImages.length})
-                            </span>
+                            <Settings2 className="w-4 h-4" />
+                            Brand Assets
                         </span>
-                        <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]/refimgs:rotate-180" />
+                        <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]/pipeline:rotate-180" />
                     </CollapsibleTrigger>
                     <CollapsibleContent>
-                        <section className="pt-2">
-                            <SessionReferenceImagePanel
-                                value={sessionReferenceImages}
-                                onChange={onSessionReferenceImagesChange}
-                            />
-                        </section>
+                        <div className="space-y-3 pt-2">
+
+                        {/* Brand Colors — inside Brand Assets for visual grouping */}
+                        {contextData.brand && (contextData.brand as any).colors &&
+                            ((contextData.brand as any).colors as string[]).length > 0 && (
+                                <div className="p-3 rounded-lg border border-border bg-background">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className="text-xs font-medium">Brand Colors</span>
+                                    </div>
+                                    <BrandColorSwatches colors={(contextData.brand as any).colors as string[]} size="md" />
+                                </div>
+                            )}
+
+                        {/* Logo */}
+                        <div className="p-3 rounded-lg border border-border bg-background">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-medium">Logo Branding</span>
+                                <div className="flex items-center gap-2">
+                                    <BrandAssetPicker
+                                        assets={brandAssets}
+                                        onPick={(b64) => setLogoConfig({ base64: b64 })}
+                                    />
+                                    <button onClick={() => logoInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
+                                </div>
+                            </div>
+                            <input ref={logoInputRef} type="file" accept="image/*" className="hidden"
+                                onChange={(e) => handleFileUpload('logo', e)} />
+                            {logoConfig.base64 && (
+                                <div className="flex items-center gap-2 mt-2">
+                                    <img src={logoConfig.base64} alt="Logo" className="w-8 h-8 object-contain rounded border border-border" />
+                                    <span className="text-xs text-muted-foreground">Logo uploaded</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Subject */}
+                        <div className="p-3 rounded-lg border border-border bg-background">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-medium">Reference Subject</span>
+                                <div className="flex items-center gap-2">
+                                    <BrandAssetPicker
+                                        assets={brandAssets}
+                                        onPick={(b64) => setSubjectConfig({ base64: b64 })}
+                                    />
+                                    <button onClick={() => subjectInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
+                                </div>
+                            </div>
+                            <input ref={subjectInputRef} type="file" accept="image/*" className="hidden"
+                                onChange={(e) => handleFileUpload('subject', e)} />
+                            {subjectConfig.base64 && (
+                                <div className="flex items-center gap-2 mt-2">
+                                    <img src={subjectConfig.base64} alt="Subject" className="w-8 h-8 object-contain rounded border border-border" />
+                                    <span className="text-xs text-muted-foreground">Subject uploaded</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Trust Badges */}
+                        <div className="p-3 rounded-lg border border-border bg-background">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-medium flex items-center gap-1.5">
+                                    <ShieldCheck className="w-3 h-3" />Trust Badges
+                                </span>
+                                <div className="flex items-center gap-2">
+                                    <BrandAssetPicker
+                                        assets={brandAssets}
+                                        onPick={(b64) => {
+                                            setCertifications((prev) => [...prev, { id: crypto.randomUUID(), base64: b64 }]);
+                                        }}
+                                    />
+                                    <button onClick={() => certInputRef.current?.click()} className="text-xs text-primary hover:underline">Add</button>
+                                </div>
+                            </div>
+                            <input ref={certInputRef} type="file" accept="image/*" className="hidden"
+                                onChange={(e) => handleFileUpload('cert', e)} />
+                            {certifications.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mt-2">
+                                    {certifications.map((cert) => (
+                                        <div key={cert.id} className="relative group">
+                                            <img src={cert.base64} alt="Badge" className="w-8 h-8 object-contain rounded border border-border" />
+                                            <button
+                                                onClick={() => removeCertification(cert.id)}
+                                                className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                                            >
+                                                <X className="w-2 h-2" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Text Overlay */}
+                        <div className="p-3 rounded-lg border border-border bg-background">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-medium flex items-center gap-1.5">
+                                    <Type className="w-3 h-3" />Allow Text
+                                </span>
+                                <Switch
+                                    checked={textOverlay.isActive}
+                                    onCheckedChange={(checked) => setTextOverlay((prev) => ({ ...prev, isActive: checked }))}
+                                />
+                            </div>
+                            {textOverlay.isActive && (
+                                <div className="space-y-3 mt-3">
+                                    <input
+                                        type="text"
+                                        value={textOverlay.text}
+                                        onChange={(e) => setTextOverlay((prev) => ({ ...prev, text: e.target.value }))}
+                                        placeholder="Enter text to display..."
+                                        className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={textOverlay.optimize}
+                                            onChange={(e) => setTextOverlay((prev) => ({ ...prev, optimize: e.target.checked }))}
+                                            className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary"
+                                        />
+                                        <span className="text-xs text-muted-foreground">Optimize text (allow model to adjust)</span>
+                                    </label>
+                                    <div>
+                                        <label className="text-xs text-muted-foreground mb-1 block">Placement</label>
+                                        <select
+                                            value={textOverlay.placement}
+                                            onChange={(e) => setTextOverlay((prev) => ({ ...prev, placement: e.target.value as TextPlacement }))}
+                                            className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                                        >
+                                            <option value="optimize">Optimize (model chooses)</option>
+                                            <option value="top-left">Top Left</option>
+                                            <option value="top-center">Top Center</option>
+                                            <option value="top-right">Top Right</option>
+                                            <option value="center">Center</option>
+                                            <option value="bottom-left">Bottom Left</option>
+                                            <option value="bottom-center">Bottom Center</option>
+                                            <option value="bottom-right">Bottom Right</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        </div>
                     </CollapsibleContent>
                 </Collapsible>
+
+                {/* --- Reference Images: HIDDEN ---
+                 * Reference images are NOT removed from the codebase.
+                 * They serve two purposes in the generation pipeline:
+                 *   1. LLM multimodal input: sent as image_url parts to GPT-4o/Claude/Gemini
+                 *      during concept/suggestion generation (build_multimodal_user_message)
+                 *   2. Image model input: forwarded as inputUrls to the provider (Flux/Kling/etc),
+                 *      though most models only accept maxImageInputs=1.
+                 * Hidden because brand assets now cover the primary use case (From Brand picker).
+                 * Kept in code for future re-enablement when multi-image models become standard.
+                 * The syncBrandAssetsToSession() call in ContextPanel.onChange still runs,
+                 * keeping the sessionReferenceImages array populated for generation.
+                 * --- */}
 
                 {/* 4. Generate Suggestions from Context */}
                 <section>
@@ -461,148 +601,7 @@ export const ImageSidebar = memo(function ImageSidebar({
                     </div>
                 </section>
 
-                {/* 8. Asset Pipeline — collapsed by default; Logo / Subject / Trust Badges / Allow Text live inside */}
-                <Collapsible defaultOpen={false} className="group/pipeline">
-                    <CollapsibleTrigger className="flex items-center justify-between w-full py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
-                        <span className="flex items-center gap-2">
-                            <Settings2 className="w-4 h-4" />
-                            Asset Pipeline
-                        </span>
-                        <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]/pipeline:rotate-180" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                        <div className="space-y-3 pt-2">
-                        {/* Logo */}
-                        <div className="p-3 rounded-lg border border-border bg-background">
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-medium">Logo Branding</span>
-                                <div className="flex items-center gap-2">
-                                    <BrandAssetPicker
-                                        assets={brandAssets}
-                                        onPick={(b64) => setLogoConfig({ base64: b64 })}
-                                    />
-                                    <button onClick={() => logoInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
-                                </div>
-                            </div>
-                            <input ref={logoInputRef} type="file" accept="image/*" className="hidden"
-                                onChange={(e) => handleFileUpload('logo', e)} />
-                            {logoConfig.base64 && (
-                                <div className="flex items-center gap-2 mt-2">
-                                    <img src={logoConfig.base64} alt="Logo" className="w-8 h-8 object-contain rounded border border-border" />
-                                    <span className="text-xs text-muted-foreground">Logo uploaded</span>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Subject */}
-                        <div className="p-3 rounded-lg border border-border bg-background">
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-medium">Reference Subject</span>
-                                <div className="flex items-center gap-2">
-                                    <BrandAssetPicker
-                                        assets={brandAssets}
-                                        onPick={(b64) => setSubjectConfig({ base64: b64 })}
-                                    />
-                                    <button onClick={() => subjectInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
-                                </div>
-                            </div>
-                            <input ref={subjectInputRef} type="file" accept="image/*" className="hidden"
-                                onChange={(e) => handleFileUpload('subject', e)} />
-                            {subjectConfig.base64 && (
-                                <div className="flex items-center gap-2 mt-2">
-                                    <img src={subjectConfig.base64} alt="Subject" className="w-8 h-8 object-contain rounded border border-border" />
-                                    <span className="text-xs text-muted-foreground">Subject uploaded</span>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Trust Badges */}
-                        <div className="p-3 rounded-lg border border-border bg-background">
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-medium flex items-center gap-1.5">
-                                    <ShieldCheck className="w-3 h-3" />Trust Badges
-                                </span>
-                                <div className="flex items-center gap-2">
-                                    <BrandAssetPicker
-                                        assets={brandAssets}
-                                        onPick={(b64) => {
-                                            setCertifications((prev) => [...prev, { id: crypto.randomUUID(), base64: b64 }]);
-                                        }}
-                                    />
-                                    <button onClick={() => certInputRef.current?.click()} className="text-xs text-primary hover:underline">Add</button>
-                                </div>
-                            </div>
-                            <input ref={certInputRef} type="file" accept="image/*" className="hidden"
-                                onChange={(e) => handleFileUpload('cert', e)} />
-                            {certifications.length > 0 && (
-                                <div className="flex flex-wrap gap-2 mt-2">
-                                    {certifications.map((cert) => (
-                                        <div key={cert.id} className="relative group">
-                                            <img src={cert.base64} alt="Badge" className="w-8 h-8 object-contain rounded border border-border" />
-                                            <button
-                                                onClick={() => removeCertification(cert.id)}
-                                                className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                                            >
-                                                <X className="w-2 h-2" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Text Overlay */}
-                        <div className="p-3 rounded-lg border border-border bg-background">
-                            <div className="flex items-center justify-between">
-                                <span className="text-xs font-medium flex items-center gap-1.5">
-                                    <Type className="w-3 h-3" />Allow Text
-                                </span>
-                                <Switch
-                                    checked={textOverlay.isActive}
-                                    onCheckedChange={(checked) => setTextOverlay((prev) => ({ ...prev, isActive: checked }))}
-                                />
-                            </div>
-                            {textOverlay.isActive && (
-                                <div className="space-y-3 mt-3">
-                                    <input
-                                        type="text"
-                                        value={textOverlay.text}
-                                        onChange={(e) => setTextOverlay((prev) => ({ ...prev, text: e.target.value }))}
-                                        placeholder="Enter text to display..."
-                                        className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                                    />
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={textOverlay.optimize}
-                                            onChange={(e) => setTextOverlay((prev) => ({ ...prev, optimize: e.target.checked }))}
-                                            className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary"
-                                        />
-                                        <span className="text-xs text-muted-foreground">Optimize text (allow model to adjust)</span>
-                                    </label>
-                                    <div>
-                                        <label className="text-xs text-muted-foreground mb-1 block">Placement</label>
-                                        <select
-                                            value={textOverlay.placement}
-                                            onChange={(e) => setTextOverlay((prev) => ({ ...prev, placement: e.target.value as TextPlacement }))}
-                                            className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                                        >
-                                            <option value="optimize">Optimize (model chooses)</option>
-                                            <option value="top-left">Top Left</option>
-                                            <option value="top-center">Top Center</option>
-                                            <option value="top-right">Top Right</option>
-                                            <option value="center">Center</option>
-                                            <option value="bottom-left">Bottom Left</option>
-                                            <option value="bottom-center">Bottom Center</option>
-                                            <option value="bottom-right">Bottom Right</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                        </div>
-                    </CollapsibleContent>
-                </Collapsible>
+                {/* Old position of Asset Pipeline — moved to position 2 (after Brand dropdown) */}
             </div>
         </aside>
     );
