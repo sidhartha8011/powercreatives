@@ -1178,7 +1178,11 @@ class PCM_Copy_Service
         );
 
         $result = PCM_LLM::invoke($messages, array('model' => $model, 'max_tokens' => (int)PCM_Settings::get('token_budget_copy', 16384)));
-        $parsed = json_decode($result['content'] ?? '{}', true);
+        // Defensive: some providers (Claude, Gemini) sometimes wrap JSON in
+        // ```json ... ``` markdown despite the "no markdown" system instruction.
+        // extract_json() is a no-op on already-clean JSON.
+        $clean_json = PCM_LLM::extract_json($result['content'] ?? '');
+        $parsed = json_decode($clean_json !== '' ? $clean_json : '{}', true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             throw new \RuntimeException('Failed to parse business info from URL.');
