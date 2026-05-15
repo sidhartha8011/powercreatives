@@ -21,8 +21,9 @@ import { AssetDetailView } from '@/components/AssetDetailView';
 import type { Asset } from '@/components/AssetDetailView';
 import { toast } from 'sonner';
 import { createEmptyContextData } from '@/components/shared/ContextPanel';
-import type { ContextData } from '@/components/shared/ContextPanel';
+import type { ContextData, ScrapedBusinessData } from '@/components/shared/ContextPanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
+import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
 import type { BrandAsset } from '@shared/brandTypes';
 import type { GeneratedAsset } from '@/types';
 import { useApp } from '@/contexts/AppContext';
@@ -118,6 +119,30 @@ export function ImageModule() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextData.brand]);
+
+  // ── Sync ContextPanel changes to Image form fields (brand → form mapping) ──
+  const handleContextChange = useCallback((newCtx: ContextData) => {
+    const prevCtx = contextData;
+    setContextData(newCtx);
+
+    // Brand changed or updated → map brand fields to form values
+    const brandChanged = newCtx.brandId !== prevCtx.brandId;
+    const brandDataUpdated = newCtx.brand !== prevCtx.brand;
+    if ((brandChanged || brandDataUpdated) && newCtx.brand) {
+      const mapped = mapBrandToFormValues(newCtx.brand as Record<string, any>);
+      if (Object.keys(mapped).length > 0) {
+        setFormValues((prev) => ({ ...prev, ...mapped }));
+      }
+    }
+  }, [contextData]);
+
+  // ── Sync URL fetch results to Image form fields ──
+  const handleUrlFetched = useCallback((scraped: ScrapedBusinessData) => {
+    const mapped = mapScrapedToFormValues(scraped);
+    if (Object.keys(mapped).length > 0) {
+      setFormValues((prev) => ({ ...prev, ...mapped }));
+    }
+  }, []);
 
   // ── Detail view handlers ──
   const handleOpenDetailView = useCallback((asset: GeneratedAsset) => {
@@ -223,7 +248,8 @@ export function ImageModule() {
       <div className="flex-1 flex overflow-hidden">
         <ImageSidebar
           contextData={contextData}
-          onContextChange={setContextData}
+          onContextChange={handleContextChange}
+          onUrlFetched={handleUrlFetched}
           sessionReferenceImages={sessionReferenceImages}
           onSessionReferenceImagesChange={setSessionReferenceImages}
           productBrief={productBrief}

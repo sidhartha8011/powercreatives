@@ -34,30 +34,7 @@ export function ContextPanel(props: ContextPanelProps) {
           handleBrandClear={actions.handleBrandClear}
         />
 
-        {/* Brand Identity — consolidated: summary + colors + logo.
-         * Renders inline under dropdown when brand is selected.
-         * Single source of truth for all modules (Image, Copy, Video). */}
-        {brand && (brandSummary || brandColors || brandLogo) && (
-          <div className="space-y-2 pl-1">
-            {brandSummary && (
-              <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-                {brandSummary}
-              </p>
-            )}
-            {(brandColors || brandLogo) && (
-              <div className="flex items-center gap-3">
-                {brandLogo && (
-                  <img
-                    src={brandLogo.url}
-                    alt="Brand logo"
-                    className="w-6 h-6 object-contain rounded border border-border shrink-0"
-                  />
-                )}
-                {brandColors && <BrandColorSwatches colors={brandColors} size="sm" />}
-              </div>
-            )}
-          </div>
-        )}
+
 
         {!hideUrl && (
           <UrlInput

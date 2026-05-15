@@ -21,7 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ContextPanel, EnhancedBrandSection } from '@/components/shared';
-import type { ContextData } from '@/components/shared';
+import type { ContextData, ScrapedBusinessData } from '@/components/shared';
 import { SessionReferenceImagePanel } from '@/components/shared/SessionReferenceImagePanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import type { BrandAsset } from '@shared/brandTypes';
@@ -46,6 +46,7 @@ interface ImageSidebarProps {
     // Shared context
     contextData: ContextData;
     onContextChange: (data: ContextData) => void;
+    onUrlFetched?: (data: ScrapedBusinessData) => void;
     sessionReferenceImages: SessionReferenceImage[];
     onSessionReferenceImagesChange: (imgs: SessionReferenceImage[]) => void;
     // Product brief
@@ -141,6 +142,7 @@ function BrandAssetPicker({ assets, onPick }: { assets: BrandAsset[]; onPick: (b
 export const ImageSidebar = memo(function ImageSidebar({
     contextData,
     onContextChange,
+    onUrlFetched,
     sessionReferenceImages,
     onSessionReferenceImagesChange,
     productBrief,
@@ -185,11 +187,12 @@ export const ImageSidebar = memo(function ImageSidebar({
                         const synced = syncBrandAssetsToSession(contextData, newData, sessionReferenceImages);
                         if (synced) onSessionReferenceImagesChange(synced);
                     }}
+                    onUrlFetched={onUrlFetched}
                 />
 
                 <EnhancedBrandSection
                     contextData={contextData}
-                    onContextChange={setContextData}
+                    onContextChange={onContextChange}
                     formValues={formValues}
                     onFormChange={onFormChange}
                     referenceImages={sessionReferenceImages}
