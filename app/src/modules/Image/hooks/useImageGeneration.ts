@@ -453,8 +453,8 @@ export function useImageGeneration({
         generateConceptsMutation,
         generateImageMutation,
         optimizeBriefMutation,
-        buildColorContext,
         settings.defaultImageTextModel,
+        formValues,
     ]);
 
     return {
