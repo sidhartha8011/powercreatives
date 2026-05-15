@@ -122,6 +122,19 @@ export const ImageSidebar = memo(function ImageSidebar({
         <aside className="shrink-0 border-r border-border overflow-y-auto bg-muted/20" style={{ width: '22%', minWidth: '280px', maxWidth: '380px' }}>
             <div className="p-4 space-y-6">
 
+                {/* 1. Brand / URL Context
+                 * Theme is hidden and rendered separately below. */}
+                <ContextPanel
+                    value={contextData}
+                    onChange={(newData) => {
+                        onContextChange(newData);
+                        const synced = syncBrandAssetsToSession(contextData, newData, sessionReferenceImages);
+                        if (synced) onSessionReferenceImagesChange(synced);
+                    }}
+                    onUrlFetched={onUrlFetched}
+                    hideTheme
+                />
+
                 <EnhancedBrandSection
                     contextData={contextData}
                     onContextChange={onContextChange}
@@ -131,19 +144,12 @@ export const ImageSidebar = memo(function ImageSidebar({
                     onReferenceImagesChange={onSessionReferenceImagesChange}
                 />
 
-                {/* 1. Brand / URL / Theme Context
-                 * Theme is rendered inside ContextPanel but collapsed by default.
-                 * We do NOT pass hideTheme because ThemeSelector already has its own
-                 * accordion with defaultExpanded — we override that to false below. */}
-                <ContextPanel
-                    value={contextData}
-                    onChange={(newData) => {
-                        onContextChange(newData);
-                        // Sync brand assets → session reference images when brand or assets change
-                        const synced = syncBrandAssetsToSession(contextData, newData, sessionReferenceImages);
-                        if (synced) onSessionReferenceImagesChange(synced);
-                    }}
-                    onUrlFetched={onUrlFetched}
+                {/* Theme — rendered after Brand Assets */}
+                <ThemeSelector
+                    seasonEvent={contextData.seasonEvent}
+                    campaignTheme={contextData.campaignTheme}
+                    onSeasonChange={(seasonEvent) => onContextChange({ ...contextData, seasonEvent })}
+                    onCampaignThemeChange={(campaignTheme) => onContextChange({ ...contextData, campaignTheme })}
                 />
 
 

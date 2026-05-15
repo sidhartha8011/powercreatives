@@ -484,6 +484,14 @@ export function CopyModule() {
           className="overflow-y-auto space-y-3 min-w-0 pr-1 pt-1"
           style={{ width: '20%', minWidth: '240px', maxWidth: '320px' }}
         >
+          {/* Brand / URL — shared ContextPanel (Theme hidden, rendered below) */}
+          <ContextPanel
+            value={contextData}
+            onChange={handleContextChange}
+            onUrlFetched={handleUrlFetched}
+            hideTheme
+          />
+
           {/* Business Info & Brand Assets — Replaces dynamic section to include colors/logo/subjects */}
           <EnhancedBrandSection
             contextData={contextData}
@@ -492,14 +500,6 @@ export function CopyModule() {
             onFormChange={handleFieldChange}
             referenceImages={sessionReferenceImages}
             onReferenceImagesChange={setSessionReferenceImages}
-          />
-
-          {/* Brand / URL — shared ContextPanel (Theme hidden, rendered below) */}
-          <ContextPanel
-            value={contextData}
-            onChange={handleContextChange}
-            onUrlFetched={handleUrlFetched}
-            hideTheme
           />
 
           {/* Save to Brand — only shows when business_name has value */}
