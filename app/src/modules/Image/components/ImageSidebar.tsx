@@ -5,11 +5,13 @@
  * No business logic, no API calls — those live in the hooks.
  *
  * Sections:
- * 1. Brand / URL / Theme context (ContextPanel — includes brand identity)
- * 2. Generation Assets (subject, badges, text overlay)
- * 3. Product Brief + AI Suggestions
- * 4. Production Engines (model accordion)
- * 5. Production Parameters (sliders)
+ * 1. Brand / URL context (ContextPanel — brand identity)
+ * 2. Brand Context accordion (toggle-controlled injection)
+ * 3. Save Brand + Generate Suggestions
+ * 4. Product Brief + AI Suggestions
+ * 5. Theme (below Product Brief)
+ * 6. Production Engines (model accordion)
+ * 7. Production Parameters (sliders)
  */
 
 import { memo } from 'react';
@@ -18,24 +20,24 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ContextPanel } from '@/components/shared/ContextPanel';
 import type { ContextData } from '@/components/shared/ContextPanel';
-import { SessionReferenceImagePanel } from '@/components/shared/SessionReferenceImagePanel';
+import { ThemeSelector } from '@/components/shared/ThemeSelector';
+import { SaveBrandButton } from '@/components/shared/SaveBrandButton';
+import { BrandContextAccordion } from './BrandContextAccordion';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
-import type { BrandAsset } from '@shared/brandTypes';
 import { syncBrandAssetsToSession } from '@/lib/syncBrandAssetsToSession';
 import {
     Sparkles, Loader2, Wand2, Lightbulb, Cpu, SlidersHorizontal,
-    Settings2, ShieldCheck, Type, Check, ChevronDown, ChevronRight,
-    Dices, Zap, X, Info,
+    Check, ChevronDown, ChevronRight,
+    Dices, Zap,
 } from 'lucide-react';
 import type { DetailLevelValue } from '../types';
-import type { LogoConfig, ReferenceAsset, CertificationConfig, TextOverlayConfig, TextPlacement, CostTier } from '@/types';
+import type { TextOverlayConfig, TextPlacement, CostTier } from '@/types';
 import type { UseImageGenerationReturn } from '../hooks/useImageGeneration';
 import type { UseImageSuggestionsReturn } from '../hooks/useImageSuggestions';
-import type { UseImageAssetsReturn } from '../hooks/useImageAssets';
+import type { UseBrandContextReturn } from '../hooks/useBrandContext';
 import { PRODUCTION_DEFAULTS } from '../imageConfig';
 
 // ============================================================================
@@ -51,6 +53,8 @@ interface ImageSidebarProps {
     // Product brief
     productBrief: string;
     onProductBriefChange: (v: string) => void;
+    // Brand context (toggle-controlled injection)
+    brandCtx: UseBrandContextReturn;
     // Generation hook
     gen: Pick<
         UseImageGenerationReturn,
@@ -70,65 +74,9 @@ interface ImageSidebarProps {
         | 'handleGenerateSuggestions' | 'handleGenerateContextSuggestions'
         | 'applySuggestion' | 'applyContextSuggestion'
     >;
-    // Asset pipeline hook (generation-specific: subject, badges, text overlay)
-    asset: Pick<
-        UseImageAssetsReturn,
-        | 'subjectConfig' | 'subjectInputRef' | 'clearSubject'
-        | 'certifications' | 'certInputRef' | 'removeCertification' | 'setCertifications'
-        | 'textOverlay' | 'setTextOverlay'
-        | 'handleFileUpload'
-        | 'setSubjectConfig'
-    >;
-}
-
-// ============================================================================
-// BrandAssetPicker — Inline popover for picking brand assets into pipeline slots
-// Renders only when brand has >= 1 asset. Converts remote URL to base64.
-// ============================================================================
-
-function BrandAssetPicker({ assets, onPick }: { assets: BrandAsset[]; onPick: (base64: string) => void }) {
-    if (assets.length === 0) return null;
-
-    /** Fetch a remote image URL and convert to base64 data URI */
-    const pickAsset = async (url: string) => {
-        try {
-            const res = await fetch(url);
-            const blob = await res.blob();
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                if (typeof reader.result === 'string') onPick(reader.result);
-            };
-            reader.readAsDataURL(blob);
-        } catch (err) {
-            console.warn('Failed to load brand asset:', err);
-        }
-    };
-
-    return (
-        <Popover>
-            <PopoverTrigger asChild>
-                <button type="button" className="text-xs text-muted-foreground hover:text-primary hover:underline transition-colors">
-                    From Brand
-                </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-52 p-2" side="left" align="start">
-                <p className="text-[10px] text-muted-foreground mb-1.5">Select brand asset</p>
-                <div className="grid grid-cols-3 gap-1.5">
-                    {assets.map((a) => (
-                        <button
-                            key={a.fileKey}
-                            type="button"
-                            onClick={() => pickAsset(a.url)}
-                            className="rounded border border-border hover:border-primary/50 overflow-hidden transition-colors"
-                            title={a.filename}
-                        >
-                            <img src={a.url} alt={a.filename} className="w-full h-12 object-contain bg-muted/30" />
-                        </button>
-                    ))}
-                </div>
-            </PopoverContent>
-        </Popover>
-    );
+    // Text overlay (kept separate — module-specific generation tool)
+    textOverlay: TextOverlayConfig;
+    setTextOverlay: React.Dispatch<React.SetStateAction<TextOverlayConfig>>;
 }
 
 // ============================================================================
@@ -142,9 +90,11 @@ export const ImageSidebar = memo(function ImageSidebar({
     onSessionReferenceImagesChange,
     productBrief,
     onProductBriefChange,
+    brandCtx,
     gen,
     sug,
-    asset,
+    textOverlay,
+    setTextOverlay,
 }: ImageSidebarProps) {
     const { selectedModels, numVersions, variationsPerModel, autoOptimizeBrief,
         expandedTiers, toggleModel, toggleTier, tierLabels, modelsByTier } = gen;
@@ -154,24 +104,15 @@ export const ImageSidebar = memo(function ImageSidebar({
         handleGenerateSuggestions, handleGenerateContextSuggestions,
         applySuggestion, applyContextSuggestion } = sug;
 
-    const { subjectConfig, subjectInputRef, clearSubject,
-        certifications, certInputRef, removeCertification, setCertifications,
-        textOverlay, setTextOverlay, handleFileUpload,
-        setSubjectConfig } = asset;
-
     const hasContext = !!(contextData.brand || contextData.url || contextData.seasonEvent || contextData.campaignTheme);
-
-    // Brand assets available for the From Brand picker in pipeline slots
-    const brandAssets: BrandAsset[] = ((contextData.brand as any)?.assets as BrandAsset[] | null) ?? [];
 
     return (
         <aside className="shrink-0 border-r border-border overflow-y-auto bg-muted/20" style={{ width: '22%', minWidth: '280px', maxWidth: '380px' }}>
             <div className="p-4 space-y-6">
 
-                {/* 1. Brand / URL / Theme Context
-                 * Theme is rendered inside ContextPanel but collapsed by default.
-                 * We do NOT pass hideTheme because ThemeSelector already has its own
-                 * accordion with defaultExpanded — we override that to false below. */}
+                {/* 1. Brand / URL Context
+                 * Theme is now rendered separately below Product Brief (G7).
+                 * hideTheme=true prevents ContextPanel from rendering its own ThemeSelector. */}
                 <ContextPanel
                     value={contextData}
                     onChange={(newData) => {
@@ -180,138 +121,27 @@ export const ImageSidebar = memo(function ImageSidebar({
                         const synced = syncBrandAssetsToSession(contextData, newData, sessionReferenceImages);
                         if (synced) onSessionReferenceImagesChange(synced);
                     }}
+                    hideTheme={true}
                 />
 
-                {/* 2. Generation Assets (module-specific generation tools)
-                 * Brand identity (colors, logo, summary) is in ContextPanel above.
-                 * This section contains only generation-specific tools. */}
-                <Collapsible defaultOpen={false} className="group/pipeline">
-                    <CollapsibleTrigger className="flex items-center justify-between w-full py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
-                        <span className="flex items-center gap-2">
-                            <Settings2 className="w-4 h-4" />
-                            Generation Assets
-                        </span>
-                        <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]/pipeline:rotate-180" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                        <div className="space-y-3 pt-2">
+                {/* 2. Brand Context — toggle-controlled brand data injection
+                 * Replaces old "Generation Assets" accordion.
+                 * All brand fields (name, niche, summary, location, phone, website,
+                 * language, colors, logo, subject, badges) are displayed with
+                 * per-field toggles controlling prompt injection. */}
+                <BrandContextAccordion
+                    ctx={brandCtx}
+                    onFileUpload={() => { /* handled internally by BrandContextAccordion */ }}
+                />
 
-                        {/* Subject */}
-                        <div className="p-3 rounded-lg border border-border bg-background">
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-medium">Reference Subject</span>
-                                <div className="flex items-center gap-2">
-                                    <BrandAssetPicker
-                                        assets={brandAssets}
-                                        onPick={(b64) => setSubjectConfig({ base64: b64 })}
-                                    />
-                                    <button onClick={() => subjectInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
-                                </div>
-                            </div>
-                            <input ref={subjectInputRef} type="file" accept="image/*" className="hidden"
-                                onChange={(e) => handleFileUpload('subject', e)} />
-                            {subjectConfig.base64 && (
-                                <div className="flex items-center gap-2 mt-2">
-                                    <img src={subjectConfig.base64} alt="Subject" className="w-8 h-8 object-contain rounded border border-border" />
-                                    <span className="text-xs text-muted-foreground">Subject uploaded</span>
-                                    <button
-                                        onClick={clearSubject}
-                                        className="ml-auto w-5 h-5 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground rounded-full flex items-center justify-center transition-colors"
-                                        title="Remove subject"
-                                    >
-                                        <X className="w-2.5 h-2.5" />
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Trust Badges */}
-                        <div className="p-3 rounded-lg border border-border bg-background">
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-medium flex items-center gap-1.5">
-                                    <ShieldCheck className="w-3 h-3" />Trust Badges
-                                </span>
-                                <div className="flex items-center gap-2">
-                                    <BrandAssetPicker
-                                        assets={brandAssets}
-                                        onPick={(b64) => {
-                                            setCertifications((prev) => [...prev, { id: crypto.randomUUID(), base64: b64 }]);
-                                        }}
-                                    />
-                                    <button onClick={() => certInputRef.current?.click()} className="text-xs text-primary hover:underline">Add</button>
-                                </div>
-                            </div>
-                            <input ref={certInputRef} type="file" accept="image/*" className="hidden"
-                                onChange={(e) => handleFileUpload('cert', e)} />
-                            {certifications.length > 0 && (
-                                <div className="flex flex-wrap gap-2 mt-2">
-                                    {certifications.map((cert) => (
-                                        <div key={cert.id} className="relative group">
-                                            <img src={cert.base64} alt="Badge" className="w-8 h-8 object-contain rounded border border-border" />
-                                            <button
-                                                onClick={() => removeCertification(cert.id)}
-                                                className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                                            >
-                                                <X className="w-2 h-2" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Text Overlay */}
-                        <div className="p-3 rounded-lg border border-border bg-background">
-                            <div className="flex items-center justify-between">
-                                <span className="text-xs font-medium flex items-center gap-1.5">
-                                    <Type className="w-3 h-3" />Allow Text
-                                </span>
-                                <Switch
-                                    checked={textOverlay.isActive}
-                                    onCheckedChange={(checked) => setTextOverlay((prev) => ({ ...prev, isActive: checked }))}
-                                />
-                            </div>
-                            {textOverlay.isActive && (
-                                <div className="space-y-3 mt-3">
-                                    <input
-                                        type="text"
-                                        value={textOverlay.text}
-                                        onChange={(e) => setTextOverlay((prev) => ({ ...prev, text: e.target.value }))}
-                                        placeholder="Enter text to display..."
-                                        className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                                    />
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={textOverlay.optimize}
-                                            onChange={(e) => setTextOverlay((prev) => ({ ...prev, optimize: e.target.checked }))}
-                                            className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary"
-                                        />
-                                        <span className="text-xs text-muted-foreground">Optimize text (allow model to adjust)</span>
-                                    </label>
-                                    <div>
-                                        <label className="text-xs text-muted-foreground mb-1 block">Placement</label>
-                                        <select
-                                            value={textOverlay.placement}
-                                            onChange={(e) => setTextOverlay((prev) => ({ ...prev, placement: e.target.value as TextPlacement }))}
-                                            className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                                        >
-                                            <option value="optimize">Optimize (model chooses)</option>
-                                            <option value="top-left">Top Left</option>
-                                            <option value="top-center">Top Center</option>
-                                            <option value="top-right">Top Right</option>
-                                            <option value="center">Center</option>
-                                            <option value="bottom-left">Bottom Left</option>
-                                            <option value="bottom-center">Bottom Center</option>
-                                            <option value="bottom-right">Bottom Right</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                        </div>
-                    </CollapsibleContent>
-                </Collapsible>
+                {/* Save to Brand — reuses shared SaveBrandButton from Copy module */}
+                {brandCtx.hasBrand && (
+                    <SaveBrandButton
+                        formValues={brandCtx.brandFields}
+                        selectedBrandId={contextData.brandId}
+                        selectedBrandName={brandCtx.brandName}
+                    />
+                )}
 
                 {/* --- Reference Images: HIDDEN ---
                  * Reference images are NOT removed from the codebase.
@@ -405,6 +235,17 @@ export const ImageSidebar = memo(function ImageSidebar({
                         placeholder="Describe your product or service..."
                         className="min-h-[100px] text-sm resize-none"
                     />
+
+                    {/* Theme — moved here from ContextPanel per UX design (G7) */}
+                    <div className="mt-3">
+                        <ThemeSelector
+                            seasonEvent={contextData.seasonEvent}
+                            campaignTheme={contextData.campaignTheme}
+                            onSeasonChange={(v) => onContextChange({ ...contextData, seasonEvent: v })}
+                            onCampaignThemeChange={(v) => onContextChange({ ...contextData, campaignTheme: v })}
+                            defaultExpanded={false}
+                        />
+                    </div>
 
                     {/* Suggestion Controls */}
                     <div className="mt-3 space-y-3">
