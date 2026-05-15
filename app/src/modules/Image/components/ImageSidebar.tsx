@@ -20,8 +20,8 @@ import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ContextPanel } from '@/components/shared/ContextPanel';
-import type { ContextData } from '@/components/shared/ContextPanel';
+import { ContextPanel, EnhancedBrandSection } from '@/components/shared';
+import type { ContextData } from '@/components/shared';
 import { SessionReferenceImagePanel } from '@/components/shared/SessionReferenceImagePanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import type { BrandAsset } from '@shared/brandTypes';
@@ -51,6 +51,9 @@ interface ImageSidebarProps {
     // Product brief
     productBrief: string;
     onProductBriefChange: (v: string) => void;
+    // Form state for EnhancedBrandSection
+    formValues: Record<string, string | number | undefined>;
+    onFormChange: (fieldId: string, value: string | number) => void;
     // Generation hook
     gen: Pick<
         UseImageGenerationReturn,
@@ -142,6 +145,8 @@ export const ImageSidebar = memo(function ImageSidebar({
     onSessionReferenceImagesChange,
     productBrief,
     onProductBriefChange,
+    formValues,
+    onFormChange,
     gen,
     sug,
     asset,
@@ -182,6 +187,15 @@ export const ImageSidebar = memo(function ImageSidebar({
                     }}
                 />
 
+                <EnhancedBrandSection
+                    contextData={contextData}
+                    onContextChange={setContextData}
+                    formValues={formValues}
+                    onFormChange={onFormChange}
+                    referenceImages={sessionReferenceImages}
+                    onReferenceImagesChange={onSessionReferenceImagesChange}
+                />
+
                 {/* 2. Generation Assets (module-specific generation tools)
                  * Brand identity (colors, logo, summary) is in ContextPanel above.
                  * This section contains only generation-specific tools. */}
@@ -195,35 +209,6 @@ export const ImageSidebar = memo(function ImageSidebar({
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                         <div className="space-y-3 pt-2">
-
-                            {/* Subject */}
-                            <div className="p-3 rounded-lg border border-border bg-background">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-xs font-medium">Reference Subject</span>
-                                    <div className="flex items-center gap-2">
-                                        <BrandAssetPicker
-                                            assets={brandAssets}
-                                            onPick={(b64) => setSubjectConfig({ base64: b64 })}
-                                        />
-                                        <button onClick={() => subjectInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
-                                    </div>
-                                </div>
-                                <input ref={subjectInputRef} type="file" accept="image/*" className="hidden"
-                                    onChange={(e) => handleFileUpload('subject', e)} />
-                                {subjectConfig.base64 && (
-                                    <div className="flex items-center gap-2 mt-2">
-                                        <img src={subjectConfig.base64} alt="Subject" className="w-8 h-8 object-contain rounded border border-border" />
-                                        <span className="text-xs text-muted-foreground">Subject uploaded</span>
-                                        <button
-                                            onClick={clearSubject}
-                                            className="ml-auto w-5 h-5 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground rounded-full flex items-center justify-center transition-colors"
-                                            title="Remove subject"
-                                        >
-                                            <X className="w-2.5 h-2.5" />
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
 
                             {/* Trust Badges */}
                             <div className="p-3 rounded-lg border border-border bg-background">

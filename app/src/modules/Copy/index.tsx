@@ -29,8 +29,10 @@ import {
   ContextPanel,
   ThemeSelector,
   createEmptyContextData,
+  EnhancedBrandSection,
 } from '@/components/shared';
 import type { GenerationMode, ListItem, AngleItem, ContextData, ScrapedBusinessData } from '@/components/shared';
+import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import type {
   CopyType,
   CopyTypeSelection,
@@ -83,6 +85,9 @@ export function CopyModule() {
 
   // Shared context: brand, URL, theme (single source of truth via ContextPanel)
   const [contextData, setContextData] = useState<ContextData>(createEmptyContextData());
+
+  // Reference images for multimodal prompts (selected via EnhancedBrandSection)
+  const [sessionReferenceImages, setSessionReferenceImages] = useState<SessionReferenceImage[]>([]);
 
   // Generation settings — angles & audiences mode (default to auto)
   const [genSettings, setGenSettings] = useState<GenerationSettings>({
@@ -350,6 +355,28 @@ export function CopyModule() {
     (scope: GenerateScope, activeTab: CopyType | null, activeAudience: string, modelId: string) => {
       if (activeTypes.length === 0) return;
 
+      // 1. Respect Toggles for Text Fields
+      const finalFormValues = { ...formValues };
+      const toggles = contextData.brandToggles || { useSummary: true, useColors: true, useLogo: true };
+      
+      if (!toggles.useSummary) {
+        finalFormValues.business_summary = ''; // Strip if deselected
+      }
+
+      // 2. Build Visual Assets payload if toggles are active
+      const brand = contextData.brand as Record<string, any> | null;
+      const visualAssets: GenerateParams['visualAssets'] = {};
+      
+      if (toggles.useColors && Array.isArray(brand?.colors)) {
+        visualAssets.colors = brand.colors as string[];
+      }
+      if (toggles.useLogo && Array.isArray(brand?.assets) && brand.assets.length > 0) {
+        visualAssets.logo = brand.assets[0].url;
+      }
+      if (sessionReferenceImages.length > 0) {
+        visualAssets.referenceImages = sessionReferenceImages.map(img => ({ url: img.url, intent: img.intent }));
+      }
+
       generate({
         copyTypes: activeTypes,
         audiences: {
@@ -363,7 +390,7 @@ export function CopyModule() {
           count: genSettings.anglesCount,
         },
         modelId,
-        formValues,
+        formValues: finalFormValues,
         useResearch: researchEnabled,
         ...(settings.defaultCopyResearchModel ? { researchModelId: settings.defaultCopyResearchModel } : {}),
         scope,
@@ -371,9 +398,10 @@ export function CopyModule() {
           type: activeTab ?? activeTypes[0],
           audienceId: activeAudience,
         },
+        visualAssets,
       });
     },
-    [activeTypes, audiences, angles, genSettings, formValues, generate, researchEnabled, settings.defaultCopyResearchModel],
+    [activeTypes, audiences, angles, genSettings, formValues, generate, researchEnabled, settings.defaultCopyResearchModel, contextData, sessionReferenceImages],
   );
 
   // ── Regenerate Card Handler ──
@@ -464,16 +492,15 @@ export function CopyModule() {
             hideTheme
           />
 
-          {/* Business Info — directly under URL fetch */}
-          {COPY_SECTIONS.filter((s) => s.id === 'business_info').map((section) => (
-            <DynamicSection
-              key={section.id}
-              section={section}
-              values={formValues}
-              selectedTypes={selectedTypes}
-              onChange={handleFieldChange}
-            />
-          ))}
+          {/* Business Info & Brand Assets — Replaces dynamic section to include colors/logo/subjects */}
+          <EnhancedBrandSection
+            contextData={contextData}
+            onContextChange={handleContextChange}
+            formValues={formValues}
+            onFormChange={handleFieldChange}
+            referenceImages={sessionReferenceImages}
+            onReferenceImagesChange={setSessionReferenceImages}
+          />
 
           {/* Save to Brand — only shows when business_name has value */}
           <SaveBrandButton

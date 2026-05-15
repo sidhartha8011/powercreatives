@@ -51,6 +51,11 @@ export interface GenerateParams {
     type?: CopyType;
     audienceId?: string;
   };
+  visualAssets?: {
+    colors?: string[];
+    logo?: string;
+    referenceImages?: Array<{ url: string; intent: string }>;
+  };
 }
 
 export interface GenerationProgress {
@@ -370,6 +375,7 @@ export function useCopyGeneration(): UseCopyGenerationReturn {
           researchModelId: params.researchModelId,
           scope: params.scope,
           scopeFilter: params.scopeFilter,
+          visualAssets: params.visualAssets,
         };
 
         // Build the WP REST URL for copy/generate

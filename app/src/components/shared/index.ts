@@ -19,6 +19,7 @@ export { ModuleHeader } from './ModuleHeader';
 export { EmptyState } from './EmptyState';
 export { ContextPanel, createEmptyContextData } from './ContextPanel';
 export type { ContextData, ScrapedBusinessData } from './ContextPanel';
+export { EnhancedBrandSection } from './EnhancedBrandSection';
 export { ThemeSelector } from './ThemeSelector';
 export type { ThemeSelectorProps } from './ThemeSelector';
 export { BrandColorSwatches } from './BrandColorSwatches';

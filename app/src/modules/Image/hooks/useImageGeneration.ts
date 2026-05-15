@@ -232,7 +232,8 @@ export function useImageGeneration({
     }, [selection]);
 
     // ── Build brand color context string ──
-    const buildColorContext = useCallback((brand: ContextData['brand']): string => {
+    const buildColorContext = useCallback((brand: ContextData['brand'], useColors: boolean): string => {
+        if (!useColors) return '';
         const colors = ((brand as any)?.colors as string[] | null) ?? [];
         if (colors.length === 0) return '';
         const parts: string[] = [];
@@ -255,6 +256,8 @@ export function useImageGeneration({
 
         setStatus({ isGenerating: true, progress: 0, message: 'Generating creative concepts...' });
         setAssets([]);
+
+        const toggles = contextData.brandToggles || { useSummary: true, useColors: true, useLogo: true };
 
         try {
             // 0. Optionally optimize the brief via LLM
@@ -300,7 +303,7 @@ export function useImageGeneration({
                     modelId: settings.defaultImageTextModel || undefined,
                     brandContext: contextData.brand ? {
                         name: (contextData.brand as any).name,
-                        summary: (contextData.brand as any).businessSummary,
+                        summary: toggles.useSummary ? (contextData.brand as any).businessSummary : undefined,
                     } : undefined,
                     referenceImages: sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent })),
                 });
@@ -323,7 +326,7 @@ export function useImageGeneration({
             // while respecting per-provider rate limits via sequential variations.
             const totalWork = generatedVersions.length * selectedModels.length * variationsPerModel;
             let completed = 0;
-            const colorCtx = buildColorContext(contextData.brand);
+            const colorCtx = buildColorContext(contextData.brand, toggles.useColors);
             const refUrls = sessionReferenceImages.map((img) => img.url);
             const refIntents = sessionReferenceImages.map((img) => img.intent);
 

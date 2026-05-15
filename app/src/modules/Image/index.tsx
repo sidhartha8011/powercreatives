@@ -50,6 +50,12 @@ export function ImageModule() {
   const [sessionReferenceImages, setSessionReferenceImages] = useState<SessionReferenceImage[]>([]);
   const [productBrief, setProductBrief] = useState('');
 
+  // ── Form state for EnhancedBrandSection ──
+  const [formValues, setFormValues] = useState<Record<string, string | number | undefined>>({});
+  const handleFormChange = useCallback((fieldId: string, value: string | number) => {
+    setFormValues((prev) => ({ ...prev, [fieldId]: value }));
+  }, []);
+
   // ── Detail view ──
   const [selectedAsset, setSelectedAsset] = useState<GeneratedAsset | null>(null);
   const [isDetailViewOpen, setIsDetailViewOpen] = useState(false);
@@ -222,6 +228,8 @@ export function ImageModule() {
           onSessionReferenceImagesChange={setSessionReferenceImages}
           productBrief={productBrief}
           onProductBriefChange={setProductBrief}
+          formValues={formValues}
+          onFormChange={handleFormChange}
           gen={{
             selectedModels: genHook.selectedModels,
             numVersions: genHook.numVersions,
