@@ -19,9 +19,11 @@ export function useBrandAssets(
   const [isUpdatingColors, setIsUpdatingColors] = useState(false);
 
   const utils = trpc.useUtils();
-  const addAssetMutation = trpc.brands.addAsset.useMutation();
   const removeAssetMutation = trpc.brands.removeAsset.useMutation();
   const updateColorsMutation = trpc.brands.updateColors.useMutation();
+  
+  // Expose certifications by filtering the current brand assets
+  const certifications = ((contextData.brand as any)?.assets as any[] | null)?.filter(a => a.role === 'certification') || [];
 
   const refreshBrand = useCallback(async (brandId: number) => {
     try {
@@ -151,24 +153,75 @@ export function useBrandAssets(
 
     setIsUploadingLogo(true);
     try {
-      const buffer = await file.arrayBuffer();
-      const base64 = btoa(
-        new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-      );
-      
-      await addAssetMutation.mutateAsync({
-        brandId: currentContext.brandId,
-        fileData: base64,
-        filename: file.name,
-        mimeType: file.type,
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("role", "logo");
+
+      const response = await fetch(`${(window as any).pcmConfig.restUrl}brands/${currentContext.brandId}/assets`, {
+        method: 'POST',
+        headers: {
+          'X-WP-Nonce': (window as any).pcmConfig.nonce
+        },
+        body: formData
       });
+
+      if (!response.ok) {
+        throw new Error("Upload failed");
+      }
+      
       await refreshBrand(currentContext.brandId);
     } catch (err) {
       toast.error("Failed to upload logo.");
     } finally {
       setIsUploadingLogo(false);
     }
-  }, [addAssetMutation, refreshBrand]);
+  }, [refreshBrand]);
+
+  const [isUploadingCertification, setIsUploadingCertification] = useState(false);
+  const uploadCertification = useCallback(async (file: File) => {
+    const currentContext = contextDataRef.current;
+    if (!currentContext.brandId) return;
+
+    setIsUploadingCertification(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("role", "certification");
+
+      const response = await fetch(`${(window as any).pcmConfig.restUrl}brands/${currentContext.brandId}/assets`, {
+        method: 'POST',
+        headers: {
+          'X-WP-Nonce': (window as any).pcmConfig.nonce
+        },
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error("Upload failed");
+      }
+      
+      await refreshBrand(currentContext.brandId);
+    } catch (err) {
+      toast.error("Failed to upload certification.");
+    } finally {
+      setIsUploadingCertification(false);
+    }
+  }, [refreshBrand]);
+
+  const removeCertification = useCallback(async (fileKey: string) => {
+    const currentContext = contextDataRef.current;
+    if (!currentContext.brandId) return;
+    
+    try {
+      await removeAssetMutation.mutateAsync({
+        brandId: currentContext.brandId,
+        fileKey: fileKey
+      });
+      await refreshBrand(currentContext.brandId);
+    } catch (err) {
+      toast.error("Failed to remove certification.");
+    }
+  }, [removeAssetMutation, refreshBrand]);
 
   const removeLogo = useCallback(async () => {
     const currentContext = contextDataRef.current;
@@ -204,6 +257,10 @@ export function useBrandAssets(
     assignAsSecondary,
     uploadLogo,
     removeLogo,
+    uploadCertification,
+    removeCertification,
+    certifications,
+    isUploadingCertification,
     refreshBrand,
   };
 }

@@ -184,11 +184,12 @@ class PCM_Brands_Service
      * @param int    $brand_id Brand ID.
      * @param int    $user_id  PCM user ID.
      * @param object $brand    Brand DB row (for existing assets/colors).
+     * @param string $role     Optional role (e.g., logo, certification).
      *
-     * @return array Asset data { fileKey, url, mimeType, source, addedAt }
+     * @return array Asset data { fileKey, url, mimeType, source, addedAt, role }
      * @throws \RuntimeException On upload failure.
      */
-    public function upload_asset(array $file, int $brand_id, int $user_id, object $brand): array
+    public function upload_asset(array $file, int $brand_id, int $user_id, object $brand, string $role = ''): array
     {
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/media.php';
@@ -200,7 +201,7 @@ class PCM_Brands_Service
             throw new \RuntimeException('Upload failed: ' . $upload['error']);
         }
 
-        $asset = $this->create_asset_entry($brand_id, $upload['url'], $upload['type'], 'upload');
+        $asset = $this->create_asset_entry($brand_id, $upload['url'], $upload['type'], 'upload', $role);
 
         // Append to brand assets
         $this->append_asset($brand_id, $user_id, $brand, $asset);
@@ -227,11 +228,12 @@ class PCM_Brands_Service
      * @param int    $brand_id  Brand ID.
      * @param int    $user_id   PCM user ID.
      * @param object $brand     Brand DB row.
+     * @param string $role      Optional role.
      *
      * @return array Asset data.
      * @throws \RuntimeException On download or save failure.
      */
-    public function add_asset_from_url(string $url, int $brand_id, int $user_id, object $brand): array
+    public function add_asset_from_url(string $url, int $brand_id, int $user_id, object $brand, string $role = ''): array
     {
         $response = wp_remote_get($url, array('timeout' => 30));
         if (is_wp_error($response)) {
@@ -253,7 +255,7 @@ class PCM_Brands_Service
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
         file_put_contents($file_path, $body);
 
-        $asset = $this->create_asset_entry($brand_id, $upload_dir['url'] . '/' . $file_name, $mime_type, 'url_fetch');
+        $asset = $this->create_asset_entry($brand_id, $upload_dir['url'] . '/' . $file_name, $mime_type, 'url_fetch', $role);
 
         // Append to brand assets
         $this->append_asset($brand_id, $user_id, $brand, $asset);
@@ -436,18 +438,23 @@ class PCM_Brands_Service
      * @param string $url       Asset URL.
      * @param string $mime_type MIME type.
      * @param string $source    Source type (upload, url_fetch).
+     * @param string $role      Role of the asset (logo, certification).
      *
-     * @return array Asset entry { fileKey, url, mimeType, source, addedAt }
+     * @return array Asset entry { fileKey, url, mimeType, source, addedAt, role }
      */
-    private function create_asset_entry(int $brand_id, string $url, string $mime_type, string $source): array
+    private function create_asset_entry(int $brand_id, string $url, string $mime_type, string $source, string $role = ''): array
     {
-        return array(
+        $asset = array(
             'fileKey' => 'brand_' . $brand_id . '_' . wp_generate_uuid4(),
             'url' => $url,
             'mimeType' => $mime_type,
             'source' => $source,
             'addedAt' => current_time('c'),
         );
+        if (!empty($role)) {
+            $asset['role'] = $role;
+        }
+        return $asset;
     }
 
     /**

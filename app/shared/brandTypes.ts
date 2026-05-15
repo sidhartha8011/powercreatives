@@ -30,6 +30,8 @@ export interface BrandAsset {
   source: BrandAssetSource;
   /** ISO 8601 timestamp when added */
   addedAt: string;
+  /** Role of the asset to distinguish logos, certifications, and normal references */
+  role?: 'logo' | 'certification' | 'reference';
 }
 
 // ============================================

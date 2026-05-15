@@ -29,6 +29,13 @@ export interface ContextData {
   seasonEvent: string;
   /** Free-text campaign theme */
   campaignTheme: string;
+  /** Which brand assets should be used in generation */
+  brandToggles?: {
+    useSummary?: boolean;
+    useColors?: boolean;
+    useLogo?: boolean;
+    useCertifications?: boolean;
+  };
 }
 
 /** Props for the ContextPanel orchestrator */

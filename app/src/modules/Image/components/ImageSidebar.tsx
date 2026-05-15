@@ -74,66 +74,15 @@ interface ImageSidebarProps {
         | 'handleGenerateSuggestions' | 'handleGenerateContextSuggestions'
         | 'applySuggestion' | 'applyContextSuggestion'
     >;
-    // Asset pipeline hook (generation-specific: subject, badges, text overlay)
+    // Asset pipeline hook (generation-specific)
     asset: Pick<
         UseImageAssetsReturn,
         | 'subjectConfig' | 'subjectInputRef' | 'clearSubject'
-        | 'certifications' | 'certInputRef' | 'removeCertification' | 'setCertifications'
-        | 'textOverlay' | 'setTextOverlay'
         | 'handleFileUpload'
         | 'setSubjectConfig'
     >;
 }
 
-// ============================================================================
-// BrandAssetPicker — Inline popover for picking brand assets into pipeline slots
-// Renders only when brand has >= 1 asset. Converts remote URL to base64.
-// ============================================================================
-
-function BrandAssetPicker({ assets, onPick }: { assets: BrandAsset[]; onPick: (base64: string) => void }) {
-    if (assets.length === 0) return null;
-
-    /** Fetch a remote image URL and convert to base64 data URI */
-    const pickAsset = async (url: string) => {
-        try {
-            const res = await fetch(url);
-            const blob = await res.blob();
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                if (typeof reader.result === 'string') onPick(reader.result);
-            };
-            reader.readAsDataURL(blob);
-        } catch (err) {
-            console.warn('Failed to load brand asset:', err);
-        }
-    };
-
-    return (
-        <Popover>
-            <PopoverTrigger asChild>
-                <button type="button" className="text-xs text-muted-foreground hover:text-primary hover:underline transition-colors">
-                    From Brand
-                </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-52 p-2" side="left" align="start">
-                <p className="text-[10px] text-muted-foreground mb-1.5">Select brand asset</p>
-                <div className="grid grid-cols-3 gap-1.5">
-                    {assets.map((a) => (
-                        <button
-                            key={a.fileKey}
-                            type="button"
-                            onClick={() => pickAsset(a.url)}
-                            className="rounded border border-border hover:border-primary/50 overflow-hidden transition-colors"
-                            title={a.filename}
-                        >
-                            <img src={a.url} alt={a.filename} className="w-full h-12 object-contain bg-muted/30" />
-                        </button>
-                    ))}
-                </div>
-            </PopoverContent>
-        </Popover>
-    );
-}
 
 // ============================================================================
 // Component
@@ -162,9 +111,7 @@ export const ImageSidebar = memo(function ImageSidebar({
         applySuggestion, applyContextSuggestion } = sug;
 
     const { subjectConfig, subjectInputRef, clearSubject,
-        certifications, certInputRef, removeCertification, setCertifications,
-        textOverlay, setTextOverlay, handleFileUpload,
-        setSubjectConfig } = asset;
+        handleFileUpload, setSubjectConfig } = asset;
 
     const hasContext = !!(contextData.brand || contextData.url || contextData.seasonEvent || contextData.campaignTheme);
 
@@ -199,107 +146,7 @@ export const ImageSidebar = memo(function ImageSidebar({
                     onReferenceImagesChange={onSessionReferenceImagesChange}
                 />
 
-                {/* 2. Generation Assets (module-specific generation tools)
-                 * Brand identity (colors, logo, summary) is in ContextPanel above.
-                 * This section contains only generation-specific tools. */}
-                <Collapsible defaultOpen={false} className="group/pipeline">
-                    <CollapsibleTrigger className="flex items-center justify-between w-full py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
-                        <span className="flex items-center gap-2">
-                            <Settings2 className="w-4 h-4" />
-                            Generation Assets
-                        </span>
-                        <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]/pipeline:rotate-180" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                        <div className="space-y-3 pt-2">
 
-                            {/* Trust Badges */}
-                            <div className="p-3 rounded-lg border border-border bg-background">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-xs font-medium flex items-center gap-1.5">
-                                        <ShieldCheck className="w-3 h-3" />Trust Badges
-                                    </span>
-                                    <div className="flex items-center gap-2">
-                                        <BrandAssetPicker
-                                            assets={brandAssets}
-                                            onPick={(b64) => {
-                                                setCertifications((prev) => [...prev, { id: crypto.randomUUID(), base64: b64 }]);
-                                            }}
-                                        />
-                                        <button onClick={() => certInputRef.current?.click()} className="text-xs text-primary hover:underline">Add</button>
-                                    </div>
-                                </div>
-                                <input ref={certInputRef} type="file" accept="image/*" className="hidden"
-                                    onChange={(e) => handleFileUpload('cert', e)} />
-                                {certifications.length > 0 && (
-                                    <div className="flex flex-wrap gap-2 mt-2">
-                                        {certifications.map((cert) => (
-                                            <div key={cert.id} className="relative group">
-                                                <img src={cert.base64} alt="Badge" className="w-8 h-8 object-contain rounded border border-border" />
-                                                <button
-                                                    onClick={() => removeCertification(cert.id)}
-                                                    className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                                                >
-                                                    <X className="w-2 h-2" />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Text Overlay */}
-                            <div className="p-3 rounded-lg border border-border bg-background">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-xs font-medium flex items-center gap-1.5">
-                                        <Type className="w-3 h-3" />Allow Text
-                                    </span>
-                                    <Switch
-                                        checked={textOverlay.isActive}
-                                        onCheckedChange={(checked) => setTextOverlay((prev) => ({ ...prev, isActive: checked }))}
-                                    />
-                                </div>
-                                {textOverlay.isActive && (
-                                    <div className="space-y-3 mt-3">
-                                        <input
-                                            type="text"
-                                            value={textOverlay.text}
-                                            onChange={(e) => setTextOverlay((prev) => ({ ...prev, text: e.target.value }))}
-                                            placeholder="Enter text to display..."
-                                            className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                                        />
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input
-                                                type="checkbox"
-                                                checked={textOverlay.optimize}
-                                                onChange={(e) => setTextOverlay((prev) => ({ ...prev, optimize: e.target.checked }))}
-                                                className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary"
-                                            />
-                                            <span className="text-xs text-muted-foreground">Optimize text (allow model to adjust)</span>
-                                        </label>
-                                        <div>
-                                            <label className="text-xs text-muted-foreground mb-1 block">Placement</label>
-                                            <select
-                                                value={textOverlay.placement}
-                                                onChange={(e) => setTextOverlay((prev) => ({ ...prev, placement: e.target.value as TextPlacement }))}
-                                                className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                                            >
-                                                <option value="optimize">Optimize (model chooses)</option>
-                                                <option value="top-left">Top Left</option>
-                                                <option value="top-center">Top Center</option>
-                                                <option value="top-right">Top Right</option>
-                                                <option value="center">Center</option>
-                                                <option value="bottom-left">Bottom Left</option>
-                                                <option value="bottom-center">Bottom Center</option>
-                                                <option value="bottom-right">Bottom Right</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </CollapsibleContent>
-                </Collapsible>
 
                 {/* --- Reference Images: HIDDEN ---
                  * Reference images are NOT removed from the codebase.

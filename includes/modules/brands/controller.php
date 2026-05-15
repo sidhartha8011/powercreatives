@@ -299,8 +299,10 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->error('No file uploaded.');
         }
 
+        $role = sanitize_text_field($request->get_param('role') ?? '');
+
         try {
-            $asset = $this->service->upload_asset($files['file'], $id, $user->id, $brand);
+            $asset = $this->service->upload_asset($files['file'], $id, $user->id, $brand, $role);
             return $this->success($asset, 201);
         }
         catch (\RuntimeException $e) {
@@ -324,8 +326,10 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->error('Image URL is required.');
         }
 
+        $role = sanitize_text_field($request->get_param('role') ?? '');
+
         try {
-            $asset = $this->service->add_asset_from_url($url, $id, $user->id, $brand);
+            $asset = $this->service->add_asset_from_url($url, $id, $user->id, $brand, $role);
             return $this->success($asset, 201);
         }
         catch (\RuntimeException $e) {

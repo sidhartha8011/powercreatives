@@ -257,7 +257,7 @@ export function useImageGeneration({
         setStatus({ isGenerating: true, progress: 0, message: 'Generating creative concepts...' });
         setAssets([]);
 
-        const toggles = contextData.brandToggles || { useSummary: true, useColors: true, useLogo: true };
+        const toggles = contextData.brandToggles || { useSummary: false, useColors: false, useLogo: true, useCertifications: false };
 
         try {
             // 0. Optionally optimize the brief via LLM

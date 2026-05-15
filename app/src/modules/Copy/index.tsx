@@ -357,7 +357,7 @@ export function CopyModule() {
 
       // 1. Respect Toggles for Text Fields
       const finalFormValues = { ...formValues };
-      const toggles = contextData.brandToggles || { useSummary: true, useColors: true, useLogo: true };
+      const toggles = contextData.brandToggles || { useSummary: false, useColors: false, useLogo: true, useCertifications: false };
       
       if (!toggles.useSummary) {
         finalFormValues.business_summary = ''; // Strip if deselected

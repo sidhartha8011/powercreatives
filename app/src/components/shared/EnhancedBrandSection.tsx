@@ -38,7 +38,11 @@ export function EnhancedBrandSection({
 }: EnhancedBrandSectionProps) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const colorPickerRef = useRef<HTMLInputElement>(null);
-  const { addColor, removeColor, assignAsPrimary, assignAsSecondary, refreshBrand } = useBrandAssets(contextData, onContextChange);
+  const certInputRef = useRef<HTMLInputElement>(null);
+  const { 
+    addColor, removeColor, assignAsPrimary, assignAsSecondary, refreshBrand,
+    uploadCertification, removeCertification, certifications, isUploadingCertification
+  } = useBrandAssets(contextData, onContextChange);
 
   // Hardcoded fields that match the exact visual layout of Copy's business_info section
   const textFields = [
@@ -53,9 +57,9 @@ export function EnhancedBrandSection({
 
   const brand = contextData.brand as Record<string, any> | null;
   const brandColors = (Array.isArray(brand?.colors) && brand.colors.length > 0) ? brand.colors as string[] : null;
-  const brandLogo = (Array.isArray(brand?.assets) && brand.assets.length > 0) ? brand.assets[0] : null;
+  const brandLogo = (Array.isArray(brand?.assets) && brand.assets.length > 0) ? brand.assets.find((a: any) => a.role === 'logo' || !a.role) : null;
 
-  const toggles = contextData.brandToggles || { useSummary: true, useColors: true, useLogo: true };
+  const toggles = contextData.brandToggles || { useSummary: false, useColors: false, useLogo: true, useCertifications: false };
 
   const handleToggle = (key: keyof typeof toggles, checked: boolean) => {
     onContextChange({
@@ -98,9 +102,9 @@ export function EnhancedBrandSection({
 
   // Count filled fields + active assets for the header counter
   const filledTextCount = textFields.filter(f => !!formValues[f.id]).length;
-  const activeAssets = (toggles.useColors && brandColors ? 1 : 0) + (toggles.useLogo && brandLogo ? 1 : 0) + (referenceImages.length > 0 ? 1 : 0);
+  const activeAssets = (toggles.useColors && brandColors ? 1 : 0) + (toggles.useLogo && brandLogo ? 1 : 0) + (toggles.useCertifications && certifications.length > 0 ? 1 : 0) + (referenceImages.length > 0 ? 1 : 0);
   const totalCount = filledTextCount + activeAssets;
-  const totalPossible = textFields.length + 3; // 3 asset blocks
+  const totalPossible = textFields.length + 4; // 4 asset blocks
 
   return (
     <div className="rounded-lg border mb-3" style={{ borderColor: "#e5e7eb" }}>
@@ -283,6 +287,65 @@ export function EnhancedBrandSection({
               ) : (
                 <span className="text-[10px] text-muted-foreground italic">Select images to reference in prompt.</span>
               )}
+            </div>
+
+            {/* Certifications */}
+            <div className="flex flex-col gap-2 p-2.5 rounded bg-muted/20 border border-border">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">Certifications / Trust Badges</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => certInputRef.current?.click()}
+                    disabled={isUploadingCertification || !contextData.brandId}
+                    className="text-[10px] font-medium text-primary hover:underline disabled:opacity-50"
+                  >
+                    + Add Certification
+                  </button>
+                  <Switch
+                    checked={toggles.useCertifications}
+                    onCheckedChange={(c) => handleToggle("useCertifications", c)}
+                    disabled={certifications.length === 0}
+                  />
+                </div>
+              </div>
+              <input
+                ref={certInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.[0]) uploadCertification(e.target.files[0]);
+                  e.target.value = '';
+                }}
+              />
+              
+              <div className={`transition-opacity ${!toggles.useCertifications && certifications.length > 0 ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
+                {certifications.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {certifications.map((cert) => (
+                      <div key={cert.fileKey} className="relative group">
+                        <img
+                          src={cert.url}
+                          alt="Certification"
+                          className="w-10 h-10 object-cover rounded border border-border"
+                        />
+                        <button
+                          onClick={() => removeCertification(cert.fileKey)}
+                          className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Remove"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-[10px] text-muted-foreground italic w-full">
+                    {!contextData.brandId ? "No brand selected." : "No certifications added to this brand."}
+                  </span>
+                )}
+              </div>
             </div>
 
           </div>

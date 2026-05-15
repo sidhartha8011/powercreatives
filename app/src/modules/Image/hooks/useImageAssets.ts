@@ -4,8 +4,6 @@
  * Owns file upload state for the Asset Pipeline sidebar section:
  * - Logo branding (single image)
  * - Reference subject (single image)
- * - Trust badges / certifications (multiple images)
- * - Text overlay configuration
  *
  * Also owns localStorage persistence for generated assets and ad versions
  * (read-on-mount + write-on-change pattern).
@@ -21,9 +19,7 @@ import type {
     LogoPlacement,
     ReferenceAsset,
     ReferenceAssetType,
-    CertificationConfig,
-    TextOverlayConfig,
-    TextPlacement,
+    ReferenceAssetType,
     GeneratedAsset,
     AdVersion,
 } from '@/types';
@@ -45,16 +41,8 @@ export interface UseImageAssetsReturn {
     setSubjectConfig: React.Dispatch<React.SetStateAction<ReferenceAsset>>;
     subjectInputRef: RefObject<HTMLInputElement>;
     clearSubject: () => void;
-    // Certifications
-    certifications: CertificationConfig[];
-    setCertifications: React.Dispatch<React.SetStateAction<CertificationConfig[]>>;
-    certInputRef: RefObject<HTMLInputElement>;
-    removeCertification: (id: string) => void;
-    // Text overlay
-    textOverlay: TextOverlayConfig;
-    setTextOverlay: React.Dispatch<React.SetStateAction<TextOverlayConfig>>;
     // Unified upload handler
-    handleFileUpload: (type: 'logo' | 'subject' | 'cert', e: React.ChangeEvent<HTMLInputElement>) => void;
+    handleFileUpload: (type: 'logo' | 'subject', e: React.ChangeEvent<HTMLInputElement>) => void;
     // Built payload to pass to generation hook
     assetPipelinePayload: AssetPipelinePayload;
     // localStorage helpers for assets + versions
@@ -83,21 +71,9 @@ export function useImageAssets(): UseImageAssetsReturn {
     });
     const subjectInputRef = useRef<HTMLInputElement>(null);
 
-    // ── Certifications / trust badges ──
-    const [certifications, setCertifications] = useState<CertificationConfig[]>([]);
-    const certInputRef = useRef<HTMLInputElement>(null);
-
-    // ── Text overlay ──
-    const [textOverlay, setTextOverlay] = useState<TextOverlayConfig>({
-        isActive: false,
-        text: '',
-        optimize: true,
-        placement: 'optimize' as TextPlacement,
-    });
-
     // ── File upload handler — reads file as base64 data URL ──
     const handleFileUpload = useCallback(
-        (type: 'logo' | 'subject' | 'cert', e: React.ChangeEvent<HTMLInputElement>) => {
+        (type: 'logo' | 'subject', e: React.ChangeEvent<HTMLInputElement>) => {
             const file = e.target.files?.[0];
             if (!file) return;
 
@@ -108,8 +84,6 @@ export function useImageAssets(): UseImageAssetsReturn {
                     setLogoConfig((prev) => ({ ...prev, base64: result, isActive: true }));
                 } else if (type === 'subject') {
                     setSubjectConfig((prev) => ({ ...prev, base64: result, isActive: true }));
-                } else if (type === 'cert') {
-                    setCertifications((prev) => [...prev, { id: crypto.randomUUID(), base64: result }]);
                 }
             };
             reader.readAsDataURL(file);
@@ -118,10 +92,6 @@ export function useImageAssets(): UseImageAssetsReturn {
         },
         [],
     );
-
-    const removeCertification = useCallback((id: string) => {
-        setCertifications((prev) => prev.filter((c) => c.id !== id));
-    }, []);
 
     // ── Clear handlers — reset logo/subject to initial empty state ──
     const clearLogo = useCallback(() => {
@@ -137,10 +107,7 @@ export function useImageAssets(): UseImageAssetsReturn {
     const assetPipelinePayload = useMemo<AssetPipelinePayload>(() => ({
         logoBase64: logoConfig.base64 || undefined,
         subjectBase64: subjectConfig.base64 || undefined,
-        textOverlay: textOverlay.isActive && textOverlay.text
-            ? { text: textOverlay.text, placement: textOverlay.placement, optimize: textOverlay.optimize }
-            : undefined,
-    }), [logoConfig, subjectConfig, textOverlay]);
+    }), [logoConfig, subjectConfig]);
 
     // ── localStorage helpers ──
     const persistAssets = useCallback((assets: GeneratedAsset[]) => {
@@ -185,12 +152,6 @@ export function useImageAssets(): UseImageAssetsReturn {
         setSubjectConfig,
         subjectInputRef,
         clearSubject,
-        certifications,
-        setCertifications,
-        certInputRef,
-        removeCertification,
-        textOverlay,
-        setTextOverlay,
         handleFileUpload,
         assetPipelinePayload,
         persistAssets,
