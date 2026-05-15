@@ -1,9 +1,9 @@
 import { useContextPanel } from "./useContextPanel";
 import { BrandDropdown } from "./BrandDropdown";
-import { BrandSummaryCard } from "./BrandSummaryCard";
 import { UrlInput } from "./UrlInput";
 import { BrandConflictDialog } from "./BrandConflictDialog";
 import { ThemeSelector } from "@/components/shared/ThemeSelector";
+import { BrandColorSwatches } from "@/components/shared/BrandColorSwatches";
 import { LogoSelectionDialog } from "@/components/shared/LogoSelectionDialog";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/trpc";
@@ -12,6 +12,12 @@ import type { ContextPanelProps } from "./types";
 export function ContextPanel(props: ContextPanelProps) {
   const { value, hideUrl = false, hideTheme = false } = props;
   const { state, actions, mutations } = useContextPanel(props);
+
+  // Extract brand identity fields (safe access — brand shape varies)
+  const brand = value.brand as Record<string, any> | null;
+  const brandSummary = brand?.businessSummary as string | undefined;
+  const brandColors = (Array.isArray(brand?.colors) && brand.colors.length > 0) ? brand.colors as string[] : null;
+  const brandLogo = (Array.isArray(brand?.assets) && brand.assets.length > 0) ? brand.assets[0] : null;
 
   return (
     <>
@@ -28,8 +34,30 @@ export function ContextPanel(props: ContextPanelProps) {
           handleBrandClear={actions.handleBrandClear}
         />
 
-        {/* Brand identity summary — auto-rendered when brand is selected */}
-        <BrandSummaryCard brand={value.brand} />
+        {/* Brand Identity — consolidated: summary + colors + logo.
+         * Renders inline under dropdown when brand is selected.
+         * Single source of truth for all modules (Image, Copy, Video). */}
+        {brand && (brandSummary || brandColors || brandLogo) && (
+          <div className="space-y-2 pl-1">
+            {brandSummary && (
+              <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                {brandSummary}
+              </p>
+            )}
+            {(brandColors || brandLogo) && (
+              <div className="flex items-center gap-3">
+                {brandLogo && (
+                  <img
+                    src={brandLogo.url}
+                    alt="Brand logo"
+                    className="w-6 h-6 object-contain rounded border border-border shrink-0"
+                  />
+                )}
+                {brandColors && <BrandColorSwatches colors={brandColors} size="sm" />}
+              </div>
+            )}
+          </div>
+        )}
 
         {!hideUrl && (
           <UrlInput

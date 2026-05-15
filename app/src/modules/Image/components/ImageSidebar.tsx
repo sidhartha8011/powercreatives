@@ -5,14 +5,11 @@
  * No business logic, no API calls — those live in the hooks.
  *
  * Sections:
- * 1. Brand / URL / Theme context (ContextPanel)
- * 2. Brand Color Swatches
- * 3. Session Reference Images
- * 4. Generate Suggestions from Context
- * 5. Product Brief + AI Suggestions
- * 6. Production Engines (model accordion)
- * 7. Production Parameters (sliders)
- * 8. Asset Pipeline (logo, subject, badges, text overlay)
+ * 1. Brand / URL / Theme context (ContextPanel — includes brand identity)
+ * 2. Generation Assets (subject, badges, text overlay)
+ * 3. Product Brief + AI Suggestions
+ * 4. Production Engines (model accordion)
+ * 5. Production Parameters (sliders)
  */
 
 import { memo } from 'react';
@@ -26,7 +23,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { ContextPanel } from '@/components/shared/ContextPanel';
 import type { ContextData } from '@/components/shared/ContextPanel';
 import { SessionReferenceImagePanel } from '@/components/shared/SessionReferenceImagePanel';
-import { BrandColorSwatches } from '@/components/shared/BrandColorSwatches';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import type { BrandAsset } from '@shared/brandTypes';
 import { syncBrandAssetsToSession } from '@/lib/syncBrandAssetsToSession';
@@ -74,15 +70,14 @@ interface ImageSidebarProps {
         | 'handleGenerateSuggestions' | 'handleGenerateContextSuggestions'
         | 'applySuggestion' | 'applyContextSuggestion'
     >;
-    // Asset pipeline hook
+    // Asset pipeline hook (generation-specific: subject, badges, text overlay)
     asset: Pick<
         UseImageAssetsReturn,
-        | 'logoConfig' | 'logoInputRef' | 'clearLogo'
         | 'subjectConfig' | 'subjectInputRef' | 'clearSubject'
         | 'certifications' | 'certInputRef' | 'removeCertification' | 'setCertifications'
         | 'textOverlay' | 'setTextOverlay'
         | 'handleFileUpload'
-        | 'setLogoConfig' | 'setSubjectConfig'
+        | 'setSubjectConfig'
     >;
 }
 
@@ -159,10 +154,10 @@ export const ImageSidebar = memo(function ImageSidebar({
         handleGenerateSuggestions, handleGenerateContextSuggestions,
         applySuggestion, applyContextSuggestion } = sug;
 
-    const { logoConfig, logoInputRef, clearLogo, subjectConfig, subjectInputRef, clearSubject,
+    const { subjectConfig, subjectInputRef, clearSubject,
         certifications, certInputRef, removeCertification, setCertifications,
         textOverlay, setTextOverlay, handleFileUpload,
-        setLogoConfig, setSubjectConfig } = asset;
+        setSubjectConfig } = asset;
 
     const hasContext = !!(contextData.brand || contextData.url || contextData.seasonEvent || contextData.campaignTheme);
 
@@ -187,59 +182,19 @@ export const ImageSidebar = memo(function ImageSidebar({
                     }}
                 />
 
-                {/* 2. Brand Assets (renamed from Asset Pipeline)
-                 * Positioned directly after brand selection for identity-first workflow.
-                 * Contains: Brand Colors + Logo + Subject + Trust Badges + Text Overlay */}
+                {/* 2. Generation Assets (module-specific generation tools)
+                 * Brand identity (colors, logo, summary) is in ContextPanel above.
+                 * This section contains only generation-specific tools. */}
                 <Collapsible defaultOpen={false} className="group/pipeline">
                     <CollapsibleTrigger className="flex items-center justify-between w-full py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
                         <span className="flex items-center gap-2">
                             <Settings2 className="w-4 h-4" />
-                            Brand Assets
+                            Generation Assets
                         </span>
                         <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]/pipeline:rotate-180" />
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                         <div className="space-y-3 pt-2">
-
-                        {/* Brand Colors — inside Brand Assets for visual grouping */}
-                        {contextData.brand && (contextData.brand as any).colors &&
-                            ((contextData.brand as any).colors as string[]).length > 0 && (
-                                <div className="p-3 rounded-lg border border-border bg-background">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <span className="text-xs font-medium">Brand Colors</span>
-                                    </div>
-                                    <BrandColorSwatches colors={(contextData.brand as any).colors as string[]} size="md" />
-                                </div>
-                            )}
-
-                        {/* Logo */}
-                        <div className="p-3 rounded-lg border border-border bg-background">
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-medium">Logo Branding</span>
-                                <div className="flex items-center gap-2">
-                                    <BrandAssetPicker
-                                        assets={brandAssets}
-                                        onPick={(b64) => setLogoConfig({ base64: b64 })}
-                                    />
-                                    <button onClick={() => logoInputRef.current?.click()} className="text-xs text-primary hover:underline">Upload</button>
-                                </div>
-                            </div>
-                            <input ref={logoInputRef} type="file" accept="image/*" className="hidden"
-                                onChange={(e) => handleFileUpload('logo', e)} />
-                            {logoConfig.base64 && (
-                                <div className="flex items-center gap-2 mt-2">
-                                    <img src={logoConfig.base64} alt="Logo" className="w-8 h-8 object-contain rounded border border-border" />
-                                    <span className="text-xs text-muted-foreground">Logo uploaded</span>
-                                    <button
-                                        onClick={clearLogo}
-                                        className="ml-auto w-5 h-5 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground rounded-full flex items-center justify-center transition-colors"
-                                        title="Remove logo"
-                                    >
-                                        <X className="w-2.5 h-2.5" />
-                                    </button>
-                                </div>
-                            )}
-                        </div>
 
                         {/* Subject */}
                         <div className="p-3 rounded-lg border border-border bg-background">
