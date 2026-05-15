@@ -89,6 +89,62 @@ export function useBrandAssets(
     }
   }, [onContextChange, updateColorsMutation, refreshBrand]);
 
+  const assignAsPrimary = useCallback(async (index: number) => {
+    const currentContext = contextDataRef.current;
+    if (!currentContext.brandId) return;
+
+    const currentColors = ((currentContext.brand as any)?.colors as string[] | null) ?? [];
+    if (index <= 0 || index >= currentColors.length) return;
+
+    const newColors = [...currentColors];
+    const [color] = newColors.splice(index, 1);
+    newColors.unshift(color);
+
+    onContextChange({
+      ...currentContext,
+      brand: { ...currentContext.brand, colors: newColors } as any
+    });
+
+    setIsUpdatingColors(true);
+    try {
+      await updateColorsMutation.mutateAsync({ brandId: currentContext.brandId, colors: newColors });
+      await refreshBrand(currentContext.brandId);
+    } catch (err) {
+      toast.error("Failed to update colors.");
+      onContextChange(currentContext);
+    } finally {
+      setIsUpdatingColors(false);
+    }
+  }, [onContextChange, updateColorsMutation, refreshBrand]);
+
+  const assignAsSecondary = useCallback(async (index: number) => {
+    const currentContext = contextDataRef.current;
+    if (!currentContext.brandId) return;
+
+    const currentColors = ((currentContext.brand as any)?.colors as string[] | null) ?? [];
+    if (index === 1 || index >= currentColors.length) return;
+
+    const newColors = [...currentColors];
+    const [color] = newColors.splice(index, 1);
+    newColors.splice(1, 0, color);
+
+    onContextChange({
+      ...currentContext,
+      brand: { ...currentContext.brand, colors: newColors } as any
+    });
+
+    setIsUpdatingColors(true);
+    try {
+      await updateColorsMutation.mutateAsync({ brandId: currentContext.brandId, colors: newColors });
+      await refreshBrand(currentContext.brandId);
+    } catch (err) {
+      toast.error("Failed to update colors.");
+      onContextChange(currentContext);
+    } finally {
+      setIsUpdatingColors(false);
+    }
+  }, [onContextChange, updateColorsMutation, refreshBrand]);
+
   const uploadLogo = useCallback(async (file: File) => {
     const currentContext = contextDataRef.current;
     if (!currentContext.brandId) return;
@@ -144,7 +200,10 @@ export function useBrandAssets(
     isUpdatingColors,
     addColor,
     removeColor,
+    assignAsPrimary,
+    assignAsSecondary,
     uploadLogo,
     removeLogo,
+    refreshBrand,
   };
 }

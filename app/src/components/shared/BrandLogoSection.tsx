@@ -18,11 +18,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { Loader2, ImageIcon, Upload, Link } from "lucide-react";
+import { Loader2, ImageIcon, Upload, Link, X } from "lucide-react";
 import { toast } from "sonner";
 import { trpc, apiFetch } from "@/lib/trpc";
 import type { BrandAsset } from "@shared/brandTypes";
-import type { Brand } from "../types";
+import type { Brand } from "@/modules/Brands/types";
 
 interface BrandLogoSectionProps {
   /** Brand being edited (null = create mode — logo disabled) */
@@ -49,7 +49,22 @@ export function BrandLogoSection({
 
   const addAssetMutation = trpc.brands.addAsset.useMutation();
   const addAssetFromUrlMutation = trpc.brands.addAssetFromUrl.useMutation();
+  const removeAssetMutation = trpc.brands.removeAsset.useMutation();
   const reorderMutation = trpc.brands.reorderAssets.useMutation();
+
+  const handleRemoveLogo = useCallback(async () => {
+    if (!editBrand || !logoAsset) return;
+    try {
+      await removeAssetMutation.mutateAsync({
+        brandId: editBrand.id,
+        fileKey: logoAsset.fileKey,
+      });
+      onLogoChanged();
+      toast.success("Logo removed");
+    } catch {
+      toast.error("Failed to remove logo");
+    }
+  }, [editBrand, logoAsset, removeAssetMutation, onLogoChanged]);
 
   const isEdit = !!editBrand;
 
@@ -181,35 +196,48 @@ export function BrandLogoSection({
         setLogoPopoverOpen(open);
         if (!open) setLogoUrlInput("");
       }}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              "w-16 h-16 rounded-lg overflow-hidden transition-all",
-              isEdit
-                ? "cursor-pointer hover:ring-2 hover:ring-primary/50 hover:scale-105"
-                : "cursor-default",
-              logoAsset
-                ? "border border-border bg-muted"
-                : "border border-dashed border-border bg-muted/30 flex items-center justify-center"
-            )}
-            title={isEdit ? "Click to change logo" : "Save the brand first"}
-          >
-            {(uploadingLogo || fetchingLogoUrl) ? (
-              <div className="w-full h-full flex items-center justify-center">
-                <Loader2 size={20} className="animate-spin text-muted-foreground" />
-              </div>
-            ) : logoAsset ? (
-              <img
-                src={logoAsset.url}
-                alt="Brand logo"
-                className="w-full h-full object-contain"
-              />
-            ) : (
-              <ImageIcon size={20} className="text-muted-foreground" />
-            )}
-          </button>
-        </PopoverTrigger>
+        <div className="relative inline-block">
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "w-16 h-16 rounded-lg overflow-hidden transition-all",
+                isEdit
+                  ? "cursor-pointer hover:ring-2 hover:ring-primary/50 hover:scale-105"
+                  : "cursor-default",
+                logoAsset
+                  ? "border border-border bg-muted"
+                  : "border border-dashed border-border bg-muted/30 flex items-center justify-center"
+              )}
+              title={isEdit ? "Click to change logo" : "Save the brand first"}
+            >
+              {(uploadingLogo || fetchingLogoUrl || removeAssetMutation.isPending) ? (
+                <div className="w-full h-full flex items-center justify-center">
+                  <Loader2 size={20} className="animate-spin text-muted-foreground" />
+                </div>
+              ) : logoAsset ? (
+                <img
+                  src={logoAsset.url}
+                  alt="Brand logo"
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <ImageIcon size={20} className="text-muted-foreground" />
+              )}
+            </button>
+          </PopoverTrigger>
+          {logoAsset && isEdit && (
+            <button
+              type="button"
+              onClick={handleRemoveLogo}
+              disabled={removeAssetMutation.isPending}
+              className="absolute -top-2 -right-2 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center shadow-sm hover:scale-110 transition-transform z-10 disabled:opacity-50"
+              title="Remove Logo"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
         <PopoverContent align="start" side="right" className="w-72 p-3 space-y-3">
           {/* Option 1: Upload file */}
           <div>

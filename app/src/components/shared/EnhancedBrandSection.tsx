@@ -3,6 +3,8 @@ import { ChevronDown, ChevronRight, X, Image as ImageIcon } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { LANGUAGES } from "@shared/brandTypes";
 import { useBrandAssets } from "./hooks/useBrandAssets";
+import { BrandColorSection } from "./BrandColorSection";
+import { BrandLogoSection } from "./BrandLogoSection";
 import type { ContextData } from "./ContextPanel/types";
 import type { SessionReferenceImage } from "@shared/referenceImageIntents";
 
@@ -35,8 +37,8 @@ export function EnhancedBrandSection({
   onReferenceImagesChange,
 }: EnhancedBrandSectionProps) {
   const [isCollapsed, setIsCollapsed] = useState(true);
-  const [tempColor, setTempColor] = useState("#000000");
-  const { addColor, removeColor, uploadLogo, removeLogo, isUploadingLogo } = useBrandAssets(contextData, onContextChange);
+  const colorPickerRef = useRef<HTMLInputElement>(null);
+  const { addColor, removeColor, assignAsPrimary, assignAsSecondary, refreshBrand } = useBrandAssets(contextData, onContextChange);
 
   // Hardcoded fields that match the exact visual layout of Copy's business_info section
   const textFields = [
@@ -197,54 +199,20 @@ export function EnhancedBrandSection({
                   />
                 </div>
               </div>
-              <div className={`transition-opacity ${!toggles.useColors ? 'opacity-40 grayscale' : ''}`}>
-                 <div className="flex flex-wrap gap-3 mt-1 items-start">
-                   {brandColors ? brandColors.map((color, index) => {
-                     const role = index === 0 ? "Main" : index === 1 ? "Secondary" : "Additional";
-                     return (
-                       <div key={`${color}-${index}`} className="flex flex-col items-center gap-1 group relative">
-                         <div
-                           className="w-6 h-6 rounded-full border shadow-sm relative overflow-hidden flex items-center justify-center cursor-pointer group-hover:border-destructive transition-colors"
-                           style={{ backgroundColor: color, borderColor: "#e5e7eb" }}
-                         >
-                            <div 
-                              onClick={() => removeColor(index)}
-                              className="absolute inset-0 bg-destructive/80 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              <X className="w-3 h-3" />
-                            </div>
-                         </div>
-                         <span className="text-[9px] text-muted-foreground uppercase">{role}</span>
-                       </div>
-                     );
-                   }) : (
-                     <span className="text-[10px] text-muted-foreground italic w-full">No colors found. Fetch URL above.</span>
-                   )}
-                   
-                   {(contextData.brandId) && (
-                     <div className="flex flex-col items-center gap-1">
-                       <div className="flex items-center gap-1.5 p-1 rounded-full border bg-white shadow-sm">
-                         <label className="w-5 h-5 rounded-full border cursor-pointer hover:opacity-80 transition-opacity overflow-hidden relative">
-                           <div className="absolute inset-0" style={{ backgroundColor: tempColor }} />
-                           <input 
-                             type="color" 
-                             className="absolute opacity-0 w-0 h-0"
-                             value={tempColor}
-                             onChange={(e) => setTempColor(e.target.value)}
-                           />
-                         </label>
-                         <button 
-                           onClick={() => addColor(tempColor)}
-                           className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors text-[10px] font-bold"
-                           title="Save Color"
-                         >
-                           +
-                         </button>
-                       </div>
-                       <span className="text-[9px] text-muted-foreground uppercase mt-0.5">Add</span>
-                     </div>
-                   )}
-                 </div>
+              <div className={`transition-opacity ${!toggles.useColors ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
+                 {contextData.brandId ? (
+                   <BrandColorSection
+                     colors={brandColors || []}
+                     maxColors={10}
+                     additionalColorRef={colorPickerRef}
+                     onAssignPrimary={assignAsPrimary}
+                     onAssignSecondary={assignAsSecondary}
+                     onRemove={removeColor}
+                     onAdd={addColor}
+                   />
+                 ) : (
+                   <span className="text-[10px] text-muted-foreground italic w-full">No brand selected.</span>
+                 )}
               </div>
             </div>
 
@@ -258,65 +226,17 @@ export function EnhancedBrandSection({
                   disabled={!brandLogo}
                 />
               </div>
-              <div className={`transition-opacity ${!toggles.useLogo ? 'opacity-40 grayscale' : ''}`}>
-                 {brandLogo ? (
-                   <div className="flex items-end gap-3">
-                     <div className="relative inline-block">
-                       <img
-                         src={brandLogo.url}
-                         alt="Brand logo"
-                         className="h-10 w-auto object-contain rounded border border-border bg-white"
-                       />
-                       <button
-                         onClick={removeLogo}
-                         className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center shadow-sm hover:scale-110 transition-transform"
-                         title="Remove Logo"
-                       >
-                         <X className="w-2.5 h-2.5" />
-                       </button>
-                     </div>
-                     <label className="flex items-center justify-center h-6 px-2 border border-dashed border-muted-foreground/50 rounded cursor-pointer hover:bg-muted/50 transition-colors mb-1">
-                       {isUploadingLogo ? (
-                         <span className="text-[10px] text-muted-foreground animate-pulse">Uploading...</span>
-                       ) : (
-                         <span className="text-[10px] text-muted-foreground font-medium hover:underline">Replace</span>
-                       )}
-                       <input
-                         type="file"
-                         accept="image/*"
-                         className="hidden"
-                         onChange={(e) => {
-                           if (e.target.files?.[0]) {
-                             uploadLogo(e.target.files[0]);
-                             e.target.value = ''; // Reset input
-                           }
-                         }}
-                       />
-                     </label>
-                   </div>
-                 ) : contextData.brandId ? (
-                   <div className="relative">
-                     <label className="flex items-center justify-center w-full h-10 border border-dashed border-muted-foreground/50 rounded cursor-pointer hover:bg-muted/50 transition-colors">
-                       {isUploadingLogo ? (
-                         <span className="text-[10px] text-muted-foreground animate-pulse">Uploading...</span>
-                       ) : (
-                         <span className="text-[10px] text-muted-foreground font-medium hover:underline">+ Upload Logo</span>
-                       )}
-                       <input
-                         type="file"
-                         accept="image/*"
-                         className="hidden"
-                         onChange={(e) => {
-                           if (e.target.files?.[0]) {
-                             uploadLogo(e.target.files[0]);
-                             e.target.value = ''; // Reset input
-                           }
-                         }}
-                       />
-                     </label>
-                   </div>
+              <div className={`transition-opacity ${!toggles.useLogo ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
+                 {contextData.brandId ? (
+                   <BrandLogoSection
+                     editBrand={contextData.brand as any}
+                     logoAsset={brandLogo}
+                     onLogoChanged={() => {
+                       if (contextData.brandId) refreshBrand(contextData.brandId);
+                     }}
+                   />
                  ) : (
-                   <span className="text-[10px] text-muted-foreground italic">No logo found. Select a brand.</span>
+                   <span className="text-[10px] text-muted-foreground italic">No brand selected.</span>
                  )}
               </div>
             </div>
