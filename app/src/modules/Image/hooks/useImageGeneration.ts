@@ -24,7 +24,6 @@ import { PRODUCTION_DEFAULTS, STORAGE_KEYS } from '../imageConfig';
 import type { ContextData } from '@/components/shared/ContextPanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { TIER_CONFIG, useImageModelsForGeneration } from '@/hooks/useModelsForGeneration';
-import type { InjectedBrandData } from './useBrandContext';
 
 // ============================================================================
 // Types
@@ -47,8 +46,6 @@ export interface UseImageGenerationOptions {
     contextData: ContextData;
     sessionReferenceImages: SessionReferenceImage[];
     assetPipelinePayload: AssetPipelinePayload;
-    /** Toggle-controlled brand data — only includes fields the user has toggled ON */
-    injectedBrandData?: InjectedBrandData;
 }
 
 export interface UseImageGenerationReturn {
@@ -100,7 +97,6 @@ export function useImageGeneration({
     contextData,
     sessionReferenceImages,
     assetPipelinePayload,
-    injectedBrandData,
 }: UseImageGenerationOptions): UseImageGenerationReturn {
 
     // ── Settings (for Menu Intelligence model selection) ──
@@ -235,28 +231,15 @@ export function useImageGeneration({
         toast.success(`Removed ${idsToRemove.size} images`);
     }, [selection]);
 
-    // ── Build comprehensive brand context string from toggled-ON fields ──
-    const buildBrandContext = useCallback((data?: InjectedBrandData): string => {
-        if (!data) return '';
+    // ── Build brand color context string ──
+    const buildColorContext = useCallback((brand: ContextData['brand']): string => {
+        const colors = ((brand as any)?.colors as string[] | null) ?? [];
+        if (colors.length === 0) return '';
         const parts: string[] = [];
-
-        // Identity fields
-        if (data.business_name) parts.push(`Business: ${data.business_name}`);
-        if (data.niche) parts.push(`Industry: ${data.niche}`);
-        if (data.business_summary) parts.push(`About: ${data.business_summary}`);
-        if (data.location) parts.push(`Location: ${data.location}`);
-
-        // Colors
-        if (data.colors && data.colors.length > 0) {
-            const colorParts: string[] = [];
-            if (data.colors[0]) colorParts.push(`primary ${data.colors[0]}`);
-            if (data.colors[1]) colorParts.push(`secondary ${data.colors[1]}`);
-            data.colors.slice(2, 4).forEach((c) => colorParts.push(c));
-            parts.push(`Brand colors: ${colorParts.join(', ')}`);
-        }
-
-        if (parts.length === 0) return '';
-        return ` ${parts.join('. ')}.`;
+        if (colors[0]) parts.push(`primary ${colors[0]}`);
+        if (colors[1]) parts.push(`secondary ${colors[1]}`);
+        colors.slice(2, 4).forEach((c) => parts.push(c));
+        return ` Use brand colors: ${parts.join(', ')}.`;
     }, []);
 
     // ── Main generation handler ──
@@ -340,7 +323,7 @@ export function useImageGeneration({
             // while respecting per-provider rate limits via sequential variations.
             const totalWork = generatedVersions.length * selectedModels.length * variationsPerModel;
             let completed = 0;
-            const brandCtx = buildBrandContext(injectedBrandData);
+            const colorCtx = buildColorContext(contextData.brand);
             const refUrls = sessionReferenceImages.map((img) => img.url);
             const refIntents = sessionReferenceImages.map((img) => img.intent);
 
@@ -356,8 +339,8 @@ export function useImageGeneration({
                 // Build prompt once per concept (shared across all models)
                 const isAnchor = version.name === 'Original';
                 const fullPrompt = isAnchor
-                    ? `${version.description}${brandCtx}`
-                    : `${version.description}. Product: ${productBrief}${brandCtx}`;
+                    ? `${version.description}${colorCtx}`
+                    : `${version.description}. Product: ${productBrief}${colorCtx}`;
 
                 // Fire ALL models in parallel for this concept
                 const modelTasks = selectedModels.map(async (modelId) => {

@@ -118,12 +118,12 @@ export function ContextPanel(props: ContextPanelProps) {
                     });
                   }
                 }
-              } catch (err) {}
+              } catch (err) { }
               const extracted = (result as any)?.extractedColors as string[] | undefined;
               if (extracted && extracted.length > 0) {
                 try {
                   await mutations.updateBrandColors.mutateAsync({ brandId, colors: extracted });
-                } catch (err) {}
+                } catch (err) { }
                 return extracted;
               }
               await mutations.refreshBrand(brandId);
@@ -154,7 +154,7 @@ export function ContextPanel(props: ContextPanelProps) {
               if (extracted && extracted.length > 0) {
                 try {
                   await mutations.updateBrandColors.mutateAsync({ brandId, colors: extracted });
-                } catch (err) {}
+                } catch (err) { }
               }
               await mutations.refreshBrand(brandId);
             } catch (err) {
@@ -177,7 +177,7 @@ export function ContextPanel(props: ContextPanelProps) {
               if (extracted && extracted.length > 0) {
                 try {
                   await mutations.updateBrandColors.mutateAsync({ brandId, colors: extracted });
-                } catch (err) {}
+                } catch (err) { }
               }
               await mutations.refreshBrand(brandId);
             } catch (err) {
@@ -187,7 +187,7 @@ export function ContextPanel(props: ContextPanelProps) {
             }
           }
         }}
-        onSkip={() => {}}
+        onSkip={() => { }}
       />
     </>
   );

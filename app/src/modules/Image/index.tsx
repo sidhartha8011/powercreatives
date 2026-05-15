@@ -31,7 +31,6 @@ import { useApp } from '@/contexts/AppContext';
 import { useImageGeneration } from './hooks/useImageGeneration';
 import { useImageSuggestions } from './hooks/useImageSuggestions';
 import { useImageAssets } from './hooks/useImageAssets';
-import { useBrandContext } from './hooks/useBrandContext';
 
 // Components
 import { ImageSidebar } from './components/ImageSidebar';
@@ -57,13 +56,11 @@ export function ImageModule() {
 
   // ── Hooks ──
   const assetHook = useImageAssets();
-  const brandCtxHook = useBrandContext(contextData);
 
   const genHook = useImageGeneration({
     contextData,
     sessionReferenceImages,
     assetPipelinePayload: assetHook.assetPipelinePayload,
-    injectedBrandData: brandCtxHook.injectedBrandData,
   });
 
   const sugHook = useImageSuggestions();
@@ -240,7 +237,6 @@ export function ImageModule() {
             displayModels: genHook.displayModels,
             modelsByTier: genHook.modelsByTier,
           }}
-          brandCtx={brandCtxHook}
           sug={{
             suggestions: sugHook.suggestions,
             contextSuggestions: sugHook.contextSuggestions,
@@ -255,8 +251,20 @@ export function ImageModule() {
             applySuggestion: sugHook.applySuggestion,
             applyContextSuggestion: sugHook.applyContextSuggestion,
           }}
-          textOverlay={assetHook.textOverlay}
-          setTextOverlay={assetHook.setTextOverlay}
+          asset={{
+            logoConfig: assetHook.logoConfig,
+            logoInputRef: assetHook.logoInputRef,
+            subjectConfig: assetHook.subjectConfig,
+            subjectInputRef: assetHook.subjectInputRef,
+            certifications: assetHook.certifications,
+            certInputRef: assetHook.certInputRef,
+            removeCertification: assetHook.removeCertification,
+            textOverlay: assetHook.textOverlay,
+            setTextOverlay: assetHook.setTextOverlay,
+            handleFileUpload: assetHook.handleFileUpload,
+            setLogoConfig: assetHook.setLogoConfig,
+            setSubjectConfig: assetHook.setSubjectConfig,
+          }}
         />
 
         <ImageResultsGrid
@@ -295,11 +303,11 @@ export function ImageModule() {
               ),
             );
             if (selectedAsset) {
-              setSelectedAsset({ 
-                ...selectedAsset, 
+              setSelectedAsset({
+                ...selectedAsset,
                 id: refinedAsset.id ? String(refinedAsset.id) : selectedAsset.id,
-                url: refinedAsset.url, 
-                thumbnailUrl: refinedAsset.url 
+                url: refinedAsset.url,
+                thumbnailUrl: refinedAsset.url
               });
             }
             toast.success('Image edited successfully!');
