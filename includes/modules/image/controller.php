@@ -429,6 +429,7 @@ class PCM_REST_Image extends PCM_REST_Base
         }
 
         $system_prompt = $this->get_prompt_override($user->id, 'image', 'brief_optimization');
+        $user_template = $this->get_prompt_override($user->id, 'image', 'brief_optimization_user');
 
         try {
             $optimized = $this->service->optimize_brief(
@@ -436,7 +437,8 @@ class PCM_REST_Image extends PCM_REST_Base
                 $brief,
                 $params['brandContext'] ?? null,
                 $system_prompt,
-                $model_id
+                $model_id,
+                $user_template
             );
 
             return $this->success(array('optimizedBrief' => $optimized));

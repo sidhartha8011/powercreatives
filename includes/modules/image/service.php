@@ -392,22 +392,25 @@ class PCM_Image_Service
         string $brief,
         ?array $brand_context = null,
         ?string $system_prompt = null,
-        string $model_id = ''
+        string $model_id = '',
+        ?string $user_template = null
         ): string
     {
         if (!$system_prompt) {
-            $system_prompt = 'You are an expert AI image prompt engineer. '
-                . 'Rewrite the given product brief into a detailed, effective image generation prompt. '
-                . 'Focus on visual elements: composition, lighting, style, mood, and subject details. '
-                . 'Return only the optimized prompt text, nothing else.';
+            $defaults = self::get_default_prompts();
+            $system_prompt = $defaults['brief_optimization'];
         }
 
-        $user_text = "Optimize this product brief for AI image generation:\n\n{$brief}";
+        // Build placeholder variables from context
+        $vars = $this->build_image_context($brand_context ?? array(), 1);
+        $vars['brief'] = $brief;
 
-        if (!empty($brand_context['name'])) {
-            $brand_name = sanitize_text_field($brand_context['name'] ?? '');
-            $user_text .= "\n\nBrand: {$brand_name}";
+        // Resolve user prompt template
+        if (!$user_template) {
+            $defaults = $defaults ?? self::get_default_prompts();
+            $user_template = $defaults['brief_optimization_user'];
         }
+        $user_text = $this->resolve_prompt_placeholders($user_template, $vars);
 
         $messages = array(
                 array('role' => 'system', 'content' => $system_prompt),
@@ -718,6 +721,19 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
             . 'Rewrite the given product brief into a detailed, effective image generation prompt. '
             . 'Focus on visual elements: composition, lighting, style, mood, and subject details. '
             . 'Return only the optimized prompt text, nothing else.',
+
+            // ── Brief Optimization — User Prompt ───────────────
+            'brief_optimization_user' => "Optimize this product brief for AI image generation:
+
+{{brief}}
+
+{{brandName}}
+{{niche}}
+{{location}}
+{{language}}
+{{phone}}
+{{url}}
+{{brandColors}}",
         );
     }
 

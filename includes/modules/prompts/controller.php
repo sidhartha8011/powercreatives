@@ -528,8 +528,12 @@ class PCM_REST_Prompts extends PCM_REST_Base
                 'description' => 'User prompt template for angle/scene generation. This is what the AI receives as the task. Supports {{count}}, {{brief}}, {{style}}, {{brandName}}, {{brandSummary}}.',
             ),
             'image.brief_optimization' => array(
-                'label' => 'Brief Optimization',
-                'description' => 'System prompt for rewriting a product brief into a detailed, AI-optimized image generation prompt.',
+                'label' => 'Brief Optimization — System',
+                'description' => 'System prompt for rewriting a product brief into a detailed, AI-optimized image generation prompt. Does NOT support {{placeholders}}.',
+            ),
+            'image.brief_optimization_user' => array(
+                'label' => 'Brief Optimization — User',
+                'description' => 'User prompt template for brief optimization. Supports {{brief}}, {{brandName}}, {{niche}}, {{location}}, {{language}}, {{phone}}, {{url}}, {{brandColors}}.',
             ),
 
             // Writer module
@@ -561,7 +565,7 @@ class PCM_REST_Prompts extends PCM_REST_Base
             // Copy: system prompt (role:system) + user prompt (role:user) for ads,
             // plus organic prompt and all generation + research sections.
             'copy' => array('system_prompt_ads_system', 'system_prompt_ads', 'system_prompt_organic', 'angle_generation', 'audience_generation', 'audience_research', 'angle_generation_with_audiences'),
-            'image' => array('prompt_suggestions_system', 'prompt_suggestions', 'context_suggestions_system', 'context_suggestions', 'concept_suggestions', 'concept_suggestions_user', 'brief_optimization'),
+            'image' => array('prompt_suggestions_system', 'prompt_suggestions', 'context_suggestions_system', 'context_suggestions', 'concept_suggestions', 'concept_suggestions_user', 'brief_optimization', 'brief_optimization_user'),
             'video' => array('concept_suggestions', 'compose', 'enhance'),
             'writer' => array('writer_system', 'writer_user'),
         );
