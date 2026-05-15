@@ -711,7 +711,7 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
 {{language}}
 {{phone}}
 {{url}}
-{{brandColors}}
+{{brandColors}}",
 
             // ── Brief Optimization — System Prompt ───────────────
             'brief_optimization' => 'You are an expert AI image prompt engineer. '
