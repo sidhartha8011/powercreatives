@@ -335,7 +335,7 @@ class PCM_Image_Service
     /**
      * Format brand colors as a human-readable string.
      *
-     * Follows the same convention as buildColorContext() in the frontend:
+     * Follows the convention: first color = primary, second = secondary, rest listed as-is.
      * first color = primary, second = secondary, rest listed as-is.
      *
      * @param array $colors Array of hex color strings (e.g. ['#3A8D9A', '#FFFFFF']).
@@ -734,6 +734,18 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
 {{phone}}
 {{url}}
 {{brandColors}}",
+
+            // ── Final Prompt — the prompt sent to the image model ───
+            // This template wraps the user's brief (or optimized brief) with
+            // brand context before sending to DALL-E / Flux / Kling / etc.
+            // Each {{variable}} resolves to "Label: value" or "" (empty) via
+            // build_image_context(), so entire lines vanish when toggled off.
+            'final_prompt' => "{{brief}}
+{{brandName}}
+{{niche}}
+{{location}}
+{{language}}
+{{brandColors}}",
         );
     }
 
@@ -824,5 +836,38 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
 
         // Collapse multiple consecutive blank lines left by empty placeholders
         return trim(preg_replace('/\n{3,}/', "\n\n", $resolved));
+    }
+
+    // =========================================================================
+    // PUBLIC ACCESSORS (used by Controller for final_prompt resolution)
+    // =========================================================================
+
+    /**
+     * Build placeholder variables for the final prompt template.
+     *
+     * Thin public wrapper around build_image_context() — used by the
+     * controller when resolving the editable "Final Prompt" template
+     * before sending to an image provider.
+     *
+     * @param array $context Brand context from the frontend request.
+     * @return array Placeholder key→value map.
+     */
+    public function build_final_prompt_context(array $context): array
+    {
+        return $this->build_image_context($context, 1);
+    }
+
+    /**
+     * Resolve {{placeholders}} in the final prompt template.
+     *
+     * Public wrapper around resolve_prompt_placeholders().
+     *
+     * @param string $template Template string with {{key}} placeholders.
+     * @param array  $vars     Key-value map of placeholder replacements.
+     * @return string Resolved prompt string.
+     */
+    public function resolve_final_prompt(string $template, array $vars): string
+    {
+        return $this->resolve_prompt_placeholders($template, $vars);
     }
 }

@@ -251,30 +251,33 @@ export function useImageGeneration({
 
         const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
 
+        // Build brand context ONCE — reused for optimize_brief, suggest_concepts,
+        // AND generate_single (final_prompt resolution). Fixes DRY violation.
+        const brandCtx = {
+            name: (contextData.brand as any)?.name,
+            summary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
+            brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
+            niche: formValues.niche,
+            location: formValues.location,
+            phone: formValues.phone,
+            website: formValues.website,
+            language: formValues.language,
+            seasonEvent: contextData.seasonEvent,
+            campaignTheme: contextData.campaignTheme,
+            url: contextData.url,
+        };
+        const hasBrandCtx = contextData.brand || Object.keys(formValues).length > 0;
+
         try {
             // 0. Optionally optimize the brief via LLM
             let briefToUse = productBrief;
             if (autoOptimizeBrief) {
                 setStatus((prev) => ({ ...prev, progress: 5, message: 'Optimizing your brief...' }));
                 try {
-                    const fullBrandContext = {
-                        name: (contextData.brand as any)?.name,
-                        summary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
-                        brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
-                        niche: formValues.niche,
-                        location: formValues.location,
-                        phone: formValues.phone,
-                        website: formValues.website,
-                        language: formValues.language,
-                        seasonEvent: contextData.seasonEvent,
-                        campaignTheme: contextData.campaignTheme,
-                        url: contextData.url,
-                    };
-
                     const optimized = await optimizeBriefMutation.mutateAsync({
                         brief: productBrief,
                         modelId: settings.defaultImageTextModel || undefined,
-                        brandContext: contextData.brand || Object.keys(formValues).length > 0 ? fullBrandContext : undefined,
+                        brandContext: hasBrandCtx ? brandCtx : undefined,
                     });
                     briefToUse = (optimized as any).optimizedBrief ?? productBrief;
                 } catch {
@@ -301,25 +304,11 @@ export function useImageGeneration({
             if (numVersions > 1) {
                 setStatus((prev) => ({ ...prev, progress: 10, message: 'AI is conceptualizing creative angles...' }));
 
-                    const fullBrandContext = {
-                        name: (contextData.brand as any)?.name,
-                        summary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
-                        brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
-                        niche: formValues.niche,
-                        location: formValues.location,
-                        phone: formValues.phone,
-                        website: formValues.website,
-                        language: formValues.language,
-                        seasonEvent: contextData.seasonEvent,
-                        campaignTheme: contextData.campaignTheme,
-                        url: contextData.url,
-                    };
-
                     const conceptsResult = await generateConceptsMutation.mutateAsync({
                     prompt: briefToUse,
                     count: numVersions - 1,
                     modelId: settings.defaultImageTextModel || undefined,
-                    brandContext: contextData.brand || Object.keys(formValues).length > 0 ? fullBrandContext : undefined,
+                    brandContext: hasBrandCtx ? brandCtx : undefined,
                     referenceImages: toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent })) : [],
                 });
 
@@ -392,6 +381,8 @@ export function useImageGeneration({
                                 prompt: fullPrompt,
                                 model: modelId,
                                 provider: resolvedProvider,
+                                // Pass brand context so backend resolves the final_prompt template
+                                brandContext: hasBrandCtx ? brandCtx : undefined,
                                 ...(refUrls.length > 0 ? { referenceImageUrls: refUrls, referenceImageIntents: refIntents } : {}),
                                 ...pipelineExtra,
                             });

@@ -535,6 +535,10 @@ class PCM_REST_Prompts extends PCM_REST_Base
                 'label' => 'Brief Optimization — User',
                 'description' => 'User prompt template for brief optimization. Supports {{brief}}, {{brandName}}, {{niche}}, {{location}}, {{language}}, {{phone}}, {{url}}, {{brandColors}}.',
             ),
+            'image.final_prompt' => array(
+                'label' => 'Final Prompt',
+                'description' => 'The actual prompt sent to the image model (DALL-E, Flux, Kling). Wraps the brief with brand context. Empty variables disappear automatically. Supports {{brief}}, {{brandName}}, {{niche}}, {{location}}, {{language}}, {{brandColors}}.',
+            ),
 
             // Writer module
             'writer.writer_system' => array(
@@ -565,7 +569,7 @@ class PCM_REST_Prompts extends PCM_REST_Base
             // Copy: system prompt (role:system) + user prompt (role:user) for ads,
             // plus organic prompt and all generation + research sections.
             'copy' => array('system_prompt_ads_system', 'system_prompt_ads', 'system_prompt_organic', 'angle_generation', 'audience_generation', 'audience_research', 'angle_generation_with_audiences'),
-            'image' => array('prompt_suggestions_system', 'prompt_suggestions', 'context_suggestions_system', 'context_suggestions', 'concept_suggestions', 'concept_suggestions_user', 'brief_optimization', 'brief_optimization_user'),
+            'image' => array('prompt_suggestions_system', 'prompt_suggestions', 'context_suggestions_system', 'context_suggestions', 'concept_suggestions', 'concept_suggestions_user', 'brief_optimization', 'brief_optimization_user', 'final_prompt'),
             'video' => array('concept_suggestions', 'compose', 'enhance'),
             'writer' => array('writer_system', 'writer_user'),
         );

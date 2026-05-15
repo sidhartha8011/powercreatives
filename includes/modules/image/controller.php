@@ -148,6 +148,27 @@ class PCM_REST_Image extends PCM_REST_Base
             return $this->error('Provider is required. Pass provider alongside model ID.', 400, 'pcm_missing_provider');
         }
 
+        // ── Resolve final prompt template ──────────────────────────
+        // When brandContext is provided, wrap the raw prompt with brand
+        // variables via the editable "Final Prompt" template. If no
+        // brandContext is sent, the prompt passes through unchanged
+        // (backward-compatible).
+        $brand_context = $params['brandContext'] ?? null;
+        if (!empty($brand_context)) {
+            $final_template = $this->get_prompt_override($user->id, 'image', 'final_prompt');
+            if (!$final_template) {
+                $defaults = PCM_Image_Service::get_default_prompts();
+                $final_template = $defaults['final_prompt'];
+            }
+
+            $vars = $this->service->build_final_prompt_context($brand_context);
+            $vars['brief'] = $prompt;
+            $prompt = $this->service->resolve_final_prompt($final_template, $vars);
+        }
+
+        // Override the prompt in params so save_asset() stores the resolved version
+        $params['prompt'] = $prompt;
+
         try {
             $api_key = $this->get_provider_api_key($provider, $user->id);
             $image_url = $this->service->generate_image($model_id, $provider, $api_key, $params);
