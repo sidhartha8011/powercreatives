@@ -35,6 +35,7 @@ export interface ContextData {
     useColors?: boolean;
     useLogo?: boolean;
     useCertifications?: boolean;
+    useReferenceSubjects?: boolean;
   };
 }
 

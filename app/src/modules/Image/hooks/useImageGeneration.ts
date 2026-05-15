@@ -257,7 +257,7 @@ export function useImageGeneration({
         setStatus({ isGenerating: true, progress: 0, message: 'Generating creative concepts...' });
         setAssets([]);
 
-        const toggles = contextData.brandToggles || { useSummary: false, useColors: false, useLogo: true, useCertifications: false };
+        const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
 
         try {
             // 0. Optionally optimize the brief via LLM
@@ -305,7 +305,7 @@ export function useImageGeneration({
                         name: (contextData.brand as any).name,
                         summary: toggles.useSummary ? (contextData.brand as any).businessSummary : undefined,
                     } : undefined,
-                    referenceImages: sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent })),
+                    referenceImages: toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent })) : [],
                 });
 
                 const conceptsList = (conceptsResult as any).concepts ?? [];
@@ -327,8 +327,8 @@ export function useImageGeneration({
             const totalWork = generatedVersions.length * selectedModels.length * variationsPerModel;
             let completed = 0;
             const colorCtx = buildColorContext(contextData.brand, toggles.useColors);
-            const refUrls = sessionReferenceImages.map((img) => img.url);
-            const refIntents = sessionReferenceImages.map((img) => img.intent);
+            const refUrls = toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => img.url) : [];
+            const refIntents = toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => img.intent) : [];
 
             // Build asset pipeline context once (shared across all generations)
             // NOTE: logoBase64 and subjectBase64 are intentionally NOT sent here.

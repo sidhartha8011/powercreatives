@@ -5,6 +5,7 @@ import { LANGUAGES } from "@shared/brandTypes";
 import { useBrandAssets } from "./hooks/useBrandAssets";
 import { BrandColorSection } from "./BrandColorSection";
 import { BrandLogoSection } from "./BrandLogoSection";
+import { BrandAssetGrid } from "./BrandAssetGrid";
 import type { ContextData } from "./ContextPanel/types";
 import type { SessionReferenceImage } from "@shared/referenceImageIntents";
 
@@ -59,7 +60,7 @@ export function EnhancedBrandSection({
   const brandColors = (Array.isArray(brand?.colors) && brand.colors.length > 0) ? brand.colors as string[] : null;
   const brandLogo = (Array.isArray(brand?.assets) && brand.assets.length > 0) ? brand.assets.find((a: any) => a.role === 'logo' || !a.role) : null;
 
-  const toggles = contextData.brandToggles || { useSummary: false, useColors: false, useLogo: true, useCertifications: false };
+  const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
 
   const handleToggle = (key: keyof typeof toggles, checked: boolean) => {
     onContextChange({
@@ -71,10 +72,7 @@ export function EnhancedBrandSection({
     });
   };
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleSubjectUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleSubjectUpload = (file: File) => {
     if (!file || !onReferenceImagesChange) return;
 
     const reader = new FileReader();
@@ -91,7 +89,29 @@ export function EnhancedBrandSection({
       }
     };
     reader.readAsDataURL(file);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleSubjectPick = (url: string) => {
+    if (!onReferenceImagesChange) return;
+    const newImage: SessionReferenceImage = {
+      id: crypto.randomUUID(),
+      url,
+      filename: 'Picked from brand',
+      mimeType: 'image/*',
+      intent: 'subject',
+    };
+    onReferenceImagesChange([...referenceImages, newImage]);
+  };
+
+  const handleCertificationPick = async (url: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const file = new File([blob], "certification.png", { type: blob.type });
+      await uploadCertification(file);
+    } catch (e) {
+      console.error("Failed to pick certification from brand", e);
+    }
   };
 
   const removeSubject = (id: string) => {
@@ -246,107 +266,29 @@ export function EnhancedBrandSection({
             </div>
 
             {/* Reference Subjects */}
-            <div className="flex flex-col gap-2 p-2.5 rounded bg-muted/20 border border-border">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">Reference Subjects</span>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="text-[10px] font-medium text-primary hover:underline"
-                >
-                  + Add Reference
-                </button>
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleSubjectUpload}
-              />
-              
-              {referenceImages.length > 0 ? (
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {referenceImages.map((img) => (
-                    <div key={img.id} className="relative group">
-                      <img
-                        src={img.url}
-                        alt="Reference"
-                        className="w-10 h-10 object-cover rounded border border-border"
-                      />
-                      <button
-                        onClick={() => removeSubject(img.id)}
-                        className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Remove"
-                      >
-                        <X className="w-2.5 h-2.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-[10px] text-muted-foreground italic">Select images to reference in prompt.</span>
-              )}
-            </div>
+            <BrandAssetGrid
+              title="Reference Subjects"
+              items={referenceImages.map(img => ({ id: img.id, url: img.url }))}
+              brandAssets={(contextData.brand?.assets as any) || []}
+              isActive={!!toggles.useReferenceSubjects}
+              onToggle={(c) => handleToggle("useReferenceSubjects", c)}
+              onUpload={handleSubjectUpload}
+              onPick={handleSubjectPick}
+              onRemove={removeSubject}
+            />
 
             {/* Certifications */}
-            <div className="flex flex-col gap-2 p-2.5 rounded bg-muted/20 border border-border">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">Certifications / Trust Badges</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => certInputRef.current?.click()}
-                    disabled={isUploadingCertification || !contextData.brandId}
-                    className="text-[10px] font-medium text-primary hover:underline disabled:opacity-50"
-                  >
-                    + Add Certification
-                  </button>
-                  <Switch
-                    checked={toggles.useCertifications}
-                    onCheckedChange={(c) => handleToggle("useCertifications", c)}
-                    disabled={certifications.length === 0}
-                  />
-                </div>
-              </div>
-              <input
-                ref={certInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files?.[0]) uploadCertification(e.target.files[0]);
-                  e.target.value = '';
-                }}
-              />
-              
-              <div className={`transition-opacity ${!toggles.useCertifications && certifications.length > 0 ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
-                {certifications.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {certifications.map((cert) => (
-                      <div key={cert.fileKey} className="relative group">
-                        <img
-                          src={cert.url}
-                          alt="Certification"
-                          className="w-10 h-10 object-cover rounded border border-border"
-                        />
-                        <button
-                          onClick={() => removeCertification(cert.fileKey)}
-                          className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remove"
-                        >
-                          <X className="w-2.5 h-2.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-[10px] text-muted-foreground italic w-full">
-                    {!contextData.brandId ? "No brand selected." : "No certifications added to this brand."}
-                  </span>
-                )}
-              </div>
-            </div>
+            <BrandAssetGrid
+              title="Certifications / Trust Badges"
+              items={certifications.map(cert => ({ id: cert.fileKey, url: cert.url }))}
+              brandAssets={(contextData.brand?.assets as any) || []}
+              isActive={!!toggles.useCertifications}
+              isUploading={isUploadingCertification}
+              onToggle={(c) => handleToggle("useCertifications", c)}
+              onUpload={uploadCertification}
+              onPick={handleCertificationPick}
+              onRemove={removeCertification}
+            />
 
           </div>
         </div>

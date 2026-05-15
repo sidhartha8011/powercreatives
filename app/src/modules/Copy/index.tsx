@@ -357,7 +357,7 @@ export function CopyModule() {
 
       // 1. Respect Toggles for Text Fields
       const finalFormValues = { ...formValues };
-      const toggles = contextData.brandToggles || { useSummary: false, useColors: false, useLogo: true, useCertifications: false };
+      const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
       
       if (!toggles.useSummary) {
         finalFormValues.business_summary = ''; // Strip if deselected
@@ -373,7 +373,7 @@ export function CopyModule() {
       if (toggles.useLogo && Array.isArray(brand?.assets) && brand.assets.length > 0) {
         visualAssets.logo = brand.assets[0].url;
       }
-      if (sessionReferenceImages.length > 0) {
+      if (toggles.useReferenceSubjects && sessionReferenceImages.length > 0) {
         visualAssets.referenceImages = sessionReferenceImages.map(img => ({ url: img.url, intent: img.intent }));
       }
 
