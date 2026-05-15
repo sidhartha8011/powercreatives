@@ -20,7 +20,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ContextPanel, EnhancedBrandSection } from '@/components/shared';
+import { ContextPanel, EnhancedBrandSection, ThemeSelector } from '@/components/shared';
 import type { ContextData, ScrapedBusinessData } from '@/components/shared';
 import { SessionReferenceImagePanel } from '@/components/shared/SessionReferenceImagePanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
