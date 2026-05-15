@@ -1,8 +1,8 @@
 import { useState, useRef } from "react";
 import { ChevronDown, ChevronRight, X, Image as ImageIcon } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { BrandColorSwatches } from "./BrandColorSwatches";
 import { LANGUAGES } from "@shared/brandTypes";
+import { useBrandAssets } from "./hooks/useBrandAssets";
 import type { ContextData } from "./ContextPanel/types";
 import type { SessionReferenceImage } from "@shared/referenceImageIntents";
 
@@ -35,6 +35,7 @@ export function EnhancedBrandSection({
   onReferenceImagesChange,
 }: EnhancedBrandSectionProps) {
   const [isCollapsed, setIsCollapsed] = useState(true);
+  const { addColor, removeColor, uploadLogo, removeLogo, isUploadingLogo } = useBrandAssets(contextData, onContextChange);
 
   // Hardcoded fields that match the exact visual layout of Copy's business_info section
   const textFields = [
@@ -196,11 +197,43 @@ export function EnhancedBrandSection({
                 </div>
               </div>
               <div className={`transition-opacity ${!toggles.useColors ? 'opacity-40 grayscale' : ''}`}>
-                 {brandColors ? (
-                   <BrandColorSwatches colors={brandColors.slice(0, 3)} size="sm" />
-                 ) : (
-                   <span className="text-[10px] text-muted-foreground italic">No colors found. Fetch URL above.</span>
-                 )}
+                 <div className="flex flex-wrap gap-3 mt-1 items-start">
+                   {brandColors ? brandColors.map((color, index) => {
+                     const role = index === 0 ? "Main" : index === 1 ? "Secondary" : "Additional";
+                     return (
+                       <div key={`${color}-${index}`} className="flex flex-col items-center gap-1 group relative">
+                         <div
+                           className="w-6 h-6 rounded-full border shadow-sm relative overflow-hidden flex items-center justify-center cursor-pointer"
+                           style={{ backgroundColor: color, borderColor: "#e5e7eb" }}
+                         >
+                            <div 
+                              onClick={() => removeColor(index)}
+                              className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <X className="w-3 h-3" />
+                            </div>
+                         </div>
+                         <span className="text-[9px] text-muted-foreground uppercase">{role}</span>
+                       </div>
+                     );
+                   }) : (
+                     <span className="text-[10px] text-muted-foreground italic w-full">No colors found. Fetch URL above.</span>
+                   )}
+                   
+                   {(contextData.brandId) && (
+                     <div className="flex flex-col items-center gap-1">
+                       <label className="w-6 h-6 rounded-full border border-dashed border-muted-foreground/50 flex items-center justify-center cursor-pointer hover:bg-muted/50 transition-colors relative">
+                         <span className="text-muted-foreground text-xs font-medium leading-none mb-0.5">+</span>
+                         <input 
+                           type="color" 
+                           className="absolute opacity-0 w-0 h-0"
+                           onChange={(e) => addColor(e.target.value)}
+                         />
+                       </label>
+                       <span className="text-[9px] text-transparent select-none">Add</span>
+                     </div>
+                   )}
+                 </div>
               </div>
             </div>
 
@@ -216,13 +249,43 @@ export function EnhancedBrandSection({
               </div>
               <div className={`transition-opacity ${!toggles.useLogo ? 'opacity-40 grayscale' : ''}`}>
                  {brandLogo ? (
-                   <img
-                     src={brandLogo.url}
-                     alt="Brand logo"
-                     className="h-10 w-auto object-contain rounded border border-border bg-white"
-                   />
+                   <div className="relative group inline-block">
+                     <img
+                       src={brandLogo.url}
+                       alt="Brand logo"
+                       className="h-10 w-auto object-contain rounded border border-border bg-white"
+                     />
+                     <button
+                       onClick={removeLogo}
+                       className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                       title="Remove Logo"
+                     >
+                       <X className="w-2.5 h-2.5" />
+                     </button>
+                   </div>
+                 ) : contextData.brandId ? (
+                   <div className="relative">
+                     <label className="flex items-center justify-center w-full h-10 border border-dashed border-muted-foreground/50 rounded cursor-pointer hover:bg-muted/50 transition-colors">
+                       {isUploadingLogo ? (
+                         <span className="text-[10px] text-muted-foreground animate-pulse">Uploading...</span>
+                       ) : (
+                         <span className="text-[10px] text-muted-foreground font-medium hover:underline">+ Upload Logo</span>
+                       )}
+                       <input
+                         type="file"
+                         accept="image/*"
+                         className="hidden"
+                         onChange={(e) => {
+                           if (e.target.files?.[0]) {
+                             uploadLogo(e.target.files[0]);
+                             e.target.value = ''; // Reset input
+                           }
+                         }}
+                       />
+                     </label>
+                   </div>
                  ) : (
-                   <span className="text-[10px] text-muted-foreground italic">No logo found.</span>
+                   <span className="text-[10px] text-muted-foreground italic">No logo found. Select a brand.</span>
                  )}
               </div>
             </div>
