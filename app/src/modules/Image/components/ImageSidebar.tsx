@@ -122,6 +122,15 @@ export const ImageSidebar = memo(function ImageSidebar({
         <aside className="shrink-0 border-r border-border overflow-y-auto bg-muted/20" style={{ width: '22%', minWidth: '280px', maxWidth: '380px' }}>
             <div className="p-4 space-y-6">
 
+                <EnhancedBrandSection
+                    contextData={contextData}
+                    onContextChange={onContextChange}
+                    formValues={formValues}
+                    onFormChange={onFormChange}
+                    referenceImages={sessionReferenceImages}
+                    onReferenceImagesChange={onSessionReferenceImagesChange}
+                />
+
                 {/* 1. Brand / URL / Theme Context
                  * Theme is rendered inside ContextPanel but collapsed by default.
                  * We do NOT pass hideTheme because ThemeSelector already has its own
@@ -135,15 +144,6 @@ export const ImageSidebar = memo(function ImageSidebar({
                         if (synced) onSessionReferenceImagesChange(synced);
                     }}
                     onUrlFetched={onUrlFetched}
-                />
-
-                <EnhancedBrandSection
-                    contextData={contextData}
-                    onContextChange={onContextChange}
-                    formValues={formValues}
-                    onFormChange={onFormChange}
-                    referenceImages={sessionReferenceImages}
-                    onReferenceImagesChange={onSessionReferenceImagesChange}
                 />
 
 
@@ -166,8 +166,8 @@ export const ImageSidebar = memo(function ImageSidebar({
                     <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleGenerateContextSuggestions(contextData, sessionReferenceImages)}
-                        disabled={isLoadingContextSuggestions || !hasContext}
+                        onClick={() => handleGenerateContextSuggestions(contextData, formValues, sessionReferenceImages)}
+                        disabled={isLoadingContextSuggestions || (!hasContext && Object.keys(formValues).length === 0)}
                         className="w-full gap-2 text-xs"
                     >
                         {isLoadingContextSuggestions ? (
@@ -264,7 +264,7 @@ export const ImageSidebar = memo(function ImageSidebar({
 
                         <Button
                             variant="outline" size="sm"
-                            onClick={() => handleGenerateSuggestions(productBrief, contextData, sessionReferenceImages)}
+                            onClick={() => handleGenerateSuggestions(productBrief, contextData, formValues, sessionReferenceImages)}
                             disabled={!productBrief.trim() || productBrief.length < 3 || isLoadingSuggestions}
                             className="w-full gap-2 text-xs"
                         >

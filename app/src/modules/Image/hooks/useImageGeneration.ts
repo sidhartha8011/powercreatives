@@ -44,6 +44,7 @@ export interface AssetPipelinePayload {
 
 export interface UseImageGenerationOptions {
     contextData: ContextData;
+    formValues: Record<string, string | number | undefined>;
     sessionReferenceImages: SessionReferenceImage[];
     assetPipelinePayload: AssetPipelinePayload;
 }
@@ -95,6 +96,7 @@ export interface UseImageGenerationReturn {
 
 export function useImageGeneration({
     contextData,
+    formValues,
     sessionReferenceImages,
     assetPipelinePayload,
 }: UseImageGenerationOptions): UseImageGenerationReturn {
@@ -231,17 +233,7 @@ export function useImageGeneration({
         toast.success(`Removed ${idsToRemove.size} images`);
     }, [selection]);
 
-    // ── Build brand color context string ──
-    const buildColorContext = useCallback((brand: ContextData['brand'], useColors: boolean): string => {
-        if (!useColors) return '';
-        const colors = ((brand as any)?.colors as string[] | null) ?? [];
-        if (colors.length === 0) return '';
-        const parts: string[] = [];
-        if (colors[0]) parts.push(`primary ${colors[0]}`);
-        if (colors[1]) parts.push(`secondary ${colors[1]}`);
-        colors.slice(2, 4).forEach((c) => parts.push(c));
-        return ` Use brand colors: ${parts.join(', ')}.`;
-    }, []);
+    // ── buildColorContext removed: Colors are now handled purely via Prompt Templates ──
 
     // ── Main generation handler ──
     const handleGenerate = useCallback(async (productBrief: string) => {
@@ -265,11 +257,24 @@ export function useImageGeneration({
             if (autoOptimizeBrief) {
                 setStatus((prev) => ({ ...prev, progress: 5, message: 'Optimizing your brief...' }));
                 try {
+                    const fullBrandContext = {
+                        name: (contextData.brand as any)?.name,
+                        summary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
+                        brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
+                        niche: formValues.niche,
+                        location: formValues.location,
+                        phone: formValues.phone,
+                        website: formValues.website,
+                        language: formValues.language,
+                        seasonEvent: contextData.seasonEvent,
+                        campaignTheme: contextData.campaignTheme,
+                        url: contextData.url,
+                    };
+
                     const optimized = await optimizeBriefMutation.mutateAsync({
                         brief: productBrief,
-                        // Menu Intelligence model selection
                         modelId: settings.defaultImageTextModel || undefined,
-                        brandContext: contextData.brand ? { name: (contextData.brand as any).name } : undefined,
+                        brandContext: contextData.brand || Object.keys(formValues).length > 0 ? fullBrandContext : undefined,
                     });
                     briefToUse = (optimized as any).optimizedBrief ?? productBrief;
                 } catch {
@@ -296,15 +301,25 @@ export function useImageGeneration({
             if (numVersions > 1) {
                 setStatus((prev) => ({ ...prev, progress: 10, message: 'AI is conceptualizing creative angles...' }));
 
-                const conceptsResult = await generateConceptsMutation.mutateAsync({
+                    const fullBrandContext = {
+                        name: (contextData.brand as any)?.name,
+                        summary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
+                        brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
+                        niche: formValues.niche,
+                        location: formValues.location,
+                        phone: formValues.phone,
+                        website: formValues.website,
+                        language: formValues.language,
+                        seasonEvent: contextData.seasonEvent,
+                        campaignTheme: contextData.campaignTheme,
+                        url: contextData.url,
+                    };
+
+                    const conceptsResult = await generateConceptsMutation.mutateAsync({
                     prompt: briefToUse,
                     count: numVersions - 1,
-                    // Menu Intelligence model selection
                     modelId: settings.defaultImageTextModel || undefined,
-                    brandContext: contextData.brand ? {
-                        name: (contextData.brand as any).name,
-                        summary: toggles.useSummary ? (contextData.brand as any).businessSummary : undefined,
-                    } : undefined,
+                    brandContext: contextData.brand || Object.keys(formValues).length > 0 ? fullBrandContext : undefined,
                     referenceImages: toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent })) : [],
                 });
 
@@ -326,7 +341,6 @@ export function useImageGeneration({
             // while respecting per-provider rate limits via sequential variations.
             const totalWork = generatedVersions.length * selectedModels.length * variationsPerModel;
             let completed = 0;
-            const colorCtx = buildColorContext(contextData.brand, toggles.useColors);
             const refUrls = toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => img.url) : [];
             const refIntents = toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => img.intent) : [];
 
@@ -342,8 +356,8 @@ export function useImageGeneration({
                 // Build prompt once per concept (shared across all models)
                 const isAnchor = version.name === 'Original';
                 const fullPrompt = isAnchor
-                    ? `${version.description}${colorCtx}`
-                    : `${version.description}. Product: ${productBrief}${colorCtx}`;
+                    ? version.description
+                    : `${version.description}. Product: ${productBrief}`;
 
                 // Fire ALL models in parallel for this concept
                 const modelTasks = selectedModels.map(async (modelId) => {

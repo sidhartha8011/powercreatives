@@ -651,6 +651,12 @@ class PCM_Image_Service
 
 Brief: {{brief}}
 {{brandName}}
+{{brandSummary}}
+{{niche}}
+{{location}}
+{{language}}
+{{phone}}
+{{url}}
 {{seasonEvent}}
 {{campaignTheme}}
 {{brandColors}}
@@ -666,6 +672,10 @@ Return exactly {{count}} distinct, detailed prompts optimized for AI image gener
 
 {{brandName}}
 {{brandSummary}}
+{{niche}}
+{{location}}
+{{language}}
+{{phone}}
 {{url}}
 {{seasonEvent}}
 {{campaignTheme}}
@@ -695,7 +705,13 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
             'concept_suggestions_user' => "Generate {{count}} creative image concepts for: {{brief}}
 {{style}}
 {{brandName}}
-{{brandSummary}}",
+{{brandSummary}}
+{{niche}}
+{{location}}
+{{language}}
+{{phone}}
+{{url}}
+{{brandColors}}
 
             // ── Brief Optimization — System Prompt ───────────────
             'brief_optimization' => 'You are an expert AI image prompt engineer. '
@@ -730,8 +746,21 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
         if (!empty($context['brandSummary'])) {
             $vars['brandSummary'] = 'Brand Summary: ' . sanitize_textarea_field($context['brandSummary']);
         }
-        if (!empty($context['url'])) {
-            $vars['url'] = 'Website: ' . esc_url_raw($context['url']);
+        if (!empty($context['url']) || !empty($context['website'])) {
+            $url = $context['website'] ?? $context['url'];
+            $vars['url'] = 'Website: ' . esc_url_raw($url);
+        }
+        if (!empty($context['niche'])) {
+            $vars['niche'] = 'Niche/Industry: ' . sanitize_text_field($context['niche']);
+        }
+        if (!empty($context['location'])) {
+            $vars['location'] = 'Location: ' . sanitize_text_field($context['location']);
+        }
+        if (!empty($context['phone'])) {
+            $vars['phone'] = 'Phone: ' . sanitize_text_field($context['phone']);
+        }
+        if (!empty($context['language'])) {
+            $vars['language'] = 'Language: ' . sanitize_text_field($context['language']);
         }
 
         // Campaign context

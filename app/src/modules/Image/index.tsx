@@ -66,6 +66,7 @@ export function ImageModule() {
 
   const genHook = useImageGeneration({
     contextData,
+    formValues,
     sessionReferenceImages,
     assetPipelinePayload: assetHook.assetPipelinePayload,
   });

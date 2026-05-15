@@ -40,10 +40,12 @@ export interface UseImageSuggestionsReturn {
     handleGenerateSuggestions: (
         productBrief: string,
         contextData: ContextData,
+        formValues: Record<string, string | number | undefined>,
         sessionReferenceImages: SessionReferenceImage[]
     ) => Promise<void>;
     handleGenerateContextSuggestions: (
         contextData: ContextData,
+        formValues: Record<string, string | number | undefined>,
         sessionReferenceImages: SessionReferenceImage[]
     ) => Promise<void>;
     applySuggestion: (
@@ -82,6 +84,7 @@ export function useImageSuggestions(): UseImageSuggestionsReturn {
     const handleGenerateSuggestions = useCallback(async (
         productBrief: string,
         contextData: ContextData,
+        formValues: Record<string, string | number | undefined>,
         sessionReferenceImages: SessionReferenceImage[],
     ) => {
         if (!productBrief.trim() || productBrief.length < SUGGESTION_CONFIG.minInputLength) {
@@ -89,21 +92,27 @@ export function useImageSuggestions(): UseImageSuggestionsReturn {
             return;
         }
 
+        const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
+
         setIsLoadingSuggestions(true);
         try {
             const result = await generateSuggestionsMutation.mutateAsync({
                 brief: productBrief,
                 count: suggestionCount,
                 detailLevel: toDetailLevelEnum(detailLevel),
-                // Menu Intelligence model selection — uses Settings > Image > Menu Intelligence
                 modelId: settings.defaultImageTextModel || undefined,
                 brandName: (contextData.brand as any)?.name,
-                brandSummary: (contextData.brand as any)?.businessSummary,
-                brandColors: (contextData.brand as any)?.colors || undefined,
+                brandSummary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
+                brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
+                niche: formValues.niche as string,
+                location: formValues.location as string,
+                phone: formValues.phone as string,
+                website: formValues.website as string,
+                language: formValues.language as string,
                 seasonEvent: contextData.seasonEvent || undefined,
                 campaignTheme: contextData.campaignTheme || undefined,
                 url: contextData.url || undefined,
-                referenceImages: sessionReferenceImages.length > 0
+                referenceImages: toggles.useReferenceSubjects && sessionReferenceImages.length > 0
                     ? sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent }))
                     : undefined,
             });
@@ -122,28 +131,35 @@ export function useImageSuggestions(): UseImageSuggestionsReturn {
     // ── Context-based suggestions ──
     const handleGenerateContextSuggestions = useCallback(async (
         contextData: ContextData,
+        formValues: Record<string, string | number | undefined>,
         sessionReferenceImages: SessionReferenceImage[],
     ) => {
-        const hasContext = contextData.brand || contextData.url || contextData.seasonEvent || contextData.campaignTheme;
+        const hasContext = contextData.brand || contextData.url || contextData.seasonEvent || contextData.campaignTheme || Object.keys(formValues).length > 0;
         if (!hasContext) {
-            toast.error('Please select a brand, enter a URL, or pick a season/theme first');
+            toast.error('Please select a brand, fill out brand fields, or pick a season/theme first');
             return;
         }
+
+        const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
 
         setIsLoadingContextSuggestions(true);
         try {
             const result = await generateContextSuggestionsMutation.mutateAsync({
                 count: 4,
-                // Menu Intelligence model selection
                 modelId: settings.defaultImageTextModel || undefined,
                 brandId: (contextData.brand as any)?.id,
                 brandName: (contextData.brand as any)?.name,
-                brandSummary: (contextData.brand as any)?.businessSummary,
-                brandColors: (contextData.brand as any)?.colors || undefined,
+                brandSummary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
+                brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
+                niche: formValues.niche as string,
+                location: formValues.location as string,
+                phone: formValues.phone as string,
+                website: formValues.website as string,
+                language: formValues.language as string,
                 seasonEvent: contextData.seasonEvent || undefined,
                 campaignTheme: contextData.campaignTheme || undefined,
                 url: contextData.url || undefined,
-                referenceImages: sessionReferenceImages.length > 0
+                referenceImages: toggles.useReferenceSubjects && sessionReferenceImages.length > 0
                     ? sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent }))
                     : undefined,
             });
