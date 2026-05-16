@@ -50,7 +50,7 @@ export interface BrandToggles {
  * Import this everywhere instead of duplicating the fallback inline.
  */
 export const DEFAULT_BRAND_TOGGLES: Required<BrandToggles> = {
-  useSummary: false,
+  useSummary: true,
   useColors: true,
   useLogo: true,
   useCertifications: false,

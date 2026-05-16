@@ -411,6 +411,7 @@ export function useImageGeneration({
 
                 // Fire ALL models in parallel for this concept
                 const modelTasks = selectedModels.map(async (modelId) => {
+                  try {
                     const model = displayModels.find((m: { id: string; name: string; provider: string; costTier: CostTier }) => m.id === modelId);
 
                     // Resolve provider once per model
@@ -419,7 +420,8 @@ export function useImageGeneration({
                         ?? '';
 
                     if (!resolvedProvider) {
-                        throw new Error(`No provider found for model ${modelId}. Check the model registry.`);
+                        console.error(`[useImageGeneration] No provider for model ${modelId} — skipping.`);
+                        return; // Skip this model, don't crash everything
                     }
 
                     // Variations run sequentially within each model (rate-limit safe)
@@ -471,8 +473,7 @@ export function useImageGeneration({
                             );
                         }
 
-                        // Progress update — React batches setState so concurrent
-                        // updates to `completed` are safe via closure capture
+                        // Progress update
                         completed++;
                         setStatus((prev) => ({
                             ...prev,
@@ -480,6 +481,11 @@ export function useImageGeneration({
                             message: `Generating: ${version.name} (${model?.name ?? modelId})...`,
                         }));
                     }
+                  } catch (modelError) {
+                    // Catch-all for unexpected model-level failures (network, auth, etc.)
+                    console.error(`[useImageGeneration] Model ${modelId} failed entirely:`, modelError);
+                    toast.error(`${modelId} failed — other models continue.`);
+                  }
                 });
 
                 // Wait for all models to finish for this concept before moving to next
