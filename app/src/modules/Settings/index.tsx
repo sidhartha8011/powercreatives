@@ -37,7 +37,13 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { ModelRegistrySection } from './ModelRegistrySection';
 import { PromptEditorSection } from './PromptEditorSection';
-import MultipleSelector from '@/components/ui/multiple-selector';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+} from '@/components/ui/dropdown-menu';
+import { ChevronDown } from 'lucide-react';
 
 export function SettingsModule() {
   const { settings, updateSettings } = useSettings();
@@ -135,20 +141,43 @@ export function SettingsModule() {
                   <Label className="text-sm">Default Models</Label>
                   <p className="text-xs text-muted-foreground">Pre-selected models when opening Image module</p>
                 </div>
-                <div className="w-[280px]">
-                  <MultipleSelector
-                    value={(settings.defaultImageModels || [])
-                      .map(id => imageModels.find(m => m.id === id))
-                      .filter(Boolean)
-                      .map(m => ({ value: m!.id, label: m!.name }))}
-                    options={imageModels.map(m => ({ value: m.id, label: m.name }))}
-                    onChange={(opts) => handleSettingChange('defaultImageModels', opts.map(o => o.value))}
-                    placeholder="Select default models..."
-                    showCheckboxes
-                    hidePlaceholderWhenSelected
-                    emptyIndicator={<span className="text-xs text-muted-foreground">No models available</span>}
-                  />
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="flex h-9 w-[200px] items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus:outline-none focus:ring-1 focus:ring-ring">
+                      <span className="truncate text-muted-foreground">
+                        {(settings.defaultImageModels || []).length === 0
+                          ? 'No defaults'
+                          : `${(settings.defaultImageModels || []).length} selected`}
+                      </span>
+                      <ChevronDown className="h-4 w-4 opacity-50" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-[200px]">
+                    {imageModels.length === 0 ? (
+                      <p className="px-2 py-1.5 text-xs text-muted-foreground">No models available</p>
+                    ) : (
+                      imageModels.map(model => {
+                        const checked = (settings.defaultImageModels || []).includes(model.id);
+                        return (
+                          <DropdownMenuCheckboxItem
+                            key={model.id}
+                            checked={checked}
+                            onSelect={(e) => e.preventDefault()}
+                            onCheckedChange={() => {
+                              const current = settings.defaultImageModels || [];
+                              const next = checked
+                                ? current.filter(id => id !== model.id)
+                                : [...current, model.id];
+                              handleSettingChange('defaultImageModels', next);
+                            }}
+                          >
+                            {model.name}
+                          </DropdownMenuCheckboxItem>
+                        );
+                      })
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
 
               {/* Menu Intelligence — text model used for suggestions, concepts, optimize brief */}
