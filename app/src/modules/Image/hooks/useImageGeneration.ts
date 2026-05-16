@@ -308,8 +308,8 @@ export function useImageGeneration({
         // Build brand context ONCE — reused for optimize_brief, suggest_concepts,
         // AND generate_single (final_prompt resolution). Fixes DRY violation.
         const brandCtx = {
-            brandName: (contextData.brand as any)?.name,
-            brandSummary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
+            brandName: formValues.business_name,
+            brandSummary: toggles.useSummary ? formValues.business_summary : undefined,
             brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
             niche: formValues.niche,
             location: formValues.location,
@@ -384,12 +384,20 @@ export function useImageGeneration({
             // while respecting per-provider rate limits via sequential variations.
             const totalWork = generatedVersions.length * selectedModels.length * variationsPerModel;
             let completed = 0;
-            const refUrls = toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => img.url) : [];
-            const refIntents = toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => img.intent) : [];
+            // Combine Logo and Reference Images into a single input stream
+            const brandAssets = (contextData.brand as any)?.assets as any[] | undefined;
+            const logo = brandAssets?.find((a) => a.role === 'logo');
+
+            const refUrls = [
+                ...(toggles.useLogo && logo ? [logo.url] : []),
+                ...(toggles.useReferenceSubjects ? sessionReferenceImages.filter((img) => img.fileKey !== logo?.fileKey).map((img) => img.url) : [])
+            ];
+            const refIntents = [
+                ...(toggles.useLogo && logo ? ['auto'] : []),
+                ...(toggles.useReferenceSubjects ? sessionReferenceImages.filter((img) => img.fileKey !== logo?.fileKey).map((img) => img.intent) : [])
+            ];
 
             // Build asset pipeline context once (shared across all generations)
-            // NOTE: logoBase64 and subjectBase64 are intentionally NOT sent here.
-            // No backend provider handles them — they were dead code.
             const pipelineExtra: Record<string, unknown> = {};
             if (assetPipelinePayload.textOverlay?.text) {
                 pipelineExtra.textOverlay = assetPipelinePayload.textOverlay;
@@ -439,7 +447,7 @@ export function useImageGeneration({
                                 provider: resolvedProvider,
                                 // Pass brand context so backend resolves the final_prompt template
                                 brandContext: hasBrandCtx ? brandCtx : undefined,
-                                ...(refUrls.length > 0 ? { referenceImageUrls: refUrls, referenceImageIntents: refIntents } : {}),
+                                ...(refUrls.length > 0 ? { inputUrls: refUrls, referenceImageIntents: refIntents } : {}),
                                 ...pipelineExtra,
                             });
 

@@ -448,13 +448,6 @@ class PCM_Image_Service
         array $params
         ): string
     {
-        // Normalize reference images → provider-standard 'inputUrls' field.
-        // Frontend sends 'referenceImageUrls', all providers expect 'inputUrls'.
-        // Placed here (service layer) so both generate_single() and generate_batch()
-        // benefit from a single mapping point.
-        if (!empty($params['referenceImageUrls']) && empty($params['inputUrls'])) {
-            $params['inputUrls'] = array_map('esc_url_raw', $params['referenceImageUrls']);
-        }
 
         $instance = PCM_Provider_Registry::get($provider, $api_key);
 
