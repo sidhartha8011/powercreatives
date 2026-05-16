@@ -154,6 +154,10 @@ class PCM_REST_Image extends PCM_REST_Base
         // brandContext is sent, the prompt passes through unchanged
         // (backward-compatible).
         $brand_context = $params['brandContext'] ?? null;
+
+        // [PCM-SOND 2026-05-16] DIAGNOSTIC — grep "PCM-SOND" to find and remove
+        error_log('[PCM-SOND] brandContext received: ' . wp_json_encode($brand_context));
+
         if (!empty($brand_context)) {
             $final_template = $this->get_prompt_override($user->id, 'image', 'final_prompt');
             if (!$final_template) {
@@ -164,6 +168,10 @@ class PCM_REST_Image extends PCM_REST_Base
             $vars = $this->service->build_final_prompt_context($brand_context);
             $vars['brief'] = $prompt;
             $prompt = $this->service->resolve_final_prompt($final_template, $vars);
+
+            // [PCM-SOND 2026-05-16] DIAGNOSTIC — grep "PCM-SOND" to find and remove
+            error_log('[PCM-SOND] resolved vars: ' . wp_json_encode($vars));
+            error_log('[PCM-SOND] final prompt sent to model: ' . $prompt);
         }
 
         // Override the prompt in params so save_asset() stores the resolved version
