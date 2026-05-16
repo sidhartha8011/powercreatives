@@ -733,12 +733,17 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
             // brand context before sending to DALL-E / Flux / Kling / etc.
             // Each {{variable}} resolves to "Label: value" or "" (empty) via
             // build_image_context(), so entire lines vanish when toggled off.
+            // Order matches context_suggestions for consistency across templates.
             'final_prompt' => "{{brief}}
 {{brandName}}
 {{brandSummary}}
 {{niche}}
 {{location}}
 {{language}}
+{{phone}}
+{{url}}
+{{seasonEvent}}
+{{campaignTheme}}
 {{brandColors}}",
         );
     }
@@ -770,7 +775,10 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
         }
         if (!empty($context['url']) || !empty($context['website'])) {
             $url = $context['website'] ?? $context['url'];
-            $vars['url'] = 'Website: ' . esc_url_raw($url);
+            // Strip protocol + trailing slash for cleaner prompt text and fewer tokens.
+            // sanitize_text_field is correct for plain prompt text (esc_url_raw is for DB/attributes).
+            $clean_url = rtrim(preg_replace('#^https?://#i', '', $url), '/');
+            $vars['url'] = 'Website: ' . sanitize_text_field($clean_url);
         }
         if (!empty($context['niche'])) {
             $vars['niche'] = 'Niche/Industry: ' . sanitize_text_field($context['niche']);
