@@ -742,6 +742,7 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
             // build_image_context(), so entire lines vanish when toggled off.
             'final_prompt' => "{{brief}}
 {{brandName}}
+{{brandSummary}}
 {{niche}}
 {{location}}
 {{language}}

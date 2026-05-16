@@ -315,8 +315,8 @@ export function useImageGeneration({
         // Build brand context ONCE — reused for optimize_brief, suggest_concepts,
         // AND generate_single (final_prompt resolution). Fixes DRY violation.
         const brandCtx = {
-            name: (contextData.brand as any)?.name,
-            summary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
+            brandName: (contextData.brand as any)?.name,
+            brandSummary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
             brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
             niche: formValues.niche,
             location: formValues.location,
