@@ -9,7 +9,7 @@
  * UI concerns (modals, tabs, detail view) stay in the parent component.
  */
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
 import { useSettings } from '@/contexts/AppContext';
@@ -21,6 +21,7 @@ import type {
     CostTier,
 } from '@/types';
 import { PRODUCTION_DEFAULTS, STORAGE_KEYS } from '../imageConfig';
+import { DEFAULT_BRAND_TOGGLES } from '@/components/shared/ContextPanel';
 import type { ContextData } from '@/components/shared/ContextPanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { TIER_CONFIG, useImageModelsForGeneration } from '@/hooks/useModelsForGeneration';
@@ -117,19 +118,36 @@ export function useImageGeneration({
         hasModels: hasIntegrations,
     } = useImageModelsForGeneration();
 
-    // Standardised display format
+    // Determine if reference image filter is active:
+    // user toggled "Reference Subjects" ON and has at least one image loaded.
+    const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
+    const referenceFilterActive = !!toggles.useReferenceSubjects && sessionReferenceImages.length > 0;
+
+    // Standardised display format — filtered by image-input capability when reference images active
     const displayModels = useMemo(
-        () => imageModels.map((m: { id: string; name: string; provider: string; costTier: CostTier }) => ({ id: m.id, name: m.name, provider: m.provider, costTier: m.costTier })),
-        [imageModels],
+        () => {
+            const mapped = imageModels.map((m) => ({ id: m.id, name: m.name, provider: m.provider, costTier: m.costTier, imageInputMode: m.imageInputMode }));
+            if (!referenceFilterActive) return mapped;
+            // Only show models that accept image input
+            return mapped.filter((m) => m.imageInputMode !== null);
+        },
+        [imageModels, referenceFilterActive],
     );
 
     const modelsByTier = useMemo(
-        () => ({
-            budget: modelsByTierRaw.budget.map((m: { id: string; name: string; provider: string; costTier: CostTier }) => ({ id: m.id, name: m.name, provider: m.provider, costTier: m.costTier })),
-            standard: modelsByTierRaw.standard.map((m: { id: string; name: string; provider: string; costTier: CostTier }) => ({ id: m.id, name: m.name, provider: m.provider, costTier: m.costTier })),
-            premium: modelsByTierRaw.premium.map((m: { id: string; name: string; provider: string; costTier: CostTier }) => ({ id: m.id, name: m.name, provider: m.provider, costTier: m.costTier })),
-        }),
-        [modelsByTierRaw],
+        () => {
+            const mapModel = (m: { id: string; name: string; provider: string; costTier: CostTier; imageInputMode: string | null }) =>
+                ({ id: m.id, name: m.name, provider: m.provider, costTier: m.costTier, imageInputMode: m.imageInputMode });
+            const filterFn = referenceFilterActive
+                ? (m: { imageInputMode: string | null }) => m.imageInputMode !== null
+                : () => true;
+            return {
+                budget: modelsByTierRaw.budget.map(mapModel).filter(filterFn),
+                standard: modelsByTierRaw.standard.map(mapModel).filter(filterFn),
+                premium: modelsByTierRaw.premium.map(mapModel).filter(filterFn),
+            };
+        },
+        [modelsByTierRaw, referenceFilterActive],
     );
 
     // ── Selection state ──
@@ -139,6 +157,18 @@ export function useImageGeneration({
         standard: false,
         premium: false,
     });
+
+    // Auto-deselect models that disappear when the reference filter activates.
+    // Prevents user from having "ghost" selections that would fail silently.
+    useEffect(() => {
+        if (!referenceFilterActive) return;
+        const availableIds = new Set(displayModels.map((m) => m.id));
+        const removed = selectedModels.filter((id) => !availableIds.has(id));
+        if (removed.length > 0) {
+            setSelectedModels((prev) => prev.filter((id) => availableIds.has(id)));
+            toast.info(`${removed.length} model(s) deselected — they don't support reference images`);
+        }
+    }, [referenceFilterActive, displayModels]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Production parameters ──
     const [numVersions, setNumVersions] = useState(PRODUCTION_DEFAULTS.numVersions);
@@ -249,7 +279,7 @@ export function useImageGeneration({
         setStatus({ isGenerating: true, progress: 0, message: 'Generating creative concepts...' });
         setAssets([]);
 
-        const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
+        // toggles is already computed at hook scope (line 122) — reuse it
 
         // Build brand context ONCE — reused for optimize_brief, suggest_concepts,
         // AND generate_single (final_prompt resolution). Fixes DRY violation.

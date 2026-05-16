@@ -194,6 +194,11 @@ export interface ModelData {
   // Provider-specific config
   providerMetadata: Record<string, unknown> | null;
   
+  // Image input capability — from Kie marketplace registry.
+  // null = model does NOT accept reference images (e.g. DALL-E).
+  // Non-null = the API field name for image input (e.g. "image_urls").
+  imageInputMode: string | null;
+  
   // Metadata
   description: string | null;
   tags: string[];
@@ -318,6 +323,7 @@ export function toModelData(row: {
   isAvailable: boolean;
   enabledModules?: unknown;
   providerMetadata?: unknown;
+  imageInputMode?: string | null;
   description: string | null;
   tags: string | null;
   sortOrder: number;
@@ -355,6 +361,7 @@ export function toModelData(row: {
     providerMetadata: (row.providerMetadata && typeof row.providerMetadata === 'object') 
       ? row.providerMetadata as Record<string, unknown> 
       : null,
+    imageInputMode: row.imageInputMode ?? null,
     description: row.description,
     tags: row.tags ? JSON.parse(row.tags) : [],
     sortOrder: row.sortOrder,

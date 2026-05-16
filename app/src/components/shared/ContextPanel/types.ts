@@ -30,14 +30,32 @@ export interface ContextData {
   /** Free-text campaign theme */
   campaignTheme: string;
   /** Which brand assets should be used in generation */
-  brandToggles?: {
-    useSummary?: boolean;
-    useColors?: boolean;
-    useLogo?: boolean;
-    useCertifications?: boolean;
-    useReferenceSubjects?: boolean;
-  };
+  brandToggles?: BrandToggles;
 }
+
+/**
+ * Shape for brand asset toggles.
+ * Controls which brand assets are injected into the generation pipeline.
+ */
+export interface BrandToggles {
+  useSummary?: boolean;
+  useColors?: boolean;
+  useLogo?: boolean;
+  useCertifications?: boolean;
+  useReferenceSubjects?: boolean;
+}
+
+/**
+ * Default brand toggle values — single source of truth.
+ * Import this everywhere instead of duplicating the fallback inline.
+ */
+export const DEFAULT_BRAND_TOGGLES: Required<BrandToggles> = {
+  useSummary: false,
+  useColors: true,
+  useLogo: true,
+  useCertifications: false,
+  useReferenceSubjects: false,
+};
 
 /** Props for the ContextPanel orchestrator */
 export interface ContextPanelProps {

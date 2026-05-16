@@ -17,7 +17,7 @@ export { SectionCard } from './SectionCard';
 export { SectionLabel } from './SectionLabel';
 export { ModuleHeader } from './ModuleHeader';
 export { EmptyState } from './EmptyState';
-export { ContextPanel, createEmptyContextData } from './ContextPanel';
+export { ContextPanel, createEmptyContextData, DEFAULT_BRAND_TOGGLES } from './ContextPanel';
 export type { ContextData, ScrapedBusinessData } from './ContextPanel';
 export { EnhancedBrandSection } from './EnhancedBrandSection';
 export { ThemeSelector } from './ThemeSelector';

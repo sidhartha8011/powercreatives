@@ -332,7 +332,7 @@ class PCM_Kie_Api {
         return $models[ $model_id ] ?? null;
     }
 
-    private static function load_marketplace_registry(): array {
+    public static function load_marketplace_registry(): array {
         $json_path = PCM_PLUGIN_DIR . 'app' . DIRECTORY_SEPARATOR . 'shared' . DIRECTORY_SEPARATOR . 'kieMarketplaceModels.json';
         if ( file_exists( $json_path ) ) {
             $raw = file_get_contents( $json_path );

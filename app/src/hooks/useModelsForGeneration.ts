@@ -27,6 +27,8 @@ export interface GenerationModel {
   registryId: number;
   /** Whether this model supports audio generation */
   supportsAudio: boolean;
+  /** Image input mode — null means model does NOT accept reference images */
+  imageInputMode: string | null;
 }
 
 /**
@@ -73,6 +75,7 @@ function toGenerationModel(model: ModelData): GenerationModel {
     originalModelId: model.modelId,
     registryId: model.id,
     supportsAudio: marketplaceAudioSupport.get(model.modelId) ?? DEDICATED_AUDIO_MODELS.has(model.modelId),
+    imageInputMode: model.imageInputMode ?? null,
   };
 }
 

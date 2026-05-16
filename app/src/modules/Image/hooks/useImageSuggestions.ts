@@ -16,6 +16,7 @@ import { useSettings } from '@/contexts/AppContext';
 import { DEFAULT_DETAIL_LEVEL, DEFAULT_SUGGESTION_COUNT, SUGGESTION_CONFIG } from '../imageConfig';
 import { toDetailLevelEnum } from '../types';
 import type { DetailLevelValue } from '../types';
+import { DEFAULT_BRAND_TOGGLES } from '@/components/shared/ContextPanel';
 import type { ContextData } from '@/components/shared/ContextPanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 
@@ -92,7 +93,7 @@ export function useImageSuggestions(): UseImageSuggestionsReturn {
             return;
         }
 
-        const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
+        const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
 
         setIsLoadingSuggestions(true);
         try {
@@ -140,7 +141,7 @@ export function useImageSuggestions(): UseImageSuggestionsReturn {
             return;
         }
 
-        const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
+        const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
 
         setIsLoadingContextSuggestions(true);
         try {

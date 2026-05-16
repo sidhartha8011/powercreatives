@@ -171,4 +171,5 @@ export function ContextPanel(props: ContextPanelProps) {
 }
 
 export { createEmptyContextData } from "./utils";
-export type { ContextData, ScrapedBusinessData, ContextPanelProps } from "./types";
+export { DEFAULT_BRAND_TOGGLES } from "./types";
+export type { ContextData, ScrapedBusinessData, ContextPanelProps, BrandToggles } from "./types";

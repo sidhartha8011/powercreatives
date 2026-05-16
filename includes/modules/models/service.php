@@ -438,6 +438,10 @@ class PCM_Models_Service
             'sortOrder' => (int)$model->sortOrder,
             'enabledModules' => $enabled_modules,
             'providerMetadata' => $metadata,
+            // Image input capability — looked up from the Kie marketplace registry.
+            // null = model does NOT accept reference images (e.g. DALL-E, pure text-to-image).
+            // Non-null = the field name the model uses for image input (e.g. "image_urls", "input_urls").
+            'imageInputMode' => $this->get_image_input_mode($model->modelId),
             'createdAt' => $model->createdAt,
             'updatedAt' => $model->updatedAt,
         );
@@ -495,5 +499,53 @@ class PCM_Models_Service
         }
 
         return null;
+    }
+
+    // =========================================================================
+    // IMAGE INPUT MODE LOOKUP
+    // =========================================================================
+
+    /**
+     * Cached marketplace registry for imageInputMode lookups.
+     * Delegates to PCM_Kie_Api::load_marketplace_registry() (single source of truth).
+     *
+     * @var array|null Maps modelId → model definition array.
+     */
+    private static ?array $marketplace_models = null;
+
+    /**
+     * Dedicated Kie.ai models that accept image input but are NOT in
+     * the marketplace registry. Kept here so format_model() can return
+     * a truthful imageInputMode for them as well.
+     */
+    private const DEDICATED_IMAGE_INPUT = array(
+        'kie-gpt-4o-image' => 'filesUrl',
+        'kie-flux-kontext'  => 'inputImage',
+    );
+
+    /**
+     * Get the imageInputMode for a model.
+     *
+     * Looks up the model in the Kie marketplace registry first,
+     * then checks the dedicated models list. Returns null if the
+     * model does not accept image input at all.
+     *
+     * @param string $model_id Model identifier.
+     * @return string|null The image input field name, or null if unsupported.
+     */
+    private function get_image_input_mode(string $model_id): ?string
+    {
+        // Lazy-load from the shared registry (PCM_Kie_Api owns the JSON parsing)
+        if (null === self::$marketplace_models) {
+            self::$marketplace_models = PCM_Kie_Api::load_marketplace_registry();
+        }
+
+        // 1. Marketplace models
+        if (isset(self::$marketplace_models[$model_id])) {
+            return self::$marketplace_models[$model_id]['imageInputMode'] ?? null;
+        }
+
+        // 2. Dedicated Kie models (GPT-4o Image, Flux Kontext)
+        return self::DEDICATED_IMAGE_INPUT[$model_id] ?? null;
     }
 }

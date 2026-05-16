@@ -30,6 +30,7 @@ import {
   ThemeSelector,
   createEmptyContextData,
   EnhancedBrandSection,
+  DEFAULT_BRAND_TOGGLES,
 } from '@/components/shared';
 import type { GenerationMode, ListItem, AngleItem, ContextData, ScrapedBusinessData } from '@/components/shared';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
@@ -357,7 +358,7 @@ export function CopyModule() {
 
       // 1. Respect Toggles for Text Fields
       const finalFormValues = { ...formValues };
-      const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
+      const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
       
       if (!toggles.useSummary) {
         finalFormValues.business_summary = ''; // Strip if deselected

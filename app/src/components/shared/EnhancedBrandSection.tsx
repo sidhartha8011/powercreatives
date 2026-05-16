@@ -6,6 +6,7 @@ import { useBrandAssets } from "./hooks/useBrandAssets";
 import { BrandColorSection } from "./BrandColorSection";
 import { BrandLogoSection } from "./BrandLogoSection";
 import { BrandAssetGrid } from "./BrandAssetGrid";
+import { DEFAULT_BRAND_TOGGLES } from "./ContextPanel/types";
 import type { ContextData } from "./ContextPanel/types";
 import type { SessionReferenceImage } from "@shared/referenceImageIntents";
 
@@ -60,7 +61,7 @@ export function EnhancedBrandSection({
   const brandColors = (Array.isArray(brand?.colors) && brand.colors.length > 0) ? brand.colors as string[] : null;
   const brandLogo = (Array.isArray(brand?.assets) && brand.assets.length > 0) ? brand.assets.find((a: any) => a.role === 'logo' || !a.role) : null;
 
-  const toggles = contextData.brandToggles || { useSummary: false, useColors: true, useLogo: true, useCertifications: false, useReferenceSubjects: false };
+  const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
 
   const handleToggle = (key: keyof typeof toggles, checked: boolean) => {
     onContextChange({
