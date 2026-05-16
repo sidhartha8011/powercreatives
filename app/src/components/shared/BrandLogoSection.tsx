@@ -99,6 +99,7 @@ export function BrandLogoSection({
           fileData: base64,
           filename: file.name,
           mimeType: file.type,
+          role: 'logo',
         });
 
         // Move the newly added asset to position 0 (logo)
@@ -151,6 +152,7 @@ export function BrandLogoSection({
         const result = await addAssetFromUrlMutation.mutateAsync({
           brandId: editBrand.id,
           imageUrl: url,
+          role: 'logo',
         });
 
         // Move the newly added asset to position 0 (logo)

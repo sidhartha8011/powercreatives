@@ -88,6 +88,13 @@ class PCM_Activator
             // PCM_Prompt_Seeds::seed() above is idempotent — it inserts only missing sections
             // and skips any that already exist, so re-running it safely adds the new section.
 
+            // v1.4.0: Backfill role='logo' on legacy brand assets that were created
+            // before the role contract was introduced. Idempotent — only touches assets
+            // missing the role field.
+            if (version_compare($installed_version, '1.4.0', '<')) {
+                PCM_Schema::migrate_brand_assets_role();
+            }
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

@@ -305,6 +305,9 @@ class PCM_REST_Brands extends PCM_REST_Base
             $asset = $this->service->upload_asset($files['file'], $id, $user->id, $brand, $role);
             return $this->success($asset, 201);
         }
+        catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 400, 'pcm_invalid_role');
+        }
         catch (\RuntimeException $e) {
             return $this->error($e->getMessage());
         }
@@ -331,6 +334,9 @@ class PCM_REST_Brands extends PCM_REST_Base
         try {
             $asset = $this->service->add_asset_from_url($url, $id, $user->id, $brand, $role);
             return $this->success($asset, 201);
+        }
+        catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 400, 'pcm_invalid_role');
         }
         catch (\RuntimeException $e) {
             return $this->error($e->getMessage());

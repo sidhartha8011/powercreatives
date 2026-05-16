@@ -78,6 +78,7 @@ export function ContextPanel(props: ContextPanelProps) {
               const result = await mutations.addAssetFromUrl.mutateAsync({
                 brandId,
                 imageUrl: logoUrl,
+                role: 'logo',
               });
               try {
                 const brand = await apiFetch<any>(`brands/${brandId}`);
@@ -126,6 +127,7 @@ export function ContextPanel(props: ContextPanelProps) {
                 fileData: base64,
                 filename: file.name,
                 mimeType: file.type,
+                role: 'logo',
               });
               const extracted = (result as any)?.extractedColors as string[] | undefined;
               if (extracted && extracted.length > 0) {
@@ -149,6 +151,7 @@ export function ContextPanel(props: ContextPanelProps) {
               const result = await mutations.addAssetFromUrl.mutateAsync({
                 brandId,
                 imageUrl: logoUrl,
+                role: 'logo',
               });
               const extracted = (result as any)?.extractedColors as string[] | undefined;
               if (extracted && extracted.length > 0) {

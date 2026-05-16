@@ -24,6 +24,7 @@ import { PRODUCTION_DEFAULTS, STORAGE_KEYS } from '../imageConfig';
 import { DEFAULT_BRAND_TOGGLES } from '@/components/shared/ContextPanel';
 import type { ContextData } from '@/components/shared/ContextPanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
+import { getBrandLogo } from '@shared/brandAssetResolver';
 import { TIER_CONFIG, useImageModelsForGeneration } from '@/hooks/useModelsForGeneration';
 
 // ============================================================================
@@ -390,9 +391,9 @@ export function useImageGeneration({
             // while respecting per-provider rate limits via sequential variations.
             const totalWork = generatedVersions.length * selectedModels.length * variationsPerModel;
             let completed = 0;
-            // Combine Logo and Reference Images into a single input stream
-            const brandAssets = (contextData.brand as any)?.assets as any[] | undefined;
-            const logo = brandAssets?.find((a) => a.role === 'logo');
+            // Combine Logo and Reference Images into a single input stream.
+            // Logo resolution via canonical resolver — see app/shared/brandAssetResolver.ts.
+            const logo = getBrandLogo(contextData.brand as any);
 
             const refUrls = [
                 ...(toggles.useLogo && logo ? [logo.url] : []),

@@ -575,6 +575,69 @@ class PCM_Schema
     }
 
     /**
+     * Backfill role='logo' on legacy brand assets (v1.4.0).
+     *
+     * Brand assets are stored as a JSON array in the brands.assets column.
+     * Before v1.4.0 the role field did not exist — every asset was created
+     * without a role, and the implicit convention was "assets[0] is the logo".
+     *
+     * After v1.4.0 every consumer expects an explicit role. This migration
+     * makes the implicit convention explicit by setting:
+     *   - assets[0].role = 'logo' (preserves historical "first = logo" behaviour)
+     *   - assets[1..].role = 'reference' (default for any extra assets)
+     *
+     * Idempotent: assets that already have a role are left untouched.
+     * Brands are only updated if at least one asset was modified, so re-running
+     * this migration after it has completed is a no-op (zero DB writes).
+     *
+     * @return void
+     */
+    public static function migrate_brand_assets_role(): void
+    {
+        global $wpdb;
+
+        $table = self::table('brands');
+
+        // Fetch all brands that have a non-empty assets payload.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->get_results(
+            "SELECT id, assets FROM {$table} WHERE assets IS NOT NULL AND assets != '' AND assets != '[]'",
+            ARRAY_A
+        );
+
+        if (empty($rows)) {
+            return;
+        }
+
+        foreach ($rows as $row) {
+            $assets = json_decode($row['assets'], true);
+            if (!is_array($assets) || empty($assets)) {
+                continue;
+            }
+
+            $changed = false;
+            foreach ($assets as $i => $asset) {
+                if (!is_array($asset) || isset($asset['role'])) {
+                    continue;
+                }
+                $assets[$i]['role'] = ($i === 0) ? 'logo' : 'reference';
+                $changed = true;
+            }
+
+            if ($changed) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update(
+                    $table,
+                    array('assets' => wp_json_encode($assets)),
+                    array('id' => (int)$row['id']),
+                    array('%s'),
+                    array('%d')
+                );
+            }
+        }
+    }
+
+    /**
      * Drop all plugin tables.
      *
      * Only called when user explicitly deletes plugin data.

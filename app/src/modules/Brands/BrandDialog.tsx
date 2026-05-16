@@ -153,7 +153,7 @@ export function BrandDialog({
 
       setIsConfirmingLogo(true);
       try {
-        const result = await addAssetFromUrlMutation.mutateAsync({ brandId, imageUrl: logoUrl });
+        const result = await addAssetFromUrlMutation.mutateAsync({ brandId, imageUrl: logoUrl, role: 'logo' });
         fetchHook.brandQuery.refetch();
         utils.brands.list.invalidate();
         toast.success("Logo saved");

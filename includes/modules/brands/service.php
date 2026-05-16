@@ -184,13 +184,16 @@ class PCM_Brands_Service
      * @param int    $brand_id Brand ID.
      * @param int    $user_id  PCM user ID.
      * @param object $brand    Brand DB row (for existing assets/colors).
-     * @param string $role     Optional role (e.g., logo, certification).
+     * @param string $role     Required role: 'logo' | 'certification' | 'reference'.
      *
      * @return array Asset data { fileKey, url, mimeType, source, addedAt, role }
+     * @throws \InvalidArgumentException If role is empty or not in the allowed set.
      * @throws \RuntimeException On upload failure.
      */
-    public function upload_asset(array $file, int $brand_id, int $user_id, object $brand, string $role = ''): array
+    public function upload_asset(array $file, int $brand_id, int $user_id, object $brand, string $role): array
     {
+        $this->assert_valid_role($role);
+
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/media.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
@@ -228,13 +231,16 @@ class PCM_Brands_Service
      * @param int    $brand_id  Brand ID.
      * @param int    $user_id   PCM user ID.
      * @param object $brand     Brand DB row.
-     * @param string $role      Optional role.
+     * @param string $role      Required role: 'logo' | 'certification' | 'reference'.
      *
      * @return array Asset data.
+     * @throws \InvalidArgumentException If role is empty or not in the allowed set.
      * @throws \RuntimeException On download or save failure.
      */
-    public function add_asset_from_url(string $url, int $brand_id, int $user_id, object $brand, string $role = ''): array
+    public function add_asset_from_url(string $url, int $brand_id, int $user_id, object $brand, string $role): array
     {
+        $this->assert_valid_role($role);
+
         $response = wp_remote_get($url, array('timeout' => 30));
         if (is_wp_error($response)) {
             throw new \RuntimeException('Failed to download image: ' . $response->get_error_message());
@@ -438,23 +444,49 @@ class PCM_Brands_Service
      * @param string $url       Asset URL.
      * @param string $mime_type MIME type.
      * @param string $source    Source type (upload, url_fetch).
-     * @param string $role      Role of the asset (logo, certification).
+     * @param string $role      Required role: 'logo' | 'certification' | 'reference'.
+     *                          Callers must validate via assert_valid_role() before this point.
      *
      * @return array Asset entry { fileKey, url, mimeType, source, addedAt, role }
      */
-    private function create_asset_entry(int $brand_id, string $url, string $mime_type, string $source, string $role = ''): array
+    private function create_asset_entry(int $brand_id, string $url, string $mime_type, string $source, string $role): array
     {
-        $asset = array(
+        return array(
             'fileKey' => 'brand_' . $brand_id . '_' . wp_generate_uuid4(),
             'url' => $url,
             'mimeType' => $mime_type,
             'source' => $source,
             'addedAt' => current_time('c'),
+            'role' => $role,
         );
-        if (!empty($role)) {
-            $asset['role'] = $role;
+    }
+
+    /**
+     * Allowed brand-asset roles. Extend here when adding new types
+     * (e.g. 'font', 'video') — keep in sync with shared/brandTypes.ts.
+     */
+    private const ALLOWED_ASSET_ROLES = array('logo', 'certification', 'reference');
+
+    /**
+     * Validate that the provided role is non-empty and in the allowed set.
+     *
+     * Throws InvalidArgumentException so REST controllers convert it to a
+     * 400 response — caller's contract violation, not a server error.
+     *
+     * @param string $role Role to validate.
+     * @return void
+     * @throws \InvalidArgumentException If role is empty or unknown.
+     */
+    private function assert_valid_role(string $role): void
+    {
+        if ($role === '') {
+            throw new \InvalidArgumentException('Asset role is required.');
         }
-        return $asset;
+        if (!in_array($role, self::ALLOWED_ASSET_ROLES, true)) {
+            throw new \InvalidArgumentException(
+                'Invalid asset role "' . $role . '". Allowed: ' . implode(', ', self::ALLOWED_ASSET_ROLES) . '.'
+            );
+        }
     }
 
     /**
