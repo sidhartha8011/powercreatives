@@ -151,25 +151,37 @@ export function useImageGeneration({
     );
 
     // ── Selection state ──
-    // Pre-select the user's default model from Settings (if configured and available).
+    // Pre-select the user's default models from Settings (multi-select).
+    // If a saved default no longer exists, warn but don't error — still select valid ones.
     const [selectedModels, setSelectedModels] = useState<string[]>(() => {
-        if (settings.defaultImageModel && imageModels.some((m) => m.id === settings.defaultImageModel)) {
-            return [settings.defaultImageModel];
-        }
-        return [];
+        const defaults = settings.defaultImageModels || [];
+        if (defaults.length === 0) return [];
+        const availableIds = new Set(imageModels.map((m) => m.id));
+        return defaults.filter((id) => availableIds.has(id));
     });
 
-    // Handle the case where settings or imageModels load asynchronously:
-    // if selectedModels is still empty and a default is configured, apply it.
+    // Handle async loading: settings/models may arrive after initial render.
     const defaultAppliedRef = useRef(false);
     useEffect(() => {
         if (defaultAppliedRef.current) return;
         if (selectedModels.length > 0) { defaultAppliedRef.current = true; return; }
-        if (settings.defaultImageModel && imageModels.some((m) => m.id === settings.defaultImageModel)) {
-            setSelectedModels([settings.defaultImageModel]);
+
+        const defaults = settings.defaultImageModels || [];
+        if (defaults.length === 0) return;
+
+        const availableIds = new Set(imageModels.map((m) => m.id));
+        const valid = defaults.filter((id) => availableIds.has(id));
+        const missing = defaults.filter((id) => !availableIds.has(id));
+
+        if (valid.length > 0) {
+            setSelectedModels(valid);
             defaultAppliedRef.current = true;
         }
-    }, [settings.defaultImageModel, imageModels]); // eslint-disable-line react-hooks/exhaustive-deps
+        if (missing.length > 0 && imageModels.length > 0) {
+            // Models existed when user saved settings but are no longer available
+            toast.warning(`${missing.length} default model(s) no longer available — check Settings`);
+        }
+    }, [settings.defaultImageModels, imageModels]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const [expandedTiers, setExpandedTiers] = useState<Record<CostTier, boolean>>({
         budget: false,

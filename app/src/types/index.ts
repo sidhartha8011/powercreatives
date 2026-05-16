@@ -84,7 +84,7 @@ export type Language = 'en' | 'sv';
 export interface AppSettings {
   theme: ThemeMode;
   language: Language;
-  defaultImageModel: string | null;
+  defaultImageModels: string[];
   defaultVideoModel: string | null;
   /** Default text model for URL scraping and text analysis */
   defaultTextModel: string | null;

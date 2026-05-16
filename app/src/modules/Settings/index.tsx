@@ -131,25 +131,38 @@ export function SettingsModule() {
               </div>
               <div className="flex items-center justify-between pl-10">
                 <div>
-                  <Label className="text-sm">Default Model</Label>
-                  <p className="text-xs text-muted-foreground">Pre-selected model for image generation</p>
+                  <Label className="text-sm">Default Models</Label>
+                  <p className="text-xs text-muted-foreground">Pre-selected models when opening Image module</p>
                 </div>
-                <Select
-                  value={settings.defaultImageModel || 'none'}
-                  onValueChange={(value) => handleSettingChange('defaultImageModel', value === 'none' ? null : value)}
-                >
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="Select model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No default</SelectItem>
-                    {imageModels.map(model => (
-                      <SelectItem key={model.id} value={model.id}>
-                        {model.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex flex-wrap gap-1.5 max-w-[320px] justify-end">
+                  {imageModels.length === 0 ? (
+                    <span className="text-xs text-muted-foreground italic">No models available</span>
+                  ) : (
+                    imageModels.map(model => {
+                      const isSelected = (settings.defaultImageModels || []).includes(model.id);
+                      return (
+                        <button
+                          key={model.id}
+                          type="button"
+                          onClick={() => {
+                            const current = settings.defaultImageModels || [];
+                            const next = isSelected
+                              ? current.filter(id => id !== model.id)
+                              : [...current, model.id];
+                            handleSettingChange('defaultImageModels', next);
+                          }}
+                          className={`px-2 py-0.5 text-xs rounded-md border transition-colors ${
+                            isSelected
+                              ? 'bg-primary/10 border-primary/30 text-primary font-medium'
+                              : 'bg-muted/30 border-border text-muted-foreground hover:bg-muted/50'
+                          }`}
+                        >
+                          {model.name}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
               {/* Menu Intelligence — text model used for suggestions, concepts, optimize brief */}

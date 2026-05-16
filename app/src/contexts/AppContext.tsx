@@ -84,7 +84,7 @@ type AppAction =
 const initialSettings: AppSettings = {
   theme: 'light',
   language: 'en',
-  defaultImageModel: null,
+  defaultImageModels: [],
   defaultVideoModel: null,
   defaultTextModel: null,
   defaultCopyMenuIntelligence: null,
