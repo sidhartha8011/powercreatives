@@ -103,7 +103,7 @@ export const ImageSidebar = memo(function ImageSidebar({
     asset,
 }: ImageSidebarProps) {
     const { selectedModels, numVersions, variationsPerModel, autoOptimizeBrief,
-        expandedTiers, toggleModel, toggleTier, tierLabels, modelsByTier } = gen;
+        expandedTiers, toggleModel, toggleTier, tierLabels, modelsByTier, requiresImageInput } = gen;
 
     const { suggestions, contextSuggestions, suggestionCount, detailLevel,
         isLoadingSuggestions, isLoadingContextSuggestions,
@@ -337,25 +337,54 @@ export const ImageSidebar = memo(function ImageSidebar({
 
                                     {expandedTiers[tier] && (
                                         <div className="p-2 space-y-1 bg-background">
-                                            {models.map((model: { id: string; name: string; provider: string }) => (
-                                                <button
-                                                    key={model.id}
-                                                    onClick={() => toggleModel(model.id)}
-                                                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${selectedModels.includes(model.id)
-                                                        ? 'bg-primary/10 border border-primary/30'
-                                                        : 'hover:bg-muted/50'
-                                                        }`}
-                                                >
-                                                    <div className={`w-5 h-5 rounded flex items-center justify-center ${selectedModels.includes(model.id) ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                                            {models.map((model: { id: string; name: string; provider: string; imageInputMode: string | null }) => {
+                                                const isDisabled = requiresImageInput && model.imageInputMode === null;
+                                                const isSelected = selectedModels.includes(model.id);
+
+                                                const buttonClass = `w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                                                    isDisabled
+                                                        ? 'opacity-50 cursor-not-allowed grayscale'
+                                                        : isSelected
+                                                            ? 'bg-primary/10 border border-primary/30'
+                                                            : 'hover:bg-muted/50'
+                                                }`;
+
+                                                const ButtonContent = (
+                                                    <button
+                                                        type="button"
+                                                        disabled={isDisabled}
+                                                        onClick={() => !isDisabled && toggleModel(model.id)}
+                                                        className={buttonClass}
+                                                    >
+                                                        <div className={`w-5 h-5 rounded flex items-center justify-center ${
+                                                            isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted'
                                                         }`}>
-                                                        {selectedModels.includes(model.id) && <Check className="w-3 h-3" />}
+                                                            {isSelected && <Check className="w-3 h-3" />}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="text-sm font-medium truncate">{model.name}</div>
+                                                            <div className="text-xs text-muted-foreground capitalize">{model.provider}</div>
+                                                        </div>
+                                                    </button>
+                                                );
+
+                                                return (
+                                                    <div key={model.id}>
+                                                        {isDisabled ? (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <div className="w-full">{ButtonContent}</div>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent side="left" className="text-xs">
+                                                                    Kan inte användas med bild-input. Stäng av Logotyp och Referensbilder för att aktivera.
+                                                                </TooltipContent>
+                                                            </Tooltip>
+                                                        ) : (
+                                                            ButtonContent
+                                                        )}
                                                     </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="text-sm font-medium truncate">{model.name}</div>
-                                                        <div className="text-xs text-muted-foreground capitalize">{model.provider}</div>
-                                                    </div>
-                                                </button>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     )}
                                 </div>

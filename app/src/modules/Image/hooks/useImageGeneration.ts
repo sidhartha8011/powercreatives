@@ -118,36 +118,29 @@ export function useImageGeneration({
         hasModels: hasIntegrations,
     } = useImageModelsForGeneration();
 
-    // Determine if reference image filter is active:
-    // user toggled "Reference Subjects" ON and has at least one image loaded.
+    // Determine if any image inputs are active (reference subjects or logo)
     const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
-    const referenceFilterActive = !!toggles.useReferenceSubjects && sessionReferenceImages.length > 0;
+    const requiresImageInput = (!!toggles.useReferenceSubjects && sessionReferenceImages.length > 0) || !!toggles.useLogo;
 
-    // Standardised display format — filtered by image-input capability when reference images active
+    // Standardised display format — keep ALL models visible
     const displayModels = useMemo(
         () => {
-            const mapped = imageModels.map((m) => ({ id: m.id, name: m.name, provider: m.provider, costTier: m.costTier, imageInputMode: m.imageInputMode }));
-            if (!referenceFilterActive) return mapped;
-            // Only show models that accept image input
-            return mapped.filter((m) => m.imageInputMode !== null);
+            return imageModels.map((m) => ({ id: m.id, name: m.name, provider: m.provider, costTier: m.costTier, imageInputMode: m.imageInputMode }));
         },
-        [imageModels, referenceFilterActive],
+        [imageModels],
     );
 
     const modelsByTier = useMemo(
         () => {
             const mapModel = (m: { id: string; name: string; provider: string; costTier: CostTier; imageInputMode: string | null }) =>
                 ({ id: m.id, name: m.name, provider: m.provider, costTier: m.costTier, imageInputMode: m.imageInputMode });
-            const filterFn = referenceFilterActive
-                ? (m: { imageInputMode: string | null }) => m.imageInputMode !== null
-                : () => true;
             return {
-                budget: modelsByTierRaw.budget.map(mapModel).filter(filterFn),
-                standard: modelsByTierRaw.standard.map(mapModel).filter(filterFn),
-                premium: modelsByTierRaw.premium.map(mapModel).filter(filterFn),
+                budget: modelsByTierRaw.budget.map(mapModel),
+                standard: modelsByTierRaw.standard.map(mapModel),
+                premium: modelsByTierRaw.premium.map(mapModel),
             };
         },
-        [modelsByTierRaw, referenceFilterActive],
+        [modelsByTierRaw],
     );
 
     // ── Selection state ──
@@ -189,17 +182,17 @@ export function useImageGeneration({
         premium: false,
     });
 
-    // Auto-deselect models that disappear when the reference filter activates.
+    // Auto-deselect models that do not support image input when it's required.
     // Prevents user from having "ghost" selections that would fail silently.
     useEffect(() => {
-        if (!referenceFilterActive) return;
-        const availableIds = new Set(displayModels.map((m) => m.id));
-        const removed = selectedModels.filter((id) => !availableIds.has(id));
+        if (!requiresImageInput) return;
+        const validIds = new Set(displayModels.filter(m => m.imageInputMode !== null).map((m) => m.id));
+        const removed = selectedModels.filter((id) => !validIds.has(id));
         if (removed.length > 0) {
-            setSelectedModels((prev) => prev.filter((id) => availableIds.has(id)));
-            toast.info(`${removed.length} model(s) deselected — they don't support reference images`);
+            setSelectedModels((prev) => prev.filter((id) => validIds.has(id)));
+            toast.info(`${removed.length} model(s) deselected — they don't support image inputs`);
         }
-    }, [referenceFilterActive, displayModels]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [requiresImageInput, displayModels]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Production parameters ──
     const [numVersions, setNumVersions] = useState(PRODUCTION_DEFAULTS.numVersions);
@@ -452,10 +445,11 @@ export function useImageGeneration({
 
                             // Replace placeholder with completed asset
                             const dbId = (result as any).id;
+                            const dbPrompt = (result as any).prompt;
                             setAssets((prev) =>
                                 prev.map((a) =>
                                     a.id === placeholderId
-                                        ? { ...a, id: dbId ? String(dbId) : a.id, url: (result as any).url, thumbnailUrl: (result as any).url, status: 'complete' as const }
+                                        ? { ...a, id: dbId ? String(dbId) : a.id, url: (result as any).url, thumbnailUrl: (result as any).url, prompt: dbPrompt ?? a.prompt, status: 'complete' as const }
                                         : a,
                                 ),
                             );
@@ -539,6 +533,7 @@ export function useImageGeneration({
         modelsByTier,
         isLoadingRegistry,
         hasIntegrations,
+        requiresImageInput,
         // Multi-select (bulk actions) — delegated to shared useRowSelection<string>
         selectedAssetIds: selection.selectedIds,
         selectedAssets,
