@@ -9,7 +9,7 @@
  * UI concerns (modals, tabs, detail view) stay in the parent component.
  */
 
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
 import { useSettings } from '@/contexts/AppContext';
@@ -151,7 +151,26 @@ export function useImageGeneration({
     );
 
     // ── Selection state ──
-    const [selectedModels, setSelectedModels] = useState<string[]>([]);
+    // Pre-select the user's default model from Settings (if configured and available).
+    const [selectedModels, setSelectedModels] = useState<string[]>(() => {
+        if (settings.defaultImageModel && imageModels.some((m) => m.id === settings.defaultImageModel)) {
+            return [settings.defaultImageModel];
+        }
+        return [];
+    });
+
+    // Handle the case where settings or imageModels load asynchronously:
+    // if selectedModels is still empty and a default is configured, apply it.
+    const defaultAppliedRef = useRef(false);
+    useEffect(() => {
+        if (defaultAppliedRef.current) return;
+        if (selectedModels.length > 0) { defaultAppliedRef.current = true; return; }
+        if (settings.defaultImageModel && imageModels.some((m) => m.id === settings.defaultImageModel)) {
+            setSelectedModels([settings.defaultImageModel]);
+            defaultAppliedRef.current = true;
+        }
+    }, [settings.defaultImageModel, imageModels]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const [expandedTiers, setExpandedTiers] = useState<Record<CostTier, boolean>>({
         budget: false,
         standard: false,
