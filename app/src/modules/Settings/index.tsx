@@ -37,6 +37,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { ModelRegistrySection } from './ModelRegistrySection';
 import { PromptEditorSection } from './PromptEditorSection';
+import MultipleSelector from '@/components/ui/multiple-selector';
 
 export function SettingsModule() {
   const { settings, updateSettings } = useSettings();
@@ -134,34 +135,19 @@ export function SettingsModule() {
                   <Label className="text-sm">Default Models</Label>
                   <p className="text-xs text-muted-foreground">Pre-selected models when opening Image module</p>
                 </div>
-                <div className="flex flex-wrap gap-1.5 max-w-[320px] justify-end">
-                  {imageModels.length === 0 ? (
-                    <span className="text-xs text-muted-foreground italic">No models available</span>
-                  ) : (
-                    imageModels.map(model => {
-                      const isSelected = (settings.defaultImageModels || []).includes(model.id);
-                      return (
-                        <button
-                          key={model.id}
-                          type="button"
-                          onClick={() => {
-                            const current = settings.defaultImageModels || [];
-                            const next = isSelected
-                              ? current.filter(id => id !== model.id)
-                              : [...current, model.id];
-                            handleSettingChange('defaultImageModels', next);
-                          }}
-                          className={`px-2 py-0.5 text-xs rounded-md border transition-colors ${
-                            isSelected
-                              ? 'bg-primary/10 border-primary/30 text-primary font-medium'
-                              : 'bg-muted/30 border-border text-muted-foreground hover:bg-muted/50'
-                          }`}
-                        >
-                          {model.name}
-                        </button>
-                      );
-                    })
-                  )}
+                <div className="w-[280px]">
+                  <MultipleSelector
+                    value={(settings.defaultImageModels || [])
+                      .map(id => imageModels.find(m => m.id === id))
+                      .filter(Boolean)
+                      .map(m => ({ value: m!.id, label: m!.name }))}
+                    options={imageModels.map(m => ({ value: m.id, label: m.name }))}
+                    onChange={(opts) => handleSettingChange('defaultImageModels', opts.map(o => o.value))}
+                    placeholder="Select default models..."
+                    showCheckboxes
+                    hidePlaceholderWhenSelected
+                    emptyIndicator={<span className="text-xs text-muted-foreground">No models available</span>}
+                  />
                 </div>
               </div>
 
