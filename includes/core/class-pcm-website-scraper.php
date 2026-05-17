@@ -84,7 +84,7 @@ class PCM_Website_Scraper
         // Extract all data categories
         $text_data = self::extract_text_data($dom, $xpath);
         $images = self::extract_images($dom, $xpath, $base_url);
-        $colors = self::extract_colors($dom, $xpath, $html);
+        $colors = self::extract_colors($dom, $xpath, $html, $url);
 
         // Debug: log extraction results (controlled via WP_DEBUG_LOG)
         error_log('[PCM] Scraper: url=' . $url . ' | images=' . count($images) . ' | colors=' . count($colors));
@@ -260,11 +260,19 @@ class PCM_Website_Scraper
      * @param \DOMDocument $dom   Parsed DOM.
      * @param \DOMXPath    $xpath XPath query engine.
      * @param string       $html  Raw HTML for regex-based style parsing.
+     * @param string       $url   Website URL for fetching rendered screenshots.
      * @return array Array of unique hex color strings (e.g. ['#ff0000']).
      */
-    private static function extract_colors(\DOMDocument $dom, \DOMXPath $xpath, string $html): array
+    private static function extract_colors(\DOMDocument $dom, \DOMXPath $xpath, string $html, string $url): array
     {
         $colors = array();
+
+        // 0. Extract Rendered Colors (Favicon + mShots Screenshot)
+        // This solves the problem of CSS-in-JS frameworks hiding the brand colors.
+        $rendered_colors = self::extract_colors_from_images($url);
+        if (!empty($rendered_colors)) {
+            $colors = array_merge($colors, $rendered_colors);
+        }
 
         // 1. CSS custom properties from <style> blocks
         // Match patterns like: --primary-color: #ff0000; or --brand: rgb(255,0,0);
@@ -324,6 +332,47 @@ class PCM_Website_Scraper
 
         // Return top colors (max 10), removing duplicates that are too similar
         return PCM_Image_Utils::deduplicate_similar_colors(array_values($filtered), 10);
+    }
+
+    /**
+     * Fetch rendered colors by taking a screenshot (mShots) and grabbing the favicon.
+     *
+     * @param string $url Website URL.
+     * @return array Array of hex colors extracted from images.
+     */
+    private static function extract_colors_from_images(string $url): array
+    {
+        $colors = array();
+
+        // 1. Google Favicon (Highest priority for brand color)
+        $favicon_url = 'https://s2.googleusercontent.com/s2/favicons?domain=' . urlencode($url) . '&sz=128';
+        $fav_resp = wp_remote_get($favicon_url, array('timeout' => 5));
+        if (!is_wp_error($fav_resp) && wp_remote_retrieve_response_code($fav_resp) === 200) {
+            $body = wp_remote_retrieve_body($fav_resp);
+            if (!empty($body)) {
+                $tmp = get_temp_dir() . 'pcm_fav_' . wp_generate_uuid4() . '.png';
+                file_put_contents($tmp, $body);
+                $fav_colors = PCM_Image_Utils::extract_dominant_colors($tmp, 5);
+                $colors = array_merge($colors, $fav_colors);
+                @unlink($tmp);
+            }
+        }
+
+        // 2. mShots Screenshot (For secondary/background colors)
+        $mshots_url = 'https://s0.wordpress.com/mshots/v1/' . urlencode($url) . '?w=800&h=600';
+        $mshots_resp = wp_remote_get($mshots_url, array('timeout' => 10));
+        if (!is_wp_error($mshots_resp) && wp_remote_retrieve_response_code($mshots_resp) === 200) {
+            $body = wp_remote_retrieve_body($mshots_resp);
+            if (!empty($body)) {
+                $tmp = get_temp_dir() . 'pcm_mshot_' . wp_generate_uuid4() . '.jpg';
+                file_put_contents($tmp, $body);
+                $mshots_colors = PCM_Image_Utils::extract_dominant_colors($tmp, 8);
+                $colors = array_merge($colors, $mshots_colors);
+                @unlink($tmp);
+            }
+        }
+
+        return $colors;
     }
 
     // =========================================================================
