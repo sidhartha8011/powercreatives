@@ -83,7 +83,7 @@ export function AssetDetailView({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         className="max-w-[70vw] w-auto h-[85vh] max-h-[85vh] p-0 gap-0 overflow-hidden bg-neutral-950 border-neutral-800 rounded-2xl flex flex-col"
-        style={{ maxWidth: '1100px', minWidth: '700px' }}
+        style={{ maxWidth: '1400px', minWidth: '900px' }}
       >
         <VisuallyHidden><DialogTitle>Asset Detail</DialogTitle></VisuallyHidden>
         {/* Tab Bar — pill-shaped icons, centered */}
