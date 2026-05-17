@@ -43,6 +43,8 @@ export interface AdsGenerateParams {
   imageModelIds: string[];
   /** Video model ID (empty = skip video phase) */
   videoModelId: string;
+  /** Number of angles (scenes) */
+  angles: number;
   /** Number of variations per image model */
   imageVariations: number;
   /** Business context from ContextPanel + EnhancedBrandSection */

@@ -57,6 +57,7 @@ export function AdsModule() {
   const [videoModelId] = useState('');
 
   // ── Production params ──
+  const [angles, setAngles] = useState(ADS_DEFAULTS.angleCount);
   const [imageVariations, setImageVariations] = useState(ADS_DEFAULTS.imageVariations);
 
   // ── Orchestration hook ──
@@ -89,11 +90,12 @@ export function AdsModule() {
       textModelId,
       imageModelIds: selectedImageModels,
       videoModelId,
+      angles,
       imageVariations,
       formValues,
       contextData,
     });
-  }, [brief, textModelId, selectedImageModels, videoModelId, imageVariations, formValues, contextData, orchestration]);
+  }, [brief, textModelId, selectedImageModels, videoModelId, angles, imageVariations, formValues, contextData, orchestration]);
 
   // ── Render ──
   return (
@@ -113,6 +115,8 @@ export function AdsModule() {
         onImageModelsChange={handleImageModelsChange}
         videoModelId={videoModelId}
         onVideoModelChange={() => {}} // Fishbone — no-op
+        angles={angles}
+        onAnglesChange={setAngles}
         imageVariations={imageVariations}
         onImageVariationsChange={setImageVariations}
         isGenerating={orchestration.isGenerating}

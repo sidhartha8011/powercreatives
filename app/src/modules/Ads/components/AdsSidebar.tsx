@@ -24,6 +24,7 @@ import {
   EnhancedBrandSection,
   ThemeSelector,
   GlobalEngineSelector,
+  GlobalProductionParameters,
   DEFAULT_BRAND_TOGGLES,
 } from '@/components/shared';
 import type { ContextData, ScrapedBusinessData } from '@/components/shared';
@@ -65,6 +66,8 @@ interface AdsSidebarProps {
   onVideoModelChange: (id: string) => void;
 
   // ── Production params ──
+  angles: number;
+  onAnglesChange: (n: number) => void;
   imageVariations: number;
   onImageVariationsChange: (n: number) => void;
 
@@ -91,6 +94,8 @@ export const AdsSidebar = memo(function AdsSidebar({
   onImageModelsChange,
   videoModelId,
   onVideoModelChange,
+  angles,
+  onAnglesChange,
   imageVariations,
   onImageVariationsChange,
   isGenerating,
@@ -187,38 +192,13 @@ export const AdsSidebar = memo(function AdsSidebar({
           </div>
         </section>
 
-        {/* 8. Production Parameters */}
-        <section>
-          <div className="flex items-center gap-2 mb-3">
-            <SlidersHorizontal className="w-4 h-4 text-muted-foreground" />
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Production Parameters
-            </h3>
-          </div>
-
-          {/* Image variations per model */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <Zap className="w-3 h-3" />Images per Model
-              </label>
-              <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">
-                {imageVariations}
-              </span>
-            </div>
-            <input
-              type="range"
-              min="1"
-              max="4"
-              value={imageVariations}
-              onChange={(e) => onImageVariationsChange(parseInt(e.target.value) || 1)}
-              className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
-            />
-            <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-              <span>1</span><span>4</span>
-            </div>
-          </div>
-        </section>
+        {/* 6. Production Parameters */}
+        <GlobalProductionParameters
+          angles={angles}
+          onAnglesChange={onAnglesChange}
+          variations={imageVariations}
+          onVariationsChange={onImageVariationsChange}
+        />
 
         {/* 9. Generate Button */}
         <Button
