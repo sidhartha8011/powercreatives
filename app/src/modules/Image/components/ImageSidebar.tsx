@@ -365,23 +365,24 @@ export const ImageSidebar = memo(function ImageSidebar({
                                                             <div className="text-sm font-medium truncate">{model.name}</div>
                                                             <div className="text-xs text-muted-foreground capitalize">{model.provider}</div>
                                                         </div>
+                                                        {isDisabled && (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <div className="ml-auto flex items-center justify-center cursor-help">
+                                                                        <Info className="w-4 h-4 text-muted-foreground hover:text-foreground transition-colors" />
+                                                                    </div>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent className="max-w-[220px] text-xs text-center z-[100]">
+                                                                    Cannot be used with image inputs. Disable Logo and Reference Images to activate.
+                                                                </TooltipContent>
+                                                            </Tooltip>
+                                                        )}
                                                     </button>
                                                 );
 
                                                 return (
                                                     <div key={model.id}>
-                                                        {isDisabled ? (
-                                                            <Tooltip>
-                                                                <TooltipTrigger asChild>
-                                                                    <div className="w-full">{ButtonContent}</div>
-                                                                </TooltipTrigger>
-                                                                <TooltipContent className="max-w-[220px] text-xs text-center">
-                                                                    Cannot be used with image inputs. Disable Logo and Reference Images to activate.
-                                                                </TooltipContent>
-                                                            </Tooltip>
-                                                        ) : (
-                                                            ButtonContent
-                                                        )}
+                                                        {ButtonContent}
                                                     </div>
                                                 );
                                             })}
