@@ -9,7 +9,10 @@
 
 import { Label } from "@/components/ui/label";
 import { Plus, X } from "lucide-react";
+import { useState } from "react";
 import type { RefObject } from "react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 
 interface BrandColorSectionProps {
   /** Array of hex colors */
@@ -34,6 +37,14 @@ export function BrandColorSection({
   onRemove,
   onAdd,
 }: BrandColorSectionProps) {
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const [draftColor, setDraftColor] = useState("#000000");
+
+  const handleAddConfirm = () => {
+    onAdd(draftColor);
+    setIsPopoverOpen(false);
+  };
+
   return (
     <div className="space-y-2">
       <Label className="text-sm font-medium">Brand Colors</Label>
@@ -98,21 +109,51 @@ export function BrandColorSection({
           );
         })}
         {colors.length < maxColors && (
-          <button
-            type="button"
-            onClick={() => additionalColorRef.current?.click()}
-            className="w-8 h-8 rounded-lg border border-dashed border-border flex items-center justify-center text-muted-foreground hover:bg-muted/50 transition-colors"
-            title="Add color"
-          >
-            <Plus size={14} />
-          </button>
+          <Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="w-8 h-8 rounded-lg border border-dashed border-border flex items-center justify-center text-muted-foreground hover:bg-muted/50 transition-colors"
+                title="Add color"
+              >
+                <Plus size={14} />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-4" align="start">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <h4 className="font-medium text-sm">Add Brand Color</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Select a color and confirm to add it to your palette.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="relative w-10 h-10 rounded-md overflow-hidden border shadow-sm">
+                    <input
+                      type="color"
+                      value={draftColor}
+                      onChange={(e) => setDraftColor(e.target.value)}
+                      className="absolute inset-[-10px] w-20 h-20 cursor-pointer"
+                    />
+                  </div>
+                  <div className="flex-1 font-mono text-xs uppercase text-muted-foreground">
+                    {draftColor}
+                  </div>
+                </div>
+                <Button 
+                  type="button" 
+                  size="sm" 
+                  className="w-full"
+                  onClick={handleAddConfirm}
+                >
+                  Add Color
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
         )}
-        <input
-          ref={additionalColorRef}
-          type="color"
-          className="sr-only"
-          onChange={(e) => onAdd(e.target.value)}
-        />
+        {/* Keep the ref attached to a dummy element in case parents still try to click it (graceful fallback) */}
+        <input ref={additionalColorRef} type="hidden" className="sr-only" />
       </div>
     </div>
   );
