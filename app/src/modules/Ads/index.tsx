@@ -25,7 +25,15 @@ import type { CostTier } from '@/types';
 
 export function AdsModule() {
   // ── Shared context state (brand, URL, theme) ──
-  const [contextData, setContextData] = useState<ContextData>({});
+  // All fields must be initialized to prevent crashes in ContextPanel (value.url.trim())
+  const [contextData, setContextData] = useState<ContextData>({
+    brandId: undefined,
+    brand: null,
+    url: '',
+    scrapedData: null,
+    seasonEvent: '',
+    campaignTheme: '',
+  });
   const [formValues, setFormValues] = useState<Record<string, string | number | undefined>>({});
 
   // ── Brief ──
