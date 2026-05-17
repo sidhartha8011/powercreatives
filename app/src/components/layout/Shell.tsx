@@ -26,6 +26,7 @@ import { WriterModule } from '@/modules/Writer';
 import { StrategiesModule } from '@/modules/Strategies';
 import { SitesModule } from '@/modules/Sites';
 import { ApprovalsModule } from '@/modules/Approvals';
+import { AdsModule } from '@/modules/Ads';
 import type { ModuleId } from '@/types';
 
 // Module registry - maps module IDs to their components
@@ -46,10 +47,11 @@ const moduleRegistry: Record<ModuleId, React.ComponentType> = {
   strategies: StrategiesModule,
   sites: SitesModule,
   approvals: ApprovalsModule,
+  ads: AdsModule,
 };
 
 // Modules that need full-bleed layout (no padding, full height)
-const fullBleedModules: ModuleId[] = ['image', 'video', 'writer'];
+const fullBleedModules: ModuleId[] = ['image', 'video', 'writer', 'ads'];
 
 export function Shell() {
   const { state } = useApp();

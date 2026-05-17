@@ -30,6 +30,7 @@ import {
   Globe,
   KanbanSquare,
   LogOut,
+  Megaphone,
 } from 'lucide-react';
 
 interface NavItem {
@@ -52,6 +53,7 @@ const mainNavItems: NavItem[] = [
   { id: 'approvals', label: 'Approvals', icon: <KanbanSquare className="w-[1.2rem] h-[1.2rem]" /> },
   { id: 'image', label: 'Image', icon: <Image className="w-[1.2rem] h-[1.2rem]" /> },
   { id: 'video', label: 'Video', icon: <Video className="w-[1.2rem] h-[1.2rem]" /> },
+  { id: 'ads', label: 'Ads', icon: <Megaphone className="w-[1.2rem] h-[1.2rem]" /> },
 ];
 
 // Configuration items (bottom of sidebar)
