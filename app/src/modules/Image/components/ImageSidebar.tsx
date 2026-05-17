@@ -375,8 +375,8 @@ export const ImageSidebar = memo(function ImageSidebar({
                                                                 <TooltipTrigger asChild>
                                                                     <div className="w-full">{ButtonContent}</div>
                                                                 </TooltipTrigger>
-                                                                <TooltipContent side="left" className="text-xs">
-                                                                    Kan inte användas med bild-input. Stäng av Logotyp och Referensbilder för att aktivera.
+                                                                <TooltipContent className="max-w-[220px] text-xs text-center">
+                                                                    Cannot be used with image inputs. Disable Logo and Reference Images to activate.
                                                                 </TooltipContent>
                                                             </Tooltip>
                                                         ) : (
