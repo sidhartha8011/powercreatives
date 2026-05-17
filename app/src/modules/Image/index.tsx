@@ -275,6 +275,7 @@ export function ImageModule() {
             tierLabels: genHook.tierLabels,
             displayModels: genHook.displayModels,
             modelsByTier: genHook.modelsByTier,
+            requiresImageInput: genHook.requiresImageInput,
           }}
           sug={{
             suggestions: sugHook.suggestions,

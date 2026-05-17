@@ -62,7 +62,7 @@ interface ImageSidebarProps {
         | 'variationsPerModel' | 'setVariationsPerModel'
         | 'autoOptimizeBrief' | 'setAutoOptimizeBrief'
         | 'expandedTiers' | 'toggleModel' | 'toggleTier' | 'tierLabels'
-        | 'displayModels' | 'modelsByTier'
+        | 'displayModels' | 'modelsByTier' | 'requiresImageInput'
     >;
     // Suggestions hook
     sug: Pick<
