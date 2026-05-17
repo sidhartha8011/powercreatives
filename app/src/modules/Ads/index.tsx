@@ -51,29 +51,7 @@ export function AdsModule() {
   }, [textModels, textModelId]);
 
   // ── Image models ──
-  const {
-    imageModelsByTier: rawImageModelsByTier,
-  } = useImageModelsForGeneration();
-
   const [selectedImageModels, setSelectedImageModels] = useState<string[]>([]);
-  const [expandedTiers, setExpandedTiers] = useState<Record<CostTier, boolean>>({
-    budget: false,
-    standard: false,
-    premium: false,
-  });
-
-  // Standardize image models for sidebar display (memoized to prevent re-renders)
-  const imageModelsByTier = useMemo(() => ({
-    budget: rawImageModelsByTier.budget.map((m) => ({
-      id: m.id, name: m.name, provider: m.provider, costTier: m.costTier,
-    })),
-    standard: rawImageModelsByTier.standard.map((m) => ({
-      id: m.id, name: m.name, provider: m.provider, costTier: m.costTier,
-    })),
-    premium: rawImageModelsByTier.premium.map((m) => ({
-      id: m.id, name: m.name, provider: m.provider, costTier: m.costTier,
-    })),
-  }), [rawImageModelsByTier]);
 
   // ── Video model (fishbone) ──
   const [videoModelId] = useState('');
@@ -101,16 +79,8 @@ export function AdsModule() {
     setFormValues((prev) => ({ ...prev, [fieldId]: value }));
   }, []);
 
-  const handleToggleImageModel = useCallback((modelId: string) => {
-    setSelectedImageModels((prev) =>
-      prev.includes(modelId)
-        ? prev.filter((id) => id !== modelId)
-        : [...prev, modelId],
-    );
-  }, []);
-
-  const handleToggleTier = useCallback((tier: CostTier) => {
-    setExpandedTiers((prev) => ({ ...prev, [tier]: !prev[tier] }));
+  const handleImageModelsChange = useCallback((ids: string[]) => {
+    setSelectedImageModels(ids);
   }, []);
 
   const handleGenerate = useCallback(() => {
@@ -139,13 +109,8 @@ export function AdsModule() {
         onBriefChange={setBrief}
         textModelId={textModelId}
         onTextModelChange={setTextModelId}
-        textModels={textModels}
-        textModelGroups={textModelGroups}
         imageModelIds={selectedImageModels}
-        onToggleImageModel={handleToggleImageModel}
-        imageModelsByTier={imageModelsByTier}
-        expandedTiers={expandedTiers}
-        onToggleTier={handleToggleTier}
+        onImageModelsChange={handleImageModelsChange}
         videoModelId={videoModelId}
         onVideoModelChange={() => {}} // Fishbone — no-op
         imageVariations={imageVariations}
