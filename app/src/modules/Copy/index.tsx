@@ -52,6 +52,7 @@ import { useCopyGeneration, type GenerateScope } from './useCopyGeneration';
 import { useSelection } from './useSelection';
 import { useTextModels } from './useTextModels';
 import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
+import { getBrandLogo } from '@shared/brandAssetResolver';
 import { SaveBrandButton } from '@/components/shared/SaveBrandButton';
 
 export interface GenerationSettings {
@@ -371,8 +372,11 @@ export function CopyModule() {
       if (toggles.useColors && Array.isArray(brand?.colors)) {
         visualAssets.colors = brand.colors as string[];
       }
-      if (toggles.useLogo && Array.isArray(brand?.assets) && brand.assets.length > 0) {
-        visualAssets.logo = brand.assets[0].url;
+      if (toggles.useLogo) {
+        const logo = getBrandLogo(brand);
+        if (logo) {
+          visualAssets.logo = logo.url;
+        }
       }
       if (toggles.useReferenceSubjects && sessionReferenceImages.length > 0) {
         visualAssets.referenceImages = sessionReferenceImages.map(img => ({ url: img.url, intent: img.intent }));

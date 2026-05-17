@@ -25,6 +25,7 @@ import type { ContextData, ScrapedBusinessData } from '@/components/shared/Conte
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
 import type { BrandAsset } from '@shared/brandTypes';
+import { getBrandLogo } from '@shared/brandAssetResolver';
 import type { GeneratedAsset } from '@/types';
 import { useApp } from '@/contexts/AppContext';
 
@@ -100,9 +101,11 @@ export function ImageModule() {
   useEffect(() => {
     const assets = ((contextData.brand as any)?.assets as BrandAsset[] | null) ?? [];
     if (assets.length > 0 && !assetHook.logoConfig.base64) {
-      // Convert remote brand asset URL → base64 (same pattern as BrandAssetPicker)
-      const logoUrl = assets[0].url;
-      fetch(logoUrl)
+      // Use resolver to find the logo asset by role (Brand Asset Role Contract)
+      const logoAsset = getBrandLogo(contextData.brand as any);
+      const logoUrl = logoAsset?.url ?? (assets.length > 0 ? assets[0].url : null);
+      if (logoUrl) {
+        fetch(logoUrl)
         .then((res) => res.blob())
         .then((blob) => {
           const reader = new FileReader();
@@ -114,6 +117,7 @@ export function ImageModule() {
           reader.readAsDataURL(blob);
         })
         .catch(() => { /* Non-fatal — user can still pick manually */ });
+      }
     } else if (!contextData.brand) {
       // Brand deselected → clear logo
       assetHook.clearLogo();
@@ -193,8 +197,8 @@ export function ImageModule() {
 
   // ── Brand logo URL for AssetDetailView ──
   const brandLogoUrl = (() => {
-    const assets = ((contextData.brand as any)?.assets as BrandAsset[] | null) ?? [];
-    return assets.length > 0 ? assets[0].url : null;
+    const logo = getBrandLogo(contextData.brand as any);
+    return logo?.url ?? null;
   })();
 
   // ── Launch button state ──

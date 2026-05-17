@@ -8,6 +8,7 @@ import { LogoSelectionDialog } from "@/components/shared/LogoSelectionDialog";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/trpc";
 import type { ContextPanelProps } from "./types";
+import { getBrandLogo } from "@shared/brandAssetResolver";
 
 export function ContextPanel(props: ContextPanelProps) {
   const { value, hideUrl = false, hideTheme = false } = props;
@@ -17,7 +18,7 @@ export function ContextPanel(props: ContextPanelProps) {
   const brand = value.brand as Record<string, any> | null;
   const brandSummary = brand?.businessSummary as string | undefined;
   const brandColors = (Array.isArray(brand?.colors) && brand.colors.length > 0) ? brand.colors as string[] : null;
-  const brandLogo = (Array.isArray(brand?.assets) && brand.assets.length > 0) ? brand.assets[0] : null;
+  const brandLogo = getBrandLogo(brand) ?? null;
 
   return (
     <>

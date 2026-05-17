@@ -193,7 +193,7 @@ export function useImageGeneration({
             setSelectedModels((prev) => prev.filter((id) => validIds.has(id)));
             toast.info(`${removed.length} model(s) deselected — they don't support image inputs`);
         }
-    }, [requiresImageInput, displayModels]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [requiresImageInput, displayModels, selectedModels]);
 
     // ── Production parameters ──
     const [numVersions, setNumVersions] = useState(PRODUCTION_DEFAULTS.numVersions);
@@ -323,11 +323,7 @@ export function useImageGeneration({
         };
         const hasBrandCtx = contextData.brand || Object.keys(formValues).length > 0;
 
-        // [PCM-SOND 2026-05-16] DIAGNOSTIC — grep "PCM-SOND" to find and remove
-        console.log('[PCM-SOND] brandCtx →', brandCtx);
-        console.log('[PCM-SOND] formValues →', formValues);
-        console.log('[PCM-SOND] contextData.brand →', contextData.brand);
-        console.log('[PCM-SOND] hasBrandCtx →', hasBrandCtx);
+
 
         try {
             // 0. Optionally optimize the brief via LLM

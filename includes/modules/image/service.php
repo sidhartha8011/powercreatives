@@ -707,6 +707,8 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
 {{language}}
 {{phone}}
 {{url}}
+{{seasonEvent}}
+{{campaignTheme}}
 {{brandColors}}",
 
             // ── Brief Optimization — System Prompt ───────────────
@@ -726,6 +728,8 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
 {{language}}
 {{phone}}
 {{url}}
+{{seasonEvent}}
+{{campaignTheme}}
 {{brandColors}}",
 
             // ── Final Prompt — the prompt sent to the image model ───
