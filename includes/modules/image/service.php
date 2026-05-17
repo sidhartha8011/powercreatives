@@ -320,6 +320,14 @@ class PCM_Image_Service
                 continue;
             }
 
+            // [FIX] Convert local WP URLs to base64 data URIs so external LLMs can access them
+            if (!str_starts_with($url, 'data:')) {
+                $base64 = $this->url_to_base64_data_uri($url);
+                if ($base64) {
+                    $url = $base64;
+                }
+            }
+
             $parts[] = array(
                 'type' => 'image_url',
                 'image_url' => array(
@@ -330,6 +338,44 @@ class PCM_Image_Service
         }
 
         return $parts;
+    }
+
+    /**
+     * Convert a URL (local WP upload or external) to a Base64 data URI.
+     * Prevents LLMs from failing when trying to download local/protected URLs.
+     *
+     * @param string $url The image URL.
+     * @return string|null The data URI, or null on failure.
+     */
+    private function url_to_base64_data_uri(string $url): ?string
+    {
+        $upload_dir = wp_upload_dir();
+        $baseurl = $upload_dir['baseurl'];
+        $basedir = $upload_dir['basedir'];
+
+        // 1. If it's a local WordPress upload, read directly from disk (fastest, bypasses local DNS/auth)
+        if (str_starts_with($url, $baseurl)) {
+            $local_path = str_replace($baseurl, $basedir, $url);
+            if (file_exists($local_path)) {
+                $mime = wp_check_filetype($local_path)['type'];
+                $data = file_get_contents($local_path);
+                if ($data && $mime) {
+                    return 'data:' . $mime . ';base64,' . base64_encode($data);
+                }
+            }
+        }
+
+        // 2. Fallback to HTTP request (for external URLs or if path mapping fails)
+        $response = wp_remote_get($url, array('timeout' => 15));
+        if (!is_wp_error($response)) {
+            $body = wp_remote_retrieve_body($response);
+            $mime = wp_remote_retrieve_header($response, 'content-type');
+            if ($body && $mime) {
+                return 'data:' . $mime . ';base64,' . base64_encode($body);
+            }
+        }
+
+        return null;
     }
 
     /**

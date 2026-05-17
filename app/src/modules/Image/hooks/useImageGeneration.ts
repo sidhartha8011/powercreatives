@@ -301,6 +301,13 @@ export function useImageGeneration({
             return;
         }
 
+        if (numVersions > 1 || autoOptimizeBrief) {
+            if (!settings.defaultImageTextModel) {
+                toast.error('Menu Intelligence saknas. Välj en modell i Settings → Module Defaults.');
+                return;
+            }
+        }
+
         setStatus({ isGenerating: true, progress: 0, message: 'Generating creative concepts...' });
         setAssets([]);
 
@@ -333,7 +340,7 @@ export function useImageGeneration({
                 try {
                     const optimized = await optimizeBriefMutation.mutateAsync({
                         brief: productBrief,
-                        modelId: settings.defaultImageTextModel || undefined,
+                        modelId: settings.defaultImageTextModel,
                         brandContext: hasBrandCtx ? brandCtx : undefined,
                     });
                     briefToUse = (optimized as any).optimizedBrief ?? productBrief;
@@ -364,7 +371,7 @@ export function useImageGeneration({
                     const conceptsResult = await generateConceptsMutation.mutateAsync({
                     prompt: briefToUse,
                     count: numVersions - 1,
-                    modelId: settings.defaultImageTextModel || undefined,
+                    modelId: settings.defaultImageTextModel,
                     brandContext: hasBrandCtx ? brandCtx : undefined,
                     referenceImages: toggles.useReferenceSubjects ? sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent })) : [],
                 });

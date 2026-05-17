@@ -93,6 +93,11 @@ export function useImageSuggestions(): UseImageSuggestionsReturn {
             return;
         }
 
+        if (!settings.defaultImageTextModel) {
+            toast.error('Menu Intelligence saknas. Välj en modell i Settings → Module Defaults.');
+            return;
+        }
+
         const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
 
         setIsLoadingSuggestions(true);
@@ -101,7 +106,7 @@ export function useImageSuggestions(): UseImageSuggestionsReturn {
                 brief: productBrief,
                 count: suggestionCount,
                 detailLevel: toDetailLevelEnum(detailLevel),
-                modelId: settings.defaultImageTextModel || undefined,
+                modelId: settings.defaultImageTextModel,
                 brandName: (contextData.brand as any)?.name,
                 brandSummary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
                 brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
@@ -141,13 +146,18 @@ export function useImageSuggestions(): UseImageSuggestionsReturn {
             return;
         }
 
+        if (!settings.defaultImageTextModel) {
+            toast.error('Menu Intelligence saknas. Välj en modell i Settings → Module Defaults.');
+            return;
+        }
+
         const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
 
         setIsLoadingContextSuggestions(true);
         try {
             const result = await generateContextSuggestionsMutation.mutateAsync({
                 count: 4,
-                modelId: settings.defaultImageTextModel || undefined,
+                modelId: settings.defaultImageTextModel,
                 brandId: (contextData.brand as any)?.id,
                 brandName: (contextData.brand as any)?.name,
                 brandSummary: toggles.useSummary ? ((contextData.brand as any)?.businessSummary || formValues.business_summary) : undefined,
