@@ -267,16 +267,17 @@ class PCM_Website_Scraper
     {
         $colors = array();
 
-        // 0. Extract Rendered Colors (Favicon + mShots Screenshot)
-        // This solves the problem of CSS-in-JS frameworks hiding the brand colors.
-        $rendered_colors = self::extract_colors_from_images($url);
-        if (!empty($rendered_colors)) {
-            $colors = array_merge($colors, $rendered_colors);
+        // 1. Extract Rendered Colors (Favicon)
+        // The Favicon is the ultimate Source of Truth for brand colors.
+        $favicon_colors = self::extract_colors_from_images($url);
+        if (!empty($favicon_colors)) {
+            $colors = array_merge($colors, $favicon_colors);
         }
 
-        // 1. CSS custom properties from <style> blocks
-        // Match patterns like: --primary-color: #ff0000; or --brand: rgb(255,0,0);
-        if (preg_match_all('/--[\w-]+\s*:\s*(#[0-9a-fA-F]{3,8}|rgb\([^)]+\)|rgba\([^)]+\))\s*;/', $html, $matches)) {
+        // 2. CSS custom properties from <style> blocks (Strict Whitelist)
+        // Match ONLY semantic variables like: --primary-color: #ff0000; or --brand: rgb(...)
+        // explicitly ignoring utility frameworks like Tailwind (--tw) or Bootstrap (--bs).
+        if (preg_match_all('/--(?:primary|brand|accent|main|theme)[\w-]*\s*:\s*(#[0-9a-fA-F]{3,8}|rgb\([^)]+\)|rgba\([^)]+\))\s*;/i', $html, $matches)) {
             foreach ($matches[1] as $color_value) {
                 $hex = PCM_Image_Utils::css_color_to_hex($color_value);
                 if ($hex) {
@@ -307,19 +308,9 @@ class PCM_Website_Scraper
             }
         }
 
-        // 3. Color properties from <style> blocks (background-color, color, border-color)
-        $color_properties = array('background-color', 'background', 'color', 'border-color');
-        foreach ($color_properties as $prop) {
-            $pattern = '/' . preg_quote($prop, '/') . '\s*:\s*(#[0-9a-fA-F]{3,8}|rgb\([^)]+\)|rgba\([^)]+\))/i';
-            if (preg_match_all($pattern, $html, $matches)) {
-                foreach ($matches[1] as $color_value) {
-                    $hex = PCM_Image_Utils::css_color_to_hex($color_value);
-                    if ($hex) {
-                        $colors[] = $hex;
-                    }
-                }
-            }
-        }
+        // We no longer scan generic <style> blocks for 'background-color' or 'color',
+        // because that regex blindly picks up all utility classes (e.g. Tailwind/Bootstrap
+        // rainbow palettes). By removing it, we enforce "foolproof" heuristic extraction.
 
         // Deduplicate and filter noise colors (near-white, near-black, pure gray)
         $colors = array_unique($colors);
@@ -335,16 +326,16 @@ class PCM_Website_Scraper
     }
 
     /**
-     * Fetch rendered colors by taking a screenshot (mShots) and grabbing the favicon.
+     * Fetch rendered colors from the brand's Favicon.
      *
      * @param string $url Website URL.
-     * @return array Array of hex colors extracted from images.
+     * @return array Array of hex colors extracted from the favicon.
      */
     private static function extract_colors_from_images(string $url): array
     {
         $colors = array();
 
-        // 1. Google Favicon (Highest priority for brand color)
+        // Google Favicon API (Highest priority, always returns a reliable image fast)
         $favicon_url = 'https://s2.googleusercontent.com/s2/favicons?domain=' . urlencode($url) . '&sz=128';
         $fav_resp = wp_remote_get($favicon_url, array('timeout' => 5));
         if (!is_wp_error($fav_resp) && wp_remote_retrieve_response_code($fav_resp) === 200) {
@@ -354,20 +345,6 @@ class PCM_Website_Scraper
                 file_put_contents($tmp, $body);
                 $fav_colors = PCM_Image_Utils::extract_dominant_colors($tmp, 5);
                 $colors = array_merge($colors, $fav_colors);
-                @unlink($tmp);
-            }
-        }
-
-        // 2. mShots Screenshot (For secondary/background colors)
-        $mshots_url = 'https://s0.wordpress.com/mshots/v1/' . urlencode($url) . '?w=800&h=600';
-        $mshots_resp = wp_remote_get($mshots_url, array('timeout' => 10));
-        if (!is_wp_error($mshots_resp) && wp_remote_retrieve_response_code($mshots_resp) === 200) {
-            $body = wp_remote_retrieve_body($mshots_resp);
-            if (!empty($body)) {
-                $tmp = get_temp_dir() . 'pcm_mshot_' . wp_generate_uuid4() . '.jpg';
-                file_put_contents($tmp, $body);
-                $mshots_colors = PCM_Image_Utils::extract_dominant_colors($tmp, 8);
-                $colors = array_merge($colors, $mshots_colors);
                 @unlink($tmp);
             }
         }
