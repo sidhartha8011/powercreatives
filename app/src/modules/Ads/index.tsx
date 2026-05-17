@@ -9,7 +9,7 @@
  * Pattern: Mirrors Image module's index.tsx structure
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { ContextData, ScrapedBusinessData } from '@/components/shared';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import { useImageModelsForGeneration, TIER_CONFIG } from '@/hooks/useModelsForGeneration';
@@ -35,10 +35,12 @@ export function AdsModule() {
   const { textModels, groups: textModelGroups } = useTextModels();
   const [textModelId, setTextModelId] = useState('');
 
-  // Auto-select first text model when models load
-  if (!textModelId && textModels.length > 0) {
-    setTextModelId(textModels[0].id);
-  }
+  // Auto-select first text model when models load (useEffect avoids setState-during-render)
+  useEffect(() => {
+    if (!textModelId && textModels.length > 0) {
+      setTextModelId(textModels[0].id);
+    }
+  }, [textModels, textModelId]);
 
   // ── Image models ──
   const {
@@ -52,8 +54,8 @@ export function AdsModule() {
     premium: false,
   });
 
-  // Standardize image models for sidebar display
-  const imageModelsByTier = {
+  // Standardize image models for sidebar display (memoized to prevent re-renders)
+  const imageModelsByTier = useMemo(() => ({
     budget: rawImageModelsByTier.budget.map((m) => ({
       id: m.id, name: m.name, provider: m.provider, costTier: m.costTier,
     })),
@@ -63,7 +65,7 @@ export function AdsModule() {
     premium: rawImageModelsByTier.premium.map((m) => ({
       id: m.id, name: m.name, provider: m.provider, costTier: m.costTier,
     })),
-  };
+  }), [rawImageModelsByTier]);
 
   // ── Video model (fishbone) ──
   const [videoModelId] = useState('');

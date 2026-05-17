@@ -13,7 +13,7 @@
  *   tight coupling and state conflicts between modules.
  * - Uses Promise.allSettled for image generation so one model failure
  *   doesn't block results from other models.
- * - SSE parsing follows the exact same protocol as useCopyGeneration.
+ * - SSE parsing is extracted to utils/sseTextParser.ts for testability.
  */
 
 import { useState, useCallback, useRef } from 'react';
@@ -27,6 +27,7 @@ import type {
   AdsProgress,
 } from '../types';
 import { ADS_DEFAULTS } from '../adsConfig';
+import { parseTextSSEStream } from '../utils/sseTextParser';
 import type { ContextData } from '@/components/shared/ContextPanel';
 
 // ============================================================================
@@ -77,38 +78,6 @@ export interface UseAdsOrchestrationReturn {
 }
 
 // ============================================================================
-// SSE Parser — reads the Copy generation stream
-// ============================================================================
-
-/**
- * Parse a single SSE 'result' event from /copy/generate into a TextSlot.
- * Matches the payload shape from Copy's controller.php.
- */
-function toTextSlot(payload: {
-  id: number;
-  headline: string;
-  body: string;
-  cta: string;
-  hashtags: string[];
-  audienceName: string;
-  angleName: string;
-  modelUsed: string;
-}): TextSlot {
-  return {
-    id: String(payload.id),
-    headline: payload.headline || '',
-    body: payload.body || '',
-    cta: payload.cta || undefined,
-    hashtags: Array.isArray(payload.hashtags) && payload.hashtags.length > 0
-      ? payload.hashtags
-      : undefined,
-    audienceName: payload.audienceName || undefined,
-    angleName: payload.angleName || undefined,
-    modelUsed: payload.modelUsed || '',
-  };
-}
-
-// ============================================================================
 // Composition — round-robin text + image → AdCreative
 // ============================================================================
 
@@ -152,6 +121,28 @@ function composeCreatives(texts: TextSlot[], medias: MediaSlot[]): AdCreative[] 
   return creatives;
 }
 
+/**
+ * Build brand context object matching what Copy/Image backends expect.
+ * Pure function — no React dependencies.
+ */
+function buildBrandContext(
+  formValues: Record<string, string | number | undefined>,
+  contextData: ContextData,
+) {
+  return {
+    brandName: formValues.business_name,
+    brandSummary: formValues.business_summary,
+    niche: formValues.niche,
+    location: formValues.location,
+    phone: formValues.phone,
+    website: formValues.website,
+    language: formValues.language,
+    seasonEvent: contextData.seasonEvent,
+    campaignTheme: contextData.campaignTheme,
+    url: contextData.url,
+  };
+}
+
 // ============================================================================
 // Hook
 // ============================================================================
@@ -176,25 +167,6 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
   // ── Clear error ──
   const clearError = useCallback(() => setError(null), []);
 
-  // ── Build brand context for backend (matches Copy/Image format) ──
-  function buildBrandContext(
-    formValues: Record<string, string | number | undefined>,
-    contextData: ContextData,
-  ) {
-    return {
-      brandName: formValues.business_name,
-      brandSummary: formValues.business_summary,
-      niche: formValues.niche,
-      location: formValues.location,
-      phone: formValues.phone,
-      website: formValues.website,
-      language: formValues.language,
-      seasonEvent: contextData.seasonEvent,
-      campaignTheme: contextData.campaignTheme,
-      url: contextData.url,
-    };
-  }
-
   // ══════════════════════════════════════════════════════════════════
   // PHASE 1: Text Generation (SSE stream from /copy/generate)
   // ══════════════════════════════════════════════════════════════════
@@ -209,7 +181,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     const config = window.pcmConfig ?? { restUrl: '/wp-json/pcm/v1/', nonce: '' };
     const url = `${config.restUrl}copy/generate`;
 
-    // Build the payload matching what Copy's controller expects
+    // Build payload matching Copy controller's expected input
     const input = {
       copyTypes: [ADS_DEFAULTS.copyType],
       audiences: { mode: 'auto' as const, count: ADS_DEFAULTS.audienceCount },
@@ -237,88 +209,15 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       throw new Error(`Copy generation failed: ${response.status} ${response.statusText}`);
     }
 
-    // Parse SSE stream (same protocol as useCopyGeneration)
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('No response body from copy/generate');
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let currentEvent = '';
-    let currentData = '';
-    const collectedTexts: TextSlot[] = [];
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEvent = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
-          currentData += (currentData ? '\n' : '') + line.slice(6);
-        } else if (line.trim() === '' && currentEvent) {
-          try {
-            const payload = JSON.parse(currentData);
-
-            switch (currentEvent) {
-              case 'init':
-                setProgress({
-                  phase: 'text_phase',
-                  current: 0,
-                  total: payload.totalCount ?? 0,
-                  label: 'Starting copy generation...',
-                });
-                break;
-
-              case 'progress':
-                setProgress({
-                  phase: 'text_phase',
-                  current: payload.current ?? 0,
-                  total: payload.total ?? 0,
-                  label: payload.label || 'Generating copy...',
-                });
-                break;
-
-              case 'result':
-                if (!payload.error) {
-                  const slot = toTextSlot(payload);
-                  collectedTexts.push(slot);
-                  setTextSlots([...collectedTexts]);
-                }
-                break;
-
-              case 'done':
-                setProgress({
-                  phase: 'text_phase',
-                  current: payload.completedCount ?? collectedTexts.length,
-                  total: payload.totalCount ?? collectedTexts.length,
-                  label: `Copy: ${payload.completedCount ?? collectedTexts.length} generated`,
-                });
-                break;
-
-              case 'error':
-                console.warn('[AdsOrchestration] SSE error event:', payload.message);
-                break;
-            }
-          } catch (parseErr) {
-            console.warn('[AdsOrchestration] Failed to parse SSE data:', currentData);
-          }
-
-          currentEvent = '';
-          currentData = '';
-        }
-      }
-    }
-
-    return collectedTexts;
+    // Delegate to extracted SSE parser utility
+    return parseTextSSEStream(response, {
+      onProgress: setProgress,
+      onTextSlot: (_slot, allSlots) => setTextSlots(allSlots),
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════
-  // PHASE 2: Image Generation (parallel mutations to /image/generate)
+  // PHASE 2: Image Generation (parallel mutations)
   // ══════════════════════════════════════════════════════════════════
 
   async function runImagePhase(
@@ -331,7 +230,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     const { imageModelIds, imageVariations, brief, formValues, contextData } = params;
     const brandCtx = buildBrandContext(formValues, contextData);
 
-    // Calculate total images needed: at least as many as text slots
+    // Calculate total images: at least as many as text slots
     const totalImages = Math.max(textCount, imageModelIds.length * imageVariations);
     let completed = 0;
 
@@ -342,14 +241,11 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       label: 'Generating images...',
     });
 
-    const collectedMedia: MediaSlot[] = [];
+    // Use functional updater pattern to avoid race conditions
+    // between parallel model tasks sharing mutable state
+    const completedSlots: MediaSlot[] = [];
 
-    // Fire all models in parallel, variations sequential within each model
     const modelTasks = imageModelIds.map(async (modelId) => {
-      // Look up provider via existing models query data
-      // We pass provider in the mutation — the backend resolves the rest
-      const modelInfo = (generateImageMutation as any)._def?.trpc ?? {};
-
       for (let v = 0; v < imageVariations; v++) {
         if (signal.aborted) return;
 
@@ -360,12 +256,12 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
           status: 'processing',
           modelName: modelId,
           modelId,
-          provider: '',  // Backend resolves from modelId
+          provider: '',  // Backend resolves from modelId via registry
           prompt: brief,
         };
 
-        collectedMedia.push(placeholder);
-        setMediaSlots([...collectedMedia]);
+        // Use functional updater to safely add placeholder
+        setMediaSlots((prev) => [...prev, placeholder]);
 
         try {
           const result = await generateImageMutation.mutateAsync({
@@ -375,30 +271,30 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
             brandContext: brandCtx,
           });
 
-          // Update placeholder with result
-          const idx = collectedMedia.findIndex((m) => m.id === placeholderId);
-          if (idx >= 0) {
-            collectedMedia[idx] = {
-              ...collectedMedia[idx],
-              status: 'complete',
-              url: (result as any).url,
-              thumbnailUrl: (result as any).url,
-              prompt: (result as any).prompt ?? brief,
-              dbAssetId: (result as any).id,
-            };
-            setMediaSlots([...collectedMedia]);
-          }
+          // Update placeholder with completed result using functional updater
+          const completedSlot: MediaSlot = {
+            ...placeholder,
+            status: 'complete',
+            url: (result as any).url,
+            thumbnailUrl: (result as any).url,
+            prompt: (result as any).prompt ?? brief,
+            dbAssetId: (result as any).id,
+          };
+
+          completedSlots.push(completedSlot);
+
+          setMediaSlots((prev) =>
+            prev.map((m) => m.id === placeholderId ? completedSlot : m),
+          );
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Image generation failed';
-          const idx = collectedMedia.findIndex((m) => m.id === placeholderId);
-          if (idx >= 0) {
-            collectedMedia[idx] = {
-              ...collectedMedia[idx],
-              status: 'failed',
-              errorMessage: msg,
-            };
-            setMediaSlots([...collectedMedia]);
-          }
+          setMediaSlots((prev) =>
+            prev.map((m) =>
+              m.id === placeholderId
+                ? { ...m, status: 'failed' as const, errorMessage: msg }
+                : m,
+            ),
+          );
         }
 
         completed++;
@@ -412,7 +308,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     });
 
     await Promise.allSettled(modelTasks);
-    return collectedMedia.filter((m) => m.status === 'complete');
+    return completedSlots;
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -421,22 +317,11 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
 
   function runComposePhase(texts: TextSlot[], medias: MediaSlot[]): AdCreative[] {
     setPhase('compose_phase');
-    setProgress({
-      phase: 'compose_phase',
-      current: 0,
-      total: 1,
-      label: 'Assembling ad creatives...',
-    });
+    setProgress({ phase: 'compose_phase', current: 0, total: 1, label: 'Assembling ad creatives...' });
 
     const composed = composeCreatives(texts, medias);
 
-    setProgress({
-      phase: 'compose_phase',
-      current: 1,
-      total: 1,
-      label: `${composed.length} ads assembled`,
-    });
-
+    setProgress({ phase: 'compose_phase', current: 1, total: 1, label: `${composed.length} ads assembled` });
     return composed;
   }
 

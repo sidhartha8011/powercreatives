@@ -12,7 +12,7 @@
  */
 
 import { memo } from 'react';
-import { Sparkles, Megaphone, Loader2 } from 'lucide-react';
+import { Megaphone, Loader2 } from 'lucide-react';
 import { colors, typography } from '@/components/shared';
 import type { AdCreative, AdsProgress, AdsPhase } from '../types';
 import { AdCard } from './AdCard';

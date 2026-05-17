@@ -92,15 +92,24 @@ export const AdCard = memo(function AdCard({
     toast.success('Text copied to clipboard');
   }, [text]);
 
-  // ── Download image ──
-  const downloadImage = useCallback(() => {
+  // ── Download image (fetch→blob for cross-origin compatibility) ──
+  const downloadImage = useCallback(async () => {
     if (!media.url) return;
-    const link = document.createElement('a');
-    link.href = media.url;
-    link.download = `ad-${creative.id}.png`;
-    link.target = '_blank';
-    link.click();
-    toast.success('Downloading image');
+    try {
+      const response = await fetch(media.url);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `ad-${creative.id}.png`;
+      link.click();
+      URL.revokeObjectURL(blobUrl);
+      toast.success('Downloading image');
+    } catch {
+      // Fallback: open in new tab if fetch fails (e.g. CORS)
+      window.open(media.url, '_blank');
+      toast.info('Opened image in new tab');
+    }
   }, [media.url, creative.id]);
 
   return (
