@@ -29,6 +29,7 @@ import type {
 import { ADS_DEFAULTS } from '../adsConfig';
 import { parseTextSSEStream } from '../utils/sseTextParser';
 import type { ContextData } from '@/components/shared/ContextPanel';
+import { useImageModelsForGeneration } from '@/hooks/useModelsForGeneration';
 
 // ============================================================================
 // Types
@@ -158,6 +159,9 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
   const [mediaSlots, setMediaSlots] = useState<MediaSlot[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Image model registry — needed to resolve provider from modelId ──
+  const { imageModels } = useImageModelsForGeneration();
+
   // ── tRPC mutations for image generation ──
   const generateImageMutation = trpc.image.generate.useMutation();
 
@@ -187,7 +191,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     const input = {
       copyTypes: [ADS_DEFAULTS.copyType],
       audiences: { mode: 'auto' as const, count: ADS_DEFAULTS.audienceCount },
-      angles: { mode: 'auto' as const, count: ADS_DEFAULTS.angleCount },
+      angles: { mode: 'auto' as const, count: params.angles },
       modelId: params.textModelId,
       formValues: {
         ...params.formValues,
@@ -251,14 +255,24 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       for (let v = 0; v < imageVariations; v++) {
         if (signal.aborted) return;
 
+        // Resolve provider from model registry (REQUIRED by backend)
+        const registryModel = imageModels.find((m) => m.id === modelId);
+        const resolvedProvider = registryModel?.provider ?? '';
+
+        if (!resolvedProvider) {
+          console.error(`[AdsOrchestration] No provider found for model ${modelId} — skipping.`);
+          completed++;
+          continue;
+        }
+
         const placeholderId = crypto.randomUUID();
         const placeholder: MediaSlot = {
           id: placeholderId,
           type: 'image',
           status: 'processing',
-          modelName: modelId,
+          modelName: registryModel?.name ?? modelId,
           modelId,
-          provider: '',  // Backend resolves from modelId via registry
+          provider: resolvedProvider,
           prompt: brief,
         };
 
@@ -269,7 +283,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
           const result = await generateImageMutation.mutateAsync({
             prompt: brief,
             model: modelId,
-            provider: '', // Backend resolves from modelId via registry
+            provider: resolvedProvider,
             brandContext: brandCtx,
           });
 
@@ -408,7 +422,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       toast.error(message);
       console.error('[AdsOrchestration] Generate failed:', err);
     }
-  }, [generateImageMutation]);
+  }, [generateImageMutation, imageModels]);
 
   // ── Update creative text (inline editing) ──
   const updateCreativeText = useCallback(
