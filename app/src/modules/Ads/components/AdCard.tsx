@@ -183,27 +183,6 @@ export const AdCard = memo(function AdCard({
 
       {/* ── Content Section ── */}
       <div style={{ padding: '0.875rem 1rem' }}>
-        {/* Badges: Audience + Angle */}
-        {(text.audienceName || text.angleName) && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {text.audienceName && (
-              <span
-                className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
-                style={{ background: '#dbeafe', color: '#1d4ed8' }}
-              >
-                <Target className="w-3 h-3" /> {text.audienceName}
-              </span>
-            )}
-            {text.angleName && (
-              <span
-                className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
-                style={{ background: '#fef3c7', color: '#92400e' }}
-              >
-                <Zap className="w-3 h-3" /> {text.angleName}
-              </span>
-            )}
-          </div>
-        )}
 
         {/* Text fields — view or edit mode */}
         {isEditing ? (
@@ -284,6 +263,22 @@ export const AdCard = memo(function AdCard({
                 style={{ background: '#eff6ff', color: '#2563eb' }}
               >
                 {text.cta}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* ── Context Footer (Audience & Angle) ── */}
+        {(text.audienceName || text.angleName) && (
+          <div className="flex items-center gap-3 mt-1 pb-1">
+            {text.audienceName && (
+              <span className="flex items-center gap-1 text-[10px]" style={{ color: colors.textFaint }}>
+                <Target className="w-3 h-3" /> {text.audienceName}
+              </span>
+            )}
+            {text.angleName && (
+              <span className="flex items-center gap-1 text-[10px]" style={{ color: colors.textFaint }}>
+                <Zap className="w-3 h-3" /> {text.angleName}
               </span>
             )}
           </div>
