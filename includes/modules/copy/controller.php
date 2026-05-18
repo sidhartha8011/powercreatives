@@ -288,6 +288,7 @@ class PCM_REST_Copy extends PCM_REST_Base
 
         }
         catch (\Exception $e) {
+            error_log('[PCM_Copy_Debug] Copy generation failed: ' . $e->getMessage() . "\nTrace: " . $e->getTraceAsString());
             // If SSE already started, send error event; otherwise return JSON error
             if (PCM_SSE::is_started()) {
                 PCM_SSE::send_error('Copy generation failed: ' . $e->getMessage());

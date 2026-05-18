@@ -11,6 +11,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { ContextData, ScrapedBusinessData } from '@/components/shared';
+import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import { useImageModelsForGeneration, TIER_CONFIG } from '@/hooks/useModelsForGeneration';
 import { useAdsOrchestration } from './hooks/useAdsOrchestration';
@@ -64,16 +65,26 @@ export function AdsModule() {
   const orchestration = useAdsOrchestration();
 
   // ── Handlers ──
-  const handleContextChange = useCallback((data: ContextData) => {
-    setContextData(data);
+  const handleContextChange = useCallback((newCtx: ContextData) => {
+    setContextData((prevCtx) => {
+      // Check if brand changed
+      const brandChanged = newCtx.brandId !== prevCtx.brandId;
+      const brandDataUpdated = newCtx.brand !== prevCtx.brand;
+      if ((brandChanged || brandDataUpdated) && newCtx.brand) {
+        const mapped = mapBrandToFormValues(newCtx.brand as Record<string, any>);
+        if (Object.keys(mapped).length > 0) {
+          setFormValues((prevForm) => ({ ...prevForm, ...mapped }));
+        }
+      }
+      return newCtx;
+    });
   }, []);
 
-  const handleUrlFetched = useCallback((data: ScrapedBusinessData) => {
-    // Populate form values from scraped URL data
-    if (data.businessName) setFormValues((prev) => ({ ...prev, business_name: data.businessName }));
-    if (data.description) setFormValues((prev) => ({ ...prev, business_summary: data.description }));
-    if (data.phone) setFormValues((prev) => ({ ...prev, phone: data.phone }));
-    if (data.niche) setFormValues((prev) => ({ ...prev, niche: data.niche }));
+  const handleUrlFetched = useCallback((scraped: ScrapedBusinessData) => {
+    const mapped = mapScrapedToFormValues(scraped);
+    if (Object.keys(mapped).length > 0) {
+      setFormValues((prev) => ({ ...prev, ...mapped }));
+    }
   }, []);
 
   const handleFormChange = useCallback((fieldId: string, value: string | number) => {
