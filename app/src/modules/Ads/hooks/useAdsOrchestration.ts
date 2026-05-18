@@ -195,10 +195,8 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       modelId: params.textModelId,
       formValues: {
         ...params.formValues,
-        // Inject the brief as the business description if not already set
-        business_summary: params.formValues.business_summary || params.brief,
-        // Force Swedish language if not explicitly provided
-        language: params.formValues.language || 'sv',
+        // Explicitly map the brief for the backend
+        brief: params.brief,
       },
       scope: 'all_types' as const,
     };

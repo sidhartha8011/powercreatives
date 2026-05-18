@@ -1530,7 +1530,8 @@ Provide a concise market research summary (max 300 words) that can inform audien
     {
         $template = $this->get_system_prompt($copy_type, $user_id);
 
-        $language = $this->get_language_label($form_values['language'] ?? 'en');
+        $locale_code = substr(get_locale(), 0, 2);
+        $language = $this->get_language_label($form_values['language'] ?? $locale_code);
         $brief = $this->extract_brief($form_values);
 
         // Tone resolution

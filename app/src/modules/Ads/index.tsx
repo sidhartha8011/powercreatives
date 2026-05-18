@@ -15,6 +15,7 @@ import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import { useImageModelsForGeneration, TIER_CONFIG } from '@/hooks/useModelsForGeneration';
 import { useAdsOrchestration } from './hooks/useAdsOrchestration';
+import { useBrandSync } from './hooks/useBrandSync';
 import { AdsSidebar } from './components/AdsSidebar';
 import { AdsResultsGrid } from './components/AdsResultsGrid';
 import { ADS_DEFAULTS } from './adsConfig';
@@ -64,28 +65,10 @@ export function AdsModule() {
   // ── Orchestration hook ──
   const orchestration = useAdsOrchestration();
 
-  // ── Handlers ──
-  const handleContextChange = useCallback((newCtx: ContextData) => {
-    setContextData((prevCtx) => {
-      // Check if brand changed
-      const brandChanged = newCtx.brandId !== prevCtx.brandId;
-      const brandDataUpdated = newCtx.brand !== prevCtx.brand;
-      if ((brandChanged || brandDataUpdated) && newCtx.brand) {
-        const mapped = mapBrandToFormValues(newCtx.brand as Record<string, any>);
-        if (Object.keys(mapped).length > 0) {
-          setFormValues((prevForm) => ({ ...prevForm, ...mapped }));
-        }
-      }
-      return newCtx;
-    });
-  }, []);
+  // ── Sync Hook ──
+  const { handleContextChange, handleUrlFetched } = useBrandSync(setFormValues, setContextData);
 
-  const handleUrlFetched = useCallback((scraped: ScrapedBusinessData) => {
-    const mapped = mapScrapedToFormValues(scraped);
-    if (Object.keys(mapped).length > 0) {
-      setFormValues((prev) => ({ ...prev, ...mapped }));
-    }
-  }, []);
+  // ── Handlers ──
 
   const handleFormChange = useCallback((fieldId: string, value: string | number) => {
     setFormValues((prev) => ({ ...prev, [fieldId]: value }));
