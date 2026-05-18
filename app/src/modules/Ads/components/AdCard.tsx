@@ -6,12 +6,12 @@
  *
  * Features:
  * - 16:9 image preview with loading/error states
- * - Inline-editable headline, body, and CTA
+ * - Inline-editable headline, body, and CTA using contentEditable
  * - Action bar: copy text, download image
  * - Audience/angle badges
  */
 
-import { useState, useCallback, memo } from 'react';
+import { useState, useCallback, useRef, useEffect, memo } from 'react';
 import {
   ImageIcon,
   Copy,
@@ -58,34 +58,50 @@ export const AdCard = memo(function AdCard({
 
   // ── Inline edit state ──
   const [isEditing, setIsEditing] = useState(false);
-  const [editHeadline, setEditHeadline] = useState(text.headline);
-  const [editBody, setEditBody] = useState(text.body);
-  const [editCta, setEditCta] = useState(text.cta ?? '');
+
+  // Refs for in-place contentEditable fields
+  const headlineRef = useRef<HTMLHeadingElement>(null);
+  const bodyRef = useRef<HTMLParagraphElement>(null);
+  const ctaRef = useRef<HTMLSpanElement>(null);
+
+  // Sync DOM content from variation when in read mode
+  useEffect(() => {
+    if (!isEditing) {
+      if (headlineRef.current) headlineRef.current.innerText = text.headline ?? '';
+      if (bodyRef.current) bodyRef.current.innerText = text.body ?? '';
+      if (ctaRef.current) ctaRef.current.innerText = text.cta ?? '';
+    }
+  }, [text, isEditing]);
 
   // ── Start editing ──
   const startEdit = useCallback(() => {
-    setEditHeadline(text.headline);
-    setEditBody(text.body);
-    setEditCta(text.cta ?? '');
     setIsEditing(true);
-  }, [text]);
+  }, []);
 
   // ── Save edits ──
   const saveEdit = useCallback(() => {
+    const newHeadline = headlineRef.current?.innerText?.trim() ?? text.headline;
+    const newBody = bodyRef.current?.innerText ?? text.body;
+    const newCta = ctaRef.current?.innerText?.trim() ?? text.cta ?? '';
+
     if (onTextUpdate) {
       onTextUpdate(creative.id, {
-        headline: editHeadline,
-        body: editBody,
-        cta: editCta || undefined,
+        headline: newHeadline,
+        body: newBody,
+        cta: newCta || undefined,
       });
     }
     setIsEditing(false);
-  }, [creative.id, editHeadline, editBody, editCta, onTextUpdate]);
+  }, [creative.id, text, onTextUpdate]);
 
   // ── Cancel editing ──
   const cancelEdit = useCallback(() => {
+    // Reset DOM content to original text values
+    if (headlineRef.current) headlineRef.current.innerText = text.headline ?? '';
+    if (bodyRef.current) bodyRef.current.innerText = text.body ?? '';
+    if (ctaRef.current) ctaRef.current.innerText = text.cta ?? '';
     setIsEditing(false);
-  }, []);
+  }, [text]);
 
   // ── Copy all text to clipboard ──
   const copyText = useCallback(() => {
@@ -116,7 +132,9 @@ export const AdCard = memo(function AdCard({
 
   return (
     <div
-      className="rounded-xl overflow-hidden transition-shadow hover:shadow-md"
+      className={`rounded-xl overflow-hidden transition-all duration-200 ${
+        isEditing ? 'ring-2 ring-amber-400/40 shadow-md' : 'hover:shadow-md'
+      }`}
       style={{
         background: colors.bgSurface,
         border: `1px solid ${colors.borderLight}`,
@@ -183,88 +201,85 @@ export const AdCard = memo(function AdCard({
 
       {/* ── Content Section ── */}
       <div style={{ padding: '0.875rem 1rem' }}>
-
-        {/* Text fields — view or edit mode */}
-        {isEditing ? (
-          <div className="space-y-2">
-            {/* Headline edit */}
-            <input
-              type="text"
-              value={editHeadline}
-              onChange={(e) => setEditHeadline(e.target.value)}
-              className="w-full text-sm font-semibold rounded border px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
-              style={{ borderColor: colors.border, color: colors.text }}
-              placeholder="Headline"
-              autoFocus
-            />
-            {/* Body edit */}
-            <textarea
-              value={editBody}
-              onChange={(e) => setEditBody(e.target.value)}
-              className="w-full text-xs rounded border px-2 py-1 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
+        
+        {/* WYSIWYG Editable Text */}
+        <div className="mb-2">
+          {/* Headline */}
+          {(text.headline || isEditing) && (
+            <h4
+              ref={headlineRef}
+              contentEditable={isEditing || undefined}
+              suppressContentEditableWarning
+              className="font-semibold mb-1 leading-tight"
               style={{
-                borderColor: colors.border,
-                color: colors.textSecondary,
-                minHeight: '60px',
+                color: colors.text,
+                fontSize: typography.sm,
+                outline: 'none',
+                cursor: isEditing ? 'text' : 'default',
+                minHeight: isEditing ? '1.25em' : undefined,
               }}
-              placeholder="Body text"
-            />
-            {/* CTA edit */}
-            <input
-              type="text"
-              value={editCta}
-              onChange={(e) => setEditCta(e.target.value)}
-              className="w-full text-xs font-medium rounded border px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
-              style={{ borderColor: colors.border, color: '#2563eb' }}
-              placeholder="Call to action (optional)"
-            />
-            {/* Edit actions */}
-            <div className="flex gap-1.5 justify-end pt-1">
-              <button
-                onClick={cancelEdit}
-                className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md transition-colors"
-                style={{ color: colors.textFaint, background: colors.bgHover }}
-              >
-                <X className="w-3 h-3" /> Cancel
-              </button>
-              <button
-                onClick={saveEdit}
-                className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md transition-colors"
-                style={{ color: '#fff', background: '#2563eb' }}
-              >
-                <Check className="w-3 h-3" /> Save
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div>
-            {/* Headline */}
-            {text.headline && (
-              <h4
-                className="font-semibold mb-1 leading-tight"
-                style={{ color: colors.text, fontSize: typography.sm }}
-              >
-                {text.headline}
-              </h4>
-            )}
-            {/* Body */}
-            {text.body && (
-              <p
-                className="mb-2 line-clamp-3 leading-relaxed"
-                style={{ color: colors.textSecondary, fontSize: typography.xs }}
-              >
-                {text.body}
-              </p>
-            )}
-            {/* CTA */}
-            {text.cta && (
-              <span
-                className="inline-block text-xs font-medium px-3 py-1 rounded-full mb-2"
-                style={{ background: '#eff6ff', color: '#2563eb' }}
-              >
-                {text.cta}
-              </span>
-            )}
+            >
+              {text.headline}
+            </h4>
+          )}
+          
+          {/* Body */}
+          {(text.body || isEditing) && (
+            <p
+              ref={bodyRef}
+              contentEditable={isEditing || undefined}
+              suppressContentEditableWarning
+              className="mb-2 line-clamp-3 leading-relaxed whitespace-pre-line"
+              style={{
+                color: colors.textSecondary,
+                fontSize: typography.xs,
+                outline: 'none',
+                cursor: isEditing ? 'text' : 'default',
+                minHeight: isEditing ? '1.25em' : undefined,
+              }}
+            >
+              {text.body}
+            </p>
+          )}
+          
+          {/* CTA */}
+          {(text.cta || isEditing) && (
+            <span
+              ref={ctaRef}
+              contentEditable={isEditing || undefined}
+              suppressContentEditableWarning
+              className="inline-block text-xs font-medium px-3 py-1 rounded-full mb-2"
+              style={{
+                background: '#eff6ff',
+                color: '#2563eb',
+                outline: 'none',
+                cursor: isEditing ? 'text' : 'default',
+                minHeight: isEditing ? '1.25em' : undefined,
+                minWidth: isEditing ? '60px' : undefined,
+              }}
+            >
+              {text.cta}
+            </span>
+          )}
+        </div>
+
+        {/* Save/Cancel buttons when editing */}
+        {isEditing && (
+          <div className="flex gap-1.5 justify-end pt-1 mb-2">
+            <button
+              onClick={cancelEdit}
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md transition-colors"
+              style={{ color: colors.textFaint, background: colors.bgHover }}
+            >
+              <X className="w-3 h-3" /> Cancel
+            </button>
+            <button
+              onClick={saveEdit}
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md transition-colors"
+              style={{ color: '#fff', background: '#2563eb' }}
+            >
+              <Check className="w-3 h-3" /> Save
+            </button>
           </div>
         )}
 

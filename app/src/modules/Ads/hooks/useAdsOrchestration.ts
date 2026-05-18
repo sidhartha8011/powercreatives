@@ -197,6 +197,8 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
         ...params.formValues,
         // Inject the brief as the business description if not already set
         business_summary: params.formValues.business_summary || params.brief,
+        // Force Swedish language if not explicitly provided
+        language: params.formValues.language || 'sv',
       },
       scope: 'all_types' as const,
     };
