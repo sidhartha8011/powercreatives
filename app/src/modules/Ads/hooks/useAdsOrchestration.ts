@@ -212,7 +212,16 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     });
 
     if (!response.ok) {
-      throw new Error(`Copy generation failed: ${response.status} ${response.statusText}`);
+      let errorMsg = `${response.status} ${response.statusText}`;
+      try {
+        const errData = await response.json();
+        if (errData && errData.message) {
+          errorMsg = errData.message;
+        }
+      } catch (e) {
+        // Ignore JSON parse errors and fallback to statusText
+      }
+      throw new Error(errorMsg);
     }
 
     // Delegate to extracted SSE parser utility
