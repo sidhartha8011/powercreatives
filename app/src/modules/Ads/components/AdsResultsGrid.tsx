@@ -11,8 +11,8 @@
  * but renders AdCard components instead of text-only cards.
  */
 
-import { memo } from 'react';
-import { Megaphone, Loader2 } from 'lucide-react';
+import React, { memo } from 'react';
+import { Megaphone, Loader2, FileText, ImageIcon, Layers, Video, AlertTriangle } from 'lucide-react';
 import { colors, typography } from '@/components/shared';
 import type { AdCreative, AdsProgress, AdsPhase } from '../types';
 import { AdCard } from './AdCard';
@@ -100,13 +100,13 @@ function EmptyState() {
 }
 
 /** Phase label for progress display */
-function getPhaseLabel(phase: AdsPhase): string {
+function getPhaseLabel(phase: AdsPhase): React.ReactNode {
   switch (phase) {
-    case 'text_phase': return '📝 Generating copy';
-    case 'image_phase': return '🖼️ Generating images';
-    case 'compose_phase': return '🔗 Assembling ads';
-    case 'video_phase': return '🎬 Generating video';
-    default: return '';
+    case 'text_phase': return <span className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Generating copy</span>;
+    case 'image_phase': return <span className="flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5" /> Generating images</span>;
+    case 'compose_phase': return <span className="flex items-center gap-1.5"><Layers className="w-3.5 h-3.5" /> Assembling ads</span>;
+    case 'video_phase': return <span className="flex items-center gap-1.5"><Video className="w-3.5 h-3.5" /> Generating video</span>;
+    default: return null;
   }
 }
 
@@ -212,8 +212,8 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
             borderBottom: '1px solid #fecaca',
           }}
         >
-          <p className="text-xs" style={{ color: '#dc2626' }}>
-            ⚠️ {error}
+          <p className="text-xs flex items-center gap-1.5" style={{ color: '#dc2626' }}>
+            <AlertTriangle className="w-3.5 h-3.5" /> {error}
           </p>
         </div>
       )}

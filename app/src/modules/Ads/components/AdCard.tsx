@@ -22,6 +22,8 @@ import {
   AlertCircle,
   Loader2,
   Video,
+  Target,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { colors, typography, spacing } from '@/components/shared';
@@ -186,18 +188,18 @@ export const AdCard = memo(function AdCard({
           <div className="flex flex-wrap gap-1.5 mb-2">
             {text.audienceName && (
               <span
-                className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+                className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
                 style={{ background: '#dbeafe', color: '#1d4ed8' }}
               >
-                🎯 {text.audienceName}
+                <Target className="w-3 h-3" /> {text.audienceName}
               </span>
             )}
             {text.angleName && (
               <span
-                className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+                className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
                 style={{ background: '#fef3c7', color: '#92400e' }}
               >
-                ⚡ {text.angleName}
+                <Zap className="w-3 h-3" /> {text.angleName}
               </span>
             )}
           </div>
