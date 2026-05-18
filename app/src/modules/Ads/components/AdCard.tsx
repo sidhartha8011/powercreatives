@@ -199,8 +199,8 @@ export const AdCard = memo(function AdCard({
         )}
       </div>
 
-      {/* ── Content Section ── */}
-      <div style={{ padding: '0.875rem 1rem' }}>
+      {/* ── Content Section (The Canvas) ── */}
+      <div style={{ padding: '1.25rem' }}>
         
         {/* WYSIWYG Editable Text */}
         <div className="mb-2">
@@ -210,10 +210,10 @@ export const AdCard = memo(function AdCard({
               ref={headlineRef}
               contentEditable={isEditing || undefined}
               suppressContentEditableWarning
-              className="font-semibold mb-1 leading-tight"
+              className="font-semibold mb-2 leading-snug"
               style={{
                 color: colors.text,
-                fontSize: typography.sm,
+                fontSize: typography.base,
                 outline: 'none',
                 cursor: isEditing ? 'text' : 'default',
                 minHeight: isEditing ? '1.25em' : undefined,
@@ -229,10 +229,10 @@ export const AdCard = memo(function AdCard({
               ref={bodyRef}
               contentEditable={isEditing || undefined}
               suppressContentEditableWarning
-              className="mb-2 line-clamp-3 leading-relaxed whitespace-pre-line"
+              className="mb-3 leading-relaxed whitespace-pre-line"
               style={{
                 color: colors.textSecondary,
-                fontSize: typography.xs,
+                fontSize: typography.sm,
                 outline: 'none',
                 cursor: isEditing ? 'text' : 'default',
                 minHeight: isEditing ? '1.25em' : undefined,
@@ -248,10 +248,9 @@ export const AdCard = memo(function AdCard({
               ref={ctaRef}
               contentEditable={isEditing || undefined}
               suppressContentEditableWarning
-              className="inline-block text-xs font-medium px-3 py-1 rounded-full mb-2"
+              className="inline-block text-sm font-semibold mb-1"
               style={{
-                background: '#eff6ff',
-                color: '#2563eb',
+                color: '#2563eb', // Trustworthy blue
                 outline: 'none',
                 cursor: isEditing ? 'text' : 'default',
                 minHeight: isEditing ? '1.25em' : undefined,
@@ -283,31 +282,44 @@ export const AdCard = memo(function AdCard({
           </div>
         )}
 
-        {/* ── Context Footer (Audience & Angle) ── */}
+      </div>
+
+      {/* ── The Chrome (Metadata & Toolbar Footer) ── */}
+      <div 
+        className="px-4 py-3 flex flex-col gap-2"
+        style={{ 
+          background: '#f8fafc', // slate-50
+          borderTop: `1px solid ${colors.borderLight}` 
+        }}
+      >
+        {/* Context Row (Audience & Angle) */}
         {(text.audienceName || text.angleName) && (
-          <div className="flex items-center gap-3 mt-1 pb-1">
+          <div className="flex items-center gap-4 w-full">
             {text.audienceName && (
-              <span className="flex items-center gap-1 text-[10px]" style={{ color: colors.textFaint }}>
-                <Target className="w-3 h-3" /> {text.audienceName}
-              </span>
+              <div className="flex items-center gap-1.5 flex-1 min-w-0" title={text.audienceName}>
+                <Target className="w-3.5 h-3.5 shrink-0" style={{ color: colors.textGhost }} />
+                <span className="text-[11px] truncate font-medium" style={{ color: colors.textFaint }}>
+                  {text.audienceName}
+                </span>
+              </div>
             )}
             {text.angleName && (
-              <span className="flex items-center gap-1 text-[10px]" style={{ color: colors.textFaint }}>
-                <Zap className="w-3 h-3" /> {text.angleName}
-              </span>
+              <div className="flex items-center gap-1.5 flex-1 min-w-0" title={text.angleName}>
+                <Zap className="w-3.5 h-3.5 shrink-0" style={{ color: colors.textGhost }} />
+                <span className="text-[11px] truncate font-medium" style={{ color: colors.textFaint }}>
+                  {text.angleName}
+                </span>
+              </div>
             )}
           </div>
         )}
 
-        {/* ── Action Bar ── */}
-        <div
-          className="flex items-center justify-between pt-2 mt-2"
-          style={{ borderTop: `1px solid ${colors.bgHover}` }}
-        >
+        {/* Action Row */}
+        <div className="flex items-center justify-between pt-1">
           {/* Model info */}
           <div className="flex items-center gap-1.5">
             <span
-              className="text-[10px] truncate max-w-[100px]"
+              className="text-[10px] uppercase tracking-wider font-semibold"
               style={{ color: colors.textGhost }}
             >
               {media.modelName}
@@ -315,18 +327,18 @@ export const AdCard = memo(function AdCard({
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             {/* Edit text */}
             {!isEditing && (
               <button
                 onClick={startEdit}
                 className="p-1.5 rounded-md transition-colors"
                 style={{ color: colors.textFaint }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = colors.bgHover)}
+                onMouseEnter={(e) => (e.currentTarget.style.background = '#e2e8f0')} // slate-200 hover
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 title="Edit text"
               >
-                <Pencil className="w-3.5 h-3.5" />
+                <Pencil className="w-4 h-4" />
               </button>
             )}
             {/* Copy text */}
@@ -334,11 +346,11 @@ export const AdCard = memo(function AdCard({
               onClick={copyText}
               className="p-1.5 rounded-md transition-colors"
               style={{ color: colors.textFaint }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = colors.bgHover)}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#e2e8f0')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               title="Copy text"
             >
-              <Copy className="w-3.5 h-3.5" />
+              <Copy className="w-4 h-4" />
             </button>
             {/* Download image */}
             {media.status === 'complete' && media.url && (
@@ -346,11 +358,11 @@ export const AdCard = memo(function AdCard({
                 onClick={downloadImage}
                 className="p-1.5 rounded-md transition-colors"
                 style={{ color: colors.textFaint }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = colors.bgHover)}
+                onMouseEnter={(e) => (e.currentTarget.style.background = '#e2e8f0')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 title="Download image"
               >
-                <Download className="w-3.5 h-3.5" />
+                <Download className="w-4 h-4" />
               </button>
             )}
           </div>
