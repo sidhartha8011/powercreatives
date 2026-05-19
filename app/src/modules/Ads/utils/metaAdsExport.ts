@@ -1,4 +1,4 @@
-import { zipSync, strToU8 } from 'fflate';
+// fflate is dynamically imported below to avoid Vite bundling initialization issues
 import type { TextSlot, MediaSlot } from '../types';
 
 /**
@@ -28,6 +28,11 @@ export async function exportToMetaAdsZip(
   if (textSlots.length === 0 && mediaSlots.length === 0) {
     throw new Error('No ads to export.');
   }
+
+  // Dynamically import fflate
+  const fflate = await import('fflate');
+  const zipSync = fflate.zipSync;
+  const strToU8 = fflate.strToU8;
 
   const zipData: Record<string, Uint8Array> = {};
   
