@@ -107,7 +107,11 @@ class PCM_Provider_KieAI implements PCM_Provider_Interface
     public function edit_image(string $model_id, array $params): array
     {
         $edit_params = $params;
-        $edit_params['inputUrls'] = [$params['image_url'] ?? $params['imageUrl'] ?? ''];
+        $inputUrls = [$params['image_url'] ?? $params['imageUrl'] ?? ''];
+        if (!empty($params['referenceImageUrl'])) {
+            $inputUrls[] = $params['referenceImageUrl'];
+        }
+        $edit_params['inputUrls'] = $inputUrls;
         return $this->generate_image($model_id, $edit_params);
     }
 

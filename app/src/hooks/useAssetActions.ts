@@ -101,7 +101,7 @@ export function useAssetActions({
    * Refine asset with AI - supports multi-model parallel processing
    * Uses the image.edit endpoint to actually edit the image
    */
-  const handleRefine = useCallback(async (instruction: string, modelIds?: string[]) => {
+  const handleRefine = useCallback(async (instruction: string, modelIds?: string[], referenceImageUrl?: string) => {
     if (!instruction.trim()) {
       toast.error("Please enter refinement instructions");
       return;
@@ -138,6 +138,7 @@ export function useAssetActions({
             prompt: instruction,
             model: modelId,
             provider,
+            ...(referenceImageUrl ? { referenceImageUrl } : {}),
           });
 
           // Update result for this model
@@ -190,6 +191,7 @@ export function useAssetActions({
         prompt: instruction,
         model: modelIds[0],
         provider,
+        ...(referenceImageUrl ? { referenceImageUrl } : {}),
       });
 
       toast.success("Image edited successfully!");

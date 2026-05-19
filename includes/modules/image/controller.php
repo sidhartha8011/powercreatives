@@ -294,6 +294,10 @@ class PCM_REST_Image extends PCM_REST_Base
         $prompt = sanitize_text_field($params['prompt'] ?? '');
         $model_id = sanitize_text_field($params['model'] ?? $params['modelId'] ?? 'dall-e-2');
         $provider = sanitize_text_field($params['provider'] ?? '');
+        
+        if (!empty($params['referenceImageUrl'])) {
+            $params['referenceImageUrl'] = esc_url_raw($params['referenceImageUrl']);
+        }
 
         if (empty($image_url) || empty($prompt)) {
             return $this->error('imageUrl and prompt are required.', 400, 'pcm_missing_params');

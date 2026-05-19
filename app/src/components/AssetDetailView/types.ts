@@ -53,8 +53,8 @@ export interface ActionPanelProps {
 
 // Refine panel specific props
 export interface RefinePanelProps extends ActionPanelProps {
-  /** Callback when user applies refinement. Receives instruction and selected model IDs. */
-  onRefine: (instruction: string, modelIds?: string[]) => Promise<void>;
+  /** Callback when user applies refinement. Receives instruction, selected model IDs, and optional reference image. */
+  onRefine: (instruction: string, modelIds?: string[], referenceImageUrl?: string) => Promise<void>;
 }
 
 // Export panel specific props
