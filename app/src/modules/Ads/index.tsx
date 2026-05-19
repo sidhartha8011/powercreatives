@@ -19,6 +19,9 @@ import { useBrandSync } from './hooks/useBrandSync';
 import { AdsSidebar } from './components/AdsSidebar';
 import { AdsResultsGrid } from './components/AdsResultsGrid';
 import { ADS_DEFAULTS } from './adsConfig';
+import { BulkActionBar } from '@/components/shared/BulkActionBar';
+import { Download } from 'lucide-react';
+import { toast } from 'sonner';
 import type { CostTier } from '@/types';
 
 // ============================================================================
@@ -62,6 +65,10 @@ export function AdsModule() {
   const [angles, setAngles] = useState(ADS_DEFAULTS.angleCount);
   const [imageVariations, setImageVariations] = useState(ADS_DEFAULTS.imageVariations);
 
+  // ── Selection State (Client Board) ──
+  const [selectedVisualIds, setSelectedVisualIds] = useState<string[]>([]);
+  const [selectedCopyIds, setSelectedCopyIds] = useState<string[]>([]);
+
   // ── Orchestration hook ──
   const orchestration = useAdsOrchestration();
 
@@ -79,6 +86,10 @@ export function AdsModule() {
   }, []);
 
   const handleGenerate = useCallback(() => {
+    // Clear selection on new generation
+    setSelectedVisualIds([]);
+    setSelectedCopyIds([]);
+    
     orchestration.generate({
       brief,
       textModelId,
@@ -90,6 +101,28 @@ export function AdsModule() {
       contextData,
     });
   }, [brief, textModelId, selectedImageModels, videoModelId, angles, imageVariations, formValues, contextData, orchestration]);
+
+  const handleSelectVisual = useCallback((id: string) => {
+    setSelectedVisualIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
+  }, []);
+
+  const handleSelectCopy = useCallback((id: string) => {
+    setSelectedCopyIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedVisualIds([]);
+    setSelectedCopyIds([]);
+  }, []);
+
+  const handleExport = useCallback(() => {
+    const total = selectedVisualIds.length + selectedCopyIds.length;
+    toast.success(`Exporting ${total} assets for Meta...`);
+    // Stub for actual ZIP export logic
+    setTimeout(() => clearSelection(), 1000);
+  }, [selectedVisualIds.length, selectedCopyIds.length, clearSelection]);
+
+  const selectionCount = selectedVisualIds.length + selectedCopyIds.length;
 
   // ── Render ──
   return (
@@ -120,14 +153,28 @@ export function AdsModule() {
       {/* Results grid — output */}
       <div className="flex-1 overflow-hidden">
         <AdsResultsGrid
-          creatives={orchestration.creatives}
+          mediaSlots={orchestration.mediaSlots}
+          textSlots={orchestration.textSlots}
           phase={orchestration.phase}
           progress={orchestration.progress}
           isGenerating={orchestration.isGenerating}
           error={orchestration.error}
-          onTextUpdate={orchestration.updateCreativeText}
+          selectedVisualIds={selectedVisualIds}
+          selectedCopyIds={selectedCopyIds}
+          onSelectVisual={handleSelectVisual}
+          onSelectCopy={handleSelectCopy}
+          onDownloadVisual={(id) => toast.success('Image downloaded')}
         />
       </div>
+
+      {/* ── Client Board Export Bar ── */}
+      <BulkActionBar count={selectionCount} onClear={clearSelection}>
+        <BulkActionBar.Action
+          icon={Download}
+          label="Export for Meta (ZIP)"
+          onClick={handleExport}
+        />
+      </BulkActionBar>
     </div>
   );
 }

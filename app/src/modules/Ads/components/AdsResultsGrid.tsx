@@ -14,31 +14,26 @@
 import React, { memo } from 'react';
 import { Megaphone, Loader2, FileText, ImageIcon, Layers, Video, AlertTriangle } from 'lucide-react';
 import { colors, typography } from '@/components/shared';
-import type { AdCreative, AdsProgress, AdsPhase } from '../types';
-import { AdCard } from './AdCard';
+import type { MediaSlot, TextSlot, AdsProgress, AdsPhase } from '../types';
+import { AdVisualCard } from './AdVisualCard';
+import { AdCopyCard } from './AdCopyCard';
 
 // ============================================================================
 // Props
 // ============================================================================
 
 interface AdsResultsGridProps {
-  /** Generated ad creatives */
-  creatives: AdCreative[];
-  /** Current pipeline phase */
+  mediaSlots: MediaSlot[];
+  textSlots: TextSlot[];
   phase: AdsPhase;
-  /** Progress within current phase */
   progress: AdsProgress | null;
-  /** Whether generation is active */
   isGenerating: boolean;
-  /** Error message */
   error: string | null;
-  /** Called when a text field on a card is edited */
-  onTextUpdate?: (
-    creativeId: string,
-    updates: { headline?: string; body?: string; cta?: string },
-  ) => void;
-  /** Called when an image is clicked (detail view) */
-  onImageClick?: (creative: AdCreative) => void;
+  selectedVisualIds: string[];
+  selectedCopyIds: string[];
+  onSelectVisual: (id: string) => void;
+  onSelectCopy: (id: string) => void;
+  onDownloadVisual?: (id: string) => void;
 }
 
 // ============================================================================
@@ -55,18 +50,7 @@ function CardSkeleton() {
         border: `1px solid ${colors.borderLight}`,
       }}
     >
-      {/* Image skeleton */}
       <div className="w-full bg-gray-200" style={{ aspectRatio: '16/9' }} />
-      {/* Text skeleton */}
-      <div style={{ padding: '0.875rem 1rem' }}>
-        <div className="h-2 w-16 rounded bg-blue-100 mb-2" />
-        <div className="h-3.5 w-3/4 rounded bg-gray-200 mb-2" />
-        <div className="space-y-1.5 mb-3">
-          <div className="h-2.5 w-full rounded bg-gray-100" />
-          <div className="h-2.5 w-5/6 rounded bg-gray-100" />
-        </div>
-        <div className="h-6 w-24 rounded-full bg-blue-50" />
-      </div>
     </div>
   );
 }
@@ -87,12 +71,11 @@ function EmptyState() {
           className="text-sm font-medium mb-2"
           style={{ color: colors.textSecondary }}
         >
-          Ready to create ads
+          Ready to create assets
         </p>
         <p className="text-xs leading-relaxed" style={{ color: colors.textFaint }}>
           Write a creative brief in the sidebar, select your text and image models,
-          then click <strong>Generate Ads</strong> to create complete ad creatives
-          with images and copy.
+          then click <strong>Generate Ads</strong> to create independent visuals and copy variants.
         </p>
       </div>
     </div>
@@ -103,8 +86,7 @@ function EmptyState() {
 function getPhaseLabel(phase: AdsPhase): React.ReactNode {
   switch (phase) {
     case 'text_phase': return <span className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Generating copy</span>;
-    case 'image_phase': return <span className="flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5" /> Generating images</span>;
-    case 'compose_phase': return <span className="flex items-center gap-1.5"><Layers className="w-3.5 h-3.5" /> Assembling ads</span>;
+    case 'image_phase': return <span className="flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5" /> Generating visuals</span>;
     case 'video_phase': return <span className="flex items-center gap-1.5"><Video className="w-3.5 h-3.5" /> Generating video</span>;
     default: return null;
   }
@@ -115,18 +97,22 @@ function getPhaseLabel(phase: AdsPhase): React.ReactNode {
 // ============================================================================
 
 export const AdsResultsGrid = memo(function AdsResultsGrid({
-  creatives,
+  mediaSlots,
+  textSlots,
   phase,
   progress,
   isGenerating,
   error,
-  onTextUpdate,
-  onImageClick,
+  selectedVisualIds,
+  selectedCopyIds,
+  onSelectVisual,
+  onSelectCopy,
+  onDownloadVisual,
 }: AdsResultsGridProps) {
-  const hasCreatives = creatives.length > 0;
+  const hasAssets = mediaSlots.length > 0 || textSlots.length > 0;
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col bg-slate-50">
       {/* ── Header ── */}
       <div
         className="flex items-center justify-between shrink-0"
@@ -141,14 +127,14 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
             className="font-bold tracking-tight"
             style={{ color: colors.text, fontSize: '1rem' }}
           >
-            Ad Creatives
+            Generated Assets
           </h2>
-          {hasCreatives && (
+          {hasAssets && (
             <span
               className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
               style={{ background: '#f0fdf4', color: '#16a34a' }}
             >
-              {creatives.length} ads
+              {mediaSlots.length} Visuals &middot; {textSlots.length} Copy
             </span>
           )}
         </div>
@@ -219,48 +205,51 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
       )}
 
       {/* ── Empty state ── */}
-      {!hasCreatives && !isGenerating && <EmptyState />}
-
-      {/* ── Loading skeleton ── */}
-      {!hasCreatives && isGenerating && (
-        <div className="flex-1 overflow-y-auto">
-          <div
-            className="mx-auto"
-            style={{
-              maxWidth: '100%',
-              padding: '2rem clamp(1rem, 5vw, 4rem)',
-            }}
-          >
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <CardSkeleton key={i} />
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {!hasAssets && !isGenerating && <EmptyState />}
 
       {/* ── Populated grid ── */}
-      {hasCreatives && (
-        <div className="flex-1 overflow-y-auto">
-          <div
-            className="mx-auto"
-            style={{
-              maxWidth: '100%',
-              padding: '2rem clamp(1rem, 5vw, 4rem)',
-            }}
-          >
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {creatives.map((creative) => (
-                <AdCard
-                  key={creative.id}
-                  creative={creative}
-                  onTextUpdate={onTextUpdate}
-                  onImageClick={onImageClick}
-                />
-              ))}
-            </div>
-          </div>
+      {(hasAssets || isGenerating) && (
+        <div className="flex-1 overflow-y-auto px-8 py-6 pb-32 space-y-10">
+          
+          {/* Visuals Section */}
+          {(mediaSlots.length > 0 || (isGenerating && phase === 'image_phase')) && (
+            <section>
+              <h3 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wider">
+                Generated Visuals ({mediaSlots.length})
+              </h3>
+              <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                {mediaSlots.map((media) => (
+                  <AdVisualCard
+                    key={media.id}
+                    media={media}
+                    isSelected={selectedVisualIds.includes(media.id)}
+                    onSelect={() => onSelectVisual(media.id)}
+                    onDownload={() => onDownloadVisual?.(media.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Copy Variants Section */}
+          {(textSlots.length > 0 || (isGenerating && phase === 'text_phase')) && (
+            <section>
+              <h3 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wider">
+                Copy Variants ({textSlots.length})
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {textSlots.map((text) => (
+                  <AdCopyCard
+                    key={text.id}
+                    text={text}
+                    isSelected={selectedCopyIds.includes(text.id)}
+                    onSelect={() => onSelectCopy(text.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
         </div>
       )}
     </div>

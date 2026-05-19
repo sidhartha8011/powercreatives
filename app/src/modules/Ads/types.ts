@@ -66,25 +66,6 @@ export interface TextSlot {
 }
 
 // ============================================================================
-// Ad Creative — the composed unit (media + text)
-// ============================================================================
-
-/**
- * A single composed ad creative: one media asset + one text block.
- * This is the primary data unit rendered by AdCard.
- */
-export interface AdCreative {
-  /** Unique ID for this creative */
-  id: string;
-  /** The media component (image or video) */
-  media: MediaSlot;
-  /** The text component (headline, body, CTA) */
-  text: TextSlot;
-  /** Timestamp when this creative was assembled */
-  createdAt: Date;
-}
-
-// ============================================================================
 // Orchestration State
 // ============================================================================
 
@@ -93,7 +74,6 @@ export type AdsPhase =
   | 'idle'
   | 'text_phase'
   | 'image_phase'
-  | 'compose_phase'
   | 'video_phase'   // Fishbone — not active yet
   | 'complete'
   | 'error';

@@ -20,7 +20,6 @@ import { useState, useCallback, useRef } from 'react';
 import { trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
 import type {
-  AdCreative,
   MediaSlot,
   TextSlot,
   AdsPhase,
@@ -59,8 +58,6 @@ export interface UseAdsOrchestrationReturn {
   phase: AdsPhase;
   /** Progress within current phase */
   progress: AdsProgress | null;
-  /** Assembled ad creatives (the final output) */
-  creatives: AdCreative[];
   /** Raw text results (before composition) */
   textSlots: TextSlot[];
   /** Raw media results (before composition) */
@@ -73,57 +70,14 @@ export interface UseAdsOrchestrationReturn {
   clearError: () => void;
   /** Start the full generation pipeline */
   generate: (params: AdsGenerateParams) => Promise<void>;
-  /** Update text fields on a creative (inline editing) */
-  updateCreativeText: (
-    creativeId: string,
+  /** Update text fields on a text slot (inline editing) */
+  updateTextSlot: (
+    slotId: string,
     updates: { headline?: string; body?: string; cta?: string },
   ) => void;
 }
 
-// ============================================================================
-// Composition — round-robin text + image → AdCreative
-// ============================================================================
-
-/**
- * Combine text and media slots into AdCreative[] using round-robin.
- * If there are more texts than images, the last image is reused.
- * If there are more images than texts, excess images get empty text.
- */
-function composeCreatives(texts: TextSlot[], medias: MediaSlot[]): AdCreative[] {
-  const maxLen = Math.max(texts.length, medias.length);
-  const creatives: AdCreative[] = [];
-
-  for (let i = 0; i < maxLen; i++) {
-    const text = texts[i] ?? texts[texts.length - 1];
-    const media = medias[i] ?? medias[medias.length - 1];
-
-    // Skip if we have neither text nor media
-    if (!text && !media) continue;
-
-    creatives.push({
-      id: `ad-${i}-${Date.now()}`,
-      media: media ?? {
-        id: `placeholder-${i}`,
-        type: 'image',
-        status: 'pending',
-        modelName: '',
-        modelId: '',
-        provider: '',
-        prompt: '',
-      },
-      text: text ?? {
-        id: `empty-text-${i}`,
-        headline: '',
-        body: '',
-        modelUsed: '',
-      },
-      createdAt: new Date(),
-    });
-  }
-
-  return creatives;
-}
-
+// (Removed composition logic)
 /**
  * Build brand context object matching what Copy/Image backends expect.
  * Pure function — no React dependencies.
@@ -154,7 +108,6 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
   // ── State ──
   const [phase, setPhase] = useState<AdsPhase>('idle');
   const [progress, setProgress] = useState<AdsProgress | null>(null);
-  const [creatives, setCreatives] = useState<AdCreative[]>([]);
   const [textSlots, setTextSlots] = useState<TextSlot[]>([]);
   const [mediaSlots, setMediaSlots] = useState<MediaSlot[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -336,20 +289,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     return completedSlots;
   }
 
-  // ══════════════════════════════════════════════════════════════════
-  // PHASE 3: Compose (round-robin text + image → AdCreative)
-  // ══════════════════════════════════════════════════════════════════
-
-  function runComposePhase(texts: TextSlot[], medias: MediaSlot[]): AdCreative[] {
-    setPhase('compose_phase');
-    setProgress({ phase: 'compose_phase', current: 0, total: 1, label: 'Assembling ad creatives...' });
-
-    const composed = composeCreatives(texts, medias);
-
-    setProgress({ phase: 'compose_phase', current: 1, total: 1, label: `${composed.length} ads assembled` });
-    return composed;
-  }
-
+// (Removed compose phase)
   // ══════════════════════════════════════════════════════════════════
   // PHASE 4: Video (fishbone — disabled, ready to activate)
   // ══════════════════════════════════════════════════════════════════
@@ -388,7 +328,6 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     setError(null);
     setTextSlots([]);
     setMediaSlots([]);
-    setCreatives([]);
 
     // Abort any previous generation
     abortRef.current?.abort();
@@ -410,9 +349,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
         throw new Error('No images were generated. Check your image models and try again.');
       }
 
-      // Phase 3: Compose
-      const composed = runComposePhase(texts, images);
-      setCreatives(composed);
+      // Composition phase removed - assets are kept decoupled
 
       // Phase 4: Video (fishbone — skip for now)
       // if (params.videoModelId) {
@@ -421,7 +358,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       // }
 
       setPhase('complete');
-      toast.success(`${composed.length} ad creatives generated!`);
+      toast.success(`${images.length} visuals and ${texts.length} copy variants generated!`);
     } catch (err) {
       if (controller.signal.aborted) return; // User cancelled
 
@@ -433,20 +370,17 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     }
   }, [generateImageMutation, imageModels]);
 
-  // ── Update creative text (inline editing) ──
-  const updateCreativeText = useCallback(
-    (creativeId: string, updates: { headline?: string; body?: string; cta?: string }) => {
-      setCreatives((prev) =>
+  // ── Update text (inline editing) ──
+  const updateTextSlot = useCallback(
+    (slotId: string, updates: { headline?: string; body?: string; cta?: string }) => {
+      setTextSlots((prev) =>
         prev.map((c) =>
-          c.id === creativeId
+          c.id === slotId
             ? {
                 ...c,
-                text: {
-                  ...c.text,
-                  headline: updates.headline ?? c.text.headline,
-                  body: updates.body ?? c.text.body,
-                  cta: updates.cta !== undefined ? updates.cta : c.text.cta,
-                },
+                headline: updates.headline ?? c.headline,
+                body: updates.body ?? c.body,
+                cta: updates.cta !== undefined ? updates.cta : c.cta,
               }
             : c,
         ),
@@ -458,13 +392,12 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
   return {
     phase,
     progress,
-    creatives,
     textSlots,
     mediaSlots,
     isGenerating,
     error,
     clearError,
     generate,
-    updateCreativeText,
+    updateTextSlot,
   };
 }
