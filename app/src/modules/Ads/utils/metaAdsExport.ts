@@ -1,6 +1,4 @@
-// JSZip is dynamically imported inside the function to prevent Vite bundling issues 
-// and reduce initial bundle size.
-// import JSZip from 'jszip';
+import { zipSync, strToU8 } from 'fflate';
 import type { TextSlot, MediaSlot } from '../types';
 
 /**
@@ -31,11 +29,7 @@ export async function exportToMetaAdsZip(
     throw new Error('No ads to export.');
   }
 
-  // Dynamically import JSZip
-  const JSZipModule = await import('jszip');
-  const JSZip = JSZipModule.default || JSZipModule;
-  
-  const zip = new JSZip();
+  const zipData: Record<string, Uint8Array> = {};
   
   // CSV Headers based on Meta Ads Bulk Import Format
   const csvRows: string[][] = [
@@ -74,12 +68,12 @@ export async function exportToMetaAdsZip(
       try {
         const response = await fetch(media.url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const blob = await response.blob();
+        const arrayBuffer = await response.arrayBuffer();
         
         const fileExtension = media.url.split('.').pop()?.split('?')[0] || 'jpg';
         fileName = `ad_image_${i + 1}.${fileExtension}`;
         
-        zip.file(fileName, blob);
+        zipData[fileName] = new Uint8Array(arrayBuffer);
       } catch (err) {
         console.error(`Failed to download image for Ad ${i + 1}`, err);
       }
@@ -103,13 +97,14 @@ export async function exportToMetaAdsZip(
 
   // 3. Generate CSV string
   const csvString = csvRows.map(row => row.map(escapeCsvCell).join(',')).join('\n');
-  zip.file('meta_ads_import.csv', csvString);
+  zipData['meta_ads_import.csv'] = strToU8(csvString);
 
   // 4. Generate and download ZIP
-  const content = await zip.generateAsync({ type: 'blob' });
+  const zipped = zipSync(zipData);
+  const blob = new Blob([zipped], { type: 'application/zip' });
   
   // Create a temporary link to trigger download
-  const url = window.URL.createObjectURL(content);
+  const url = window.URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = 'powercreatives_meta_export.zip';
