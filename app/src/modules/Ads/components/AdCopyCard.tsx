@@ -39,7 +39,6 @@ export const AdCopyCard = memo(function AdCopyCard({
   const bodyRef = useRef<HTMLDivElement>(null);
   const headlineRef = useRef<HTMLHeadingElement>(null);
   const descriptionRef = useRef<HTMLParagraphElement>(null);
-  const ctaRef = useRef<HTMLSpanElement>(null);
 
   // Sync DOM content when not editing
   useEffect(() => {
@@ -47,7 +46,6 @@ export const AdCopyCard = memo(function AdCopyCard({
       if (bodyRef.current) bodyRef.current.innerText = text.body || '';
       if (headlineRef.current) headlineRef.current.innerText = text.headline || '';
       if (descriptionRef.current) descriptionRef.current.innerText = text.description || '';
-      if (ctaRef.current) ctaRef.current.innerText = text.cta || '';
     }
   }, [text, isEditing]);
 
@@ -56,7 +54,6 @@ export const AdCopyCard = memo(function AdCopyCard({
     if (bodyRef.current) bodyRef.current.innerText = text.body || '';
     if (headlineRef.current) headlineRef.current.innerText = text.headline || '';
     if (descriptionRef.current) descriptionRef.current.innerText = text.description || '';
-    if (ctaRef.current) ctaRef.current.innerText = text.cta || '';
     setIsEditing(false);
   }, [text]);
 
@@ -67,14 +64,12 @@ export const AdCopyCard = memo(function AdCopyCard({
     const newBody = bodyRef.current?.innerText ?? text.body;
     const newHeadline = headlineRef.current?.innerText?.trim() ?? text.headline;
     const newDescription = descriptionRef.current?.innerText?.trim() ?? text.description ?? '';
-    const newCta = ctaRef.current?.innerText?.trim() ?? text.cta ?? '';
 
     setIsSaving(true);
     try {
       const updates: Record<string, string> = {};
       if (newHeadline !== text.headline) updates.headline = newHeadline;
       if (newBody !== text.body) updates.body = newBody;
-      if (newCta !== (text.cta ?? '')) updates.cta = newCta;
       if (newDescription !== (text.description ?? '')) updates.description = newDescription;
 
       if (Object.keys(updates).length > 0) {
@@ -93,7 +88,6 @@ export const AdCopyCard = memo(function AdCopyCard({
       text.body,
       text.headline,
       text.description,
-      text.cta,
     ].filter(Boolean).join('\n\n');
     copy(textToCopy);
   }, [text, copy]);
@@ -172,12 +166,7 @@ export const AdCopyCard = memo(function AdCopyCard({
         >
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1 min-w-0 flex flex-col justify-center">
-              <p 
-                className="text-[10px] uppercase font-semibold mb-0.5 truncate"
-                style={{ color: colors.textFaint }}
-              >
-                POWERCREATIVES.COM
-              </p>
+
               
               <div
                 ref={headlineRef}
@@ -216,26 +205,7 @@ export const AdCopyCard = memo(function AdCopyCard({
               )}
             </div>
             
-            {(text.cta || isEditing) && (
-              <span
-                ref={ctaRef}
-                contentEditable={isEditing || undefined}
-                suppressContentEditableWarning
-                className="shrink-0 inline-flex items-center justify-center font-semibold px-3 py-1.5 rounded"
-                style={{
-                  backgroundColor: '#e4e6eb',
-                  color: '#050505',
-                  fontSize: typography.xs,
-                  border: '1px solid #ccd0d5',
-                  outline: 'none',
-                  cursor: isEditing ? 'text' : 'pointer',
-                  minHeight: isEditing ? '1.5em' : undefined,
-                  minWidth: isEditing ? '80px' : undefined,
-                }}
-              >
-                {text.cta}
-              </span>
-            )}
+
           </div>
         </div>
 

@@ -1853,19 +1853,29 @@ Provide a concise market research summary (max 300 words) that can inform audien
     /**
      * Map language code to human label.
      *
-     * @param string $code ISO 639-1 code.
+     * @param string $code ISO 639-1 code or full language name.
      *
      * @return string Human-readable language name.
      */
     private function get_language_label(string $code): string
     {
+        $lower_code = strtolower(trim($code));
+
         $map = array(
             'en' => 'English', 'sv' => 'Swedish', 'no' => 'Norwegian', 'da' => 'Danish',
             'fi' => 'Finnish', 'de' => 'German', 'fr' => 'French', 'es' => 'Spanish',
             'pt' => 'Portuguese', 'it' => 'Italian', 'nl' => 'Dutch', 'ar' => 'Arabic',
         );
 
-        return $map[$code] ?? 'English';
+        if (isset($map[$lower_code])) {
+            return $map[$lower_code];
+        }
+
+        if (strlen($lower_code) > 2) {
+            return ucfirst($lower_code);
+        }
+
+        return 'English';
     }
 
     /**
