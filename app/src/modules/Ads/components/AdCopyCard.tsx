@@ -35,59 +35,81 @@ export const AdCopyCard = memo(function AdCopyCard({
         </div>
       )}
 
-      {/* ── Content Section ── */}
-      <div style={{ padding: '0.875rem 1rem' }}>
+      {/* ── Meta Ad Anatomy ── */}
+      <div className="flex flex-col flex-1">
         
-        {/* Text Area */}
-        <div className="mb-2">
-          {text.headline && (
-            <h4
-              className="font-semibold mb-1 leading-tight"
+        {/* 1. Primary Text (Body) - Placed at the top */}
+        {text.body && (
+          <div className="px-4 py-3 pb-2">
+            <p
+              className="line-clamp-4 leading-relaxed whitespace-pre-line"
               style={{
                 color: colors.text,
                 fontSize: typography.sm,
               }}
             >
-              {text.headline}
-            </h4>
-          )}
-          
-          {text.body && (
-            <p
-              className="mb-2 line-clamp-3 leading-relaxed whitespace-pre-line"
-              style={{
-                color: colors.textSecondary,
-                fontSize: typography.xs,
-              }}
-            >
               {text.body}
             </p>
-          )}
-          
-          {text.cta && (
-            <span
-              className="inline-block text-xs font-medium px-3 py-1 rounded-full mb-2"
-              style={{
-                background: '#eff6ff',
-                color: '#2563eb',
-              }}
-            >
-              {text.cta}
-            </span>
-          )}
+          </div>
+        )}
+
+        {/* 2. Link Preview Box (Grey background) - Placed below */}
+        <div 
+          className="mt-auto border-t border-b"
+          style={{ 
+            backgroundColor: '#f0f2f5', 
+            borderColor: colors.borderLight,
+            padding: '10px 16px' 
+          }}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <p 
+                className="text-[10px] uppercase font-semibold mb-0.5 truncate"
+                style={{ color: colors.textFaint }}
+              >
+                POWERCREATIVES.COM
+              </p>
+              {text.headline && (
+                <h4
+                  className="font-bold leading-tight truncate"
+                  style={{
+                    color: colors.text,
+                    fontSize: typography.body,
+                  }}
+                >
+                  {text.headline}
+                </h4>
+              )}
+            </div>
+            
+            {text.cta && (
+              <span
+                className="shrink-0 inline-flex items-center justify-center font-semibold px-3 py-1.5 rounded"
+                style={{
+                  backgroundColor: '#e4e6eb',
+                  color: '#050505',
+                  fontSize: typography.xs,
+                  border: '1px solid #ccd0d5'
+                }}
+              >
+                {text.cta}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* ── Context Footer (Audience & Angle) ── */}
         {(text.audienceName || text.angleName) && (
-          <div className="flex items-center gap-3 mt-1 pt-2 border-t border-slate-100">
+          <div className="px-4 py-2.5 flex items-center gap-3" style={{ backgroundColor: '#fff', borderBottomLeftRadius: spacing.radius, borderBottomRightRadius: spacing.radius }}>
             {text.audienceName && (
-              <span className="flex items-center gap-1 text-[10px]" style={{ color: colors.textFaint }}>
-                <Target className="w-3 h-3 shrink-0" /> <span className="truncate max-w-[120px]">{text.audienceName}</span>
+              <span className="flex items-center gap-1.5 text-[10px] font-medium" style={{ color: colors.textFaint }}>
+                <Target className="w-3.5 h-3.5 shrink-0" /> <span className="truncate max-w-[120px]">{text.audienceName}</span>
               </span>
             )}
             {text.angleName && (
-              <span className="flex items-center gap-1 text-[10px]" style={{ color: colors.textFaint }}>
-                <Zap className="w-3 h-3 shrink-0" /> <span className="truncate max-w-[120px]">{text.angleName}</span>
+              <span className="flex items-center gap-1.5 text-[10px] font-medium" style={{ color: colors.textFaint }}>
+                <Zap className="w-3.5 h-3.5 shrink-0" /> <span className="truncate max-w-[120px]">{text.angleName}</span>
               </span>
             )}
           </div>
