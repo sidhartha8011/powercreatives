@@ -23,6 +23,7 @@ import { BulkActionBar } from '@/components/shared/BulkActionBar';
 import { Download } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CostTier } from '@/types';
+import { exportToMetaAdsZip } from './utils/metaAdsExport';
 
 // ============================================================================
 // Component
@@ -115,12 +116,31 @@ export function AdsModule() {
     setSelectedCopyIds([]);
   }, []);
 
-  const handleExport = useCallback(() => {
-    const total = selectedVisualIds.length + selectedCopyIds.length;
-    toast.success(`Exporting ${total} assets for Meta...`);
-    // Stub for actual ZIP export logic
-    setTimeout(() => clearSelection(), 1000);
-  }, [selectedVisualIds.length, selectedCopyIds.length, clearSelection]);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExport = useCallback(async () => {
+    if (selectionCount === 0) return;
+    
+    setIsExporting(true);
+    toast.info(`Exporting ${selectionCount} assets for Meta...`);
+    
+    try {
+      const selectedTextSlots = orchestration.textSlots.filter(t => selectedCopyIds.includes(t.id));
+      const selectedMediaSlots = orchestration.mediaSlots.filter(m => selectedVisualIds.includes(m.id));
+      
+      // If none selected, fallback to exporting everything?
+      // Wait, BulkActionBar only shows when selectionCount > 0
+      
+      await exportToMetaAdsZip(selectedTextSlots, selectedMediaSlots);
+      toast.success('Export complete!');
+      clearSelection();
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Export failed: ' + err.message);
+    } finally {
+      setIsExporting(false);
+    }
+  }, [selectionCount, selectedCopyIds, selectedVisualIds, orchestration.textSlots, orchestration.mediaSlots, clearSelection]);
 
   const selectionCount = selectedVisualIds.length + selectedCopyIds.length;
 
@@ -173,7 +193,7 @@ export function AdsModule() {
       <BulkActionBar count={selectionCount} onClear={clearSelection}>
         <BulkActionBar.Action
           icon={Download}
-          label="Export for Meta (ZIP)"
+          label={isExporting ? "Exporting..." : "Export for Meta (ZIP)"}
           onClick={handleExport}
         />
       </BulkActionBar>
