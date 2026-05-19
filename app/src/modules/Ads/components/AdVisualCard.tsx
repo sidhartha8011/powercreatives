@@ -8,6 +8,7 @@ export interface AdVisualCardProps {
   isSelected?: boolean;
   onSelect?: () => void;
   onDownload?: () => void;
+  onViewDetails?: () => void;
 }
 
 export const AdVisualCard = memo(function AdVisualCard({
@@ -15,13 +16,14 @@ export const AdVisualCard = memo(function AdVisualCard({
   isSelected,
   onSelect,
   onDownload,
+  onViewDetails,
 }: AdVisualCardProps) {
   const { colors, typography, spacing, shadows } = tokens;
 
   return (
     <div
-      onClick={onSelect}
-      className={`flex flex-col relative overflow-hidden transition-all duration-200 cursor-pointer ${
+      onClick={onViewDetails}
+      className={`flex flex-col relative overflow-hidden transition-all duration-200 group cursor-pointer ${
         isSelected ? 'ring-2 ring-[#2563eb] ring-offset-2' : ''
       }`}
       style={{
@@ -31,11 +33,22 @@ export const AdVisualCard = memo(function AdVisualCard({
         boxShadow: shadows.card,
       }}
     >
-      {isSelected && (
-        <div className="absolute top-2 left-2 z-10 text-[#2563eb] bg-white rounded-full">
-          <CheckCircle2 className="w-5 h-5" />
+      {/* Selection Checkbox */}
+      <div 
+        className={`absolute top-2 left-2 z-10 transition-opacity duration-150 ${
+          isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-white rounded p-0.5 shadow-sm border border-gray-200 flex items-center justify-center">
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => onSelect?.()}
+            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+          />
         </div>
-      )}
+      </div>
 
       {/* ── Image Area ── */}
       <div

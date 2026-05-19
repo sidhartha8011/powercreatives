@@ -55,6 +55,8 @@ export interface TextSlot {
   body: string;
   /** Call-to-action text */
   cta?: string;
+  /** Link description (Meta ad format) */
+  description?: string;
   /** Hashtags array */
   hashtags?: string[];
   /** Audience name this was generated for */

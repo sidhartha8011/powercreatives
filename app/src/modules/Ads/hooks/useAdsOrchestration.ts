@@ -73,8 +73,10 @@ export interface UseAdsOrchestrationReturn {
   /** Update text fields on a text slot (inline editing) */
   updateTextSlot: (
     slotId: string,
-    updates: { headline?: string; body?: string; cta?: string },
+    updates: { headline?: string; body?: string; cta?: string; description?: string; hashtags?: string[] },
   ) => void;
+  /** Regenerate a text slot (stub) */
+  regenerateTextSlot: (slotId: string, instruction?: string) => void;
 }
 
 // (Removed composition logic)
@@ -372,7 +374,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
 
   // ── Update text (inline editing) ──
   const updateTextSlot = useCallback(
-    (slotId: string, updates: { headline?: string; body?: string; cta?: string }) => {
+    (slotId: string, updates: { headline?: string; body?: string; cta?: string; description?: string; hashtags?: string[] }) => {
       setTextSlots((prev) =>
         prev.map((c) =>
           c.id === slotId
@@ -381,6 +383,8 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
                 headline: updates.headline ?? c.headline,
                 body: updates.body ?? c.body,
                 cta: updates.cta !== undefined ? updates.cta : c.cta,
+                description: updates.description !== undefined ? updates.description : c.description,
+                hashtags: updates.hashtags !== undefined ? updates.hashtags : c.hashtags,
               }
             : c,
         ),
@@ -388,6 +392,11 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     },
     [],
   );
+
+  // ── Regenerate text slot (stub) ──
+  const regenerateTextSlot = useCallback((slotId: string, instruction?: string) => {
+    toast.info('Regenerate copy functionality will be implemented in the next iteration.');
+  }, []);
 
   return {
     phase,
@@ -399,5 +408,6 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     clearError,
     generate,
     updateTextSlot,
+    regenerateTextSlot,
   };
 }

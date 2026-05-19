@@ -163,6 +163,8 @@ export function AdsModule() {
           selectedCopyIds={selectedCopyIds}
           onSelectVisual={handleSelectVisual}
           onSelectCopy={handleSelectCopy}
+          onUpdateTextSlot={orchestration.updateTextSlot}
+          onRegenerateTextSlot={orchestration.regenerateTextSlot}
           onDownloadVisual={(id) => toast.success('Image downloaded')}
         />
       </div>

@@ -17,6 +17,9 @@ import { colors, typography } from '@/components/shared';
 import type { MediaSlot, TextSlot, AdsProgress, AdsPhase } from '../types';
 import { AdVisualCard } from './AdVisualCard';
 import { AdCopyCard } from './AdCopyCard';
+import { AssetDetailView } from '@/components/AssetDetailView';
+import type { Asset } from '@/components/AssetDetailView/types';
+import { useState } from 'react';
 
 // ============================================================================
 // Props
@@ -34,6 +37,8 @@ interface AdsResultsGridProps {
   onSelectVisual: (id: string) => void;
   onSelectCopy: (id: string) => void;
   onDownloadVisual?: (id: string) => void;
+  onUpdateTextSlot?: (slotId: string, updates: { headline?: string; body?: string; cta?: string; description?: string; hashtags?: string[] }) => void;
+  onRegenerateTextSlot?: (slotId: string, instruction?: string) => void;
 }
 
 // ============================================================================
@@ -108,8 +113,29 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
   onSelectVisual,
   onSelectCopy,
   onDownloadVisual,
+  onUpdateTextSlot,
+  onRegenerateTextSlot,
 }: AdsResultsGridProps) {
   const hasAssets = mediaSlots.length > 0 || textSlots.length > 0;
+  
+  // State for the Image Detail View Modal
+  const [detailAsset, setDetailAsset] = useState<Asset | null>(null);
+
+  // Helper to map MediaSlot -> Asset for the DetailView
+  const handleOpenDetailView = (media: MediaSlot) => {
+    const asset: Asset = {
+      id: media.dbAssetId || 0,
+      userId: 0,
+      type: 'image',
+      url: media.url || '',
+      thumbnailUrl: media.thumbnailUrl,
+      prompt: media.prompt,
+      model: media.modelName,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    setDetailAsset(asset);
+  };
 
   return (
     <div className="h-full flex flex-col bg-slate-50">
@@ -225,6 +251,7 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
                     isSelected={selectedVisualIds.includes(media.id)}
                     onSelect={() => onSelectVisual(media.id)}
                     onDownload={() => onDownloadVisual?.(media.id)}
+                    onViewDetails={() => handleOpenDetailView(media)}
                   />
                 ))}
               </div>
@@ -244,6 +271,8 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
                     text={text}
                     isSelected={selectedCopyIds.includes(text.id)}
                     onSelect={() => onSelectCopy(text.id)}
+                    onUpdate={(updates) => onUpdateTextSlot?.(text.id, updates)}
+                    onRegenerate={(instruction) => onRegenerateTextSlot?.(text.id, instruction)}
                   />
                 ))}
               </div>
@@ -251,6 +280,20 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
           )}
 
         </div>
+      )}
+
+      {/* ── Asset Detail View Modal ── */}
+      {detailAsset && (
+        <AssetDetailView
+          asset={detailAsset}
+          isOpen={true}
+          onClose={() => setDetailAsset(null)}
+          // These could be wired up to orchestrator in the future
+          onVariationsCreated={() => {}}
+          onAssetRefined={(refinedAsset) => {
+            // Stub: Ideally we would update the mediaSlot in orchestrator
+          }}
+        />
       )}
     </div>
   );
