@@ -82,6 +82,9 @@ class PCM_Admin
             return;
         }
 
+        // Enable WordPress Media Library integration for the React app
+        wp_enqueue_media();
+
         $app_dir = PCM_PLUGIN_DIR . 'app/dist/';
         $app_url = PCM_PLUGIN_URL . 'app/dist/';
 
