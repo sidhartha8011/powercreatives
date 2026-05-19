@@ -45,6 +45,7 @@ export function toTextSlot(payload: {
     audienceName: payload.audienceName || undefined,
     angleName: payload.angleName || undefined,
     modelUsed: payload.modelUsed || '',
+    description: payload.description || undefined,
   };
 }
 
