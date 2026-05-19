@@ -31,6 +31,7 @@ export default defineConfig({
     build: {
         // Output to dist/ — PCM_Admin enqueues from here
         outDir: path.resolve(__dirname, "dist"),
+        minify: false,
         emptyOutDir: true,
 
         // Single bundle — WordPress enqueues one JS + one CSS file

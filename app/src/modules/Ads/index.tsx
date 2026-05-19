@@ -116,6 +116,8 @@ export function AdsModule() {
     setSelectedCopyIds([]);
   }, []);
 
+  const selectionCount = selectedVisualIds.length + selectedCopyIds.length;
+
   const [isExporting, setIsExporting] = useState(false);
 
   const handleExport = useCallback(async () => {
@@ -141,8 +143,6 @@ export function AdsModule() {
       setIsExporting(false);
     }
   }, [selectionCount, selectedCopyIds, selectedVisualIds, orchestration.textSlots, orchestration.mediaSlots, clearSelection]);
-
-  const selectionCount = selectedVisualIds.length + selectedCopyIds.length;
 
   // ── Render ──
   return (
