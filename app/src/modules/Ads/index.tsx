@@ -11,6 +11,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { ContextData, ScrapedBusinessData } from '@/components/shared';
+import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import { useImageModelsForGeneration, TIER_CONFIG } from '@/hooks/useModelsForGeneration';
@@ -40,6 +41,7 @@ export function AdsModule() {
     seasonEvent: '',
     campaignTheme: '',
   });
+  const [sessionReferenceImages, setSessionReferenceImages] = useState<SessionReferenceImage[]>([]);
   const [formValues, setFormValues] = useState<Record<string, string | number | undefined>>({});
 
   // ── Brief ──
@@ -100,8 +102,9 @@ export function AdsModule() {
       imageVariations,
       formValues,
       contextData,
+      sessionReferenceImages,
     });
-  }, [brief, textModelId, selectedImageModels, videoModelId, angles, imageVariations, formValues, contextData, orchestration]);
+  }, [brief, textModelId, selectedImageModels, videoModelId, angles, imageVariations, formValues, contextData, sessionReferenceImages, orchestration]);
 
   const handleSelectVisual = useCallback((id: string) => {
     setSelectedVisualIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
@@ -152,6 +155,8 @@ export function AdsModule() {
         contextData={contextData}
         onContextChange={handleContextChange}
         onUrlFetched={handleUrlFetched}
+        sessionReferenceImages={sessionReferenceImages}
+        onSessionReferenceImagesChange={setSessionReferenceImages}
         formValues={formValues}
         onFormChange={handleFormChange}
         brief={brief}

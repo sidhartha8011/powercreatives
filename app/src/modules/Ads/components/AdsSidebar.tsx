@@ -28,6 +28,7 @@ import {
   DEFAULT_BRAND_TOGGLES,
 } from '@/components/shared';
 import type { ContextData, ScrapedBusinessData } from '@/components/shared';
+import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import {
   Wand2,
   Cpu,
@@ -48,6 +49,8 @@ interface AdsSidebarProps {
   onUrlFetched?: (data: ScrapedBusinessData) => void;
   formValues: Record<string, string | number | undefined>;
   onFormChange: (fieldId: string, value: string | number) => void;
+  sessionReferenceImages: SessionReferenceImage[];
+  onSessionReferenceImagesChange: (imgs: SessionReferenceImage[]) => void;
 
   // ── Brief ──
   brief: string;
@@ -86,6 +89,8 @@ export const AdsSidebar = memo(function AdsSidebar({
   onUrlFetched,
   formValues,
   onFormChange,
+  sessionReferenceImages,
+  onSessionReferenceImagesChange,
   brief,
   onBriefChange,
   textModelId,
@@ -130,6 +135,8 @@ export const AdsSidebar = memo(function AdsSidebar({
           onContextChange={onContextChange}
           formValues={formValues}
           onFormChange={onFormChange}
+          referenceImages={sessionReferenceImages}
+          onReferenceImagesChange={onSessionReferenceImagesChange}
         />
 
         {/* 3. Theme Selector */}

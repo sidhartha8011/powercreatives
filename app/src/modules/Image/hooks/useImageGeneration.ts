@@ -25,6 +25,7 @@ import { DEFAULT_BRAND_TOGGLES } from '@/components/shared/ContextPanel';
 import type { ContextData } from '@/components/shared/ContextPanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { getBrandLogo } from '@shared/brandAssetResolver';
+import { resolveGenerationPayload } from '@/lib/resolveGenerationPayload';
 import { TIER_CONFIG, useImageModelsForGeneration } from '@/hooks/useModelsForGeneration';
 
 // ============================================================================
@@ -315,20 +316,14 @@ export function useImageGeneration({
 
         // Build brand context ONCE — reused for optimize_brief, suggest_concepts,
         // AND generate_single (final_prompt resolution). Fixes DRY violation.
-        const brandCtx = {
-            brandName: formValues.business_name,
-            brandSummary: toggles.useSummary ? formValues.business_summary : undefined,
-            brandColors: toggles.useColors ? (contextData.brand as any)?.colors : undefined,
-            niche: formValues.niche,
-            location: formValues.location,
-            phone: formValues.phone,
-            website: formValues.website,
-            language: formValues.language,
-            seasonEvent: contextData.seasonEvent,
-            campaignTheme: contextData.campaignTheme,
-            url: contextData.url,
-        };
-        const hasBrandCtx = contextData.brand || Object.keys(formValues).length > 0;
+        const payloadParams = resolveGenerationPayload({
+            contextData,
+            formValues,
+            sessionReferenceImages,
+        });
+        const brandCtx = payloadParams.brandContext;
+        const hasBrandCtx = payloadParams.hasBrandCtx;
+
 
 
 
@@ -396,16 +391,8 @@ export function useImageGeneration({
             let completed = 0;
             // Combine Logo and Reference Images into a single input stream.
             // Logo resolution via canonical resolver — see app/shared/brandAssetResolver.ts.
-            const logo = getBrandLogo(contextData.brand as any);
-
-            const refUrls = [
-                ...(toggles.useLogo && logo ? [logo.url] : []),
-                ...(toggles.useReferenceSubjects ? sessionReferenceImages.filter((img) => img.fileKey !== logo?.fileKey).map((img) => img.url) : [])
-            ];
-            const refIntents = [
-                ...(toggles.useLogo && logo ? ['auto'] : []),
-                ...(toggles.useReferenceSubjects ? sessionReferenceImages.filter((img) => img.fileKey !== logo?.fileKey).map((img) => img.intent) : [])
-            ];
+            const refUrls = payloadParams.inputUrls;
+            const refIntents = payloadParams.referenceImageIntents;
 
             // Build asset pipeline context once (shared across all generations)
             const pipelineExtra: Record<string, unknown> = {};

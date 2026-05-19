@@ -28,6 +28,8 @@ import type {
 import { ADS_DEFAULTS } from '../adsConfig';
 import { parseTextSSEStream } from '../utils/sseTextParser';
 import type { ContextData } from '@/components/shared/ContextPanel';
+import type { SessionReferenceImage } from '@shared/referenceImageIntents';
+import { resolveGenerationPayload } from '@/lib/resolveGenerationPayload';
 import { useImageModelsForGeneration } from '@/hooks/useModelsForGeneration';
 
 // ============================================================================
@@ -51,6 +53,8 @@ export interface AdsGenerateParams {
   formValues: Record<string, string | number | undefined>;
   /** Brand/theme context */
   contextData: ContextData;
+  /** User-uploaded or selected reference images */
+  sessionReferenceImages: SessionReferenceImage[];
 }
 
 export interface UseAdsOrchestrationReturn {
@@ -80,27 +84,7 @@ export interface UseAdsOrchestrationReturn {
 }
 
 // (Removed composition logic)
-/**
- * Build brand context object matching what Copy/Image backends expect.
- * Pure function — no React dependencies.
- */
-function buildBrandContext(
-  formValues: Record<string, string | number | undefined>,
-  contextData: ContextData,
-) {
-  return {
-    brandName: formValues.business_name,
-    brandSummary: formValues.business_summary,
-    niche: formValues.niche,
-    location: formValues.location,
-    phone: formValues.phone,
-    website: formValues.website,
-    language: formValues.language,
-    seasonEvent: contextData.seasonEvent,
-    campaignTheme: contextData.campaignTheme,
-    url: contextData.url,
-  };
-}
+// buildBrandContext has been replaced by resolveGenerationPayload in @/lib/resolveGenerationPayload.ts
 
 // ============================================================================
 // Hook
@@ -143,6 +127,13 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     const url = `${config.restUrl}copy/generate`;
 
     // Build payload matching Copy controller's expected input
+    const payloadParams = resolveGenerationPayload({
+      contextData: params.contextData,
+      formValues: params.formValues,
+      sessionReferenceImages: params.sessionReferenceImages,
+    });
+    
+    // Build payload matching Copy controller's expected input
     const input = {
       copyTypes: [ADS_DEFAULTS.copyType],
       audiences: { mode: 'auto' as const, count: ADS_DEFAULTS.audienceCount },
@@ -154,6 +145,8 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
         brief: params.brief,
       },
       scope: 'all_types' as const,
+      // Pass the resolved brand context (though copy might reconstruct it)
+      brandContext: payloadParams.brandContext,
     };
 
     const response = await fetch(url, {
@@ -197,8 +190,17 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
   ): Promise<MediaSlot[]> {
     setPhase('image_phase');
 
-    const { imageModelIds, imageVariations, brief, formValues, contextData } = params;
-    const brandCtx = buildBrandContext(formValues, contextData);
+    const { imageModelIds, imageVariations, brief, formValues, contextData, sessionReferenceImages } = params;
+    
+    const payloadParams = resolveGenerationPayload({
+      contextData,
+      formValues,
+      sessionReferenceImages,
+    });
+    
+    const brandCtx = payloadParams.brandContext;
+    const refUrls = payloadParams.inputUrls;
+    const refIntents = payloadParams.referenceImageIntents;
 
     // Calculate total images: at least as many as text slots
     const totalImages = Math.max(textCount, imageModelIds.length * imageVariations);
@@ -249,6 +251,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
             model: modelId,
             provider: resolvedProvider,
             brandContext: brandCtx,
+            ...(refUrls.length > 0 ? { inputUrls: refUrls, referenceImageIntents: refIntents } : {}),
           });
 
           // Update placeholder with completed result using functional updater
