@@ -139,28 +139,43 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
     setDetailAsset(asset);
   };
 
+  // Derive a robust list of audiences by combining the sidebar prop and what actually came back from backend
+  const derivedAudiences = React.useMemo(() => {
+    const fromProps = audiences.map(a => ({ id: a.id, name: a.name }));
+    const fromResults = Array.from(new Set(textSlots.map(t => t.audienceName).filter(Boolean))) as string[];
+    
+    // Add any audiences from results that aren't already in the props
+    fromResults.forEach(name => {
+      if (!fromProps.find(a => a.name === name)) {
+        fromProps.push({ id: name, name }); // Use name as ID for dynamically discovered audiences
+      }
+    });
+    
+    return fromProps;
+  }, [audiences, textSlots]);
+
   // State for active audience tab
   const [activeAudience, setActiveAudience] = React.useState<string | null>(
-    audiences.length > 0 ? audiences[0].id : null
+    derivedAudiences.length > 0 ? derivedAudiences[0].id : null
   );
 
   React.useEffect(() => {
-    if (audiences.length > 0) {
-      if (!activeAudience || !audiences.find((a) => a.id === activeAudience)) {
-        setActiveAudience(audiences[0].id);
+    if (derivedAudiences.length > 0) {
+      if (!activeAudience || !derivedAudiences.find((a) => a.id === activeAudience)) {
+        setActiveAudience(derivedAudiences[0].id);
       }
     } else {
       setActiveAudience(null);
     }
-  }, [audiences, activeAudience]);
+  }, [derivedAudiences, activeAudience]);
 
   // Filter text slots by active audience if available
   const visibleTextSlots = React.useMemo(() => {
     if (!activeAudience) return textSlots;
-    const currentAudienceName = audiences.find(a => a.id === activeAudience)?.name;
+    const currentAudienceName = derivedAudiences.find(a => a.id === activeAudience)?.name;
     if (!currentAudienceName) return textSlots;
     return textSlots.filter(t => t.audienceName === currentAudienceName);
-  }, [textSlots, activeAudience, audiences]);
+  }, [textSlots, activeAudience, derivedAudiences]);
 
   return (
     <div className="h-full flex flex-col bg-slate-50">
@@ -293,7 +308,7 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
               </div>
 
               {/* Level 2: Audience Sub-Tabs (mirrors Copy module) */}
-              {audiences.length > 0 && (
+              {derivedAudiences.length > 0 && (
                 <div
                   className="flex items-center gap-1 mb-6 rounded-lg"
                   style={{
@@ -301,7 +316,7 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
                     background: colors.bgMuted,
                   }}
                 >
-                  {audiences.map((audience) => {
+                  {derivedAudiences.map((audience) => {
                     const isActive = audience.id === activeAudience;
                     // Count how many textSlots belong to this audience
                     const count = textSlots.filter(t => t.audienceName === audience.name).length;
