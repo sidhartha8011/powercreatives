@@ -39,6 +39,7 @@ interface AdsResultsGridProps {
   onDownloadVisual?: (id: string) => void;
   onUpdateTextSlot?: (slotId: string, updates: { headline?: string; body?: string; cta?: string; description?: string; hashtags?: string[] }) => void;
   onRegenerateTextSlot?: (slotId: string, instruction?: string) => void;
+  audiences?: { id: string; name: string }[];
 }
 
 // ============================================================================
@@ -115,6 +116,7 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
   onDownloadVisual,
   onUpdateTextSlot,
   onRegenerateTextSlot,
+  audiences = [],
 }: AdsResultsGridProps) {
   const hasAssets = mediaSlots.length > 0 || textSlots.length > 0;
   
@@ -136,6 +138,29 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
     };
     setDetailAsset(asset);
   };
+
+  // State for active audience tab
+  const [activeAudience, setActiveAudience] = React.useState<string | null>(
+    audiences.length > 0 ? audiences[0].id : null
+  );
+
+  React.useEffect(() => {
+    if (audiences.length > 0) {
+      if (!activeAudience || !audiences.find((a) => a.id === activeAudience)) {
+        setActiveAudience(audiences[0].id);
+      }
+    } else {
+      setActiveAudience(null);
+    }
+  }, [audiences, activeAudience]);
+
+  // Filter text slots by active audience if available
+  const visibleTextSlots = React.useMemo(() => {
+    if (!activeAudience) return textSlots;
+    const currentAudienceName = audiences.find(a => a.id === activeAudience)?.name;
+    if (!currentAudienceName) return textSlots;
+    return textSlots.filter(t => t.audienceName === currentAudienceName);
+  }, [textSlots, activeAudience, audiences]);
 
   return (
     <div className="h-full flex flex-col bg-slate-50">
@@ -260,12 +285,63 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
 
           {/* Copy Variants Section */}
           {(textSlots.length > 0 || (isGenerating && phase === 'text_phase')) && (
-            <section>
-              <h3 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wider">
-                Copy Variants ({textSlots.length})
-              </h3>
+            <section className="flex flex-col h-full">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">
+                  Copy Variants ({visibleTextSlots.length})
+                </h3>
+              </div>
+
+              {/* Level 2: Audience Sub-Tabs (mirrors Copy module) */}
+              {audiences.length > 0 && (
+                <div
+                  className="flex items-center gap-1 mb-6 rounded-lg"
+                  style={{
+                    padding: '0.5rem',
+                    background: colors.bgMuted,
+                  }}
+                >
+                  {audiences.map((audience) => {
+                    const isActive = audience.id === activeAudience;
+                    // Count how many textSlots belong to this audience
+                    const count = textSlots.filter(t => t.audienceName === audience.name).length;
+                    
+                    return (
+                      <button
+                        key={audience.id}
+                        onClick={() => setActiveAudience(audience.id)}
+                        className="flex items-center gap-2 transition-colors"
+                        style={{
+                          padding: '0.375rem 0.75rem',
+                          borderRadius: '9999px',
+                          background: isActive ? '#fff' : 'transparent',
+                          color: isActive ? colors.text : colors.textSecondary,
+                          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                          fontWeight: isActive ? typography.semibold : typography.medium,
+                          fontSize: typography.sm,
+                        }}
+                      >
+                        <span className="truncate max-w-[150px]">{audience.name}</span>
+                        <span
+                          className="flex items-center justify-center text-[10px]"
+                          style={{
+                            minWidth: '1.25rem',
+                            height: '1.25rem',
+                            borderRadius: '9999px',
+                            background: isActive ? colors.bgMuted : 'transparent',
+                            color: isActive ? colors.textSecondary : colors.textGhost,
+                          }}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {textSlots.map((text) => (
+                {visibleTextSlots.map((text) => (
                   <AdCopyCard
                     key={text.id}
                     text={text}

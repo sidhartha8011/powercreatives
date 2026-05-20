@@ -279,6 +279,7 @@ export function AdsModule() {
           onUpdateTextSlot={orchestration.updateTextSlot}
           onRegenerateTextSlot={orchestration.regenerateTextSlot}
           onDownloadVisual={(id) => toast.success('Image downloaded')}
+          audiences={audiences}
         />
       </div>
 
