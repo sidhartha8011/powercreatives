@@ -107,6 +107,8 @@ interface AdsSidebarProps {
   // ── Generate ──
   isGenerating: boolean;
   onGenerate: () => void;
+  onGenerateAudiences?: () => Promise<ListItem[]>;
+  onGenerateAngles?: () => Promise<AngleItem[]>;
 }
 
 // ============================================================================
@@ -142,6 +144,8 @@ export const AdsSidebar = memo(function AdsSidebar({
   onImageVariationsChange,
   isGenerating,
   onGenerate,
+  onGenerateAudiences,
+  onGenerateAngles,
 }: AdsSidebarProps) {
   const canGenerate = brief.trim().length > 0
     && textModelId
@@ -210,58 +214,11 @@ export const AdsSidebar = memo(function AdsSidebar({
           />
         </section>
 
-        {/* 5. Copy Type Selector */}
-        <CopyTypeSelector
-          selection={selectedTypes}
-          onChange={onSelectedTypesChange}
-        />
-
-        {/* 6. Audiences */}
-        <ModeListBox
-          label="Audiences"
-          mode={genSettings.audiencesMode}
-          onModeChange={(m) => onGenSettingsChange({ ...genSettings, audiencesMode: m })}
-          items={audiences}
-          onAddItem={handleAddAudience}
-          onRemoveItem={handleRemoveAudience}
-          onItemsGenerated={onAudiencesChange}
-          placeholder="Add audience…"
-          autoCount={genSettings.audiencesCount}
-          onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, audiencesCount: c })}
-          autoHint={`AI will generate ${genSettings.audiencesCount} audience${genSettings.audiencesCount !== 1 ? 's' : ''} based on your brief`}
-        />
-
-        {/* 7. Angles */}
-        <GroupedAnglesList
-          mode={genSettings.anglesMode}
-          onModeChange={(m) => onGenSettingsChange({ ...genSettings, anglesMode: m })}
-          items={angles}
-          onItemsChange={onAnglesChange}
-          audiences={audiences}
-          autoCount={genSettings.anglesCount}
-          onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, anglesCount: c })}
-        />
-
-        {/* 8. Advanced Options (Tone, Emoji, CTA) */}
-        <DynamicSection
-          section={ADVANCED_COPY_OPTIONS}
-          values={formValues}
-          selectedTypes={selectedTypes}
-          onChange={onFormChange}
-        />
-
-        {/* 9. Reference Ads */}
-        <ReferenceAdsSection
-          values={formValues}
-          onChange={onFormChange}
-          onBatchChange={onBatchChange}
-        />
-
-        {/* 10. Models */}
+        {/* 5. Models (Engines) - Moved to Section 2 visually */}
         <section>
           <div className="mb-3">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Models
+              Engines
             </h3>
           </div>
           
@@ -292,6 +249,47 @@ export const AdsSidebar = memo(function AdsSidebar({
             />
           </div>
         </section>
+
+        {/* 6. Copy Type Selector */}
+        <CopyTypeSelector
+          selection={selectedTypes}
+          onChange={onSelectedTypesChange}
+        />
+
+        {/* 7. Audiences */}
+        <ModeListBox
+          label="Audiences"
+          mode={genSettings.audiencesMode}
+          onModeChange={(m) => onGenSettingsChange({ ...genSettings, audiencesMode: m })}
+          items={audiences}
+          onAddItem={handleAddAudience}
+          onRemoveItem={handleRemoveAudience}
+          onItemsGenerated={onAudiencesChange}
+          placeholder="Add audience…"
+          autoCount={genSettings.audiencesCount}
+          onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, audiencesCount: c })}
+          onGenerate={onGenerateAudiences}
+        />
+
+        {/* 8. Angles */}
+        <GroupedAnglesList
+          mode={genSettings.anglesMode}
+          onModeChange={(m) => onGenSettingsChange({ ...genSettings, anglesMode: m })}
+          items={angles}
+          onItemsChange={onAnglesChange}
+          audiences={audiences}
+          autoCount={genSettings.anglesCount}
+          onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, anglesCount: c })}
+          onGenerate={onGenerateAngles}
+          onItemsGenerated={onAnglesChange}
+        />
+
+        {/* 9. Reference Ads */}
+        <ReferenceAdsSection
+          values={formValues}
+          onChange={onFormChange}
+          onBatchChange={onBatchChange}
+        />
 
         {/* 11. Production Parameters */}
         <GlobalProductionParameters

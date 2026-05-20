@@ -14,8 +14,8 @@ import type {
   OfferTemplate,
 } from './types';
 
-// Re-export shared option sets so existing Copy imports still work
-export {
+// Import shared option sets so we can use them locally and re-export them
+import {
   LANGUAGE_OPTIONS,
   SEASON_OPTIONS,
   EMOJI_OPTIONS,
@@ -25,6 +25,17 @@ export {
   isSectionVisible,
   isFieldVisible,
 } from '@/components/shared/copySettingsConfig';
+
+export {
+  LANGUAGE_OPTIONS,
+  SEASON_OPTIONS,
+  EMOJI_OPTIONS,
+  CTA_STYLE_OPTIONS,
+  TONE_OPTIONS,
+  POST_FORMAT_OPTIONS,
+  isSectionVisible,
+  isFieldVisible,
+};
 
 
 // ============================================

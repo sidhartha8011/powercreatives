@@ -24,6 +24,7 @@ import { ADS_DEFAULTS } from './adsConfig';
 import { BulkActionBar } from '@/components/shared/BulkActionBar';
 import { Download } from 'lucide-react';
 import { toast } from 'sonner';
+import { trpc } from '@/lib/trpc';
 import type { CostTier } from '@/types';
 import { exportToMetaAdsZip } from './utils/metaAdsExport';
 
@@ -96,6 +97,9 @@ export function AdsModule() {
   // ── Sync Hook ──
   const { handleContextChange, handleUrlFetched } = useBrandSync(setFormValues, setContextData);
 
+  // ── TRPC Mutation ──
+  const suggestMutation = trpc.copy.suggest.useMutation();
+
   // ── Handlers ──
 
   const handleFormChange = useCallback((fieldId: string, value: string | number) => {
@@ -152,6 +156,34 @@ export function AdsModule() {
       sessionReferenceImages,
     });
   }, [brief, textModelId, selectedImageModels, videoModelId, activeTypes, genSettings, audiences, angles, imageVariations, formValues, contextData, sessionReferenceImages, orchestration]);
+
+  const validateBeforeSuggest = useCallback(() => {
+    if (!brief.trim()) throw new Error('Please enter a creative brief first.');
+    if (!textModelId) throw new Error('Please select a text model first.');
+  }, [brief, textModelId]);
+
+  const handleGenerateAudiences = useCallback(async () => {
+    validateBeforeSuggest();
+    const res = await suggestMutation.mutateAsync({
+      type: 'audiences',
+      count: genSettings.audiencesCount,
+      formValues: { ...formValues, creativeBrief: brief },
+      modelId: textModelId,
+    });
+    return (res as any).items ?? [];
+  }, [suggestMutation, genSettings.audiencesCount, formValues, brief, textModelId, validateBeforeSuggest]);
+
+  const handleGenerateAngles = useCallback(async () => {
+    validateBeforeSuggest();
+    const res = await suggestMutation.mutateAsync({
+      type: 'angles',
+      count: genSettings.anglesCount,
+      audiences: audiences.length > 0 ? audiences : undefined,
+      formValues: { ...formValues, creativeBrief: brief },
+      modelId: textModelId,
+    });
+    return (res as any).items ?? [];
+  }, [suggestMutation, genSettings.anglesCount, audiences, formValues, brief, textModelId, validateBeforeSuggest]);
 
   const handleSelectVisual = useCallback((id: string) => {
     setSelectedVisualIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
@@ -227,6 +259,8 @@ export function AdsModule() {
         onImageVariationsChange={setImageVariations}
         isGenerating={orchestration.isGenerating}
         onGenerate={handleGenerate}
+        onGenerateAudiences={handleGenerateAudiences}
+        onGenerateAngles={handleGenerateAngles}
       />
 
       {/* Results grid — output */}
