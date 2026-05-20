@@ -141,8 +141,9 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       modelId: params.textModelId,
       formValues: {
         ...params.formValues,
-        // Explicitly map the brief for the backend
-        brief: params.brief,
+        // Map to 'creativeBrief' — the key extract_brief() reads in Copy service.
+        // Using 'brief' was silently dropped, causing brand-only copy output.
+        creativeBrief: params.brief,
       },
       scope: 'all_types' as const,
       // Pass the resolved brand context (though copy might reconstruct it)

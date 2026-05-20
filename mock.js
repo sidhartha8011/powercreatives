@@ -1,0 +1,1 @@
+global.window = {}; global.document = { createElement: () => ({ relList: {} }), querySelector: () => null, head: { appendChild: () => {} } }; global.navigator = { userAgent: '' }; import('./app/dist/index-writer.js').catch(e => console.error(e));
