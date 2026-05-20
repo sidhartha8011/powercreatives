@@ -11,6 +11,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { ContextData, ScrapedBusinessData } from '@/components/shared';
+import type { GenerationMode, ListItem, AngleItem } from '@/components/shared';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
 import { useTextModels } from '@/modules/Copy/useTextModels';
@@ -47,6 +48,24 @@ export function AdsModule() {
   // ── Brief ──
   const [brief, setBrief] = useState('');
 
+  // ── Copy type selection (social_ads, social_organic) ──
+  const [selectedTypes, setSelectedTypes] = useState<Record<string, boolean>>({
+    social_ads: true,
+    social_organic: false,
+  });
+
+  // ── Audiences & Angles ──
+  const [audiences, setAudiences] = useState<ListItem[]>([]);
+  const [angles, setAngles] = useState<AngleItem[]>([]);
+
+  // ── Generation settings (mode + count for audiences/angles) ──
+  const [genSettings, setGenSettings] = useState({
+    audiencesMode: 'auto' as GenerationMode,
+    audiencesCount: 3,
+    anglesMode: 'auto' as GenerationMode,
+    anglesCount: 3,
+  });
+
   // ── Text model ──
   const { textModels, groups: textModelGroups } = useTextModels();
   const [textModelId, setTextModelId] = useState('');
@@ -65,7 +84,6 @@ export function AdsModule() {
   const [videoModelId] = useState('');
 
   // ── Production params ──
-  const [angles, setAngles] = useState(ADS_DEFAULTS.angleCount);
   const [imageVariations, setImageVariations] = useState(ADS_DEFAULTS.imageVariations);
 
   // ── Selection State (Client Board) ──
@@ -84,9 +102,27 @@ export function AdsModule() {
     setFormValues((prev) => ({ ...prev, [fieldId]: value }));
   }, []);
 
+  /** Batch update multiple form fields in a single render (used by ReferenceAdsSection for re-indexing) */
+  const handleBatchChange = useCallback((updates: Record<string, string | undefined>) => {
+    setFormValues((prev) => {
+      const next = { ...prev };
+      for (const [key, val] of Object.entries(updates)) {
+        if (val === undefined) {
+          delete next[key];
+        } else {
+          next[key] = val;
+        }
+      }
+      return next;
+    });
+  }, []);
+
   const handleImageModelsChange = useCallback((ids: string[]) => {
     setSelectedImageModels(ids);
   }, []);
+
+  // Active copy types for generation
+  const activeTypes = Object.keys(selectedTypes).filter((t) => selectedTypes[t]);
 
   const handleGenerate = useCallback(() => {
     // Clear selection on new generation
@@ -98,13 +134,24 @@ export function AdsModule() {
       textModelId,
       imageModelIds: selectedImageModels,
       videoModelId,
-      angles,
+      // Pass dynamic generation settings instead of hardcoded values
+      copyTypes: activeTypes,
+      audiences: {
+        mode: genSettings.audiencesMode,
+        items: audiences,
+        count: genSettings.audiencesCount,
+      },
+      angles: {
+        mode: genSettings.anglesMode,
+        items: angles,
+        count: genSettings.anglesCount,
+      },
       imageVariations,
       formValues,
       contextData,
       sessionReferenceImages,
     });
-  }, [brief, textModelId, selectedImageModels, videoModelId, angles, imageVariations, formValues, contextData, sessionReferenceImages, orchestration]);
+  }, [brief, textModelId, selectedImageModels, videoModelId, activeTypes, genSettings, audiences, angles, imageVariations, formValues, contextData, sessionReferenceImages, orchestration]);
 
   const handleSelectVisual = useCallback((id: string) => {
     setSelectedVisualIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
@@ -159,16 +206,23 @@ export function AdsModule() {
         onSessionReferenceImagesChange={setSessionReferenceImages}
         formValues={formValues}
         onFormChange={handleFormChange}
+        onBatchChange={handleBatchChange}
         brief={brief}
         onBriefChange={setBrief}
+        selectedTypes={selectedTypes}
+        onSelectedTypesChange={setSelectedTypes}
+        audiences={audiences}
+        onAudiencesChange={setAudiences}
+        angles={angles}
+        onAnglesChange={setAngles}
+        genSettings={genSettings}
+        onGenSettingsChange={setGenSettings}
         textModelId={textModelId}
         onTextModelChange={setTextModelId}
         imageModelIds={selectedImageModels}
         onImageModelsChange={handleImageModelsChange}
         videoModelId={videoModelId}
         onVideoModelChange={() => {}} // Fishbone — no-op
-        angles={angles}
-        onAnglesChange={setAngles}
         imageVariations={imageVariations}
         onImageVariationsChange={setImageVariations}
         isGenerating={orchestration.isGenerating}

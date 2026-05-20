@@ -9,14 +9,19 @@
  * 2. Enhanced Brand Section (business info, colors, logo — shared)
  * 3. Theme selector (season, campaign — shared)
  * 4. Creative Brief (textarea)
- * 5. Writer Model (text model dropdown)
- * 6. Image Models (multi-select with tier accordion)
- * 7. Video Model (dropdown — disabled fishbone)
- * 8. Production Parameters (variations slider)
- * 9. Generate button
+ * 5. Copy Type selector (shared)
+ * 6. Audiences (ModeListBox — shared)
+ * 7. Angles (GroupedAnglesList — shared)
+ * 8. Advanced Options (DynamicSection — tone/emoji/cta — shared)
+ * 9. Reference Ads (shared)
+ * 10. Writer Model (text model dropdown)
+ * 11. Image Models (multi-select with tier accordion)
+ * 12. Video Model (dropdown — disabled fishbone)
+ * 13. Production Parameters (variations slider)
+ * 14. Generate button
  */
 
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -26,17 +31,31 @@ import {
   GlobalEngineSelector,
   GlobalProductionParameters,
   DEFAULT_BRAND_TOGGLES,
+  ModeListBox,
+  GroupedAnglesList,
+  DynamicSection,
+  ReferenceAdsSection,
+  CopyTypeSelector,
+  ADVANCED_COPY_OPTIONS,
 } from '@/components/shared';
-import type { ContextData, ScrapedBusinessData } from '@/components/shared';
+import type { ContextData, ScrapedBusinessData, GenerationMode, ListItem, AngleItem } from '@/components/shared';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import {
   Wand2,
-  Cpu,
-  SlidersHorizontal,
-  Zap,
   Megaphone,
   Loader2,
 } from 'lucide-react';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+interface AdsGenSettings {
+  audiencesMode: GenerationMode;
+  audiencesCount: number;
+  anglesMode: GenerationMode;
+  anglesCount: number;
+}
 
 // ============================================================================
 // Props
@@ -49,12 +68,25 @@ interface AdsSidebarProps {
   onUrlFetched?: (data: ScrapedBusinessData) => void;
   formValues: Record<string, string | number | undefined>;
   onFormChange: (fieldId: string, value: string | number) => void;
+  onBatchChange: (updates: Record<string, string | undefined>) => void;
   sessionReferenceImages: SessionReferenceImage[];
   onSessionReferenceImagesChange: (imgs: SessionReferenceImage[]) => void;
 
   // ── Brief ──
   brief: string;
   onBriefChange: (v: string) => void;
+
+  // ── Copy types ──
+  selectedTypes: Record<string, boolean>;
+  onSelectedTypesChange: (types: Record<string, boolean>) => void;
+
+  // ── Audiences & Angles ──
+  audiences: ListItem[];
+  onAudiencesChange: (items: ListItem[]) => void;
+  angles: AngleItem[];
+  onAnglesChange: (items: AngleItem[]) => void;
+  genSettings: AdsGenSettings;
+  onGenSettingsChange: (settings: AdsGenSettings) => void;
 
   // ── Text model ──
   textModelId: string;
@@ -69,8 +101,6 @@ interface AdsSidebarProps {
   onVideoModelChange: (id: string) => void;
 
   // ── Production params ──
-  angles: number;
-  onAnglesChange: (n: number) => void;
   imageVariations: number;
   onImageVariationsChange: (n: number) => void;
 
@@ -89,18 +119,25 @@ export const AdsSidebar = memo(function AdsSidebar({
   onUrlFetched,
   formValues,
   onFormChange,
+  onBatchChange,
   sessionReferenceImages,
   onSessionReferenceImagesChange,
   brief,
   onBriefChange,
+  selectedTypes,
+  onSelectedTypesChange,
+  audiences,
+  onAudiencesChange,
+  angles,
+  onAnglesChange,
+  genSettings,
+  onGenSettingsChange,
   textModelId,
   onTextModelChange,
   imageModelIds,
   onImageModelsChange,
   videoModelId,
   onVideoModelChange,
-  angles,
-  onAnglesChange,
   imageVariations,
   onImageVariationsChange,
   isGenerating,
@@ -114,6 +151,16 @@ export const AdsSidebar = memo(function AdsSidebar({
   // Determine if image inputs (logo/reference) are active
   const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
   const requiresImageInput = !!toggles.useLogo;
+
+  // ── Audience handlers ──
+  const handleAddAudience = useCallback((name: string) => {
+    const id = `audience_${Date.now()}`;
+    onAudiencesChange([...audiences, { id, name }]);
+  }, [audiences, onAudiencesChange]);
+
+  const handleRemoveAudience = useCallback((id: string) => {
+    onAudiencesChange(audiences.filter((a) => a.id !== id));
+  }, [audiences, onAudiencesChange]);
 
   return (
     <aside
@@ -163,7 +210,54 @@ export const AdsSidebar = memo(function AdsSidebar({
           />
         </section>
 
-        {/* 5. Models */}
+        {/* 5. Copy Type Selector */}
+        <CopyTypeSelector
+          selection={selectedTypes}
+          onChange={onSelectedTypesChange}
+        />
+
+        {/* 6. Audiences */}
+        <ModeListBox
+          label="Audiences"
+          mode={genSettings.audiencesMode}
+          onModeChange={(m) => onGenSettingsChange({ ...genSettings, audiencesMode: m })}
+          items={audiences}
+          onAddItem={handleAddAudience}
+          onRemoveItem={handleRemoveAudience}
+          onItemsGenerated={onAudiencesChange}
+          placeholder="Add audience…"
+          autoCount={genSettings.audiencesCount}
+          onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, audiencesCount: c })}
+          autoHint={`AI will generate ${genSettings.audiencesCount} audience${genSettings.audiencesCount !== 1 ? 's' : ''} based on your brief`}
+        />
+
+        {/* 7. Angles */}
+        <GroupedAnglesList
+          mode={genSettings.anglesMode}
+          onModeChange={(m) => onGenSettingsChange({ ...genSettings, anglesMode: m })}
+          items={angles}
+          onItemsChange={onAnglesChange}
+          audiences={audiences}
+          autoCount={genSettings.anglesCount}
+          onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, anglesCount: c })}
+        />
+
+        {/* 8. Advanced Options (Tone, Emoji, CTA) */}
+        <DynamicSection
+          section={ADVANCED_COPY_OPTIONS}
+          values={formValues}
+          selectedTypes={selectedTypes}
+          onChange={onFormChange}
+        />
+
+        {/* 9. Reference Ads */}
+        <ReferenceAdsSection
+          values={formValues}
+          onChange={onFormChange}
+          onBatchChange={onBatchChange}
+        />
+
+        {/* 10. Models */}
         <section>
           <div className="mb-3">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -199,15 +293,13 @@ export const AdsSidebar = memo(function AdsSidebar({
           </div>
         </section>
 
-        {/* 6. Production Parameters */}
+        {/* 11. Production Parameters */}
         <GlobalProductionParameters
-          angles={angles}
-          onAnglesChange={onAnglesChange}
           variations={imageVariations}
           onVariationsChange={onImageVariationsChange}
         />
 
-        {/* 9. Generate Button */}
+        {/* 12. Generate Button */}
         <Button
           onClick={onGenerate}
           disabled={!canGenerate}

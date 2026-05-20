@@ -36,6 +36,13 @@ import { useImageModelsForGeneration } from '@/hooks/useModelsForGeneration';
 // Types
 // ============================================================================
 
+/** Audiences/Angles generation config — matches Copy module's pattern */
+interface GenerationDimension {
+  mode: 'auto' | 'manual';
+  items?: { id: string; name: string }[];
+  count: number;
+}
+
 export interface AdsGenerateParams {
   /** Creative brief / prompt */
   brief: string;
@@ -45,8 +52,12 @@ export interface AdsGenerateParams {
   imageModelIds: string[];
   /** Video model ID (empty = skip video phase) */
   videoModelId: string;
-  /** Number of angles (scenes) */
-  angles: number;
+  /** Which copy types to generate (e.g. ['social_ads', 'social_organic']) */
+  copyTypes: string[];
+  /** Audiences generation config (auto/manual + items + count) */
+  audiences: GenerationDimension;
+  /** Angles generation config (auto/manual + items + count) */
+  angles: GenerationDimension;
   /** Number of variations per image model */
   imageVariations: number;
   /** Business context from ContextPanel + EnhancedBrandSection */
@@ -134,10 +145,15 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     });
     
     // Build payload matching Copy controller's expected input
+    // Uses dynamic audiences/angles/copyTypes from user selections
     const input = {
-      copyTypes: [ADS_DEFAULTS.copyType],
-      audiences: { mode: 'auto' as const, count: ADS_DEFAULTS.audienceCount },
-      angles: { mode: 'auto' as const, count: params.angles },
+      copyTypes: params.copyTypes.length > 0 ? params.copyTypes : [ADS_DEFAULTS.copyType],
+      audiences: params.audiences.mode === 'manual' && params.audiences.items?.length
+        ? { mode: 'manual' as const, items: params.audiences.items }
+        : { mode: 'auto' as const, count: params.audiences.count },
+      angles: params.angles.mode === 'manual' && params.angles.items?.length
+        ? { mode: 'manual' as const, items: params.angles.items }
+        : { mode: 'auto' as const, count: params.angles.count },
       modelId: params.textModelId,
       formValues: {
         ...params.formValues,

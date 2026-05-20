@@ -38,11 +38,9 @@ export type FieldVisibility = 'always' | 'social_ads' | 'social_organic';
 /** Whether a field is required, optional, or hidden for a given copy type */
 export type FieldRequirement = 'required' | 'optional' | 'hidden';
 
-/** A single option for select/dropdown fields */
-export interface SelectOption {
-  value: string;
-  label: string;
-}
+/** Re-export SelectOption from shared — single source of truth */
+export type { SelectOption } from '@/components/shared/copySettingsConfig';
+import type { SelectOption } from '@/components/shared/copySettingsConfig';
 
 /** Full field definition — the building block of the config */
 export interface CopyFieldConfig {

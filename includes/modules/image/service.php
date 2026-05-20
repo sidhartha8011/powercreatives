@@ -731,14 +731,14 @@ Return exactly {{count}} distinct, production-ready image generation prompts.",
             'concept_suggestions' => 'You are a creative director specialising in advertising and commercial photography. '
             . 'Given a product brief, generate distinct creative concept angles for image generation. '
             . 'Each concept must have a unique visual approach (scene, mood, style, composition). '
-            . "Return only structured JSON matching the provided schema.\n\n"
-            . "Reference Image Intent: {{referenceImageIntent}}\n\n"
-            . "If a reference image is provided (intent above is not empty):\n"
-            . "- Read the user's brief carefully and follow their stated intent.\n"
-            . "- If the user asks for variations — preserve the reference image's composition, subject, style, and colors. Do NOT invent entirely new scenes.\n"
-            . "- If the user asks for something creative — use the reference as inspiration but create fresh concepts.\n"
-            . "- If the user does not specify — default to creating variations that stay close to the reference image.\n\n"
-            . "If no reference image (intent above is empty):\n"
+            . 'Return only structured JSON matching the provided schema.' . "\n\n"
+            . 'Reference Image Intent: {{referenceImageIntent}}' . "\n\n"
+            . 'If a reference image is provided (intent above is not empty):' . "\n"
+            . '- Read the user\'s brief carefully and follow their stated intent.' . "\n"
+            . '- If the user asks for variations — preserve the reference image\'s composition, subject, style, and colors. Do NOT invent entirely new scenes.' . "\n"
+            . '- If the user asks for something creative — use the reference as inspiration but create fresh concepts.' . "\n"
+            . '- If the user does not specify — default to creating variations that stay close to the reference image.' . "\n\n"
+            . 'If no reference image (intent above is empty):' . "\n"
             . '- Generate distinct creative concept angles freely with unique visual approaches.',
 
             // ── Angles (Scenes) — User Prompt ──────────────

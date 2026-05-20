@@ -4,80 +4,28 @@
  * Every field, section, and option is defined here.
  * Components read this config and render dynamically — no hardcoded UI logic.
  *
- * To add a new field:  add an entry to the relevant section's `fields` array.
- * To add a new section: add an entry to `COPY_SECTIONS`.
- * To add a new copy type: extend CopyType union in types.ts and add applicableTo rules here.
+ * Reusable option sets (TONE, EMOJI, CTA, LANGUAGE, SEASON, POST_FORMAT)
+ * are imported from the shared copySettingsConfig module.
  */
 
 import type {
   CopySectionConfig,
   CopyType,
   OfferTemplate,
-  SelectOption,
 } from './types';
-import { SEASON_OPTIONS as SHARED_SEASON_OPTIONS } from '@shared/seasonOptions';
 
-// ============================================
-// Reusable Option Sets
-// ============================================
+// Re-export shared option sets so existing Copy imports still work
+export {
+  LANGUAGE_OPTIONS,
+  SEASON_OPTIONS,
+  EMOJI_OPTIONS,
+  CTA_STYLE_OPTIONS,
+  TONE_OPTIONS,
+  POST_FORMAT_OPTIONS,
+  isSectionVisible,
+  isFieldVisible,
+} from '@/components/shared/copySettingsConfig';
 
-export const LANGUAGE_OPTIONS: SelectOption[] = [
-  { value: 'en', label: 'English' },
-  { value: 'sv', label: 'Swedish' },
-  { value: 'no', label: 'Norwegian' },
-  { value: 'da', label: 'Danish' },
-  { value: 'fi', label: 'Finnish' },
-  { value: 'de', label: 'German' },
-  { value: 'fr', label: 'French' },
-  { value: 'es', label: 'Spanish' },
-  { value: 'pt', label: 'Portuguese' },
-  { value: 'it', label: 'Italian' },
-  { value: 'nl', label: 'Dutch' },
-  { value: 'ar', label: 'Arabic' },
-];
-
-/**
- * Season options derived from the shared single source of truth.
- * Cast to SelectOption[] for compatibility with the config-driven UI.
- */
-export const SEASON_OPTIONS: SelectOption[] = SHARED_SEASON_OPTIONS;
-
-export const EMOJI_OPTIONS: SelectOption[] = [
-  { value: 'auto', label: 'Auto (AI decides)' },
-  { value: 'none', label: 'None' },
-  { value: 'few', label: 'Few (1-2)' },
-  { value: 'some', label: 'Some (3-5)' },
-  { value: 'many', label: 'Many (6+)' },
-];
-
-export const CTA_STYLE_OPTIONS: SelectOption[] = [
-  { value: 'auto', label: 'Auto (AI decides)' },
-  { value: 'direct', label: 'Direct ("Buy Now", "Sign Up")' },
-  { value: 'soft', label: 'Soft ("Learn More", "See How")' },
-  { value: 'urgency', label: 'Urgency ("Limited Time", "Act Now")' },
-  { value: 'question', label: 'Question ("Ready to…?")' },
-];
-
-export const TONE_OPTIONS: SelectOption[] = [
-  { value: 'auto', label: 'Auto (AI decides)' },
-  { value: 'professional', label: 'Professional' },
-  { value: 'casual', label: 'Casual / Friendly' },
-  { value: 'humorous', label: 'Humorous' },
-  { value: 'urgent', label: 'Urgent / FOMO' },
-  { value: 'luxurious', label: 'Luxurious / Premium' },
-  { value: 'empathetic', label: 'Empathetic / Caring' },
-  { value: 'bold', label: 'Bold / Provocative' },
-];
-
-export const POST_FORMAT_OPTIONS: SelectOption[] = [
-  { value: 'auto', label: 'Auto (AI decides)' },
-  { value: 'short', label: 'Short Post (1-3 lines)' },
-  { value: 'story', label: 'Story / Narrative' },
-  { value: 'listicle', label: 'Listicle (numbered tips)' },
-  { value: 'question', label: 'Question / Poll' },
-  { value: 'carousel', label: 'Carousel Captions' },
-  { value: 'thread', label: 'Thread / Multi-part' },
-];
 
 // ============================================
 // Section & Field Definitions
@@ -453,27 +401,7 @@ export const OFFER_TEMPLATES: OfferTemplate[] = [
 // Helpers
 // ============================================
 
-/**
- * Determine whether a section should be visible given the currently selected copy types.
- */
-export function isSectionVisible(
-  section: CopySectionConfig,
-  selectedTypes: Record<string, boolean>,
-): boolean {
-  if (section.applicableTo === 'always') return true;
-  return !!selectedTypes[section.applicableTo];
-}
-
-/**
- * Determine whether a field should be visible given the currently selected copy types.
- */
-export function isFieldVisible(
-  field: { applicableTo: string },
-  selectedTypes: Record<string, boolean>,
-): boolean {
-  if (field.applicableTo === 'always') return true;
-  return !!selectedTypes[field.applicableTo];
-}
+// isSectionVisible and isFieldVisible are re-exported from shared/copySettingsConfig above.
 
 /**
  * Build initial form values from config defaults.
