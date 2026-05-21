@@ -97,7 +97,6 @@ function InlineEditableCardInner({
   const headlineRef = useRef<HTMLHeadingElement>(null);
   const hashtagsRef = useRef<HTMLParagraphElement>(null);
   const descriptionRef = useRef<HTMLParagraphElement>(null);
-  const ctaRef = useRef<HTMLParagraphElement>(null);
 
   // Sync DOM content from variation when in read mode (e.g. after regeneration)
   useEffect(() => {
@@ -106,7 +105,6 @@ function InlineEditableCardInner({
       if (headlineRef.current) headlineRef.current.innerText = variation.headline ?? '';
       if (hashtagsRef.current) hashtagsRef.current.innerText = variation.hashtags?.join('  ') ?? '';
       if (descriptionRef.current) descriptionRef.current.innerText = variation.description ?? '';
-      if (ctaRef.current) ctaRef.current.innerText = variation.cta ?? '';
     }
   }, [variation, editState]);
 
@@ -133,7 +131,6 @@ function InlineEditableCardInner({
     if (headlineRef.current) headlineRef.current.innerText = variation.headline ?? '';
     if (hashtagsRef.current) hashtagsRef.current.innerText = variation.hashtags?.join('  ') ?? '';
     if (descriptionRef.current) descriptionRef.current.innerText = variation.description ?? '';
-    if (ctaRef.current) ctaRef.current.innerText = variation.cta ?? '';
     setEditState('read');
   }, [variation]);
 
@@ -143,14 +140,12 @@ function InlineEditableCardInner({
     const newHeadline = headlineRef.current?.innerText?.trim() ?? variation.headline;
     const newHashtagsRaw = hashtagsRef.current?.innerText ?? '';
     const newDescription = descriptionRef.current?.innerText?.trim() ?? variation.description ?? '';
-    const newCta = ctaRef.current?.innerText?.trim() ?? variation.cta ?? '';
 
     setIsSaving(true);
     try {
       const updates: Record<string, string> = {};
       if (newHeadline !== variation.headline) updates.headline = newHeadline;
       if (newBody !== variation.body) updates.body = newBody;
-      if (newCta !== (variation.cta ?? '')) updates.cta = newCta;
       if (newDescription !== (variation.description ?? '')) updates.description = newDescription;
       // Normalize hashtag string: split by comma or whitespace, rejoin with comma
       const newHashtagsNorm = newHashtagsRaw.split(/[,\s]+/).map((h) => h.trim()).filter(Boolean).join(',');
@@ -170,16 +165,53 @@ function InlineEditableCardInner({
 
   const variationLabel = `${variation.copyType === 'social_ads' ? 'Social Ad' : 'Organic Post'} · Variation ${index + 1}`;
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    // If we are in read-only mode, clicking the card doesn't select anything
+    if (readOnly) return;
+
+    // If we are already editing, don't trigger selection toggle on clicks inside
+    if (isEditing) return;
+
+    const target = e.target as HTMLElement;
+
+    // Check if the click target is inside one of our editable text fields:
+    const isBodyClick = bodyRef.current?.contains(target);
+    const isHeadlineClick = headlineRef.current?.contains(target);
+    const isDescriptionClick = descriptionRef.current?.contains(target);
+    const isHashtagsClick = hashtagsRef.current?.contains(target);
+
+    // Check if they clicked an interactive element like a button, input checkbox, or drop-down
+    const isInteractiveClick = target.closest('button') || target.closest('input') || target.closest('select');
+
+    if (isInteractiveClick) {
+      // Let the button or checkbox handle its own click
+      return;
+    }
+
+    if (isBodyClick || isHeadlineClick || isDescriptionClick || isHashtagsClick) {
+      // User clicked directly on an editable text element — trigger EDIT mode!
+      handleEnterEdit();
+      // Prevent selection toggle from triggering
+      e.stopPropagation();
+    } else {
+      // User clicked outside the text blocks (e.g. padding/background) — toggle SELECTION!
+      if (onToggleSelect) {
+        onToggleSelect(variation.id);
+      }
+    }
+  };
+
   const isEditing = editState === 'edit';
 
   return (
     <article
-      className={`flex flex-col transition-all duration-200 rounded-xl relative group ${isSelected ? 'ring-2 ring-blue-400/50' : ''
-        } ${isEditing ? 'ring-2 ring-amber-400/40' : ''}`}
+      onClick={handleCardClick}
+      className={`flex flex-col transition-all duration-200 rounded-xl relative group ${isEditing ? 'ring-2 ring-amber-400/40' : 'select-none'} ${isSelected ? 'ring-2 ring-blue-400/50' : ''}`}
       style={{
         padding: '2.25rem 2.5rem',
         background: isSelected ? 'rgba(59, 130, 246, 0.03)' : colors.bgSurface,
         border: `1px solid ${colors.borderLight}`,
+        cursor: readOnly || isEditing ? 'default' : 'pointer',
       }}
     >
       {/* Checkbox + Angle label row */}
