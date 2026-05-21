@@ -163,7 +163,9 @@ function InlineEditableCardInner({
     }
   }, [variation, onSaveEdits]);
 
-  const variationLabel = `${variation.copyType === 'social_ads' ? 'Social Ad' : 'Organic Post'} · Variation ${index + 1}`;
+  const variationLabel = variation.headline 
+    ? `Copy ${index + 1}: ${variation.headline}` 
+    : `Copy ${index + 1}`;
 
   const handleCardClick = (e: React.MouseEvent) => {
     // If we are in read-only mode, clicking the card doesn't select anything
@@ -208,7 +210,7 @@ function InlineEditableCardInner({
       onClick={handleCardClick}
       className={`flex flex-col transition-all duration-200 rounded-xl relative group ${isEditing ? 'ring-2 ring-amber-400/40' : 'select-none'} ${isSelected ? 'ring-2 ring-blue-400/50' : ''}`}
       style={{
-        padding: '2.25rem 2.5rem',
+        padding: '1.25rem 1.5rem',
         background: isSelected ? 'rgba(59, 130, 246, 0.03)' : colors.bgSurface,
         border: `1px solid ${colors.borderLight}`,
         cursor: readOnly || isEditing ? 'default' : 'pointer',
@@ -336,20 +338,22 @@ function InlineEditableCardInner({
         className="flex flex-col pt-3 mt-auto rounded-lg p-3 border border-slate-100/60 bg-slate-50/50"
       >
         {/* Context Row */}
-        <div className="flex flex-col gap-2 pb-2 mb-2 border-b border-slate-100/60 w-full">
-          <div className="flex items-center gap-2 min-w-0" title={variation.audienceName || 'General Audience'}>
-            <Target className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-            <span className="text-[11px] truncate font-medium text-slate-500">
-              Audience: <span className="font-semibold text-slate-700">{variation.audienceName || 'General'}</span>
-            </span>
+        {!readOnly && (
+          <div className="flex flex-col gap-2 pb-2 mb-2 border-b border-slate-100/60 w-full">
+            <div className="flex items-center gap-2 min-w-0" title={variation.audienceName || 'General Audience'}>
+              <Target className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+              <span className="text-[11px] truncate font-medium text-slate-500">
+                Audience: <span className="font-semibold text-slate-700">{variation.audienceName || 'General'}</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-2 min-w-0" title={variation.angleName || `Angle ${index + 1}`}>
+              <Zap className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+              <span className="text-[11px] truncate font-medium text-slate-500">
+                Angle: <span className="font-semibold text-slate-700">{variation.angleName || `Angle ${index + 1}`}</span>
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-2 min-w-0" title={variation.angleName || `Angle ${index + 1}`}>
-            <Zap className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-            <span className="text-[11px] truncate font-medium text-slate-500">
-              Angle: <span className="font-semibold text-slate-700">{variation.angleName || `Angle ${index + 1}`}</span>
-            </span>
-          </div>
-        </div>
+        )}
 
         {/* Action / Model Row */}
         <div className="flex items-center justify-between w-full">

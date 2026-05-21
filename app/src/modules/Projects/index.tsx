@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
 import { Project } from './types';
@@ -54,6 +54,34 @@ export function ProjectsModule() {
     { enabled: !!selectedProject && detailTab === 'copy' }
   );
   const copyResults = copyResultsQuery.data?.results ?? [];
+
+  const [activeAudienceTab, setActiveAudienceTab] = useState<string>('');
+
+  const groupedCopyResults = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    copyResults.forEach((v: any) => {
+      const aud = v.audienceName || 'General';
+      if (!groups[aud]) {
+        groups[aud] = [];
+      }
+      groups[aud].push(v);
+    });
+    return groups;
+  }, [copyResults]);
+
+  const audienceNames = useMemo(() => Object.keys(groupedCopyResults), [groupedCopyResults]);
+
+  // Auto-select first audience tab if current one is invalid
+  useEffect(() => {
+    if (audienceNames.length > 0 && !audienceNames.includes(activeAudienceTab)) {
+      setActiveAudienceTab(audienceNames[0]);
+    }
+  }, [audienceNames, activeAudienceTab]);
+
+  // Reset active audience tab on project change
+  useEffect(() => {
+    setActiveAudienceTab('');
+  }, [selectedProject]);
 
   // Data Fetching (Batch Loaded)
   const projectsQuery = trpc.assets.getProjects.useQuery({ includeThumbnails: true });
@@ -275,10 +303,46 @@ export function ProjectsModule() {
               description="Select and save generated copy cards to this project from the Copy module"
             />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-in fade-in duration-200">
-              {copyResults.map((v: any, idx: number) => (
-                <InlineEditableCard key={v.id} variation={v} index={idx} readOnly={true} />
-              ))}
+            <div className="flex flex-col gap-4 animate-in fade-in duration-200">
+              {/* Audience Sub-Tabs Bar */}
+              <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-50/80 rounded-xl border border-slate-100 max-w-max">
+                {audienceNames.map((audName) => {
+                  const isActive = audName === activeAudienceTab;
+                  const count = groupedCopyResults[audName]?.length ?? 0;
+                  return (
+                    <button
+                      key={audName}
+                      onClick={() => setActiveAudienceTab(audName)}
+                      className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all duration-150 ${
+                        isActive 
+                          ? 'bg-white shadow-sm border border-slate-200 text-slate-900 font-bold' 
+                          : 'border border-transparent text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      {audName}
+                      <span className={`text-[10px] rounded-full px-1.5 py-0.5 font-bold transition-colors ${
+                        isActive ? 'bg-blue-50 text-blue-600' : 'bg-slate-200/60 text-slate-500'
+                      }`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Grid of overlookable compact cards */}
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {(groupedCopyResults[activeAudienceTab] ?? []).map((v: any, idx: number) => (
+                    <InlineEditableCard 
+                      key={v.id} 
+                      variation={v} 
+                      index={idx} 
+                      readOnly={true} 
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
           )
         )}
