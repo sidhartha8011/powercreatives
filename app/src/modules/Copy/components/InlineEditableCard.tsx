@@ -299,25 +299,6 @@ function InlineEditableCardInner({
         </div>
       )}
 
-      {/* ─── CTA ─── */}
-      {(variation.cta || isEditing) && (
-        <p
-          ref={ctaRef}
-          contentEditable={isEditing || undefined}
-          suppressContentEditableWarning
-          className="font-semibold mb-3"
-          style={{
-            color: '#2563eb',
-            fontSize: '0.8125rem',
-            outline: 'none',
-            cursor: isEditing ? 'text' : 'default',
-            minHeight: isEditing ? '1.25em' : undefined,
-          }}
-        >
-          {variation.cta}
-        </p>
-      )}
-
       {/* Footer — model + actions */}
       <div
         className="flex flex-col pt-3 mt-auto rounded-lg p-3 border border-slate-100/60 bg-slate-50/50"
@@ -344,82 +325,95 @@ function InlineEditableCardInner({
             via {variation.modelUsed || 'Gemini Flash'}
           </span>
 
-          {!readOnly && (
-            <div className="flex gap-2">
-              {isEditing ? (
-                <>
+          <div className="flex gap-2">
+            {isEditing ? (
+              <>
+                <button
+                  onClick={handleCancelEdit}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+                  style={{
+                    background: 'transparent',
+                    color: colors.textMuted,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+                  style={{
+                    background: '#2563eb',
+                    color: '#fff',
+                    border: '1px solid #2563eb',
+                    opacity: isSaving ? 0.6 : 1,
+                  }}
+                >
+                  {isSaving ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  {isSaving ? 'Saving…' : 'Save'}
+                </button>
+              </>
+            ) : readOnly ? (
+              <button
+                onClick={handleCopy}
+                title={copied ? 'Copied!' : 'Copy to clipboard'}
+                className="flex items-center p-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+                style={{
+                  background: copied ? colors.successLight : 'transparent',
+                  color: copied ? colors.success : colors.textMuted,
+                  border: copied
+                    ? `1px solid ${colors.successBorder}`
+                    : `1px solid ${colors.border}`,
+                }}
+              >
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            ) : (
+              <>
+                <RegenerateSplitButton
+                  onRegenerate={(instruction) => onRegenerateCard && onRegenerateCard(variation.id, instruction)}
+                  isRegenerating={isRegenerating}
+                />
+
+                <button
+                  onClick={handleCopy}
+                  title={copied ? 'Copied!' : 'Copy to clipboard'}
+                  className="flex items-center p-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+                  style={{
+                    background: copied ? colors.successLight : 'transparent',
+                    color: copied ? colors.success : colors.textMuted,
+                    border: copied
+                      ? `1px solid ${colors.successBorder}`
+                      : `1px solid ${colors.border}`,
+                  }}
+                >
+                  {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+
+                {/* Duplicate button — clones this card and inserts it directly below */}
+                {onDuplicate && (
                   <button
-                    onClick={handleCancelEdit}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+                    onClick={() => onDuplicate(variation.id)}
+                    title="Duplicate card"
+                    className="flex items-center p-1.5 text-xs font-medium transition-all duration-150 rounded-lg hover:bg-gray-50"
                     style={{
-                      background: 'transparent',
                       color: colors.textMuted,
+                      background: 'transparent',
                       border: `1px solid ${colors.border}`,
                     }}
                   >
-                    <X className="w-3.5 h-3.5" />
-                    Cancel
+                    <CopyPlus className="w-3.5 h-3.5" />
                   </button>
-                  <button
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
-                    style={{
-                      background: '#2563eb',
-                      color: '#fff',
-                      border: '1px solid #2563eb',
-                      opacity: isSaving ? 0.6 : 1,
-                    }}
-                  >
-                    {isSaving ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Save className="w-3.5 h-3.5" />
-                    )}
-                    {isSaving ? 'Saving…' : 'Save'}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <RegenerateSplitButton
-                    onRegenerate={(instruction) => onRegenerateCard && onRegenerateCard(variation.id, instruction)}
-                    isRegenerating={isRegenerating}
-                  />
-
-                  <button
-                    onClick={handleCopy}
-                    title={copied ? 'Copied!' : 'Copy to clipboard'}
-                    className="flex items-center p-1.5 rounded-lg text-xs font-medium transition-all duration-150"
-                    style={{
-                      background: copied ? colors.successLight : 'transparent',
-                      color: copied ? colors.success : colors.textMuted,
-                      border: copied
-                        ? `1px solid ${colors.successBorder}`
-                        : `1px solid ${colors.border}`,
-                    }}
-                  >
-                    {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-
-                  {/* Duplicate button — clones this card and inserts it directly below */}
-                  {onDuplicate && (
-                    <button
-                      onClick={() => onDuplicate(variation.id)}
-                      title="Duplicate card"
-                      className="flex items-center p-1.5 text-xs font-medium transition-all duration-150 rounded-lg hover:bg-gray-50"
-                      style={{
-                        color: colors.textMuted,
-                        background: 'transparent',
-                        border: `1px solid ${colors.border}`,
-                      }}
-                    >
-                      <CopyPlus className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          )}
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
     </article>
