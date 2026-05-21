@@ -176,12 +176,6 @@ function InlineEditableCardInner({
 
     const target = e.target as HTMLElement;
 
-    // Check if the click target is inside one of our editable text fields:
-    const isBodyClick = bodyRef.current?.contains(target);
-    const isHeadlineClick = headlineRef.current?.contains(target);
-    const isDescriptionClick = descriptionRef.current?.contains(target);
-    const isHashtagsClick = hashtagsRef.current?.contains(target);
-
     // Check if they clicked an interactive element like a button, input checkbox, or drop-down
     const isInteractiveClick = target.closest('button') || target.closest('input') || target.closest('select');
 
@@ -190,17 +184,25 @@ function InlineEditableCardInner({
       return;
     }
 
-    if (isBodyClick || isHeadlineClick || isDescriptionClick || isHashtagsClick) {
-      // User clicked directly on an editable text element — trigger EDIT mode!
-      handleEnterEdit();
-      // Prevent selection toggle from triggering
-      e.stopPropagation();
-    } else {
-      // User clicked outside the text blocks (e.g. padding/background) — toggle SELECTION!
-      if (onToggleSelect) {
-        onToggleSelect(variation.id);
-      }
+    // Single click toggles selection
+    if (onToggleSelect) {
+      onToggleSelect(variation.id);
     }
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    // If read-only, already editing, or no save handler is configured, ignore
+    if (readOnly || isEditing || !onSaveEdits) return;
+
+    const target = e.target as HTMLElement;
+    const isInteractiveClick = target.closest('button') || target.closest('input') || target.closest('select');
+
+    if (isInteractiveClick) {
+      return;
+    }
+
+    // Double click enters edit mode
+    handleEnterEdit();
   };
 
   const isEditing = editState === 'edit';
@@ -208,6 +210,7 @@ function InlineEditableCardInner({
   return (
     <article
       onClick={handleCardClick}
+      onDoubleClick={handleDoubleClick}
       className={`flex flex-col transition-all duration-200 rounded-xl relative group ${isEditing ? 'ring-2 ring-amber-400/40' : 'select-none'} ${isSelected ? 'ring-2 ring-blue-400/50' : ''}`}
       style={{
         padding: '1.25rem 1.5rem',

@@ -34,7 +34,9 @@ import {
   Copy,
   Check,
   FileText,
+  FolderInput,
 } from 'lucide-react';
+import { BulkActionBar } from '@/components/shared/BulkActionBar';
 
 export function ProjectsModule() {
   // Global View State
@@ -99,6 +101,48 @@ export function ProjectsModule() {
   const [renameModalOpen, setRenameModalOpen] = useState(false);
   const [projectToRename, setProjectToRename] = useState<Project | null>(null);
   const [newName, setNewName] = useState('');
+
+  // Copy Selection & Movement States
+  const [selectedCopyIds, setSelectedCopyIds] = useState<string[]>([]);
+  const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false);
+
+  // Sync/clear copy selections when active project or tab changes
+  useEffect(() => {
+    setSelectedCopyIds([]);
+  }, [selectedProject, detailTab]);
+
+  const handleToggleCopySelect = (cardId: string) => {
+    setSelectedCopyIds((prev) =>
+      prev.includes(cardId) ? prev.filter((id) => id !== cardId) : [...prev, cardId]
+    );
+  };
+
+  const handleClearCopySelection = () => setSelectedCopyIds([]);
+
+  // Mutation for Inline Copy Card Editing
+  const updateCopyResultMutation = trpc.copy.updateResult.useMutation();
+
+  const handleSaveCopyEdits = async (
+    variationId: string,
+    updates: { headline?: string; body?: string; cta?: string; hashtags?: string; description?: string }
+  ) => {
+    const resultId = parseInt(variationId, 10);
+    if (isNaN(resultId)) {
+      toast.error('Invalid copy result ID');
+      return;
+    }
+    try {
+      await updateCopyResultMutation.mutateAsync({
+        resultId,
+        ...updates,
+      });
+      toast.success('Edits saved successfully');
+      copyResultsQuery.refetch();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save edits');
+      throw err;
+    }
+  };
 
   // Create Project State
   const [showCreate, setShowCreate] = useState(false);
@@ -338,7 +382,11 @@ export function ProjectsModule() {
                       key={v.id} 
                       variation={v} 
                       index={idx} 
-                      readOnly={true} 
+                      readOnly={false}
+                      isSelected={selectedCopyIds.includes(v.id)}
+                      onToggleSelect={handleToggleCopySelect}
+                      showCheckbox={selectedCopyIds.length > 0}
+                      onSaveEdits={handleSaveCopyEdits}
                     />
                   ))}
                 </div>
@@ -346,6 +394,33 @@ export function ProjectsModule() {
             </div>
           )
         )}
+
+        {/* Bulk Action Bar for Campaign Copy Cards */}
+        {selectedCopyIds.length > 0 && (
+          <BulkActionBar
+            count={selectedCopyIds.length}
+            onClear={handleClearCopySelection}
+          >
+            <BulkActionBar.Action
+              icon={FolderInput}
+              label="Move to Project"
+              onClick={() => setIsMoveDialogOpen(true)}
+            />
+          </BulkActionBar>
+        )}
+
+        {/* Move To Project Dialog */}
+        <MoveToProjectDialog
+          open={isMoveDialogOpen}
+          onOpenChange={setIsMoveDialogOpen}
+          selectedIds={selectedCopyIds}
+          currentProjectId={selectedProject.id}
+          onComplete={() => {
+            handleClearCopySelection();
+            copyResultsQuery.refetch();
+            projectsQuery.refetch();
+          }}
+        />
       </div>
     );
   }
@@ -508,5 +583,108 @@ export function ProjectsModule() {
       </Dialog>
 
     </div>
+  );
+}
+
+interface MoveToProjectDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  selectedIds: string[];
+  currentProjectId: number;
+  onComplete: () => void;
+}
+
+export function MoveToProjectDialog({
+  open,
+  onOpenChange,
+  selectedIds,
+  currentProjectId,
+  onComplete,
+}: MoveToProjectDialogProps) {
+  const [targetProjectId, setTargetProjectId] = useState<string>('');
+  const [isMoving, setIsMoving] = useState(false);
+
+  // Fetch projects list (omit the current project so they don't move to the same one!)
+  const { data: projects, isLoading } = trpc.assets.getProjects.useQuery(undefined, { enabled: open });
+  const moveMutation = trpc.copy.saveToProject.useMutation();
+
+  const filteredProjects = useMemo(() => {
+    return (projects ?? []).filter((p: any) => p.id !== currentProjectId);
+  }, [projects, currentProjectId]);
+
+  const handleMove = async () => {
+    if (!targetProjectId) {
+      toast.error('Please select a project');
+      return;
+    }
+
+    setIsMoving(true);
+    try {
+      const cleanIds = selectedIds.map(id => {
+        const parsed = parseInt(id.replace(/[^\d]/g, ''), 10);
+        return isNaN(parsed) ? 0 : parsed;
+      }).filter(id => id > 0);
+
+      if (cleanIds.length === 0) {
+        toast.error('No valid copy results selected.');
+        return;
+      }
+
+      await moveMutation.mutateAsync({
+        resultIds: cleanIds,
+        projectId: parseInt(targetProjectId, 10),
+      });
+
+      const projectName = projects?.find((p: any) => p.id.toString() === targetProjectId)?.name ?? 'project';
+      toast.success(`Moved ${cleanIds.length} copy card(s) to "${projectName}"`);
+      onComplete();
+      onOpenChange(false);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to move copy cards');
+    } finally {
+      setIsMoving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle>Move Copy to Project</DialogTitle>
+        </DialogHeader>
+        <div className="py-4 flex flex-col gap-4">
+          <label className="text-sm font-medium text-slate-700">Select target project:</label>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+            </div>
+          ) : filteredProjects.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-2">No other active projects found.</p>
+          ) : (
+            <Select value={targetProjectId} onValueChange={setTargetProjectId}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose a project..." />
+              </SelectTrigger>
+              <SelectContent>
+                {filteredProjects.map((p: any) => (
+                  <SelectItem key={p.id} value={p.id.toString()}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isMoving}>
+            Cancel
+          </Button>
+          <Button onClick={handleMove} disabled={isMoving || !targetProjectId} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold">
+            {isMoving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Confirm Move
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
