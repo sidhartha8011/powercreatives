@@ -6,6 +6,7 @@ import { useProjectActions } from './hooks/useProjectActions';
 import { ProjectGrid } from './components/ProjectGrid';
 import { ProjectList } from './components/ProjectList';
 import { getGradient, formatProjectDate } from './utils';
+import { useClipboard } from '@/hooks/useClipboard';
 
 import { ModuleHeader } from '@/components/shared/ModuleHeader';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -20,7 +21,20 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { useSortableTable } from '@/hooks/useSortableTable';
-import { Plus, Folder, LayoutGrid, List, Loader2, ArrowLeft, ImageIcon, Search, X } from 'lucide-react';
+import {
+  Plus,
+  Folder,
+  LayoutGrid,
+  List,
+  Loader2,
+  ArrowLeft,
+  ImageIcon,
+  Search,
+  X,
+  Copy,
+  Check,
+  FileText,
+} from 'lucide-react';
 
 export function ProjectsModule() {
   // Global View State
@@ -33,6 +47,13 @@ export function ProjectsModule() {
     { enabled: !!selectedProject }
   );
   const assets = assetsQuery.data ?? [];
+
+  const [detailTab, setDetailTab] = useState<'media' | 'copy'>('media');
+  const copyResultsQuery = trpc.copy.getProjectResults.useQuery(
+    { projectId: selectedProject?.id ?? 0 },
+    { enabled: !!selectedProject && detailTab === 'copy' }
+  );
+  const copyResults = copyResultsQuery.data?.results ?? [];
 
   // Data Fetching (Batch Loaded)
   const projectsQuery = trpc.assets.getProjects.useQuery({ includeThumbnails: true });
@@ -150,7 +171,10 @@ export function ProjectsModule() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setSelectedProject(null)}
+            onClick={() => {
+              setSelectedProject(null);
+              setDetailTab('media');
+            }}
             className="h-9 w-9 rounded-full"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -160,57 +184,103 @@ export function ProjectsModule() {
               {selectedProject.name}
             </h1>
             <p className="text-sm text-slate-500 mt-1 capitalize">
-              {assets.length} asset{assets.length !== 1 ? 's' : ''} · {selectedProject.type}
+              {assets.length} media asset{assets.length !== 1 ? 's' : ''} · {copyResults.length} copy card{copyResults.length !== 1 ? 's' : ''} · {selectedProject.type}
             </p>
           </div>
         </div>
 
-        {assetsQuery.isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
-          </div>
-        ) : assets.length === 0 ? (
-          <EmptyState
-            icon={<ImageIcon className="w-12 h-12" />}
-            title="No assets in this project"
-            description="Save images or videos to this project from the Image or Video modules"
-          />
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {assets.map((asset: any) => (
-              <div
-                key={asset.id}
-                className="group relative rounded-lg overflow-hidden border border-slate-200 bg-slate-50 aspect-square"
-              >
-                {asset.url ? (
-                  <img
-                    src={asset.url}
-                    alt={asset.prompt || 'Saved asset'}
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center">
-                    <ImageIcon className="w-8 h-8 text-slate-300" />
-                  </div>
-                )}
-                {/* Hover overlay */}
+        {/* Detail Tabs Bar */}
+        <div className="flex border-b border-slate-200 mb-6 gap-6">
+          <button
+            onClick={() => setDetailTab('media')}
+            className={`pb-3 text-sm font-semibold relative transition-colors ${
+              detailTab === 'media' ? 'text-blue-600' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Media Assets ({assets.length})
+            {detailTab === 'media' && (
+              <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-blue-600 rounded-full animate-in fade-in duration-200" />
+            )}
+          </button>
+          <button
+            onClick={() => setDetailTab('copy')}
+            className={`pb-3 text-sm font-semibold relative transition-colors ${
+              detailTab === 'copy' ? 'text-blue-600' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Campaign Copy ({copyResults.length})
+            {detailTab === 'copy' && (
+              <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-blue-600 rounded-full animate-in fade-in duration-200" />
+            )}
+          </button>
+        </div>
+
+        {detailTab === 'media' ? (
+          assetsQuery.isLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
+            </div>
+          ) : assets.length === 0 ? (
+            <EmptyState
+              icon={<ImageIcon className="w-12 h-12" />}
+              title="No assets in this project"
+              description="Save images or videos to this project from the Image or Video modules"
+            />
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 animate-in fade-in duration-200">
+              {assets.map((asset: any) => (
                 <div
-                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2 bg-gradient-to-t from-black/80 to-transparent"
+                  key={asset.id}
+                  className="group relative rounded-lg overflow-hidden border border-slate-200 bg-slate-50 aspect-square"
                 >
-                  {asset.prompt && (
-                    <p className="line-clamp-2 text-[11px] text-white font-medium leading-snug">
-                      {asset.prompt}
-                    </p>
+                  {asset.url ? (
+                    <img
+                      src={asset.url}
+                      alt={asset.prompt || 'Saved asset'}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <ImageIcon className="w-8 h-8 text-slate-300" />
+                    </div>
                   )}
-                  <div className="flex items-center gap-2 mt-1 text-[10px] text-white/70">
-                    <span>{asset.model}</span>
-                    <span>{formatProjectDate(asset.createdAt)}</span>
+                  {/* Hover overlay */}
+                  <div
+                    className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2 bg-gradient-to-t from-black/80 to-transparent"
+                  >
+                    {asset.prompt && (
+                      <p className="line-clamp-2 text-[11px] text-white font-medium leading-snug">
+                        {asset.prompt}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 mt-1 text-[10px] text-white/70">
+                      <span>{asset.model}</span>
+                      <span>{formatProjectDate(asset.createdAt)}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )
+        ) : (
+          copyResultsQuery.isLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
+            </div>
+          ) : copyResults.length === 0 ? (
+            <EmptyState
+              icon={<FileText className="w-12 h-12" />}
+              title="No saved copy in this project"
+              description="Select and save generated copy cards to this project from the Copy module"
+            />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-in fade-in duration-200">
+              {copyResults.map((v: any, idx: number) => (
+                <CopyResultCard key={v.id} variation={v} index={idx} />
+              ))}
+            </div>
+          )
         )}
       </div>
     );
@@ -227,7 +297,6 @@ export function ProjectsModule() {
         <ModuleHeader
           title="Projects"
           description="Manage your projects and keep your campaign assets organized"
-          className="mb-0"
         />
         <div className="flex items-center gap-3">
           <div className="flex bg-slate-100 p-1 rounded-md border border-slate-200">
@@ -375,5 +444,103 @@ export function ProjectsModule() {
       </Dialog>
 
     </div>
+  );
+}
+
+// ============================================================================
+// CopyResultCard Subcomponent
+// ============================================================================
+
+function CopyResultCard({ variation, index }: { variation: any; index: number }) {
+  const { copy, copied } = useClipboard();
+
+  const handleCopy = () => {
+    const text = [
+      variation.body,
+      variation.headline,
+      variation.description,
+      variation.cta,
+      variation.hashtags?.join(' '),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    copy(text);
+  };
+
+  const angleLabel = variation.audienceName
+    ? `${variation.copyType === 'social_ads' ? 'Ad' : 'Organic'} · ${variation.audienceName}`
+    : `${variation.copyType === 'social_ads' ? 'Social Ad' : 'Social Organic'}`;
+
+  return (
+    <article
+      className="flex flex-col transition-all duration-200 rounded-xl relative border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md"
+    >
+      <div className="flex items-center justify-between mb-4">
+        <span
+          className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded"
+          style={{
+            background: variation.copyType === 'social_ads' ? '#eff6ff' : '#ecfdf5',
+            color: variation.copyType === 'social_ads' ? '#1e40af' : '#065f46',
+          }}
+        >
+          {angleLabel}
+        </span>
+        <button
+          onClick={handleCopy}
+          title={copied ? 'Copied!' : 'Copy to clipboard'}
+          className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+        >
+          {copied ? (
+            <Check className="w-3.5 h-3.5 text-emerald-600" />
+          ) : (
+            <Copy className="w-3.5 h-3.5 text-slate-500" />
+          )}
+        </button>
+      </div>
+
+      {variation.body && (
+        <div
+          className="whitespace-pre-line text-sm text-slate-700 leading-relaxed mb-4"
+        >
+          {variation.body}
+        </div>
+      )}
+
+      {variation.hashtags && variation.hashtags.length > 0 && (
+        <p className="text-xs text-indigo-600 font-medium mb-4">
+          {variation.hashtags.map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ')}
+        </p>
+      )}
+
+      {(variation.headline || variation.description) && (
+        <div
+          className="mb-4 rounded-lg bg-slate-50 p-4 border-l-4 border-slate-200"
+        >
+          {variation.headline && (
+            <h3 className="font-bold text-slate-900 text-sm leading-snug">
+              {variation.headline}
+            </h3>
+          )}
+          {variation.description && (
+            <p className="mt-1 text-slate-500 text-xs leading-snug">
+              {variation.description}
+            </p>
+          )}
+        </div>
+      )}
+
+      {variation.cta && (
+        <p className="font-semibold text-blue-600 text-sm mb-4">
+          {variation.cta}
+        </p>
+      )}
+
+      <div
+        className="flex items-center justify-between pt-3 mt-auto border-t border-slate-100 text-[10px] text-slate-400 font-medium"
+      >
+        <span>via {variation.modelUsed}</span>
+        <span>Saved {formatProjectDate(variation.createdAt)}</span>
+      </div>
+    </article>
   );
 }

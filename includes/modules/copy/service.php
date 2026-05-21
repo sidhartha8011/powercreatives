@@ -849,6 +849,88 @@ class PCM_Copy_Service
         return array_map(function ($row) {
             return array(
                 'id' => (int)$row->id,
+                'projectId' => isset($row->projectId) && $row->projectId ? (int)$row->projectId : null,
+                'copyType' => $row->copyType,
+                'audienceId' => $row->audienceId,
+                'audienceName' => $row->audienceName,
+                'headline' => $row->headline,
+                'body' => $row->body,
+                'cta' => $row->cta,
+                'hashtags' => json_decode($row->hashtags ?? '[]', true),
+                'description' => $row->description,
+                'createdAt' => $row->createdAt,
+            );
+        }, $results ?: array());
+    }
+
+    /**
+     * Associate selected copy results with a project.
+     *
+     * @param array $result_ids Array of copy result IDs.
+     * @param int   $project_id Project ID.
+     * @param int   $user_id    PCM user ID.
+     *
+     * @return int Number of affected rows.
+     */
+    public function save_to_project(array $result_ids, int $project_id, int $user_id): int
+    {
+        global $wpdb;
+
+        if (empty($result_ids)) {
+            return 0;
+        }
+
+        $result_table = PCM_Schema::table('copy_results');
+        $project_table = PCM_Schema::table('projects');
+
+        // Verify project ownership
+        $project_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $project_table WHERE id = %d AND userId = %d",
+            $project_id,
+            $user_id
+        ));
+
+        if (!$project_exists) {
+            throw new \InvalidArgumentException('Project not found or not owned by user.');
+        }
+
+        // Clean and prepare IDs
+        $clean_ids = array_map('intval', $result_ids);
+        $placeholders = implode(',', array_fill(0, count($clean_ids), '%d'));
+
+        // Perform bulk update of projectId
+        $sql = "UPDATE $result_table SET projectId = %d WHERE id IN ($placeholders) AND userId = %d";
+        $params = array_merge(array($project_id), $clean_ids, array($user_id));
+
+        $affected = $wpdb->query($wpdb->prepare($sql, ...$params));
+
+        return $affected !== false ? $affected : 0;
+    }
+
+    /**
+     * Get all copy results for a specific project.
+     *
+     * @param int $project_id Project ID.
+     * @param int $user_id    PCM user ID.
+     *
+     * @return array List of formatted copy results.
+     */
+    public function get_results_for_project(int $project_id, int $user_id): array
+    {
+        global $wpdb;
+
+        $result_table = PCM_Schema::table('copy_results');
+
+        $results = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $result_table WHERE projectId = %d AND userId = %d ORDER BY id DESC",
+            $project_id,
+            $user_id
+        ));
+
+        return array_map(function ($row) {
+            return array(
+                'id' => (int)$row->id,
+                'projectId' => (int)$row->projectId,
                 'copyType' => $row->copyType,
                 'audienceId' => $row->audienceId,
                 'audienceName' => $row->audienceName,

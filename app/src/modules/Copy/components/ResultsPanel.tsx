@@ -21,6 +21,9 @@ import {
   CopyPlus,
   Pencil,
   Check,
+  FolderPlus,
+  FolderOpen,
+  Loader2,
 } from 'lucide-react';
 import { PillButton, colors, typography, spacing } from '@/components/shared';
 import type { CopyType, CopyVariation, CopyResults, CopyAudience } from '../types';
@@ -28,6 +31,25 @@ import { COPY_TYPE_LABELS, filterByAudience } from '../types';
 import { useTextModels } from '../useTextModels';
 import { InlineEditableCard, REGEN_PRESETS } from './InlineEditableCard';
 import type { UseSelectionReturn } from '../useSelection';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { trpc } from '@/lib/trpc';
+import { toast } from 'sonner';
 
 // ─── Types ───
 
@@ -42,6 +64,7 @@ export type BulkAction =
   | 'professional'
   | 'casual'
   | 'change_cta'
+  | 'save_to_project'
   | 'custom';
 
 interface Props {
@@ -203,6 +226,7 @@ function ActionDropdown({
     { id: 'professional', label: 'More professional' },
     { id: 'casual', label: 'More casual' },
     { id: 'change_cta', label: 'Change CTA' },
+    { id: 'save_to_project', label: 'Save to Project...' },
     { id: 'custom', label: 'Custom instructions…' },
   ];
 
@@ -416,6 +440,7 @@ export function ResultsPanel({
 
   // Generate scope — default to all_types for simplicity
   const [generateScope] = useState<GenerateScope>('all_types');
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
 
   useEffect(() => {
     if (activeTypes.length === 0) {
@@ -481,6 +506,10 @@ export function ResultsPanel({
   // ─── Bulk action handlers ───
   const handleBulkAction = useCallback(
     (action: BulkAction) => {
+      if (action === 'save_to_project') {
+        setIsSaveDialogOpen(true);
+        return;
+      }
       if (!onRegenerateBatch) return;
       const ids = selection.getSelectedIds();
       if (ids.length === 0) return;
@@ -498,7 +527,9 @@ export function ResultsPanel({
       };
 
       const instruction = instructionMap[action];
-      onRegenerateBatch(ids, instruction);
+      if (instruction !== undefined) {
+        onRegenerateBatch(ids, instruction);
+      }
     },
     [onRegenerateBatch, selection],
   );
@@ -962,6 +993,187 @@ export function ResultsPanel({
           </div>
         </>
       )}
+
+      {/* ── Save to Project Dialog ── */}
+      <SaveToProjectDialog
+        open={isSaveDialogOpen}
+        onOpenChange={setIsSaveDialogOpen}
+        selectedIds={selection.getSelectedIds()}
+        onComplete={() => {
+          selection.clearSelection();
+        }}
+      />
     </div>
+  );
+}
+
+// ============================================================================
+// SaveToProjectDialog Component
+// ============================================================================
+
+interface SaveToProjectDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  selectedIds: string[];
+  onComplete: () => void;
+}
+
+export function SaveToProjectDialog({
+  open,
+  onOpenChange,
+  selectedIds,
+  onComplete,
+}: SaveToProjectDialogProps) {
+  const [projectId, setProjectId] = useState<string>('');
+  const [showNew, setShowNew] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Fetch projects list
+  const { data: projects, isLoading: projectsLoading, refetch: refetchProjects } =
+    trpc.assets.getProjects.useQuery(undefined, { enabled: open });
+
+  const saveToProjectMutation = trpc.copy.saveToProject.useMutation();
+  const createProjectMutation = trpc.assets.createProject.useMutation();
+
+  const handleSave = async () => {
+    if (!projectId || projectId === 'none') {
+      toast.error('Please select a project');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      // Parse card IDs from selections (they are string IDs e.g. "v-123", let's extract ints)
+      const cleanIds = selectedIds.map(id => {
+        const parsed = parseInt(id.replace(/[^\d]/g, ''), 10);
+        return isNaN(parsed) ? 0 : parsed;
+      }).filter(id => id > 0);
+
+      if (cleanIds.length === 0) {
+        toast.error('No valid copy results selected.');
+        return;
+      }
+
+      await saveToProjectMutation.mutateAsync({
+        resultIds: cleanIds,
+        projectId: parseInt(projectId, 10),
+      });
+
+      const projectName = projects?.find((p: any) => p.id.toString() === projectId)?.name ?? 'project';
+      toast.success(`Successfully saved ${cleanIds.length} copy card(s) to "${projectName}"`);
+      onComplete();
+      onOpenChange(false);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to save copy cards to project');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCreateProject = async () => {
+    if (!newName.trim()) return;
+    setIsSaving(true);
+    try {
+      const result = await createProjectMutation.mutateAsync({ name: newName.trim(), type: 'copy' });
+      await refetchProjects();
+      setProjectId(result.id.toString());
+      setNewName('');
+      setShowNew(false);
+      toast.success(`Created project "${result.name}"`);
+    } catch (err) {
+      toast.error('Failed to create project');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FolderOpen className="w-5 h-5 text-blue-600" />
+            Save Copy to Project
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="grid gap-6 py-4">
+          <p className="text-sm text-slate-500">
+            You are saving <strong>{selectedIds.length}</strong> selected copy card(s).
+          </p>
+
+          {showNew ? (
+            <div className="flex flex-col gap-3 p-3 rounded-lg border border-slate-100 bg-slate-50/50 animate-in fade-in slide-in-from-top-2 duration-200">
+              <Label htmlFor="new-project-name" className="text-xs font-semibold text-slate-600">New Project Name</Label>
+              <Input
+                id="new-project-name"
+                placeholder="e.g. Summer Campaign 2026"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="w-full h-9 text-sm"
+                onKeyDown={(e) => e.key === 'Enter' && handleCreateProject()}
+                disabled={isSaving}
+                autoFocus
+              />
+              <div className="flex justify-end gap-2 mt-1">
+                <Button variant="ghost" size="sm" onClick={() => setShowNew(false)} disabled={isSaving} className="h-8 text-xs">
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleCreateProject} disabled={!newName.trim() || isSaving} className="h-8 text-xs gap-1">
+                  {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5" />}
+                  Create Project
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="project-select" className="text-xs font-semibold text-slate-600">Choose Project</Label>
+              <div className="flex gap-2">
+                <Select value={projectId} onValueChange={setProjectId} disabled={isSaving || projectsLoading}>
+                  <SelectTrigger id="project-select" className="flex-1 text-sm h-10">
+                    <SelectValue placeholder="Select a project..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {projectsLoading ? (
+                      <div className="flex items-center justify-center p-4 text-xs text-slate-400">
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading...
+                      </div>
+                    ) : !projects || projects.length === 0 ? (
+                      <SelectItem value="none" disabled>No projects yet</SelectItem>
+                    ) : (
+                      projects.map((p: any) => (
+                        <SelectItem key={p.id} value={p.id.toString()}>
+                          {p.name}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowNew(true)}
+                  disabled={isSaving}
+                  className="h-10 px-3 shrink-0"
+                  title="Create New Project"
+                >
+                  <FolderPlus className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isSaving}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={isSaving || !projectId || projectId === 'none'} className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5">
+            {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+            Save to Project
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

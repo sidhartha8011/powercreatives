@@ -64,6 +64,8 @@ class PCM_REST_Copy extends PCM_REST_Base
             // Result operations
                 array('POST', '/copy/update-result', 'update_result'),
                 array('GET', '/copy/jobs/(?P<jobId>\d+)', 'get_job_results'),
+                array('POST', '/copy/save-to-project', 'save_to_project'),
+                array('GET', '/copy/project/(?P<projectId>\d+)', 'get_project_results'),
 
             // URL Scraper (for extracting business info from websites)
                 array('POST', '/copy/scrape-url', 'scrape_business_info'),
@@ -665,6 +667,72 @@ class PCM_REST_Copy extends PCM_REST_Base
             return $this->success($info);
         }
         catch (\Exception $e) {
+            return $this->error($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * POST /copy/save-to-project — Save one or more copy results to a project.
+     *
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response|WP_Error
+     */
+    public function save_to_project(WP_REST_Request $request)
+    {
+        $user = $this->get_current_pcm_user();
+        $params = $request->get_json_params();
+
+        $result_ids = $params['resultIds'] ?? array();
+        $project_id = (int)($params['projectId'] ?? 0);
+
+        if (empty($result_ids)) {
+            // Handle legacy input parameter single resultId for versatility
+            $single_id = (int)($params['resultId'] ?? 0);
+            if ($single_id > 0) {
+                $result_ids = array($single_id);
+            } else {
+                return $this->error('resultIds is required.');
+            }
+        }
+
+        if (!$project_id) {
+            return $this->error('projectId is required.');
+        }
+
+        try {
+            $affected = $this->service->save_to_project($result_ids, $project_id, $user->id);
+            return $this->success(array(
+                'success' => true,
+                'count' => $affected,
+            ));
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 400);
+        } catch (\Exception $e) {
+            return $this->error($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * GET /copy/project/{projectId} — Get all copy results associated with a project.
+     *
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response|WP_Error
+     */
+    public function get_project_results(WP_REST_Request $request)
+    {
+        $user = $this->get_current_pcm_user();
+        $project_id = (int)$request->get_param('projectId');
+
+        if (!$project_id) {
+            return $this->error('projectId is required.');
+        }
+
+        try {
+            $results = $this->service->get_results_for_project($project_id, $user->id);
+            return $this->success(array(
+                'results' => $results,
+            ));
+        } catch (\Exception $e) {
             return $this->error($e->getMessage(), 500);
         }
     }

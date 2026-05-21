@@ -412,6 +412,12 @@ const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `copy/jobs/${input.jobId}` }),
     },
+    "copy.saveToProject": { endpoint: "copy/save-to-project", method: "POST" },
+    "copy.getProjectResults": {
+        endpoint: "copy",
+        method: "GET",
+        transform: (input: any) => ({ url: `copy/project/${input.projectId}` }),
+    },
 
     // ── Copy URL Scraper ──
     "copyUrlScraper.scrapeBusinessInfo": { endpoint: "copy/scrape-url", method: "POST" },

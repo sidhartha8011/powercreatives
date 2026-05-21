@@ -241,6 +241,7 @@ class PCM_Schema
             id int(11) NOT NULL AUTO_INCREMENT,
             jobId int(11) NOT NULL,
             userId int(11) NOT NULL,
+            projectId int(11) DEFAULT NULL,
             copyType varchar(50) NOT NULL,
             audienceId varchar(256) DEFAULT NULL,
             audienceName varchar(512) DEFAULT NULL,
@@ -253,7 +254,8 @@ class PCM_Schema
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
             KEY idx_jobId (jobId),
-            KEY idx_userId (userId)
+            KEY idx_userId (userId),
+            KEY idx_projectId (projectId)
         ) $charset_collate;";
         dbDelta($sql);
 
