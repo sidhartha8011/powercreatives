@@ -102,13 +102,15 @@ export function ProjectsModule() {
   const [projectToRename, setProjectToRename] = useState<Project | null>(null);
   const [newName, setNewName] = useState('');
 
-  // Copy Selection & Movement States
+  // Copy & Media Selection & Movement States
   const [selectedCopyIds, setSelectedCopyIds] = useState<string[]>([]);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([]);
   const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false);
 
-  // Sync/clear copy selections when active project or tab changes
+  // Sync/clear selections when active project or tab changes
   useEffect(() => {
     setSelectedCopyIds([]);
+    setSelectedAssetIds([]);
   }, [selectedProject, detailTab]);
 
   const handleToggleCopySelect = (cardId: string) => {
@@ -118,6 +120,14 @@ export function ProjectsModule() {
   };
 
   const handleClearCopySelection = () => setSelectedCopyIds([]);
+
+  const handleToggleAssetSelect = (assetId: number) => {
+    setSelectedAssetIds((prev) =>
+      prev.includes(assetId) ? prev.filter((id) => id !== assetId) : [...prev, assetId]
+    );
+  };
+
+  const handleClearAssetSelection = () => setSelectedAssetIds([]);
 
   // Mutation for Inline Copy Card Editing
   const updateCopyResultMutation = trpc.copy.updateResult.useMutation();
@@ -300,39 +310,64 @@ export function ProjectsModule() {
             />
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 animate-in fade-in duration-200">
-              {assets.map((asset: any) => (
-                <div
-                  key={asset.id}
-                  className="group relative rounded-lg overflow-hidden border border-slate-200 bg-slate-50 aspect-square"
-                >
-                  {asset.url ? (
-                    <img
-                      src={asset.url}
-                      alt={asset.prompt || 'Saved asset'}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <ImageIcon className="w-8 h-8 text-slate-300" />
-                    </div>
-                  )}
-                  {/* Hover overlay */}
+              {assets.map((asset: any) => {
+                const isSelected = selectedAssetIds.includes(asset.id);
+                return (
                   <div
-                    className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2 bg-gradient-to-t from-black/80 to-transparent"
+                    key={asset.id}
+                    onClick={() => handleToggleAssetSelect(asset.id)}
+                    className={`group relative rounded-lg overflow-hidden border bg-slate-50 aspect-square cursor-pointer transition-all duration-200 ${
+                      isSelected
+                        ? 'border-blue-500 ring-2 ring-blue-500/40 shadow-sm scale-[0.99]'
+                        : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'
+                    }`}
                   >
-                    {asset.prompt && (
-                      <p className="line-clamp-2 text-[11px] text-white font-medium leading-snug">
-                        {asset.prompt}
-                      </p>
+                    {/* Selection checkbox */}
+                    <div
+                      className={`absolute top-2 left-2 z-10 transition-all duration-200 ${
+                        isSelected ? 'opacity-100 scale-100' : 'opacity-0 group-hover:opacity-100 scale-95'
+                      }`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => handleToggleAssetSelect(asset.id)}
+                        className="h-4.5 w-4.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer shadow-sm"
+                      />
+                    </div>
+
+                    {asset.url ? (
+                      <img
+                        src={asset.url}
+                        alt={asset.prompt || 'Saved asset'}
+                        className="w-full h-full object-cover select-none"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <ImageIcon className="w-8 h-8 text-slate-300 animate-pulse" />
+                      </div>
                     )}
-                    <div className="flex items-center gap-2 mt-1 text-[10px] text-white/70">
-                      <span>{asset.model}</span>
-                      <span>{formatProjectDate(asset.createdAt)}</span>
+                    
+                    {/* Hover overlay */}
+                    <div
+                      className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none"
+                    >
+                      {asset.prompt && (
+                        <p className="line-clamp-2 text-[11px] text-white font-medium leading-snug">
+                          {asset.prompt}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-2 mt-1 text-[10px] text-white/70">
+                        <span className="capitalize">{asset.type || 'Media'}</span>
+                        <span>{asset.model}</span>
+                        <span>{formatProjectDate(asset.createdAt)}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )
         ) : (
@@ -395,11 +430,11 @@ export function ProjectsModule() {
           )
         )}
 
-        {/* Bulk Action Bar for Campaign Copy Cards */}
-        {selectedCopyIds.length > 0 && (
+        {/* Generic Bulk Action Bar */}
+        {((detailTab === 'media' ? selectedAssetIds.length : selectedCopyIds.length) > 0) && (
           <BulkActionBar
-            count={selectedCopyIds.length}
-            onClear={handleClearCopySelection}
+            count={detailTab === 'media' ? selectedAssetIds.length : selectedCopyIds.length}
+            onClear={detailTab === 'media' ? handleClearAssetSelection : handleClearCopySelection}
           >
             <BulkActionBar.Action
               icon={FolderInput}
@@ -413,11 +448,17 @@ export function ProjectsModule() {
         <MoveToProjectDialog
           open={isMoveDialogOpen}
           onOpenChange={setIsMoveDialogOpen}
-          selectedIds={selectedCopyIds}
+          selectedIds={detailTab === 'media' ? selectedAssetIds.map(String) : selectedCopyIds}
           currentProjectId={selectedProject.id}
+          assetType={detailTab}
           onComplete={() => {
-            handleClearCopySelection();
-            copyResultsQuery.refetch();
+            if (detailTab === 'media') {
+              handleClearAssetSelection();
+              assetsQuery.refetch();
+            } else {
+              handleClearCopySelection();
+              copyResultsQuery.refetch();
+            }
             projectsQuery.refetch();
           }}
         />
@@ -591,6 +632,7 @@ interface MoveToProjectDialogProps {
   onOpenChange: (open: boolean) => void;
   selectedIds: string[];
   currentProjectId: number;
+  assetType: 'media' | 'copy';
   onComplete: () => void;
 }
 
@@ -599,6 +641,7 @@ export function MoveToProjectDialog({
   onOpenChange,
   selectedIds,
   currentProjectId,
+  assetType,
   onComplete,
 }: MoveToProjectDialogProps) {
   const [targetProjectId, setTargetProjectId] = useState<string>('');
@@ -606,7 +649,8 @@ export function MoveToProjectDialog({
 
   // Fetch projects list (omit the current project so they don't move to the same one!)
   const { data: projects, isLoading } = trpc.assets.getProjects.useQuery(undefined, { enabled: open });
-  const moveMutation = trpc.copy.saveToProject.useMutation();
+  const copyMoveMutation = trpc.copy.saveToProject.useMutation();
+  const mediaMoveMutation = trpc.assets.saveToProject.useMutation();
 
   const filteredProjects = useMemo(() => {
     return (projects ?? []).filter((p: any) => p.id !== currentProjectId);
@@ -625,21 +669,29 @@ export function MoveToProjectDialog({
         .filter(id => id > 0);
 
       if (cleanIds.length === 0) {
-        toast.error('No valid copy results selected.');
+        toast.error(`No valid ${assetType} items selected.`);
         return;
       }
 
-      await moveMutation.mutateAsync({
-        resultIds: cleanIds,
-        projectId: parseInt(targetProjectId, 10),
-      });
+      if (assetType === 'media') {
+        await mediaMoveMutation.mutateAsync({
+          assetIds: cleanIds,
+          projectId: parseInt(targetProjectId, 10),
+        });
+      } else {
+        await copyMoveMutation.mutateAsync({
+          resultIds: cleanIds,
+          projectId: parseInt(targetProjectId, 10),
+        });
+      }
 
       const projectName = projects?.find((p: any) => p.id.toString() === targetProjectId)?.name ?? 'project';
-      toast.success(`Moved ${cleanIds.length} copy card(s) to "${projectName}"`);
+      const typeLabel = assetType === 'media' ? 'media asset(s)' : 'copy card(s)';
+      toast.success(`Moved ${cleanIds.length} ${typeLabel} to "${projectName}"`);
       onComplete();
       onOpenChange(false);
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to move copy cards');
+      toast.error(err?.message || `Failed to move ${assetType} items`);
     } finally {
       setIsMoving(false);
     }

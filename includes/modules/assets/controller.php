@@ -278,18 +278,10 @@ class PCM_REST_Assets extends PCM_REST_Base
         $user = $this->get_current_pcm_user();
         $params = $request->get_json_params();
 
-        $asset_id = (int)($params['assetId'] ?? 0);
         $project_id = (int)($params['projectId'] ?? 0);
 
-        if (!$asset_id || !$project_id) {
-            return $this->error('assetId and projectId are required.');
-        }
-
-        // Verify asset ownership
-        $asset_table = PCM_Schema::table('assets');
-        $asset = $this->get_asset_with_auth($asset_id, $user->id);
-        if (is_wp_error($asset)) {
-            return $asset;
+        if (!$project_id) {
+            return $this->error('projectId is required.');
         }
 
         // Verify project ownership
@@ -304,16 +296,46 @@ class PCM_REST_Assets extends PCM_REST_Base
             return $this->not_found('Project');
         }
 
-        // Update the asset's project
-        $wpdb->update(
-            $asset_table,
-            array('projectId' => $project_id),
-            array('id' => $asset_id, 'userId' => $user->id)
-        );
+        // Parse either a single assetId or a batch of assetIds
+        $asset_ids = $params['assetIds'] ?? [];
+        if (empty($asset_ids) && !empty($params['assetId'])) {
+            $asset_ids = [$params['assetId']];
+        }
+
+        if (empty($asset_ids)) {
+            return $this->error('assetId or assetIds is required.');
+        }
+
+        // Clean & filter IDs
+        $clean_ids = array_map('intval', $asset_ids);
+        $clean_ids = array_filter($clean_ids, function($id) { return $id > 0; });
+
+        if (empty($clean_ids)) {
+            return $this->error('No valid asset IDs provided.');
+        }
+
+        $asset_table = PCM_Schema::table('assets');
+
+        // Verify ownership for all targeted assets to prevent unauthorized manipulation
+        $placeholders = implode(',', array_fill(0, count($clean_ids), '%d'));
+        $db_assets = $wpdb->get_col($wpdb->prepare(
+            "SELECT id FROM $asset_table WHERE id IN ($placeholders) AND userId = %d",
+            ...array_merge($clean_ids, array($user->id))
+        ));
+
+        $valid_ids = array_map('intval', $db_assets ?: array());
+        if (empty($valid_ids)) {
+            return $this->error('No authorized assets found.');
+        }
+
+        // Update the assets' projectId in bulk
+        $update_placeholders = implode(',', array_fill(0, count($valid_ids), '%d'));
+        $query = "UPDATE $asset_table SET projectId = %d WHERE id IN ($update_placeholders) AND userId = %d";
+        $wpdb->query($wpdb->prepare($query, $project_id, ...array_merge($valid_ids, array($user->id))));
 
         return $this->success(array(
             'success' => true,
-            'assetId' => $asset_id,
+            'assetIds' => $valid_ids,
             'projectId' => $project_id,
             'projectName' => $project->name,
         ));
