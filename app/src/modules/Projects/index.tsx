@@ -126,7 +126,7 @@ export function ProjectsModule() {
     variationId: string,
     updates: { headline?: string; body?: string; cta?: string; hashtags?: string; description?: string }
   ) => {
-    const resultId = parseInt(variationId, 10);
+    const resultId = parseInt(String(variationId), 10);
     if (isNaN(resultId)) {
       toast.error('Invalid copy result ID');
       return;
@@ -621,7 +621,7 @@ export function MoveToProjectDialog({
     setIsMoving(true);
     try {
       const cleanIds = selectedIds.map(id => {
-        const parsed = parseInt(id.replace(/[^\d]/g, ''), 10);
+        const parsed = parseInt(String(id).replace(/[^\d]/g, ''), 10);
         return isNaN(parsed) ? 0 : parsed;
       }).filter(id => id > 0);
 
