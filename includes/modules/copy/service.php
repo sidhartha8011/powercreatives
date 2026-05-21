@@ -847,17 +847,22 @@ class PCM_Copy_Service
         ));
 
         return array_map(function ($row) {
+            $raw = !empty($row->rawResponse) ? json_decode($row->rawResponse, true) : array();
+            $angle_name = $raw['angleName'] ?? '';
+            $model_used = $raw['modelUsed'] ?? '';
             return array(
                 'id' => (int)$row->id,
                 'projectId' => isset($row->projectId) && $row->projectId ? (int)$row->projectId : null,
                 'copyType' => $row->copyType,
                 'audienceId' => $row->audienceId,
                 'audienceName' => $row->audienceName,
+                'angleName' => $angle_name,
                 'headline' => $row->headline,
                 'body' => $row->body,
                 'cta' => $row->cta,
                 'hashtags' => json_decode($row->hashtags ?? '[]', true),
                 'description' => $row->description,
+                'modelUsed' => $model_used ?: 'Gemini Flash',
                 'createdAt' => $row->createdAt,
             );
         }, $results ?: array());
@@ -928,17 +933,22 @@ class PCM_Copy_Service
         ));
 
         return array_map(function ($row) {
+            $raw = !empty($row->rawResponse) ? json_decode($row->rawResponse, true) : array();
+            $angle_name = $raw['angleName'] ?? '';
+            $model_used = $raw['modelUsed'] ?? '';
             return array(
                 'id' => (int)$row->id,
                 'projectId' => (int)$row->projectId,
                 'copyType' => $row->copyType,
                 'audienceId' => $row->audienceId,
                 'audienceName' => $row->audienceName,
+                'angleName' => $angle_name,
                 'headline' => $row->headline,
                 'body' => $row->body,
                 'cta' => $row->cta,
                 'hashtags' => json_decode($row->hashtags ?? '[]', true),
                 'description' => $row->description,
+                'modelUsed' => $model_used ?: 'Gemini Flash',
                 'createdAt' => $row->createdAt,
             );
         }, $results ?: array());
