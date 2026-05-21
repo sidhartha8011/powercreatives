@@ -51,22 +51,24 @@ interface InlineEditableCardProps {
   variation: CopyVariation;
   index: number;
   /** Whether this card is selected in multi-select mode */
-  isSelected: boolean;
+  isSelected?: boolean;
   /** Toggle selection for this card */
-  onToggleSelect: (cardId: string) => void;
+  onToggleSelect?: (cardId: string) => void;
   /** Regenerate this card with optional instruction */
-  onRegenerateCard: (variationId: string, instruction?: string) => void;
+  onRegenerateCard?: (variationId: string, instruction?: string) => void;
   /** Duplicate this card — inserts an identical copy directly after it */
   onDuplicate?: (variationId: string) => void;
   /** Whether this card is currently being regenerated */
-  isRegenerating: boolean;
+  isRegenerating?: boolean;
   /** Save edited text fields to backend */
-  onSaveEdits: (
+  onSaveEdits?: (
     variationId: string,
     updates: { headline?: string; body?: string; cta?: string; hashtags?: string; description?: string },
   ) => Promise<void>;
   /** Whether any selection exists (to show checkboxes) */
-  showCheckbox: boolean;
+  showCheckbox?: boolean;
+  /** Whether the card is in read-only presentation mode */
+  readOnly?: boolean;
 }
 
 type EditState = 'read' | 'edit';
@@ -74,13 +76,14 @@ type EditState = 'read' | 'edit';
 function InlineEditableCardInner({
   variation,
   index,
-  isSelected,
+  isSelected = false,
   onToggleSelect,
   onRegenerateCard,
   onDuplicate,
-  isRegenerating,
+  isRegenerating = false,
   onSaveEdits,
-  showCheckbox,
+  showCheckbox = false,
+  readOnly = false,
 }: InlineEditableCardProps) {
   const [editState, setEditState] = useState<EditState>('read');
   const { copy, copied } = useClipboard();
@@ -182,17 +185,19 @@ function InlineEditableCardInner({
       {/* Checkbox + Angle label row */}
       <div className="flex items-center gap-2 mb-2">
         {/* Checkbox — always visible when showCheckbox or on hover */}
-        <div
-          className={`transition-opacity duration-150 ${showCheckbox || isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-            }`}
-        >
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={() => onToggleSelect(variation.id)}
-            className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-          />
-        </div>
+        {!readOnly && (
+          <div
+            className={`transition-opacity duration-150 ${showCheckbox || isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`}
+          >
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => onToggleSelect && onToggleSelect(variation.id)}
+              className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+            />
+          </div>
+        )}
 
         <span
           className="text-[10px] font-medium uppercase tracking-widest flex-1"
@@ -202,7 +207,7 @@ function InlineEditableCardInner({
         </span>
 
         {/* Edit toggle button */}
-        {!isEditing && (
+        {!readOnly && !isEditing && (
           <button
             onClick={handleEnterEdit}
             className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-100"
@@ -359,10 +364,25 @@ function InlineEditableCardInner({
                 {isSaving ? 'Saving…' : 'Save'}
               </button>
             </>
+          ) : readOnly ? (
+            <button
+              onClick={handleCopy}
+              title={copied ? 'Copied!' : 'Copy to clipboard'}
+              className="flex items-center p-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+              style={{
+                background: copied ? colors.successLight : 'transparent',
+                color: copied ? colors.success : colors.textMuted,
+                border: copied
+                  ? `1px solid ${colors.successBorder}`
+                  : `1px solid ${colors.border}`,
+              }}
+            >
+              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
           ) : (
             <>
               <RegenerateSplitButton
-                onRegenerate={(instruction) => onRegenerateCard(variation.id, instruction)}
+                onRegenerate={(instruction) => onRegenerateCard && onRegenerateCard(variation.id, instruction)}
                 isRegenerating={isRegenerating}
               />
 

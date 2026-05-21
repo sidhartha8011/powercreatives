@@ -6,7 +6,7 @@ import { useProjectActions } from './hooks/useProjectActions';
 import { ProjectGrid } from './components/ProjectGrid';
 import { ProjectList } from './components/ProjectList';
 import { getGradient, formatProjectDate } from './utils';
-import { useClipboard } from '@/hooks/useClipboard';
+import { InlineEditableCard } from '../Copy/components/InlineEditableCard';
 
 import { ModuleHeader } from '@/components/shared/ModuleHeader';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -277,7 +277,7 @@ export function ProjectsModule() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-in fade-in duration-200">
               {copyResults.map((v: any, idx: number) => (
-                <CopyResultCard key={v.id} variation={v} index={idx} />
+                <InlineEditableCard key={v.id} variation={v} index={idx} readOnly={true} />
               ))}
             </div>
           )
@@ -444,103 +444,5 @@ export function ProjectsModule() {
       </Dialog>
 
     </div>
-  );
-}
-
-// ============================================================================
-// CopyResultCard Subcomponent
-// ============================================================================
-
-function CopyResultCard({ variation, index }: { variation: any; index: number }) {
-  const { copy, copied } = useClipboard();
-
-  const handleCopy = () => {
-    const text = [
-      variation.body,
-      variation.headline,
-      variation.description,
-      variation.cta,
-      variation.hashtags?.join(' '),
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-    copy(text);
-  };
-
-  const angleLabel = variation.audienceName
-    ? `${variation.copyType === 'social_ads' ? 'Ad' : 'Organic'} · ${variation.audienceName}`
-    : `${variation.copyType === 'social_ads' ? 'Social Ad' : 'Social Organic'}`;
-
-  return (
-    <article
-      className="flex flex-col transition-all duration-200 rounded-xl relative border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md"
-    >
-      <div className="flex items-center justify-between mb-4">
-        <span
-          className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded"
-          style={{
-            background: variation.copyType === 'social_ads' ? '#eff6ff' : '#ecfdf5',
-            color: variation.copyType === 'social_ads' ? '#1e40af' : '#065f46',
-          }}
-        >
-          {angleLabel}
-        </span>
-        <button
-          onClick={handleCopy}
-          title={copied ? 'Copied!' : 'Copy to clipboard'}
-          className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
-        >
-          {copied ? (
-            <Check className="w-3.5 h-3.5 text-emerald-600" />
-          ) : (
-            <Copy className="w-3.5 h-3.5 text-slate-500" />
-          )}
-        </button>
-      </div>
-
-      {variation.body && (
-        <div
-          className="whitespace-pre-line text-sm text-slate-700 leading-relaxed mb-4"
-        >
-          {variation.body}
-        </div>
-      )}
-
-      {variation.hashtags && variation.hashtags.length > 0 && (
-        <p className="text-xs text-indigo-600 font-medium mb-4">
-          {variation.hashtags.map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ')}
-        </p>
-      )}
-
-      {(variation.headline || variation.description) && (
-        <div
-          className="mb-4 rounded-lg bg-slate-50 p-4 border-l-4 border-slate-200"
-        >
-          {variation.headline && (
-            <h3 className="font-bold text-slate-900 text-sm leading-snug">
-              {variation.headline}
-            </h3>
-          )}
-          {variation.description && (
-            <p className="mt-1 text-slate-500 text-xs leading-snug">
-              {variation.description}
-            </p>
-          )}
-        </div>
-      )}
-
-      {variation.cta && (
-        <p className="font-semibold text-blue-600 text-sm mb-4">
-          {variation.cta}
-        </p>
-      )}
-
-      <div
-        className="flex items-center justify-between pt-3 mt-auto border-t border-slate-100 text-[10px] text-slate-400 font-medium"
-      >
-        <span>via {variation.modelUsed}</span>
-        <span>Saved {formatProjectDate(variation.createdAt)}</span>
-      </div>
-    </article>
   );
 }
