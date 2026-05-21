@@ -5,7 +5,7 @@ import { Project } from './types';
 import { useProjectActions } from './hooks/useProjectActions';
 import { ProjectGrid } from './components/ProjectGrid';
 import { ProjectList } from './components/ProjectList';
-import { getGradient, formatProjectDate } from './utils';
+import { getGradient, formatProjectDate, extractNumericId } from './utils';
 import { InlineEditableCard } from '../Copy/components/InlineEditableCard';
 
 import { ModuleHeader } from '@/components/shared/ModuleHeader';
@@ -126,8 +126,8 @@ export function ProjectsModule() {
     variationId: string,
     updates: { headline?: string; body?: string; cta?: string; hashtags?: string; description?: string }
   ) => {
-    const resultId = parseInt(String(variationId), 10);
-    if (isNaN(resultId)) {
+    const resultId = extractNumericId(variationId);
+    if (resultId <= 0) {
       toast.error('Invalid copy result ID');
       return;
     }
@@ -620,10 +620,9 @@ export function MoveToProjectDialog({
 
     setIsMoving(true);
     try {
-      const cleanIds = selectedIds.map(id => {
-        const parsed = parseInt(String(id).replace(/[^\d]/g, ''), 10);
-        return isNaN(parsed) ? 0 : parsed;
-      }).filter(id => id > 0);
+      const cleanIds = selectedIds
+        .map(extractNumericId)
+        .filter(id => id > 0);
 
       if (cleanIds.length === 0) {
         toast.error('No valid copy results selected.');

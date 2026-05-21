@@ -17,3 +17,24 @@ export const formatProjectDate = (dateStr?: string) => {
     minute: '2-digit',
   }).format(new Date(dateStr));
 };
+
+/**
+ * Safely extracts the primary database ID from a copy variation ID.
+ * Handles pure numbers, numeric strings, and composite duplicate IDs (e.g., "42-copy-177937").
+ */
+export function extractNumericId(id: string | number | undefined | null): number {
+  if (typeof id === 'number') {
+    return id;
+  }
+  
+  if (!id) return 0;
+
+  // Extract leading digits before hyphen/suffix (handles "42-copy-123")
+  const match = String(id).match(/^(\d+)/);
+  if (match) {
+    const parsed = parseInt(match[1], 10);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+
+  return 0;
+}
