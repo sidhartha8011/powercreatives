@@ -36,6 +36,8 @@ export interface MediaSlot {
   provider: string;
   /** The prompt used for generation */
   prompt: string;
+  /** Creative concept/angle name this visual was generated for (tab grouping) */
+  conceptName?: string;
   /** Error message if generation failed */
   errorMessage?: string;
   /** Database asset ID (for refine/variations via existing Image endpoints) */

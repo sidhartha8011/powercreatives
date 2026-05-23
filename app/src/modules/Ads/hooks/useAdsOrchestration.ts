@@ -353,6 +353,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
               modelId,
               provider: resolvedProvider,
               prompt: fullPrompt,
+              conceptName: version.name,
             };
 
             // Use functional updater to safely add placeholder

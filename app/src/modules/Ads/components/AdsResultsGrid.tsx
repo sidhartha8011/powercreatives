@@ -139,7 +139,22 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
     setDetailAsset(asset);
   };
 
-  // Derive a robust list of audiences by combining the sidebar prop and what actually came back from backend
+  // ── Visual concept tabs — group images by creative concept (like Image module's AdVersion tabs) ──
+  const derivedConcepts = React.useMemo(() => {
+    const conceptNames = Array.from(new Set(mediaSlots.map(m => m.conceptName).filter(Boolean))) as string[];
+    return conceptNames.map(name => ({ id: name, name }));
+  }, [mediaSlots]);
+
+  // 'all' = show all visuals, otherwise filter by concept name
+  const [activeConceptTab, setActiveConceptTab] = React.useState<string>('all');
+
+  // Filter media slots by active concept tab
+  const visibleMediaSlots = React.useMemo(() => {
+    if (activeConceptTab === 'all') return mediaSlots;
+    return mediaSlots.filter(m => m.conceptName === activeConceptTab);
+  }, [mediaSlots, activeConceptTab]);
+
+  // ── Copy audience tabs — derive audiences from props + results ──
   const derivedAudiences = React.useMemo(() => {
     const fromProps = audiences.map(a => ({ id: a.id, name: a.name }));
     const fromResults = Array.from(new Set(textSlots.map(t => t.audienceName).filter(Boolean))) as string[];
@@ -154,24 +169,12 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
     return fromProps;
   }, [audiences, textSlots]);
 
-  // State for active audience tab
-  const [activeAudience, setActiveAudience] = React.useState<string | null>(
-    derivedAudiences.length > 0 ? derivedAudiences[0].id : null
-  );
+  // 'all' = show all copy, otherwise filter by audience
+  const [activeAudience, setActiveAudience] = React.useState<string>('all');
 
-  React.useEffect(() => {
-    if (derivedAudiences.length > 0) {
-      if (!activeAudience || !derivedAudiences.find((a) => a.id === activeAudience)) {
-        setActiveAudience(derivedAudiences[0].id);
-      }
-    } else {
-      setActiveAudience(null);
-    }
-  }, [derivedAudiences, activeAudience]);
-
-  // Filter text slots by active audience if available
+  // Filter text slots by active audience tab
   const visibleTextSlots = React.useMemo(() => {
-    if (!activeAudience) return textSlots;
+    if (activeAudience === 'all') return textSlots;
     const currentAudienceName = derivedAudiences.find(a => a.id === activeAudience)?.name;
     if (!currentAudienceName) return textSlots;
     return textSlots.filter(t => t.audienceName === currentAudienceName);
@@ -281,10 +284,92 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
           {(mediaSlots.length > 0 || (isGenerating && phase === 'image_phase')) && (
             <section>
               <h3 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wider">
-                Generated Visuals ({mediaSlots.length})
+                Generated Visuals ({visibleMediaSlots.length})
               </h3>
+
+              {/* Concept tabs — group visuals by creative angle (mirrors Image module) */}
+              {derivedConcepts.length > 1 && (
+                <div
+                  className="flex items-center gap-1 mb-6 rounded-lg"
+                  style={{
+                    padding: '0.5rem',
+                    background: colors.bgMuted,
+                  }}
+                >
+                  {/* "All" tab */}
+                  {(() => {
+                    const isActive = activeConceptTab === 'all';
+                    return (
+                      <button
+                        onClick={() => setActiveConceptTab('all')}
+                        className="flex items-center gap-2 transition-colors"
+                        style={{
+                          padding: '0.375rem 0.75rem',
+                          borderRadius: '9999px',
+                          background: isActive ? '#fff' : 'transparent',
+                          color: isActive ? colors.text : colors.textSecondary,
+                          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                          fontWeight: isActive ? typography.semibold : typography.medium,
+                          fontSize: typography.sm,
+                        }}
+                      >
+                        <span>All</span>
+                        <span
+                          className="flex items-center justify-center text-[10px]"
+                          style={{
+                            minWidth: '1.25rem',
+                            height: '1.25rem',
+                            borderRadius: '9999px',
+                            background: isActive ? colors.bgMuted : 'transparent',
+                            color: isActive ? colors.textSecondary : colors.textGhost,
+                          }}
+                        >
+                          {mediaSlots.length}
+                        </span>
+                      </button>
+                    );
+                  })()}
+
+                  {/* Per-concept tabs */}
+                  {derivedConcepts.map((concept) => {
+                    const isActive = concept.id === activeConceptTab;
+                    const count = mediaSlots.filter(m => m.conceptName === concept.name).length;
+                    return (
+                      <button
+                        key={concept.id}
+                        onClick={() => setActiveConceptTab(concept.id)}
+                        className="flex items-center gap-2 transition-colors"
+                        style={{
+                          padding: '0.375rem 0.75rem',
+                          borderRadius: '9999px',
+                          background: isActive ? '#fff' : 'transparent',
+                          color: isActive ? colors.text : colors.textSecondary,
+                          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                          fontWeight: isActive ? typography.semibold : typography.medium,
+                          fontSize: typography.sm,
+                        }}
+                      >
+                        <span className="truncate max-w-[150px]">{concept.name}</span>
+                        <span
+                          className="flex items-center justify-center text-[10px]"
+                          style={{
+                            minWidth: '1.25rem',
+                            height: '1.25rem',
+                            borderRadius: '9999px',
+                            background: isActive ? colors.bgMuted : 'transparent',
+                            color: isActive ? colors.textSecondary : colors.textGhost,
+                          }}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-                {mediaSlots.map((media) => (
+                {visibleMediaSlots.map((media) => (
                   <AdVisualCard
                     key={media.id}
                     media={media}
@@ -307,7 +392,7 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
                 </h3>
               </div>
 
-              {/* Level 2: Audience Sub-Tabs (mirrors Copy module) */}
+              {/* Level 2: Audience Sub-Tabs with "All" tab (mirrors Copy module) */}
               {derivedAudiences.length > 0 && (
                 <div
                   className="flex items-center gap-1 mb-6 rounded-lg"
@@ -316,6 +401,41 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
                     background: colors.bgMuted,
                   }}
                 >
+                  {/* "All" tab */}
+                  {(() => {
+                    const isActive = activeAudience === 'all';
+                    return (
+                      <button
+                        onClick={() => setActiveAudience('all')}
+                        className="flex items-center gap-2 transition-colors"
+                        style={{
+                          padding: '0.375rem 0.75rem',
+                          borderRadius: '9999px',
+                          background: isActive ? '#fff' : 'transparent',
+                          color: isActive ? colors.text : colors.textSecondary,
+                          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                          fontWeight: isActive ? typography.semibold : typography.medium,
+                          fontSize: typography.sm,
+                        }}
+                      >
+                        <span>All</span>
+                        <span
+                          className="flex items-center justify-center text-[10px]"
+                          style={{
+                            minWidth: '1.25rem',
+                            height: '1.25rem',
+                            borderRadius: '9999px',
+                            background: isActive ? colors.bgMuted : 'transparent',
+                            color: isActive ? colors.textSecondary : colors.textGhost,
+                          }}
+                        >
+                          {textSlots.length}
+                        </span>
+                      </button>
+                    );
+                  })()}
+
+                  {/* Per-audience tabs */}
                   {derivedAudiences.map((audience) => {
                     const isActive = audience.id === activeAudience;
                     // Count how many textSlots belong to this audience
