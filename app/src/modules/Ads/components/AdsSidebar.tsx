@@ -75,12 +75,12 @@ function AccordionSection({ title, icon, defaultOpen = false, badge, children }:
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden bg-background">
+    <div className="rounded-lg overflow-hidden bg-card shadow-sm">
       {/* Accordion header */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-muted/50 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2.5 text-left bg-muted/30 hover:bg-muted/50 transition-colors"
       >
         <div className="flex items-center gap-2">
           {icon && <span className="text-muted-foreground">{icon}</span>}
@@ -102,7 +102,7 @@ function AccordionSection({ title, icon, defaultOpen = false, badge, children }:
 
       {/* Accordion content */}
       {isOpen && (
-        <div className="px-3 pb-3 pt-1 space-y-4 border-t border-border">
+        <div className="px-3 pb-3 pt-2 space-y-4">
           {children}
         </div>
       )}
@@ -233,7 +233,7 @@ export const AdsSidebar = memo(function AdsSidebar({
 
   return (
     <aside
-      className="shrink-0 border-r border-border overflow-y-auto bg-muted/20"
+      className="shrink-0 border-r border-border overflow-y-auto bg-muted"
       style={{ width: '22%', minWidth: '280px', maxWidth: '380px' }}
     >
       <div className="p-3 space-y-3">
@@ -325,8 +325,7 @@ export const AdsSidebar = memo(function AdsSidebar({
 
         {/* Segmented control bar */}
         <div
-          className="flex items-center rounded-lg p-1"
-          style={{ background: 'hsl(var(--muted))' }}
+          className="flex items-center rounded-lg p-1 bg-muted/80"
         >
           {tabs.map((tab) => {
             const isActive = tab.id === activeTab;
@@ -349,7 +348,7 @@ export const AdsSidebar = memo(function AdsSidebar({
         </div>
 
         {/* Active tab panel */}
-        <div className="border border-border rounded-lg bg-background p-3 space-y-4">
+        <div className="rounded-lg bg-card shadow-sm p-3 space-y-4">
 
           {/* ── IMAGE PANEL ── */}
           {activeTab === 'image' && (
