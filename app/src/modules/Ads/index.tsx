@@ -21,7 +21,8 @@ import { AdsSidebar } from './components/AdsSidebar';
 import { AdsResultsGrid } from './components/AdsResultsGrid';
 import { ADS_DEFAULTS } from './adsConfig';
 import { BulkActionBar } from '@/components/shared/BulkActionBar';
-import { Download, Share2 } from 'lucide-react';
+import { Download, Share2, Megaphone, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { exportToMetaAdsZip } from './utils/metaAdsExport';
 import { CreateApprovalSetDialog } from './components/CreateApprovalSetDialog';
@@ -219,9 +220,69 @@ export function AdsModule() {
     }
   }, [selectionCount, selectedCopyIds, selectedVisualIds, orchestration.textSlots, orchestration.mediaSlots, clearSelection]);
 
+  // ── canGenerate (used in header) ──
+  const canGenerate = (brief.trim().length > 0
+    && textModelId
+    && selectedImageModels.length > 0) || orchestration.isGenerating;
+
   // ── Render ──
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Module Header — matches Image module pattern */}
+      <header className="shrink-0 border-b border-border px-6 py-3 flex items-center justify-between bg-background/95 backdrop-blur-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+            <Megaphone className="w-4 h-4 text-primary-foreground" />
+          </div>
+          <div>
+            <h1 className="text-sm font-semibold">Ad Composer</h1>
+            <p className="text-xs text-muted-foreground">Multi-format creative production</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* Progress indicator during generation */}
+          {orchestration.isGenerating && (
+            <div className="flex items-center gap-3 bg-muted/50 border border-border px-4 py-1.5 rounded-full">
+              <Loader2 className="w-3 h-3 text-primary animate-spin" />
+              <span className="text-xs font-medium text-muted-foreground truncate max-w-[200px]">
+                {orchestration.progress?.message || 'Generating...'}
+              </span>
+              {orchestration.progress && orchestration.progress.total > 0 && (
+                <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all duration-500 ease-out"
+                    style={{ width: `${Math.max(2, (orchestration.progress.current / orchestration.progress.total) * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Generate / Cancel button */}
+          <Button
+            onClick={orchestration.isGenerating ? orchestration.cancel : handleGenerate}
+            disabled={orchestration.isGenerating ? false : !canGenerate}
+            variant={orchestration.isGenerating ? 'destructive' : 'default'}
+            className="gap-2"
+          >
+            {orchestration.isGenerating ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Cancel
+              </>
+            ) : (
+              <>
+                <Megaphone className="w-4 h-4" />
+                Generate Ads
+              </>
+            )}
+          </Button>
+        </div>
+      </header>
+
+      {/* Main content: Sidebar + Results */}
+      <div className="flex flex-1 overflow-hidden">
       {/* Sidebar — input controls */}
       <AdsSidebar
         contextData={contextData}
@@ -254,9 +315,6 @@ export function AdsModule() {
         onAutoOptimizeBriefChange={setAutoOptimizeBrief}
         numVersions={numVersions}
         onNumVersionsChange={setNumVersions}
-        isGenerating={orchestration.isGenerating}
-        onGenerate={handleGenerate}
-        onCancel={orchestration.cancel}
         onGenerateAudiences={handleGenerateAudiences}
         onGenerateAngles={handleGenerateAngles}
       />
@@ -307,6 +365,7 @@ export function AdsModule() {
         brandName={contextData.brand ? contextData.brand.name : null}
         brandLogoUrl={contextData.brand ? (contextData.brand as any).logoUrl : null}
       />
+      </div>
     </div>
   );
 }

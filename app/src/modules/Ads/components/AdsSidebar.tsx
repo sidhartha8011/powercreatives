@@ -17,12 +17,10 @@
  * 10. Writer Model (text model dropdown)
  * 11. Image Models (multi-select with tier accordion)
  * 12. Video Model (dropdown — disabled fishbone)
- * 13. Production Parameters (variations slider)
- * 14. Generate button
+ * 12. Video Engine (dropdown)
  */
 
 import { memo, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -45,8 +43,6 @@ import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { syncBrandAssetsToSession } from '@/lib/syncBrandAssetsToSession';
 import {
   Wand2,
-  Megaphone,
-  Loader2,
   Sparkles,
   Dices,
 } from 'lucide-react';
@@ -115,10 +111,7 @@ interface AdsSidebarProps {
   numVersions: number;
   onNumVersionsChange: (n: number) => void;
 
-  // ── Generate ──
-  isGenerating: boolean;
-  onGenerate: () => void;
-  onCancel?: () => void;
+  // ── AI generation helpers ──
   onGenerateAudiences?: () => Promise<ListItem[]>;
   onGenerateAngles?: () => Promise<AngleItem[]>;
 }
@@ -158,15 +151,9 @@ export const AdsSidebar = memo(function AdsSidebar({
   onAutoOptimizeBriefChange,
   numVersions,
   onNumVersionsChange,
-  isGenerating,
-  onGenerate,
-  onCancel,
   onGenerateAudiences,
   onGenerateAngles,
 }: AdsSidebarProps) {
-  const canGenerate = (brief.trim().length > 0
-    && textModelId
-    && imageModelIds.length > 0) || isGenerating;
 
   // Determine if image inputs (logo/reference) are active
   const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
@@ -188,7 +175,12 @@ export const AdsSidebar = memo(function AdsSidebar({
       style={{ width: '22%', minWidth: '280px', maxWidth: '380px' }}
     >
       <div className="p-4 space-y-6">
-        {/* 1. Brand / URL Context */}
+
+        {/* ================================================================
+         *  SHARED — Brand, context, brief (applies to all output types)
+         * ================================================================ */}
+
+        {/* Brand / URL Context */}
         <ContextPanel
           value={contextData}
           onChange={(newData) => {
@@ -200,7 +192,7 @@ export const AdsSidebar = memo(function AdsSidebar({
           hideTheme
         />
 
-        {/* 2. Enhanced Brand Section */}
+        {/* Business Info & Brand Assets (logo, colors, subjects) */}
         <EnhancedBrandSection
           contextData={contextData}
           onContextChange={onContextChange}
@@ -210,7 +202,7 @@ export const AdsSidebar = memo(function AdsSidebar({
           onReferenceImagesChange={onSessionReferenceImagesChange}
         />
 
-        {/* 3. Theme Selector */}
+        {/* Theme (season, campaign) */}
         <ThemeSelector
           seasonEvent={contextData.seasonEvent}
           campaignTheme={contextData.campaignTheme}
@@ -218,7 +210,7 @@ export const AdsSidebar = memo(function AdsSidebar({
           onCampaignThemeChange={(campaignTheme) => onContextChange({ ...contextData, campaignTheme })}
         />
 
-        {/* 4. Creative Brief */}
+        {/* Creative Brief + AI Enhance toggle */}
         <section>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -262,52 +254,126 @@ export const AdsSidebar = memo(function AdsSidebar({
             placeholder="Describe what you want to advertise..."
             className="min-h-[100px] text-sm resize-none"
           />
-
-          {/* Angles Slider */}
-          <div className="mt-4">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <Dices className="w-3 h-3" />Angles (Scenes)
-              </label>
-              <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">{numVersions}</span>
-            </div>
-            <input
-              type="range" min="1" max="8" value={numVersions}
-              onChange={(e) => onNumVersionsChange(parseInt(e.target.value) || 1)}
-              className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
-            />
-            <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-              <span>1</span><span>8</span>
-            </div>
-          </div>
         </section>
 
-        {/* 5. Models (Engines) - Moved to Section 2 visually */}
-        <section>
-          <div className="mb-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Engines
-            </h3>
-          </div>
-          
-          <div className="space-y-1 bg-muted/30 rounded-lg p-2 border border-border">
-            <GlobalEngineSelector
-              type="text"
-              title="Copy"
-              selectedIds={textModelId ? [textModelId] : []}
-              onChange={(ids) => onTextModelChange(ids[0] || '')}
-              multiSelect={false}
+        {/* ================================================================
+         *  IMAGE — Engine, angles, production parameters
+         * ================================================================ */}
+        <div className="pt-2 border-t border-border">
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">
+            Image Settings
+          </h3>
+
+          {/* Image Engine (model selection) */}
+          <div className="space-y-3">
+            <div className="bg-muted/30 rounded-lg p-2 border border-border">
+              <GlobalEngineSelector
+                type="image"
+                title="Image"
+                selectedIds={imageModelIds}
+                onChange={onImageModelsChange}
+                multiSelect={true}
+                requiresImageInput={requiresImageInput}
+              />
+            </div>
+
+            {/* Angles (Scenes) slider */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <Dices className="w-3 h-3" />Angles (Scenes)
+                </label>
+                <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">{numVersions}</span>
+              </div>
+              <input
+                type="range" min="1" max="8" value={numVersions}
+                onChange={(e) => onNumVersionsChange(parseInt(e.target.value) || 1)}
+                className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                <span>1</span><span>8</span>
+              </div>
+            </div>
+
+            {/* Production Parameters (variations per model) */}
+            <GlobalProductionParameters
+              variations={imageVariations}
+              onVariationsChange={onImageVariationsChange}
             />
-            
-            <GlobalEngineSelector
-              type="image"
-              title="Image"
-              selectedIds={imageModelIds}
-              onChange={onImageModelsChange}
-              multiSelect={true}
-              requiresImageInput={requiresImageInput}
+          </div>
+        </div>
+
+        {/* ================================================================
+         *  COPY — Engine, types, audiences, angles, reference ads
+         * ================================================================ */}
+        <div className="pt-2 border-t border-border">
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">
+            Copy Settings
+          </h3>
+
+          <div className="space-y-4">
+            {/* Copy Engine (text model) */}
+            <div className="bg-muted/30 rounded-lg p-2 border border-border">
+              <GlobalEngineSelector
+                type="text"
+                title="Copy"
+                selectedIds={textModelId ? [textModelId] : []}
+                onChange={(ids) => onTextModelChange(ids[0] || '')}
+                multiSelect={false}
+              />
+            </div>
+
+            {/* Copy Type (Social Ads / Social Organic) */}
+            <CopyTypeSelector
+              selection={selectedTypes}
+              onChange={onSelectedTypesChange}
             />
 
+            {/* Audiences */}
+            <ModeListBox
+              label="Audiences"
+              mode={genSettings.audiencesMode}
+              onModeChange={(m) => onGenSettingsChange({ ...genSettings, audiencesMode: m })}
+              items={audiences}
+              onAddItem={handleAddAudience}
+              onRemoveItem={handleRemoveAudience}
+              onItemsGenerated={onAudiencesChange}
+              placeholder="Add audience..."
+              autoCount={genSettings.audiencesCount}
+              onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, audiencesCount: c })}
+              onGenerate={onGenerateAudiences}
+            />
+
+            {/* Angles (grouped by audience) */}
+            <GroupedAnglesList
+              mode={genSettings.anglesMode}
+              onModeChange={(m) => onGenSettingsChange({ ...genSettings, anglesMode: m })}
+              items={angles}
+              onItemsChange={onAnglesChange}
+              audiences={audiences}
+              autoCount={genSettings.anglesCount}
+              onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, anglesCount: c })}
+              onGenerate={onGenerateAngles}
+              onItemsGenerated={onAnglesChange}
+            />
+
+            {/* Reference Ads */}
+            <ReferenceAdsSection
+              values={formValues}
+              onChange={onFormChange}
+              onBatchChange={onBatchChange}
+            />
+          </div>
+        </div>
+
+        {/* ================================================================
+         *  VIDEO — Engine (fishbone / placeholder)
+         * ================================================================ */}
+        <div className="pt-2 border-t border-border">
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">
+            Video Settings
+          </h3>
+          <div className="bg-muted/30 rounded-lg p-2 border border-border">
             <GlobalEngineSelector
               type="video"
               title="Video"
@@ -316,75 +382,10 @@ export const AdsSidebar = memo(function AdsSidebar({
               multiSelect={false}
             />
           </div>
-        </section>
+        </div>
 
-        {/* 6. Copy Type Selector */}
-        <CopyTypeSelector
-          selection={selectedTypes}
-          onChange={onSelectedTypesChange}
-        />
-
-        {/* 7. Audiences */}
-        <ModeListBox
-          label="Audiences"
-          mode={genSettings.audiencesMode}
-          onModeChange={(m) => onGenSettingsChange({ ...genSettings, audiencesMode: m })}
-          items={audiences}
-          onAddItem={handleAddAudience}
-          onRemoveItem={handleRemoveAudience}
-          onItemsGenerated={onAudiencesChange}
-          placeholder="Add audience…"
-          autoCount={genSettings.audiencesCount}
-          onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, audiencesCount: c })}
-          onGenerate={onGenerateAudiences}
-        />
-
-        {/* 8. Angles */}
-        <GroupedAnglesList
-          mode={genSettings.anglesMode}
-          onModeChange={(m) => onGenSettingsChange({ ...genSettings, anglesMode: m })}
-          items={angles}
-          onItemsChange={onAnglesChange}
-          audiences={audiences}
-          autoCount={genSettings.anglesCount}
-          onAutoCountChange={(c) => onGenSettingsChange({ ...genSettings, anglesCount: c })}
-          onGenerate={onGenerateAngles}
-          onItemsGenerated={onAnglesChange}
-        />
-
-        {/* 9. Reference Ads */}
-        <ReferenceAdsSection
-          values={formValues}
-          onChange={onFormChange}
-          onBatchChange={onBatchChange}
-        />
-
-        {/* 11. Production Parameters */}
-        <GlobalProductionParameters
-          variations={imageVariations}
-          onVariationsChange={onImageVariationsChange}
-        />
-
-        {/* 12. Generate Button */}
-        <Button
-          onClick={isGenerating ? onCancel : onGenerate}
-          disabled={isGenerating ? false : !canGenerate}
-          className="w-full gap-2"
-          variant={isGenerating ? "destructive" : "default"}
-          size="lg"
-        >
-          {isGenerating ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Cancel Generation
-            </>
-          ) : (
-            <>
-              <Megaphone className="w-4 h-4" />
-              Generate Ads
-            </>
-          )}
-        </Button>
+        {/* Bottom spacer */}
+        <div className="h-4" />
       </div>
     </aside>
   );
