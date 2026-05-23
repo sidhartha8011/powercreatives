@@ -385,8 +385,8 @@ export function ReferenceImageSelector({
 
               {/* Hover overlay with controls */}
               <div className="absolute inset-0 bg-black/50 rounded opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-0.5">
-                {/* Set as primary (crown) — only shown when onSetAsPrimary provided and not already primary */}
-                {onSetAsPrimary && index > 0 && (
+                {/* Set as primary (crown) — any reference can be promoted to logo */}
+                {onSetAsPrimary && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
