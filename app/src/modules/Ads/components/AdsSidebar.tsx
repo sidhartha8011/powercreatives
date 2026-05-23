@@ -233,8 +233,7 @@ export const AdsSidebar = memo(function AdsSidebar({
 
   return (
     <aside
-      className="shrink-0 border-r border-border overflow-y-auto bg-muted/20"
-      style={{ width: '22%', minWidth: '280px', maxWidth: '380px' }}
+      className="shrink-0 border-r border-border overflow-y-auto bg-muted/20 w-[22%] min-w-[280px] max-w-[380px]"
     >
       <div className="p-3 space-y-3">
 
@@ -319,36 +318,32 @@ export const AdsSidebar = memo(function AdsSidebar({
           />
         </AccordionSection>
 
-        {/* ================================================================
-         *  OUTPUT SETTINGS — Segmented Control + Panel
-         * ================================================================ */}
+        {/* Output settings — tabs + panel as one visual unit */}
+        <div className="rounded-lg bg-card shadow-sm overflow-hidden">
+          {/* Segmented control header */}
+          <div className="flex items-center p-1.5 border-b border-border bg-muted/40">
+            {tabs.map((tab) => {
+              const isActive = tab.id === activeTab;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 ${
+                    isActive
+                      ? 'bg-card text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
 
-        {/* Segmented control bar */}
-        <div
-          className="flex items-center rounded-lg p-1 bg-muted/80"
-        >
-          {tabs.map((tab) => {
-            const isActive = tab.id === activeTab;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 ${
-                  isActive
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Active tab panel */}
-        <div className="rounded-lg bg-card shadow-sm p-3 space-y-4">
+          {/* Panel content */}
+          <div className="p-3 space-y-4">
 
           {/* ── IMAGE PANEL ── */}
           {activeTab === 'image' && (
@@ -465,6 +460,7 @@ export const AdsSidebar = memo(function AdsSidebar({
               </p>
             </>
           )}
+          </div>
         </div>
 
         {/* Bottom spacer */}
