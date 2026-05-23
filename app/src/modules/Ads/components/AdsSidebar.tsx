@@ -40,6 +40,7 @@ import {
 } from '@/components/shared';
 import type { ContextData, ScrapedBusinessData, GenerationMode, ListItem, AngleItem } from '@/components/shared';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
+import { syncBrandAssetsToSession } from '@/lib/syncBrandAssetsToSession';
 import {
   Wand2,
   Megaphone,
@@ -175,7 +176,11 @@ export const AdsSidebar = memo(function AdsSidebar({
         {/* 1. Brand / URL Context */}
         <ContextPanel
           value={contextData}
-          onChange={onContextChange}
+          onChange={(newData) => {
+            onContextChange(newData);
+            const synced = syncBrandAssetsToSession(contextData, newData, sessionReferenceImages);
+            if (synced) onSessionReferenceImagesChange(synced);
+          }}
           onUrlFetched={onUrlFetched}
           hideTheme
         />

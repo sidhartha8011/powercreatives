@@ -61,9 +61,14 @@ export function CreateApprovalSetDialog({
   // tRPC Mutation to create set
   const createMutation = trpc.approvals.createSet.useMutation({
     onSuccess: (data: any) => {
-      // Build the absolute client review URL
-      const host = window.location.origin;
-      const publicLink = `${host}/public/approval/${data.token}`;
+      // Build the absolute client review URL using the dynamic WordPress page that hosts the shortcode
+      const config = window.pcmConfig ?? { shortcodePageUrl: window.location.origin + '/' };
+      const baseUrl = config.shortcodePageUrl || (window.location.origin + '/');
+      
+      // Determine separator for query parameters (e.g. ? or &)
+      const separator = baseUrl.includes('?') ? '&' : '?';
+      const publicLink = `${baseUrl}${separator}pcm_public_token=${data.token}`;
+      
       setShareableLink(publicLink);
       toast.success('Client sharing board created successfully!');
     },
@@ -119,10 +124,59 @@ export function CreateApprovalSetDialog({
 
   const handleCopyLink = useCallback(() => {
     if (!shareableLink) return;
-    navigator.clipboard.writeText(shareableLink);
-    setCopied(true);
-    toast.success('Link copied to clipboard!');
-    setTimeout(() => setCopied(false), 2000);
+    
+    // 1. Try modern clipboard API first (async)
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(shareableLink)
+        .then(() => {
+          setCopied(true);
+          toast.success('Link copied to clipboard!');
+          setTimeout(() => setCopied(false), 2000);
+        })
+        .catch(() => {
+          // Fall back to execCommand if navigator.clipboard throws an error
+          fallbackCopy();
+        });
+    } else {
+      // 2. Fallback to execCommand if API not available
+      fallbackCopy();
+    }
+
+    function fallbackCopy() {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = shareableLink;
+        
+        // Prevent scrolling on focus in some browsers
+        textArea.style.position = 'fixed';
+        textArea.style.top = '0';
+        textArea.style.left = '0';
+        textArea.style.width = '2em';
+        textArea.style.height = '2em';
+        textArea.style.padding = '0';
+        textArea.style.border = 'none';
+        textArea.style.outline = 'none';
+        textArea.style.boxShadow = 'none';
+        textArea.style.background = 'transparent';
+        
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        if (successful) {
+          setCopied(true);
+          toast.success('Link copied to clipboard!');
+          setTimeout(() => setCopied(false), 2000);
+        } else {
+          toast.error('Failed to copy. Please copy the link manually.');
+        }
+      } catch (err) {
+        toast.error('Failed to copy. Please copy the link manually.');
+      }
+    }
   }, [shareableLink]);
 
   return (

@@ -492,10 +492,25 @@ class PCM_Shortcode
             );
         }
 
+        // Dynamically find the published page/post containing the [power_creatives] shortcode
+        $shortcode_page_url = home_url('/'); // Safe default fallback
+        
+        global $wpdb;
+        $like_sc = '%' . $wpdb->esc_like('[power_creatives]') . '%';
+        $page_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_content LIKE %s LIMIT 1",
+            $like_sc
+        ));
+        
+        if ($page_id) {
+            $shortcode_page_url = get_permalink((int) $page_id);
+        }
+
         return array(
             'restUrl' => esc_url_raw(rest_url('pcm/v1/')),
             'nonce' => wp_create_nonce('wp_rest'),
             'pluginUrl' => esc_url(PCM_PLUGIN_URL),
+            'shortcodePageUrl' => esc_url_raw($shortcode_page_url),
             'user' => $user_payload,
             'version' => PCM_VERSION,
         );

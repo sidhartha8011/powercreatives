@@ -172,6 +172,20 @@ class PCM_Admin
     {
         $current_user = wp_get_current_user();
 
+        // Dynamically find the published page/post containing the [power_creatives] shortcode
+        $shortcode_page_url = home_url('/'); // Safe default fallback
+        
+        global $wpdb;
+        $like_sc = '%' . $wpdb->esc_like('[power_creatives]') . '%';
+        $page_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_content LIKE %s LIMIT 1",
+            $like_sc
+        ));
+        
+        if ($page_id) {
+            $shortcode_page_url = get_permalink((int) $page_id);
+        }
+
         return array(
             // REST API base URL for fetch calls
             'restUrl' => esc_url_raw(rest_url('pcm/v1/')),
@@ -179,6 +193,8 @@ class PCM_Admin
             'nonce' => wp_create_nonce('wp_rest'),
             // Plugin URL for asset references
             'pluginUrl' => esc_url(PCM_PLUGIN_URL),
+            // Shortcode page URL (for client shareable link resolution)
+            'shortcodePageUrl' => esc_url_raw($shortcode_page_url),
             // Current WordPress user info
             'user' => array(
                 'id' => $current_user->ID,

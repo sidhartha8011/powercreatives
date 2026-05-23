@@ -26,6 +26,7 @@ declare global {
             restUrl: string;
             nonce: string;
             pluginUrl: string;
+            shortcodePageUrl?: string;
             version: string;
             user: {
                 id: number;
@@ -45,6 +46,7 @@ function getConfig() {
             restUrl: "/wp-json/pcm/v1/",
             nonce: "",
             pluginUrl: "",
+            shortcodePageUrl: window.location.origin + "/",
             version: "1.0.0",
             user: { id: 0, name: "Dev", email: "", role: "admin", avatarUrl: "" },
         }
