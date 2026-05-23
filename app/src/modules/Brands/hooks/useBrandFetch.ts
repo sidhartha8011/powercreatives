@@ -157,6 +157,7 @@ export function useBrandFetch({
               await addAssetFromUrlMutation.mutateAsync({
                 brandId: editBrand.id,
                 imageUrl: img.url ?? img,
+                role: 'reference',
               });
               addedCount++;
             } catch {

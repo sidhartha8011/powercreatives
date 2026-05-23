@@ -210,6 +210,7 @@ export function ReferenceImageSelector({
             fileData: base64,
             filename: file.name,
             mimeType: file.type,
+            role: 'reference',
           });
         }
       } catch (err: any) {
@@ -245,6 +246,7 @@ export function ReferenceImageSelector({
         await addAssetFromUrlMutation.mutateAsync({
           brandId,
           imageUrl: url,
+          role: 'reference',
         });
         setUrlInput("");
         setShowUrlInput(false);
