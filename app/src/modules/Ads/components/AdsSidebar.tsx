@@ -75,34 +75,49 @@ function AccordionSection({ title, icon, defaultOpen = false, badge, children }:
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className="rounded-lg overflow-hidden bg-card shadow-sm">
-      {/* Accordion header */}
+    <div className="rounded-lg overflow-hidden shadow-sm border border-border">
+      {/* Accordion header — SOLID background, no opacity stacking */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-3 py-2.5 text-left bg-muted/50 hover:bg-muted/70 transition-colors"
+        className="w-full flex items-center justify-between px-3.5 py-2.5 text-left transition-colors"
+        style={{
+          backgroundColor: 'var(--sidebar-section-bg)',
+        }}
+        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--sidebar-section-hover)'}
+        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--sidebar-section-bg)'}
       >
         <div className="flex items-center gap-2">
-          {icon && <span className="text-muted-foreground">{icon}</span>}
-          <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+          {icon && <span style={{ color: 'var(--sidebar-section-fg)' }}>{icon}</span>}
+          <span
+            className="text-xs font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--sidebar-section-fg)' }}
+          >
             {title}
           </span>
           {badge && (
-            <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+            <span
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded"
+              style={{ color: 'var(--sidebar-section-fg)', backgroundColor: 'var(--sidebar-section-hover)' }}
+            >
               {badge}
             </span>
           )}
         </div>
         <ChevronDown
-          className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 ${
+          className={`w-3.5 h-3.5 transition-transform duration-200 ${
             isOpen ? 'rotate-0' : '-rotate-90'
           }`}
+          style={{ color: 'var(--sidebar-section-fg)' }}
         />
       </button>
 
-      {/* Accordion content */}
+      {/* Accordion content — solid white, one border separator */}
       {isOpen && (
-        <div className="px-3 pb-3 pt-2 space-y-4">
+        <div
+          className="px-3 pb-3 pt-2 space-y-4 border-t border-border"
+          style={{ backgroundColor: 'var(--card)' }}
+        >
           {children}
         </div>
       )}
@@ -233,9 +248,10 @@ export const AdsSidebar = memo(function AdsSidebar({
 
   return (
     <aside
-      className="shrink-0 border-r border-border overflow-y-auto bg-muted/20 w-[22%] min-w-[280px] max-w-[380px]"
+      className="shrink-0 border-r border-border overflow-y-auto w-[22%] min-w-[280px] max-w-[380px]"
+      style={{ backgroundColor: 'var(--sidebar)' }}
     >
-      <div className="p-3 space-y-3">
+      <div className="p-3 space-y-4">
 
         {/* ================================================================
          *  BRAND & CONTEXT — Accordion
@@ -322,9 +338,12 @@ export const AdsSidebar = memo(function AdsSidebar({
         </AccordionSection>
 
         {/* Output settings — tabs + panel as one visual unit */}
-        <div className="rounded-lg bg-card shadow-sm overflow-hidden">
-          {/* Segmented control header */}
-          <div className="flex items-center p-1.5 border-b border-border bg-muted/40">
+        <div className="rounded-lg shadow-sm overflow-hidden border border-border">
+          {/* Segmented control header — solid, no opacity */}
+          <div
+            className="flex items-center p-1.5 border-b border-border"
+            style={{ backgroundColor: 'var(--sidebar-section-bg)' }}
+          >
             {tabs.map((tab) => {
               const isActive = tab.id === activeTab;
               return (
@@ -334,9 +353,10 @@ export const AdsSidebar = memo(function AdsSidebar({
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 ${
                     isActive
-                      ? 'bg-card text-foreground shadow-sm'
+                      ? 'text-foreground shadow-sm border border-border'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
+                  style={isActive ? { backgroundColor: 'var(--card)' } : undefined}
                 >
                   {tab.icon}
                   {tab.label}
@@ -346,13 +366,13 @@ export const AdsSidebar = memo(function AdsSidebar({
           </div>
 
           {/* Panel content */}
-          <div className="p-3 space-y-4">
+          <div className="p-3 space-y-4" style={{ backgroundColor: 'var(--card)' }}>
 
           {/* ── IMAGE PANEL ── */}
           {activeTab === 'image' && (
             <>
               {/* Image Engine (model selection) */}
-              <div className="bg-muted/30 rounded-lg p-2 border border-border">
+              <div className="rounded-lg p-2 border border-border" style={{ backgroundColor: 'var(--sidebar-panel-bg)' }}>
                 <GlobalEngineSelector
                   type="image"
                   title="Image"
