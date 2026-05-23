@@ -127,7 +127,7 @@ export function GlobalEngineSelector({
   }
 
   return (
-    <div className={`flex items-center ${title ? 'justify-between' : 'justify-end'} py-2 px-1`}>
+    <div className={`flex items-center ${title ? 'justify-between py-2 px-1' : ''}`}>
       {/* Label — only shown when explicitly provided to avoid duplicating parent headers */}
       {title && (
         <div>
@@ -138,7 +138,7 @@ export function GlobalEngineSelector({
         <DropdownMenuTrigger asChild>
           <button 
             disabled={isLoading}
-            className="flex h-9 w-[220px] items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+            className={`flex h-9 items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 ${title ? 'w-[220px]' : 'w-full'}`}
           >
             <span className="truncate text-muted-foreground font-medium">
               {isLoading ? 'Loading...' : selectedSummary}

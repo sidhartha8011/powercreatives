@@ -321,38 +321,35 @@ export const AdsSidebar = memo(function AdsSidebar({
           />
         </AccordionSection>
 
-        {/* Output settings — tabs + panel as one visual unit */}
+        {/* Output settings — tabs + engine selector + panel as one visual unit */}
         <div className="rounded-lg shadow-sm overflow-hidden border border-border">
-          {/* Segmented control header */}
-          <div className="flex items-center p-1.5 border-b border-border bg-[var(--sidebar-section-bg)]">
-            {tabs.map((tab) => {
-              const isActive = tab.id === activeTab;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 ${
-                    isActive
-                      ? 'bg-card text-foreground shadow-sm border border-border'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {tab.icon}
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
+          {/* Segmented control header + engine selector */}
+          <div className="border-b border-border bg-[var(--sidebar-section-bg)]">
+            {/* Tab buttons */}
+            <div className="flex items-center p-1.5">
+              {tabs.map((tab) => {
+                const isActive = tab.id === activeTab;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 ${
+                      isActive
+                        ? 'bg-card text-foreground shadow-sm border border-border'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {tab.icon}
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
 
-          {/* Panel content */}
-          <div className="p-3 space-y-4 bg-card">
-
-          {/* ── IMAGE PANEL ── */}
-          {activeTab === 'image' && (
-            <>
-              {/* Image Engine (model selection) */}
-              <div className="rounded-lg p-2 border border-border bg-[var(--sidebar-panel-bg)]">
+            {/* Engine selector — inline in header, switches with active tab */}
+            <div className="px-3 pb-2">
+              {activeTab === 'image' && (
                 <GlobalEngineSelector
                   type="image"
                   selectedIds={imageModelIds}
@@ -360,8 +357,32 @@ export const AdsSidebar = memo(function AdsSidebar({
                   multiSelect={true}
                   requiresImageInput={requiresImageInput}
                 />
-              </div>
+              )}
+              {activeTab === 'copy' && (
+                <GlobalEngineSelector
+                  type="text"
+                  selectedIds={textModelId ? [textModelId] : []}
+                  onChange={(ids) => onTextModelChange(ids[0] || '')}
+                  multiSelect={false}
+                />
+              )}
+              {activeTab === 'video' && (
+                <GlobalEngineSelector
+                  type="video"
+                  selectedIds={videoModelId ? [videoModelId] : []}
+                  onChange={(ids) => onVideoModelChange(ids[0] || '')}
+                  multiSelect={false}
+                />
+              )}
+            </div>
+          </div>
 
+          {/* Panel content — only tab-specific controls, no engine selector */}
+          <div className="p-3 space-y-4 bg-card">
+
+          {/* ── IMAGE PANEL ── */}
+          {activeTab === 'image' && (
+            <>
               {/* Angles (Scenes) slider */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -388,19 +409,8 @@ export const AdsSidebar = memo(function AdsSidebar({
             </>
           )}
 
-          {/* ── COPY PANEL ── */}
           {activeTab === 'copy' && (
             <>
-              {/* Copy Engine (text model) */}
-              <div className="rounded-lg p-2 border border-border bg-[var(--sidebar-panel-bg)]">
-                <GlobalEngineSelector
-                  type="text"
-                  selectedIds={textModelId ? [textModelId] : []}
-                  onChange={(ids) => onTextModelChange(ids[0] || '')}
-                  multiSelect={false}
-                />
-              </div>
-
               {/* Copy Type (Social Ads / Social Organic) */}
               <CopyTypeSelector
                 selection={selectedTypes}
@@ -444,17 +454,8 @@ export const AdsSidebar = memo(function AdsSidebar({
             </>
           )}
 
-          {/* ── VIDEO PANEL ── */}
           {activeTab === 'video' && (
             <>
-              <div className="rounded-lg p-2 border border-border bg-[var(--sidebar-panel-bg)]">
-                <GlobalEngineSelector
-                  type="video"
-                  selectedIds={videoModelId ? [videoModelId] : []}
-                  onChange={(ids) => onVideoModelChange(ids[0] || '')}
-                  multiSelect={false}
-                />
-              </div>
               <p className="text-[11px] text-muted-foreground text-center py-2">
                 Video generation is coming soon
               </p>
