@@ -15,7 +15,6 @@ import type { GenerationMode, ListItem, AngleItem } from '@/components/shared';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
 import { useTextModels } from '@/modules/Copy/useTextModels';
-import { useImageModelsForGeneration, TIER_CONFIG } from '@/hooks/useModelsForGeneration';
 import { useAdsOrchestration } from './hooks/useAdsOrchestration';
 import { useBrandSync } from './hooks/useBrandSync';
 import { AdsSidebar } from './components/AdsSidebar';
@@ -24,8 +23,6 @@ import { ADS_DEFAULTS } from './adsConfig';
 import { BulkActionBar } from '@/components/shared/BulkActionBar';
 import { Download, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { trpc } from '@/lib/trpc';
-import type { CostTier } from '@/types';
 import { exportToMetaAdsZip } from './utils/metaAdsExport';
 import { CreateApprovalSetDialog } from './components/CreateApprovalSetDialog';
 
@@ -86,7 +83,11 @@ export function AdsModule() {
   const [videoModelId] = useState('');
 
   // ── Production params ──
-  const [imageVariations, setImageVariations] = useState(ADS_DEFAULTS.imageVariations);
+  const [imageVariations, setImageVariations] = useState<number>(ADS_DEFAULTS.imageVariations);
+
+  // ── R2 parameters ──
+  const [autoOptimizeBrief, setAutoOptimizeBrief] = useState(false);
+  const [numVersions, setNumVersions] = useState<number>(1);
 
   // ── Selection State (Client Board) ──
   const [selectedVisualIds, setSelectedVisualIds] = useState<string[]>([]);
@@ -98,9 +99,6 @@ export function AdsModule() {
 
   // ── Sync Hook ──
   const { handleContextChange, handleUrlFetched } = useBrandSync(setFormValues, setContextData);
-
-  // ── TRPC Mutation ──
-  const suggestMutation = trpc.copy.suggest.useMutation();
 
   // ── Handlers ──
 
@@ -156,36 +154,29 @@ export function AdsModule() {
       formValues,
       contextData,
       sessionReferenceImages,
+      autoOptimizeBrief,
+      numVersions,
     });
-  }, [brief, textModelId, selectedImageModels, videoModelId, activeTypes, genSettings, audiences, angles, imageVariations, formValues, contextData, sessionReferenceImages, orchestration]);
-
-  const validateBeforeSuggest = useCallback(() => {
-    if (!brief.trim()) throw new Error('Please enter a creative brief first.');
-    if (!textModelId) throw new Error('Please select a text model first.');
-  }, [brief, textModelId]);
+  }, [brief, textModelId, selectedImageModels, videoModelId, activeTypes, genSettings, audiences, angles, imageVariations, formValues, contextData, sessionReferenceImages, autoOptimizeBrief, numVersions, orchestration]);
 
   const handleGenerateAudiences = useCallback(async () => {
-    validateBeforeSuggest();
-    const res = await suggestMutation.mutateAsync({
-      type: 'audiences',
+    return orchestration.generateAudiences({
+      brief,
+      textModelId,
       count: genSettings.audiencesCount,
-      formValues: { ...formValues, creativeBrief: brief },
-      modelId: textModelId,
+      formValues,
     });
-    return (res as any).items ?? [];
-  }, [suggestMutation, genSettings.audiencesCount, formValues, brief, textModelId, validateBeforeSuggest]);
+  }, [brief, textModelId, genSettings.audiencesCount, formValues, orchestration]);
 
   const handleGenerateAngles = useCallback(async () => {
-    validateBeforeSuggest();
-    const res = await suggestMutation.mutateAsync({
-      type: 'angles',
+    return orchestration.generateAngles({
+      brief,
+      textModelId,
       count: genSettings.anglesCount,
-      audiences: audiences.length > 0 ? audiences : undefined,
-      formValues: { ...formValues, creativeBrief: brief },
-      modelId: textModelId,
+      formValues,
+      audiences,
     });
-    return (res as any).items ?? [];
-  }, [suggestMutation, genSettings.anglesCount, audiences, formValues, brief, textModelId, validateBeforeSuggest]);
+  }, [brief, textModelId, genSettings.anglesCount, formValues, audiences, orchestration]);
 
   const handleSelectVisual = useCallback((id: string) => {
     setSelectedVisualIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
@@ -259,8 +250,13 @@ export function AdsModule() {
         onVideoModelChange={() => {}} // Fishbone — no-op
         imageVariations={imageVariations}
         onImageVariationsChange={setImageVariations}
+        autoOptimizeBrief={autoOptimizeBrief}
+        onAutoOptimizeBriefChange={setAutoOptimizeBrief}
+        numVersions={numVersions}
+        onNumVersionsChange={setNumVersions}
         isGenerating={orchestration.isGenerating}
         onGenerate={handleGenerate}
+        onCancel={orchestration.cancel}
         onGenerateAudiences={handleGenerateAudiences}
         onGenerateAngles={handleGenerateAngles}
       />

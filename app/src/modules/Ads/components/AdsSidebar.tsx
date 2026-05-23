@@ -24,6 +24,8 @@
 import { memo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   ContextPanel,
   EnhancedBrandSection,
@@ -45,6 +47,8 @@ import {
   Wand2,
   Megaphone,
   Loader2,
+  Sparkles,
+  Dices,
 } from 'lucide-react';
 
 // ============================================================================
@@ -105,9 +109,16 @@ interface AdsSidebarProps {
   imageVariations: number;
   onImageVariationsChange: (n: number) => void;
 
+  // ── R2 variables ──
+  autoOptimizeBrief: boolean;
+  onAutoOptimizeBriefChange: (v: boolean) => void;
+  numVersions: number;
+  onNumVersionsChange: (n: number) => void;
+
   // ── Generate ──
   isGenerating: boolean;
   onGenerate: () => void;
+  onCancel?: () => void;
   onGenerateAudiences?: () => Promise<ListItem[]>;
   onGenerateAngles?: () => Promise<AngleItem[]>;
 }
@@ -143,15 +154,19 @@ export const AdsSidebar = memo(function AdsSidebar({
   onVideoModelChange,
   imageVariations,
   onImageVariationsChange,
+  autoOptimizeBrief,
+  onAutoOptimizeBriefChange,
+  numVersions,
+  onNumVersionsChange,
   isGenerating,
   onGenerate,
+  onCancel,
   onGenerateAudiences,
   onGenerateAngles,
 }: AdsSidebarProps) {
-  const canGenerate = brief.trim().length > 0
+  const canGenerate = (brief.trim().length > 0
     && textModelId
-    && imageModelIds.length > 0
-    && !isGenerating;
+    && imageModelIds.length > 0) || isGenerating;
 
   // Determine if image inputs (logo/reference) are active
   const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
@@ -205,11 +220,41 @@ export const AdsSidebar = memo(function AdsSidebar({
 
         {/* 4. Creative Brief */}
         <section>
-          <div className="flex items-center gap-2 mb-3">
-            <Wand2 className="w-4 h-4 text-muted-foreground" />
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Creative Brief
-            </h3>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Wand2 className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Creative Brief
+              </h3>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <label
+                    htmlFor="auto-optimize"
+                    className={`flex items-center gap-1 text-[11px] font-medium cursor-pointer select-none transition-colors ${autoOptimizeBrief
+                        ? 'text-primary'
+                        : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 transition-all ${autoOptimizeBrief
+                        ? 'text-primary drop-shadow-[0_0_4px_hsl(var(--primary)/0.4)]'
+                        : 'text-muted-foreground'
+                      }`} />
+                    AI Enhance
+                  </label>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-[220px] text-xs">
+                  When enabled, AI rewrites your brief into a more detailed, optimized image prompt before generation
+                </TooltipContent>
+              </Tooltip>
+              <Switch
+                id="auto-optimize"
+                checked={autoOptimizeBrief}
+                onCheckedChange={onAutoOptimizeBriefChange}
+                className="h-4 w-7 data-[state=checked]:bg-primary"
+              />
+            </div>
           </div>
           <Textarea
             value={brief}
@@ -217,6 +262,24 @@ export const AdsSidebar = memo(function AdsSidebar({
             placeholder="Describe what you want to advertise..."
             className="min-h-[100px] text-sm resize-none"
           />
+
+          {/* Angles Slider */}
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <Dices className="w-3 h-3" />Angles (Scenes)
+              </label>
+              <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">{numVersions}</span>
+            </div>
+            <input
+              type="range" min="1" max="8" value={numVersions}
+              onChange={(e) => onNumVersionsChange(parseInt(e.target.value) || 1)}
+              className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+              <span>1</span><span>8</span>
+            </div>
+          </div>
         </section>
 
         {/* 5. Models (Engines) - Moved to Section 2 visually */}
@@ -304,15 +367,16 @@ export const AdsSidebar = memo(function AdsSidebar({
 
         {/* 12. Generate Button */}
         <Button
-          onClick={onGenerate}
-          disabled={!canGenerate}
+          onClick={isGenerating ? onCancel : onGenerate}
+          disabled={isGenerating ? false : !canGenerate}
           className="w-full gap-2"
+          variant={isGenerating ? "destructive" : "default"}
           size="lg"
         >
           {isGenerating ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Generating Ads...
+              Cancel Generation
             </>
           ) : (
             <>

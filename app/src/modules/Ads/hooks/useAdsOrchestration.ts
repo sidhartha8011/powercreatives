@@ -31,6 +31,9 @@ import type { ContextData } from '@/components/shared/ContextPanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { resolveGenerationPayload } from '@/lib/resolveGenerationPayload';
 import { useImageModelsForGeneration } from '@/hooks/useModelsForGeneration';
+import type { ListItem, AngleItem } from '@/components/shared';
+import { useSettings } from '@/contexts/AppContext';
+import { DEFAULT_BRAND_TOGGLES } from '@/components/shared/ContextPanel';
 
 // ============================================================================
 // Types
@@ -66,6 +69,10 @@ export interface AdsGenerateParams {
   contextData: ContextData;
   /** User-uploaded or selected reference images */
   sessionReferenceImages: SessionReferenceImage[];
+  /** AI Enhance toggle */
+  autoOptimizeBrief: boolean;
+  /** Angles count slider */
+  numVersions: number;
 }
 
 export interface UseAdsOrchestrationReturn {
@@ -83,6 +90,8 @@ export interface UseAdsOrchestrationReturn {
   error: string | null;
   /** Clear error */
   clearError: () => void;
+  /** Cancel ongoing generation */
+  cancel: () => void;
   /** Start the full generation pipeline */
   generate: (params: AdsGenerateParams) => Promise<void>;
   /** Update text fields on a text slot (inline editing) */
@@ -92,6 +101,21 @@ export interface UseAdsOrchestrationReturn {
   ) => void;
   /** Regenerate a text slot (stub) */
   regenerateTextSlot: (slotId: string, instruction?: string) => void;
+  /** Suggest audiences based on brief */
+  generateAudiences: (params: {
+    brief: string;
+    textModelId: string;
+    count: number;
+    formValues: Record<string, string | number | undefined>;
+  }) => Promise<ListItem[]>;
+  /** Suggest angles based on brief and audiences */
+  generateAngles: (params: {
+    brief: string;
+    textModelId: string;
+    count: number;
+    formValues: Record<string, string | number | undefined>;
+    audiences: ListItem[];
+  }) => Promise<AngleItem[]>;
 }
 
 // (Removed composition logic)
@@ -114,6 +138,12 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
 
   // ── tRPC mutations for image generation ──
   const generateImageMutation = trpc.image.generate.useMutation();
+  const optimizeBriefMutation = trpc.image.optimizeBrief.useMutation();
+  const generateConceptsMutation = trpc.image.generateConcepts.useMutation();
+  const suggestMutation = trpc.copy.suggest.useMutation();
+
+  // ── Settings ──
+  const { settings } = useSettings();
 
   // ── Abort controller ref for cancellation ──
   const abortRef = useRef<AbortController | null>(null);
@@ -122,6 +152,14 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
 
   // ── Clear error ──
   const clearError = useCallback(() => setError(null), []);
+
+  // ── Cancel ongoing generation ──
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    setPhase('idle');
+    setProgress(null);
+    toast.info('Generation cancelled');
+  }, []);
 
   // ══════════════════════════════════════════════════════════════════
   // PHASE 1: Text Generation (SSE stream from /copy/generate)
@@ -202,7 +240,6 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
 
   async function runImagePhase(
     params: AdsGenerateParams,
-    textCount: number,
     signal: AbortSignal,
   ): Promise<MediaSlot[]> {
     setPhase('image_phase');
@@ -219,8 +256,58 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     const refUrls = payloadParams.inputUrls;
     const refIntents = payloadParams.referenceImageIntents;
 
-    // Calculate total images: at least as many as text slots
-    const totalImages = Math.max(textCount, imageModelIds.length * imageVariations);
+    // 0. Optionally optimize the brief via LLM
+    let briefToUse = brief;
+    if (params.autoOptimizeBrief) {
+      setProgress((prev) => ({ ...prev, phase: 'image_phase', current: 0, total: 100, label: 'Optimizing creative brief...' }));
+      try {
+        const optimized = await optimizeBriefMutation.mutateAsync({
+          brief: brief,
+          modelId: settings?.defaultImageTextModel || '',
+          brandContext: brandCtx,
+        });
+        briefToUse = (optimized as any).optimizedBrief ?? brief;
+      } catch (err) {
+        console.warn('[AdsOrchestration] Brief optimization failed, using original.', err);
+      }
+    }
+
+    // 1. Build creative angles (concepts)
+    interface Concept {
+      name: string;
+      description: string;
+    }
+    
+    let conceptsList: Concept[] = [{
+      name: 'Original',
+      description: briefToUse,
+    }];
+
+    if (params.numVersions > 1) {
+      setProgress((prev) => ({ ...prev, phase: 'image_phase', current: 0, total: 100, label: 'AI is conceptualizing creative angles...' }));
+      try {
+        const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
+        const conceptsResult = await generateConceptsMutation.mutateAsync({
+          prompt: briefToUse,
+          count: params.numVersions - 1,
+          modelId: settings?.defaultImageTextModel || '',
+          brandContext: brandCtx,
+          referenceImages: toggles.useReferenceSubjects
+            ? sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent }))
+            : [],
+        });
+        const generated = (conceptsResult as any).concepts ?? [];
+        conceptsList = [
+          { name: 'Original', description: briefToUse },
+          ...generated.map((c: any) => ({ name: c.name, description: c.description }))
+        ];
+      } catch (err) {
+        console.warn('[AdsOrchestration] Concepts generation failed, using original brief as fallback.', err);
+      }
+    }
+
+    // Calculate total images: concepts * models * variations
+    const totalImages = conceptsList.length * imageModelIds.length * imageVariations;
     let completed = 0;
 
     setProgress({
@@ -230,84 +317,99 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       label: 'Generating images...',
     });
 
-    // Use functional updater pattern to avoid race conditions
-    // between parallel model tasks sharing mutable state
     const completedSlots: MediaSlot[] = [];
 
-    const modelTasks = imageModelIds.map(async (modelId) => {
-      for (let v = 0; v < imageVariations; v++) {
-        if (signal.aborted) return;
+    // Loop over each version/concept sequentially
+    for (const version of conceptsList) {
+      if (signal.aborted) break;
 
-        // Resolve provider from model registry (REQUIRED by backend)
-        const registryModel = imageModels.find((m) => m.id === modelId);
-        const resolvedProvider = registryModel?.provider ?? '';
+      const isAnchor = version.name === 'Original';
+      const fullPrompt = isAnchor
+        ? version.description
+        : `${version.description}. Product: ${brief}`;
 
-        if (!resolvedProvider) {
-          console.error(`[AdsOrchestration] No provider found for model ${modelId} — skipping.`);
-          completed++;
-          continue;
-        }
-
-        const placeholderId = crypto.randomUUID();
-        const placeholder: MediaSlot = {
-          id: placeholderId,
-          type: 'image',
-          status: 'processing',
-          modelName: registryModel?.name ?? modelId,
-          modelId,
-          provider: resolvedProvider,
-          prompt: brief,
-        };
-
-        // Use functional updater to safely add placeholder
-        setMediaSlots((prev) => [...prev, placeholder]);
-
+      // Fire all models in parallel for this concept
+      const modelTasks = imageModelIds.map(async (modelId) => {
         try {
-          const result = await generateImageMutation.mutateAsync({
-            prompt: brief,
-            model: modelId,
-            provider: resolvedProvider,
-            brandContext: brandCtx,
-            ...(refUrls.length > 0 ? { inputUrls: refUrls, referenceImageIntents: refIntents } : {}),
-          });
+          const registryModel = imageModels.find((m) => m.id === modelId);
+          const resolvedProvider = registryModel?.provider ?? '';
 
-          // Update placeholder with completed result using functional updater
-          const completedSlot: MediaSlot = {
-            ...placeholder,
-            status: 'complete',
-            url: (result as any).url,
-            thumbnailUrl: (result as any).url,
-            prompt: (result as any).prompt ?? brief,
-            dbAssetId: (result as any).id,
-          };
+          if (!resolvedProvider) {
+            console.error(`[AdsOrchestration] No provider found for model ${modelId} — skipping.`);
+            completed += imageVariations;
+            return;
+          }
 
-          completedSlots.push(completedSlot);
+          // Variations run sequentially within each model (rate-limit safe)
+          for (let v = 0; v < imageVariations; v++) {
+            if (signal.aborted) return;
 
-          setMediaSlots((prev) =>
-            prev.map((m) => m.id === placeholderId ? completedSlot : m),
-          );
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : 'Image generation failed';
-          setMediaSlots((prev) =>
-            prev.map((m) =>
-              m.id === placeholderId
-                ? { ...m, status: 'failed' as const, errorMessage: msg }
-                : m,
-            ),
-          );
+            const placeholderId = crypto.randomUUID();
+            const placeholder: MediaSlot = {
+              id: placeholderId,
+              type: 'image',
+              status: 'processing',
+              modelName: registryModel?.name ?? modelId,
+              modelId,
+              provider: resolvedProvider,
+              prompt: fullPrompt,
+            };
+
+            // Use functional updater to safely add placeholder
+            setMediaSlots((prev) => [...prev, placeholder]);
+
+            try {
+              const result = await generateImageMutation.mutateAsync({
+                prompt: fullPrompt,
+                model: modelId,
+                provider: resolvedProvider,
+                brandContext: brandCtx,
+                ...(refUrls.length > 0 ? { inputUrls: refUrls, referenceImageIntents: refIntents } : {}),
+              });
+
+              // Update placeholder with completed result
+              const completedSlot: MediaSlot = {
+                ...placeholder,
+                status: 'complete',
+                url: (result as any).url,
+                thumbnailUrl: (result as any).url,
+                prompt: (result as any).prompt ?? fullPrompt,
+                dbAssetId: (result as any).id,
+              };
+
+              completedSlots.push(completedSlot);
+
+              setMediaSlots((prev) =>
+                prev.map((m) => m.id === placeholderId ? completedSlot : m),
+              );
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'Image generation failed';
+              setMediaSlots((prev) =>
+                prev.map((m) =>
+                  m.id === placeholderId
+                    ? { ...m, status: 'failed' as const, errorMessage: msg }
+                    : m,
+                ),
+              );
+            }
+
+            completed++;
+            setProgress({
+              phase: 'image_phase',
+              current: completed,
+              total: totalImages,
+              label: `Images: ${completed}/${totalImages} (${version.name})`,
+            });
+          }
+        } catch (modelError) {
+          console.error(`[AdsOrchestration] Model ${modelId} failed:`, modelError);
         }
+      });
 
-        completed++;
-        setProgress({
-          phase: 'image_phase',
-          current: completed,
-          total: totalImages,
-          label: `Images: ${completed}/${totalImages}`,
-        });
-      }
-    });
+      // Wait for all models to finish for this concept before moving to next
+      await Promise.allSettled(modelTasks);
+    }
 
-    await Promise.allSettled(modelTasks);
     return completedSlots;
   }
 
@@ -345,6 +447,12 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       toast.error('Please select at least one image model');
       return;
     }
+    if (params.autoOptimizeBrief || params.numVersions > 1) {
+      if (!settings?.defaultImageTextModel) {
+        toast.error('Menu Intelligence saknas. Välj en modell i Settings → Module Defaults.');
+        return;
+      }
+    }
 
     // Reset state
     setError(null);
@@ -365,7 +473,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       }
 
       // Phase 2: Generate images
-      const images = await runImagePhase(params, texts.length, controller.signal);
+      const images = await runImagePhase(params, controller.signal);
 
       if (images.length === 0) {
         throw new Error('No images were generated. Check your image models and try again.');
@@ -390,7 +498,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       toast.error(message);
       console.error('[AdsOrchestration] Generate failed:', err);
     }
-  }, [generateImageMutation, imageModels]);
+  }, [generateImageMutation, imageModels, settings, optimizeBriefMutation, generateConceptsMutation]);
 
   // ── Update text (inline editing) ──
   const updateTextSlot = useCallback(
@@ -418,6 +526,44 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     toast.info('Regenerate copy functionality will be implemented in the next iteration.');
   }, []);
 
+  // ── Suggest Audiences (Backend Query) ──
+  const generateAudiences = useCallback(async (params: {
+    brief: string;
+    textModelId: string;
+    count: number;
+    formValues: Record<string, string | number | undefined>;
+  }) => {
+    if (!params.brief.trim()) throw new Error('Please enter a creative brief first.');
+    if (!params.textModelId) throw new Error('Please select a text model first.');
+    const res = await suggestMutation.mutateAsync({
+      type: 'audiences',
+      count: params.count,
+      formValues: { ...params.formValues, creativeBrief: params.brief },
+      modelId: params.textModelId,
+    });
+    return (res as any).items ?? [];
+  }, [suggestMutation]);
+
+  // ── Suggest Angles (Backend Query) ──
+  const generateAngles = useCallback(async (params: {
+    brief: string;
+    textModelId: string;
+    count: number;
+    formValues: Record<string, string | number | undefined>;
+    audiences: ListItem[];
+  }) => {
+    if (!params.brief.trim()) throw new Error('Please enter a creative brief first.');
+    if (!params.textModelId) throw new Error('Please select a text model first.');
+    const res = await suggestMutation.mutateAsync({
+      type: 'angles',
+      count: params.count,
+      audiences: params.audiences.length > 0 ? params.audiences : undefined,
+      formValues: { ...params.formValues, creativeBrief: params.brief },
+      modelId: params.textModelId,
+    });
+    return (res as any).items ?? [];
+  }, [suggestMutation]);
+
   return {
     phase,
     progress,
@@ -427,7 +573,10 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     error,
     clearError,
     generate,
+    cancel,
     updateTextSlot,
     regenerateTextSlot,
+    generateAudiences,
+    generateAngles,
   };
 }
