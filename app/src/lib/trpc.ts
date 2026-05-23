@@ -663,9 +663,10 @@ function createNestedProxy(path: string[] = []): any {
                                     endpoint = path.join("/");
                                 }
 
-                                // Only send body for methods that support it (POST, PATCH, PUT)
+                                // Send body for POST, PATCH, PUT, and DELETE
+                                // WordPress REST API reads params from body for all methods except GET
                                 const fetchOptions: RequestInit = { method };
-                                if (method !== "GET" && method !== "DELETE") {
+                                if (method !== "GET") {
                                     fetchOptions.body = JSON.stringify(body);
                                 }
 
