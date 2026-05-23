@@ -209,6 +209,11 @@ const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `brands/${input.brandId}/assets/reorder`, body: input }),
     },
+    "brands.setAssetAsLogo": {
+        endpoint: "brands",
+        method: "POST",
+        transform: (input: any) => ({ url: `brands/${input.brandId}/assets/set-logo`, body: input }),
+    },
     "brands.updateColors": {
         endpoint: "brands",
         method: "POST",

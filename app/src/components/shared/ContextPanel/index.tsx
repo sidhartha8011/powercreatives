@@ -6,7 +6,6 @@ import { ThemeSelector } from "@/components/shared/ThemeSelector";
 import { BrandColorSwatches } from "@/components/shared/BrandColorSwatches";
 import { LogoSelectionDialog } from "@/components/shared/LogoSelectionDialog";
 import { toast } from "sonner";
-import { apiFetch } from "@/lib/trpc";
 import type { ContextPanelProps } from "./types";
 import { getBrandLogo } from "@shared/brandAssetResolver";
 
@@ -81,23 +80,7 @@ export function ContextPanel(props: ContextPanelProps) {
                 imageUrl: logoUrl,
                 role: 'logo',
               });
-              try {
-                const brand = await apiFetch<any>(`brands/${brandId}`);
-                const assets = brand?.assets ?? [];
-                const logoAsset = assets.find((a: any) => a.url === logoUrl || a.originalUrl === logoUrl);
-                if (logoAsset) {
-                  const newOrder = assets.map((a: any) => a.fileKey);
-                  const idx = newOrder.indexOf(logoAsset.fileKey);
-                  if (idx > 0) {
-                    newOrder.splice(idx, 1);
-                    newOrder.unshift(logoAsset.fileKey);
-                    await apiFetch(`brands/${brandId}/assets/reorder`, {
-                      method: 'POST',
-                      body: JSON.stringify({ brandId, fileKeys: newOrder }),
-                    });
-                  }
-                }
-              } catch (err) { }
+              // No reorder needed — logo is resolved by role === 'logo', not position.
               const extracted = (result as any)?.extractedColors as string[] | undefined;
               if (extracted && extracted.length > 0) {
                 try {

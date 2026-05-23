@@ -34,7 +34,7 @@ import { Separator } from "@/components/ui/separator";
 import { Globe, Loader2, ImageIcon } from "lucide-react";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { trpc, apiFetch } from "@/lib/trpc";
+import { trpc } from "@/lib/trpc";
 import { ReferenceImageSelector } from "@/components/shared/ReferenceImageSelector";
 import { LogoSelectionContent } from "@/components/shared/LogoSelectionDialog";
 import { Label } from "@/components/ui/label";
@@ -111,8 +111,10 @@ export function BrandDialog({
   const liveAssets: BrandAsset[] = (liveBrand as any)?.assets ?? [];
   const logoAsset = getBrandLogo(liveBrand as any) ?? null;
 
-  // ── Mutations (for logo save in wizard) ──
+  // ── Mutations (for logo save in wizard + role management) ──
   const addAssetFromUrlMutation = trpc.brands.addAssetFromUrl.useMutation();
+  const setAssetAsLogoMutation = trpc.brands.setAssetAsLogo.useMutation();
+  const updateColorsMutation = trpc.brands.updateColors.useMutation();
   const utils = trpc.useUtils();
 
   // ── Reset wizard when dialog closes ──
@@ -201,13 +203,10 @@ export function BrandDialog({
       // Persist colors to DB if brand exists
       const brandId = editBrand?.id ?? fetchHook.lastCreatedBrandId;
       if (brandId) {
-        apiFetch(`brands/${brandId}/colors`, {
-          method: "POST",
-          body: JSON.stringify({ brandId, colors: newColors }),
-        }).catch(() => {});
+        updateColorsMutation.mutateAsync({ brandId, colors: newColors }).catch(() => {});
       }
     },
-    [editBrand, fetchHook.lastCreatedBrandId, formHook]
+    [editBrand, fetchHook.lastCreatedBrandId, formHook, updateColorsMutation]
   );
 
   /** LogoSelectionContent is done (after logo + colors) → advance to form.
@@ -235,7 +234,7 @@ export function BrandDialog({
     utils.brands.list.invalidate();
   }, [fetchHook.brandQuery, utils]);
 
-  /** Promote a reference asset to logo by updating its role via the API.
+  /** Promote a reference asset to logo by updating its role via tRPC.
    *  The old logo (if any) is automatically demoted to 'reference' by the backend. */
   const handleSetAsLogo = useCallback(
     async (index: number) => {
@@ -245,9 +244,9 @@ export function BrandDialog({
       if (!target) return;
 
       try {
-        await apiFetch(`brands/${editBrand.id}/assets/set-logo`, {
-          method: 'POST',
-          body: JSON.stringify({ fileKey: target.fileKey }),
+        await setAssetAsLogoMutation.mutateAsync({
+          brandId: editBrand.id,
+          fileKey: target.fileKey,
         });
         fetchHook.brandQuery.refetch();
         utils.brands.getById.invalidate();
@@ -257,7 +256,7 @@ export function BrandDialog({
         toast.error("Failed to set logo");
       }
     },
-    [editBrand, liveAssets, fetchHook.brandQuery, utils]
+    [editBrand, liveAssets, setAssetAsLogoMutation, fetchHook.brandQuery, utils]
   );
 
   // ── Derived state ──

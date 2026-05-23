@@ -350,7 +350,11 @@ abstract class PCM_REST_Base
     }
 
     /**
-     * Get the primary logo URL for a brand.
+     * Get the brand logo URL from the brand's assets JSON.
+     *
+     * Reads from wp_pcm_brands.assets JSON column and finds the first
+     * asset with role='logo'. This is the single source of truth —
+     * matches the frontend's getBrandLogo() resolver.
      *
      * @param int $brand_id Brand ID.
      * @return string|null Logo URL or null.
@@ -359,20 +363,29 @@ abstract class PCM_REST_Base
     {
         global $wpdb;
 
-        $table = PCM_Schema::table('brand_assets');
+        $brands_table = PCM_Schema::table('brands');
 
-        $url = $wpdb->get_var($wpdb->prepare(
-            "SELECT url FROM $table WHERE brandId = %d AND type = 'logo' AND isPrimary = 1 LIMIT 1",
+        $assets_json = $wpdb->get_var($wpdb->prepare(
+            "SELECT assets FROM $brands_table WHERE id = %d LIMIT 1",
             $brand_id
         ));
 
-        if (empty($url)) {
-            $url = $wpdb->get_var($wpdb->prepare(
-                "SELECT url FROM $table WHERE brandId = %d AND type = 'logo' ORDER BY createdAt DESC LIMIT 1",
-                $brand_id
-            ));
+        if (empty($assets_json)) {
+            return null;
         }
 
-        return $url ?: null;
+        $assets = json_decode($assets_json, true);
+        if (!is_array($assets)) {
+            return null;
+        }
+
+        // Find first asset with role='logo' — same logic as frontend getBrandLogo()
+        foreach ($assets as $asset) {
+            if (isset($asset['role']) && $asset['role'] === 'logo' && !empty($asset['url'])) {
+                return $asset['url'];
+            }
+        }
+
+        return null;
     }
 }

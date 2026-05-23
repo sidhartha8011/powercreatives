@@ -17,7 +17,7 @@
 
 import { useState, useRef } from "react";
 import { toast } from "sonner";
-import { trpc, apiFetch } from "@/lib/trpc";
+import { trpc } from "@/lib/trpc";
 import { useSettings } from "@/contexts/AppContext";
 import { mapScrapedToFormValues, mapFormValuesToBrandKeys, normalizeLanguage } from "@shared/brandTypes";
 import { MAX_COLORS } from "../types";
@@ -141,12 +141,9 @@ export function useBrandFetch({
         try {
           // Persist scraped colors to DB immediately
           if (updated.colors.length > 0) {
-            await apiFetch(`brands/${editBrand.id}/colors`, {
-              method: 'POST',
-              body: JSON.stringify({
-                brandId: editBrand.id,
-                colors: updated.colors,
-              }),
+            await updateBrandColorsMutation.mutateAsync({
+              brandId: editBrand.id,
+              colors: updated.colors,
             });
           }
 
