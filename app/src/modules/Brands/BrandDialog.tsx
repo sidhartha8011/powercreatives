@@ -205,10 +205,15 @@ export function BrandDialog({
     [editBrand, fetchHook.lastCreatedBrandId, formHook]
   );
 
-  /** LogoSelectionContent is done (after logo + colors) → advance to form */
+  /** LogoSelectionContent is done (after logo + colors) → advance to form.
+   *  Invalidate the brands.getById cache so the ReferenceImageSelector
+   *  (which remounts here) fetches fresh data instead of relying on the
+   *  staleTime:30s cache that may pre-date the images saved during fetch. */
   const handleLogoDone = useCallback(() => {
+    fetchHook.brandQuery.refetch();
+    utils.brands.getById.invalidate();
     setCurrentStep("form");
-  }, []);
+  }, [fetchHook.brandQuery, utils]);
 
   // ── Form step handlers ──
 
