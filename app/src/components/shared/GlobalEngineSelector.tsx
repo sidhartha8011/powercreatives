@@ -116,8 +116,6 @@ export function GlobalEngineSelector({
     }
   };
 
-  const displayTitle = title || (type === 'text' ? 'Copy' : (type === 'image' ? 'Image' : 'Video'));
-
   // Get name of selected item if single-select
   let selectedSummary = 'Select engine...';
   if (selectedIds.length === 1) {
@@ -129,10 +127,13 @@ export function GlobalEngineSelector({
   }
 
   return (
-    <div className="flex items-center justify-between py-2 px-1">
-      <div>
-        <label className="text-sm font-medium text-foreground">{displayTitle}</label>
-      </div>
+    <div className={`flex items-center ${title ? 'justify-between' : 'justify-end'} py-2 px-1`}>
+      {/* Label — only shown when explicitly provided to avoid duplicating parent headers */}
+      {title && (
+        <div>
+          <label className="text-sm font-medium text-foreground">{title}</label>
+        </div>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button 
