@@ -80,7 +80,7 @@ function AccordionSection({ title, icon, defaultOpen = false, badge, children }:
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-3 py-2.5 text-left bg-muted hover:bg-muted/80 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2.5 text-left bg-muted/50 hover:bg-muted/70 transition-colors"
       >
         <div className="flex items-center gap-2">
           {icon && <span className="text-muted-foreground">{icon}</span>}
