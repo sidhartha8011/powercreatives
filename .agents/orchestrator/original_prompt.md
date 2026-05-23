@@ -1,19 +1,19 @@
-# Original User Request
+## 2026-05-23T08:54:13Z
 
-## 2026-05-22T23:28:14-07:00
+You are the Project Orchestrator.
+Your working directory is: c:\Users\dataadmin546\Desktop\PROJECTS\PowerCreatives\app\public\wp-content\plugins\power-creatives\.agents\orchestrator
+Your workspace directory is: c:\Users\dataadmin546\Desktop\PROJECTS\PowerCreatives\app\public\wp-content\plugins\power-creatives
 
-You are the teamwork_preview_orchestrator for the PowerCreatives multi-agent comprehensive code and architecture audit.
-Your working directory is: c:\Users\dataadmin546\Desktop\PROJECTS\PowerCreatives\app\public\wp-content\plugins\power-creatives\.agents\orchestrator/
-Your mission is to execute the audit as described in: c:\Users\dataadmin546\Desktop\PROJECTS\PowerCreatives\app\public\wp-content\plugins\power-creatives\ORIGINAL_REQUEST.md
+Please read the verbatim request in `c:\Users\dataadmin546\Desktop\PROJECTS\PowerCreatives\app\public\wp-content\plugins\power-creatives\ORIGINAL_REQUEST.md` (the section under "## Follow-up — 2026-05-23T08:53:51Z").
+Your goal is to coordinate the team to build a completely aligned and unified Ads Module by integrating copywriting and image generation capabilities, confined 100% to the Ads Module directory.
 
-Please follow your standard orchestrator protocol:
-1. Decompose the request and create a detailed multi-stage plan in your working directory (`.agents/orchestrator/plan.md`).
-2. Maintain active progress in `.agents/orchestrator/progress.md` and keep state context in `.agents/orchestrator/context.md`.
-3. You can spawn specialist subagents (e.g., explorer, worker, reviewer, challenger) using your `invoke_subagent` tool to assist with scanning the files, checking modularity, identifying code smells, verifying table/sidebar config-driven components, and compiling the findings.
-4. Ensure you perform a highly detailed scan of 100% of files in `includes/modules/` and `app/src/`.
-5. Identify all files exceeding 500 lines (with exact ranges and absolute links/paths).
-6. Verify compliance with `docs/ARCHITECTURE.md` (e.g., `PCM_REST_Base` inheritance, custom hooks for React UI business logic, config-driven tables/sidebars).
-7. Generate the final unified, highly detailed markdown audit report at `docs/audits/architecture_audit_report.md` specifying clear binary PASS/FAIL status for each module, and details on all violations (file path, violating lines, severity, and step-by-step technical remediation plan).
-8. Once the report is generated and you believe the work is complete, send a completion report back to me (the Sentinel). I will then trigger a mandatory victory audit before we present the final result to the user.
+Strictly adhere to:
+- @architecture.md and modular React frontend guidelines.
+- planning_process.md and implementation_process.md.
+- CRITICAL CONSTRAINT: All modifications must be 100% confined to the Ads Module directory (app/src/modules/Ads/). ZERO modifications to backend PHP files, databases, or other frontend modules (Copy, Image, etc.).
+- Exposing the "AI Enhance" toggle and "Angles (Scenes)" slider in AdsSidebar.tsx using same patterns as Image Sidebar.
+- Updating useAdsOrchestration.ts hook.
+- Dumb presentational UI components.
+- Cohesive approval set packaging under a single public link using CreateApprovalSetDialog.tsx.
 
-Get started by creating your `plan.md` and initiating the audit. Let me know when you have initialized!
+Initialize your coordination artifacts (plan.md, progress.md, briefing.md) and spawn specialists (e.g. explorer, worker/implementer, reviewer) as needed. When all milestones are complete and verified, report back to me (the Sentinel) with your final completion report.

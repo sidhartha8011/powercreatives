@@ -34,3 +34,44 @@ Generate a unified, highly detailed markdown audit report at `docs/audits/archit
 - [ ] Every violation in the report must include the absolute file link and exact line range.
 - [ ] The report must contain a clear binary PASS/FAIL status for each module.
 - [ ] Independent Verification: The verifying agent (Auditor) must randomly verify at least 3 flagged violations to confirm they are accurate (no false positives) and that the remediation plans are technically viable.
+
+## Follow-up — 2026-05-23T08:53:51Z
+
+Build a completely aligned and unified Ads Module by integrating the copywriting and image generation capabilities of the individual Copy and Image modules. The copy and visual outputs will remain display-wise decoupled in the board, but the user will be able to select and package them as a cohesive approval set.
+
+**CRITICAL CONSTRAINT:** All modifications must be 100% confined to the Ads Module directory (`app/src/modules/Ads/`). There must be absolutely ZERO modifications to backend PHP files, databases, or other frontend modules (`Copy`, `Image`, etc.).
+
+Working directory: c:\Users\dataadmin546\Desktop\PROJECTS\PowerCreatives\app\public\wp-content\plugins\power-creatives
+
+Integrity mode: development
+
+## Requirements
+
+### R1. Dumb UI & Hook-Based Logic Separation
+Follow the project's strict architecture:
+- All business logic, tRPC mutations, and orchestration for copy and image generation must live strictly inside `useAdsOrchestration.ts` (the Hook).
+- UI components (`AdsSidebar.tsx`, `AdsResultsGrid.tsx`, `index.tsx`) must be completely presentational ("dumb") and receive all state and callbacks as props.
+
+### R2. AI Enhance & Slider UI Integration
+Expose the "AI Enhance" (Brief Optimization) toggle and the "Angles (Scenes)" slider in `AdsSidebar.tsx` using the same visual patterns (styling, layout, range sliders) as the individual Image Sidebar. Pass these state variables and callbacks from `index.tsx` to `AdsSidebar.tsx`.
+
+### R3. Ads Image Phase Alignment (Hook Logic)
+Update `useAdsOrchestration.ts` to call the existing, decoupled tRPC image mutations:
+- Call `optimizeBrief` mutation if "AI Enhance" is active.
+- Call `generateConcepts` mutation if `numVersions` (Angles/Scenes) > 1 to generate distinct visual concepts/scenes.
+- Execute parallel `generateImage` queries using these optimized prompts and concepts, matching the high-throughput parallel execution model of the Image module.
+
+### R4. Cohesive Share & Approval Set Selection
+Maintain the decoupled grid display rendering for visuals and copy cards in `AdsResultsGrid.tsx`. Ensure the user can select a combination of visuals and copy cards and package them cohesively via `CreateApprovalSetDialog.tsx` under a single public sharing link.
+
+## Acceptance Criteria
+
+### Architectural Separation
+- [ ] No file outside `app/src/modules/Ads/` is modified.
+- [ ] `AdsSidebar.tsx` contains no direct API requests or tRPC mutations; it only invokes callbacks passed down via props.
+- [ ] `useAdsOrchestration.ts` contains all orchestration logic for the Copy phase, Image optimization/concepts phase, and Image generation phase.
+
+### Visual Generation Quality & Features
+- [ ] Toggling "AI Enhance" in the Ads Sidebar successfully calls `optimizeBrief` on the backend during generation.
+- [ ] Changing the "Angles (Scenes)" slider to >1 successfully generates distinct visual concepts before image generation, matching the Image module's variation quality.
+- [ ] Selection and client board packaging of copy and visuals under a single, unified link is fully verified.
