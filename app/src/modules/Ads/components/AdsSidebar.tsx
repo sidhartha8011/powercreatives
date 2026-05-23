@@ -233,7 +233,7 @@ export const AdsSidebar = memo(function AdsSidebar({
 
   return (
     <aside
-      className="shrink-0 border-r border-border overflow-y-auto bg-muted"
+      className="shrink-0 border-r border-border overflow-y-auto bg-muted/20"
       style={{ width: '22%', minWidth: '280px', maxWidth: '380px' }}
     >
       <div className="p-3 space-y-3">
