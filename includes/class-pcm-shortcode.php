@@ -166,6 +166,11 @@ class PCM_Shortcode
             return $this->render_dashboard($mode);
         }
 
+        // Public client review board bypass
+        if (isset($_GET['pcm_public_token'])) {
+            return $this->render_dashboard($mode);
+        }
+
         if (PCM_Gate_Auth::is_authenticated()) {
             return $this->render_dashboard($mode);
         }

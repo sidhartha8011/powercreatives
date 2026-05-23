@@ -443,6 +443,28 @@ class PCM_Schema
             KEY idx_status (status)
         ) $charset_collate;";
         dbDelta($sql);
+
+        // ── Approval Sets ──
+        // Packages generated copy and media assets into client-shareable boards.
+        // Stores client approvals, element comments, and frozen snapshots.
+        $sql = "CREATE TABLE {$prefix}approval_sets (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            userId int(11) NOT NULL,
+            brandId int(11) DEFAULT NULL,
+            projectId int(11) DEFAULT NULL,
+            name varchar(256) NOT NULL,
+            token varchar(128) NOT NULL,
+            status varchar(50) DEFAULT 'draft' NOT NULL,
+            snapshot longtext NOT NULL,
+            reviewFeedback longtext DEFAULT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY idx_token (token),
+            KEY idx_userId (userId),
+            KEY idx_brandId (brandId)
+        ) $charset_collate;";
+        dbDelta($sql);
     }
 
     /**
@@ -653,6 +675,7 @@ class PCM_Schema
 
         $prefix = self::prefix();
         $tables = array(
+            'approval_sets',
             'sites',
             'articles',
             'strategy_items',

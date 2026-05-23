@@ -532,7 +532,19 @@ const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `keywords/lists/${input.id}` }),
     },
 
-
+    // ── Approvals (Client Sharing & Webhooks) ──
+    "approvals.listSets": { endpoint: "approvals/sets", method: "GET" },
+    "approvals.createSet": { endpoint: "approvals/sets", method: "POST" },
+    "approvals.getPublicSet": {
+        endpoint: "approvals/sets",
+        method: "GET",
+        transform: (input: any) => ({ url: `approvals/sets/${input.token}` }),
+    },
+    "approvals.submitReview": {
+        endpoint: "approvals/sets",
+        method: "POST",
+        transform: (input: any) => ({ url: `approvals/sets/${input.token}/review`, body: input }),
+    },
 };
 
 // ============================================

@@ -9,6 +9,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AppProvider } from "./contexts/AppContext";
 import { Shell } from "./components/layout/Shell";
+import { ClientReviewPage } from "./modules/Approvals/components/ClientReviewPage";
 
 function App() {
   return (
@@ -17,7 +18,14 @@ function App() {
         <AppProvider>
           <TooltipProvider>
             <Toaster position="bottom-right" />
-            <Shell />
+            {(() => {
+              const urlParams = new URLSearchParams(window.location.search);
+              const token = urlParams.get('pcm_public_token');
+              if (token) {
+                return <ClientReviewPage token={token} />;
+              }
+              return <Shell />;
+            })()}
           </TooltipProvider>
         </AppProvider>
       </ThemeProvider>

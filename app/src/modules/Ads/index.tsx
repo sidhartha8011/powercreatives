@@ -22,11 +22,12 @@ import { AdsSidebar } from './components/AdsSidebar';
 import { AdsResultsGrid } from './components/AdsResultsGrid';
 import { ADS_DEFAULTS } from './adsConfig';
 import { BulkActionBar } from '@/components/shared/BulkActionBar';
-import { Download } from 'lucide-react';
+import { Download, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { trpc } from '@/lib/trpc';
 import type { CostTier } from '@/types';
 import { exportToMetaAdsZip } from './utils/metaAdsExport';
+import { CreateApprovalSetDialog } from './components/CreateApprovalSetDialog';
 
 // ============================================================================
 // Component
@@ -90,6 +91,7 @@ export function AdsModule() {
   // ── Selection State (Client Board) ──
   const [selectedVisualIds, setSelectedVisualIds] = useState<string[]>([]);
   const [selectedCopyIds, setSelectedCopyIds] = useState<string[]>([]);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
   // ── Orchestration hook ──
   const orchestration = useAdsOrchestration();
@@ -286,11 +288,29 @@ export function AdsModule() {
       {/* ── Client Board Export Bar ── */}
       <BulkActionBar count={selectionCount} onClear={clearSelection}>
         <BulkActionBar.Action
+          icon={Share2}
+          label="Share with Client"
+          onClick={() => setIsShareDialogOpen(true)}
+        />
+        <BulkActionBar.Action
           icon={Download}
           label={isExporting ? "Exporting..." : "Export for Meta (ZIP)"}
           onClick={handleExport}
         />
       </BulkActionBar>
+
+      <CreateApprovalSetDialog
+        isOpen={isShareDialogOpen}
+        onClose={() => setIsShareDialogOpen(false)}
+        selectedVisualIds={selectedVisualIds}
+        selectedCopyIds={selectedCopyIds}
+        mediaSlots={orchestration.mediaSlots}
+        textSlots={orchestration.textSlots}
+        brandId={contextData.brandId}
+        projectId={contextData.brand ? (contextData.brand as any).projectId : null}
+        brandName={contextData.brand ? contextData.brand.name : null}
+        brandLogoUrl={contextData.brand ? (contextData.brand as any).logoUrl : null}
+      />
     </div>
   );
 }
