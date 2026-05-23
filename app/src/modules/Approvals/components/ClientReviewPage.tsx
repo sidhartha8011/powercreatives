@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { CheckCircle2, MessageSquare, Send, Check, Heart, HelpCircle, Loader2 } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Send, Check, Heart, HelpCircle, Loader2, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
