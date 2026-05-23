@@ -196,6 +196,9 @@ class PCM_Copy_Service
             );
         }, $parsed);
 
+        // Strictly enforce user settings count to prevent LLM non-determinism from returning too many items
+        $audiences = array_slice($audiences, 0, $count);
+
         return array(
             'audiences' => $audiences,
             'researched' => $researched,
@@ -261,12 +264,15 @@ class PCM_Copy_Service
             return array(array('id' => 'default', 'name' => 'Value Proposition'));
         }
 
-        return array_map(function ($a) {
+        $angles = array_map(function ($a) {
             return array(
                 'id' => $this->sanitize_label($a['id'] ?? $a['name'] ?? ''),
                 'name' => $this->sanitize_label($a['name'] ?? ''),
             );
         }, $parsed);
+
+        // Strictly enforce user settings count to prevent LLM non-determinism from returning too many items
+        return array_slice($angles, 0, $count);
     }
 
     /**
@@ -365,7 +371,7 @@ class PCM_Copy_Service
 
         // Sanitize and ensure audienceId is present on every item
         $audience_ids = array_column($audiences, 'id');
-        return array_map(function ($a) use ($audience_ids) {
+        $sanitized_angles = array_map(function ($a) use ($audience_ids) {
             $aud_id = $this->sanitize_label($a['audienceId'] ?? '');
             // Validate the audienceId — if unknown, mark as wildcard
             if (!in_array($aud_id, $audience_ids, true)) {
@@ -377,6 +383,21 @@ class PCM_Copy_Service
                 'audienceId' => $aud_id,
             );
         }, $parsed);
+
+        // Group by audienceId to strictly enforce the user-requested count per audience
+        $grouped_angles = array();
+        foreach ($sanitized_angles as $angle) {
+            $aud_id = $angle['audienceId'];
+            $grouped_angles[$aud_id][] = $angle;
+        }
+
+        $enforced_angles = array();
+        foreach ($grouped_angles as $aud_id => $angle_list) {
+            // Strictly limit angles per audience to the user-requested count
+            $enforced_angles = array_merge($enforced_angles, array_slice($angle_list, 0, $count));
+        }
+
+        return $enforced_angles;
     }
 
     /**
