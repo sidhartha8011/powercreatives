@@ -226,6 +226,7 @@ export function BrandDialog({
 
   const handleAssetsChanged = useCallback(() => {
     fetchHook.brandQuery.refetch();
+    utils.brands.getById.invalidate();
     utils.brands.list.invalidate();
   }, [fetchHook.brandQuery, utils]);
 
