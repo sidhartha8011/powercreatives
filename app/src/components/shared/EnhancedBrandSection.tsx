@@ -9,6 +9,7 @@ import { BrandAssetGrid } from "./BrandAssetGrid";
 import { DEFAULT_BRAND_TOGGLES } from "./ContextPanel/types";
 import type { ContextData } from "./ContextPanel/types";
 import type { SessionReferenceImage } from "@shared/referenceImageIntents";
+import { getBrandLogo } from "@shared/brandAssetResolver";
 
 interface EnhancedBrandSectionProps {
   // Shared context (for brand colors, logo, and toggles)
@@ -59,7 +60,7 @@ export function EnhancedBrandSection({
 
   const brand = contextData.brand as Record<string, any> | null;
   const brandColors = (Array.isArray(brand?.colors) && brand.colors.length > 0) ? brand.colors as string[] : null;
-  const brandLogo = (Array.isArray(brand?.assets) && brand.assets.length > 0) ? brand.assets.find((a: any) => a.role === 'logo' || !a.role) : null;
+  const brandLogo = getBrandLogo(brand);
 
   const toggles = { ...DEFAULT_BRAND_TOGGLES, ...contextData.brandToggles };
 
