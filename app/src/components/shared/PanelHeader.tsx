@@ -26,8 +26,7 @@ export function PanelHeader({ title, rightElement, className = "", onClick, isCo
       onMouseLeave={onClick ? (e: any) => e.currentTarget.style.backgroundColor = 'var(--sidebar-section-bg)' : undefined}
     >
       <span
-        className="text-[11px] font-semibold uppercase tracking-wider"
-        style={{ color: 'var(--sidebar-section-fg)' }}
+        className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
       >
         {title}
       </span>

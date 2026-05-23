@@ -76,11 +76,11 @@ function AccordionSection({ title, icon, defaultOpen = false, badge, children }:
 
   return (
     <div className="rounded-lg overflow-hidden shadow-sm border border-border">
-      {/* Accordion header — SOLID background, no opacity stacking */}
+      {/* Accordion header — solid background, no opacity stacking */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-3.5 py-2.5 text-left transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors"
         style={{
           backgroundColor: 'var(--sidebar-section-bg)',
         }}
@@ -88,27 +88,22 @@ function AccordionSection({ title, icon, defaultOpen = false, badge, children }:
         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--sidebar-section-bg)'}
       >
         <div className="flex items-center gap-2">
-          {icon && <span style={{ color: 'var(--sidebar-section-fg)' }}>{icon}</span>}
-          <span
-            className="text-xs font-semibold uppercase tracking-wider"
-            style={{ color: 'var(--sidebar-section-fg)' }}
-          >
+          {icon && <span className="text-muted-foreground">{icon}</span>}
+          <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
             {title}
           </span>
           {badge && (
-            <span
-              className="text-[10px] font-medium px-1.5 py-0.5 rounded"
-              style={{ color: 'var(--sidebar-section-fg)', backgroundColor: 'var(--sidebar-section-hover)' }}
+            <span className="text-[10px] font-medium text-muted-foreground px-1.5 py-0.5 rounded"
+              style={{ backgroundColor: 'var(--sidebar-section-hover)' }}
             >
               {badge}
             </span>
           )}
         </div>
         <ChevronDown
-          className={`w-3.5 h-3.5 transition-transform duration-200 ${
+          className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 ${
             isOpen ? 'rotate-0' : '-rotate-90'
           }`}
-          style={{ color: 'var(--sidebar-section-fg)' }}
         />
       </button>
 

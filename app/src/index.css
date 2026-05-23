@@ -222,19 +222,16 @@
   --sidebar-ring: oklch(0.55 0.2 255);
 
   /* ── Sidebar Section Headers ──
-   * SOLID, OPAQUE colors. No opacity modifiers. No stacking.
-   * Each element gets ONE background. Period.
+   * SOLID, OPAQUE equivalents of the old semi-transparent layers.
+   * Same visual result as before, zero opacity stacking.
    *
-   * Hierarchy (from outermost to innermost):
-   *   aside container   → --sidebar (white)
-   *   section header    → --sidebar-section-bg (light blue tint)
-   *   section content   → --card (white)
-   *   sub-panel bg      → --sidebar-panel-bg (very light neutral)
+   *   bg-muted/50 on white ≈ oklch(0.97)  → --sidebar-section-bg
+   *   bg-muted/70 on white ≈ oklch(0.96)  → --sidebar-section-hover
+   *   bg-muted/30 on white ≈ oklch(0.98)  → --sidebar-panel-bg
    */
-  --sidebar-section-bg: oklch(0.95 0.02 250);         /* light blue-gray tint */
-  --sidebar-section-hover: oklch(0.93 0.025 250);     /* hover: slightly darker */
-  --sidebar-section-fg: oklch(0.38 0.06 250);         /* dark blue-gray text */
-  --sidebar-panel-bg: oklch(0.97 0.003 250);          /* very subtle neutral for sub-panels */
+  --sidebar-section-bg: oklch(0.97 0.003 250);
+  --sidebar-section-hover: oklch(0.96 0.003 250);
+  --sidebar-panel-bg: oklch(0.98 0.002 250);
 
   /* ── DR Badge Color Scale ──
    * Pastel palette for Domain Rating badges.
