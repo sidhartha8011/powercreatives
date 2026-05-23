@@ -39,6 +39,7 @@ import { ReferenceImageSelector } from "@/components/shared/ReferenceImageSelect
 import { LogoSelectionContent } from "@/components/shared/LogoSelectionDialog";
 import { Label } from "@/components/ui/label";
 import type { BrandAsset } from "@shared/brandTypes";
+import { getBrandLogo } from "@shared/brandAssetResolver";
 
 // Sub-components & hooks
 import { useBrandForm } from "./hooks/useBrandForm";
@@ -104,13 +105,14 @@ export function BrandDialog({
   isFetchingRef.current = fetchHook.isFetching;
 
   // ── Brand data for visual identity panel (edit mode) ──
+  // Logo is resolved by role === 'logo', NOT by position.
+  // This is the single source of truth — matches getBrandLogo() used in AI generation.
   const liveBrand = fetchHook.brandQuery.data;
   const liveAssets: BrandAsset[] = (liveBrand as any)?.assets ?? [];
-  const logoAsset = liveAssets.length > 0 ? liveAssets[0] : null;
+  const logoAsset = getBrandLogo(liveBrand as any) ?? null;
 
-  // ── Mutations (for logo save in wizard + asset reorder) ──
+  // ── Mutations (for logo save in wizard) ──
   const addAssetFromUrlMutation = trpc.brands.addAssetFromUrl.useMutation();
-  const reorderMutation = trpc.brands.reorderAssets.useMutation();
   const utils = trpc.useUtils();
 
   // ── Reset wizard when dialog closes ──
@@ -145,7 +147,8 @@ export function BrandDialog({
     }
   }, [fetchHook]);
 
-  /** Logo selected → save as asset → reorder to position 0 → return extracted logo colors */
+  /** Logo selected → save as asset with role:'logo' → return extracted logo colors.
+   *  No reorder needed: logo is resolved by role, not position. */
   const handleLogoSelected = useCallback(
     async (logoUrl: string): Promise<string[]> => {
       const brandId = editBrand?.id ?? fetchHook.lastCreatedBrandId;
@@ -154,17 +157,6 @@ export function BrandDialog({
       setIsConfirmingLogo(true);
       try {
         const result = await addAssetFromUrlMutation.mutateAsync({ brandId, imageUrl: logoUrl, role: 'logo' });
-
-        // Move the newly appended logo to position 0 so liveAssets[0] = logo.
-        // Same pattern as BrandLogoSection.tsx — the logo is always at index 0.
-        const refreshed = await apiFetch<any>(`brands/${brandId}`);
-        const refreshedAssets: BrandAsset[] = (refreshed as any)?.assets ?? [];
-        if (refreshedAssets.length > 1) {
-          const newOrder = refreshedAssets.map((a) => a.fileKey);
-          const last = newOrder.pop()!;
-          newOrder.unshift(last);
-          await reorderMutation.mutateAsync({ brandId, fileKeys: newOrder });
-        }
 
         fetchHook.brandQuery.refetch();
         utils.brands.getById.invalidate();
@@ -190,7 +182,7 @@ export function BrandDialog({
         setIsConfirmingLogo(false);
       }
     },
-    [editBrand, fetchHook.lastCreatedBrandId, addAssetFromUrlMutation, reorderMutation, fetchHook.brandQuery, utils, formHook]
+    [editBrand, fetchHook.lastCreatedBrandId, addAssetFromUrlMutation, fetchHook.brandQuery, utils, formHook]
   );
 
   /** Colors assigned in LogoSelectionContent → merge into form */
@@ -243,29 +235,29 @@ export function BrandDialog({
     utils.brands.list.invalidate();
   }, [fetchHook.brandQuery, utils]);
 
-  /** Move an asset to position 0 (set as logo) */
+  /** Promote a reference asset to logo by updating its role via the API.
+   *  The old logo (if any) is automatically demoted to 'reference' by the backend. */
   const handleSetAsLogo = useCallback(
     async (index: number) => {
       if (!editBrand) return;
-      if (index <= 0 || index >= liveAssets.length) return;
-
-      const newOrder = liveAssets.map((a) => a.fileKey);
-      const [moved] = newOrder.splice(index, 1);
-      newOrder.unshift(moved);
+      const referenceAssets = liveAssets.filter((a) => a.role !== 'logo');
+      const target = referenceAssets[index];
+      if (!target) return;
 
       try {
-        await reorderMutation.mutateAsync({
-          brandId: editBrand.id,
-          fileKeys: newOrder,
+        await apiFetch(`brands/${editBrand.id}/assets/set-logo`, {
+          method: 'POST',
+          body: JSON.stringify({ fileKey: target.fileKey }),
         });
         fetchHook.brandQuery.refetch();
+        utils.brands.getById.invalidate();
         utils.brands.list.invalidate();
         toast.success("Logo updated");
       } catch {
         toast.error("Failed to set logo");
       }
     },
-    [editBrand, liveAssets, reorderMutation, fetchHook.brandQuery, utils]
+    [editBrand, liveAssets, fetchHook.brandQuery, utils]
   );
 
   // ── Derived state ──

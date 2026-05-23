@@ -21,6 +21,7 @@
  *   POST   /brands/<id>/assets/from-url      → addAssetFromUrl
  *   DELETE /brands/<id>/assets               → removeAsset
  *   POST   /brands/<id>/assets/reorder       → reorderAssets
+ *   POST   /brands/<id>/assets/set-logo      → setAssetAsLogo
  *   POST   /brands/<id>/colors               → updateColors
  *
  * @package PowerCreatives
@@ -76,6 +77,7 @@ class PCM_REST_Brands extends PCM_REST_Base
                 array('POST', '/brands/(?P<id>\\d+)/assets/from-url', 'add_asset_from_url'),
                 array('DELETE', '/brands/(?P<id>\\d+)/assets', 'remove_asset'),
                 array('POST', '/brands/(?P<id>\\d+)/assets/reorder', 'reorder_assets'),
+                array('POST', '/brands/(?P<id>\\d+)/assets/set-logo', 'set_asset_as_logo'),
 
             // Color management
                 array('POST', '/brands/(?P<id>\\d+)/colors', 'update_colors'),
@@ -406,6 +408,28 @@ class PCM_REST_Brands extends PCM_REST_Base
         }
 
         $this->service->reorder_assets($id, $user->id, $brand, $file_keys);
+
+        return $this->success(array('success' => true));
+    }
+
+    /** POST /brands/<id>/assets/set-logo — Promote a reference asset to logo role.
+     *  The previous logo (if any) is automatically demoted to 'reference'. */
+    public function set_asset_as_logo(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $id = absint($request->get_param('id'));
+        $file_key = sanitize_text_field($request->get_param('fileKey'));
+
+        if (empty($file_key)) {
+            return $this->error('fileKey is required.');
+        }
+
+        $brand = PCM_DB::get_brand_by_id($id, $user->id);
+        if (!$brand) {
+            return $this->not_found('Brand');
+        }
+
+        $this->service->set_asset_as_logo($id, $user->id, $brand, $file_key);
 
         return $this->success(array('success' => true));
     }

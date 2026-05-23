@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { trpc, apiFetch } from "@/lib/trpc";
 import { toast } from "sonner";
 import type { ContextData } from "@/components/shared/ContextPanel";
+import { getBrandLogo } from "@shared/brandAssetResolver";
 
 export function useBrandAssets(
   contextData: ContextData,
@@ -230,8 +231,9 @@ export function useBrandAssets(
     const currentAssets = ((currentContext.brand as any)?.assets as any[] | null) ?? [];
     if (currentAssets.length === 0) return;
     
-    // We assume index 0 is the logo per architecture
-    const logoAsset = currentAssets[0];
+    // Resolve logo by role, not position — matches getBrandLogo() used everywhere
+    const logoAsset = getBrandLogo(currentContext.brand as any);
+    if (!logoAsset) return;
     
     setIsRemovingLogo(true);
     try {

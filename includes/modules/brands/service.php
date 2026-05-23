@@ -408,6 +408,38 @@ class PCM_Brands_Service
         ));
     }
 
+    /**
+     * Promote an asset to 'logo' role, demoting any existing logo to 'reference'.
+     *
+     * This is an atomic role-swap operation that replaces the old position-based
+     * approach (reorder to index 0). The role field is the single source of truth
+     * for determining which asset is the brand logo.
+     *
+     * @param int    $brand_id Brand ID.
+     * @param int    $user_id  PCM user ID.
+     * @param object $brand    Brand DB row.
+     * @param string $file_key fileKey of the asset to promote to 'logo'.
+     */
+    public function set_asset_as_logo(int $brand_id, int $user_id, object $brand, string $file_key): void
+    {
+        $assets = json_decode($brand->assets ?? '[]', true) ?: array();
+
+        foreach ($assets as &$asset) {
+            if ($asset['fileKey'] === $file_key) {
+                // Promote target to logo
+                $asset['role'] = 'logo';
+            } elseif (($asset['role'] ?? '') === 'logo') {
+                // Demote previous logo to reference
+                $asset['role'] = 'reference';
+            }
+        }
+        unset($asset);
+
+        PCM_DB::update_brand($brand_id, $user_id, array(
+            'assets' => wp_json_encode($assets),
+        ));
+    }
+
     // =========================================================================
     // COLOR MANAGEMENT
     // =========================================================================

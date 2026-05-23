@@ -20,7 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Loader2, ImageIcon, Upload, Link, X } from "lucide-react";
 import { toast } from "sonner";
-import { trpc, apiFetch } from "@/lib/trpc";
+import { trpc } from "@/lib/trpc";
 import type { BrandAsset } from "@shared/brandTypes";
 import type { Brand } from "@/modules/Brands/types";
 
@@ -50,7 +50,6 @@ export function BrandLogoSection({
   const addAssetMutation = trpc.brands.addAsset.useMutation();
   const addAssetFromUrlMutation = trpc.brands.addAssetFromUrl.useMutation();
   const removeAssetMutation = trpc.brands.removeAsset.useMutation();
-  const reorderMutation = trpc.brands.reorderAssets.useMutation();
 
   const handleRemoveLogo = useCallback(async () => {
     if (!editBrand || !logoAsset) return;
@@ -102,18 +101,7 @@ export function BrandLogoSection({
           role: 'logo',
         });
 
-        // Move the newly added asset to position 0 (logo)
-        const refreshed = await apiFetch<any>(`brands/${editBrand.id}`);
-        const refreshedAssets: BrandAsset[] = (refreshed as any)?.assets ?? [];
-        if (refreshedAssets.length > 1) {
-          const newOrder = refreshedAssets.map((a) => a.fileKey);
-          const last = newOrder.pop()!;
-          newOrder.unshift(last);
-          await reorderMutation.mutateAsync({
-            brandId: editBrand.id,
-            fileKeys: newOrder,
-          });
-        }
+        // No reorder needed — logo is resolved by role === 'logo', not position.
 
         onLogoChanged();
         toast.success("Logo uploaded");
@@ -130,7 +118,7 @@ export function BrandLogoSection({
         if (logoInputRef.current) logoInputRef.current.value = "";
       }
     },
-    [editBrand, addAssetMutation, reorderMutation, onLogoChanged, onColorsExtracted]
+    [editBrand, addAssetMutation, onLogoChanged, onColorsExtracted]
   );
 
   // ── Fetch logo from URL ──
@@ -155,18 +143,7 @@ export function BrandLogoSection({
           role: 'logo',
         });
 
-        // Move the newly added asset to position 0 (logo)
-        const refreshed = await apiFetch<any>(`brands/${editBrand.id}`);
-        const refreshedAssets: BrandAsset[] = (refreshed as any)?.assets ?? [];
-        if (refreshedAssets.length > 1) {
-          const newOrder = refreshedAssets.map((a) => a.fileKey);
-          const last = newOrder.pop()!;
-          newOrder.unshift(last);
-          await reorderMutation.mutateAsync({
-            brandId: editBrand.id,
-            fileKeys: newOrder,
-          });
-        }
+        // No reorder needed — logo is resolved by role === 'logo', not position.
 
         onLogoChanged();
         setLogoUrlInput("");
@@ -184,7 +161,7 @@ export function BrandLogoSection({
         setFetchingLogoUrl(false);
       }
     },
-    [editBrand, logoUrlInput, addAssetFromUrlMutation, reorderMutation, onLogoChanged, onColorsExtracted]
+    [editBrand, logoUrlInput, addAssetFromUrlMutation, onLogoChanged, onColorsExtracted]
   );
 
   return (

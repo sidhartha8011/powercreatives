@@ -131,9 +131,11 @@ export function ReferenceImageSelector({
     { enabled: externalAssets === undefined && brandId > 0 }
   );
 
-  // Resolve assets: prefer external, fall back to own query
-  const assets: BrandAsset[] =
+  // Resolve assets: prefer external, fall back to own query.
+  // Filter out logo assets — logos are displayed in BrandLogoSection, not here.
+  const allAssets: BrandAsset[] =
     externalAssets ?? (brandQuery.data as any)?.assets ?? [];
+  const assets = allAssets.filter((a) => a.role !== 'logo');
 
   // Invalidate both own query and parent list after mutations
   const invalidateAll = useCallback(() => {

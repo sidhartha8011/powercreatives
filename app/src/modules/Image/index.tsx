@@ -103,7 +103,7 @@ export function ImageModule() {
     if (assets.length > 0 && !assetHook.logoConfig.base64) {
       // Use resolver to find the logo asset by role (Brand Asset Role Contract)
       const logoAsset = getBrandLogo(contextData.brand as any);
-      const logoUrl = logoAsset?.url ?? (assets.length > 0 ? assets[0].url : null);
+      const logoUrl = logoAsset?.url ?? null;
       if (logoUrl) {
         fetch(logoUrl)
         .then((res) => res.blob())
