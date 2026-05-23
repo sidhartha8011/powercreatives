@@ -256,18 +256,6 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     const refUrls = payloadParams.inputUrls;
     const refIntents = payloadParams.referenceImageIntents;
 
-    // ── DEBUG: Trace logo delivery (remove after verification) ──
-    console.group('[AdsOrchestration] 🔍 LOGO DEBUG');
-    console.log('contextData.brand:', contextData.brand);
-    console.log('contextData.brand?.assets:', (contextData.brand as any)?.assets);
-    console.log('contextData.brandToggles:', contextData.brandToggles);
-    console.log('sessionReferenceImages:', sessionReferenceImages);
-    console.log('resolveGenerationPayload result:', payloadParams);
-    console.log('inputUrls (refUrls):', refUrls);
-    console.log('referenceImageIntents:', refIntents);
-    console.log('brandContext:', brandCtx);
-    console.groupEnd();
-
     // 0. Optionally optimize the brief via LLM
     let briefToUse = brief;
     if (params.autoOptimizeBrief) {

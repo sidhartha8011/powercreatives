@@ -204,7 +204,24 @@ class PCM_Brands_Service
             throw new \RuntimeException('Upload failed: ' . $upload['error']);
         }
 
-        $asset = $this->create_asset_entry($brand_id, $upload['url'], $upload['type'], 'upload', $role);
+        $upload_url  = $upload['url'];
+        $upload_type = $upload['type'];
+        $upload_file = $upload['file'];
+
+        // SVG → PNG rasterization:
+        // AI image generation models cannot process SVG vector files.
+        // Convert at upload time so all downstream consumers get PNG.
+        if (PCM_Image_Utils::is_svg($upload_type)) {
+            $rasterized = PCM_Image_Utils::rasterize_svg_to_png($upload_file);
+            if ($rasterized) {
+                $upload_file = $rasterized['path'];
+                $upload_type = $rasterized['mime'];
+                // Rebuild the URL: same directory, new filename
+                $upload_url = dirname($upload_url) . '/' . $rasterized['url_filename'];
+            }
+        }
+
+        $asset = $this->create_asset_entry($brand_id, $upload_url, $upload_type, 'upload', $role);
 
         // Append to brand assets
         $this->append_asset($brand_id, $user_id, $brand, $asset);
@@ -212,7 +229,7 @@ class PCM_Brands_Service
         // Extract dominant colors from the uploaded image.
         // Return them in the response so the frontend can show a
         // toast notification asking the user to approve/dismiss.
-        $extracted = PCM_Image_Utils::extract_dominant_colors($upload['file'], 5);
+        $extracted = PCM_Image_Utils::extract_dominant_colors($upload_file, 5);
         $existing = json_decode($brand->colors ?? '[]', true) ?: array();
 
         // Filter out colors that already exist or are too similar
@@ -260,6 +277,20 @@ class PCM_Brands_Service
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
         file_put_contents($file_path, $body);
+
+        // SVG → PNG rasterization:
+        // AI image generation models (Flux, DALL-E, etc.) cannot process SVG vector
+        // files. Convert to PNG at storage time so every downstream consumer gets
+        // a rasterized image automatically — no module-level workarounds needed.
+        if (PCM_Image_Utils::is_svg($mime_type)) {
+            $rasterized = PCM_Image_Utils::rasterize_svg_to_png($file_path, $upload_dir['path']);
+            if ($rasterized) {
+                $file_name = $rasterized['url_filename'];
+                $file_path = $rasterized['path'];
+                $mime_type = $rasterized['mime'];
+            }
+            // If rasterization fails, we keep the original SVG — better than nothing.
+        }
 
         $asset = $this->create_asset_entry($brand_id, $upload_dir['url'] . '/' . $file_name, $mime_type, 'url_fetch', $role);
 

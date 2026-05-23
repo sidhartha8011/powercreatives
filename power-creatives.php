@@ -23,7 +23,7 @@ if (!defined('ABSPATH')) {
 
 // ── Plugin Constants ──
 define('PCM_VERSION', '1.2.1');
-define('PCM_DB_VERSION', '1.6.0');
+define('PCM_DB_VERSION', '1.7.0');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));

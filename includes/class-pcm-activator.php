@@ -95,6 +95,13 @@ class PCM_Activator
                 PCM_Schema::migrate_brand_assets_role();
             }
 
+            // v1.7.0: Convert existing SVG brand assets to PNG.
+            // AI image generation models cannot process SVG vector files.
+            // This rasterizes all SVG logos/assets to PNG using Imagick.
+            if (version_compare($installed_version, '1.7.0', '<')) {
+                PCM_Schema::migrate_brand_svg_to_png();
+            }
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

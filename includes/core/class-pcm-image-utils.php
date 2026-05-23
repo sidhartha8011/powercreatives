@@ -407,6 +407,122 @@ class PCM_Image_Utils
 
         return $default;
     }
+
+    // =========================================================================
+    // SVG → PNG RASTERIZATION
+    // =========================================================================
+
+    /**
+     * Check if a MIME type or file path represents an SVG file.
+     *
+     * @param string $mime_or_path MIME type (e.g. 'image/svg+xml') or file path.
+     * @return bool True if SVG.
+     */
+    public static function is_svg(string $mime_or_path): bool
+    {
+        // Check MIME type
+        if (str_contains($mime_or_path, 'svg')) {
+            return true;
+        }
+
+        // Check file extension
+        $ext = strtolower(pathinfo($mime_or_path, PATHINFO_EXTENSION));
+        return $ext === 'svg';
+    }
+
+    /**
+     * Rasterize an SVG file to PNG using Imagick.
+     *
+     * Uses high-resolution density (300 DPI) before reading the SVG
+     * to ensure crisp, high-quality output. Preserves transparency.
+     *
+     * AI image generation models (Flux, DALL-E, Midjourney, etc.) cannot
+     * process SVG vector files as input — they require rasterized formats
+     * (PNG/JPEG/WebP). This method is called during brand asset storage
+     * to ensure all logos are in a model-compatible format.
+     *
+     * @param string $svg_path   Absolute path to the SVG file.
+     * @param string $output_dir Directory to write the PNG file into.
+     *                           If empty, uses the same directory as the SVG.
+     * @return array{path: string, url_filename: string, mime: string}|null
+     *         Returns the new file info, or null if conversion failed.
+     */
+    public static function rasterize_svg_to_png(string $svg_path, string $output_dir = ''): ?array
+    {
+        // Guard: Imagick must be available
+        if (!extension_loaded('imagick')) {
+            error_log('[PCM_Image_Utils] Imagick extension not loaded — cannot rasterize SVG.');
+            return null;
+        }
+
+        if (!file_exists($svg_path)) {
+            error_log('[PCM_Image_Utils] SVG file not found: ' . $svg_path);
+            return null;
+        }
+
+        // Determine output path
+        if (empty($output_dir)) {
+            $output_dir = dirname($svg_path);
+        }
+
+        // Generate a unique PNG filename
+        $png_filename = 'pcm-brand-' . wp_generate_uuid4() . '.png';
+        $png_path = rtrim($output_dir, '/\\') . '/' . $png_filename;
+
+        try {
+            $imagick = new \Imagick();
+
+            // Set high resolution BEFORE reading the SVG.
+            // This is the critical step — without it, the SVG is rasterized
+            // at the default 72 DPI, producing blurry/pixelated output.
+            $imagick->setResolution(300, 300);
+
+            // Transparent background (preserves SVG transparency)
+            $imagick->setBackgroundColor(new \ImagickPixel('transparent'));
+
+            // Read the SVG file
+            $imagick->readImage($svg_path);
+
+            // Set output format to PNG with alpha channel
+            $imagick->setImageFormat('png32');
+
+            // Resize to a reasonable max dimension for AI model input.
+            // Most models accept up to 1024–2048px. We cap at 1024px
+            // on the longest side to balance quality vs. file size.
+            $width = $imagick->getImageWidth();
+            $height = $imagick->getImageHeight();
+            $max_dim = 1024;
+
+            if ($width > $max_dim || $height > $max_dim) {
+                if ($width >= $height) {
+                    $imagick->resizeImage($max_dim, 0, \Imagick::FILTER_LANCZOS, 1);
+                } else {
+                    $imagick->resizeImage(0, $max_dim, \Imagick::FILTER_LANCZOS, 1);
+                }
+            }
+
+            // Write the PNG file
+            $imagick->writeImage($png_path);
+            $imagick->clear();
+            $imagick->destroy();
+
+            // Clean up the original SVG file (no longer needed)
+            @unlink($svg_path);
+
+            return array(
+                'path'         => $png_path,
+                'url_filename' => $png_filename,
+                'mime'         => 'image/png',
+            );
+
+        } catch (\ImagickException $e) {
+            error_log('[PCM_Image_Utils] SVG rasterization failed: ' . $e->getMessage());
+            return null;
+        } catch (\Exception $e) {
+            error_log('[PCM_Image_Utils] Unexpected error during SVG rasterization: ' . $e->getMessage());
+            return null;
+        }
+    }
 }
 
 

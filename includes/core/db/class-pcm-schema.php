@@ -662,6 +662,105 @@ class PCM_Schema
     }
 
     /**
+     * v1.7.0 Migration: Convert existing SVG brand assets to PNG.
+     *
+     * AI image generation models (Flux, DALL-E, etc.) cannot process SVG
+     * vector files. This migration finds all brand assets with mimeType
+     * 'image/svg+xml', rasterizes them to PNG using Imagick, and updates
+     * the database records with the new PNG URL and MIME type.
+     *
+     * Idempotent — only touches assets with svg MIME type.
+     *
+     * @return void
+     */
+    public static function migrate_brand_svg_to_png(): void
+    {
+        global $wpdb;
+
+        $table = self::table('brands');
+
+        // Only fetch brands with SVG assets
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->get_results(
+            "SELECT id, assets FROM {$table} WHERE assets LIKE '%svg%'",
+            ARRAY_A
+        );
+
+        if (empty($rows)) {
+            return;
+        }
+
+        foreach ($rows as $row) {
+            $assets = json_decode($row['assets'], true);
+            if (!is_array($assets) || empty($assets)) {
+                continue;
+            }
+
+            $changed = false;
+            foreach ($assets as $i => $asset) {
+                if (!is_array($asset)) {
+                    continue;
+                }
+
+                $mime = $asset['mimeType'] ?? '';
+                if (!PCM_Image_Utils::is_svg($mime)) {
+                    continue;
+                }
+
+                // Resolve the local file path from the URL
+                $url = $asset['url'] ?? '';
+                if (empty($url)) {
+                    continue;
+                }
+
+                // Convert URL to local path
+                $upload_dir = wp_upload_dir();
+                $base_url = $upload_dir['baseurl'];
+                $base_dir = $upload_dir['basedir'];
+
+                if (!str_contains($url, $base_url)) {
+                    // URL doesn't point to our uploads directory — skip
+                    continue;
+                }
+
+                $relative = str_replace($base_url, '', $url);
+                $local_path = $base_dir . $relative;
+
+                if (!file_exists($local_path)) {
+                    error_log('[PCM_Schema] SVG migration: file not found at ' . $local_path);
+                    continue;
+                }
+
+                // Rasterize SVG → PNG
+                $rasterized = PCM_Image_Utils::rasterize_svg_to_png($local_path);
+                if (!$rasterized) {
+                    error_log('[PCM_Schema] SVG migration: rasterization failed for brand ' . $row['id']);
+                    continue;
+                }
+
+                // Update asset entry with PNG info
+                $png_url = dirname($url) . '/' . $rasterized['url_filename'];
+                $assets[$i]['url'] = $png_url;
+                $assets[$i]['mimeType'] = 'image/png';
+                $changed = true;
+
+                error_log('[PCM_Schema] SVG migration: brand ' . $row['id'] . ' asset ' . ($asset['fileKey'] ?? '?') . ' converted to PNG.');
+            }
+
+            if ($changed) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update(
+                    $table,
+                    array('assets' => wp_json_encode($assets)),
+                    array('id' => (int)$row['id']),
+                    array('%s'),
+                    array('%d')
+                );
+            }
+        }
+    }
+
+    /**
      * Drop all plugin tables.
      *
      * Only called when user explicitly deletes plugin data.
