@@ -13,7 +13,7 @@
 
 import React, { memo } from 'react';
 import { Megaphone, Loader2, FileText, ImageIcon, Layers, Video, AlertTriangle } from 'lucide-react';
-import { colors, typography } from '@/components/shared';
+import { colors, typography, PillTabBar } from '@/components/shared';
 import type { MediaSlot, TextSlot, AdsProgress, AdsPhase } from '../types';
 import { AdVisualCard } from './AdVisualCard';
 import { AdCopyCard } from './AdCopyCard';
@@ -289,83 +289,13 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
 
               {/* Concept tabs — group visuals by creative angle (mirrors Image module) */}
               {derivedConcepts.length > 1 && (
-                <div
-                  className="flex items-center gap-1 mb-6 rounded-lg"
-                  style={{
-                    padding: '0.5rem',
-                    background: colors.bgMuted,
-                  }}
-                >
-                  {/* "All" tab */}
-                  {(() => {
-                    const isActive = activeConceptTab === 'all';
-                    return (
-                      <button
-                        onClick={() => setActiveConceptTab('all')}
-                        className="flex items-center gap-2 transition-colors"
-                        style={{
-                          padding: '0.375rem 0.75rem',
-                          borderRadius: '9999px',
-                          background: isActive ? '#fff' : 'transparent',
-                          color: isActive ? colors.text : colors.textSecondary,
-                          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                          fontWeight: isActive ? typography.semibold : typography.medium,
-                          fontSize: typography.sm,
-                        }}
-                      >
-                        <span>All</span>
-                        <span
-                          className="flex items-center justify-center text-[10px]"
-                          style={{
-                            minWidth: '1.25rem',
-                            height: '1.25rem',
-                            borderRadius: '9999px',
-                            background: isActive ? colors.bgMuted : 'transparent',
-                            color: isActive ? colors.textSecondary : colors.textGhost,
-                          }}
-                        >
-                          {mediaSlots.length}
-                        </span>
-                      </button>
-                    );
-                  })()}
-
-                  {/* Per-concept tabs */}
-                  {derivedConcepts.map((concept) => {
-                    const isActive = concept.id === activeConceptTab;
-                    const count = mediaSlots.filter(m => m.conceptName === concept.name).length;
-                    return (
-                      <button
-                        key={concept.id}
-                        onClick={() => setActiveConceptTab(concept.id)}
-                        className="flex items-center gap-2 transition-colors"
-                        style={{
-                          padding: '0.375rem 0.75rem',
-                          borderRadius: '9999px',
-                          background: isActive ? '#fff' : 'transparent',
-                          color: isActive ? colors.text : colors.textSecondary,
-                          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                          fontWeight: isActive ? typography.semibold : typography.medium,
-                          fontSize: typography.sm,
-                        }}
-                      >
-                        <span className="truncate max-w-[150px]">{concept.name}</span>
-                        <span
-                          className="flex items-center justify-center text-[10px]"
-                          style={{
-                            minWidth: '1.25rem',
-                            height: '1.25rem',
-                            borderRadius: '9999px',
-                            background: isActive ? colors.bgMuted : 'transparent',
-                            color: isActive ? colors.textSecondary : colors.textGhost,
-                          }}
-                        >
-                          {count}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <PillTabBar
+                  items={derivedConcepts}
+                  activeId={activeConceptTab}
+                  onSelect={setActiveConceptTab}
+                  totalCount={mediaSlots.length}
+                  getCount={(id) => mediaSlots.filter(m => m.conceptName === id).length}
+                />
               )}
 
               <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
@@ -392,87 +322,15 @@ export const AdsResultsGrid = memo(function AdsResultsGrid({
                 </h3>
               </div>
 
-              {/* Level 2: Audience Sub-Tabs with "All" tab (mirrors Copy module) */}
+              {/* Audience tabs — group copy by target audience */}
               {derivedAudiences.length > 0 && (
-                <div
-                  className="flex items-center gap-1 mb-6 rounded-lg"
-                  style={{
-                    padding: '0.5rem',
-                    background: colors.bgMuted,
-                  }}
-                >
-                  {/* "All" tab */}
-                  {(() => {
-                    const isActive = activeAudience === 'all';
-                    return (
-                      <button
-                        onClick={() => setActiveAudience('all')}
-                        className="flex items-center gap-2 transition-colors"
-                        style={{
-                          padding: '0.375rem 0.75rem',
-                          borderRadius: '9999px',
-                          background: isActive ? '#fff' : 'transparent',
-                          color: isActive ? colors.text : colors.textSecondary,
-                          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                          fontWeight: isActive ? typography.semibold : typography.medium,
-                          fontSize: typography.sm,
-                        }}
-                      >
-                        <span>All</span>
-                        <span
-                          className="flex items-center justify-center text-[10px]"
-                          style={{
-                            minWidth: '1.25rem',
-                            height: '1.25rem',
-                            borderRadius: '9999px',
-                            background: isActive ? colors.bgMuted : 'transparent',
-                            color: isActive ? colors.textSecondary : colors.textGhost,
-                          }}
-                        >
-                          {textSlots.length}
-                        </span>
-                      </button>
-                    );
-                  })()}
-
-                  {/* Per-audience tabs */}
-                  {derivedAudiences.map((audience) => {
-                    const isActive = audience.id === activeAudience;
-                    // Count how many textSlots belong to this audience
-                    const count = textSlots.filter(t => t.audienceName === audience.name).length;
-                    
-                    return (
-                      <button
-                        key={audience.id}
-                        onClick={() => setActiveAudience(audience.id)}
-                        className="flex items-center gap-2 transition-colors"
-                        style={{
-                          padding: '0.375rem 0.75rem',
-                          borderRadius: '9999px',
-                          background: isActive ? '#fff' : 'transparent',
-                          color: isActive ? colors.text : colors.textSecondary,
-                          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                          fontWeight: isActive ? typography.semibold : typography.medium,
-                          fontSize: typography.sm,
-                        }}
-                      >
-                        <span className="truncate max-w-[150px]">{audience.name}</span>
-                        <span
-                          className="flex items-center justify-center text-[10px]"
-                          style={{
-                            minWidth: '1.25rem',
-                            height: '1.25rem',
-                            borderRadius: '9999px',
-                            background: isActive ? colors.bgMuted : 'transparent',
-                            color: isActive ? colors.textSecondary : colors.textGhost,
-                          }}
-                        >
-                          {count}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <PillTabBar
+                  items={derivedAudiences}
+                  activeId={activeAudience}
+                  onSelect={setActiveAudience}
+                  totalCount={textSlots.length}
+                  getCount={(id) => textSlots.filter(t => t.audienceName === derivedAudiences.find(a => a.id === id)?.name).length}
+                />
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
