@@ -145,7 +145,7 @@ export function BrandDialog({
     }
   }, [fetchHook]);
 
-  /** Logo selected → save as asset → return extracted logo colors for pre-selection */
+  /** Logo selected → save as asset → reorder to position 0 → return extracted logo colors */
   const handleLogoSelected = useCallback(
     async (logoUrl: string): Promise<string[]> => {
       const brandId = editBrand?.id ?? fetchHook.lastCreatedBrandId;
@@ -154,7 +154,20 @@ export function BrandDialog({
       setIsConfirmingLogo(true);
       try {
         const result = await addAssetFromUrlMutation.mutateAsync({ brandId, imageUrl: logoUrl, role: 'logo' });
+
+        // Move the newly appended logo to position 0 so liveAssets[0] = logo.
+        // Same pattern as BrandLogoSection.tsx — the logo is always at index 0.
+        const refreshed = await apiFetch<any>(`brands/${brandId}`);
+        const refreshedAssets: BrandAsset[] = (refreshed as any)?.assets ?? [];
+        if (refreshedAssets.length > 1) {
+          const newOrder = refreshedAssets.map((a) => a.fileKey);
+          const last = newOrder.pop()!;
+          newOrder.unshift(last);
+          await reorderMutation.mutateAsync({ brandId, fileKeys: newOrder });
+        }
+
         fetchHook.brandQuery.refetch();
+        utils.brands.getById.invalidate();
         utils.brands.list.invalidate();
         toast.success("Logo saved");
 
@@ -177,7 +190,7 @@ export function BrandDialog({
         setIsConfirmingLogo(false);
       }
     },
-    [editBrand, fetchHook.lastCreatedBrandId, addAssetFromUrlMutation, fetchHook.brandQuery, utils, formHook]
+    [editBrand, fetchHook.lastCreatedBrandId, addAssetFromUrlMutation, reorderMutation, fetchHook.brandQuery, utils, formHook]
   );
 
   /** Colors assigned in LogoSelectionContent → merge into form */
