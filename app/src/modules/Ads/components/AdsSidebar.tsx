@@ -1,23 +1,33 @@
 /**
- * ADS SIDEBAR — All sidebar controls for the Ads module
+ * ADS SIDEBAR -- All sidebar controls for the Ads module
  *
  * Pure presentational component. Receives all state/callbacks as props.
- * No business logic — those live in useAdsOrchestration.
+ * No business logic -- those live in useAdsOrchestration.
  *
- * Sections:
- * 1. Brand / URL / Theme context (ContextPanel — shared)
- * 2. Enhanced Brand Section (business info, colors, logo — shared)
- * 3. Theme selector (season, campaign — shared)
- * 4. Creative Brief (textarea)
- * 5. Copy Type selector (shared)
- * 6. Audiences (ModeListBox — shared)
- * 7. Angles (GroupedAnglesList — shared)
- * 8. Advanced Options (DynamicSection — tone/emoji/cta — shared)
- * 9. Reference Ads (shared)
- * 10. Writer Model (text model dropdown)
- * 11. Image Models (multi-select with tier accordion)
- * 12. Video Model (dropdown — disabled fishbone)
- * 12. Video Engine (dropdown)
+ * Sections (grouped by output type):
+ *
+ * SHARED:
+ *   1. Brand / URL / Theme context (ContextPanel)
+ *   2. Enhanced Brand Section (business info, colors, logo)
+ *   3. Theme selector (season, campaign)
+ *   4. Creative Brief (textarea + AI Enhance)
+ *
+ * IMAGE:
+ *   5. Image Engine (multi-select with tier accordion)
+ *   6. Angles (scenes) slider
+ *   7. Production Parameters (variations)
+ *
+ * COPY:
+ *   8. Copy Engine (text model dropdown)
+ *   9. Copy Type selector (social_ads / social_organic)
+ *  10. Audiences (ModeListBox)
+ *  11. Angles (GroupedAnglesList)
+ *  12. Reference Ads
+ *
+ * VIDEO:
+ *  13. Video Engine (dropdown)
+ *
+ * Generate button lives in the module header (index.tsx), not here.
  */
 
 import { memo, useCallback } from 'react';
