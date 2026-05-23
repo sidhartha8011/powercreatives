@@ -29,6 +29,9 @@ interface Props {
   selectedBrandId: number | undefined;
   handleBrandSelect: (brandId: number) => void;
   handleBrandClear: (e: React.MouseEvent) => void;
+  /** When true, hides the PanelHeader and card wrapper.
+   *  Use when BrandDropdown is inside an AccordionSection that already provides the title. */
+  hideHeader?: boolean;
 }
 
 export function BrandDropdown({
@@ -41,6 +44,7 @@ export function BrandDropdown({
   selectedBrandId,
   handleBrandSelect,
   handleBrandClear,
+  hideHeader = false,
 }: Props) {
   const brandTriggerRef = useRef<HTMLButtonElement>(null);
   const selectedBrand = brandList.find((b) => b.id === selectedBrandId);
@@ -67,14 +71,10 @@ export function BrandDropdown({
 
   const hasNiches = groupKeys.some((k) => k !== "__ungrouped__");
 
-  return (
-    <div
-      className="rounded-lg border bg-white overflow-hidden"
-      style={{ borderColor: "#e5e7eb" }}
-    >
-      <PanelHeader title="Brand" />
-      <div className="p-3 space-y-2">
-        <Popover open={brandOpen} onOpenChange={setBrandOpen}>
+  /* Inner content — shared between both modes */
+  const content = (
+    <div className="space-y-2">
+      <Popover open={brandOpen} onOpenChange={setBrandOpen}>
           <div className="flex items-center gap-0">
             <PopoverTrigger asChild>
               <Button
@@ -89,8 +89,7 @@ export function BrandDropdown({
                   !selectedBrand && "text-muted-foreground"
                 )}
                 style={{
-                  borderColor: selectedBrand ? colors.primary : colors.border,
-                  background: colors.bgSurface,
+                  borderColor: selectedBrand ? colors.primary : undefined,
                 }}
               >
                 <span className="truncate flex-1 text-left">
@@ -112,7 +111,6 @@ export function BrandDropdown({
                 className="inline-flex items-center justify-center h-9 w-8 rounded-r-md border border-l-0 hover:bg-muted transition-colors"
                 style={{
                   borderColor: colors.primary,
-                  background: colors.bgSurface,
                 }}
                 aria-label="Clear brand selection"
               >
@@ -194,7 +192,7 @@ export function BrandDropdown({
         </Popover>
 
         {selectedBrand && (
-          <p className="text-xs" style={{ color: colors.textSecondary }}>
+          <p className="text-xs text-muted-foreground">
             {selectedBrand.niche && `${selectedBrand.niche} · `}
             {selectedBrand.location ||
               selectedBrand.website?.replace(/^https?:\/\//, "").replace(/\/$/, "") || ""}
@@ -202,11 +200,21 @@ export function BrandDropdown({
         )}
 
         {!brandsLoading && brandList.length === 0 && (
-          <p className="text-xs" style={{ color: colors.textSecondary }}>
+          <p className="text-xs text-muted-foreground">
             No brands yet. Fetch a URL below to auto-save one.
           </p>
         )}
-      </div>
+    </div>
+  );
+
+  /* Bare mode — parent provides wrapper */
+  if (hideHeader) return content;
+
+  /* Full mode — self-contained card with header */
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <PanelHeader title="Brand" />
+      <div className="p-3">{content}</div>
     </div>
   );
 }

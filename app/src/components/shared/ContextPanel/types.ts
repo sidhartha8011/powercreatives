@@ -68,4 +68,6 @@ export interface ContextPanelProps {
   /** Hide specific sections if not needed */
   hideUrl?: boolean;
   hideTheme?: boolean;
+  /** Hide the Brand panel header (use when parent already provides one) */
+  hideBrandHeader?: boolean;
 }

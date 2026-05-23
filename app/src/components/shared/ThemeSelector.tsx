@@ -14,7 +14,6 @@
 
 import { useState, useCallback } from "react";
 import { ChevronRight } from "lucide-react";
-import { colors, typography } from "@/components/shared/design-tokens";
 import {
     Select,
     SelectContent,
@@ -46,6 +45,9 @@ export interface ThemeSelectorProps {
     onCampaignThemeChange: (value: string) => void;
     /** Whether the accordion starts expanded (default: false) */
     defaultExpanded?: boolean;
+    /** When true, renders only the form fields without accordion wrapper.
+     *  Use when ThemeSelector is placed inside an external AccordionSection. */
+    bare?: boolean;
 }
 
 // ============================================
@@ -58,8 +60,9 @@ export function ThemeSelector({
     onSeasonChange,
     onCampaignThemeChange,
     defaultExpanded = false,
+    bare = false,
 }: ThemeSelectorProps) {
-    const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+    const [isExpanded, setIsExpanded] = useState(bare || defaultExpanded);
 
     /** Map EMPTY_SENTINEL back to empty string for parent state */
     const handleSeasonChange = useCallback(
@@ -75,11 +78,57 @@ export function ThemeSelector({
             ? `${seasonEvent} · ${campaignTheme}`
             : seasonEvent || campaignTheme || undefined;
 
+    /* ── Bare mode: just the form fields, no wrapper ── */
+    const fields = (
+        <>
+            {/* Season / Event dropdown */}
+            <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground">
+                    Season / Event
+                </label>
+                <Select
+                    value={seasonEvent || EMPTY_SENTINEL}
+                    onValueChange={handleSeasonChange}
+                >
+                    <SelectTrigger className="h-9 text-sm w-full">
+                        <SelectValue placeholder="Select…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value={EMPTY_SENTINEL}>None</SelectItem>
+                        {SEASON_OPTIONS.filter((o) => o.value !== "").map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </div>
+
+            {/* Campaign Theme free-text */}
+            <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground">
+                    Campaign Theme
+                </label>
+                <input
+                    type="text"
+                    value={campaignTheme}
+                    onChange={(e) => onCampaignThemeChange(e.target.value)}
+                    placeholder='e.g. "New Year, New You" or "Back to School Savings"'
+                    className="w-full rounded-md border border-border px-3 py-2 text-sm outline-none bg-background"
+                />
+            </div>
+        </>
+    );
+
+    /* Bare mode — parent provides the wrapper/accordion */
+    if (bare) {
+        return <div className="space-y-3">{fields}</div>;
+    }
+
+    /* Full mode — self-contained accordion */
+
     return (
-        <div
-            className="rounded-lg border p-3 space-y-2"
-            style={{ borderColor: colors.border, background: colors.bgMuted }}
-        >
+        <div className="rounded-lg border border-border p-3 space-y-2 bg-muted">
             {/* Clickable header — toggles accordion */}
             <button
                 type="button"
@@ -88,98 +137,24 @@ export function ThemeSelector({
             >
                 <div className="flex items-center gap-1.5">
                     <ChevronRight
-                        style={{
-                            width: 14,
-                            height: 14,
-                            color: colors.textMuted,
-                            transition: 'transform 150ms ease',
-                            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                        }}
+                        className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-150 ${
+                            isExpanded ? 'rotate-90' : 'rotate-0'
+                        }`}
                     />
-                    <span
-                        style={{
-                            fontSize: typography.micro,
-                            fontWeight: typography.semibold,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.05em',
-                            color: colors.textSecondary,
-                        }}
-                    >
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                         Theme
                     </span>
                 </div>
                 {/* Collapsed summary — show active values */}
                 {!isExpanded && summaryText && (
-                    <span
-                        className="truncate ml-2"
-                        style={{
-                            fontSize: typography.xs,
-                            color: colors.textMuted,
-                            maxWidth: '60%',
-                        }}
-                    >
+                    <span className="truncate ml-2 text-xs text-muted-foreground max-w-[60%]">
                         {summaryText}
                     </span>
                 )}
             </button>
 
             {/* Expandable content */}
-            {isExpanded && (
-                <>
-                    {/* Season / Event dropdown */}
-                    <div className="space-y-1.5">
-                        <label
-                            className="text-xs"
-                            style={{ color: colors.textSecondary }}
-                        >
-                            Season / Event
-                        </label>
-                        <Select
-                            value={seasonEvent || EMPTY_SENTINEL}
-                            onValueChange={handleSeasonChange}
-                        >
-                            <SelectTrigger
-                                className="h-9 text-sm w-full"
-                                style={{
-                                    borderColor: colors.border,
-                                    background: colors.bgSurface,
-                                }}
-                            >
-                                <SelectValue placeholder="Select…" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value={EMPTY_SENTINEL}>None</SelectItem>
-                                {SEASON_OPTIONS.filter((o) => o.value !== "").map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                        {option.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-
-                    {/* Campaign Theme free-text */}
-                    <div className="space-y-1.5">
-                        <label
-                            className="text-xs"
-                            style={{ color: colors.textSecondary }}
-                        >
-                            Campaign Theme
-                        </label>
-                        <input
-                            type="text"
-                            value={campaignTheme}
-                            onChange={(e) => onCampaignThemeChange(e.target.value)}
-                            placeholder='e.g. "New Year, New You" or "Back to School Savings"'
-                            className="w-full rounded-md border px-3 py-2 text-sm outline-none"
-                            style={{
-                                borderColor: colors.border,
-                                background: colors.bgSurface,
-                            }}
-                        />
-                    </div>
-                </>
-            )}
+            {isExpanded && fields}
         </div>
     );
 }

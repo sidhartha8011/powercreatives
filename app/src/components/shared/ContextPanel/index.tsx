@@ -10,7 +10,7 @@ import type { ContextPanelProps } from "./types";
 import { getBrandLogo } from "@shared/brandAssetResolver";
 
 export function ContextPanel(props: ContextPanelProps) {
-  const { value, hideUrl = false, hideTheme = false } = props;
+  const { value, hideUrl = false, hideTheme = false, hideBrandHeader = false } = props;
   const { state, actions, mutations } = useContextPanel(props);
 
   // Extract brand identity fields (safe access — brand shape varies)
@@ -32,6 +32,7 @@ export function ContextPanel(props: ContextPanelProps) {
           selectedBrandId={value.brandId}
           handleBrandSelect={actions.handleBrandSelect}
           handleBrandClear={actions.handleBrandClear}
+          hideHeader={hideBrandHeader}
         />
 
 

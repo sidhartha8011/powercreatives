@@ -76,16 +76,11 @@ function AccordionSection({ title, icon, defaultOpen = false, badge, children }:
 
   return (
     <div className="rounded-lg overflow-hidden shadow-sm border border-border">
-      {/* Accordion header — solid background, no opacity stacking */}
+      {/* Accordion header — Tailwind classes only, no inline styles */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors"
-        style={{
-          backgroundColor: 'var(--sidebar-section-bg)',
-        }}
-        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--sidebar-section-hover)'}
-        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--sidebar-section-bg)'}
+        className="w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors bg-[var(--sidebar-section-bg)] hover:bg-[var(--sidebar-section-hover)]"
       >
         <div className="flex items-center gap-2">
           {icon && <span className="text-muted-foreground">{icon}</span>}
@@ -93,9 +88,7 @@ function AccordionSection({ title, icon, defaultOpen = false, badge, children }:
             {title}
           </span>
           {badge && (
-            <span className="text-[10px] font-medium text-muted-foreground px-1.5 py-0.5 rounded"
-              style={{ backgroundColor: 'var(--sidebar-section-hover)' }}
-            >
+            <span className="text-[10px] font-medium text-muted-foreground px-1.5 py-0.5 rounded bg-[var(--sidebar-section-hover)]">
               {badge}
             </span>
           )}
@@ -107,12 +100,9 @@ function AccordionSection({ title, icon, defaultOpen = false, badge, children }:
         />
       </button>
 
-      {/* Accordion content — solid white, one border separator */}
+      {/* Accordion content */}
       {isOpen && (
-        <div
-          className="px-3 pb-3 pt-2 space-y-4 border-t border-border"
-          style={{ backgroundColor: 'var(--card)' }}
-        >
+        <div className="px-3 pb-3 pt-2 space-y-4 border-t border-border bg-card">
           {children}
         </div>
       )}
@@ -242,10 +232,7 @@ export const AdsSidebar = memo(function AdsSidebar({
   ];
 
   return (
-    <aside
-      className="shrink-0 border-r border-border overflow-y-auto w-[22%] min-w-[280px] max-w-[380px]"
-      style={{ backgroundColor: 'var(--sidebar)' }}
-    >
+    <aside className="shrink-0 border-r border-border overflow-y-auto w-[22%] min-w-[280px] max-w-[380px] bg-sidebar">
       <div className="p-3 space-y-4">
 
         {/* ================================================================
@@ -262,6 +249,7 @@ export const AdsSidebar = memo(function AdsSidebar({
             }}
             onUrlFetched={onUrlFetched}
             hideTheme
+            hideBrandHeader
           />
 
           {/* Business Info & Brand Assets (logo, colors, subjects) */}
@@ -283,6 +271,7 @@ export const AdsSidebar = memo(function AdsSidebar({
             campaignTheme={contextData.campaignTheme}
             onSeasonChange={(seasonEvent) => onContextChange({ ...contextData, seasonEvent })}
             onCampaignThemeChange={(campaignTheme) => onContextChange({ ...contextData, campaignTheme })}
+            bare
           />
         </AccordionSection>
 
@@ -334,11 +323,8 @@ export const AdsSidebar = memo(function AdsSidebar({
 
         {/* Output settings — tabs + panel as one visual unit */}
         <div className="rounded-lg shadow-sm overflow-hidden border border-border">
-          {/* Segmented control header — solid, no opacity */}
-          <div
-            className="flex items-center p-1.5 border-b border-border"
-            style={{ backgroundColor: 'var(--sidebar-section-bg)' }}
-          >
+          {/* Segmented control header */}
+          <div className="flex items-center p-1.5 border-b border-border bg-[var(--sidebar-section-bg)]">
             {tabs.map((tab) => {
               const isActive = tab.id === activeTab;
               return (
@@ -348,10 +334,9 @@ export const AdsSidebar = memo(function AdsSidebar({
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 ${
                     isActive
-                      ? 'text-foreground shadow-sm border border-border'
+                      ? 'bg-card text-foreground shadow-sm border border-border'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
-                  style={isActive ? { backgroundColor: 'var(--card)' } : undefined}
                 >
                   {tab.icon}
                   {tab.label}
@@ -361,16 +346,15 @@ export const AdsSidebar = memo(function AdsSidebar({
           </div>
 
           {/* Panel content */}
-          <div className="p-3 space-y-4" style={{ backgroundColor: 'var(--card)' }}>
+          <div className="p-3 space-y-4 bg-card">
 
           {/* ── IMAGE PANEL ── */}
           {activeTab === 'image' && (
             <>
               {/* Image Engine (model selection) */}
-              <div className="rounded-lg p-2 border border-border" style={{ backgroundColor: 'var(--sidebar-panel-bg)' }}>
+              <div className="rounded-lg p-2 border border-border bg-[var(--sidebar-panel-bg)]">
                 <GlobalEngineSelector
                   type="image"
-                  title="Image"
                   selectedIds={imageModelIds}
                   onChange={onImageModelsChange}
                   multiSelect={true}
@@ -408,10 +392,9 @@ export const AdsSidebar = memo(function AdsSidebar({
           {activeTab === 'copy' && (
             <>
               {/* Copy Engine (text model) */}
-              <div className="bg-muted/30 rounded-lg p-2 border border-border">
+              <div className="rounded-lg p-2 border border-border bg-[var(--sidebar-panel-bg)]">
                 <GlobalEngineSelector
                   type="text"
-                  title="Copy"
                   selectedIds={textModelId ? [textModelId] : []}
                   onChange={(ids) => onTextModelChange(ids[0] || '')}
                   multiSelect={false}
@@ -464,10 +447,9 @@ export const AdsSidebar = memo(function AdsSidebar({
           {/* ── VIDEO PANEL ── */}
           {activeTab === 'video' && (
             <>
-              <div className="bg-muted/30 rounded-lg p-2 border border-border">
+              <div className="rounded-lg p-2 border border-border bg-[var(--sidebar-panel-bg)]">
                 <GlobalEngineSelector
                   type="video"
-                  title="Video"
                   selectedIds={videoModelId ? [videoModelId] : []}
                   onChange={(ids) => onVideoModelChange(ids[0] || '')}
                   multiSelect={false}
