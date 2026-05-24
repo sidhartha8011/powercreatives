@@ -238,7 +238,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
 
-        :root {
+        /* Scoped to .aurora-mesh-bg — these variables ONLY affect the client review board */
+        .aurora-mesh-bg {
           --ink: #1d1d1f;
           --ink-2: #4a4239;
           --ink-3: #6f6a64;
