@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon, Download, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { toast } from 'sonner';
 import { isVideoAsset } from './ClientReviewPage';
 
 export interface CreativeAsset {
@@ -39,6 +40,7 @@ interface CreativeAssetCardProps {
   brandName?: string;
   pairedMediaUrl?: string | null;
   isSubmitted?: boolean;
+  isTeamMember?: boolean;
 }
 
 export function CreativeAssetCard({
@@ -52,7 +54,8 @@ export function CreativeAssetCard({
   brandLogoUrl,
   brandName = 'Brand',
   pairedMediaUrl,
-  isSubmitted = false
+  isSubmitted = false,
+  isTeamMember = false
 }: CreativeAssetCardProps) {
   const [isEditingComment, setIsEditingComment] = useState(false);
   const [tempCommentText, setTempCommentText] = useState(comment || '');
@@ -80,6 +83,69 @@ export function CreativeAssetCard({
     if (isSubmitted) return;
     onApprove(asset.id);
   }, [asset.id, onApprove, isSubmitted]);
+
+  // CORS-resilient downloading system
+  const handleDownload = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!asset.url) return;
+    
+    const extension = isVideo ? 'mp4' : 'jpg';
+    const filename = asset.name 
+      ? asset.name.endsWith(`.${extension}`) ? asset.name : `${asset.name}.${extension}`
+      : `creative-asset.${extension}`;
+
+    try {
+      const response = await fetch(asset.url, { mode: 'cors' });
+      if (!response.ok) throw new Error();
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch {
+      // Direct tab fallback if CORS is strict
+      window.open(asset.url, '_blank');
+    }
+  }, [asset, isVideo]);
+
+  // Cross-browser clipboard copier with fallback
+  const handleCopyToClipboard = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    const textToCopy = asset.headline ? `${asset.headline}\n\n${asset.body}` : (asset.body || '');
+    
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(textToCopy)
+        .then(() => {
+          toast.success('Ad copy copied to clipboard!');
+        })
+        .catch(() => {
+          toast.error('Failed to copy text.');
+        });
+      return;
+    }
+
+    // Classic fallback for non-secure HTTP or older browsers
+    const textArea = document.createElement("textarea");
+    textArea.value = textToCopy;
+    textArea.style.position = "fixed";
+    textArea.style.left = "-999999px";
+    textArea.style.top = "-999999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      toast.success('Ad copy copied to clipboard!');
+    } catch {
+      toast.error('Failed to copy to clipboard.');
+    } finally {
+      textArea.remove();
+    }
+  }, [asset]);
 
   const handleOpenComment = useCallback(() => {
     if (isSubmitted) return;
@@ -219,6 +285,28 @@ export function CreativeAssetCard({
             <MessageSquare className="w-[13px] h-[13px]" />
             Comment
           </button>
+
+          {isTeamMember && (
+            type === 'media' ? (
+              <button
+                type="button"
+                className="pcm-btn pcm-btn-download"
+                onClick={handleDownload}
+              >
+                <Download className="w-[13px] h-[13px]" />
+                Download
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="pcm-btn pcm-btn-copy"
+                onClick={handleCopyToClipboard}
+              >
+                <Copy className="w-[13px] h-[13px]" />
+                Copy Text
+              </button>
+            )
+          )}
 
           <span className="pcm-status">
             <span className="pulse" />

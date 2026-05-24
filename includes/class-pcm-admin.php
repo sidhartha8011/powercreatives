@@ -202,6 +202,7 @@ class PCM_Admin
                 'email' => $current_user->user_email,
                 'role' => current_user_can('manage_options') ? 'admin' : 'user',
                 'avatarUrl' => get_avatar_url($current_user->ID),
+                'isLoggedIn' => true,
             ),
             // Plugin version
             'version' => PCM_VERSION,

@@ -83,6 +83,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Derived: board is read-only when already completed on server
   const isReadOnly = set?.status === 'completed';
 
+  // Check if current user is a logged-in team member
+  const isTeamMember = useMemo(() => {
+    const config = (window as any).pcmConfig;
+    return !!config?.user?.isLoggedIn;
+  }, []);
+
   // Auto-save draft to localStorage on every state change
   useEffect(() => {
     if (isSubmitted) return;
@@ -320,7 +326,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     );
   }
 
-  if (isSubmitted) {
+  if (isSubmitted && !isTeamMember) {
     return (
       <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen">
         <style>{`
@@ -815,6 +821,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           background: transparent; color: var(--ink-2);
         }
         .pcm-btn-comment:hover { background: rgba(0,0,0,0.05); }
+        .pcm-btn-download, .pcm-btn-copy {
+          background: rgba(0,0,0,0.05); color: var(--ink-2);
+        }
+        .pcm-btn-download:hover, .pcm-btn-copy:hover {
+          background: rgba(0,0,0,0.1); color: var(--ink);
+        }
         .pcm-btn svg { width: 13px; height: 13px; }
 
         /* ---------- card status ---------- */
@@ -950,6 +962,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                   brandName={brandName}
                   pairedMediaUrl={pairedMediaUrl}
                   isSubmitted={isReadOnly || submitMutation.isPending}
+                  isTeamMember={isTeamMember}
                 />
               );
             })}

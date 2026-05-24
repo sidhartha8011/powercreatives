@@ -455,6 +455,8 @@ class PCM_Shortcode
 
     private function get_js_config(): array
     {
+        $is_team_member = is_user_logged_in() && (current_user_can('edit_posts') || current_user_can('manage_options'));
+
         // Two contexts produce two user shapes:
         //  - WP-logged-in user → identifies as that WP user (admin or otherwise)
         //  - Gate-authed visitor → identifies as the shared workspace user, so
@@ -467,6 +469,7 @@ class PCM_Shortcode
                 'email' => $wp_user->user_email,
                 'role' => current_user_can('manage_options') ? 'admin' : 'user',
                 'avatarUrl' => get_avatar_url($wp_user->ID),
+                'isLoggedIn' => $is_team_member,
             );
         } else {
             // FIX: previously we sent hardcoded id=0, which could break any frontend
@@ -489,6 +492,7 @@ class PCM_Shortcode
                 'email' => '',
                 'role' => 'user',
                 'avatarUrl' => '',
+                'isLoggedIn' => $is_team_member,
             );
         }
 
