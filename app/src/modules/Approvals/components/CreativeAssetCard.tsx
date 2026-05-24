@@ -142,15 +142,6 @@ export function CreativeAssetCard({
             {asset.platform || asset.audienceName || 'Ad Copy'} · {asset.type || asset.angleName || 'Primary Text'}
           </div>
           <p className="pcm-copy-text">{asset.headline ? `${asset.headline}\n\n` : ''}{asset.body}</p>
-          
-          <div className="pcm-copy-meta">
-            {asset.cta && (
-              <span className="pcm-kv"><b>CTA</b> · {asset.cta}</span>
-            )}
-            {(asset.tone || asset.toneOfVoice) && (
-              <span className="pcm-kv"><b>Tone</b> · {asset.tone || asset.toneOfVoice}</span>
-            )}
-          </div>
         </div>
       )}
 

@@ -684,13 +684,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           white-space: pre-wrap;
           word-break: break-word;
         }
-        .pcm-copy-meta {
-          margin-top: auto; padding-top: 6px;
-          font-size: 11px; color: var(--ink-4); font-weight: 500;
-          display: flex; align-items: center; gap: 10px;
-        }
-        .pcm-kv { display: inline-flex; align-items: center; gap: 4px; }
-        .pcm-kv b { font-weight: 600; color: var(--ink-2); }
 
         /* ---------- card actions ---------- */
         .pcm-card-actions {
