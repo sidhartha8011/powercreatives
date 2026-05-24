@@ -369,7 +369,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
               color: 'var(--ink)',
               margin: '0 0 10px', lineHeight: 1.2,
             }}>
-              Granskning inskickad!
+              Feedback inskickad!
             </h2>
 
             <p style={{
@@ -390,7 +390,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                 width: '6px', height: '6px', borderRadius: '50%',
                 background: '#18a957',
               }} />
-              Granskad &amp; stängd
+              Avslutad
             </span>
           </div>
         </div>
