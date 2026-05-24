@@ -2,7 +2,6 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Check, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { Badge } from '@/components/ui/badge';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 
@@ -224,24 +223,86 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   if (isLoading) {
     return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 gap-3">
-        <Spinner className="w-8 h-8 text-primary" />
-        <span className="text-sm text-muted-foreground">Loading client review board...</span>
+      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen" style={{
+        background: '#f6f0ea',
+        backgroundImage: `
+          radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
+          radial-gradient(at 88% 12%, #d8d0ff 0px, transparent 45%),
+          radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
+          radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%)
+        `,
+        backgroundAttachment: 'fixed',
+      }}>
+        <div style={{
+          flex: 1,
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          gap: '12px',
+        }}>
+          <Spinner className="w-8 h-8 text-primary" />
+          <span style={{ fontSize: '13px', color: '#6f6a64' }}>Loading client review board...</span>
+        </div>
       </div>
     );
   }
 
   if (error || !set) {
     return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
-        <div className="max-w-md p-6 rounded-2xl bg-white shadow-lg border border-border">
-          <HelpCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
-          <h2 className="text-lg font-bold text-foreground">
-            Invalid or Expired Board
-          </h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            This approval set link is invalid, expired, or has been revoked. Please ask the creator for a new link.
-          </p>
+      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen">
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
+          #pcm-root .aurora-mesh-bg {
+            --ink: #1d1d1f;
+            --ink-2: #4a4239;
+            --ink-3: #6f6a64;
+            --ink-4: #8a7d6d;
+            --line: rgba(0,0,0,0.06);
+            background: #f6f0ea;
+            background-image:
+              radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
+              radial-gradient(at 88% 12%, #d8d0ff 0px, transparent 45%),
+              radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
+              radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%);
+            background-attachment: fixed;
+            -webkit-font-smoothing: antialiased;
+          }
+        `}</style>
+
+        <div style={{
+          flex: 1,
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          padding: '24px',
+        }}>
+          <div style={{
+            maxWidth: '420px', width: '100%',
+            padding: '48px 36px',
+            borderRadius: '16px',
+            background: 'rgba(255,255,255,0.7)',
+            backdropFilter: 'blur(30px) saturate(180%)',
+            WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+            border: '1px solid rgba(255,255,255,0.75)',
+            boxShadow: '0 4px 24px rgba(35,18,8,0.06), 0 1px 2px rgba(0,0,0,0.04)',
+            textAlign: 'center' as const,
+          }}>
+            <HelpCircle className="w-12 h-12 mx-auto mb-4" style={{ color: '#c2410c' }} />
+
+            <h2 style={{
+              fontFamily: '"Instrument Serif", Georgia, serif',
+              fontSize: '24px', fontWeight: 400,
+              color: 'var(--ink)',
+              margin: '0 0 10px', lineHeight: 1.2,
+            }}>
+              Invalid or Expired Board
+            </h2>
+
+            <p style={{
+              fontSize: '13px', lineHeight: 1.6,
+              color: 'var(--ink-3)', margin: 0,
+            }}>
+              This approval set link is invalid, expired, or has been revoked. Please ask the creator for a new link.
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -249,21 +310,88 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   if (isSubmitted || set.status === 'completed') {
     return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
-        <div className="max-w-md p-8 rounded-2xl bg-white shadow-xl border border-border space-y-4">
-          <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
-            <Check className="w-8 h-8 text-emerald-600" />
-          </div>
-          <h2 className="text-lg font-bold text-foreground">
-            Review Submitted!
-          </h2>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            Thank you! Your approvals and comments have been locked and sent. The creative team has been notified and will review your comments.
-          </p>
-          <div className="pt-2">
-            <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 px-3 py-1 font-semibold">
-              Status: Reviewed & Closed
-            </Badge>
+      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen">
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
+          #pcm-root .aurora-mesh-bg {
+            --ink: #1d1d1f;
+            --ink-2: #4a4239;
+            --ink-3: #6f6a64;
+            --ink-4: #8a7d6d;
+            --line: rgba(0,0,0,0.06);
+            --approve: #18a957;
+            background: #f6f0ea;
+            background-image:
+              radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
+              radial-gradient(at 88% 12%, #d8d0ff 0px, transparent 45%),
+              radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
+              radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%);
+            background-attachment: fixed;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+          }
+        `}</style>
+
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '24px',
+        }}>
+          {/* Glassmorphism card matching review page cards */}
+          <div style={{
+            maxWidth: '420px',
+            width: '100%',
+            padding: '48px 36px',
+            borderRadius: '16px',
+            background: 'rgba(255,255,255,0.7)',
+            backdropFilter: 'blur(30px) saturate(180%)',
+            WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+            border: '1px solid rgba(255,255,255,0.75)',
+            boxShadow: '0 4px 24px rgba(35,18,8,0.06), 0 1px 2px rgba(0,0,0,0.04)',
+            textAlign: 'center' as const,
+          }}>
+            {/* Success icon */}
+            <div style={{
+              width: '64px', height: '64px', borderRadius: '50%',
+              background: 'rgba(24,169,87,0.12)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 20px',
+            }}>
+              <Check className="w-8 h-8" style={{ color: '#18a957' }} />
+            </div>
+
+            <h2 style={{
+              fontFamily: '"Instrument Serif", Georgia, serif',
+              fontSize: '28px', fontWeight: 400,
+              color: 'var(--ink)',
+              margin: '0 0 10px', lineHeight: 1.2,
+            }}>
+              Review Submitted!
+            </h2>
+
+            <p style={{
+              fontSize: '13px', lineHeight: 1.6,
+              color: 'var(--ink-3)', margin: '0 0 20px',
+            }}>
+              Thank you! Your approvals and comments have been locked and sent. The creative team has been notified and will review your comments.
+            </p>
+
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              fontSize: '12px', fontWeight: 600,
+              color: '#18a957',
+              background: 'rgba(24,169,87,0.1)',
+              padding: '6px 14px', borderRadius: '99px',
+            }}>
+              <span style={{
+                width: '6px', height: '6px', borderRadius: '50%',
+                background: '#18a957',
+              }} />
+              Reviewed &amp; Closed
+            </span>
           </div>
         </div>
       </div>
