@@ -80,11 +80,23 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'all' | 'images' | 'videos' | 'copy'>('all');
 
+  // Derived: board is read-only when already completed on server
+  const isReadOnly = set?.status === 'completed';
+
   // Auto-save draft to localStorage on every state change
   useEffect(() => {
     if (isSubmitted) return;
     saveDraft(token, { approvedVisualIds, approvedCopyIds, comments, clientName });
   }, [token, approvedVisualIds, approvedCopyIds, comments, clientName, isSubmitted]);
+
+  // Hydrate approved/comment state from server feedback when viewing a completed board
+  useEffect(() => {
+    if (set?.status === 'completed' && set.reviewFeedback) {
+      setApprovedVisualIds(set.reviewFeedback.approvedVisualIds || []);
+      setApprovedCopyIds(set.reviewFeedback.approvedCopyIds || []);
+      setComments(set.reviewFeedback.comments || {});
+    }
+  }, [set?.status, set?.reviewFeedback]);
 
   // Submit mutation
   const submitMutation = trpc.approvals.submitReview.useMutation({
@@ -308,7 +320,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     );
   }
 
-  if (isSubmitted || set.status === 'completed') {
+  if (isSubmitted) {
     return (
       <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen">
         <style>{`
@@ -898,6 +910,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         onConfirmSubmit={handleConfirmSubmit}
         isSubmitting={submitMutation.isPending}
         isConfirmPending={submitMutation.isPending}
+        isReadOnly={isReadOnly}
       />
 
       {/* Grid container */}
@@ -936,7 +949,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                   brandLogoUrl={set.snapshot.brandLogoUrl}
                   brandName={brandName}
                   pairedMediaUrl={pairedMediaUrl}
-                  isSubmitted={submitMutation.isPending}
+                  isSubmitted={isReadOnly || submitMutation.isPending}
                 />
               );
             })}

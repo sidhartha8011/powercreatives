@@ -17,6 +17,7 @@ interface ClientStatusToolbarProps {
   onConfirmSubmit: () => void;
   isSubmitting?: boolean;
   isConfirmPending?: boolean;
+  isReadOnly?: boolean;
 }
 
 export function ClientStatusToolbar({
@@ -29,7 +30,8 @@ export function ClientStatusToolbar({
   onApproveAll,
   onConfirmSubmit,
   isSubmitting = false,
-  isConfirmPending = false
+  isConfirmPending = false,
+  isReadOnly = false
 }: ClientStatusToolbarProps) {
   
   /** Review period in milliseconds (4 days) */
@@ -149,8 +151,21 @@ export function ClientStatusToolbar({
 
           <span className="pcm-bar-divider" aria-hidden="true" />
 
-          {/* Approve All / Confirm Submit */}
-          {isAllApproved ? (
+          {/* Approve All / Confirm Submit — hidden in read-only mode */}
+          {isReadOnly ? (
+            <span
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '5px',
+                fontSize: '12px', fontWeight: 600,
+                color: '#18a957',
+                background: 'rgba(24,169,87,0.1)',
+                padding: '6px 14px', borderRadius: '99px',
+              }}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Completed
+            </span>
+          ) : isAllApproved ? (
             <button
               type="button"
               disabled={isConfirmPending}
