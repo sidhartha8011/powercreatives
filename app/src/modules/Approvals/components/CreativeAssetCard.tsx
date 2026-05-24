@@ -214,10 +214,7 @@ export function CreativeAssetCard({
       {/* Comment Display Section (Feedback) */}
       {comment && !isEditingComment && (
         <div className="px-3.5 pb-3">
-          <div 
-            className="p-2.5 rounded-xl border italic text-xs flex justify-between items-start gap-3 shadow-inner"
-            style={{ background: '#fffbeb', borderColor: '#fef3c7', borderLeft: '3.5px solid #f59e0b', color: '#92400e' }}
-          >
+          <div className="p-2.5 rounded-xl border border-amber-200/50 border-l-4 border-l-amber-500 bg-amber-50/50 text-amber-900/90 italic text-xs flex justify-between items-start gap-3 shadow-inner">
             <span className="min-w-0 break-words flex-1 leading-relaxed">"{comment}"</span>
             {!isSubmitted && (
               <button

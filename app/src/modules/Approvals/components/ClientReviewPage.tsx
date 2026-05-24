@@ -192,7 +192,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   if (isLoading) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 gap-3">
-        <Spinner className="w-8 h-8" style={{ color: colors.primary }} />
+        <Spinner className="w-8 h-8 text-primary" />
         <span className="text-sm text-muted-foreground">Loading client review board...</span>
       </div>
     );
@@ -201,7 +201,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   if (error || !set) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
-        <div className="max-w-md p-6 rounded-2xl bg-white shadow-lg border" style={{ borderColor: colors.border }}>
+        <div className="max-w-md p-6 rounded-2xl bg-white shadow-lg border border-border">
           <HelpCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
           <h2 className="text-lg font-bold text-foreground">
             Invalid or Expired Board
@@ -217,7 +217,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   if (isSubmitted || set.status === 'completed') {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
-        <div className="max-w-md p-8 rounded-2xl bg-white shadow-xl border space-y-4" style={{ borderColor: colors.border }}>
+        <div className="max-w-md p-8 rounded-2xl bg-white shadow-xl border border-border space-y-4">
           <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
             <Check className="w-8 h-8 text-emerald-600" />
           </div>
@@ -317,10 +317,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         )}
       </main>
 
-      {/* Sticky review submission bottom footer */}
       <footer 
-        className="fixed bottom-4 left-4 right-4 md:left-6 md:right-6 z-40 bg-white/90 backdrop-blur-xl border px-5 py-3.5 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 max-w-5xl mx-auto rounded-2xl transition-all duration-200"
-        style={{ borderColor: colors.border }}
+        className="fixed bottom-4 left-4 right-4 md:left-6 md:right-6 z-40 bg-white/90 backdrop-blur-xl border border-border px-5 py-3.5 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 max-w-5xl mx-auto rounded-2xl transition-all duration-200"
       >
         <div className="flex flex-col md:flex-row md:items-center gap-4 flex-1">
           <div className="space-y-0.5 select-none">
