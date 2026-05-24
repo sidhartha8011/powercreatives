@@ -236,11 +236,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       */}
       <style>{`
         :root {
-          --ink: #1d1d1f;
-          --ink-2: #4a4239;
-          --ink-3: #6f6a64;
-          --ink-4: #8a7d6d;
-          --line: rgba(0,0,0,0.06);
+          --ink: hsl(var(--foreground));
+          --ink-2: hsl(var(--muted-foreground));
+          --ink-3: hsl(var(--muted-foreground) / 0.85);
+          --ink-4: hsl(var(--muted-foreground) / 0.65);
+          --line: hsl(var(--border) / 0.5);
           --approve: #18a957;
           --approve-soft: rgba(24,169,87,0.12);
         }
@@ -512,7 +512,9 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
               let pairedMediaUrl = null;
               if (item.type === 'copy') {
                 const copyIndex = copyAssets.findIndex((c: any) => c.id === item.id);
-                pairedMediaUrl = mediaAssets[copyIndex % mediaAssets.length]?.url || primaryMediaUrl;
+                pairedMediaUrl = (mediaAssets.length > 0 && copyIndex !== -1)
+                  ? mediaAssets[copyIndex % mediaAssets.length]?.url
+                  : primaryMediaUrl;
               }
 
               return (

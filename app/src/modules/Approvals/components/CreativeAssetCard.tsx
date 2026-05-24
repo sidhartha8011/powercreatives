@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { CheckCircle2, MessageSquare, Check, X } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -101,12 +101,12 @@ export function CreativeAssetCard({
           <span className="pcm-badge">
             {isVideo ? (
               <>
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-[10px] h-[10px]"><path d="M8 5v14l11-7z"/></svg>
+                <Video className="w-2.5 h-2.5 fill-current" />
                 Video
               </>
             ) : (
               <>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="w-[10px] h-[10px]"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                <ImageIcon className="w-2.5 h-2.5" />
                 Image
               </>
             )}

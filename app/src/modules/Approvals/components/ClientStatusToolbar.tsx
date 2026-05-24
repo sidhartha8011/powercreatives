@@ -31,7 +31,8 @@ export function ClientStatusToolbar({
   // Calculate dynamic due date (4 days from creation) and countdown
   const { formattedDueDate, remainingDaysText, urgencyClass } = useMemo(() => {
     try {
-      const createdDate = new Date(createdAt);
+      const cleanDateStr = typeof createdAt === 'string' ? createdAt.replace(' ', 'T') : createdAt;
+      const createdDate = new Date(cleanDateStr);
       if (isNaN(createdDate.getTime())) {
         return { formattedDueDate: 'Due soon', remainingDaysText: '', urgencyClass: '' };
       }
