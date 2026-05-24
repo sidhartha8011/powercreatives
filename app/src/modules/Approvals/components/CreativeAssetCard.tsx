@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -55,6 +55,22 @@ export function CreativeAssetCard({
 }: CreativeAssetCardProps) {
   const [isEditingComment, setIsEditingComment] = useState(false);
   const [tempCommentText, setTempCommentText] = useState(comment || '');
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [showLightbox, setShowLightbox] = useState(false);
+
+  // Close lightbox on Escape + prevent body scroll while open
+  useEffect(() => {
+    if (!showLightbox) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowLightbox(false);
+    };
+    document.addEventListener('keydown', handleKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      document.body.style.overflow = '';
+    };
+  }, [showLightbox]);
 
   // Detect video content using shared utility
   const isVideo = type === 'media' && isVideoAsset(asset);
@@ -85,7 +101,7 @@ export function CreativeAssetCard({
   }, [comment]);
 
   return (
-    <div className={`pcm-card ${isApproved ? 'approved' : ''} ${type === 'copy' ? 'copy' : ''} relative`}>
+    <div className={`pcm-card ${isApproved ? 'approved' : ''} ${type === 'copy' ? 'copy' : ''} ${isExpanded ? 'expanded' : ''} relative`}>
       
       {/* ─── MEDIA CARD LAYOUT ─── */}
       {type === 'media' && (
@@ -101,6 +117,8 @@ export function CreativeAssetCard({
             <img
               src={asset.url}
               alt={asset.name || 'Creative asset preview'}
+              onClick={() => setShowLightbox(true)}
+              style={{ cursor: 'pointer' }}
             />
           )}
 
@@ -113,7 +131,14 @@ export function CreativeAssetCard({
 
       {/* ─── AD COPY CARD LAYOUT (Social Ad Mockup) ─── */}
       {type === 'copy' && (
-        <div className="pcm-copy-body select-none">
+        <div
+          className="pcm-copy-body select-none"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          style={{ cursor: 'pointer' }}
+          role="button"
+          tabIndex={0}
+          aria-expanded={isExpanded}
+        >
           <div className="pcm-copy-platform">
             {asset.platform || asset.audienceName || 'Ad Copy'} · {asset.type || asset.angleName || 'Primary Text'}
           </div>
@@ -229,6 +254,30 @@ export function CreativeAssetCard({
             <span className="pulse" />
             {isApproved ? 'Approved' : 'Awaiting'}
           </span>
+        </div>
+      )}
+      {/* ─── IMAGE LIGHTBOX OVERLAY ─── */}
+      {showLightbox && asset.url && (
+        <div
+          className="pcm-lightbox"
+          onClick={() => setShowLightbox(false)}
+          role="dialog"
+          aria-label="Image preview"
+        >
+          <img
+            src={asset.url}
+            alt={asset.name || 'Full size preview'}
+            className="pcm-lightbox-img"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            className="pcm-lightbox-close"
+            onClick={() => setShowLightbox(false)}
+            aria-label="Close preview"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
       )}
     </div>

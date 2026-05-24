@@ -529,7 +529,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           overflow: hidden;
           display: flex; flex-direction: column;
           height: 400px;
-          transition: transform .2s ease, box-shadow .25s ease;
+          transition: transform .2s ease, box-shadow .25s ease, height .3s ease;
+        }
+        .pcm-card.copy.expanded {
+          height: auto;
+        }
+        .pcm-card.copy.expanded .pcm-copy-body {
+          overflow: visible;
         }
         .pcm-card:hover {
           transform: translateY(-2px);
@@ -718,6 +724,43 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         .pcm-footer-submit:disabled {
           opacity: 0.5; cursor: not-allowed;
           transform: none;
+        }
+
+        /* ---------- image lightbox ---------- */
+        .pcm-lightbox {
+          position: fixed; inset: 0;
+          z-index: 9999;
+          background: rgba(0, 0, 0, 0.85);
+          display: flex; align-items: center; justify-content: center;
+          padding: 40px;
+          cursor: zoom-out;
+          animation: pcmFadeIn .2s ease;
+        }
+        @keyframes pcmFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        .pcm-lightbox-img {
+          max-width: 90vw; max-height: 85vh;
+          object-fit: contain;
+          border-radius: 8px;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+          cursor: default;
+        }
+        .pcm-lightbox-close {
+          position: absolute; top: 20px; right: 20px;
+          appearance: none; border: none;
+          background: rgba(255,255,255,0.15);
+          color: white;
+          width: 40px; height: 40px;
+          border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer;
+          transition: background .15s ease;
+          backdrop-filter: blur(8px);
+        }
+        .pcm-lightbox-close:hover {
+          background: rgba(255,255,255,0.3);
         }
       `}</style>
 
