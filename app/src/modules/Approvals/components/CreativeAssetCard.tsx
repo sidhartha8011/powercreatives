@@ -123,10 +123,56 @@ export function CreativeAssetCard({
             />
           )}
 
-
-          
           {/* Video duration badge — dynamic from asset or hidden */}
           {isVideo && asset.duration && <span className="pcm-duration">{asset.duration}</span>}
+
+          {/* Overlay: info + actions */}
+          <div className="pcm-card-body select-none">
+            <div className="pcm-typestrip">
+              {asset.platform || 'Media'}
+              {asset.aspectRatio && ` · ${asset.aspectRatio}`}
+              {(asset.width && asset.height) && (
+                <>
+                  <span className="dot" />
+                  {asset.width}×{asset.height}
+                </>
+              )}
+            </div>
+            <h3 className="pcm-card-title">
+              {asset.name || 'Untitled Asset'}
+            </h3>
+          </div>
+
+          {/* Actions overlay bar */}
+          {!isEditingComment && (
+            <div className="pcm-card-actions select-none">
+              <button
+                type="button"
+                disabled={isSubmitted}
+                className="pcm-btn pcm-btn-approve"
+                onClick={handleToggleApprove}
+              >
+                <CheckCircle2 className="w-[13px] h-[13px]" />
+                Approve
+              </button>
+              
+              <button
+                type="button"
+                disabled={isSubmitted}
+                className="pcm-btn pcm-btn-comment"
+                onClick={handleOpenComment}
+              >
+                <MessageSquare className="w-[13px] h-[13px]" />
+                Comment
+              </button>
+
+              {/* Mini pulse awaiting indicator */}
+              <span className="pcm-status">
+                <span className="pulse" />
+                {isApproved ? 'Approved' : 'Awaiting'}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -153,25 +199,6 @@ export function CreativeAssetCard({
               <span className="pcm-kv"><b>Tone</b> · {asset.tone || asset.toneOfVoice}</span>
             )}
           </div>
-        </div>
-      )}
-
-      {/* Card Info Details (Media title / specs) */}
-      {type === 'media' && (
-        <div className="pcm-card-body select-none">
-          <div className="pcm-typestrip">
-            {asset.platform || 'Media'}
-            {asset.aspectRatio && ` · ${asset.aspectRatio}`}
-            {(asset.width && asset.height) && (
-              <>
-                <span className="dot" />
-                {asset.width}×{asset.height}
-              </>
-            )}
-          </div>
-          <h3 className="pcm-card-title">
-            {asset.name || 'Untitled Asset'}
-          </h3>
         </div>
       )}
 
@@ -227,9 +254,9 @@ export function CreativeAssetCard({
         </div>
       )}
 
-      {/* ─── CARD FOOTER ACTIONS ─── */}
-      {!isEditingComment && (
-        <div className="pcm-card-actions select-none z-10">
+      {/* Copy card actions (outside copy-body to not be affected by expand click) */}
+      {type === 'copy' && !isEditingComment && (
+        <div className="pcm-card-actions select-none">
           <button
             type="button"
             disabled={isSubmitted}
@@ -250,7 +277,6 @@ export function CreativeAssetCard({
             Comment
           </button>
 
-          {/* Mini pulse awaiting indicator */}
           <span className="pcm-status">
             <span className="pulse" />
             {isApproved ? 'Approved' : 'Awaiting'}

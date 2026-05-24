@@ -586,10 +586,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           font-variant-numeric: tabular-nums;
         }
 
-        /* ---------- card body ---------- */
+        /* ---------- card body (overlay on media) ---------- */
         .pcm-card-body {
-          padding: 12px 14px 0;
-          flex: 1; display: flex; flex-direction: column; min-height: 0;
+          position: absolute; bottom: 44px; left: 0; right: 0;
+          padding: 32px 14px 8px;
+          background: linear-gradient(to top, rgba(255,255,255,0.95) 50%, rgba(255,255,255,0) 100%);
+          display: flex; flex-direction: column; min-height: 0;
+          pointer-events: none;
         }
         .pcm-typestrip {
           display: flex; align-items: center; gap: 7px;
@@ -634,12 +637,15 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         .pcm-kv { display: inline-flex; align-items: center; gap: 4px; }
         .pcm-kv b { font-weight: 600; color: var(--ink-2); }
 
-        /* ---------- card actions ---------- */
+        /* ---------- card actions (inside overlay) ---------- */
         .pcm-card-actions {
-          margin-top: auto;
-          padding: 10px 12px;
+          position: absolute; bottom: 0; left: 0; right: 0;
+          padding: 8px 12px 10px;
           display: flex; align-items: center; gap: 6px;
-          border-top: 1px solid rgba(0,0,0,0.05);
+          background: rgba(255,255,255,0.88);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          border-radius: 0 0 16px 16px;
         }
         .pcm-btn {
           appearance: none; border: none; cursor: pointer;
