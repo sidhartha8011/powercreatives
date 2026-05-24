@@ -614,6 +614,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         }
         #pcm-root .pcm-copy-text {
           font-size: 12.5px; color: var(--ink-2); line-height: 1.5;
+          white-space: pre-wrap;
+          word-break: break-word;
         }
         .pcm-copy-meta {
           margin-top: auto; padding-top: 6px;
