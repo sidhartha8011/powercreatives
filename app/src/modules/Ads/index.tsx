@@ -14,6 +14,7 @@ import type { ContextData, ScrapedBusinessData } from '@/components/shared';
 import type { GenerationMode, ListItem, AngleItem } from '@/components/shared';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
+import { getBrandLogo } from '@shared/brandAssetResolver';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import { useAdsOrchestration } from './hooks/useAdsOrchestration';
 import { useBrandSync } from './hooks/useBrandSync';
@@ -363,7 +364,7 @@ export function AdsModule() {
         brandId={contextData.brandId}
         projectId={contextData.brand ? (contextData.brand as any).projectId : null}
         brandName={contextData.brand ? contextData.brand.name : null}
-        brandLogoUrl={contextData.brand ? (contextData.brand as any).logoUrl : null}
+        brandLogoUrl={contextData.brand ? (getBrandLogo(contextData.brand as any)?.url ?? null) : null}
       />
       </div>
     </div>

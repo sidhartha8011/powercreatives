@@ -25,12 +25,6 @@ interface EnhancedBrandSectionProps {
   onReferenceImagesChange?: (images: SessionReferenceImage[]) => void;
 }
 
-const baseInputStyle = {
-  borderColor: "#e5e7eb",
-  background: "#fff",
-  color: "#1a1a1a",
-};
-
 export function EnhancedBrandSection({
   contextData,
   onContextChange,
@@ -129,22 +123,20 @@ export function EnhancedBrandSection({
   const totalPossible = textFields.length + 4; // 4 asset blocks
 
   return (
-    <div className="rounded-lg border mb-3" style={{ borderColor: "#e5e7eb" }}>
+    <div className="rounded-lg border border-border mb-3">
       {/* Section Header */}
       <button
         type="button"
         onClick={() => setIsCollapsed(!isCollapsed)}
-        className="flex w-full items-center justify-between px-3 py-2 text-left transition-colors hover:bg-muted/30"
-        style={{
-          background: "#fff",
-          borderRadius: isCollapsed ? "0.5rem" : "0.5rem 0.5rem 0 0",
-        }}
+        className={`flex w-full items-center justify-between px-3 py-2 text-left transition-colors hover:bg-muted/30 bg-card ${
+          isCollapsed ? "rounded-lg" : "rounded-t-lg"
+        }`}
       >
-        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#555" }}>
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Brand Info & Assets
         </span>
         <div className="flex items-center gap-2">
-          <span className="text-[10px]" style={{ color: "#999" }}>
+          <span className="text-[10px] text-muted-foreground/80">
             {totalCount}/{totalPossible} items
           </span>
           {isCollapsed ? (
@@ -161,7 +153,7 @@ export function EnhancedBrandSection({
           <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
             {textFields.map((field) => (
               <div key={field.id} className={field.width === "full" ? "col-span-2" : "col-span-1"}>
-                <label className="block text-xs font-medium mb-1" style={{ color: "#555" }}>
+                <label className="block text-xs font-medium mb-1 text-muted-foreground">
                   {field.label}
                 </label>
                 
@@ -171,8 +163,7 @@ export function EnhancedBrandSection({
                     value={(formValues[field.id] as string) ?? ""}
                     onChange={(e) => onFormChange(field.id, e.target.value)}
                     placeholder={field.placeholder}
-                    className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
-                    style={baseInputStyle}
+                    className="w-full rounded-md border border-border px-3 py-2 text-sm outline-none bg-background text-foreground transition-colors focus:border-primary"
                   />
                 ) : field.type === "textarea" ? (
                   <textarea
@@ -180,15 +171,13 @@ export function EnhancedBrandSection({
                     onChange={(e) => onFormChange(field.id, e.target.value)}
                     placeholder={field.placeholder}
                     rows={3}
-                    className="w-full rounded-md border px-3 py-2 text-sm outline-none resize-y transition-colors focus:border-primary"
-                    style={baseInputStyle}
+                    className="w-full rounded-md border border-border px-3 py-2 text-sm outline-none bg-background text-foreground resize-y transition-colors focus:border-primary"
                   />
                 ) : field.type === "select" ? (
                   <select
                     value={(formValues[field.id] as string) ?? ""}
                     onChange={(e) => onFormChange(field.id, e.target.value)}
-                    className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
-                    style={baseInputStyle}
+                    className="w-full rounded-md border border-border px-3 py-2 text-sm outline-none bg-background text-foreground transition-colors focus:border-primary"
                   >
                     <option value="">Select...</option>
                     {field.options?.map((opt) => (
@@ -200,7 +189,7 @@ export function EnhancedBrandSection({
                 ) : null}
 
                 {field.helpText && (
-                  <p className="text-[10px] mt-1" style={{ color: "#999" }}>
+                  <p className="text-[10px] mt-1 text-muted-foreground/70">
                     {field.helpText}
                   </p>
                 )}

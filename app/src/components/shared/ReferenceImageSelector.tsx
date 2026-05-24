@@ -316,11 +316,13 @@ export function ReferenceImageSelector({
   const handleClearAll = useCallback(async () => {
     setError(null);
     try {
-      await updateMutation.mutateAsync({ id: brandId, assets: [] });
+      const logoAndCerts = allAssets.filter(a => a.role === 'logo' || a.role === 'certification');
+      const fileKeys = logoAndCerts.map(a => a.fileKey);
+      await reorderMutation.mutateAsync({ brandId, fileKeys });
     } catch (err: any) {
       setError(err?.message || "Failed to clear images");
     }
-  }, [brandId, updateMutation]);
+  }, [brandId, allAssets, reorderMutation]);
 
   const isBusy = uploading || fetchingUrl || addAssetMutation.isPending || removeAssetMutation.isPending || reorderMutation.isPending;
 
