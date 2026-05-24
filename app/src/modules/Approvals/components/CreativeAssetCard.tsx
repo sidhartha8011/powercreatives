@@ -335,26 +335,26 @@ export function CreativeAssetCard({
                     type="text"
                     value={editedHeadline}
                     onChange={(e) => setEditedHeadline(e.target.value)}
-                    className="w-full font-bold text-[14px] text-slate-800 leading-snug bg-transparent border-none p-0 outline-none focus:ring-0 focus:border-none placeholder:text-slate-400"
+                    className="pcm-copy-headline w-full bg-transparent border-none p-0 outline-none focus:ring-0 placeholder:text-slate-400/50"
                     placeholder="Skriv rubrik..."
                   />
                   <input
                     type="text"
                     value={editedDescription}
                     onChange={(e) => setEditedDescription(e.target.value)}
-                    className="w-full text-[12px] text-slate-500 mt-1 leading-normal bg-transparent border-none p-0 outline-none focus:ring-0 focus:border-none placeholder:text-slate-400"
+                    className="pcm-copy-text w-full mt-1 bg-transparent border-none p-0 outline-none focus:ring-0 placeholder:text-slate-400/50"
                     placeholder="Skriv beskrivning..."
                   />
                 </div>
               ) : (
                 <div className="flex flex-col gap-0.5 w-full">
                   {asset.headline && (
-                    <h4 className="font-bold text-[14px] text-slate-800 leading-snug">
+                    <h4 className="pcm-copy-headline">
                       {asset.headline}
                     </h4>
                   )}
                   {asset.description && (
-                    <p className="text-[12px] text-slate-500 mt-1 leading-normal">
+                    <p className="pcm-copy-text mt-1">
                       {asset.description}
                     </p>
                   )}

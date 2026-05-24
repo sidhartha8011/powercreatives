@@ -3,7 +3,7 @@
  * Plugin Name:       Power Creatives
  * Plugin URI:        https://powercreatives.io
  * Description:       AI-powered creative generation platform — copy, images, video, brand management, and more.
- * Version:           1.2.1
+ * Version:           1.3.0
  * Requires at least: 6.4
  * Requires PHP:      8.1
  * Author:            Power Creatives
@@ -22,8 +22,8 @@ if (!defined('ABSPATH')) {
 }
 
 // ── Plugin Constants ──
-define('PCM_VERSION', '1.2.1');
-define('PCM_DB_VERSION', '1.7.0');
+define('PCM_VERSION', '1.3.0');
+define('PCM_DB_VERSION', '1.8.0');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));

@@ -761,6 +761,48 @@ class PCM_Schema
     }
 
     /**
+     * Migrate legacy approval set statuses to the v1.8.0 6-status taxonomy.
+     *
+     * Old taxonomy: draft / review / completed.
+     * New taxonomy: draft / internal / client / approved / live / archived.
+     *
+     * Mapping (defined in PCM_Approvals_Service::LEGACY_STATUS_MAP):
+     *   review    → client    (sets out for client review)
+     *   completed → approved  (client signed off / round complete)
+     *
+     * Idempotent — touches only rows whose status is still a legacy value.
+     * Safe to run on installs that have no approval_sets table yet.
+     *
+     * @return void
+     */
+    public static function migrate_approval_set_statuses(): void
+    {
+        global $wpdb;
+
+        $table = self::table('approval_sets');
+
+        // Defensive: skip if table doesn't exist on this install.
+        $table_check = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
+        if ($table_check !== $table) {
+            return;
+        }
+
+        // PCM_Approvals_Service defines the legacy-to-new map. Load it.
+        require_once PCM_PLUGIN_DIR . 'includes/modules/approvals/service.php';
+
+        foreach (PCM_Approvals_Service::LEGACY_STATUS_MAP as $legacy => $next) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+            $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$table} SET status = %s WHERE status = %s",
+                    $next,
+                    $legacy
+                )
+            );
+        }
+    }
+
+    /**
      * Drop all plugin tables.
      *
      * Only called when user explicitly deletes plugin data.

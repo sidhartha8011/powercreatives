@@ -14,6 +14,32 @@ if (!defined('ABSPATH')) {
 class PCM_Approvals_Service
 {
     /**
+     * Canonical pipeline statuses for an approval set.
+     *
+     * Order matches the kanban left-to-right flow:
+     *   draft     — being assembled by the creator.
+     *   internal  — out for internal team review.
+     *   client    — out for client review (public link sent).
+     *   approved  — client signed off; round complete.
+     *   live      — assets in production / running.
+     *   archived  — closed; retained for reference.
+     *
+     * @var string[]
+     */
+    public const STATUSES = ['draft', 'internal', 'client', 'approved', 'live', 'archived'];
+
+    /**
+     * Legacy → new status migration map. Consumed by
+     * PCM_Schema::migrate_approval_set_statuses() (v1.8.0).
+     *
+     * @var array<string, string>
+     */
+    public const LEGACY_STATUS_MAP = [
+        'review'    => 'client',
+        'completed' => 'approved',
+    ];
+
+    /**
      * List all approval sets for a user.
      *
      * @param int $user_id User ID.
@@ -126,11 +152,13 @@ class PCM_Approvals_Service
             }
         }
 
+        // Client review submission transitions the set to 'approved'.
+        // (Old taxonomy used 'completed'; v1.8.0 migration remaps legacy data.)
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $success = $wpdb->update(
             $table,
             array(
-                'status'         => 'completed',
+                'status'         => 'approved',
                 'reviewFeedback' => wp_json_encode($sanitized_feedback),
                 'updatedAt'      => current_time('mysql'),
             ),

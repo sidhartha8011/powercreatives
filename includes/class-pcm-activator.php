@@ -102,6 +102,13 @@ class PCM_Activator
                 PCM_Schema::migrate_brand_svg_to_png();
             }
 
+            // v1.8.0: Migrate approval_sets.status to the 6-value taxonomy
+            // (draft / internal / client / approved / live / archived). Remaps
+            // legacy 'review' → 'client' and 'completed' → 'approved'. Idempotent.
+            if (version_compare($installed_version, '1.8.0', '<')) {
+                PCM_Schema::migrate_approval_set_statuses();
+            }
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

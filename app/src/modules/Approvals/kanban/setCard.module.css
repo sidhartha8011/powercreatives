@@ -1,0 +1,124 @@
+/**
+ * SetCard styles — domain-specific card body for the Sets kanban.
+ *
+ * Notion-style: two text lines, faint actions revealed on hover. The card
+ * wrapper (border, background, shadow, hover) is provided by KanbanBoard's
+ * .cardWrap — these classes style the inner content only.
+ *
+ * Class names are CSS-Module-hashed; safe from collisions.
+ */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+/* Line 1 — primary title (brand / set name) */
+.title {
+  font-family: var(--pck-font-family);
+  font-size: var(--pck-font-size-card);
+  font-weight: var(--pck-font-weight-mid);
+  color: var(--pck-text-link);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.titleBrand {
+  color: var(--pck-text);
+  font-weight: var(--pck-font-weight-semi);
+}
+
+.titleSep {
+  color: var(--pck-text-faint);
+  margin: 0 4px;
+  font-weight: 400;
+}
+
+/* Line 2 — metadata (project · counts · timestamp) */
+.meta {
+  font-family: var(--pck-font-family);
+  font-size: var(--pck-font-size-meta);
+  color: var(--pck-text-muted);
+  line-height: 1.3;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.metaItem {
+  white-space: nowrap;
+}
+
+.metaSep {
+  color: var(--pck-text-faint);
+}
+
+.metaApproved {
+  color: #386c33;
+  font-weight: var(--pck-font-weight-mid);
+}
+
+.metaFeedback {
+  color: #9c5314;
+  font-weight: var(--pck-font-weight-mid);
+}
+
+/* Hover-revealed action row */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity var(--pck-transition-fast);
+}
+
+.card:hover .actions,
+.card:focus-within .actions {
+  opacity: 1;
+}
+
+.actionBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--pck-font-family);
+  font-size: 11px;
+  font-weight: var(--pck-font-weight-mid);
+  color: var(--pck-text-muted);
+  background: transparent;
+  border: 0;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color var(--pck-transition-fast), background var(--pck-transition-fast);
+}
+
+.actionBtn:hover {
+  color: var(--pck-text-link);
+  background: var(--pck-bg-chip);
+}
+
+.actionIcon {
+  width: 11px;
+  height: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .actions,
+  .actionBtn {
+    transition: none;
+  }
+  /* Always visible when motion is reduced — no opacity gating. */
+  .actions {
+    opacity: 1;
+  }
+}
