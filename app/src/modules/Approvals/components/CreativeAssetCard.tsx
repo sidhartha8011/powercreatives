@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { isVideoAsset } from './ClientReviewPage';
 
 export interface CreativeAsset {
   id: string;
@@ -11,7 +12,18 @@ export interface CreativeAsset {
   description?: string;
   cta?: string;
   mimeType?: string;
-  [key: string]: any;
+  name?: string;
+  platform?: string;
+  audienceName?: string;
+  angleName?: string;
+  type?: string;
+  tone?: string;
+  toneOfVoice?: string;
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
+  duration?: string;
+  [key: string]: unknown;
 }
 
 interface CreativeAssetCardProps {
@@ -44,13 +56,8 @@ export function CreativeAssetCard({
   const [isEditingComment, setIsEditingComment] = useState(false);
   const [tempCommentText, setTempCommentText] = useState(comment || '');
 
-  // Detect video content by MIME type or URL extension
-  const isVideo = type === 'media' && (
-    asset.mimeType?.startsWith('video/') ||
-    asset.url?.endsWith('.mp4') ||
-    asset.url?.endsWith('.mov') ||
-    asset.url?.endsWith('.webm')
-  );
+  // Detect video content using shared utility
+  const isVideo = type === 'media' && isVideoAsset(asset);
 
   const handleToggleApprove = useCallback(() => {
     if (isSubmitted) return;
@@ -93,7 +100,7 @@ export function CreativeAssetCard({
           ) : (
             <img
               src={asset.url}
-              alt="Creative creative mockup"
+              alt={asset.name || 'Creative asset preview'}
             />
           )}
 

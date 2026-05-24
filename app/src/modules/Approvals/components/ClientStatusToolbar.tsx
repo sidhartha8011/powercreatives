@@ -28,16 +28,19 @@ export function ClientStatusToolbar({
   isSubmitting = false
 }: ClientStatusToolbarProps) {
   
-  // Calculate dynamic due date (4 days from creation) and countdown
+  /** Review period in milliseconds (4 days) */
+  const REVIEW_PERIOD_MS = 4 * 24 * 60 * 60 * 1000;
+
+  // Calculate dynamic due date and countdown
   const { formattedDueDate, remainingDaysText, urgencyClass } = useMemo(() => {
     try {
       const cleanDateStr = typeof createdAt === 'string' ? createdAt.replace(' ', 'T') : createdAt;
       const createdDate = new Date(cleanDateStr);
       if (isNaN(createdDate.getTime())) {
-        return { formattedDueDate: 'Due soon', remainingDaysText: '', urgencyClass: '' };
+        return { formattedDueDate: 'No deadline', remainingDaysText: '', urgencyClass: '' };
       }
       
-      const dueDate = new Date(createdDate.getTime() + 4 * 24 * 60 * 60 * 1000);
+      const dueDate = new Date(createdDate.getTime() + REVIEW_PERIOD_MS);
       const today = new Date();
       
       // Dynamic date formatting
@@ -57,18 +60,18 @@ export function ClientStatusToolbar({
         remainingDaysText = `· ${diffDays} days left`;
       } else if (diffDays === 1) {
         remainingDaysText = `· 1 day left`;
-        urgencyClass = 'text-amber-600 font-semibold';
+        urgencyClass = 'is-urgent';
       } else if (diffDays === 0) {
         remainingDaysText = `· Due today`;
-        urgencyClass = 'text-orange-600 font-semibold animate-pulse';
+        urgencyClass = 'is-urgent';
       } else {
         remainingDaysText = `· Overdue`;
-        urgencyClass = 'text-red-600 font-semibold';
+        urgencyClass = 'is-overdue';
       }
       
       return { formattedDueDate, remainingDaysText, urgencyClass };
-    } catch (e) {
-      return { formattedDueDate: 'Due soon', remainingDaysText: '', urgencyClass: '' };
+    } catch {
+      return { formattedDueDate: 'No deadline', remainingDaysText: '', urgencyClass: '' };
     }
   }, [createdAt]);
 

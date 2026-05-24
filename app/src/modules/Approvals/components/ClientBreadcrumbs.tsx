@@ -38,13 +38,7 @@ export function ClientBreadcrumbs({
     }
   }, [shareUrl]);
 
-  const handleDownload = useCallback(() => {
-    if (onDownloadAll) {
-      onDownloadAll();
-    } else {
-      toast.success('Preparing assets. All approved creative items package is downloading...');
-    }
-  }, [onDownloadAll]);
+  const handleDownload = onDownloadAll ?? null;
 
   return (
     <header className="pcm-crumb sticky top-0 z-30 transition-all duration-200">
@@ -85,15 +79,17 @@ export function ClientBreadcrumbs({
         >
           <Share2 className="w-[15px] h-[15px]" />
         </button>
-        <button
-          type="button"
-          onClick={handleDownload}
-          className="pcm-crumb-icon"
-          title="Download All Approved Assets"
-          aria-label="Download All Approved Assets"
-        >
-          <Download className="w-[15px] h-[15px]" />
-        </button>
+        {handleDownload && (
+          <button
+            type="button"
+            onClick={handleDownload}
+            className="pcm-crumb-icon"
+            title="Download All Approved Assets"
+            aria-label="Download All Approved Assets"
+          >
+            <Download className="w-[15px] h-[15px]" />
+          </button>
+        )}
       </div>
     </header>
   );

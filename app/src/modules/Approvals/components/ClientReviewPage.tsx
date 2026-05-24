@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Send, Check, Clock, Loader2, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -6,7 +6,6 @@ import { Badge } from '@/components/ui/badge';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { colors } from '@/components/shared/design-tokens';
 import { trpc } from '@/lib/trpc';
 
 // Import newly created reusable component modules
@@ -18,22 +17,81 @@ interface ClientReviewPageProps {
   token: string;
 }
 
+/**
+ * Detects whether a media asset is a video based on MIME type or file extension.
+ * Single source of truth — eliminates duplication across counts, filters, and card components.
+ */
+export function isVideoAsset(item: { mimeType?: string; url?: string }): boolean {
+  return !!(
+    item.mimeType?.startsWith('video/') ||
+    item.url?.endsWith('.mp4') ||
+    item.url?.endsWith('.mov') ||
+    item.url?.endsWith('.webm')
+  );
+}
+
+/** localStorage key factory for draft persistence per token */
+const getDraftKey = (token: string) => `pcm-review-draft-${token}`;
+
+/** Load draft from localStorage (returns null if none exists) */
+function loadDraft(token: string) {
+  try {
+    const raw = localStorage.getItem(getDraftKey(token));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Save draft to localStorage */
+function saveDraft(token: string, data: {
+  approvedVisualIds: string[];
+  approvedCopyIds: string[];
+  comments: Record<string, string>;
+  clientName: string;
+}) {
+  try {
+    localStorage.setItem(getDraftKey(token), JSON.stringify(data));
+  } catch {
+    // Storage full or blocked — fail silently, draft is a convenience feature
+  }
+}
+
+/** Clear draft after successful submission */
+function clearDraft(token: string) {
+  try {
+    localStorage.removeItem(getDraftKey(token));
+  } catch {
+    // Ignore
+  }
+}
+
 export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Fetch public set data by token
   const { data: set, isLoading, error } = trpc.approvals.getPublicSet.useQuery({ token }) as any;
 
-  // Local Review State
-  const [approvedVisualIds, setApprovedVisualIds] = useState<string[]>([]);
-  const [approvedCopyIds, setApprovedCopyIds] = useState<string[]>([]);
-  const [comments, setComments] = useState<Record<string, string>>({});
-  const [clientName, setClientName] = useState('');
+  // Restore draft from localStorage (if user refreshed mid-review)
+  const draft = useMemo(() => loadDraft(token), [token]);
+
+  // Local Review State — initialized from draft if available
+  const [approvedVisualIds, setApprovedVisualIds] = useState<string[]>(draft?.approvedVisualIds ?? []);
+  const [approvedCopyIds, setApprovedCopyIds] = useState<string[]>(draft?.approvedCopyIds ?? []);
+  const [comments, setComments] = useState<Record<string, string>>(draft?.comments ?? {});
+  const [clientName, setClientName] = useState(draft?.clientName ?? '');
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'all' | 'images' | 'videos' | 'copy'>('all');
+
+  // Auto-save draft to localStorage on every state change
+  useEffect(() => {
+    if (isSubmitted) return;
+    saveDraft(token, { approvedVisualIds, approvedCopyIds, comments, clientName });
+  }, [token, approvedVisualIds, approvedCopyIds, comments, clientName, isSubmitted]);
 
   // Submit mutation
   const submitMutation = trpc.approvals.submitReview.useMutation({
     onSuccess: () => {
       setIsSubmitted(true);
+      clearDraft(token);
       toast.success('Your feedback has been sent to the design team!');
     },
     onError: (err: any) => {
@@ -65,7 +123,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       ...prev,
       [id]: text
     }));
-    toast.success('Comment saved!');
+    toast('Comment noted — remember to submit before closing', { icon: '📝' });
   }, [isSubmitted]);
 
   const handleClearComment = useCallback((id: string) => {
@@ -84,7 +142,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     const copyIds = (set.snapshot.copy || []).map((c: any) => c.id);
     setApprovedVisualIds(mediaIds);
     setApprovedCopyIds(copyIds);
-    toast.success('All creative assets marked as approved!');
+    toast('All assets marked — remember to submit before closing', { icon: '✅' });
   }, [set, isSubmitted]);
 
   const handleSubmitReview = useCallback(() => {
@@ -109,27 +167,10 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const copyAssets = useMemo(() => set?.snapshot?.copy || [], [set]);
   
   const counts = useMemo(() => {
-    const images = mediaAssets.filter((item: any) => !(
-      item.mimeType?.startsWith('video/') ||
-      item.url?.endsWith('.mp4') ||
-      item.url?.endsWith('.mov') ||
-      item.url?.endsWith('.webm')
-    )).length;
-
-    const videos = mediaAssets.filter((item: any) => (
-      item.mimeType?.startsWith('video/') ||
-      item.url?.endsWith('.mp4') ||
-      item.url?.endsWith('.mov') ||
-      item.url?.endsWith('.webm')
-    )).length;
-
+    const videos = mediaAssets.filter((item: any) => isVideoAsset(item)).length;
+    const images = mediaAssets.length - videos;
     const copy = copyAssets.length;
-    return {
-      all: mediaAssets.length + copy,
-      images,
-      videos,
-      copy
-    };
+    return { all: mediaAssets.length + copy, images, videos, copy };
   }, [mediaAssets, copyAssets]);
 
   const allMergedAssets = useMemo(() => {
@@ -147,34 +188,26 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   }, [mediaAssets, copyAssets]);
 
   const filteredAssets = useMemo(() => {
-    if (activeFilter === 'all') {
-      return allMergedAssets;
-    }
-    if (activeFilter === 'images') {
-      return allMergedAssets.filter(item => item.type === 'media' && !(
-        item.data.mimeType?.startsWith('video/') ||
-        item.data.url?.endsWith('.mp4') ||
-        item.data.url?.endsWith('.mov') ||
-        item.data.url?.endsWith('.webm')
-      ));
-    }
-    if (activeFilter === 'videos') {
-      return allMergedAssets.filter(item => item.type === 'media' && (
-        item.data.mimeType?.startsWith('video/') ||
-        item.data.url?.endsWith('.mp4') ||
-        item.data.url?.endsWith('.mov') ||
-        item.data.url?.endsWith('.webm')
-      ));
-    }
-    if (activeFilter === 'copy') {
-      return allMergedAssets.filter(item => item.type === 'copy');
-    }
+    if (activeFilter === 'all') return allMergedAssets;
+    if (activeFilter === 'images') return allMergedAssets.filter(item => item.type === 'media' && !isVideoAsset(item.data));
+    if (activeFilter === 'videos') return allMergedAssets.filter(item => item.type === 'media' && isVideoAsset(item.data));
+    if (activeFilter === 'copy') return allMergedAssets.filter(item => item.type === 'copy');
     return allMergedAssets;
   }, [activeFilter, allMergedAssets]);
 
   const totalCount = counts.all;
   const approvedCount = approvedVisualIds.length + approvedCopyIds.length;
   const reviewedCount = approvedCount + Object.keys(comments).length;
+
+  // Hero subtitle — describes asset breakdown for the client
+  const heroSubtitle = useMemo(() => {
+    const parts: string[] = [];
+    if (counts.images > 0) parts.push(`${counts.images} image${counts.images !== 1 ? 's' : ''}`);
+    if (counts.videos > 0) parts.push(`${counts.videos} video${counts.videos !== 1 ? 's' : ''}`);
+    if (counts.copy > 0) parts.push(`${counts.copy} copy variation${counts.copy !== 1 ? 's' : ''}`);
+    const assetSummary = parts.length > 0 ? parts.join(', ') : 'your creative assets';
+    return `Review ${assetSummary}. Approve as you read, or sign off the whole set from the bar below.`;
+  }, [counts]);
 
   if (isLoading) {
     return (
@@ -634,6 +667,56 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         .pcm-card.approved .pcm-btn-approve {
           background: var(--approve);
         }
+
+        /* ---------- sticky submission footer ---------- */
+        #pcm-root .pcm-footer {
+          position: fixed; bottom: 16px; left: 16px; right: 16px;
+          z-index: 40;
+          max-width: 64rem; margin: 0 auto;
+          background: rgba(255,255,255,0.9);
+          backdrop-filter: blur(24px) saturate(180%);
+          -webkit-backdrop-filter: blur(24px) saturate(180%);
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          padding: 14px 20px;
+          box-shadow: 0 12px 40px rgba(35,18,8,0.10);
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 16px; flex-wrap: wrap;
+        }
+        .pcm-footer-left {
+          display: flex; align-items: center; gap: 16px; flex: 1;
+          flex-wrap: wrap;
+        }
+        .pcm-footer-progress {
+          display: flex; flex-direction: column; gap: 2px;
+          user-select: none;
+        }
+        .pcm-footer-progress-label {
+          display: flex; align-items: center; gap: 8px;
+          font-size: 12px; font-weight: 700; color: var(--ink);
+        }
+        .pcm-footer-progress-label .accent { color: #2563eb; }
+        #pcm-root .pcm-footer-hint {
+          font-size: 10px; color: var(--ink-3); line-height: 1.4;
+        }
+        .pcm-footer-name {
+          max-width: 240px; width: 100%; flex-shrink: 0;
+        }
+        .pcm-footer-submit {
+          appearance: none; border: none; cursor: pointer;
+          font-family: inherit; font-size: 12px; font-weight: 700;
+          color: white; background: #2563eb;
+          padding: 9px 16px; border-radius: 9px;
+          display: inline-flex; align-items: center; gap: 8px;
+          transition: background .15s ease, transform .1s ease;
+          white-space: nowrap;
+        }
+        .pcm-footer-submit:hover { background: #1d4ed8; }
+        .pcm-footer-submit:active { transform: translateY(1px); }
+        .pcm-footer-submit:disabled {
+          opacity: 0.5; cursor: not-allowed;
+          transform: none;
+        }
       `}</style>
 
       {/* Notion-Style Breadcrumb Header */}
@@ -653,14 +736,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           {totalCount} creative{totalCount !== 1 ? 's' : ''},<br />for your sign-off.
         </h1>
         <p className="pcm-hero-subtitle">
-          {(() => {
-            const parts: string[] = [];
-            if (counts.images > 0) parts.push(`${counts.images} image${counts.images !== 1 ? 's' : ''}`);
-            if (counts.videos > 0) parts.push(`${counts.videos} video${counts.videos !== 1 ? 's' : ''}`);
-            if (counts.copy > 0) parts.push(`${counts.copy} copy variation${counts.copy !== 1 ? 's' : ''}`);
-            const assetSummary = parts.length > 0 ? parts.join(', ') : 'your creative assets';
-            return `Review ${assetSummary}. Approve as you read, or sign off the whole set from the bar below.`;
-          })()}
+          {heroSubtitle}
         </p>
       </section>
 
@@ -720,23 +796,21 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         )}
       </main>
 
-      {/* Sticky review submission bottom footer */}
-      <footer 
-        className="fixed bottom-4 left-4 right-4 md:left-6 md:right-6 z-40 bg-white/90 backdrop-blur-xl border border-border px-5 py-3.5 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 max-w-5xl mx-auto rounded-2xl transition-all duration-200"
-      >
-        <div className="flex flex-col md:flex-row md:items-center gap-4 flex-1">
-          <div className="space-y-0.5 select-none">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-              <Clock className="w-4 h-4 text-blue-500" />
+      {/* Sticky review submission footer */}
+      <footer className="pcm-footer">
+        <div className="pcm-footer-left">
+          <div className="pcm-footer-progress">
+            <div className="pcm-footer-progress-label">
+              <Clock className="w-4 h-4" style={{ color: '#2563eb' }} />
               <span>Feedback Progress:</span>
-              <span className="text-blue-600">{reviewedCount} total actions</span>
+              <span className="accent">{reviewedCount} total actions</span>
             </div>
-            <p className="text-[10px] text-muted-foreground">
-              Your feedback is securely saved locally and will be locked and sent in a single consolidated submission.
+            <p className="pcm-footer-hint">
+              Your feedback is saved locally and will be locked and sent in a single consolidated submission.
             </p>
           </div>
 
-          <div className="max-w-[240px] w-full shrink-0">
+          <div className="pcm-footer-name">
             <Input
               value={clientName}
               onChange={(e) => setClientName(e.target.value)}
@@ -747,25 +821,24 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           </div>
         </div>
 
-        <div className="shrink-0 flex gap-2">
-          <Button
-            onClick={handleSubmitReview}
-            disabled={submitMutation.isPending || !clientName.trim()}
-            className="h-9 font-bold gap-2 text-xs cursor-pointer select-none bg-blue-600 hover:bg-blue-700 text-white border-blue-600 active:translate-y-0.5"
-          >
-            {submitMutation.isPending ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Submitting review...
-              </>
-            ) : (
-              <>
-                <Send className="w-4 h-4" />
-                Submit Feedback to Team
-              </>
-            )}
-          </Button>
-        </div>
+        <button
+          type="button"
+          onClick={handleSubmitReview}
+          disabled={submitMutation.isPending || !clientName.trim()}
+          className="pcm-footer-submit"
+        >
+          {submitMutation.isPending ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Submitting review...
+            </>
+          ) : (
+            <>
+              <Send className="w-4 h-4" />
+              Submit Feedback to Team
+            </>
+          )}
+        </button>
       </footer>
     </div>
   );
