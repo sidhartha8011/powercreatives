@@ -34,6 +34,7 @@ declare global {
                 email: string;
                 role: string;
                 avatarUrl: string;
+                isLoggedIn?: boolean;
             };
         };
     }
@@ -48,7 +49,7 @@ function getConfig() {
             pluginUrl: "",
             shortcodePageUrl: window.location.origin + "/",
             version: "1.0.0",
-            user: { id: 0, name: "Dev", email: "", role: "admin", avatarUrl: "" },
+            user: { id: 0, name: "Dev", email: "", role: "admin", avatarUrl: "", isLoggedIn: false },
         }
     );
 }
@@ -551,6 +552,11 @@ const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "approvals/sets",
         method: "POST",
         transform: (input: any) => ({ url: `approvals/sets/${input.token}/review`, body: input }),
+    },
+    "approvals.updateSnapshotAsset": {
+        endpoint: "approvals/sets",
+        method: "POST",
+        transform: (input: any) => ({ url: `approvals/sets/${input.token}/assets/${input.assetId}`, body: input }),
     },
 };
 

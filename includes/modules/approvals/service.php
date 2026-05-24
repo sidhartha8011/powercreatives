@@ -201,4 +201,87 @@ class PCM_Approvals_Service
             'blocking'    => false, // Non-blocking
         ));
     }
+
+    /**
+     * Update an asset (e.g. ad copy text) inside the approval set's snapshot and propagate it.
+     */
+    public static function update_snapshot_asset(string $token, string $asset_id, array $updates): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+
+        $set = self::get_set_by_token($token);
+        if (!$set || empty($set->snapshot)) {
+            return false;
+        }
+
+        $snapshot = $set->snapshot;
+        $updated = false;
+
+        // Search in copy snapshot assets
+        if (!empty($snapshot['copy']) && is_array($snapshot['copy'])) {
+            foreach ($snapshot['copy'] as &$item) {
+                if (isset($item['id']) && (string)$item['id'] === (string)$asset_id) {
+                    if (isset($updates['body'])) {
+                        $item['body'] = sanitize_textarea_field($updates['body']);
+                    }
+                    if (isset($updates['headline'])) {
+                        $item['headline'] = sanitize_text_field($updates['headline']);
+                    }
+                    $updated = true;
+                    break;
+                }
+            }
+        }
+
+        // Search in media snapshot assets (just in case)
+        if (!empty($snapshot['media']) && is_array($snapshot['media'])) {
+            foreach ($snapshot['media'] as &$item) {
+                if (isset($item['id']) && (string)$item['id'] === (string)$asset_id) {
+                    if (isset($updates['name'])) {
+                        $item['name'] = sanitize_text_field($updates['name']);
+                    }
+                    $updated = true;
+                    break;
+                }
+            }
+        }
+
+        if (!$updated) {
+            return false;
+        }
+
+        // 1. Save updated snapshot back to DB
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $result = $wpdb->update(
+            $table,
+            array(
+                'snapshot'  => wp_json_encode($snapshot),
+                'updatedAt' => current_time('mysql'),
+            ),
+            array('id' => (int)$set->id)
+        );
+
+        if ($result === false) {
+            return false;
+        }
+
+        // 2. Propagate updates back to the original copy_results table if the ID is numeric
+        if (is_numeric($asset_id)) {
+            $copy_table = PCM_Schema::table('copy_results');
+            $copy_updates = array();
+            if (isset($updates['body'])) {
+                $copy_updates['body'] = sanitize_textarea_field($updates['body']);
+            }
+            if (isset($updates['headline'])) {
+                $copy_updates['headline'] = sanitize_text_field($updates['headline']);
+            }
+            if (!empty($copy_updates)) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update($copy_table, $copy_updates, array('id' => (int)$asset_id));
+            }
+        }
+
+        return true;
+    }
 }

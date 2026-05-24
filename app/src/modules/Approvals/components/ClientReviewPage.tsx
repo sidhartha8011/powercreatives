@@ -192,6 +192,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     });
   }, [token, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
 
+  const utils = trpc.useUtils();
+  const handleAssetUpdate = useCallback(() => {
+    utils.approvals.getPublicSet.invalidate({ token });
+  }, [utils, token]);
+
   // Combined asset lists & counts
   const mediaAssets = useMemo(() => set?.snapshot?.media || [], [set]);
   const copyAssets = useMemo(() => set?.snapshot?.copy || [], [set]);
@@ -963,6 +968,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                   pairedMediaUrl={pairedMediaUrl}
                   isSubmitted={isReadOnly || submitMutation.isPending}
                   isTeamMember={isTeamMember}
+                  onAssetUpdate={handleAssetUpdate}
                 />
               );
             })}

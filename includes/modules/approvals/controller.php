@@ -9,6 +9,7 @@
  *   POST   /approvals/sets                           Create an approval set
  *   GET    /approvals/sets/(?P<token>[a-zA-Z0-9_-]+)  Get public set by token (unauthenticated)
  *   POST   /approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/review  Submit client feedback (unauthenticated)
+ *   POST   /approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/assets/(?P<asset_id>[a-zA-Z0-9_-]+)  Update snapshot asset (authenticated)
  *
  * @package PowerCreatives
  */
@@ -64,6 +65,7 @@ class PCM_REST_Approvals extends PCM_REST_Base
             array('POST', '/approvals/sets',                          'create_set',          array(), 'edit_posts'),
             array('GET',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)', 'get_public_set',      array(), 'public'),
             array('POST', '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/review', 'submit_public_review', array(), 'public'),
+            array('POST', '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/assets/(?P<asset_id>[a-zA-Z0-9_-]+)', 'update_snapshot_asset', array(), 'public'),
         );
     }
 
@@ -166,6 +168,33 @@ class PCM_REST_Approvals extends PCM_REST_Base
             return $this->success(array('success' => true));
         } catch (\Throwable $e) {
             return $this->error('Failed to submit client review: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Update an individual asset inside the approval set snapshot (authenticated for team members).
+     */
+    public function update_snapshot_asset(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        // Require logged-in team member authorization
+        if (!is_user_logged_in() || (!current_user_can('edit_posts') && !current_user_can('manage_options'))) {
+            return $this->error('Unauthorized: only team members can edit assets.', 403);
+        }
+
+        $token    = sanitize_key($request->get_param('token'));
+        $asset_id = sanitize_key($request->get_param('asset_id'));
+        $params   = $request->get_json_params();
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $success = PCM_Approvals_Service::update_snapshot_asset($token, $asset_id, $params);
+            if (!$success) {
+                return $this->error('Failed to update asset or asset not found in snapshot.', 400);
+            }
+            return $this->success(array('success' => true));
+        } catch (\Throwable $e) {
+            return $this->error('Failed to update snapshot asset: ' . $e->getMessage(), 500);
         }
     }
 }
