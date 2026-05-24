@@ -1,0 +1,173 @@
+/**
+ * Kanban Board Styles
+ *
+ * CSS Modules — every class name here is build-time-hashed. The .root
+ * selector establishes the `pck-root` token scope (see tokens.css) so all
+ * --pck-* variables cascade to descendants.
+ *
+ * Notion-inspired layout: thin pastel column headers, flat light-gray
+ * column body, white cards with a subtle border. Cards render via the
+ * consumer's renderCard — wrapper visuals only.
+ */
+
+/* ─── Board root ─── */
+.root {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(220px, 1fr);
+  gap: var(--pck-gap-board);
+  width: 100%;
+  font-family: var(--pck-font-family);
+  color: var(--pck-text);
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: start;
+}
+
+/* ─── Column ─── */
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pck-gap-column);
+  background: var(--pck-bg-column);
+  border-radius: var(--pck-radius-column);
+  padding: var(--pck-pad-column);
+  min-height: 120px;
+}
+
+.columnHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 6px 4px;
+}
+
+.columnHeaderPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: var(--pck-font-size-sm);
+  font-weight: var(--pck-font-weight-mid);
+  background: var(--pck-pill-bg);
+  color: var(--pck-pill-text);
+  border-radius: var(--pck-radius-pill);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.columnHeaderCount {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--pck-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.columnList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pck-gap-column);
+}
+
+.columnEmpty {
+  font-size: var(--pck-font-size-sm);
+  color: var(--pck-text-faint);
+  padding: 8px 4px;
+  font-style: italic;
+}
+
+/* ─── Card wrapper ─── */
+/*
+ * The board provides the wrapper (background, border, shadow, hover).
+ * The card's *content* comes from the consumer. Hover lifts slightly.
+ */
+.cardWrap {
+  background: var(--pck-bg-card);
+  border: 1px solid var(--pck-border);
+  border-radius: var(--pck-radius-card);
+  box-shadow: var(--pck-shadow-card);
+  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast);
+  cursor: default;
+}
+
+.cardWrap:hover {
+  background: var(--pck-bg-card-hover);
+  border-color: var(--pck-border-strong);
+}
+
+/* ─── Default empty / loading / error states ─── */
+.emptyBoard,
+.loadingBoard,
+.errorBoard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 16px;
+  text-align: center;
+  font-family: var(--pck-font-family);
+  color: var(--pck-text);
+}
+
+.emptyBoardIcon {
+  color: var(--pck-text-faint);
+}
+
+.emptyBoardTitle {
+  font-size: 14px;
+  font-weight: var(--pck-font-weight-semi);
+  margin: 0;
+}
+
+.emptyBoardDescription {
+  font-size: 12px;
+  color: var(--pck-text-muted);
+  margin: 0;
+  max-width: 360px;
+}
+
+.loadingBoard {
+  flex-direction: row;
+  padding: 24px;
+  color: var(--pck-text-muted);
+  font-size: 12px;
+}
+
+.loadingBoardLabel {
+  font-size: 12px;
+}
+
+.errorBoard {
+  border: 1px solid var(--pck-border);
+  border-radius: var(--pck-radius-column);
+  background: var(--pck-bg-card);
+}
+
+.errorBoardIcon {
+  width: 24px;
+  height: 24px;
+  color: #d97706;
+}
+
+.errorBoardTitle {
+  font-size: 14px;
+  font-weight: var(--pck-font-weight-semi);
+  margin: 0;
+}
+
+.errorBoardMessage {
+  font-size: 12px;
+  color: var(--pck-text-muted);
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cardWrap {
+    transition: none;
+  }
+}

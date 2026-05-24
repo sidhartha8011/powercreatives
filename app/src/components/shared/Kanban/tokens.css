@@ -1,0 +1,64 @@
+/**
+ * Kanban Design Tokens
+ *
+ * Notion-inspired palette for the generic Kanban primitive. Exposed as CSS
+ * custom properties so consumers (modules, skins, custom cards) can read them
+ * without importing the JS tokens.
+ *
+ * Naming convention: --pck-* (PowerCreatives Kanban) to avoid global collisions.
+ * Pair with the .pck-board root selector — all variables cascade from there.
+ */
+
+.pck-root {
+  /* Surfaces */
+  --pck-bg-page:          #ffffff;
+  --pck-bg-column:        #f7f7f5;
+  --pck-bg-card:          #ffffff;
+  --pck-bg-card-hover:    #fafaf9;
+  --pck-bg-popover:       #ffffff;
+  --pck-bg-input:         #ffffff;
+  --pck-bg-chip:          #eef0f3;
+  --pck-bg-chip-active:   #e8eef7;
+
+  /* Borders */
+  --pck-border:           #e8e8e6;
+  --pck-border-strong:    #d8d8d4;
+  --pck-border-focus:     #3b82f6;
+
+  /* Text */
+  --pck-text:             #1f1f1f;
+  --pck-text-muted:       #6b6b6b;
+  --pck-text-faint:       #9b9b9b;
+  --pck-text-link:        #2563eb;
+
+  /* Column header pill defaults (consumer overrides per-column via accentColor) */
+  --pck-pill-bg:          #eef0f3;
+  --pck-pill-text:        #4a4a4a;
+
+  /* Spacing */
+  --pck-gap-board:        12px;
+  --pck-gap-column:       6px;
+  --pck-pad-column:       10px;
+  --pck-pad-card:         10px 12px;
+
+  /* Radii */
+  --pck-radius-card:      6px;
+  --pck-radius-column:    8px;
+  --pck-radius-pill:      4px;
+  --pck-radius-input:     6px;
+
+  /* Typography */
+  --pck-font-family:      'Inter', ui-sans-serif, system-ui, sans-serif;
+  --pck-font-size-sm:     12px;
+  --pck-font-size-card:   13px;
+  --pck-font-size-meta:   12px;
+  --pck-font-weight-mid:  500;
+  --pck-font-weight-semi: 600;
+
+  /* Shadows */
+  --pck-shadow-card:      0 1px 2px rgba(15, 15, 15, 0.04);
+  --pck-shadow-popover:   0 8px 24px rgba(15, 15, 15, 0.12);
+
+  /* Motion (consumer can disable via prefers-reduced-motion) */
+  --pck-transition-fast:  120ms cubic-bezier(0.4, 0, 0.2, 1);
+}

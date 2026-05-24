@@ -228,6 +228,9 @@ class PCM_Approvals_Service
                     if (isset($updates['headline'])) {
                         $item['headline'] = sanitize_text_field($updates['headline']);
                     }
+                    if (isset($updates['description'])) {
+                        $item['description'] = sanitize_textarea_field($updates['description']);
+                    }
                     $updated = true;
                     break;
                 }
@@ -275,6 +278,9 @@ class PCM_Approvals_Service
             }
             if (isset($updates['headline'])) {
                 $copy_updates['headline'] = sanitize_text_field($updates['headline']);
+            }
+            if (isset($updates['description'])) {
+                $copy_updates['description'] = sanitize_textarea_field($updates['description']);
             }
             if (!empty($copy_updates)) {
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery

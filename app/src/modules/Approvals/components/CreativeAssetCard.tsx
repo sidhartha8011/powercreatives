@@ -70,8 +70,13 @@ export function CreativeAssetCard({
   const [isEditingText, setIsEditingText] = useState(false);
   const [editedHeadline, setEditedHeadline] = useState(asset.headline || '');
   const [editedBody, setEditedBody] = useState(asset.body || '');
+  const [editedDescription, setEditedDescription] = useState(asset.description || '');
   const [isSavingEdits, setIsSavingEdits] = useState(false);
+  const [focusField, setFocusField] = useState<'body' | 'headline' | 'description' | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
+  const headlineInputRef = useRef<HTMLInputElement>(null);
+  const descriptionInputRef = useRef<HTMLInputElement>(null);
 
   const updateMutation = trpc.approvals.updateSnapshotAsset.useMutation();
 
@@ -180,10 +185,50 @@ export function CreativeAssetCard({
     setTempCommentText(comment || '');
   }, [comment]);
 
+  const handleBodyClick = useCallback((e: React.MouseEvent) => {
+    if (isTeamMember) {
+      e.stopPropagation();
+      setIsEditingText(true);
+      setFocusField('body');
+    }
+  }, [isTeamMember]);
+
+  const handleHeadlineClick = useCallback((e: React.MouseEvent) => {
+    if (isTeamMember) {
+      e.stopPropagation();
+      setIsEditingText(true);
+      setFocusField('headline');
+    }
+  }, [isTeamMember]);
+
+  const handleDescriptionClick = useCallback((e: React.MouseEvent) => {
+    if (isTeamMember) {
+      e.stopPropagation();
+      setIsEditingText(true);
+      setFocusField('description');
+    }
+  }, [isTeamMember]);
+
+  // Focus effect for inputs when edit mode starts
+  useEffect(() => {
+    if (isEditingText && focusField) {
+      if (focusField === 'headline' && headlineInputRef.current) {
+        headlineInputRef.current.focus();
+      } else if (focusField === 'description' && descriptionInputRef.current) {
+        descriptionInputRef.current.focus();
+      }
+      setFocusField(null);
+    }
+  }, [isEditingText, focusField]);
+
   // Save inline text edits to snapshot and DB
   const handleSaveTextEdits = useCallback(async () => {
     // If text hasn't changed, just close editing mode
-    if (editedHeadline === (asset.headline || '') && editedBody === (asset.body || '')) {
+    if (
+      editedHeadline === (asset.headline || '') && 
+      editedBody === (asset.body || '') && 
+      editedDescription === (asset.description || '')
+    ) {
       setIsEditingText(false);
       return;
     }
@@ -197,7 +242,8 @@ export function CreativeAssetCard({
         token,
         assetId: asset.id,
         headline: editedHeadline,
-        body: editedBody
+        body: editedBody,
+        description: editedDescription
       },
       {
         onSuccess: () => {
@@ -212,7 +258,7 @@ export function CreativeAssetCard({
         }
       }
     );
-  }, [editedHeadline, editedBody, asset.headline, asset.body, asset.id, onAssetUpdate, updateMutation]);
+  }, [editedHeadline, editedBody, editedDescription, asset.headline, asset.body, asset.description, asset.id, onAssetUpdate, updateMutation]);
 
   // Handle click outside container card to trigger autosave
   useEffect(() => {
@@ -232,7 +278,8 @@ export function CreativeAssetCard({
   useEffect(() => {
     setEditedHeadline(asset.headline || '');
     setEditedBody(asset.body || '');
-  }, [asset.headline, asset.body]);
+    setEditedDescription(asset.description || '');
+  }, [asset.headline, asset.body, asset.description]);
 
   return (
     <div ref={containerRef} className={`pcm-card ${isApproved ? 'approved' : ''} ${type === 'copy' ? 'copy' : ''} ${isExpanded ? 'expanded' : ''} relative`}>
@@ -274,15 +321,13 @@ export function CreativeAssetCard({
       {/* ─── AD COPY CARD LAYOUT (Social Ad Mockup) ─── */}
       {type === 'copy' && (
         <div
-          className="pcm-copy-body select-none"
+          className="pcm-copy-body select-none flex flex-col h-full"
           onClick={() => {
-            if (isTeamMember) {
-              setIsEditingText(true);
-            } else {
+            if (!isTeamMember) {
               setIsExpanded((prev) => !prev);
             }
           }}
-          style={{ cursor: 'pointer' }}
+          style={{ cursor: isTeamMember ? 'default' : 'pointer' }}
           role="button"
           tabIndex={0}
           aria-expanded={isExpanded}
@@ -292,36 +337,90 @@ export function CreativeAssetCard({
           </div>
           
           {isEditingText ? (
-            <div className="flex flex-col gap-3.5 w-full mt-2" onClick={(e) => e.stopPropagation()}>
-              {asset.headline !== undefined && (
-                <div className="flex flex-col gap-1 w-full">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                    Headline
-                  </label>
-                  <input
-                    type="text"
-                    value={editedHeadline}
-                    onChange={(e) => setEditedHeadline(e.target.value)}
-                    className="w-full text-sm font-semibold border-b border-border outline-none py-1 focus:border-slate-800 bg-transparent text-slate-800"
-                    placeholder="Headline..."
-                  />
+            <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
+              <TiptapBodyEditor
+                content={editedBody}
+                editable={true}
+                onChange={setEditedBody}
+                placeholder="Skriv brödtext..."
+                className="bg-transparent text-[12.5px] leading-normal text-slate-800 font-normal border-none p-0 outline-none focus:ring-0"
+              />
+            </div>
+          ) : (
+            <p 
+              className="pcm-copy-text mb-4"
+              style={{ cursor: isTeamMember ? 'text' : 'pointer' }}
+              onClick={handleBodyClick}
+            >
+              {asset.body}
+            </p>
+          )}
+
+          {/* Facebook Link Preview Overlay Box */}
+          {isEditingText ? (
+            <div 
+              className="bg-slate-50/50 border border-slate-100/50 rounded-xl p-3 mt-auto flex items-center justify-between w-full shadow-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex-1 min-w-0 pr-4">
+                <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1 select-none">
+                  {brandName.toLowerCase()}.se
                 </div>
-              )}
-              <div className="flex flex-col gap-1 w-full">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">
-                  Body Text
-                </label>
-                <TiptapBodyEditor
-                  content={editedBody}
-                  editable={true}
-                  onChange={setEditedBody}
-                  placeholder="Enter body text..."
-                  className="bg-white/40 border border-dashed border-border/70 rounded-lg p-2 focus-within:border-solid focus-within:border-slate-800 text-xs"
+                <input
+                  ref={headlineInputRef}
+                  type="text"
+                  value={editedHeadline}
+                  onChange={(e) => setEditedHeadline(e.target.value)}
+                  className="w-full font-bold text-[13.5px] text-slate-900 leading-snug bg-transparent border-none p-0 outline-none focus:ring-0 focus:border-none focus:outline-none placeholder:text-slate-400"
+                  placeholder="Skriv rubrik..."
                 />
+                <input
+                  ref={descriptionInputRef}
+                  type="text"
+                  value={editedDescription}
+                  onChange={(e) => setEditedDescription(e.target.value)}
+                  className="w-full text-[11.5px] text-slate-500 mt-0.5 leading-normal bg-transparent border-none p-0 outline-none focus:ring-0 focus:border-none focus:outline-none placeholder:text-slate-400"
+                  placeholder="Skriv beskrivning..."
+                />
+              </div>
+              <div className="shrink-0 select-none">
+                <div className="px-3.5 py-1.5 rounded bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-sm">
+                  {asset.cta || 'Läs mer'}
+                </div>
               </div>
             </div>
           ) : (
-            <p className="pcm-copy-text">{asset.headline ? `${asset.headline}\n\n` : ''}{asset.body}</p>
+            (asset.headline || asset.description || isTeamMember) && (
+              <div 
+                className="bg-slate-50/50 border border-slate-100/50 rounded-xl p-3 mt-auto flex items-center justify-between w-full shadow-sm"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex-1 min-w-0 pr-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1 select-none">
+                    {brandName.toLowerCase()}.se
+                  </div>
+                  <h4 
+                    className="font-bold text-[13.5px] text-slate-900 leading-snug truncate cursor-pointer hover:underline"
+                    onClick={handleHeadlineClick}
+                    title={isTeamMember ? 'Klicka för att redigera rubrik' : undefined}
+                  >
+                    {asset.headline || (isTeamMember ? 'Klicka för att skriva rubrik...' : '')}
+                  </h4>
+                  <p 
+                    className="text-[11.5px] text-slate-500 mt-0.5 leading-normal truncate cursor-pointer hover:underline animate-in fade-in"
+                    onClick={handleDescriptionClick}
+                    title={isTeamMember ? 'Klicka för att redigera beskrivning' : undefined}
+                  >
+                    {asset.description || (isTeamMember ? 'Klicka för att skriva beskrivning...' : '')}
+                  </p>
+                </div>
+                <div className="shrink-0 select-none">
+                  <div className="px-3.5 py-1.5 rounded bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-sm">
+                    {asset.cta || 'Läs mer'}
+                  </div>
+                </div>
+              </div>
+            )
           )}
         </div>
       )}
