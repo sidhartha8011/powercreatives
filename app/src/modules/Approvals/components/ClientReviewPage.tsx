@@ -379,19 +379,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
               Tack! Dina godkännanden har skickats till teamet.
             </p>
 
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', gap: '6px',
-              fontSize: '12px', fontWeight: 600,
-              color: '#18a957',
-              background: 'rgba(24,169,87,0.1)',
-              padding: '6px 14px', borderRadius: '99px',
-            }}>
-              <span style={{
-                width: '6px', height: '6px', borderRadius: '50%',
-                background: '#18a957',
-              }} />
-              Avslutad
-            </span>
           </div>
         </div>
       </div>
