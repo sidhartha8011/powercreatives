@@ -558,7 +558,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           line-height: 1.22;
         }
         .pcm-copy-text {
-          font-size: 12.5px; color: var(--ink-2); line-height: 1.5;
+          font-size: 15.5px; color: var(--ink-2); line-height: 1.55;
         }
         .pcm-copy-meta {
           margin-top: auto; padding-top: 6px;
@@ -628,7 +628,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           {campaignName} · Asset Review
         </div>
         <h1
-          className="italic font-normal text-5xl md:text-[64px] leading-[1.0] text-foreground tracking-tight max-w-2xl"
+          className="italic font-normal text-[64px] leading-[1.0] text-foreground tracking-tight max-w-2xl"
           style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
         >
           {totalCount} creative{totalCount !== 1 ? 's' : ''},<br />for your sign-off.
