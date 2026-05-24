@@ -123,56 +123,8 @@ export function CreativeAssetCard({
             />
           )}
 
-          {/* Video duration badge — dynamic from asset or hidden */}
+          {/* Video duration badge */}
           {isVideo && asset.duration && <span className="pcm-duration">{asset.duration}</span>}
-
-          {/* Overlay: info + actions */}
-          <div className="pcm-card-body select-none">
-            <div className="pcm-typestrip">
-              {asset.platform || 'Media'}
-              {asset.aspectRatio && ` · ${asset.aspectRatio}`}
-              {(asset.width && asset.height) && (
-                <>
-                  <span className="dot" />
-                  {asset.width}×{asset.height}
-                </>
-              )}
-            </div>
-            <h3 className="pcm-card-title">
-              {asset.name || 'Untitled Asset'}
-            </h3>
-          </div>
-
-          {/* Actions overlay bar */}
-          {!isEditingComment && (
-            <div className="pcm-card-actions select-none">
-              <button
-                type="button"
-                disabled={isSubmitted}
-                className="pcm-btn pcm-btn-approve"
-                onClick={handleToggleApprove}
-              >
-                <CheckCircle2 className="w-[13px] h-[13px]" />
-                Approve
-              </button>
-              
-              <button
-                type="button"
-                disabled={isSubmitted}
-                className="pcm-btn pcm-btn-comment"
-                onClick={handleOpenComment}
-              >
-                <MessageSquare className="w-[13px] h-[13px]" />
-                Comment
-              </button>
-
-              {/* Mini pulse awaiting indicator */}
-              <span className="pcm-status">
-                <span className="pulse" />
-                {isApproved ? 'Approved' : 'Awaiting'}
-              </span>
-            </div>
-          )}
         </div>
       )}
 
@@ -254,8 +206,8 @@ export function CreativeAssetCard({
         </div>
       )}
 
-      {/* Copy card actions (outside copy-body to not be affected by expand click) */}
-      {type === 'copy' && !isEditingComment && (
+      {/* Card actions (shared for media + copy) */}
+      {!isEditingComment && (
         <div className="pcm-card-actions select-none">
           <button
             type="button"
