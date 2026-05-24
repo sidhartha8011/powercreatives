@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Send, Check, Clock, Loader2, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
