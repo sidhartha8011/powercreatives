@@ -1,14 +1,18 @@
 import { useState, useCallback, useMemo } from 'react';
-import { CheckCircle2, MessageSquare, Send, Check, Heart, HelpCircle, Loader2, Clock } from 'lucide-react';
+import { Send, Check, Clock, Loader2, Heart, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { colors, typography, shadows } from '@/components/shared/design-tokens';
+import { colors, shadows } from '@/components/shared/design-tokens';
 import { trpc } from '@/lib/trpc';
+
+// Import newly created reusable component modules
+import { ClientBreadcrumbs } from './ClientBreadcrumbs';
+import { ClientStatusToolbar } from './ClientStatusToolbar';
+import { CreativeAssetCard } from './CreativeAssetCard';
 
 interface ClientReviewPageProps {
   token: string;
@@ -16,16 +20,15 @@ interface ClientReviewPageProps {
 
 export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Fetch public set data by token
-  const { data: set, isLoading, error, refetch } = trpc.approvals.getPublicSet.useQuery({ token }) as any;
+  const { data: set, isLoading, error } = trpc.approvals.getPublicSet.useQuery({ token }) as any;
 
   // Local Review State
   const [approvedVisualIds, setApprovedVisualIds] = useState<string[]>([]);
   const [approvedCopyIds, setApprovedCopyIds] = useState<string[]>([]);
   const [comments, setComments] = useState<Record<string, string>>({});
-  const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
-  const [tempCommentText, setTempCommentText] = useState('');
   const [clientName, setClientName] = useState('');
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<'all' | 'images' | 'videos' | 'copy'>('all');
 
   // Submit mutation
   const submitMutation = trpc.approvals.submitReview.useMutation({
@@ -39,37 +42,31 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   });
 
   // Toggles
-  const handleToggleVisual = useCallback((id: string) => {
-    if (isSubmitted) return;
-    setApprovedVisualIds((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
-    );
-  }, [isSubmitted]);
+  const handleToggleApprove = useCallback((id: string) => {
+    if (isSubmitted || !set) return;
 
-  const handleToggleCopy = useCallback((id: string) => {
-    if (isSubmitted) return;
-    setApprovedCopyIds((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
-    );
-  }, [isSubmitted]);
+    // Check if ID belongs to media or copy
+    const isMedia = set.snapshot.media?.some((m: any) => m.id === id);
+    if (isMedia) {
+      setApprovedVisualIds((prev) =>
+        prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+      );
+    } else {
+      setApprovedCopyIds((prev) =>
+        prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+      );
+    }
+  }, [set, isSubmitted]);
 
   // Comment managers
-  const handleOpenComment = useCallback((id: string) => {
+  const handleSaveComment = useCallback((id: string, text: string) => {
     if (isSubmitted) return;
-    setActiveCommentId(id);
-    setTempCommentText(comments[id] || '');
-  }, [comments, isSubmitted]);
-
-  const handleSaveComment = useCallback(() => {
-    if (!activeCommentId) return;
     setComments((prev) => ({
       ...prev,
-      [activeCommentId]: tempCommentText.trim(),
+      [id]: text
     }));
-    setActiveCommentId(null);
-    setTempCommentText('');
     toast.success('Comment saved!');
-  }, [activeCommentId, tempCommentText]);
+  }, [isSubmitted]);
 
   const handleClearComment = useCallback((id: string) => {
     if (isSubmitted) return;
@@ -80,6 +77,15 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     });
     toast.info('Comment removed');
   }, [isSubmitted]);
+
+  const handleApproveAll = useCallback(() => {
+    if (isSubmitted || !set) return;
+    const mediaIds = (set.snapshot.media || []).map((m: any) => m.id);
+    const copyIds = (set.snapshot.copy || []).map((c: any) => c.id);
+    setApprovedVisualIds(mediaIds);
+    setApprovedCopyIds(copyIds);
+    toast.success('All creative assets marked as approved!');
+  }, [set, isSubmitted]);
 
   const handleSubmitReview = useCallback(() => {
     if (!clientName.trim()) {
@@ -98,17 +104,96 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     });
   }, [token, clientName, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
 
-  // Combined asset counts
-  const mediaCount = set?.snapshot?.media?.length || 0;
-  const copyCount = set?.snapshot?.copy?.length || 0;
-  const totalCount = mediaCount + copyCount;
-  const reviewedCount = approvedVisualIds.length + approvedCopyIds.length + Object.keys(comments).length;
+  // Combined asset lists & counts
+  const mediaAssets = useMemo(() => set?.snapshot?.media || [], [set]);
+  const copyAssets = useMemo(() => set?.snapshot?.copy || [], [set]);
+  
+  const counts = useMemo(() => {
+    const images = mediaAssets.filter((item: any) => !(
+      item.mimeType?.startsWith('video/') ||
+      item.url?.endsWith('.mp4') ||
+      item.url?.endsWith('.mov') ||
+      item.url?.endsWith('.webm')
+    )).length;
+
+    const videos = mediaAssets.filter((item: any) => (
+      item.mimeType?.startsWith('video/') ||
+      item.url?.endsWith('.mp4') ||
+      item.url?.endsWith('.mov') ||
+      item.url?.endsWith('.webm')
+    )).length;
+
+    const copy = copyAssets.length;
+    return {
+      all: mediaAssets.length + copy,
+      images,
+      videos,
+      copy
+    };
+  }, [mediaAssets, copyAssets]);
+
+  const allMergedAssets = useMemo(() => {
+    const media = mediaAssets.map((item: any) => ({
+      id: item.id,
+      type: 'media' as const,
+      data: item
+    }));
+    const copy = copyAssets.map((item: any) => ({
+      id: item.id,
+      type: 'copy' as const,
+      data: item
+    }));
+    return [...media, ...copy];
+  }, [mediaAssets, copyAssets]);
+
+  const filteredAssets = useMemo(() => {
+    if (activeFilter === 'all') {
+      return allMergedAssets;
+    }
+    if (activeFilter === 'images') {
+      return allMergedAssets.filter(item => item.type === 'media' && !(
+        item.data.mimeType?.startsWith('video/') ||
+        item.data.url?.endsWith('.mp4') ||
+        item.data.url?.endsWith('.mov') ||
+        item.data.url?.endsWith('.webm')
+      ));
+    }
+    if (activeFilter === 'videos') {
+      return allMergedAssets.filter(item => item.type === 'media' && (
+        item.data.mimeType?.startsWith('video/') ||
+        item.data.url?.endsWith('.mp4') ||
+        item.data.url?.endsWith('.mov') ||
+        item.data.url?.endsWith('.webm')
+      ));
+    }
+    if (activeFilter === 'copy') {
+      return allMergedAssets.filter(item => item.type === 'copy');
+    }
+    return allMergedAssets;
+  }, [activeFilter, allMergedAssets]);
+
+  const totalCount = counts.all;
+  const approvedCount = approvedVisualIds.length + approvedCopyIds.length;
+  const reviewedCount = approvedCount + Object.keys(comments).length;
+
+  // Background Aurora styled gradient configurations
+  const pageWrapperStyle = useMemo(() => ({
+    background: '#f6f0ea',
+    backgroundImage: `
+      radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
+      radial-gradient(at 88% 12%, #d8d0ff 0px, transparent 45%),
+      radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
+      radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%)
+    `,
+    backgroundAttachment: 'fixed' as const,
+    minHeight: '100vh',
+  }), []);
 
   if (isLoading) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 gap-3">
         <Spinner className="w-8 h-8" style={{ color: colors.primary }} />
-        <span style={{ fontSize: typography.sm, color: colors.textSecondary }}>Loading client review board...</span>
+        <span className="text-sm text-muted-foreground">Loading client review board...</span>
       </div>
     );
   }
@@ -116,12 +201,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   if (error || !set) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
-        <div className="max-w-md p-6 rounded-lg bg-white shadow-lg border" style={{ borderColor: colors.border }}>
+        <div className="max-w-md p-6 rounded-2xl bg-white shadow-lg border" style={{ borderColor: colors.border }}>
           <HelpCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
-          <h2 style={{ fontSize: typography.title, fontWeight: typography.bold, color: colors.text }}>
+          <h2 className="text-lg font-bold text-foreground">
             Invalid or Expired Board
           </h2>
-          <p className="mt-2 text-sm" style={{ color: colors.textSecondary }}>
+          <p className="mt-2 text-sm text-muted-foreground">
             This approval set link is invalid, expired, or has been revoked. Please ask the creator for a new link.
           </p>
         </div>
@@ -129,24 +214,21 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     );
   }
 
-  // Pre-select primary media for mockups
-  const primaryMediaUrl = set.snapshot.media?.[0]?.url || '';
-
   if (isSubmitted || set.status === 'completed') {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
-        <div className="max-w-md p-8 rounded-lg bg-white shadow-xl border space-y-4" style={{ borderColor: colors.border }}>
+        <div className="max-w-md p-8 rounded-2xl bg-white shadow-xl border space-y-4" style={{ borderColor: colors.border }}>
           <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
             <Check className="w-8 h-8 text-emerald-600" />
           </div>
-          <h2 style={{ fontSize: typography.title, fontWeight: typography.bold, color: colors.text }}>
+          <h2 className="text-lg font-bold text-foreground">
             Review Submitted!
           </h2>
-          <p className="text-sm" style={{ color: colors.textSecondary }}>
-            Thank you! Your approvals and comments have been locked and sent. The creative team has been notified via webhooks and will review your comments.
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Thank you! Your approvals and comments have been locked and sent. The creative team has been notified and will review your comments.
           </p>
           <div className="pt-2">
-            <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 px-3 py-1">
+            <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 px-3 py-1 font-semibold">
               Status: Reviewed & Closed
             </Badge>
           </div>
@@ -155,312 +237,100 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     );
   }
 
+  const primaryMediaUrl = mediaAssets[0]?.url || '';
+  const brandName = set.snapshot.brandName || 'Client Board';
+  const campaignName = set.name || 'Creative Review';
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col pb-28 font-sans" style={{ color: colors.text }}>
-      {/* Brand Header */}
-      <header className="sticky top-0 z-30 w-full px-6 py-4 bg-white/95 backdrop-blur border-b flex justify-between items-center shadow-xs"
-        style={{ borderColor: colors.border }}
-      >
-        <div className="flex items-center gap-3">
-          {set.snapshot.brandLogoUrl && (
-            <img
-              src={set.snapshot.brandLogoUrl}
-              alt="Brand logo"
-              className="w-8 h-8 rounded-full border bg-white object-contain"
-            />
-          )}
-          <div>
-            <h2 className="text-sm font-semibold" style={{ color: colors.text }}>
-              {set.snapshot.brandName || 'Client Board'}
-            </h2>
-            <span style={{ fontSize: typography.xs, color: colors.textMuted }}>
-              Campaign: {set.name}
-            </span>
-          </div>
-        </div>
-        <div>
-          <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100 py-1 px-3">
-            Client Review Stage
-          </Badge>
-        </div>
-      </header>
+    <div style={pageWrapperStyle} className="font-sans flex flex-col pb-36 text-foreground">
+      {/* Notion-Style Breadcrumb Header */}
+      <ClientBreadcrumbs
+        brandName={brandName}
+        campaignName={campaignName}
+        shareUrl={window.location.href}
+      />
 
-      {/* Main Container */}
-      <main className="max-w-5xl w-full mx-auto p-6 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
-        
-        {/* =====================================================================
-            Left Side: Media Asset Gallery
-            ===================================================================== */}
-        <section className="space-y-4">
-          <h3 className="text-sm font-bold uppercase tracking-wider" style={{ color: colors.textSecondary }}>
-            1. Review Media Assets ({mediaCount})
-          </h3>
-          <div className="grid grid-cols-1 gap-4">
-            {set.snapshot.media?.map((media: any) => {
-              const isApproved = approvedVisualIds.includes(media.id);
-              const comment = comments[media.id];
+      {/* Hero Header */}
+      <section className="max-w-5xl w-full mx-auto px-4 md:px-6 pt-12 pb-6">
+        <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80 mb-2.5">
+          Round 1 · Asset Review
+        </div>
+        <h1 className="font-serif italic font-medium text-4xl md:text-5xl lg:text-6.5xl leading-none text-foreground tracking-tight max-w-2xl">
+          {totalCount} creative{totalCount !== 1 ? 's' : ''},<br />for your sign-off.
+        </h1>
+        <p className="mt-4 max-w-xl text-sm leading-relaxed text-slate-700">
+          The campaign drop, told in images, motion pieces, and written rooms. Approve items below, then submit your feedback to our creative design team.
+        </p>
+      </section>
+
+      {/* Sticky Frosted Glass Statusbar */}
+      <ClientStatusToolbar
+        activeFilter={activeFilter}
+        onFilterChange={setActiveFilter}
+        counts={counts}
+        approvedCount={approvedCount}
+        totalCount={totalCount}
+        createdAt={set.createdAt}
+        onApproveAll={handleApproveAll}
+        isSubmitting={submitMutation.isPending}
+      />
+
+      {/* Grid container */}
+      <main className="max-w-5xl w-full mx-auto px-4 md:px-6 mt-4">
+        {filteredAssets.length === 0 ? (
+          <div className="w-full text-center py-16 bg-white/40 backdrop-blur-md rounded-2xl border border-border/40 select-none">
+            <p className="text-sm font-semibold text-muted-foreground">No assets found in this category.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 transition-all duration-300">
+            {filteredAssets.map((item) => {
+              const isApproved = item.type === 'media'
+                ? approvedVisualIds.includes(item.id)
+                : approvedCopyIds.includes(item.id);
+              const comment = comments[item.id];
+
+              // Pair copy card with corresponding media item
+              let pairedMediaUrl = null;
+              if (item.type === 'copy') {
+                const copyIndex = copyAssets.findIndex((c: any) => c.id === item.id);
+                pairedMediaUrl = mediaAssets[copyIndex % mediaAssets.length]?.url || primaryMediaUrl;
+              }
 
               return (
-                <div
-                  key={media.id}
-                  className="rounded-xl overflow-hidden bg-white border transition-all shadow-sm flex flex-col"
-                  style={{
-                    borderColor: isApproved ? '#10b981' : colors.border,
-                    boxShadow: isApproved ? '0 4px 12px rgba(16,185,129,0.08)' : shadows.card,
-                  }}
-                >
-                  {/* Image render */}
-                  <div className="relative aspect-video bg-black flex items-center justify-center group">
-                    <img
-                      src={media.url}
-                      alt="Ad creative visual"
-                      className="w-full h-full object-cover"
-                    />
-                    {isApproved && (
-                      <div className="absolute inset-0 bg-emerald-500/10 flex items-center justify-center">
-                        <Badge className="bg-emerald-500 text-white hover:bg-emerald-500 px-3 py-1 gap-1 text-xs">
-                          <Check className="w-3.5 h-3.5" /> Selected & Approved
-                        </Badge>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="p-3 bg-white flex items-center justify-between border-t" style={{ borderColor: colors.borderLight }}>
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        size="sm"
-                        variant={isApproved ? "default" : "outline"}
-                        className="h-8 gap-1.5 text-xs font-semibold transition-all"
-                        style={{
-                          background: isApproved ? '#10b981' : undefined,
-                          borderColor: isApproved ? '#10b981' : undefined,
-                        }}
-                        onClick={() => handleToggleVisual(media.id)}
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        {isApproved ? 'Approved' : 'Approve Media'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 gap-1 text-xs"
-                        onClick={() => handleOpenComment(media.id)}
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        {comment ? 'Edit Comment' : 'Add Comment'}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Display comment if exists */}
-                  {comment && (
-                    <div className="px-3 pb-3 bg-white">
-                      <div className="p-2.5 rounded italic text-xs flex justify-between items-start gap-2"
-                        style={{ background: '#fffbeb', borderLeft: '3px solid #f59e0b' }}
-                      >
-                        <span className="min-w-0 break-words flex-1">"{comment}"</span>
-                        <button
-                          onClick={() => handleClearComment(media.id)}
-                          className="text-[10px] text-red-500 hover:underline shrink-0 font-semibold"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <CreativeAssetCard
+                  key={item.id}
+                  asset={item.data}
+                  type={item.type}
+                  isApproved={isApproved}
+                  comment={comment}
+                  onApprove={handleToggleApprove}
+                  onCommentSave={handleSaveComment}
+                  onCommentRemove={handleClearComment}
+                  brandLogoUrl={set.snapshot.brandLogoUrl}
+                  brandName={brandName}
+                  pairedMediaUrl={pairedMediaUrl}
+                  isSubmitted={submitMutation.isPending}
+                />
               );
             })}
           </div>
-        </section>
-
-        {/* =====================================================================
-            Right Side: Copy Cards inside Mockups
-            ===================================================================== */}
-        <section className="space-y-4">
-          <h3 className="text-sm font-bold uppercase tracking-wider" style={{ color: colors.textSecondary }}>
-            2. Review Ad Copy Mockups ({copyCount})
-          </h3>
-          <div className="space-y-6">
-            {set.snapshot.copy?.map((copy: any, index: number) => {
-              const isApproved = approvedCopyIds.includes(copy.id);
-              const comment = comments[copy.id];
-              
-              // Pair copy card with corresponding media or fallback
-              const creativeUrl = set.snapshot.media?.[index % mediaCount]?.url || primaryMediaUrl;
-
-              return (
-                <div
-                  key={copy.id}
-                  className="rounded-xl overflow-hidden bg-white border transition-all"
-                  style={{
-                    borderColor: isApproved ? '#10b981' : colors.border,
-                    boxShadow: isApproved ? '0 4px 16px rgba(16,185,129,0.08)' : shadows.card,
-                  }}
-                >
-                  {/* Meta Ad Mockup Header */}
-                  <div className="p-3 flex items-center justify-between border-b" style={{ borderColor: colors.borderLight }}>
-                    <div className="flex items-center gap-2">
-                      {set.snapshot.brandLogoUrl ? (
-                        <img
-                          src={set.snapshot.brandLogoUrl}
-                          alt="Brand logo"
-                          className="w-8 h-8 rounded-full border bg-white object-contain"
-                        />
-                      ) : (
-                        <div className="w-8 h-8 rounded-full bg-slate-200 border flex items-center justify-center font-bold text-xs">
-                          {set.snapshot.brandName?.[0] || 'C'}
-                        </div>
-                      )}
-                      <div>
-                        <span className="text-xs font-semibold block leading-tight">
-                          {set.snapshot.brandName || 'Brand'}
-                        </span>
-                        <span className="text-[10px]" style={{ color: colors.textFaint }}>
-                          Sponsored
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Meta Ad Text */}
-                  <div className="px-3 py-2 text-xs leading-relaxed" style={{ background: '#ffffff', color: '#1c1e21' }}>
-                    <p className="whitespace-pre-wrap">{copy.body}</p>
-                  </div>
-
-                  {/* Mockup Ad Creative */}
-                  {creativeUrl && (
-                    <div className="relative aspect-video bg-black">
-                      <img
-                        src={creativeUrl}
-                        alt="Ad preview"
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                  )}
-
-                  {/* Meta Headline & CTA footer layout */}
-                  <div className="p-3 flex items-center justify-between" style={{ background: '#f0f2f5', borderTop: '1px solid #ddd' }}>
-                    <div className="flex-1 min-w-0 pr-2">
-                      <span className="text-[10px] uppercase block truncate" style={{ color: '#606770' }}>
-                        {copy.description || 'DYNAMIC PREVIEW'}
-                      </span>
-                      <span className="text-xs font-bold block truncate text-slate-800">
-                        {copy.headline}
-                      </span>
-                    </div>
-                    {copy.cta && (
-                      <span className="text-[10px] font-semibold uppercase px-3 py-1.5 border rounded bg-white select-none text-slate-700 shadow-xs">
-                        {copy.cta}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="p-3 bg-white flex items-center justify-between border-t" style={{ borderColor: colors.borderLight }}>
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        size="sm"
-                        variant={isApproved ? "default" : "outline"}
-                        className="h-8 gap-1.5 text-xs font-semibold transition-all"
-                        style={{
-                          background: isApproved ? '#10b981' : undefined,
-                          borderColor: isApproved ? '#10b981' : undefined,
-                        }}
-                        onClick={() => handleToggleCopy(copy.id)}
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        {isApproved ? 'Approved' : 'Approve Copy'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 gap-1 text-xs"
-                        onClick={() => handleOpenComment(copy.id)}
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        {comment ? 'Edit Comment' : 'Add Comment'}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Display comment if exists */}
-                  {comment && (
-                    <div className="px-3 pb-3 bg-white">
-                      <div className="p-2.5 rounded italic text-xs flex justify-between items-start gap-2"
-                        style={{ background: '#fffbeb', borderLeft: '3px solid #f59e0b' }}
-                      >
-                        <span className="min-w-0 break-words flex-1">"{comment}"</span>
-                        <button
-                          onClick={() => handleClearComment(copy.id)}
-                          className="text-[10px] text-red-500 hover:underline shrink-0 font-semibold"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
+        )}
       </main>
 
-      {/* =====================================================================
-          Granular Comment Popup Dialog
-          ===================================================================== */}
-      {activeCommentId && (
-        <Dialog open={!!activeCommentId} onOpenChange={() => setActiveCommentId(null)}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <MessageSquare className="w-5 h-5" style={{ color: colors.primary }} />
-                Leave Feedback Comment
-              </DialogTitle>
-              <DialogDescription>
-                Provide detailed feedback or requested tweaks on this specific ad creative component.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="py-4">
-              <Textarea
-                value={tempCommentText}
-                onChange={(e) => setTempCommentText(e.target.value)}
-                placeholder="Type your feedback here... (e.g. Can we change the CTA from 'Learn More' to 'Shop Now'?)"
-                rows={4}
-                className="text-xs"
-              />
-            </div>
-
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => setActiveCommentId(null)}>
-                Cancel
-              </Button>
-              <Button onClick={handleSaveComment} style={{ background: colors.primary }}>
-                Save Comment
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {/* =====================================================================
-          Consolidated Sticky Review control footer
-          ===================================================================== */}
-      <footer className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t px-6 py-4 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 max-w-5xl mx-auto rounded-t-xl"
+      {/* Sticky review submission bottom footer */}
+      <footer 
+        className="fixed bottom-4 left-4 right-4 md:left-6 md:right-6 z-40 bg-white/90 backdrop-blur-xl border px-5 py-3.5 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 max-w-5xl mx-auto rounded-2xl transition-all duration-200"
         style={{ borderColor: colors.border }}
       >
         <div className="flex flex-col md:flex-row md:items-center gap-4 flex-1">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+          <div className="space-y-0.5 select-none">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
               <Clock className="w-4 h-4 text-blue-500" />
               <span>Feedback Progress:</span>
-              <span style={{ color: colors.primary }}>{reviewedCount} total actions</span>
+              <span className="text-blue-600">{reviewedCount} total actions</span>
             </div>
-            <p style={{ fontSize: typography.xs, color: colors.textMuted }}>
-              Your progress will be bundled and sent in a single consolidated webhook notification.
+            <p className="text-[10px] text-muted-foreground">
+              Your feedback is securely saved locally and will be locked and sent in a single consolidated submission.
             </p>
           </div>
 
@@ -469,8 +339,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
               value={clientName}
               onChange={(e) => setClientName(e.target.value)}
               placeholder="Your Name (Required)"
-              className="h-9 text-xs"
-              disabled={submitMutation.isLoading}
+              className="h-9 text-xs bg-white/80"
+              disabled={submitMutation.isPending}
             />
           </div>
         </div>
@@ -478,11 +348,10 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         <div className="shrink-0 flex gap-2">
           <Button
             onClick={handleSubmitReview}
-            disabled={submitMutation.isLoading || !clientName.trim()}
-            className="h-9 font-semibold gap-2 text-xs"
-            style={{ background: colors.primary }}
+            disabled={submitMutation.isPending || !clientName.trim()}
+            className="h-9 font-bold gap-2 text-xs cursor-pointer select-none bg-blue-600 hover:bg-blue-700 text-white border-blue-600 active:translate-y-0.5"
           >
-            {submitMutation.isLoading ? (
+            {submitMutation.isPending ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Submitting review...
