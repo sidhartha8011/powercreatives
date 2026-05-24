@@ -528,6 +528,9 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
             0 12px 28px rgba(50,30,15,0.06);
           overflow: hidden;
           display: flex; flex-direction: column;
+          transition: transform .2s ease, box-shadow .25s ease;
+        }
+        .pcm-card.copy {
           height: 400px;
           transition: transform .2s ease, box-shadow .25s ease, height .3s ease;
         }
@@ -546,16 +549,16 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
         /* ---------- card media ---------- */
         .pcm-card-media {
-          position: relative; height: 210px;
+          position: relative;
           background: #efe7df; overflow: hidden;
         }
         .pcm-card-media img {
-          width: 100%; height: 100%; object-fit: cover; display: block;
+          display: block; width: 100%; height: auto;
           transition: transform .6s cubic-bezier(.2,.6,.2,1);
         }
         .pcm-card:hover .pcm-card-media img { transform: scale(1.03); }
         .pcm-card-media video {
-          width: 100%; height: 100%; object-fit: cover; display: block;
+          display: block; width: 100%; height: auto;
         }
 
         /* ---------- badge ---------- */
