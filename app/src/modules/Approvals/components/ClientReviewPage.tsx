@@ -631,13 +631,16 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           {campaignName} · Asset Review
         </div>
         <h1
-          className="italic font-normal tracking-tight max-w-2xl"
+          className="tracking-tight max-w-2xl"
           style={{
             fontFamily: '"Instrument Serif", Georgia, serif',
+            fontWeight: 400,
+            fontStyle: 'italic',
             fontSize: '64px',
             lineHeight: 1.0,
             letterSpacing: '-0.02em',
             color: 'var(--ink)',
+            margin: '14px 0 0',
           }}
         >
           {totalCount} creative{totalCount !== 1 ? 's' : ''},<br />for your sign-off.
