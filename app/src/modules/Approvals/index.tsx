@@ -422,10 +422,11 @@ export function ApprovalsModule() {
                                   href={`${window.location.origin}/public/approval/${set.token}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="h-7 px-2.5 rounded flex items-center justify-center text-[11px] hover:opacity-90 transition-opacity text-white shrink-0"
+                                  className="h-7 px-2.5 rounded flex items-center justify-center gap-1 text-[11px] hover:opacity-90 transition-opacity text-white shrink-0"
                                   style={{ background: colors.primary, textDecoration: 'none' }}
                                 >
-                                  <ExternalLink className="w-3 h-3" />
+                                  <Eye className="w-3 h-3" />
+                                  Preview
                                 </a>
                               </div>
                             </div>
