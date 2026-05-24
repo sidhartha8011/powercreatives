@@ -369,14 +369,14 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
               color: 'var(--ink)',
               margin: '0 0 10px', lineHeight: 1.2,
             }}>
-              Review Submitted!
+              Granskning inskickad!
             </h2>
 
             <p style={{
               fontSize: '13px', lineHeight: 1.6,
               color: 'var(--ink-3)', margin: '0 0 20px',
             }}>
-              Thank you! Your approvals and comments have been locked and sent. The creative team has been notified and will review your comments.
+              Tack! Dina godkännanden har skickats till teamet.
             </p>
 
             <span style={{
@@ -390,7 +390,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                 width: '6px', height: '6px', borderRadius: '50%',
                 background: '#18a957',
               }} />
-              Reviewed &amp; Closed
+              Granskad &amp; stängd
             </span>
           </div>
         </div>
