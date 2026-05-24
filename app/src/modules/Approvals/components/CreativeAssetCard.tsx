@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -256,8 +257,8 @@ export function CreativeAssetCard({
           </span>
         </div>
       )}
-      {/* ─── IMAGE LIGHTBOX OVERLAY ─── */}
-      {showLightbox && asset.url && (
+      {/* ─── IMAGE LIGHTBOX OVERLAY (portal to body) ─── */}
+      {showLightbox && asset.url && createPortal(
         <div
           className="pcm-lightbox"
           onClick={() => setShowLightbox(false)}
@@ -278,7 +279,8 @@ export function CreativeAssetCard({
           >
             <X className="w-5 h-5" />
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
