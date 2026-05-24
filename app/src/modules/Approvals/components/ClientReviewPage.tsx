@@ -624,16 +624,28 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
       {/* Hero Header */}
       <section className="max-w-[1280px] w-full mx-auto px-7 pt-12 pb-5 select-none">
-        <div className="text-[11.5px] font-semibold uppercase tracking-widest text-muted-foreground/80 mb-3.5">
+        <div
+          className="font-semibold uppercase tracking-widest mb-3.5"
+          style={{ fontSize: '11.5px', color: 'var(--ink-3)' }}
+        >
           {campaignName} · Asset Review
         </div>
         <h1
-          className="italic font-normal text-[64px] leading-[1.0] text-foreground tracking-tight max-w-2xl"
-          style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
+          className="italic font-normal tracking-tight max-w-2xl"
+          style={{
+            fontFamily: '"Instrument Serif", Georgia, serif',
+            fontSize: '64px',
+            lineHeight: 1.0,
+            letterSpacing: '-0.02em',
+            color: 'var(--ink)',
+          }}
         >
           {totalCount} creative{totalCount !== 1 ? 's' : ''},<br />for your sign-off.
         </h1>
-        <p className="mt-4.5 max-w-[580px] text-[15.5px] leading-[1.55] text-[#4a4239]">
+        <p
+          className="max-w-[580px]"
+          style={{ fontSize: '15.5px', lineHeight: 1.55, color: 'var(--ink-2)', marginTop: '18px' }}
+        >
           {(() => {
             const parts: string[] = [];
             if (counts.images > 0) parts.push(`${counts.images} image${counts.images !== 1 ? 's' : ''}`);
