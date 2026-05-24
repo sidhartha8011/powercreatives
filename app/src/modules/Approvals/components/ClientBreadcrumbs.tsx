@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 interface ClientBreadcrumbsProps {
   brandName?: string;
   campaignName?: string;
+  studioName?: string;
   shareUrl?: string;
   onDownloadAll?: () => void;
 }
@@ -12,6 +13,7 @@ interface ClientBreadcrumbsProps {
 export function ClientBreadcrumbs({
   brandName = 'Client Board',
   campaignName = 'Creative Review',
+  studioName = 'Studio',
   shareUrl,
   onDownloadAll
 }: ClientBreadcrumbsProps) {
@@ -46,15 +48,15 @@ export function ClientBreadcrumbs({
 
   return (
     <header className="pcm-crumb sticky top-0 z-30 transition-all duration-200">
-      {/* Notion-style mark */}
+      {/* Notion-style mark — shows first letter of studio name */}
       <span className="pcm-crumb-mark" aria-hidden="true">
-        N
+        {studioName.charAt(0).toUpperCase()}
       </span>
 
       {/* Breadcrumb path */}
       <div className="flex items-center gap-0.5 max-w-[65%] truncate">
         <span className="pcm-crumb-piece cursor-pointer">
-          Northwind Studio
+          {studioName}
         </span>
         <span className="pcm-crumb-sep">/</span>
         <span className="pcm-crumb-piece cursor-pointer">

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Send, Check, Clock, Loader2, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -227,6 +227,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const primaryMediaUrl = mediaAssets[0]?.url || '';
   const brandName = set.snapshot.brandName || 'Client Board';
   const campaignName = set.name || 'Creative Review';
+  const studioName = set.snapshot.studioName || 'Studio';
 
   return (
     <div className="aurora-mesh-bg font-sans flex flex-col pb-36 text-foreground min-h-screen">
@@ -235,6 +236,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         This provides perfect pixel identical rendering matches for blurs, shadows, spacing, and gradients.
       */}
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
+
         :root {
           --ink: #1d1d1f;
           --ink-2: #4a4239;
@@ -614,19 +617,30 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       <ClientBreadcrumbs
         brandName={brandName}
         campaignName={campaignName}
+        studioName={studioName}
         shareUrl={window.location.href}
       />
 
       {/* Hero Header */}
       <section className="max-w-[1280px] w-full mx-auto px-7 pt-12 pb-5 select-none">
         <div className="text-[11.5px] font-semibold uppercase tracking-widest text-muted-foreground/80 mb-3.5">
-          Round 1 · Asset Review
+          {campaignName} · Asset Review
         </div>
-        <h1 className="font-serif italic font-normal text-5xl md:text-[64px] leading-[1.0] text-foreground tracking-tight max-w-2xl">
+        <h1
+          className="italic font-normal text-5xl md:text-[64px] leading-[1.0] text-foreground tracking-tight max-w-2xl"
+          style={{ fontFamily: '"Instrument Serif", Georgia, serif' }}
+        >
           {totalCount} creative{totalCount !== 1 ? 's' : ''},<br />for your sign-off.
         </h1>
         <p className="mt-4.5 max-w-[580px] text-[15.5px] leading-[1.55] text-[#4a4239]">
-          The summer drop, told in three image moments, two motion pieces, and four written rooms. Approve items below, then submit your feedback to our creative design team.
+          {(() => {
+            const parts: string[] = [];
+            if (counts.images > 0) parts.push(`${counts.images} image${counts.images !== 1 ? 's' : ''}`);
+            if (counts.videos > 0) parts.push(`${counts.videos} video${counts.videos !== 1 ? 's' : ''}`);
+            if (counts.copy > 0) parts.push(`${counts.copy} copy variation${counts.copy !== 1 ? 's' : ''}`);
+            const assetSummary = parts.length > 0 ? parts.join(', ') : 'your creative assets';
+            return `Review ${assetSummary}. Approve as you read, or sign off the whole set from the bar below.`;
+          })()}
         </p>
       </section>
 

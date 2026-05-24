@@ -112,20 +112,27 @@ export function CreativeAssetCard({
             )}
           </span>
           
-          {isVideo && <span className="pcm-duration">0:15</span>}
+          {/* Video duration badge — dynamic from asset or hidden */}
+          {isVideo && asset.duration && <span className="pcm-duration">{asset.duration}</span>}
         </div>
       )}
 
       {/* ─── AD COPY CARD LAYOUT (Social Ad Mockup) ─── */}
       {type === 'copy' && (
         <div className="pcm-copy-body select-none">
-          <div className="pcm-copy-platform">Meta Feed · Primary Text</div>
-          <div className="pcm-copy-headline">{asset.headline || 'Creative Headline'}</div>
+          <div className="pcm-copy-platform">
+            {asset.platform || asset.audienceName || 'Ad Copy'} · {asset.type || asset.angleName || 'Primary Text'}
+          </div>
+          <div className="pcm-copy-headline">{asset.headline || 'Untitled'}</div>
           <p className="pcm-copy-text">{asset.body}</p>
           
           <div className="pcm-copy-meta">
-            <span className="pcm-kv"><b>CTA</b> · {asset.cta || 'Shop Now'}</span>
-            <span className="pcm-kv"><b>Tone</b> · Confident, warm</span>
+            {asset.cta && (
+              <span className="pcm-kv"><b>CTA</b> · {asset.cta}</span>
+            )}
+            {(asset.tone || asset.toneOfVoice) && (
+              <span className="pcm-kv"><b>Tone</b> · {asset.tone || asset.toneOfVoice}</span>
+            )}
           </div>
         </div>
       )}
@@ -134,10 +141,17 @@ export function CreativeAssetCard({
       {type === 'media' && (
         <div className="pcm-card-body select-none">
           <div className="pcm-typestrip">
-            Meta Feed · 4&times;5 <span className="dot" /> 2400&times;3000
+            {asset.platform || 'Media'}
+            {asset.aspectRatio && ` · ${asset.aspectRatio}`}
+            {(asset.width && asset.height) && (
+              <>
+                <span className="dot" />
+                {asset.width}×{asset.height}
+              </>
+            )}
           </div>
           <h3 className="pcm-card-title">
-            {asset.name || 'Creative Asset'}
+            {asset.name || 'Untitled Asset'}
           </h3>
         </div>
       )}
