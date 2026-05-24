@@ -84,12 +84,11 @@ export function ClientStatusToolbar({
         
         {/* Filters / Tabs */}
         <div className="filters select-none" role="tablist">
-          {(['all', 'images', 'videos', 'copy'] as const)
-            .filter((filter) => filter === 'all' || counts[filter] > 0)
+          {(['images', 'videos', 'copy'] as const)
+            .filter((filter) => counts[filter] > 0)
             .map((filter) => {
             const isActive = activeFilter === filter;
             const labelMap = {
-              all: `All · ${counts.all}`,
               images: `Images · ${counts.images}`,
               videos: `Videos · ${counts.videos}`,
               copy: `Copy · ${counts.copy}`
@@ -101,7 +100,7 @@ export function ClientStatusToolbar({
                 type="button"
                 role="tab"
                 aria-selected={isActive}
-                onClick={() => onFilterChange(filter)}
+                onClick={() => onFilterChange(isActive ? 'all' : filter)}
                 className={`chip cursor-pointer ${isActive ? 'active' : ''}`}
               >
                 {labelMap[filter]}
