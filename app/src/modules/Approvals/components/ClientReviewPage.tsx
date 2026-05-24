@@ -236,11 +236,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       */}
       <style>{`
         :root {
-          --ink: hsl(var(--foreground));
-          --ink-2: hsl(var(--muted-foreground));
-          --ink-3: hsl(var(--muted-foreground) / 0.85);
-          --ink-4: hsl(var(--muted-foreground) / 0.65);
-          --line: hsl(var(--border) / 0.5);
+          --ink: #1d1d1f;
+          --ink-2: #4a4239;
+          --ink-3: #6f6a64;
+          --ink-4: #8a7d6d;
+          --line: rgba(0,0,0,0.06);
           --approve: #18a957;
           --approve-soft: rgba(24,169,87,0.12);
         }
@@ -253,73 +253,48 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
             radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
             radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%);
           background-attachment: fixed;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
         }
 
-        /* ---------- breadcrumbs overrides ---------- */
+        /* ---------- breadcrumbs ---------- */
         .pcm-crumb {
           height: 48px;
-          display: flex;
-          align-items: center;
+          display: flex; align-items: center;
           padding: 0 22px;
-          background: rgba(246, 240, 234, 0.72) !important;
-          backdrop-filter: blur(24px) saturate(180%) !important;
-          -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
-          border-bottom: 1px solid rgba(0,0,0,0.05) !important;
+          background: rgba(246,240,234,0.72);
+          backdrop-filter: blur(24px) saturate(180%);
+          -webkit-backdrop-filter: blur(24px) saturate(180%);
+          border-bottom: 1px solid rgba(0,0,0,0.05);
         }
         .pcm-crumb-mark {
-          width: 22px;
-          height: 22px;
-          border-radius: 6px;
+          width: 22px; height: 22px; border-radius: 6px;
           background: linear-gradient(135deg, #ff9c6a 0%, #c876ff 100%);
-          display: grid;
-          place-items: center;
-          color: white;
-          font-size: 11px;
-          font-weight: 700;
+          display: grid; place-items: center;
+          color: white; font-size: 11px; font-weight: 700;
           letter-spacing: -0.02em;
           margin-right: 8px;
-          box-shadow: 0 2px 6px rgba(200, 118, 255, 0.25);
+          box-shadow: 0 2px 6px rgba(200,118,255,0.25);
         }
         .pcm-crumb-piece {
-          font-size: 13px;
-          color: var(--ink-3) !important;
-          font-weight: 500;
-          padding: 4px 8px;
-          border-radius: 6px;
+          font-size: 13px; color: var(--ink-3); font-weight: 500;
+          padding: 4px 8px; border-radius: 6px;
           letter-spacing: -0.005em;
           transition: background .15s ease, color .15s ease;
         }
-        .pcm-crumb-piece:hover {
-          background: rgba(0,0,0,0.04) !important;
-          color: var(--ink-2) !important;
-        }
-        .pcm-crumb-piece.current {
-          color: var(--ink) !important;
-        }
-        .pcm-crumb-sep {
-          color: var(--ink-4) !important;
-          font-size: 12px;
-          padding: 0 1px;
-        }
+        .pcm-crumb-piece:hover { background: rgba(0,0,0,0.04); color: var(--ink-2); }
+        .pcm-crumb-piece.current { color: var(--ink); }
+        .pcm-crumb-sep { color: var(--ink-4); font-size: 12px; padding: 0 1px; }
         .pcm-crumb-icon {
-          appearance: none;
-          border: none;
-          cursor: pointer;
-          background: transparent;
-          color: var(--ink-3) !important;
-          width: 30px;
-          height: 30px;
-          border-radius: 7px;
-          display: grid;
-          place-items: center;
+          appearance: none; border: none; cursor: pointer;
+          background: transparent; color: var(--ink-3);
+          width: 30px; height: 30px; border-radius: 7px;
+          display: grid; place-items: center;
           transition: background .15s ease, color .15s ease;
         }
-        .pcm-crumb-icon:hover {
-          background: rgba(0,0,0,0.05) !important;
-          color: var(--ink) !important;
-        }
+        .pcm-crumb-icon:hover { background: rgba(0,0,0,0.05); color: var(--ink); }
 
-        /* ---------- statusbar overrides ---------- */
+        /* ---------- toolbar ---------- */
         .pcm-toolbar {
           max-width: 1280px;
           margin: 28px auto 22px;
@@ -329,136 +304,309 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           z-index: 40;
         }
         .pcm-toolbar-inner {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          background: rgba(255, 255, 255, 0.62) !important;
-          backdrop-filter: blur(28px) saturate(180%) !important;
-          -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
-          border: 1px solid rgba(255, 255, 255, 0.7) !important;
+          display: flex; align-items: center; gap: 4px;
+          background: rgba(255,255,255,0.62);
+          backdrop-filter: blur(28px) saturate(180%);
+          -webkit-backdrop-filter: blur(28px) saturate(180%);
+          border: 1px solid rgba(255,255,255,0.7);
           border-radius: 14px;
           padding: 5px;
           box-shadow:
             0 1px 0 rgba(255,255,255,0.7) inset,
-            0 6px 20px rgba(35,18,8,0.05) !important;
+            0 6px 20px rgba(35,18,8,0.05);
         }
+        .pcm-toolbar-divider {
+          width: 1px; align-self: stretch;
+          background: rgba(0,0,0,0.07);
+          margin: 6px 8px;
+        }
+        .pcm-bar-divider {
+          width: 1px; height: 18px;
+          background: rgba(0,0,0,0.08);
+          flex-shrink: 0;
+        }
+        .pcm-toolbar-right {
+          margin-left: auto;
+          display: flex; align-items: center; gap: 14px;
+          padding-left: 4px;
+        }
+        .pcm-context-group {
+          display: inline-flex; align-items: center; gap: 8px;
+        }
+
+        /* ---------- filter chips ---------- */
+        .filters {
+          display: inline-flex; gap: 2px;
+        }
+        .chip {
+          appearance: none; border: none; background: transparent;
+          font-family: inherit; font-size: 13px; font-weight: 500;
+          color: var(--ink-3); padding: 8px 14px; border-radius: 9px;
+          cursor: pointer; letter-spacing: -0.005em;
+          transition: background .15s ease, color .15s ease;
+        }
+        .chip:hover { color: var(--ink-2); background: rgba(0,0,0,0.035); }
+        .chip.active {
+          background: white; color: var(--ink);
+          box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.04);
+        }
+        .chip.active:hover { background: white; }
+
+        /* ---------- progress ---------- */
+        .pcm-progress {
+          display: flex; align-items: center; gap: 10px;
+          font-size: 12px; color: var(--ink-3); font-weight: 500;
+          padding-left: 4px;
+        }
+        .pcm-progress-bar {
+          width: 88px; height: 3px;
+          background: rgba(0,0,0,0.08);
+          border-radius: 99px; overflow: hidden;
+        }
+        .pcm-progress-bar > div {
+          height: 100%; background: var(--ink);
+          border-radius: 99px;
+          transition: width .35s cubic-bezier(.4,0,.2,1);
+        }
+
+        /* ---------- status pill ---------- */
         .pcm-bar-status {
-          display: inline-flex;
-          align-items: center;
-          gap: 7px;
-          font-size: 12.5px;
-          color: var(--ink-2) !important;
-          font-weight: 500;
+          display: inline-flex; align-items: center; gap: 7px;
+          font-size: 12.5px; color: var(--ink-2); font-weight: 500;
           letter-spacing: -0.005em;
           padding: 7px 12px 7px 10px;
-          background: rgba(212, 160, 23, 0.10) !important;
-          border: 1px solid rgba(212, 160, 23, 0.20) !important;
+          background: rgba(212,160,23,0.10);
+          border: 1px solid rgba(212,160,23,0.20);
           border-radius: 99px;
           white-space: nowrap;
         }
         .pcm-bar-status .dot {
-          width: 7px;
-          height: 7px;
-          border-radius: 99px;
+          width: 7px; height: 7px; border-radius: 99px;
           background: #d4a017;
-          box-shadow: 0 0 0 3px rgba(212, 160, 23, 0.18);
+          box-shadow: 0 0 0 3px rgba(212,160,23,0.18);
           flex-shrink: 0;
         }
         .pcm-bar-status.is-approved {
-          background: rgba(24, 169, 87, 0.10) !important;
-          border-color: rgba(24, 169, 87, 0.22) !important;
+          background: rgba(24,169,87,0.10);
+          border-color: rgba(24,169,87,0.22);
         }
         .pcm-bar-status.is-approved .dot {
           background: #18a957;
-          box-shadow: 0 0 0 3px rgba(24, 169, 87, 0.18);
+          box-shadow: 0 0 0 3px rgba(24,169,87,0.18);
         }
+
+        /* ---------- deadline ---------- */
         .pcm-bar-deadline {
-          font-size: 12.5px;
-          color: var(--ink-3) !important;
-          font-weight: 500;
+          font-size: 12.5px; color: var(--ink-3); font-weight: 500;
           letter-spacing: -0.005em;
-          display: inline-flex;
-          align-items: baseline;
-          gap: 5px;
+          display: inline-flex; align-items: baseline; gap: 5px;
           padding: 0 4px 0 8px;
           white-space: nowrap;
         }
-        .pcm-bar-deadline b {
-          font-weight: 600;
-          color: var(--ink-2) !important;
-        }
-        .pcm-bar-deadline .countdown {
-          color: var(--ink-4) !important;
-        }
+        .pcm-bar-deadline b { font-weight: 600; color: var(--ink-2); }
+        .pcm-bar-deadline .countdown { color: var(--ink-4); }
         .pcm-bar-deadline.is-urgent b,
-        .pcm-bar-deadline.is-urgent .countdown {
-          color: #b8801a !important;
-        }
+        .pcm-bar-deadline.is-urgent .countdown { color: #b8801a; }
         .pcm-bar-deadline.is-overdue b,
-        .pcm-bar-deadline.is-overdue .countdown {
-          color: #c2410c !important;
+        .pcm-bar-deadline.is-overdue .countdown { color: #c2410c; }
+
+        /* ---------- approve all button ---------- */
+        .pcm-approve-all {
+          appearance: none; border: none; cursor: pointer;
+          color: white;
+          font-family: inherit; font-size: 13px; font-weight: 600;
+          padding: 8px 16px; border-radius: 9px;
+          letter-spacing: -0.005em;
+          background-color: var(--approve);
+          background-image: linear-gradient(105deg,
+            rgba(255,255,255,0) 35%,
+            rgba(255,255,255,0.32) 47%,
+            rgba(255,255,255,0.55) 50%,
+            rgba(255,255,255,0.32) 53%,
+            rgba(255,255,255,0) 65%
+          );
+          background-size: 250% 100%;
+          background-position: 220% 0;
+          background-repeat: no-repeat;
+          box-shadow: 0 1px 2px rgba(24,169,87,0.3), 0 2px 8px rgba(24,169,87,0.22);
+          transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease;
+          display: inline-flex; align-items: center; gap: 7px;
+          animation: approveShimmer 5.5s ease-in-out infinite;
+        }
+        .pcm-approve-all:hover {
+          background-color: #15974d;
+          box-shadow: 0 1px 2px rgba(24,169,87,0.35), 0 4px 12px rgba(24,169,87,0.3);
+        }
+        .pcm-approve-all:active { transform: translateY(1px); }
+        @keyframes approveShimmer {
+          0%   { background-position: 220% 0; }
+          55%  { background-position: -120% 0; }
+          100% { background-position: -120% 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .pcm-approve-all { animation: none; }
         }
 
-        /* ---------- cards overrides ---------- */
+        /* ---------- grid ---------- */
+        .pcm-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 22px;
+        }
+        @media (max-width: 1024px) { .pcm-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 640px)  { .pcm-grid { grid-template-columns: 1fr; } }
+
+        /* ---------- cards ---------- */
         .pcm-card {
-          background: rgba(255, 255, 255, 0.7) !important;
-          backdrop-filter: blur(30px) saturate(180%) !important;
-          -webkit-backdrop-filter: blur(30px) saturate(180%) !important;
-          border: 1px solid rgba(255, 255, 255, 0.75) !important;
-          border-radius: 16px !important;
+          position: relative;
+          background: rgba(255,255,255,0.7);
+          backdrop-filter: blur(30px) saturate(180%);
+          -webkit-backdrop-filter: blur(30px) saturate(180%);
+          border: 1px solid rgba(255,255,255,0.75);
+          border-radius: 16px;
           box-shadow:
             0 1px 0 rgba(255,255,255,0.85) inset,
-            0 12px 28px rgba(50,30,15,0.06) !important;
+            0 12px 28px rgba(50,30,15,0.06);
           overflow: hidden;
-          display: flex;
-          flex-direction: column;
-          height: 400px !important;
+          display: flex; flex-direction: column;
+          height: 400px;
           transition: transform .2s ease, box-shadow .25s ease;
         }
         .pcm-card:hover {
-          transform: translateY(-2px) !important;
+          transform: translateY(-2px);
           box-shadow:
             0 1px 0 rgba(255,255,255,0.85) inset,
-            0 18px 38px rgba(50,30,15,0.09) !important;
+            0 18px 38px rgba(50,30,15,0.09);
         }
+
+        /* ---------- card media ---------- */
+        .pcm-card-media {
+          position: relative; height: 210px;
+          background: #efe7df; overflow: hidden;
+        }
+        .pcm-card-media img {
+          width: 100%; height: 100%; object-fit: cover; display: block;
+          transition: transform .6s cubic-bezier(.2,.6,.2,1);
+        }
+        .pcm-card:hover .pcm-card-media img { transform: scale(1.03); }
+        .pcm-card-media video {
+          width: 100%; height: 100%; object-fit: cover; display: block;
+        }
+
+        /* ---------- badge ---------- */
+        .pcm-badge {
+          position: absolute; left: 10px; top: 10px;
+          background: rgba(0,0,0,0.55);
+          color: white;
+          padding: 4px 8px 4px 6px;
+          border-radius: 99px;
+          font-size: 10.5px; font-weight: 500;
+          letter-spacing: 0.02em;
+          display: inline-flex; align-items: center; gap: 4px;
+          backdrop-filter: blur(8px);
+        }
+        .pcm-badge svg { width: 10px; height: 10px; }
+
+        /* ---------- duration ---------- */
+        .pcm-duration {
+          position: absolute; right: 10px; bottom: 10px;
+          background: rgba(0,0,0,0.6);
+          color: white;
+          padding: 2px 7px; border-radius: 5px;
+          font-size: 11px; font-weight: 500;
+          backdrop-filter: blur(8px);
+          font-variant-numeric: tabular-nums;
+        }
+
+        /* ---------- card body ---------- */
+        .pcm-card-body {
+          padding: 12px 14px 0;
+          flex: 1; display: flex; flex-direction: column; min-height: 0;
+        }
+        .pcm-typestrip {
+          display: flex; align-items: center; gap: 7px;
+          font-size: 10.5px; color: var(--ink-4); font-weight: 600;
+          letter-spacing: 0.05em; text-transform: uppercase;
+        }
+        .pcm-typestrip .dot { width: 3px; height: 3px; background: #c8bdb1; border-radius: 99px; }
+        .pcm-card-title {
+          margin-top: 5px;
+          font-size: 14px; font-weight: 600;
+          letter-spacing: -0.012em; color: var(--ink);
+          line-height: 1.3;
+        }
+
+        /* ---------- copy card variant ---------- */
         .pcm-card.copy .pcm-copy-body {
-          padding: 18px 18px 0 !important;
+          padding: 18px 18px 0;
           flex: 1;
-          display: flex;
-          flex-direction: column;
-          gap: 9px !important;
+          display: flex; flex-direction: column; gap: 9px;
           overflow: hidden;
         }
         .pcm-copy-platform {
-          font-size: 10.5px !important;
-          font-weight: 600;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          color: var(--ink-4) !important;
+          font-size: 10.5px; font-weight: 600;
+          letter-spacing: 0.08em; text-transform: uppercase;
+          color: var(--ink-4);
         }
         .pcm-copy-headline {
-          font-size: 17px !important;
-          font-weight: 600;
-          letter-spacing: -0.016em;
-          color: var(--ink) !important;
-          line-height: 1.22 !important;
+          font-size: 17px; font-weight: 600;
+          letter-spacing: -0.016em; color: var(--ink);
+          line-height: 1.22;
         }
         .pcm-copy-text {
-          font-size: 12.5px !important;
-          color: var(--ink-2) !important;
-          line-height: 1.5 !important;
+          font-size: 12.5px; color: var(--ink-2); line-height: 1.5;
         }
         .pcm-copy-meta {
-          margin-top: auto;
-          padding-top: 6px;
-          font-size: 11px !important;
-          color: var(--ink-4) !important;
-          display: flex;
-          align-items: center;
-          gap: 10px;
+          margin-top: auto; padding-top: 6px;
+          font-size: 11px; color: var(--ink-4); font-weight: 500;
+          display: flex; align-items: center; gap: 10px;
         }
+        .pcm-kv { display: inline-flex; align-items: center; gap: 4px; }
+        .pcm-kv b { font-weight: 600; color: var(--ink-2); }
+
+        /* ---------- card actions ---------- */
+        .pcm-card-actions {
+          margin-top: auto;
+          padding: 10px 12px;
+          display: flex; align-items: center; gap: 6px;
+          border-top: 1px solid rgba(0,0,0,0.05);
+        }
+        .pcm-btn {
+          appearance: none; border: none; cursor: pointer;
+          font-family: inherit; font-size: 12.5px; font-weight: 500;
+          padding: 7px 12px; border-radius: 99px;
+          display: inline-flex; align-items: center; gap: 5px;
+          transition: background .15s ease, color .15s ease;
+          letter-spacing: -0.005em;
+        }
+        .pcm-btn-approve {
+          background: var(--ink); color: white;
+        }
+        .pcm-btn-approve:hover { background: #000; }
+        .pcm-btn-comment {
+          background: transparent; color: var(--ink-2);
+        }
+        .pcm-btn-comment:hover { background: rgba(0,0,0,0.05); }
+        .pcm-btn svg { width: 13px; height: 13px; }
+
+        /* ---------- card status ---------- */
+        .pcm-status {
+          margin-left: auto;
+          font-size: 11px; color: var(--ink-4); font-weight: 500;
+          display: inline-flex; align-items: center; gap: 5px;
+        }
+        .pcm-status .pulse {
+          width: 6px; height: 6px; background: #d8c8b0; border-radius: 99px;
+        }
+
+        /* ---------- approved state ---------- */
         .pcm-card.approved {
-          background: linear-gradient(180deg, rgba(220,246,230,0.78), rgba(255,255,255,0.7)) !important;
+          background: linear-gradient(180deg, rgba(220,246,230,0.78), rgba(255,255,255,0.7));
+        }
+        .pcm-card.approved .pcm-status { color: var(--approve); }
+        .pcm-card.approved .pcm-status .pulse { background: var(--approve); }
+        .pcm-card.approved .pcm-btn-approve {
+          background: var(--approve);
         }
       `}</style>
 
