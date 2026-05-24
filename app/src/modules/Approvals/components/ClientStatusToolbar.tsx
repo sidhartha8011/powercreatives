@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Check, CheckCircle2, Clock, Send, Loader2 } from 'lucide-react';
+import { useMemo } from 'react';
+import { Check, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 
 interface ClientStatusToolbarProps {
   activeFilter: 'all' | 'images' | 'videos' | 'copy';
@@ -14,7 +14,7 @@ interface ClientStatusToolbarProps {
   totalCount: number;
   createdAt?: string | Date;
   onApproveAll: () => void;
-  onConfirmSubmit: (clientName: string) => void;
+  onConfirmSubmit: () => void;
   isSubmitting?: boolean;
   isConfirmPending?: boolean;
 }
@@ -31,8 +31,6 @@ export function ClientStatusToolbar({
   isSubmitting = false,
   isConfirmPending = false
 }: ClientStatusToolbarProps) {
-  const [showNameInput, setShowNameInput] = useState(false);
-  const [clientName, setClientName] = useState('');
   
   /** Review period in milliseconds (4 days) */
   const REVIEW_PERIOD_MS = 4 * 24 * 60 * 60 * 1000;
@@ -153,44 +151,18 @@ export function ClientStatusToolbar({
 
           {/* Approve All / Confirm Submit */}
           {isAllApproved ? (
-            <div className="pcm-confirm-group">
-              {showNameInput && (
-                <input
-                  type="text"
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  placeholder="Your name"
-                  className="pcm-confirm-name"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && clientName.trim()) {
-                      onConfirmSubmit(clientName.trim());
-                    }
-                  }}
-                />
+            <button
+              type="button"
+              disabled={isConfirmPending}
+              onClick={onConfirmSubmit}
+              className="pcm-confirm-btn cursor-pointer select-none"
+            >
+              {isConfirmPending ? (
+                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting...</>
+              ) : (
+                <><CheckCircle2 className="w-3.5 h-3.5" /> Click to Confirm</>
               )}
-              <button
-                type="button"
-                disabled={isConfirmPending}
-                onClick={() => {
-                  if (!showNameInput) {
-                    setShowNameInput(true);
-                    return;
-                  }
-                  if (!clientName.trim()) return;
-                  onConfirmSubmit(clientName.trim());
-                }}
-                className="pcm-confirm-btn cursor-pointer select-none"
-              >
-                {isConfirmPending ? (
-                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting...</>
-                ) : showNameInput ? (
-                  <><Send className="w-3.5 h-3.5" /> Confirm &amp; Send</>
-                ) : (
-                  <><CheckCircle2 className="w-3.5 h-3.5" /> Click to Confirm</>
-                )}
-              </button>
-            </div>
+            </button>
           ) : (
             <button
               type="button"

@@ -162,12 +162,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     });
   }, [token, clientName, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
 
-  // Confirm submit handler — receives clientName from toolbar confirm flow
-  const handleConfirmSubmit = useCallback((name: string) => {
-    setClientName(name);
+  // Confirm submit handler — direct submission without name prompt
+  const handleConfirmSubmit = useCallback(() => {
     submitMutation.mutate({
       token,
-      clientName: name,
+      clientName: 'Client',
       feedback: {
         approvedVisualIds,
         approvedCopyIds,
@@ -521,25 +520,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         }
 
         /* ---------- confirm submit button ---------- */
-        .pcm-confirm-group {
-          display: flex; align-items: center; gap: 8px;
-        }
-        .pcm-confirm-name {
-          appearance: none;
-          font-family: inherit; font-size: 12.5px;
-          padding: 7px 12px; border-radius: 8px;
-          border: 1.5px solid #e5790a;
-          background: white;
-          color: var(--ink);
-          width: 160px;
-          outline: none;
-          transition: border-color .15s ease;
-        }
-        .pcm-confirm-name:focus {
-          border-color: #c2610a;
-          box-shadow: 0 0 0 3px rgba(229,121,10,0.15);
-        }
-        .pcm-confirm-name::placeholder { color: var(--ink-4); }
         .pcm-confirm-btn {
           appearance: none; border: none; cursor: pointer;
           color: white;
