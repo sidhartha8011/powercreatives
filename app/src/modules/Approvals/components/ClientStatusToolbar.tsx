@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Check, CheckCircle2, Clock } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Check, CheckCircle2, Clock, Send, Loader2 } from 'lucide-react';
 
 interface ClientStatusToolbarProps {
   activeFilter: 'all' | 'images' | 'videos' | 'copy';
@@ -14,7 +14,9 @@ interface ClientStatusToolbarProps {
   totalCount: number;
   createdAt?: string | Date;
   onApproveAll: () => void;
+  onConfirmSubmit: (clientName: string) => void;
   isSubmitting?: boolean;
+  isConfirmPending?: boolean;
 }
 
 export function ClientStatusToolbar({
@@ -25,8 +27,12 @@ export function ClientStatusToolbar({
   totalCount,
   createdAt = new Date(),
   onApproveAll,
-  isSubmitting = false
+  onConfirmSubmit,
+  isSubmitting = false,
+  isConfirmPending = false
 }: ClientStatusToolbarProps) {
+  const [showNameInput, setShowNameInput] = useState(false);
+  const [clientName, setClientName] = useState('');
   
   /** Review period in milliseconds (4 days) */
   const REVIEW_PERIOD_MS = 4 * 24 * 60 * 60 * 1000;
@@ -145,16 +151,57 @@ export function ClientStatusToolbar({
 
           <span className="pcm-bar-divider" aria-hidden="true" />
 
-          {/* Shimmer Approve All Button */}
-          <button
-            type="button"
-            disabled={isSubmitting}
-            onClick={onApproveAll}
-            className="pcm-approve-all cursor-pointer select-none"
-          >
-            <Check className="w-3.5 h-3.5" />
-            Approve all
-          </button>
+          {/* Approve All / Confirm Submit */}
+          {isAllApproved ? (
+            <div className="pcm-confirm-group">
+              {showNameInput && (
+                <input
+                  type="text"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  placeholder="Your name"
+                  className="pcm-confirm-name"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && clientName.trim()) {
+                      onConfirmSubmit(clientName.trim());
+                    }
+                  }}
+                />
+              )}
+              <button
+                type="button"
+                disabled={isConfirmPending}
+                onClick={() => {
+                  if (!showNameInput) {
+                    setShowNameInput(true);
+                    return;
+                  }
+                  if (!clientName.trim()) return;
+                  onConfirmSubmit(clientName.trim());
+                }}
+                className="pcm-confirm-btn cursor-pointer select-none"
+              >
+                {isConfirmPending ? (
+                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting...</>
+                ) : showNameInput ? (
+                  <><Send className="w-3.5 h-3.5" /> Confirm &amp; Send</>
+                ) : (
+                  <><CheckCircle2 className="w-3.5 h-3.5" /> Click to Confirm</>
+                )}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={onApproveAll}
+              className="pcm-approve-all cursor-pointer select-none"
+            >
+              <Check className="w-3.5 h-3.5" />
+              Approve all
+            </button>
+          )}
         </div>
 
       </div>

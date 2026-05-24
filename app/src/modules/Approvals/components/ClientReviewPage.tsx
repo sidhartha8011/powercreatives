@@ -1,11 +1,11 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Send, Check, Clock, Loader2, HelpCircle } from 'lucide-react';
+import { Check, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+
 import { trpc } from '@/lib/trpc';
 
 // Import newly created reusable component modules
@@ -161,6 +161,20 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       },
     });
   }, [token, clientName, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
+
+  // Confirm submit handler — receives clientName from toolbar confirm flow
+  const handleConfirmSubmit = useCallback((name: string) => {
+    setClientName(name);
+    submitMutation.mutate({
+      token,
+      clientName: name,
+      feedback: {
+        approvedVisualIds,
+        approvedCopyIds,
+        comments,
+      },
+    });
+  }, [token, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
 
   // Combined asset lists & counts
   const mediaAssets = useMemo(() => set?.snapshot?.media || [], [set]);
@@ -506,6 +520,50 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           .pcm-approve-all { animation: none; }
         }
 
+        /* ---------- confirm submit button ---------- */
+        .pcm-confirm-group {
+          display: flex; align-items: center; gap: 8px;
+        }
+        .pcm-confirm-name {
+          appearance: none;
+          font-family: inherit; font-size: 12.5px;
+          padding: 7px 12px; border-radius: 8px;
+          border: 1.5px solid #e5790a;
+          background: white;
+          color: var(--ink);
+          width: 160px;
+          outline: none;
+          transition: border-color .15s ease;
+        }
+        .pcm-confirm-name:focus {
+          border-color: #c2610a;
+          box-shadow: 0 0 0 3px rgba(229,121,10,0.15);
+        }
+        .pcm-confirm-name::placeholder { color: var(--ink-4); }
+        .pcm-confirm-btn {
+          appearance: none; border: none; cursor: pointer;
+          color: white;
+          font-family: inherit; font-size: 13px; font-weight: 600;
+          padding: 8px 16px; border-radius: 9px;
+          letter-spacing: -0.005em;
+          background: #e5790a;
+          box-shadow: 0 1px 2px rgba(229,121,10,0.3), 0 2px 8px rgba(229,121,10,0.22), 0 0 0 2px rgba(229,121,10,0.35);
+          transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+          display: inline-flex; align-items: center; gap: 7px;
+          white-space: nowrap;
+          animation: confirmPulse 2s ease-in-out infinite;
+        }
+        .pcm-confirm-btn:hover {
+          background: #c2610a;
+          box-shadow: 0 1px 2px rgba(229,121,10,0.35), 0 4px 12px rgba(229,121,10,0.3), 0 0 0 2px rgba(229,121,10,0.45);
+        }
+        .pcm-confirm-btn:active { transform: translateY(1px); }
+        .pcm-confirm-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        @keyframes confirmPulse {
+          0%, 100% { box-shadow: 0 1px 2px rgba(229,121,10,0.3), 0 2px 8px rgba(229,121,10,0.22), 0 0 0 2px rgba(229,121,10,0.35); }
+          50% { box-shadow: 0 1px 2px rgba(229,121,10,0.4), 0 4px 16px rgba(229,121,10,0.3), 0 0 0 4px rgba(229,121,10,0.2); }
+        }
+
         /* ---------- grid ---------- */
         .pcm-grid {
           display: grid;
@@ -679,55 +737,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           background: var(--approve);
         }
 
-        /* ---------- sticky submission footer ---------- */
-        #pcm-root .pcm-footer {
-          position: fixed; bottom: 16px; left: 16px; right: 16px;
-          z-index: 40;
-          max-width: 64rem; margin: 0 auto;
-          background: rgba(255,255,255,0.9);
-          backdrop-filter: blur(24px) saturate(180%);
-          -webkit-backdrop-filter: blur(24px) saturate(180%);
-          border: 1px solid var(--line);
-          border-radius: 16px;
-          padding: 14px 20px;
-          box-shadow: 0 12px 40px rgba(35,18,8,0.10);
-          display: flex; align-items: center; justify-content: space-between;
-          gap: 16px; flex-wrap: wrap;
-        }
-        .pcm-footer-left {
-          display: flex; align-items: center; gap: 16px; flex: 1;
-          flex-wrap: wrap;
-        }
-        .pcm-footer-progress {
-          display: flex; flex-direction: column; gap: 2px;
-          user-select: none;
-        }
-        .pcm-footer-progress-label {
-          display: flex; align-items: center; gap: 8px;
-          font-size: 12px; font-weight: 700; color: var(--ink);
-        }
-        .pcm-footer-progress-label .accent { color: #2563eb; }
-        #pcm-root .pcm-footer-hint {
-          font-size: 10px; color: var(--ink-3); line-height: 1.4;
-        }
-        .pcm-footer-name {
-          max-width: 240px; width: 100%; flex-shrink: 0;
-        }
-        .pcm-footer-submit {
-          appearance: none; border: none; cursor: pointer;
-          font-family: inherit; font-size: 12px; font-weight: 700;
-          color: white; background: #2563eb;
-          padding: 9px 16px; border-radius: 9px;
-          display: inline-flex; align-items: center; gap: 8px;
-          transition: background .15s ease, transform .1s ease;
-          white-space: nowrap;
-        }
-        .pcm-footer-submit:hover { background: #1d4ed8; }
-        .pcm-footer-submit:active { transform: translateY(1px); }
-        .pcm-footer-submit:disabled {
-          opacity: 0.5; cursor: not-allowed;
-          transform: none;
-        }
+
 
         /* ---------- image lightbox ---------- */
         .pcm-lightbox {
@@ -797,7 +807,9 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         totalCount={totalCount}
         createdAt={set.createdAt}
         onApproveAll={handleApproveAll}
+        onConfirmSubmit={handleConfirmSubmit}
         isSubmitting={submitMutation.isPending}
+        isConfirmPending={submitMutation.isPending}
       />
 
       {/* Grid container */}
@@ -843,51 +855,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           </div>
         )}
       </main>
-
-      {/* Sticky review submission footer */}
-      <footer className="pcm-footer">
-        <div className="pcm-footer-left">
-          <div className="pcm-footer-progress">
-            <div className="pcm-footer-progress-label">
-              <Clock className="w-4 h-4" style={{ color: '#2563eb' }} />
-              <span>Feedback Progress:</span>
-              <span className="accent">{reviewedCount} total actions</span>
-            </div>
-            <p className="pcm-footer-hint">
-              Your feedback is saved locally and will be locked and sent in a single consolidated submission.
-            </p>
-          </div>
-
-          <div className="pcm-footer-name">
-            <Input
-              value={clientName}
-              onChange={(e) => setClientName(e.target.value)}
-              placeholder="Your Name (Required)"
-              className="h-9 text-xs bg-white/80"
-              disabled={submitMutation.isPending}
-            />
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleSubmitReview}
-          disabled={submitMutation.isPending || !clientName.trim()}
-          className="pcm-footer-submit"
-        >
-          {submitMutation.isPending ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Submitting review...
-            </>
-          ) : (
-            <>
-              <Send className="w-4 h-4" />
-              Submit Feedback to Team
-            </>
-          )}
-        </button>
-      </footer>
     </div>
   );
 }
