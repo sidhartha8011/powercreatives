@@ -487,7 +487,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         .pcm-approve-all {
           appearance: none; border: none; cursor: pointer;
           color: white;
-          font-family: inherit; font-size: 13px; font-weight: 600;
+          font-family: inherit; font-size: 14.5px; font-weight: 600;
           padding: 8px 16px; border-radius: 9px;
           letter-spacing: -0.005em;
           background-color: var(--approve);
@@ -543,7 +543,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         .pcm-confirm-btn {
           appearance: none; border: none; cursor: pointer;
           color: white;
-          font-family: inherit; font-size: 13px; font-weight: 600;
+          font-family: inherit; font-size: 14.5px; font-weight: 600;
           padding: 8px 16px; border-radius: 9px;
           letter-spacing: -0.005em;
           background: #e5790a;
