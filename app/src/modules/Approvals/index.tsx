@@ -224,12 +224,19 @@ export function ApprovalsModule() {
     updateArticleMutation.mutate({ id: articleId, status: newStatus });
   }, [updateArticleMutation]);
 
+  // Build the correct public board URL using the shortcode page + query param
+  const getPublicBoardUrl = useCallback((token: string) => {
+    const config = (window as any).pcmConfig ?? { shortcodePageUrl: window.location.origin + '/' };
+    const baseUrl = config.shortcodePageUrl || (window.location.origin + '/');
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${separator}pcm_public_token=${token}`;
+  }, []);
+
   // Copy share link helper
   const handleCopyLink = useCallback((token: string) => {
-    const host = window.location.origin;
-    navigator.clipboard.writeText(`${host}/public/approval/${token}`);
+    navigator.clipboard.writeText(getPublicBoardUrl(token));
     toast.success('Client link copied to clipboard!');
-  }, []);
+  }, [getPublicBoardUrl]);
 
   const isLoading = articlesLoading || setsLoading;
 
@@ -419,7 +426,7 @@ export function ApprovalsModule() {
                                   Copy Link
                                 </Button>
                                 <a
-                                  href={`${window.location.origin}/public/approval/${set.token}`}
+                                  href={getPublicBoardUrl(set.token)}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="h-7 px-2.5 rounded flex items-center justify-center gap-1 text-[11px] hover:opacity-90 transition-opacity text-white shrink-0"
