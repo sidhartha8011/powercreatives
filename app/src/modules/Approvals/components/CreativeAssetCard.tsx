@@ -104,20 +104,7 @@ export function CreativeAssetCard({
             />
           )}
 
-          {/* Asset Badge */}
-          <span className="pcm-badge">
-            {isVideo ? (
-              <>
-                <Video className="w-2.5 h-2.5 fill-current" />
-                Video
-              </>
-            ) : (
-              <>
-                <ImageIcon className="w-2.5 h-2.5" />
-                Image
-              </>
-            )}
-          </span>
+
           
           {/* Video duration badge — dynamic from asset or hidden */}
           {isVideo && asset.duration && <span className="pcm-duration">{asset.duration}</span>}
@@ -130,8 +117,7 @@ export function CreativeAssetCard({
           <div className="pcm-copy-platform">
             {asset.platform || asset.audienceName || 'Ad Copy'} · {asset.type || asset.angleName || 'Primary Text'}
           </div>
-          <div className="pcm-copy-headline">{asset.headline || 'Untitled'}</div>
-          <p className="pcm-copy-text">{asset.body}</p>
+          <p className="pcm-copy-text">{asset.headline ? `${asset.headline}\n\n` : ''}{asset.body}</p>
           
           <div className="pcm-copy-meta">
             {asset.cta && (

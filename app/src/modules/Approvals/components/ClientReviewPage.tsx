@@ -357,7 +357,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         .pcm-toolbar {
           max-width: 1280px;
           margin: 28px auto 22px;
-          padding: 0 28px;
+          padding: 0 22px;
           position: sticky;
           top: 48px;
           z-index: 40;
@@ -399,7 +399,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         }
         .chip {
           appearance: none; border: none; background: transparent;
-          font-family: inherit; font-size: 13px; font-weight: 500;
+          font-family: inherit; font-size: 13.5px; font-weight: 500;
           color: var(--ink-3); padding: 8px 14px; border-radius: 9px;
           cursor: pointer; letter-spacing: -0.005em;
           transition: background .15s ease, color .15s ease;
