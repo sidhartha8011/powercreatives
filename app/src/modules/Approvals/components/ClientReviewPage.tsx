@@ -238,8 +238,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
 
-        /* Scoped to .aurora-mesh-bg — these variables ONLY affect the client review board */
-        .aurora-mesh-bg {
+        /*
+         * Scoped to #pcm-root .aurora-mesh-bg
+         * Using #pcm-root prefix gives specificity (1,1,0) which beats the
+         * global reset #pcm-root :where(h1/p) at (1,0,0).
+         * This eliminates the need for !important or inline style hacks.
+         */
+        #pcm-root .aurora-mesh-bg {
           --ink: #1d1d1f;
           --ink-2: #4a4239;
           --ink-3: #6f6a64;
@@ -247,9 +252,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           --line: rgba(0,0,0,0.06);
           --approve: #18a957;
           --approve-soft: rgba(24,169,87,0.12);
-        }
-
-        .aurora-mesh-bg {
           background: #f6f0ea;
           background-image:
             radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
@@ -259,6 +261,26 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           background-attachment: fixed;
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* ---------- hero typography (matches mockup .hero exactly) ---------- */
+        #pcm-root .pcm-hero-eyebrow {
+          font-size: 11.5px; font-weight: 600;
+          letter-spacing: 0.1em; text-transform: uppercase;
+          color: var(--ink-4);
+          margin-bottom: 14px;
+        }
+        #pcm-root .pcm-hero-title {
+          font-family: "Instrument Serif", Georgia, serif;
+          font-style: italic; font-weight: 400;
+          font-size: 64px; letter-spacing: -0.02em;
+          margin: 14px 0 0; line-height: 1.0;
+          color: var(--ink);
+          max-width: 42rem;
+        }
+        #pcm-root .pcm-hero-subtitle {
+          margin: 18px 0 0; max-width: 580px;
+          font-size: 15.5px; color: var(--ink-2); line-height: 1.55;
         }
 
         /* ---------- breadcrumbs ---------- */
@@ -533,7 +555,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           letter-spacing: 0.05em; text-transform: uppercase;
         }
         .pcm-typestrip .dot { width: 3px; height: 3px; background: #c8bdb1; border-radius: 99px; }
-        .pcm-card-title {
+        #pcm-root .pcm-card-title {
           margin-top: 5px;
           font-size: 14px; font-weight: 600;
           letter-spacing: -0.012em; color: var(--ink);
@@ -557,7 +579,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           letter-spacing: -0.016em; color: var(--ink);
           line-height: 1.22;
         }
-        .pcm-copy-text {
+        #pcm-root .pcm-copy-text {
           font-size: 15.5px; color: var(--ink-2); line-height: 1.55;
         }
         .pcm-copy-meta {
@@ -623,32 +645,14 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       />
 
       {/* Hero Header */}
-      <section className="max-w-[1280px] w-full mx-auto px-7 pt-12 pb-5 select-none">
-        <div
-          className="font-semibold uppercase tracking-widest mb-3.5"
-          style={{ fontSize: '11.5px', color: 'var(--ink-3)' }}
-        >
+      <section className="pcm-hero max-w-[1280px] w-full mx-auto px-7 pt-12 pb-5 select-none">
+        <div className="pcm-hero-eyebrow">
           {campaignName} · Asset Review
         </div>
-        <h1
-          className="tracking-tight max-w-2xl"
-          style={{
-            fontFamily: '"Instrument Serif", Georgia, serif',
-            fontWeight: 400,
-            fontStyle: 'italic',
-            fontSize: '64px',
-            lineHeight: 1.0,
-            letterSpacing: '-0.02em',
-            color: 'var(--ink)',
-            margin: '14px 0 0',
-          }}
-        >
+        <h1 className="pcm-hero-title">
           {totalCount} creative{totalCount !== 1 ? 's' : ''},<br />for your sign-off.
         </h1>
-        <p
-          className="max-w-[580px]"
-          style={{ fontSize: '15.5px', lineHeight: 1.55, color: 'var(--ink-2)', marginTop: '18px' }}
-        >
+        <p className="pcm-hero-subtitle">
           {(() => {
             const parts: string[] = [];
             if (counts.images > 0) parts.push(`${counts.images} image${counts.images !== 1 ? 's' : ''}`);
