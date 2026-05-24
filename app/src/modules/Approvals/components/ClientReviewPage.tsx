@@ -613,7 +613,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           line-height: 1.22;
         }
         #pcm-root .pcm-copy-text {
-          font-size: 15.5px; color: var(--ink-2); line-height: 1.55;
+          font-size: 12.5px; color: var(--ink-2); line-height: 1.5;
         }
         .pcm-copy-meta {
           margin-top: auto; padding-top: 6px;

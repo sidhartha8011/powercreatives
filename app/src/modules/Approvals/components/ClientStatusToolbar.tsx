@@ -84,7 +84,9 @@ export function ClientStatusToolbar({
         
         {/* Filters / Tabs */}
         <div className="filters select-none" role="tablist">
-          {(['all', 'images', 'videos', 'copy'] as const).map((filter) => {
+          {(['all', 'images', 'videos', 'copy'] as const)
+            .filter((filter) => filter === 'all' || counts[filter] > 0)
+            .map((filter) => {
             const isActive = activeFilter === filter;
             const labelMap = {
               all: `All · ${counts.all}`,
