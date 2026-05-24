@@ -72,11 +72,8 @@ export function CreativeAssetCard({
   const [editedBody, setEditedBody] = useState(asset.body || '');
   const [editedDescription, setEditedDescription] = useState(asset.description || '');
   const [isSavingEdits, setIsSavingEdits] = useState(false);
-  const [focusField, setFocusField] = useState<'body' | 'headline' | 'description' | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const headlineInputRef = useRef<HTMLInputElement>(null);
-  const descriptionInputRef = useRef<HTMLInputElement>(null);
 
   const updateMutation = trpc.approvals.updateSnapshotAsset.useMutation();
 
@@ -185,41 +182,18 @@ export function CreativeAssetCard({
     setTempCommentText(comment || '');
   }, [comment]);
 
-  const handleBodyClick = useCallback((e: React.MouseEvent) => {
-    if (isTeamMember) {
+  const handleCardClick = useCallback(() => {
+    if (!isEditingText) {
+      setIsExpanded((prev) => !prev);
+    }
+  }, [isEditingText]);
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (isTeamMember && !isEditingText && !isSubmitted) {
       e.stopPropagation();
       setIsEditingText(true);
-      setFocusField('body');
     }
-  }, [isTeamMember]);
-
-  const handleHeadlineClick = useCallback((e: React.MouseEvent) => {
-    if (isTeamMember) {
-      e.stopPropagation();
-      setIsEditingText(true);
-      setFocusField('headline');
-    }
-  }, [isTeamMember]);
-
-  const handleDescriptionClick = useCallback((e: React.MouseEvent) => {
-    if (isTeamMember) {
-      e.stopPropagation();
-      setIsEditingText(true);
-      setFocusField('description');
-    }
-  }, [isTeamMember]);
-
-  // Focus effect for inputs when edit mode starts
-  useEffect(() => {
-    if (isEditingText && focusField) {
-      if (focusField === 'headline' && headlineInputRef.current) {
-        headlineInputRef.current.focus();
-      } else if (focusField === 'description' && descriptionInputRef.current) {
-        descriptionInputRef.current.focus();
-      }
-      setFocusField(null);
-    }
-  }, [isEditingText, focusField]);
+  }, [isTeamMember, isEditingText, isSubmitted]);
 
   // Save inline text edits to snapshot and DB
   const handleSaveTextEdits = useCallback(async () => {
@@ -282,7 +256,12 @@ export function CreativeAssetCard({
   }, [asset.headline, asset.body, asset.description]);
 
   return (
-    <div ref={containerRef} className={`pcm-card ${isApproved ? 'approved' : ''} ${type === 'copy' ? 'copy' : ''} ${isExpanded ? 'expanded' : ''} relative`}>
+    <div 
+      ref={containerRef} 
+      className={`pcm-card ${isApproved ? 'approved' : ''} ${type === 'copy' ? 'copy' : ''} ${isExpanded ? 'expanded' : ''} relative`}
+      onClick={type === 'copy' ? handleCardClick : undefined}
+      onDoubleClick={type === 'copy' ? handleDoubleClick : undefined}
+    >
       
       {/* Glassmorphic Saving Overlay */}
       {isSavingEdits && (
@@ -318,16 +297,11 @@ export function CreativeAssetCard({
         </div>
       )}
 
-      {/* ─── AD COPY CARD LAYOUT (Social Ad Mockup) ─── */}
+      {/* ─── AD COPY CARD LAYOUT (Apple Minimalist style) ─── */}
       {type === 'copy' && (
         <div
           className="pcm-copy-body select-none flex flex-col h-full"
-          onClick={() => {
-            if (!isTeamMember) {
-              setIsExpanded((prev) => !prev);
-            }
-          }}
-          style={{ cursor: isTeamMember ? 'default' : 'pointer' }}
+          style={{ cursor: isTeamMember ? 'pointer' : 'pointer' }}
           role="button"
           tabIndex={0}
           aria-expanded={isExpanded}
@@ -347,80 +321,46 @@ export function CreativeAssetCard({
               />
             </div>
           ) : (
-            <p 
-              className="pcm-copy-text mb-4"
-              style={{ cursor: isTeamMember ? 'text' : 'pointer' }}
-              onClick={handleBodyClick}
-            >
+            <p className="pcm-copy-text mb-4">
               {asset.body}
             </p>
           )}
 
-          {/* Facebook Link Preview Overlay Box */}
-          {isEditingText ? (
-            <div 
-              className="bg-slate-50/50 border border-slate-100/50 rounded-xl p-3 mt-auto flex items-center justify-between w-full shadow-sm"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex-1 min-w-0 pr-4">
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1 select-none">
-                  {brandName.toLowerCase()}.se
+          {/* Minimalist Apple-Style Titel & Beskrivning */}
+          {(asset.headline || asset.description || isEditingText) && (
+            <div className="border-t border-slate-100/60 mt-auto pt-3.5" onClick={(e) => e.stopPropagation()}>
+              {isEditingText ? (
+                <div className="flex flex-col gap-1 w-full">
+                  <input
+                    type="text"
+                    value={editedHeadline}
+                    onChange={(e) => setEditedHeadline(e.target.value)}
+                    className="w-full font-bold text-[14px] text-slate-800 leading-snug bg-transparent border-none p-0 outline-none focus:ring-0 focus:border-none placeholder:text-slate-400"
+                    placeholder="Skriv rubrik..."
+                  />
+                  <input
+                    type="text"
+                    value={editedDescription}
+                    onChange={(e) => setEditedDescription(e.target.value)}
+                    className="w-full text-[12px] text-slate-500 mt-1 leading-normal bg-transparent border-none p-0 outline-none focus:ring-0 focus:border-none placeholder:text-slate-400"
+                    placeholder="Skriv beskrivning..."
+                  />
                 </div>
-                <input
-                  ref={headlineInputRef}
-                  type="text"
-                  value={editedHeadline}
-                  onChange={(e) => setEditedHeadline(e.target.value)}
-                  className="w-full font-bold text-[13.5px] text-slate-900 leading-snug bg-transparent border-none p-0 outline-none focus:ring-0 focus:border-none focus:outline-none placeholder:text-slate-400"
-                  placeholder="Skriv rubrik..."
-                />
-                <input
-                  ref={descriptionInputRef}
-                  type="text"
-                  value={editedDescription}
-                  onChange={(e) => setEditedDescription(e.target.value)}
-                  className="w-full text-[11.5px] text-slate-500 mt-0.5 leading-normal bg-transparent border-none p-0 outline-none focus:ring-0 focus:border-none focus:outline-none placeholder:text-slate-400"
-                  placeholder="Skriv beskrivning..."
-                />
-              </div>
-              <div className="shrink-0 select-none">
-                <div className="px-3.5 py-1.5 rounded bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-sm">
-                  {asset.cta || 'Läs mer'}
+              ) : (
+                <div className="flex flex-col gap-0.5 w-full">
+                  {asset.headline && (
+                    <h4 className="font-bold text-[14px] text-slate-800 leading-snug">
+                      {asset.headline}
+                    </h4>
+                  )}
+                  {asset.description && (
+                    <p className="text-[12px] text-slate-500 mt-1 leading-normal">
+                      {asset.description}
+                    </p>
+                  )}
                 </div>
-              </div>
+              )}
             </div>
-          ) : (
-            (asset.headline || asset.description || isTeamMember) && (
-              <div 
-                className="bg-slate-50/50 border border-slate-100/50 rounded-xl p-3 mt-auto flex items-center justify-between w-full shadow-sm"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex-1 min-w-0 pr-4">
-                  <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1 select-none">
-                    {brandName.toLowerCase()}.se
-                  </div>
-                  <h4 
-                    className="font-bold text-[13.5px] text-slate-900 leading-snug truncate cursor-pointer hover:underline"
-                    onClick={handleHeadlineClick}
-                    title={isTeamMember ? 'Klicka för att redigera rubrik' : undefined}
-                  >
-                    {asset.headline || (isTeamMember ? 'Klicka för att skriva rubrik...' : '')}
-                  </h4>
-                  <p 
-                    className="text-[11.5px] text-slate-500 mt-0.5 leading-normal truncate cursor-pointer hover:underline animate-in fade-in"
-                    onClick={handleDescriptionClick}
-                    title={isTeamMember ? 'Klicka för att redigera beskrivning' : undefined}
-                  >
-                    {asset.description || (isTeamMember ? 'Klicka för att skriva beskrivning...' : '')}
-                  </p>
-                </div>
-                <div className="shrink-0 select-none">
-                  <div className="px-3.5 py-1.5 rounded bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-sm">
-                    {asset.cta || 'Läs mer'}
-                  </div>
-                </div>
-              </div>
-            )
           )}
         </div>
       )}
