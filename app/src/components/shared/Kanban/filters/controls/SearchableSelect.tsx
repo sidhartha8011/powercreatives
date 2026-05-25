@@ -1,18 +1,29 @@
 /**
- * SearchableSelect — popover with instant-search multiselect.
+ * SearchableSelect — multi-select combobox.
  *
- * Generic over the underlying option type. Built on shadcn Command + Popover
- * + Checkbox. Renders option counts when supplied. Empty / no-match state
- * built in.
+ * Built on the exact shadcn pattern already used in the codebase by
+ * Copy/TemplateDropdown:  Popover + Command + CommandInput + CommandList +
+ * CommandEmpty + CommandGroup + CommandItem.
  *
- * Used by the Kanban toolbar — never imported directly by domain modules.
+ * `cmdk` handles the instant search filtering automatically when
+ * `shouldFilter` is true — no custom filter loop needed. The popover
+ * background, border, and shadow come from the shared shadcn theme; we
+ * don't override them here.
  */
 
-import { useMemo, useState } from 'react';
-import { Check, ChevronDown, Search } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { Check, ChevronsUpDown } from 'lucide-react';
 
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import {
   Popover,
   PopoverContent,
@@ -29,7 +40,6 @@ export interface SearchableSelectProps {
   onChange: (next: string[]) => void;
   searchPlaceholder?: string;
   maxOptions?: number;
-  /** ARIA label fallback when the trigger label is opaque. */
   ariaLabel?: string;
 }
 
@@ -43,21 +53,14 @@ export function SearchableSelect({
   ariaLabel,
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-
-  const filteredOptions = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let list = options;
-    if (q) {
-      list = options.filter((o) => o.label.toLowerCase().includes(q));
-    }
-    if (maxOptions && list.length > maxOptions) {
-      list = list.slice(0, maxOptions);
-    }
-    return list;
-  }, [options, query, maxOptions]);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
+
+  const visibleOptions = useMemo(() => {
+    if (!maxOptions || options.length <= maxOptions) return options;
+    return options.slice(0, maxOptions);
+  }, [options, maxOptions]);
 
   const toggle = (value: string) => {
     const next = selectedSet.has(value)
@@ -66,103 +69,94 @@ export function SearchableSelect({
     onChange(next);
   };
 
-  const clear = () => {
+  const clearAll = () => {
     onChange([]);
-    setQuery('');
   };
 
-  const summary = selected.length === 0
-    ? label
-    : selected.length === 1
-      ? `${label}: ${selectedLabel(options, selected[0])}`
-      : `${label}: ${selected.length}`;
+  // Trigger summary mirrors the Notion/Linear pill convention.
+  const summary =
+    selected.length === 0
+      ? label
+      : selected.length === 1
+        ? `${label}: ${optionLabel(options, selected[0])}`
+        : `${label}: ${selected.length}`;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          ref={triggerRef}
           type="button"
           variant="outline"
           size="sm"
-          aria-label={ariaLabel ?? label}
-          aria-haspopup="listbox"
+          role="combobox"
           aria-expanded={open}
-          className={`${styles.trigger} ${selected.length > 0 ? styles.triggerActive : ''}`}
+          aria-label={ariaLabel ?? label}
+          className={cn(
+            styles.trigger,
+            selected.length > 0 && styles.triggerActive
+          )}
         >
           <span className={styles.triggerLabel}>{summary}</span>
-          <ChevronDown className={styles.triggerChevron} aria-hidden="true" />
+          <ChevronsUpDown className="h-3 w-3 opacity-60 shrink-0" aria-hidden="true" />
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent
-        align="start"
-        sideOffset={6}
-        className={styles.popoverContent}
-      >
-        <div className={styles.searchRow}>
-          <Search className={styles.searchIcon} aria-hidden="true" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+      <PopoverContent className="p-0 w-[260px]" align="start">
+        <Command shouldFilter>
+          <CommandInput
             placeholder={searchPlaceholder ?? `Search ${label.toLowerCase()}…`}
-            className={styles.searchInput}
-            aria-label={`Search ${label.toLowerCase()}`}
-            autoFocus
+            className="h-9 text-sm"
           />
-        </div>
+          <CommandList>
+            <CommandEmpty>No matches.</CommandEmpty>
+            <CommandGroup>
+              {visibleOptions.map((option) => {
+                const isSelected = selectedSet.has(option.value);
+                return (
+                  <CommandItem
+                    key={option.value}
+                    value={option.label}
+                    onSelect={() => toggle(option.value)}
+                    className="text-sm"
+                  >
+                    <Check
+                      className={cn(
+                        'mr-2 h-3.5 w-3.5 shrink-0',
+                        isSelected ? 'opacity-100' : 'opacity-0'
+                      )}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate flex-1">{option.label}</span>
+                    {typeof option.count === 'number' && (
+                      <span className="text-[10px] text-muted-foreground ml-2 shrink-0 tabular-nums">
+                        {option.count}
+                      </span>
+                    )}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
 
-        <div className={styles.optionList} role="listbox" aria-multiselectable="true">
-          {filteredOptions.length === 0 ? (
-            <div className={styles.optionEmpty}>No matches.</div>
-          ) : (
-            filteredOptions.map((option) => {
-              const isSelected = selectedSet.has(option.value);
-              return (
-                <button
-                  type="button"
-                  key={option.value}
-                  role="option"
-                  aria-selected={isSelected}
-                  onClick={() => toggle(option.value)}
-                  className={`${styles.optionRow} ${isSelected ? styles.optionRowActive : ''}`}
-                >
-                  <Checkbox
-                    checked={isSelected}
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    className={styles.optionCheckbox}
-                  />
-                  <span className={styles.optionLabel}>{option.label}</span>
-                  {typeof option.count === 'number' && (
-                    <span className={styles.optionCount}>{option.count}</span>
-                  )}
-                  {isSelected && (
-                    <Check className={styles.optionCheck} aria-hidden="true" />
-                  )}
-                </button>
-              );
-            })
+          {selected.length > 0 && (
+            <div className="border-t px-2 py-1.5 text-right">
+              <button
+                type="button"
+                onClick={clearAll}
+                className="text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded"
+              >
+                Clear selection
+              </button>
+            </div>
           )}
-        </div>
-
-        {selected.length > 0 && (
-          <div className={styles.popoverFooter}>
-            <button
-              type="button"
-              onClick={clear}
-              className={styles.popoverFooterAction}
-            >
-              Clear selection
-            </button>
-          </div>
-        )}
+        </Command>
       </PopoverContent>
     </Popover>
   );
 }
 
-function selectedLabel(
+function optionLabel(
   options: ReadonlyArray<FilterOption>,
   value: string
 ): string {

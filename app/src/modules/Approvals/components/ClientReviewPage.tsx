@@ -246,20 +246,53 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   if (isLoading) {
     return (
       <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen" style={{
-        background: '#f6f0ea',
-        backgroundImage: `
-          radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
-          radial-gradient(at 88% 12%, #d8d0ff 0px, transparent 45%),
-          radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
-          radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%)
-        `,
-        backgroundAttachment: 'fixed',
+        background: '#ffffff',
+        position: 'relative',
+        overflowX: 'hidden',
       }}>
+        {/* Ambient blue gradient blobs matching the login screen */}
+        <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
+        <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
+        <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
+
+        <style>{`
+          .pcm-glow {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(90px);
+            pointer-events: none;
+            z-index: 0;
+            will-change: transform;
+          }
+          .pcm-glow-1 {
+            top: -20%; left: 35%; width: 680px; height: 680px;
+            background: radial-gradient(circle, #5e8df0 0%, rgba(94,141,240,0) 65%);
+            opacity: 0.75;
+          }
+          .pcm-glow-2 {
+            bottom: -25%; right: -5%; width: 560px; height: 560px;
+            background: radial-gradient(circle, #3d6fe0 0%, rgba(61,111,224,0) 65%);
+            opacity: 0.55;
+          }
+          .pcm-glow-3 {
+            top: 30%; left: -10%; width: 480px; height: 480px;
+            background: radial-gradient(circle, #9bb9ff 0%, rgba(155,185,255,0) 65%);
+            opacity: 0.6;
+          }
+          @media (max-width: 640px) {
+            .pcm-glow-1 { width: 440px; height: 440px; }
+            .pcm-glow-2 { width: 380px; height: 380px; }
+            .pcm-glow-3 { width: 340px; height: 340px; }
+          }
+        `}</style>
+
         <div style={{
           flex: 1,
           display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center',
           gap: '12px',
+          position: 'relative',
+          zIndex: 10,
         }}>
           <Spinner className="w-8 h-8 text-primary" />
           <span style={{ fontSize: '13px', color: '#6f6a64' }}>Loading client review board...</span>
@@ -270,7 +303,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   if (error || !set) {
     return (
-      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen">
+      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen" style={{ position: 'relative', overflowX: 'hidden' }}>
+        {/* Ambient blue gradient blobs matching the login screen */}
+        <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
+        <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
+        <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
+
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
           #pcm-root .aurora-mesh-bg {
@@ -279,6 +317,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
             --ink-3: #6f6a64;
             --ink-4: #8a7d6d;
             --line: rgba(0,0,0,0.06);
+            background: #ffffff;
+            /* Original Background (Preserved)
             background: #f6f0ea;
             background-image:
               radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
@@ -286,7 +326,36 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
               radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
               radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%);
             background-attachment: fixed;
+            */
             -webkit-font-smoothing: antialiased;
+          }
+          #pcm-root .pcm-glow {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(90px);
+            pointer-events: none;
+            z-index: 0;
+            will-change: transform;
+          }
+          #pcm-root .pcm-glow-1 {
+            top: -20%; left: 35%; width: 680px; height: 680px;
+            background: radial-gradient(circle, #5e8df0 0%, rgba(94,141,240,0) 65%);
+            opacity: 0.75;
+          }
+          #pcm-root .pcm-glow-2 {
+            bottom: -25%; right: -5%; width: 560px; height: 560px;
+            background: radial-gradient(circle, #3d6fe0 0%, rgba(61,111,224,0) 65%);
+            opacity: 0.55;
+          }
+          #pcm-root .pcm-glow-3 {
+            top: 30%; left: -10%; width: 480px; height: 480px;
+            background: radial-gradient(circle, #9bb9ff 0%, rgba(155,185,255,0) 65%);
+            opacity: 0.6;
+          }
+          @media (max-width: 640px) {
+            #pcm-root .pcm-glow-1 { width: 440px; height: 440px; }
+            #pcm-root .pcm-glow-2 { width: 380px; height: 380px; }
+            #pcm-root .pcm-glow-3 { width: 340px; height: 340px; }
           }
         `}</style>
 
@@ -332,7 +401,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   if (isSubmitted && !isTeamMember) {
     return (
-      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen">
+      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen" style={{ position: 'relative', overflowX: 'hidden' }}>
+        {/* Ambient blue gradient blobs matching the login screen */}
+        <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
+        <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
+        <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
+
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
           #pcm-root .aurora-mesh-bg {
@@ -342,6 +416,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
             --ink-4: #8a7d6d;
             --line: rgba(0,0,0,0.06);
             --approve: #18a957;
+            background: #ffffff;
+            /* Original Background (Preserved)
             background: #f6f0ea;
             background-image:
               radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
@@ -349,8 +425,37 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
               radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
               radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%);
             background-attachment: fixed;
+            */
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
+          }
+          #pcm-root .pcm-glow {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(90px);
+            pointer-events: none;
+            z-index: 0;
+            will-change: transform;
+          }
+          #pcm-root .pcm-glow-1 {
+            top: -20%; left: 35%; width: 680px; height: 680px;
+            background: radial-gradient(circle, #5e8df0 0%, rgba(94,141,240,0) 65%);
+            opacity: 0.75;
+          }
+          #pcm-root .pcm-glow-2 {
+            bottom: -25%; right: -5%; width: 560px; height: 560px;
+            background: radial-gradient(circle, #3d6fe0 0%, rgba(61,111,224,0) 65%);
+            opacity: 0.55;
+          }
+          #pcm-root .pcm-glow-3 {
+            top: 30%; left: -10%; width: 480px; height: 480px;
+            background: radial-gradient(circle, #9bb9ff 0%, rgba(155,185,255,0) 65%);
+            opacity: 0.6;
+          }
+          @media (max-width: 640px) {
+            #pcm-root .pcm-glow-1 { width: 440px; height: 440px; }
+            #pcm-root .pcm-glow-2 { width: 380px; height: 380px; }
+            #pcm-root .pcm-glow-3 { width: 340px; height: 340px; }
           }
         `}</style>
 
@@ -413,14 +518,19 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const studioName = set.snapshot.studioName || 'Studio';
 
   return (
-    <div className="aurora-mesh-bg font-sans flex flex-col pb-36 text-foreground min-h-screen">
+    <div className="aurora-mesh-bg font-sans flex flex-col pb-36 text-foreground min-h-screen" style={{ position: 'relative', overflowX: 'hidden' }}>
+      {/* Ambient blue gradient blobs matching the login screen */}
+      <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
+      <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
+      <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
+
       {/* 
         Inject the exact design CSS stylesheet rules directly from board-14-aurora-statusbar.html.
         This provides perfect pixel identical rendering matches for blurs, shadows, spacing, and gradients.
       */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
-
+ 
         /*
          * Scoped to #pcm-root .aurora-mesh-bg
          * Using #pcm-root prefix gives specificity (1,1,0) which beats the
@@ -435,6 +545,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           --line: rgba(0,0,0,0.06);
           --approve: #18a957;
           --approve-soft: rgba(24,169,87,0.12);
+          background: #ffffff;
+          /* Original Background (Preserved)
           background: #f6f0ea;
           background-image:
             radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
@@ -442,8 +554,39 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
             radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
             radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%);
           background-attachment: fixed;
+          */
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;
+        }
+
+        #pcm-root .pcm-glow {
+          position: fixed;
+          border-radius: 50%;
+          filter: blur(90px);
+          pointer-events: none;
+          z-index: 0;
+          will-change: transform;
+        }
+        #pcm-root .pcm-glow-1 {
+          top: -20%; left: 35%; width: 680px; height: 680px;
+          background: radial-gradient(circle, #5e8df0 0%, rgba(94,141,240,0) 65%);
+          opacity: 0.75;
+        }
+        #pcm-root .pcm-glow-2 {
+          bottom: -25%; right: -5%; width: 560px; height: 560px;
+          background: radial-gradient(circle, #3d6fe0 0%, rgba(61,111,224,0) 65%);
+          opacity: 0.55;
+        }
+        #pcm-root .pcm-glow-3 {
+          top: 30%; left: -10%; width: 480px; height: 480px;
+          background: radial-gradient(circle, #9bb9ff 0%, rgba(155,185,255,0) 65%);
+          opacity: 0.6;
+        }
+        @media (max-width: 640px) {
+          #pcm-root .pcm-glow-1 { width: 440px; height: 440px; }
+          #pcm-root .pcm-glow-2 { width: 380px; height: 380px; }
+          #pcm-root .pcm-glow-3 { width: 340px; height: 340px; }
+        }grayscale;
         }
 
         /* ---------- hero typography (matches mockup .hero exactly) ---------- */
