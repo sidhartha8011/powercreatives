@@ -300,7 +300,7 @@ export function CreativeAssetCard({
       {/* ─── AD COPY CARD LAYOUT (Apple Minimalist style) ─── */}
       {type === 'copy' && (
         <div
-          className="pcm-copy-body select-none flex flex-col h-full"
+          className="pcm-copy-body select-none flex flex-col flex-1 min-h-0"
           style={{ cursor: isTeamMember ? 'pointer' : 'pointer' }}
           role="button"
           tabIndex={0}
@@ -328,7 +328,7 @@ export function CreativeAssetCard({
 
           {/* Minimalist Apple-Style Titel & Beskrivning */}
           {(asset.headline || asset.description || isEditingText) && (
-            <div className="border-t border-slate-100/60 mt-auto pt-3.5" onClick={(e) => e.stopPropagation()}>
+            <div className="border-t border-slate-100/60 mt-auto pt-3.5 pb-3.5" onClick={(e) => e.stopPropagation()}>
               {isEditingText ? (
                 <div className="flex flex-col gap-1 w-full">
                   <input
