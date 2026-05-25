@@ -802,6 +802,16 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           white-space: pre-wrap;
           word-break: break-word;
         }
+        #pcm-root .ProseMirror p {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+          font-size: 12.5px !important;
+          color: var(--ink-2) !important;
+          line-height: 1.5 !important;
+          margin-bottom: 1rem !important;
+        }
+        #pcm-root .ProseMirror p:last-child {
+          margin-bottom: 0 !important;
+        }
 
         /* ---------- card actions ---------- */
         .pcm-card-actions {
