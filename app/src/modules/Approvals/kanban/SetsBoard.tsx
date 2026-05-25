@@ -7,7 +7,7 @@
  * happens in the declaration files — this orchestrator does not change.
  */
 
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { KanbanSquare } from 'lucide-react';
 
 import {
@@ -25,7 +25,12 @@ import { DEFAULT_SET_SORT, setSorts } from './setSorts';
 import { useApprovalSets } from '../hooks/useApprovalSets';
 import type { ApprovalSet } from '../types';
 
-export function SetsBoard() {
+export interface SetsBoardProps {
+  /** Optional content rendered at the start of the toolbar row. */
+  toolbarLeadingSlot?: ReactNode;
+}
+
+export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
   const {
     sets,
     isLoading,
@@ -64,6 +69,7 @@ export function SetsBoard() {
         sorts={setSorts}
         state={listState}
         ariaLabel="Filter and sort approval sets"
+        leadingSlot={toolbarLeadingSlot}
       />
 
       <div className="flex-1 min-h-0 overflow-x-auto">

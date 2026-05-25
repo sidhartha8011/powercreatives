@@ -9,7 +9,7 @@
  * state object both consume.
  */
 
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 
 import {
   Select,
@@ -42,6 +42,12 @@ export interface KanbanToolbarProps<T extends { id: string | number }> {
   state: UseListStateResult<T>;
   /** Optional ARIA label for the toolbar landmark. */
   ariaLabel?: string;
+  /**
+   * Optional content rendered at the start of the toolbar row (left of
+   * the filter pills). Typically a view-switcher (e.g. PillTabBar) when
+   * the consumer wants one unified bar instead of two stacked rows.
+   */
+  leadingSlot?: ReactNode;
 }
 
 export function KanbanToolbar<T extends { id: string | number }>({
@@ -50,9 +56,12 @@ export function KanbanToolbar<T extends { id: string | number }>({
   sorts,
   state,
   ariaLabel = 'Filter and sort',
+  leadingSlot,
 }: KanbanToolbarProps<T>) {
   return (
     <div className={filterStyles.toolbar} role="toolbar" aria-label={ariaLabel}>
+      {leadingSlot}
+
       <div className={filterStyles.toolbarLeft}>
         {filters.map((filter) => (
           <FilterControl

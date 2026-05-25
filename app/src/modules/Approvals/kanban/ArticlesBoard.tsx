@@ -5,7 +5,7 @@
  * Proves the kanban primitive is genuinely reusable.
  */
 
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { FileText } from 'lucide-react';
 
 import {
@@ -23,7 +23,12 @@ import { DEFAULT_ARTICLE_SORT, articleSorts } from './articleSorts';
 import { useApprovalArticles } from '../hooks/useApprovalArticles';
 import type { Article } from '../types';
 
-export function ArticlesBoard() {
+export interface ArticlesBoardProps {
+  /** Optional content rendered at the start of the toolbar row. */
+  toolbarLeadingSlot?: ReactNode;
+}
+
+export function ArticlesBoard({ toolbarLeadingSlot }: ArticlesBoardProps = {}) {
   const { articles, isLoading, error, changeStatus } = useApprovalArticles();
 
   const listState = useListState<Article>(articles, articleFilters, articleSorts, {
@@ -48,6 +53,7 @@ export function ArticlesBoard() {
         sorts={articleSorts}
         state={listState}
         ariaLabel="Filter and sort articles"
+        leadingSlot={toolbarLeadingSlot}
       />
 
       <div className="flex-1 min-h-0 overflow-x-auto">

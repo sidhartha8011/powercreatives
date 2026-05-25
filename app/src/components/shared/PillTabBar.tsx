@@ -38,6 +38,13 @@ export interface PillTabBarProps {
   getCount: (id: string) => number;
   /** Whether to show the "All" tab as first tab. Default: true */
   showAllTab?: boolean;
+  /**
+   * Optional className override for the bar wrapper. When omitted, the
+   * component uses the default `flex items-center gap-1 mb-6 rounded-lg`.
+   * Pass your own when embedding the bar inside another layout (e.g. a
+   * toolbar row) so the default margin doesn't fight the parent's spacing.
+   */
+  className?: string;
 }
 
 // ============================================================================
@@ -82,9 +89,13 @@ export function PillTabBar({
   totalCount,
   getCount,
   showAllTab = true,
+  className,
 }: PillTabBarProps) {
   return (
-    <div className="flex items-center gap-1 mb-6 rounded-lg" style={BAR_STYLE}>
+    <div
+      className={className ?? 'flex items-center gap-1 mb-6 rounded-lg'}
+      style={BAR_STYLE}
+    >
       {/* "All" tab — always first when enabled */}
       {showAllTab && (
         <button

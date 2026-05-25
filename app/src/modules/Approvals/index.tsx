@@ -1,23 +1,20 @@
 /**
  * APPROVALS MODULE — Content & Ad Sets Pipeline
  *
- * Thin orchestrator. Owns only the page chrome (header, tabs, loading
- * splash) and tab labels with counts. The boards themselves
- * (ArticlesBoard, SetsBoard) own their data, columns, filters, and
- * presentation through the shared Kanban primitive.
+ * Thin orchestrator. Owns only the page chrome (header + view state) and
+ * delegates everything else to the boards (`ArticlesBoard`, `SetsBoard`),
+ * which read their own data, declarations, and render through the shared
+ * Kanban primitive. The view switcher (PillTabBar) is injected into the
+ * board's toolbar leading slot — one unified bar, no stacked rows.
  *
  * @package PowerCreatives
  */
 
+import { useCallback, useMemo, useState } from 'react';
 import { KanbanSquare } from 'lucide-react';
 
 import { Spinner } from '@/components/ui/spinner';
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs';
+import { PillTabBar } from '@/components/shared/PillTabBar';
 import { colors, typography } from '@/components/shared/design-tokens';
 
 import { ArticlesBoard } from './kanban/ArticlesBoard';
@@ -25,13 +22,47 @@ import { SetsBoard } from './kanban/SetsBoard';
 import { useApprovalArticles } from './hooks/useApprovalArticles';
 import { useApprovalSets } from './hooks/useApprovalSets';
 
+type ApprovalView = 'articles' | 'sets';
+
+const VIEW_TABS = [
+  { id: 'articles', name: 'Written Articles' },
+  { id: 'sets',     name: 'Ad Share Sets'   },
+] as const;
+
 export function ApprovalsModule() {
   // Counts only — TanStack Query dedupes; the boards read the same cache.
   const { articles, isLoading: articlesLoading } = useApprovalArticles();
   const { sets, isLoading: setsLoading } = useApprovalSets();
 
-  // First-load splash: only when BOTH queries are loading and nothing is
-  // cached yet. Subsequent refetches keep the UI mounted.
+  const [view, setView] = useState<ApprovalView>('articles');
+
+  const handleSelect = useCallback((id: string) => {
+    if (id === 'articles' || id === 'sets') setView(id);
+  }, []);
+
+  const getCount = useCallback(
+    (id: string) => (id === 'articles' ? articles.length : sets.length),
+    [articles.length, sets.length]
+  );
+
+  // Build the view switcher once per render; passed to whichever board is
+  // active so the toolbar row holds it inline with the filters.
+  const viewSwitcher = useMemo(
+    () => (
+      <PillTabBar
+        items={VIEW_TABS as unknown as { id: string; name: string }[]}
+        activeId={view}
+        onSelect={handleSelect}
+        totalCount={articles.length + sets.length}
+        getCount={getCount}
+        showAllTab={false}
+        className="flex items-center gap-1 rounded-lg shrink-0"
+      />
+    ),
+    [view, handleSelect, getCount, articles.length, sets.length]
+  );
+
+  // First-load splash only when nothing is cached yet.
   const showSplash =
     articlesLoading && setsLoading && articles.length === 0 && sets.length === 0;
 
@@ -54,24 +85,9 @@ export function ApprovalsModule() {
         </div>
       </div>
 
-      <Tabs defaultValue="articles" className="flex-1 flex flex-col min-h-0">
-        <TabsList className="grid w-full grid-cols-2 max-w-[400px] mb-4">
-          <TabsTrigger value="articles" className="text-xs">
-            Written Articles ({articles.length})
-          </TabsTrigger>
-          <TabsTrigger value="adsets" className="text-xs">
-            Ad Share Sets ({sets.length})
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="articles" className="flex-1 flex flex-col min-h-0 m-0">
-          <ArticlesBoard />
-        </TabsContent>
-
-        <TabsContent value="adsets" className="flex-1 flex flex-col min-h-0 m-0">
-          <SetsBoard />
-        </TabsContent>
-      </Tabs>
+      {view === 'articles'
+        ? <ArticlesBoard toolbarLeadingSlot={viewSwitcher} />
+        : <SetsBoard     toolbarLeadingSlot={viewSwitcher} />}
     </div>
   );
 }

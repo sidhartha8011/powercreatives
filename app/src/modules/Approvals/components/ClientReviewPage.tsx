@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc';
 
 // Import newly created reusable component modules
-import { ClientBreadcrumbs } from './ClientBreadcrumbs';
 import { ClientStatusToolbar } from './ClientStatusToolbar';
 import { CreativeAssetCard } from './CreativeAssetCard';
 
@@ -467,42 +466,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           font-size: 15.5px; color: var(--ink-2); line-height: 1.55;
         }
 
-        /* ---------- breadcrumbs ---------- */
-        .pcm-crumb {
-          height: 48px;
-          display: flex; align-items: center;
-          padding: 0 22px;
-          background: rgba(246,240,234,0.72);
-          backdrop-filter: blur(24px) saturate(180%);
-          -webkit-backdrop-filter: blur(24px) saturate(180%);
-          border-bottom: 1px solid rgba(0,0,0,0.05);
-        }
-        .pcm-crumb-mark {
-          width: 22px; height: 22px; border-radius: 6px;
-          background: linear-gradient(135deg, #ff9c6a 0%, #c876ff 100%);
-          display: grid; place-items: center;
-          color: white; font-size: 11px; font-weight: 700;
-          letter-spacing: -0.02em;
-          margin-right: 8px;
-          box-shadow: 0 2px 6px rgba(200,118,255,0.25);
-        }
-        .pcm-crumb-piece {
-          font-size: 13px; color: var(--ink-3); font-weight: 500;
-          padding: 4px 8px; border-radius: 6px;
-          letter-spacing: -0.005em;
-          transition: background .15s ease, color .15s ease;
-        }
-        .pcm-crumb-piece:hover { background: rgba(0,0,0,0.04); color: var(--ink-2); }
-        .pcm-crumb-piece.current { color: var(--ink); }
-        .pcm-crumb-sep { color: var(--ink-4); font-size: 12px; padding: 0 1px; }
-        .pcm-crumb-icon {
-          appearance: none; border: none; cursor: pointer;
-          background: transparent; color: var(--ink-3);
-          width: 30px; height: 30px; border-radius: 7px;
-          display: grid; place-items: center;
-          transition: background .15s ease, color .15s ease;
-        }
-        .pcm-crumb-icon:hover { background: rgba(0,0,0,0.05); color: var(--ink); }
 
         /* ---------- toolbar ---------- */
         .pcm-toolbar {
@@ -915,13 +878,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         }
       `}</style>
 
-      {/* Notion-Style Breadcrumb Header */}
-      <ClientBreadcrumbs
-        brandName={brandName}
-        campaignName={campaignName}
-        studioName={studioName}
-        shareUrl={window.location.href}
-      />
+
 
       {/* Hero Header */}
       <section className="pcm-hero max-w-[1280px] w-full mx-auto px-7 pt-12 pb-5 select-none">
