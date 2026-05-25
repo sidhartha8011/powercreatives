@@ -856,7 +856,18 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
         /* ---------- approved state ---------- */
         .pcm-card.approved {
-          background: linear-gradient(180deg, rgba(220,246,230,0.78), rgba(255,255,255,0.7));
+          border-color: var(--approve);
+          background: rgba(255,255,255,0.7) !important;
+          box-shadow:
+            0 1px 0 rgba(255,255,255,0.85) inset,
+            0 0 16px rgba(24,169,87,0.16),
+            0 12px 28px rgba(50,30,15,0.06);
+        }
+        .pcm-card.approved:hover {
+          box-shadow:
+            0 1px 0 rgba(255,255,255,0.85) inset,
+            0 0 22px rgba(24,169,87,0.26),
+            0 18px 38px rgba(50,30,15,0.09);
         }
         .pcm-card.approved .pcm-status { color: var(--approve); }
         .pcm-card.approved .pcm-status .pulse { background: var(--approve); }
