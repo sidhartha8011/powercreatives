@@ -34,10 +34,9 @@ interface CreativeAssetCardProps {
   asset: CreativeAsset;
   type: 'media' | 'copy';
   isApproved: boolean;
-  comment?: string;
+  /** Number of comments for this asset (0 means no comments yet) */
+  commentCount: number;
   onApprove: (id: string) => void;
-  onCommentSave: (id: string, text: string) => void;
-  onCommentRemove: (id: string) => void;
   brandLogoUrl?: string | null;
   brandName?: string;
   pairedMediaUrl?: string | null;
@@ -51,10 +50,8 @@ export function CreativeAssetCard({
   asset,
   type,
   isApproved,
-  comment,
+  commentCount,
   onApprove,
-  onCommentSave,
-  onCommentRemove,
   brandLogoUrl,
   brandName = 'Brand',
   pairedMediaUrl,
@@ -345,31 +342,16 @@ export function CreativeAssetCard({
         </div>
       )}
 
-      {/* Comment Display Section (Feedback) */}
-      {comment && (
+      {/* Comment Count Badge — opens the thread inspector */}
+      {commentCount > 0 && (
         <div className="px-3.5 pb-3.5 z-10">
           <div
             onClick={() => onOpenComments(asset.id)}
-            className="p-3 rounded-xl border border-zinc-150 bg-white/45 backdrop-blur-sm text-zinc-700 text-xs flex justify-between items-start gap-3 shadow-[0_2px_8px_rgba(0,0,0,0.015)] cursor-pointer hover:bg-white/60 transition-colors"
+            className="p-2.5 rounded-xl border border-zinc-150 bg-white/45 backdrop-blur-sm text-zinc-700 text-xs flex items-center gap-2 shadow-[0_2px_8px_rgba(0,0,0,0.015)] cursor-pointer hover:bg-white/60 transition-colors"
           >
-            <div className="flex items-start gap-2 flex-1 min-w-0">
-              <MessageSquare className="w-3.5 h-3.5 text-zinc-400 mt-0.5 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 break-words leading-relaxed font-normal">{comment}</span>
-            </div>
-            {!isSubmitted && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCommentRemove(asset.id);
-                }}
-                className="w-5 h-5 rounded-full hover:bg-zinc-100/80 flex items-center justify-center text-zinc-400 hover:text-zinc-600 transition-all shrink-0 cursor-pointer"
-                title="Remove comment"
-                aria-label="Remove comment"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
+            <MessageSquare className="w-3.5 h-3.5 text-zinc-400 shrink-0" aria-hidden="true" />
+            <span className="font-semibold">{commentCount} {commentCount === 1 ? 'comment' : 'comments'}</span>
+            <span className="ml-auto text-[10px] text-zinc-400 font-medium">View thread →</span>
           </div>
         </div>
       )}

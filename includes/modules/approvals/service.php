@@ -179,9 +179,42 @@ class PCM_Approvals_Service
             'comments'          => array(),
         );
 
+        // Sanitize threaded comments (array-of-objects per asset ID)
         if (!empty($feedback['comments']) && is_array($feedback['comments'])) {
-            foreach ($feedback['comments'] as $itemId => $commentText) {
-                $sanitized_feedback['comments'][sanitize_text_field($itemId)] = sanitize_textarea_field($commentText);
+            foreach ($feedback['comments'] as $itemId => $threadArray) {
+                $sanitized_item_id = sanitize_text_field($itemId);
+
+                if (is_string($threadArray)) {
+                    // Legacy: single string → convert to single-entry array
+                    $sanitized_feedback['comments'][$sanitized_item_id] = array(
+                        array(
+                            'id'        => wp_generate_uuid4(),
+                            'author'    => $client_name,
+                            'text'      => sanitize_textarea_field($threadArray),
+                            'createdAt' => current_time('c'),
+                            'status'    => 'New',
+                            'parentId'  => null,
+                        ),
+                    );
+                } elseif (is_array($threadArray)) {
+                    $sanitized_thread = array();
+                    foreach ($threadArray as $entry) {
+                        if (!is_array($entry) || empty($entry['text'])) {
+                            continue;
+                        }
+                        $sanitized_thread[] = array(
+                            'id'        => sanitize_text_field($entry['id'] ?? wp_generate_uuid4()),
+                            'author'    => sanitize_text_field($entry['author'] ?? $client_name),
+                            'text'      => sanitize_textarea_field($entry['text']),
+                            'createdAt' => sanitize_text_field($entry['createdAt'] ?? current_time('c')),
+                            'status'    => sanitize_text_field($entry['status'] ?? 'New'),
+                            'parentId'  => isset($entry['parentId']) ? sanitize_text_field($entry['parentId']) : null,
+                        );
+                    }
+                    if (!empty($sanitized_thread)) {
+                        $sanitized_feedback['comments'][$sanitized_item_id] = $sanitized_thread;
+                    }
+                }
             }
         }
 
@@ -208,6 +241,10 @@ class PCM_Approvals_Service
 
     /**
      * Save client feedback draft (real-time autosave).
+     *
+     * Comments are stored as an array-of-objects per asset ID:
+     *   { assetId: [ { id, author, text, createdAt, status, parentId } ] }
+     * This supports multiple comments, threading, and per-comment statuses.
      */
     public static function save_review_draft(string $token, array $feedback): bool
     {
@@ -231,9 +268,44 @@ class PCM_Approvals_Service
             'comments'          => array(),
         );
 
+        // Sanitize threaded comments (array-of-objects per asset ID)
         if (!empty($feedback['comments']) && is_array($feedback['comments'])) {
-            foreach ($feedback['comments'] as $itemId => $commentText) {
-                $sanitized_feedback['comments'][sanitize_text_field($itemId)] = sanitize_textarea_field($commentText);
+            foreach ($feedback['comments'] as $itemId => $threadArray) {
+                $sanitized_item_id = sanitize_text_field($itemId);
+
+                // Support both legacy string format and new array format
+                if (is_string($threadArray)) {
+                    // Legacy: single string → convert to array with one entry
+                    $sanitized_feedback['comments'][$sanitized_item_id] = array(
+                        array(
+                            'id'        => wp_generate_uuid4(),
+                            'author'    => 'Client',
+                            'text'      => sanitize_textarea_field($threadArray),
+                            'createdAt' => current_time('c'),
+                            'status'    => 'New',
+                            'parentId'  => null,
+                        ),
+                    );
+                } elseif (is_array($threadArray)) {
+                    // New format: array of comment objects
+                    $sanitized_thread = array();
+                    foreach ($threadArray as $entry) {
+                        if (!is_array($entry) || empty($entry['text'])) {
+                            continue;
+                        }
+                        $sanitized_thread[] = array(
+                            'id'        => sanitize_text_field($entry['id'] ?? wp_generate_uuid4()),
+                            'author'    => sanitize_text_field($entry['author'] ?? 'Client'),
+                            'text'      => sanitize_textarea_field($entry['text']),
+                            'createdAt' => sanitize_text_field($entry['createdAt'] ?? current_time('c')),
+                            'status'    => sanitize_text_field($entry['status'] ?? 'New'),
+                            'parentId'  => isset($entry['parentId']) ? sanitize_text_field($entry['parentId']) : null,
+                        );
+                    }
+                    if (!empty($sanitized_thread)) {
+                        $sanitized_feedback['comments'][$sanitized_item_id] = $sanitized_thread;
+                    }
+                }
             }
         }
 

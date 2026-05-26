@@ -10,7 +10,7 @@ import { trpc } from '@/lib/trpc';
 // Import newly created reusable component modules
 import { ClientStatusToolbar } from './ClientStatusToolbar';
 import { CreativeAssetCard } from './CreativeAssetCard';
-import { ClientCommentInspector } from './ClientCommentInspector';
+import { ClientCommentInspector, type CommentEntry } from './ClientCommentInspector';
 
 interface ClientReviewPageProps {
   token: string;
@@ -46,8 +46,7 @@ function loadDraft(token: string) {
 function saveDraft(token: string, data: {
   approvedVisualIds: string[];
   approvedCopyIds: string[];
-  comments: Record<string, string>;
-  commentStatuses?: Record<string, 'New' | 'Team reply' | 'Done'>;
+  comments: Record<string, CommentEntry[]>;
   clientName: string;
 }) {
   try {
@@ -76,8 +75,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Local Review State — initialized from draft if available
   const [approvedVisualIds, setApprovedVisualIds] = useState<string[]>(draft?.approvedVisualIds ?? []);
   const [approvedCopyIds, setApprovedCopyIds] = useState<string[]>(draft?.approvedCopyIds ?? []);
-  const [comments, setComments] = useState<Record<string, string>>(draft?.comments ?? {});
-  const [commentStatuses, setCommentStatuses] = useState<Record<string, 'New' | 'Team reply' | 'Done'>>(draft?.commentStatuses ?? {});
+  // Threaded comments: array of CommentEntry per asset ID
+  const [comments, setComments] = useState<Record<string, CommentEntry[]>>(draft?.comments ?? {});
   const [activeAssetIdForComment, setActiveAssetIdForComment] = useState<string | null>(null);
   const [clientName, setClientName] = useState(draft?.clientName ?? '');
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -95,16 +94,35 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Auto-save draft to localStorage on every state change
   useEffect(() => {
     if (isSubmitted) return;
-    saveDraft(token, { approvedVisualIds, approvedCopyIds, comments, commentStatuses, clientName });
-  }, [token, approvedVisualIds, approvedCopyIds, comments, commentStatuses, clientName, isSubmitted]);
+    saveDraft(token, { approvedVisualIds, approvedCopyIds, comments, clientName });
+  }, [token, approvedVisualIds, approvedCopyIds, comments, clientName, isSubmitted]);
 
   // Hydrate approved/comment state from server draft or completed review feedback
+  // Handles both legacy string-per-asset format and new array-of-objects format
   useEffect(() => {
     if (set?.reviewFeedback) {
       setApprovedVisualIds(set.reviewFeedback.approvedVisualIds || []);
       setApprovedCopyIds(set.reviewFeedback.approvedCopyIds || []);
-      setComments(set.reviewFeedback.comments || {});
-      setCommentStatuses(set.reviewFeedback.commentStatuses || {});
+
+      // Migrate legacy comments (string) to new format (CommentEntry[])
+      const rawComments = set.reviewFeedback.comments || {};
+      const migrated: Record<string, CommentEntry[]> = {};
+      for (const [assetId, value] of Object.entries(rawComments)) {
+        if (typeof value === 'string') {
+          // Legacy single-string → wrap in an array
+          migrated[assetId] = [{
+            id: `legacy-${assetId}`,
+            author: 'Client',
+            text: value,
+            createdAt: new Date().toISOString(),
+            status: 'New',
+            parentId: null,
+          }];
+        } else if (Array.isArray(value)) {
+          migrated[assetId] = value as CommentEntry[];
+        }
+      }
+      setComments(migrated);
     }
   }, [set?.reviewFeedback]);
 
@@ -126,13 +144,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           approvedVisualIds,
           approvedCopyIds,
           comments,
-          commentStatuses,
         },
       });
     }, 800); // 800ms debounce
 
     return () => clearTimeout(timer);
-  }, [token, approvedVisualIds, approvedCopyIds, comments, commentStatuses, isSubmitted, set]);
+  }, [token, approvedVisualIds, approvedCopyIds, comments, isSubmitted, set]);
 
   // Submit mutation
   const submitMutation = trpc.approvals.submitReview.useMutation({
@@ -163,21 +180,17 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     }
   }, [set, isSubmitted]);
 
-  // Comment managers
-  const handleSaveComment = useCallback((id: string, text: string) => {
-    if (isSubmitted) return;
-    setComments((prev) => ({
-      ...prev,
-      [id]: text
-    }));
-  }, [isSubmitted]);
-
-  const handleClearComment = useCallback((id: string) => {
+  // Thread change handler — receives the full updated thread array for an asset
+  const handleThreadChange = useCallback((assetId: string, thread: CommentEntry[]) => {
     if (isSubmitted) return;
     setComments((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
+      if (thread.length === 0) {
+        // Remove the key entirely if thread is empty
+        const next = { ...prev };
+        delete next[assetId];
+        return next;
+      }
+      return { ...prev, [assetId]: thread };
     });
   }, [isSubmitted]);
 
@@ -202,10 +215,9 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         approvedVisualIds,
         approvedCopyIds,
         comments,
-        commentStatuses,
       },
     });
-  }, [token, clientName, approvedVisualIds, approvedCopyIds, comments, commentStatuses, submitMutation]);
+  }, [token, clientName, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
 
   // Confirm submit handler — direct submission without name prompt
   const handleConfirmSubmit = useCallback(() => {
@@ -216,10 +228,9 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         approvedVisualIds,
         approvedCopyIds,
         comments,
-        commentStatuses,
       },
     });
-  }, [token, approvedVisualIds, approvedCopyIds, comments, commentStatuses, submitMutation]);
+  }, [token, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
 
   const utils = trpc.useUtils();
   const handleAssetUpdate = useCallback(() => {
@@ -1100,7 +1111,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
               const isApproved = item.type === 'media'
                 ? approvedVisualIds.includes(item.id)
                 : approvedCopyIds.includes(item.id);
-              const comment = comments[item.id];
+              const threadForAsset = comments[item.id] || [];
 
               // Pair copy card with corresponding media item
               let pairedMediaUrl = null;
@@ -1117,10 +1128,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                   asset={item.data}
                   type={item.type}
                   isApproved={isApproved}
-                  comment={comment}
+                  commentCount={threadForAsset.length}
                   onApprove={handleToggleApprove}
-                  onCommentSave={handleSaveComment}
-                  onCommentRemove={handleClearComment}
                   brandLogoUrl={set.snapshot.brandLogoUrl}
                   brandName={brandName}
                   pairedMediaUrl={pairedMediaUrl}
@@ -1140,30 +1149,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         <ClientCommentInspector
           asset={activeAssetForComment.data}
           type={activeAssetForComment.type}
-          comment={comments[activeAssetForComment.id] || ''}
-          status={commentStatuses[activeAssetForComment.id] || 'New'}
+          thread={comments[activeAssetForComment.id] || []}
+          authorName={clientName || (isTeamMember ? 'Team' : 'Client')}
+          isReadOnly={isReadOnly}
           onClose={() => setActiveAssetIdForComment(null)}
-          onSave={(text) => {
-            handleSaveComment(activeAssetForComment.id, text);
-            // Default status to 'New' if this is a newly written feedback note
-            if (!comments[activeAssetForComment.id]) {
-              setCommentStatuses((prev) => ({ ...prev, [activeAssetForComment.id]: 'New' }));
-            }
-          }}
-          onRemove={() => {
-            handleClearComment(activeAssetForComment.id);
-            setCommentStatuses((prev) => {
-              const next = { ...prev };
-              delete next[activeAssetForComment.id];
-              return next;
-            });
-          }}
-          onStatusChange={(status) => {
-            setCommentStatuses((prev) => ({
-              ...prev,
-              [activeAssetForComment.id]: status,
-            }));
-          }}
+          onThreadChange={handleThreadChange}
         />
       )}
     </div>

@@ -1,66 +1,220 @@
-import { useState, useEffect, useRef } from 'react';
-import { X, MessageSquare, CornerDownRight } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { X, MessageSquare, CornerDownRight, Send } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
-import { CreativeAsset, isVideoAsset } from './ClientReviewPage';
 
-interface ClientCommentInspectorProps {
-  asset: CreativeAsset;
-  type: 'media' | 'copy';
-  comment?: string;
-  status?: 'New' | 'Team reply' | 'Done';
-  onClose: () => void;
-  onSave: (text: string) => void;
-  onRemove: () => void;
-  onStatusChange: (status: 'New' | 'Team reply' | 'Done') => void;
+/* ─── Shared type for a single comment entry ─── */
+export interface CommentEntry {
+  id: string;
+  author: string;
+  text: string;
+  createdAt: string;
+  status: 'New' | 'Team reply' | 'Done';
+  parentId: string | null;
 }
 
+/* ─── Helper: generate a short unique id ─── */
+function uid(): string {
+  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+/* ─── Helper: format ISO date to relative label ─── */
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+/* ─── Props ─── */
+interface ClientCommentInspectorProps {
+  /** The asset being inspected */
+  asset: { id: string; url?: string; name?: string; headline?: string; body?: string; mimeType?: string; [k: string]: unknown };
+  type: 'media' | 'copy';
+  /** Full comment thread for this asset */
+  thread: CommentEntry[];
+  /** Current viewer identity */
+  authorName: string;
+  isReadOnly?: boolean;
+  onClose: () => void;
+  /** Called with the full updated thread array whenever anything changes */
+  onThreadChange: (assetId: string, thread: CommentEntry[]) => void;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * ClientCommentInspector
+ *
+ * A right-sliding side panel that displays a chronological list of
+ * comments for a single creative asset. Supports:
+ *  - Adding new top-level comments
+ *  - Replying in-thread (parentId linking)
+ *  - Per-comment status (New / Team reply / Done)
+ *  - Deleting individual comments
+ *  - Real ISO timestamps with relative display
+ * ════════════════════════════════════════════════════════════════════════ */
 export function ClientCommentInspector({
   asset,
   type,
-  comment,
-  status = 'New',
+  thread,
+  authorName,
+  isReadOnly = false,
   onClose,
-  onSave,
-  onRemove,
-  onStatusChange,
+  onThreadChange,
 }: ClientCommentInspectorProps) {
-  const [inputText, setInputText] = useState(comment || '');
+  const [inputText, setInputText] = useState('');
+  const [replyingToId, setReplyingToId] = useState<string | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Close on Escape key press
+  const isVideo = type === 'media' && !!(
+    asset.mimeType?.startsWith('video/') ||
+    asset.url?.endsWith('.mp4') ||
+    asset.url?.endsWith('.mov') ||
+    asset.url?.endsWith('.webm')
+  );
+
+  // Separate top-level comments from replies
+  const topLevel = useMemo(() => thread.filter((c) => !c.parentId), [thread]);
+  const repliesMap = useMemo(() => {
+    const map: Record<string, CommentEntry[]> = {};
+    thread.forEach((c) => {
+      if (c.parentId) {
+        if (!map[c.parentId]) map[c.parentId] = [];
+        map[c.parentId].push(c);
+      }
+    });
+    return map;
+  }, [thread]);
+
+  // Close on Escape
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Handle click outside drawer to close
-  const handleBackdropClick = (e: React.MouseEvent) => {
+  // Backdrop click
+  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
     if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
       onClose();
     }
+  }, [onClose]);
+
+  // Add a new comment (top-level or reply)
+  const handleSubmitComment = useCallback(() => {
+    const text = inputText.trim();
+    if (!text) return;
+
+    const entry: CommentEntry = {
+      id: uid(),
+      author: authorName || 'Client',
+      text,
+      createdAt: new Date().toISOString(),
+      status: 'New',
+      parentId: replyingToId,
+    };
+
+    const updated = [...thread, entry];
+    onThreadChange(asset.id, updated);
+    setInputText('');
+    setReplyingToId(null);
+
+    // Scroll to bottom after adding
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    });
+  }, [inputText, replyingToId, authorName, thread, asset.id, onThreadChange]);
+
+  // Delete a single comment (and its replies)
+  const handleDelete = useCallback((commentId: string) => {
+    const idsToRemove = new Set<string>();
+    idsToRemove.add(commentId);
+    // Also remove child replies
+    thread.forEach((c) => { if (c.parentId === commentId) idsToRemove.add(c.id); });
+    const updated = thread.filter((c) => !idsToRemove.has(c.id));
+    onThreadChange(asset.id, updated);
+  }, [thread, asset.id, onThreadChange]);
+
+  // Change status on a single comment
+  const handleStatusChange = useCallback((commentId: string, newStatus: 'New' | 'Team reply' | 'Done') => {
+    const updated = thread.map((c) => c.id === commentId ? { ...c, status: newStatus } : c);
+    onThreadChange(asset.id, updated);
+  }, [thread, asset.id, onThreadChange]);
+
+  // Start replying to a specific comment
+  const handleReply = useCallback((commentId: string) => {
+    setReplyingToId(commentId);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
+
+  // Render a single comment card
+  const renderComment = (comment: CommentEntry, isReply = false) => {
+    const replies = repliesMap[comment.id] || [];
+    return (
+      <div key={comment.id} className={isReply ? 'ml-6 mt-2' : ''}>
+        <div className={`p-3.5 rounded-xl border ${isReply ? 'border-slate-100 bg-slate-50/60' : 'border-slate-150 bg-white/80'} shadow-[0_1px_4px_rgba(0,0,0,0.03)] flex flex-col gap-2`}>
+          {/* Header row: author + status */}
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-[11.5px] text-slate-800">{comment.author}</span>
+            {!isReadOnly && (
+              <select
+                value={comment.status}
+                onChange={(e) => handleStatusChange(comment.id, e.target.value as any)}
+                className="text-[9px] font-bold tracking-wide uppercase px-2 py-0.5 rounded-full cursor-pointer outline-none transition-all appearance-none border-0"
+                style={{
+                  backgroundColor: comment.status === 'New' ? '#eff6ff' : comment.status === 'Team reply' ? '#fffbeb' : '#f0fdf4',
+                  color: comment.status === 'New' ? '#2563eb' : comment.status === 'Team reply' ? '#d97706' : '#16a34a',
+                  border: `0.5px solid ${comment.status === 'New' ? '#bfdbfe' : comment.status === 'Team reply' ? '#fde68a' : '#bbf7d0'}`,
+                }}
+              >
+                <option value="New">New</option>
+                <option value="Team reply">Team reply</option>
+                <option value="Done">Done</option>
+              </select>
+            )}
+          </div>
+
+          {/* Comment body text */}
+          <p className="text-[12.5px] text-slate-600 leading-relaxed break-words whitespace-pre-wrap">{comment.text}</p>
+
+          {/* Footer: timestamp + actions */}
+          <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1.5 border-t border-slate-50">
+            <span className="font-medium">{relativeTime(comment.createdAt)}</span>
+            <div className="flex items-center gap-2">
+              {!isReadOnly && (
+                <button
+                  onClick={() => handleReply(comment.id)}
+                  className="flex items-center gap-1 px-2.5 py-0.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-500 hover:text-slate-700 transition-all rounded-full font-semibold cursor-pointer border border-slate-200/50"
+                >
+                  <CornerDownRight className="w-2.5 h-2.5" />
+                  Reply
+                </button>
+              )}
+              {!isReadOnly && (
+                <button
+                  onClick={() => handleDelete(comment.id)}
+                  className="w-4 h-4 rounded-full hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500 transition-all cursor-pointer"
+                  title="Delete comment"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Render nested replies */}
+        {replies.map((reply) => renderComment(reply, true))}
+      </div>
+    );
   };
 
-  const handleSaveNote = () => {
-    if (inputText.trim()) {
-      onSave(inputText.trim());
-    } else {
-      onRemove();
-    }
-  };
-
-  const handleReplyClick = () => {
-    // Focus textarea to simulate starting a thread reply
-    if (textareaRef.current) {
-      textareaRef.current.focus();
-    }
-  };
-
-  const isVideo = type === 'media' && isVideoAsset(asset);
+  // Find the comment being replied to (for composer label)
+  const replyingToComment = replyingToId ? thread.find((c) => c.id === replyingToId) : null;
 
   return (
     <div
@@ -69,145 +223,110 @@ export function ClientCommentInspector({
     >
       <div
         ref={drawerRef}
-        className="w-full max-w-[420px] h-full bg-slate-50/98 backdrop-blur-2xl border-l border-slate-200 shadow-[0_0_50px_rgba(15,23,42,0.15)] flex flex-col justify-between transform translate-x-0 transition-transform duration-300 ease-out select-none"
+        className="w-full max-w-[420px] h-full bg-slate-50/98 backdrop-blur-2xl border-l border-slate-200 shadow-[0_0_50px_rgba(15,23,42,0.15)] flex flex-col transform translate-x-0 transition-transform duration-300 ease-out select-none"
       >
-        {/* Drawer Header */}
-        <div className="p-5 border-b border-slate-100 flex flex-col gap-4">
+        {/* ─── Header ─── */}
+        <div className="p-5 border-b border-slate-100 flex flex-col gap-4 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-slate-500" />
-              <span className="font-semibold text-xs text-slate-800 uppercase tracking-wider">Comment Inspector</span>
+              <span className="font-semibold text-xs text-slate-800 uppercase tracking-wider">Comments</span>
+              {thread.length > 0 && (
+                <span className="ml-1 text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">{thread.length}</span>
+              )}
             </div>
             <button
               onClick={onClose}
-              className="w-5 h-5 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              className="w-6 h-6 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
               title="Close panel"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Mini Visual Preview Card inside Header */}
-          <div className="p-3 bg-white/40 border border-slate-150/40 rounded-xl flex items-center gap-3">
+          {/* Mini asset preview */}
+          <div className="p-3 bg-white/60 border border-slate-100 rounded-xl flex items-center gap-3">
             {type === 'media' && asset.url && (
-              <div className="w-14 h-14 bg-slate-100 rounded-lg overflow-hidden shrink-0 border border-slate-100">
+              <div className="w-12 h-12 bg-slate-100 rounded-lg overflow-hidden shrink-0 border border-slate-100">
                 {isVideo ? (
                   <video src={asset.url} className="w-full h-full object-cover" preload="metadata" />
                 ) : (
-                  <img src={asset.url} alt="asset preview" className="w-full h-full object-cover" />
+                  <img src={asset.url} alt="preview" className="w-full h-full object-cover" />
                 )}
               </div>
             )}
             <div className="flex-1 min-w-0">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                {type === 'media' ? (isVideo ? 'Video Ad' : 'Image Ad') : 'Ad Copy Variation'}
+                {type === 'media' ? (isVideo ? 'Video' : 'Image') : 'Ad Copy'}
               </div>
               <div className="text-[12px] font-semibold text-slate-700 truncate mt-0.5">
-                {type === 'media' ? (asset.name || 'Creative Asset') : (asset.headline || 'Primary ad copy text')}
+                {type === 'media' ? (asset.name || 'Creative Asset') : (asset.headline || 'Ad Copy')}
               </div>
-              {type === 'copy' && asset.body && (
-                <div className="text-[10.5px] text-slate-400 truncate mt-0.5 italic">
-                  "{asset.body}"
-                </div>
-              )}
             </div>
           </div>
         </div>
 
-        {/* Scrollable Comments Thread */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {!comment ? (
+        {/* ─── Scrollable Thread ─── */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-3">
+          {topLevel.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center gap-2 py-20">
               <MessageSquare className="w-8 h-8 text-slate-200 stroke-[1.5]" />
-              <div className="text-xs font-semibold text-slate-400">No feedback notes yet</div>
+              <div className="text-xs font-semibold text-slate-400">No comments yet</div>
               <p className="text-[11px] text-slate-400/80 max-w-[200px] leading-relaxed">
-                Add a comment in the composer below to note down tweaks.
+                Start a conversation by adding a comment below.
               </p>
             </div>
           ) : (
-            <div className="p-4 rounded-xl border border-slate-100 bg-white/45 shadow-[0_2px_8px_rgba(0,0,0,0.01)] flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-xs text-slate-800">Reviewer Feedback</span>
-                
-                {/* Clean, minimalist Dropdown Status Selector */}
-                <select
-                  value={status}
-                  onChange={(e) => onStatusChange(e.target.value as any)}
-                  className="text-[9.5px] font-bold tracking-wide uppercase px-2.5 py-0.5 rounded-full border-none cursor-pointer outline-none transition-all appearance-none"
-                  style={{
-                    backgroundColor: status === 'New' ? '#eff6ff' : status === 'Team reply' ? '#fffbeb' : '#f0fdf4',
-                    color: status === 'New' ? '#2563eb' : status === 'Team reply' ? '#d97706' : '#16a34a',
-                    border: '1px solid currentColor',
-                    borderWidth: '0.5px',
-                  }}
-                >
-                  <option value="New">New</option>
-                  <option value="Team reply">Team reply</option>
-                  <option value="Done">Done</option>
-                </select>
-              </div>
-
-              {/* Comment text body */}
-              <p className="text-[12.5px] text-slate-600 font-normal leading-relaxed break-words">
-                {comment}
-              </p>
-
-              {/* Timestamp & Reply trigger */}
-              <div className="flex justify-between items-center text-[10.5px] text-slate-400 mt-1 pt-2 border-t border-slate-50/50">
-                <span className="font-medium">Today</span>
-                <button
-                  onClick={handleReplyClick}
-                  className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-500 hover:text-slate-800 transition-all rounded-full font-semibold cursor-pointer border border-slate-200/50 shadow-sm"
-                >
-                  <CornerDownRight className="w-3 h-3 animate-pulse" />
-                  Reply in thread
-                </button>
-              </div>
-            </div>
+            topLevel.map((c) => renderComment(c))
           )}
         </div>
 
-        {/* Bottom borderless Text composer */}
-        <div className="p-4 border-t border-slate-100 bg-white/30 backdrop-blur-md">
-          <Textarea
-            ref={textareaRef}
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder="Write feedback tweaks... (e.g. replace tagline, adjust lighting...)"
-            rows={3}
-            className="text-xs bg-white/60 resize-none border border-slate-200 focus:border-slate-300 focus:ring-0 focus:ring-offset-0 placeholder:text-slate-400/90 rounded-lg p-2.5 shadow-sm"
-          />
-          <div className="flex justify-end gap-1.5 mt-3">
-            {comment && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 text-[11px] font-medium text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full px-3 mr-auto"
-                onClick={() => {
-                  onRemove();
-                  setInputText('');
-                }}
-              >
-                Delete Note
-              </Button>
+        {/* ─── Composer ─── */}
+        {!isReadOnly && (
+          <div className="p-4 border-t border-slate-100 bg-white/50 backdrop-blur-md shrink-0">
+            {/* Reply-to indicator */}
+            {replyingToComment && (
+              <div className="flex items-center gap-2 mb-2 px-2 py-1.5 bg-blue-50/80 border border-blue-100 rounded-lg text-[10.5px]">
+                <CornerDownRight className="w-3 h-3 text-blue-400 shrink-0" />
+                <span className="text-blue-600 font-medium truncate">
+                  Replying to <strong>{replyingToComment.author}</strong>
+                </span>
+                <button
+                  onClick={() => setReplyingToId(null)}
+                  className="ml-auto text-blue-400 hover:text-blue-600 cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
             )}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-[11px] font-medium text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-full px-3"
-              onClick={onClose}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="h-7 text-[11px] font-semibold bg-slate-900 text-white hover:bg-slate-800 rounded-full px-4"
-              onClick={handleSaveNote}
-            >
-              Save Note
-            </Button>
+
+            <div className="flex gap-2">
+              <Textarea
+                ref={textareaRef}
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder={replyingToId ? 'Write a reply...' : 'Add a comment...'}
+                rows={2}
+                className="flex-1 text-xs bg-white resize-none border border-slate-200 focus:border-slate-300 focus:ring-0 focus:ring-offset-0 placeholder:text-slate-400/90 rounded-lg p-2.5"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    handleSubmitComment();
+                  }
+                }}
+              />
+              <button
+                onClick={handleSubmitComment}
+                disabled={!inputText.trim()}
+                className="self-end h-9 w-9 rounded-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white flex items-center justify-center transition-all cursor-pointer disabled:cursor-not-allowed shrink-0"
+                title="Send comment (⌘+Enter)"
+              >
+                <Send className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="text-[9.5px] text-slate-400 mt-1.5 text-right">⌘+Enter to send</div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

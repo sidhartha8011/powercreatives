@@ -1,5 +1,6 @@
 ## Backlog
 
+- [x] Uppgradera kommentarsystemet från en enda textsträng per tillgång till ett riktigt flertrådigt kommentarsystem med obegränsade kommentarer, författaridentitet, tidsstämplar, trådning via svar, och per-kommentar-status (New/Team reply/Done). Backend och frontend har migrerats med bakåtkompatibilitet för äldre data. [2026-05-26]
 - [x] Implementera den minimalistiska, glassmorfiska sidopanels-kommentarsinspektorn (Glass-Sheet Inspector) i Light Mode, fri från profilbilder och med integrerade statuslägen (New, Team reply, Done) synkade i realtid mot databasen. [2026-05-26]
 - [x] Testa klientgranskningssidan med samma rena vita bakgrund och tre flytande omgivande blå lystergradienter som inloggningsskärmen, samtidigt som de ursprungliga gradienterna bevaras inuti kommentarblock. [2026-05-25]
 - [x] Ta bort det Notion-liknande brödsmulefältet (Studio / Clients / ...) helt från klientgranskningssidan för att bibehålla en minimalistisk, Apple-esque design utan onödiga layoutskiftningar. [2026-05-25]

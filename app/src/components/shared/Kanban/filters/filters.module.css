@@ -10,29 +10,36 @@
  */
 
 /* ─── Trigger pills inside the connected panel ───
- * Ghost-style: no border, no background, just text + chevron. The
- * containing .toolbarPanel provides the visual chrome. Hover lights up
- * an individual chip via .bg-chip without breaking the pill rhythm.
+ *
+ * Each trigger is a WHITE pill that sits on the panel's warm-gray surface.
+ * The color contrast is what makes them visibly interactive — without it,
+ * triggers and panel would render as the same flat surface and the user
+ * cannot tell what's a button. Subtle 1px lane-border seals the chip's
+ * edge against the panel.
  */
 .trigger {
-  height: 26px;
-  padding: 0 10px;
+  height: 28px;
+  padding: 0 12px;
   font-size: var(--pck-font-size-sm);
   font-weight: var(--pck-font-weight-mid);
   border-radius: 999px;
   gap: 6px;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
+  background: var(--pck-bg-card);
+  border: 1px solid var(--pck-lane-border);
+  box-shadow: var(--pck-shadow-card);
   color: var(--pck-text);
+  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast), box-shadow var(--pck-transition-fast);
 }
 
 .trigger:hover {
-  background: var(--pck-bg-chip);
+  background: var(--pck-bg-card-hover);
+  border-color: var(--pck-border-strong);
 }
 
+/* Active state — selection applied. Blue tint signals "filter committed". */
 .triggerActive {
   color: var(--pck-text-link);
+  border-color: var(--pck-border-focus);
   background: var(--pck-bg-chip-active);
 }
 
@@ -43,18 +50,22 @@
   white-space: nowrap;
 }
 
-/* ─── Toolbar = one connected pill panel ───
- * Filters live on the left, an auto-margin pushes the sort to the right.
- * The panel sits on the page-gray canvas, matching the lane palette so
- * filters + sort visually read as one continuous control.
+/* ─── Toolbar = connected pill panel ───
+ *
+ * The panel uses the page-gray surface so the white trigger pills above
+ * it pop with clear contrast. Lane-border 1px gives the panel a defined
+ * edge. High border-radius (999px) forms one continuous pill silhouette.
+ *
+ * Sort sits on the right, separated by a 1px divider matching the panel
+ * border. Filters left, sort right, all read as one control.
  */
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px 6px;
+  gap: 4px;
+  padding: 5px 6px;
   margin-bottom: 10px;
-  background: var(--pck-bg-column);
+  background: var(--pck-bg-page);
   border: 1px solid var(--pck-lane-border);
   border-radius: 999px;
   width: fit-content;
@@ -64,7 +75,7 @@
 .toolbarLeft {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   flex: 0 1 auto;
   min-width: 0;
 }
@@ -72,18 +83,16 @@
 .toolbarRight {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-left: 8px;
-  padding-left: 8px;
+  gap: 6px;
+  margin-left: 6px;
+  padding-left: 10px;
   border-left: 1px solid var(--pck-lane-border);
 }
 
 .sortLabel {
-  font-size: 11px;
+  font-size: var(--pck-font-size-sm);
   font-weight: var(--pck-font-weight-mid);
   color: var(--pck-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .clearAll {
