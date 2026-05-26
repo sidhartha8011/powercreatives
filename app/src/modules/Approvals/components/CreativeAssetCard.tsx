@@ -36,6 +36,7 @@ interface CreativeAssetCardProps {
   isApproved: boolean;
   /** Number of comments for this asset (0 means no comments yet) */
   commentCount: number;
+  hasNewComment?: boolean;
   onApprove: (id: string) => void;
   brandLogoUrl?: string | null;
   brandName?: string;
@@ -51,6 +52,7 @@ export function CreativeAssetCard({
   type,
   isApproved,
   commentCount,
+  hasNewComment = false,
   onApprove,
   brandLogoUrl,
   brandName = 'Brand',
@@ -342,20 +344,6 @@ export function CreativeAssetCard({
         </div>
       )}
 
-      {/* Comment Count Badge — opens the thread inspector */}
-      {commentCount > 0 && (
-        <div style={{ padding: '0 14px 14px', zIndex: 10 }}>
-          <div
-            onClick={() => onOpenComments(asset.id)}
-            className="pcm-comment-badge"
-          >
-            <MessageSquare aria-hidden="true" />
-            <span className="pcm-comment-badge-count">{commentCount} {commentCount === 1 ? 'comment' : 'comments'}</span>
-            <span className="pcm-comment-badge-hint">View thread →</span>
-          </div>
-        </div>
-      )}
-
       {/* Card actions (shared for media + copy) */}
       <div className="pcm-card-actions select-none">
         <button
@@ -371,11 +359,21 @@ export function CreativeAssetCard({
         <button
           type="button"
           disabled={isSubmitted}
-          className="pcm-btn pcm-btn-comment"
+          className={`pcm-btn pcm-btn-comment ${commentCount > 0 ? 'has-comments' : ''} ${hasNewComment ? 'has-new-comments' : ''}`}
           onClick={() => onOpenComments(asset.id)}
         >
-          <MessageSquare className="w-[13px] h-[13px]" />
+          <span className="pcm-btn-comment-icon-wrapper">
+            <MessageSquare className="w-[13px] h-[13px]" />
+            {hasNewComment && (
+              <span className="pcm-comment-new-dot pulse-blue" />
+            )}
+          </span>
           Comment
+          {commentCount > 0 && (
+            <span className={`pcm-comment-count-badge ${hasNewComment ? 'is-new' : ''}`}>
+              {commentCount}
+            </span>
+          )}
         </button>
 
           {isTeamMember && (

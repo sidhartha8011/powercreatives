@@ -400,6 +400,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                 ? approvedVisualIds.includes(item.id)
                 : approvedCopyIds.includes(item.id);
               const threadForAsset = comments[item.id] || [];
+              const hasNewComment = threadForAsset.some(c => c.status === 'New');
 
               // Pair copy card with corresponding media item
               let pairedMediaUrl = null;
@@ -417,6 +418,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                   type={item.type}
                   isApproved={isApproved}
                   commentCount={threadForAsset.length}
+                  hasNewComment={hasNewComment}
                   onApprove={handleToggleApprove}
                   brandLogoUrl={set.snapshot.brandLogoUrl}
                   brandName={brandName}
