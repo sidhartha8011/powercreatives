@@ -162,52 +162,72 @@
   color: var(--pck-text);
 }
 
-/* ─── Text control (inline search box, not in popover) ─── */
-.textControl {
+/* ─── Text control (inline search box) ───
+ *
+ * Visual parity with the Projects module bar's <Input>: 36px tall, 6px
+ * radius, white bg, slate-200 border, 12px horizontal padding, with a
+ * Search icon absolutely positioned on the left (icon overlaps the input
+ * padding-left). Scoped under :global(#pcm-root) for specificity 1,1,0,0
+ * — same reason as .trigger.
+ */
+:global(#pcm-root) .textControl {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: var(--pck-control-h);
-  padding: 0 10px;
-  background: var(--pck-bg-card);
-  border: 1px solid var(--pck-control-border);
-  border-radius: var(--pck-radius-pill);
-  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast);
+  height: 36px;
+  min-width: 200px;
+  max-width: 300px;
+  flex: 1 1 240px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  transition: border-color var(--pck-transition-fast), box-shadow var(--pck-transition-fast);
 }
 
-.textControl:focus-within {
+:global(#pcm-root) .textControl:focus-within {
   border-color: var(--pck-border-focus);
-  background: var(--pck-bg-input);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
-.textControlIcon {
-  width: 13px;
-  height: 13px;
-  color: var(--pck-text-muted);
+:global(#pcm-root) .textControlIcon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  color: #94a3b8;
   flex-shrink: 0;
+  pointer-events: none;
 }
 
-.textControlInput {
+:global(#pcm-root) .textControlInput {
+  width: 100%;
+  height: 100%;
   border: 0;
   outline: 0;
   background: transparent;
   font: inherit;
-  font-size: var(--pck-font-size-sm);
+  font-size: 14px;
   color: var(--pck-text);
-  width: 140px;
+  padding: 0 36px 0 36px;
 }
 
-.textControlInput::-webkit-search-cancel-button {
+:global(#pcm-root) .textControlInput::-webkit-search-cancel-button {
   -webkit-appearance: none;
   appearance: none;
 }
 
-.textControlClear {
+:global(#pcm-root) .textControlClear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -216,7 +236,7 @@
   border-radius: var(--pck-radius-sm);
 }
 
-.textControlClear:hover {
+:global(#pcm-root) .textControlClear:hover {
   background: var(--pck-bg-chip);
   color: var(--pck-text);
 }
