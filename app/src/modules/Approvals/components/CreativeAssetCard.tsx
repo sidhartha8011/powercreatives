@@ -44,6 +44,7 @@ interface CreativeAssetCardProps {
   isSubmitted?: boolean;
   isTeamMember?: boolean;
   onAssetUpdate?: () => void;
+  onOpenComments: (id: string) => void;
 }
 
 export function CreativeAssetCard({
@@ -59,10 +60,9 @@ export function CreativeAssetCard({
   pairedMediaUrl,
   isSubmitted = false,
   isTeamMember = false,
-  onAssetUpdate
+  onAssetUpdate,
+  onOpenComments
 }: CreativeAssetCardProps) {
-  const [isEditingComment, setIsEditingComment] = useState(false);
-  const [tempCommentText, setTempCommentText] = useState(comment || '');
   const [isExpanded, setIsExpanded] = useState(false);
   const [showLightbox, setShowLightbox] = useState(false);
 
@@ -161,26 +161,6 @@ export function CreativeAssetCard({
       textArea.remove();
     }
   }, [asset]);
-
-  const handleOpenComment = useCallback(() => {
-    if (isSubmitted) return;
-    setTempCommentText(comment || '');
-    setIsEditingComment(true);
-  }, [comment, isSubmitted]);
-
-  const handleSave = useCallback(() => {
-    if (tempCommentText.trim()) {
-      onCommentSave(asset.id, tempCommentText.trim());
-    } else {
-      onCommentRemove(asset.id);
-    }
-    setIsEditingComment(false);
-  }, [asset.id, tempCommentText, onCommentSave, onCommentRemove]);
-
-  const handleCancel = useCallback(() => {
-    setIsEditingComment(false);
-    setTempCommentText(comment || '');
-  }, [comment]);
 
   const handleCardClick = useCallback(() => {
     if (!isEditingText) {
@@ -366,9 +346,12 @@ export function CreativeAssetCard({
       )}
 
       {/* Comment Display Section (Feedback) */}
-      {comment && !isEditingComment && (
+      {comment && (
         <div className="px-3.5 pb-3.5 z-10">
-          <div className="p-3 rounded-xl border border-zinc-150 bg-white/45 backdrop-blur-sm text-zinc-700 text-xs flex justify-between items-start gap-3 shadow-[0_2px_8px_rgba(0,0,0,0.015)]">
+          <div
+            onClick={() => onOpenComments(asset.id)}
+            className="p-3 rounded-xl border border-zinc-150 bg-white/45 backdrop-blur-sm text-zinc-700 text-xs flex justify-between items-start gap-3 shadow-[0_2px_8px_rgba(0,0,0,0.015)] cursor-pointer hover:bg-white/60 transition-colors"
+          >
             <div className="flex items-start gap-2 flex-1 min-w-0">
               <MessageSquare className="w-3.5 h-3.5 text-zinc-400 mt-0.5 shrink-0" aria-hidden="true" />
               <span className="min-w-0 break-words leading-relaxed font-normal">{comment}</span>
@@ -376,7 +359,10 @@ export function CreativeAssetCard({
             {!isSubmitted && (
               <button
                 type="button"
-                onClick={() => onCommentRemove(asset.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCommentRemove(asset.id);
+                }}
                 className="w-5 h-5 rounded-full hover:bg-zinc-100/80 flex items-center justify-center text-zinc-400 hover:text-zinc-600 transition-all shrink-0 cursor-pointer"
                 title="Remove comment"
                 aria-label="Remove comment"
@@ -388,59 +374,27 @@ export function CreativeAssetCard({
         </div>
       )}
 
-      {/* Comment Inline Composer Editor */}
-      {isEditingComment && (
-        <div className="px-3.5 pb-3.5 pt-2 border-t border-border/30 z-10 bg-zinc-50/20">
-          <Textarea
-            value={tempCommentText}
-            onChange={(e) => setTempCommentText(e.target.value)}
-            placeholder="Write feedback tweaks... (e.g. adjust lighting, replace tagline...)"
-            rows={2}
-            className="text-xs bg-white/60 resize-none border border-zinc-200 focus:border-zinc-300 focus:ring-0 focus:ring-offset-0 placeholder:text-zinc-400/90 rounded-lg p-2"
-            autoFocus
-          />
-          <div className="flex justify-end gap-1.5 mt-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-[11px] font-medium text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 rounded-full px-3"
-              onClick={handleCancel}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="h-7 text-[11px] font-medium bg-zinc-900 text-white hover:bg-zinc-800 rounded-full px-3"
-              onClick={handleSave}
-            >
-              Save Note
-            </Button>
-          </div>
-        </div>
-      )}
-
       {/* Card actions (shared for media + copy) */}
-      {!isEditingComment && (
-        <div className="pcm-card-actions select-none">
-          <button
-            type="button"
-            disabled={isSubmitted}
-            className="pcm-btn pcm-btn-approve"
-            onClick={handleToggleApprove}
-          >
-            <CheckCircle2 className="w-[13px] h-[13px]" />
-            Approve
-          </button>
-          
-          <button
-            type="button"
-            disabled={isSubmitted}
-            className="pcm-btn pcm-btn-comment"
-            onClick={handleOpenComment}
-          >
-            <MessageSquare className="w-[13px] h-[13px]" />
-            Comment
-          </button>
+      <div className="pcm-card-actions select-none">
+        <button
+          type="button"
+          disabled={isSubmitted}
+          className="pcm-btn pcm-btn-approve"
+          onClick={handleToggleApprove}
+        >
+          <CheckCircle2 className="w-[13px] h-[13px]" />
+          Approve
+        </button>
+        
+        <button
+          type="button"
+          disabled={isSubmitted}
+          className="pcm-btn pcm-btn-comment"
+          onClick={() => onOpenComments(asset.id)}
+        >
+          <MessageSquare className="w-[13px] h-[13px]" />
+          Comment
+        </button>
 
           {isTeamMember && (
             type === 'media' ? (
@@ -469,7 +423,6 @@ export function CreativeAssetCard({
             {isApproved ? 'Approved' : 'Awaiting'}
           </span>
         </div>
-      )}
       {/* ─── IMAGE LIGHTBOX OVERLAY (portal to body) ─── */}
       {showLightbox && asset.url && createPortal(
         <div

@@ -10,6 +10,7 @@ import { trpc } from '@/lib/trpc';
 // Import newly created reusable component modules
 import { ClientStatusToolbar } from './ClientStatusToolbar';
 import { CreativeAssetCard } from './CreativeAssetCard';
+import { ClientCommentInspector } from './ClientCommentInspector';
 
 interface ClientReviewPageProps {
   token: string;
@@ -46,6 +47,7 @@ function saveDraft(token: string, data: {
   approvedVisualIds: string[];
   approvedCopyIds: string[];
   comments: Record<string, string>;
+  commentStatuses?: Record<string, 'New' | 'Team reply' | 'Done'>;
   clientName: string;
 }) {
   try {
@@ -75,6 +77,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const [approvedVisualIds, setApprovedVisualIds] = useState<string[]>(draft?.approvedVisualIds ?? []);
   const [approvedCopyIds, setApprovedCopyIds] = useState<string[]>(draft?.approvedCopyIds ?? []);
   const [comments, setComments] = useState<Record<string, string>>(draft?.comments ?? {});
+  const [commentStatuses, setCommentStatuses] = useState<Record<string, 'New' | 'Team reply' | 'Done'>>(draft?.commentStatuses ?? {});
+  const [activeAssetIdForComment, setActiveAssetIdForComment] = useState<string | null>(null);
   const [clientName, setClientName] = useState(draft?.clientName ?? '');
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'all' | 'images' | 'videos' | 'copy'>('all');
@@ -91,8 +95,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Auto-save draft to localStorage on every state change
   useEffect(() => {
     if (isSubmitted) return;
-    saveDraft(token, { approvedVisualIds, approvedCopyIds, comments, clientName });
-  }, [token, approvedVisualIds, approvedCopyIds, comments, clientName, isSubmitted]);
+    saveDraft(token, { approvedVisualIds, approvedCopyIds, comments, commentStatuses, clientName });
+  }, [token, approvedVisualIds, approvedCopyIds, comments, commentStatuses, clientName, isSubmitted]);
 
   // Hydrate approved/comment state from server draft or completed review feedback
   useEffect(() => {
@@ -100,6 +104,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       setApprovedVisualIds(set.reviewFeedback.approvedVisualIds || []);
       setApprovedCopyIds(set.reviewFeedback.approvedCopyIds || []);
       setComments(set.reviewFeedback.comments || {});
+      setCommentStatuses(set.reviewFeedback.commentStatuses || {});
     }
   }, [set?.reviewFeedback]);
 
@@ -121,12 +126,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           approvedVisualIds,
           approvedCopyIds,
           comments,
+          commentStatuses,
         },
       });
     }, 800); // 800ms debounce
 
     return () => clearTimeout(timer);
-  }, [token, approvedVisualIds, approvedCopyIds, comments, isSubmitted, set]);
+  }, [token, approvedVisualIds, approvedCopyIds, comments, commentStatuses, isSubmitted, set]);
 
   // Submit mutation
   const submitMutation = trpc.approvals.submitReview.useMutation({
@@ -196,9 +202,10 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         approvedVisualIds,
         approvedCopyIds,
         comments,
+        commentStatuses,
       },
     });
-  }, [token, clientName, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
+  }, [token, clientName, approvedVisualIds, approvedCopyIds, comments, commentStatuses, submitMutation]);
 
   // Confirm submit handler — direct submission without name prompt
   const handleConfirmSubmit = useCallback(() => {
@@ -209,9 +216,10 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         approvedVisualIds,
         approvedCopyIds,
         comments,
+        commentStatuses,
       },
     });
-  }, [token, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
+  }, [token, approvedVisualIds, approvedCopyIds, comments, commentStatuses, submitMutation]);
 
   const utils = trpc.useUtils();
   const handleAssetUpdate = useCallback(() => {
@@ -242,6 +250,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     }));
     return [...media, ...copy];
   }, [mediaAssets, copyAssets]);
+
+  const activeAssetForComment = useMemo(() => {
+    if (!activeAssetIdForComment) return null;
+    const found = allMergedAssets.find((a) => a.id === activeAssetIdForComment);
+    return found ? found : null;
+  }, [activeAssetIdForComment, allMergedAssets]);
 
   const filteredAssets = useMemo(() => {
     if (activeFilter === 'all') return allMergedAssets;
@@ -1113,12 +1127,45 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                   isSubmitted={isReadOnly || submitMutation.isPending}
                   isTeamMember={isTeamMember}
                   onAssetUpdate={handleAssetUpdate}
+                  onOpenComments={(id) => setActiveAssetIdForComment(id)}
                 />
               );
             })}
           </div>
         )}
       </main>
+
+      {/* Floating Comment Inspector Drawer panel */}
+      {activeAssetForComment && (
+        <ClientCommentInspector
+          asset={activeAssetForComment.data}
+          type={activeAssetForComment.type}
+          comment={comments[activeAssetForComment.id] || ''}
+          status={commentStatuses[activeAssetForComment.id] || 'New'}
+          onClose={() => setActiveAssetIdForComment(null)}
+          onSave={(text) => {
+            handleSaveComment(activeAssetForComment.id, text);
+            // Default status to 'New' if this is a newly written feedback note
+            if (!comments[activeAssetForComment.id]) {
+              setCommentStatuses((prev) => ({ ...prev, [activeAssetForComment.id]: 'New' }));
+            }
+          }}
+          onRemove={() => {
+            handleClearComment(activeAssetForComment.id);
+            setCommentStatuses((prev) => {
+              const next = { ...prev };
+              delete next[activeAssetForComment.id];
+              return next;
+            });
+          }}
+          onStatusChange={(status) => {
+            setCommentStatuses((prev) => ({
+              ...prev,
+              [activeAssetForComment.id]: status,
+            }));
+          }}
+        />
+      )}
     </div>
   );
 }

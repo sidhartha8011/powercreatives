@@ -1,6 +1,6 @@
 ## Backlog
 
-- [x] Redesigna kommentarsfunktionen på granskningskort till en minimalistisk, glassmorfisk Apple-esque design, och implementera en realtids sparfunktion (autosave) mot databasen med automatisk server-hydrering och statusindikator. [2026-05-26]
+- [x] Implementera den minimalistiska, glassmorfiska sidopanels-kommentarsinspektorn (Glass-Sheet Inspector) i Light Mode, fri från profilbilder och med integrerade statuslägen (New, Team reply, Done) synkade i realtid mot databasen. [2026-05-26]
 - [x] Testa klientgranskningssidan med samma rena vita bakgrund och tre flytande omgivande blå lystergradienter som inloggningsskärmen, samtidigt som de ursprungliga gradienterna bevaras inuti kommentarblock. [2026-05-25]
 - [x] Ta bort det Notion-liknande brödsmulefältet (Studio / Clients / ...) helt från klientgranskningssidan för att bibehålla en minimalistisk, Apple-esque design utan onödiga layoutskiftningar. [2026-05-25]
 - [x] Unifiera kopieringskortets typografi med granskningssidans globala klasser (pcm-copy-headline och pcm-copy-text) för rubrik och beskrivning för att eliminera alla hårdkodade Tailwind-stilar. [2026-05-24]
