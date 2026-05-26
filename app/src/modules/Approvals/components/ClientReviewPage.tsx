@@ -400,7 +400,14 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                 ? approvedVisualIds.includes(item.id)
                 : approvedCopyIds.includes(item.id);
               const threadForAsset = comments[item.id] || [];
-              const hasNewComment = threadForAsset.some(c => c.status === 'New');
+              const userRole = isTeamMember ? 'team' : 'client';
+              const hasNewComment = threadForAsset.some(c => {
+                const isAuthorTeam = c.author === 'Team';
+                const isCurrentTeam = isTeamMember;
+                const isSelf = (isCurrentTeam && isAuthorTeam) || (!isCurrentTeam && !isAuthorTeam);
+                if (isSelf) return false;
+                return !c.readBy?.includes(userRole);
+              });
 
               // Pair copy card with corresponding media item
               let pairedMediaUrl = null;
@@ -442,6 +449,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           thread={comments[activeAssetForComment.id] || []}
           authorName={clientName || (isTeamMember ? 'Team' : 'Client')}
           isReadOnly={isReadOnly}
+          isTeamMember={isTeamMember}
           onClose={() => setActiveAssetIdForComment(null)}
           onThreadChange={handleThreadChange}
         />

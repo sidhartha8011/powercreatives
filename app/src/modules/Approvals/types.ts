@@ -62,6 +62,7 @@ export interface CommentEntry {
   status: CommentStatus;
   parentId: string | null;
   attachments?: string[];
+  readBy?: ('client' | 'team')[];
 }
 
 export interface ApprovalSet {

@@ -38,6 +38,7 @@ interface ClientCommentInspectorProps {
   /** Current viewer identity */
   authorName: string;
   isReadOnly?: boolean;
+  isTeamMember?: boolean;
   onClose: () => void;
   /** Called with the full updated thread array whenever anything changes */
   onThreadChange: (assetId: string, thread: CommentEntry[]) => void;
@@ -57,6 +58,7 @@ export function ClientCommentInspector({
   thread,
   authorName,
   isReadOnly = false,
+  isTeamMember = false,
   onClose,
   onThreadChange,
 }: ClientCommentInspectorProps) {
@@ -124,22 +126,78 @@ export function ClientCommentInspector({
     }
   }, [onClose]);
 
+  // Dynamic seen/unseen marking effect
+  useEffect(() => {
+    const userRole = isTeamMember ? 'team' : 'client';
+    
+    // Find unread comments that are not written by the current user role
+    const unread = thread.filter((c) => {
+      const isAuthorTeam = c.author === 'Team';
+      const isCurrentTeam = isTeamMember;
+      const isSelf = (isCurrentTeam && isAuthorTeam) || (!isCurrentTeam && !isAuthorTeam);
+      if (isSelf) return false;
+      return !c.readBy?.includes(userRole);
+    });
+
+    if (unread.length === 0) return;
+
+    // After 1.5 seconds, mark all unread comments in this thread as read by current user role
+    const timer = setTimeout(() => {
+      const updated = thread.map((c) => {
+        const isAuthorTeam = c.author === 'Team';
+        const isCurrentTeam = isTeamMember;
+        const isSelf = (isCurrentTeam && isAuthorTeam) || (!isCurrentTeam && !isAuthorTeam);
+        if (isSelf) return c;
+
+        const readArray = c.readBy || [];
+        if (!readArray.includes(userRole)) {
+          return { ...c, readBy: [...readArray, userRole] };
+        }
+        return c;
+      });
+      onThreadChange(asset.id, updated);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [thread, asset.id, isTeamMember, onThreadChange]);
+
   // Add a new comment (top-level or reply)
   const handleSubmitComment = useCallback(() => {
     const text = inputText.trim();
     if (!text && draftAttachments.length === 0) return;
 
+    const userRole = isTeamMember ? 'team' : 'client';
+
     const entry: CommentEntry = {
       id: crypto.randomUUID(),
-      author: authorName || 'Client',
+      author: authorName || (isTeamMember ? 'Team' : 'Client'),
       text,
       createdAt: new Date().toISOString(),
       status: 'New',
       parentId: replyingToId,
       attachments: draftAttachments.length > 0 ? draftAttachments : undefined,
+      readBy: [userRole],
     };
 
-    const updated = [...thread, entry];
+    let updated = [...thread, entry];
+
+    // Dynamic state transition on the root thread comment
+    if (replyingToId) {
+      const rootId = replyingToId;
+      const newStatus = isTeamMember ? 'Team reply' : 'New';
+      updated = updated.map((c) => {
+        if (c.id === rootId) {
+          return {
+            ...c,
+            status: newStatus,
+            // Reset readBy so the OTHER role gets an unread notification trigger
+            readBy: [userRole],
+          };
+        }
+        return c;
+      });
+    }
+
     onThreadChange(asset.id, updated);
     setInputText('');
     setDraftAttachments([]);
@@ -149,7 +207,7 @@ export function ClientCommentInspector({
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     });
-  }, [inputText, replyingToId, authorName, thread, asset.id, onThreadChange, draftAttachments]);
+  }, [inputText, replyingToId, authorName, thread, asset.id, onThreadChange, draftAttachments, isTeamMember]);
 
   // Delete a single comment (and its replies)
   const handleDelete = useCallback((commentId: string) => {
@@ -163,9 +221,10 @@ export function ClientCommentInspector({
 
   // Change status on a single comment
   const handleStatusChange = useCallback((commentId: string, newStatus: CommentStatus) => {
-    const updated = thread.map((c) => c.id === commentId ? { ...c, status: newStatus } : c);
+    const userRole = isTeamMember ? 'team' : 'client';
+    const updated = thread.map((c) => c.id === commentId ? { ...c, status: newStatus, readBy: [userRole] } : c);
     onThreadChange(asset.id, updated);
-  }, [thread, asset.id, onThreadChange]);
+  }, [thread, asset.id, onThreadChange, isTeamMember]);
 
   // Start replying to a specific comment
   const handleReply = useCallback((commentId: string) => {
@@ -176,13 +235,23 @@ export function ClientCommentInspector({
   // Render a single comment card — all styling via CSS classes
   const renderComment = (comment: CommentEntry, isReply = false) => {
     const replies = repliesMap[comment.id] || [];
+
+    const userRole = isTeamMember ? 'team' : 'client';
+    const isAuthorTeam = comment.author === 'Team';
+    const isCurrentTeam = isTeamMember;
+    const isSelf = (isCurrentTeam && isAuthorTeam) || (!isCurrentTeam && !isAuthorTeam);
+    const isUnread = !isSelf && !comment.readBy?.includes(userRole);
+
     return (
       <div key={comment.id}>
-        <div className={`pcm-comment${isReply ? ' is-reply' : ''}`}>
+        <div className={`pcm-comment${isReply ? ' is-reply' : ''}${isUnread ? ' is-unread' : ''}`}>
           {/* Header row: author + status */}
           <div className="pcm-comment-header">
-            <span className="pcm-comment-author">{comment.author}</span>
-            {!isReadOnly && (
+            <div className="pcm-comment-author-row">
+              <span className="pcm-comment-author">{comment.author}</span>
+              {isUnread && <span className="pcm-comment-unread-dot" title="Unread comment" />}
+            </div>
+            {!isReadOnly && !isReply && (
               <select
                 value={comment.status}
                 onChange={(e) => handleStatusChange(comment.id, e.target.value as CommentStatus)}

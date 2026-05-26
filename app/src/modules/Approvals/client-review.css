@@ -945,6 +945,19 @@
   background: rgba(0,0,0,0.012);
   box-shadow: none;
 }
+.pcm-comment.is-unread {
+  border-left: 3px solid #2563eb;
+  padding-left: 11px; /* Maintain optical alignment */
+}
+.pcm-comment-author-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.pcm-comment-unread-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #2563eb; display: inline-block;
+  box-shadow: 0 0 6px rgba(37,99,235,0.8);
+  flex-shrink: 0;
+}
 .pcm-comment-header {
   display: flex; align-items: center; justify-content: space-between;
 }
