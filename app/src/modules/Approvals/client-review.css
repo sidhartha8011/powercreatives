@@ -63,29 +63,21 @@
 }
 
 /* Override #pcm-root :where(p) { font-size: 0.7em } to protect raw paragraph text */
-#pcm-root .pcm-client-review p {
+#pcm-root .pcm-client-review :where(p) {
   font-size: inherit;
   line-height: inherit;
   margin: 0;
 }
 
 /* Override admin heading resets for raw headings */
-#pcm-root .pcm-client-review h1,
-#pcm-root .pcm-client-review h2,
-#pcm-root .pcm-client-review h3,
-#pcm-root .pcm-client-review h4,
-#pcm-root .pcm-client-review h5,
-#pcm-root .pcm-client-review h6 {
+#pcm-root .pcm-client-review :where(h1, h2, h3, h4, h5, h6) {
   font-size: inherit;
   font-weight: inherit;
   margin: 0;
 }
 
 /* Override admin form element resets for raw inputs and buttons */
-#pcm-root .pcm-client-review input,
-#pcm-root .pcm-client-review textarea,
-#pcm-root .pcm-client-review select,
-#pcm-root .pcm-client-review button {
+#pcm-root .pcm-client-review :where(input, textarea, select, button) {
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
@@ -478,10 +470,12 @@
   transition: transform .2s ease, box-shadow .25s ease;
 }
 .pcm-card.copy {
-  height: 400px;
-  transition: transform .2s ease, box-shadow .25s ease, height .3s ease;
+  min-height: 400px;
+  height: auto;
+  transition: transform .2s ease, box-shadow .25s ease, min-height .3s ease;
 }
 .pcm-card.copy.expanded {
+  min-height: auto;
   height: auto;
 }
 .pcm-card.copy.expanded .pcm-copy-body {
@@ -568,7 +562,7 @@
   letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--ink-4);
 }
-.pcm-copy-headline {
+#pcm-root .pcm-copy-headline {
   font-size: 17px; font-weight: 600;
   letter-spacing: -0.016em; color: var(--ink);
   line-height: 1.22;
@@ -607,21 +601,21 @@
   transition: background .15s ease, color .15s ease;
   letter-spacing: -0.005em;
 }
-.pcm-btn-approve {
+#pcm-root .pcm-btn-approve {
   background: var(--ink); color: white;
 }
-.pcm-btn-approve:hover { background: #000; }
-.pcm-btn-comment {
+#pcm-root .pcm-btn-approve:hover { background: #000; }
+#pcm-root .pcm-btn-comment {
   background: transparent; color: var(--ink-2);
 }
-.pcm-btn-comment:hover { background: rgba(0,0,0,0.05); }
-.pcm-btn-download, .pcm-btn-copy {
+#pcm-root .pcm-btn-comment:hover { background: rgba(0,0,0,0.05); }
+#pcm-root .pcm-btn-download, #pcm-root .pcm-btn-copy {
   background: rgba(0,0,0,0.05); color: var(--ink-2);
 }
-.pcm-btn-download:hover, .pcm-btn-copy:hover {
+#pcm-root .pcm-btn-download:hover, #pcm-root .pcm-btn-copy:hover {
   background: rgba(0,0,0,0.1); color: var(--ink);
 }
-.pcm-btn svg { width: 13px; height: 13px; }
+#pcm-root .pcm-btn svg { width: 13px; height: 13px; }
 
 
 /* ─── Card Status ─── */
@@ -652,8 +646,8 @@
 }
 .pcm-card.approved .pcm-status { color: var(--approve); }
 .pcm-card.approved .pcm-status .pulse { background: var(--approve); }
-.pcm-card.approved .pcm-btn-approve {
-  background: var(--approve);
+#pcm-root .pcm-card.approved .pcm-btn-approve {
+  background: var(--approve); color: white;
 }
 
 
