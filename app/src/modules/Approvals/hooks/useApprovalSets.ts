@@ -73,13 +73,16 @@ function emptyCounts(): ApprovalSetCountsByStatus {
 }
 
 /**
- * The cache key TanStack Query uses for the list query, derived by the
- * tRPC-style adapter at lib/trpc.ts (line ~652): `[...path, input]`.
- * For `trpc.approvals.listSets.useQuery()` with no input → the segments
- * become `['approvals', 'listSets', undefined]`. Mirrored here for
- * optimistic updates / invalidations.
+ * Cache-key PREFIX for the list query. The tRPC adapter at
+ * `lib/trpc.ts` constructs the full TanStack Query key as
+ * `[...path, input]`, which means a no-input call ends up with a
+ * trailing `undefined` slot. Rather than mirror that exact internal
+ * shape (fragile — couples this hook to the adapter's implementation
+ * details), we operate on the cache via partial-prefix matching
+ * (`getQueriesData` / `setQueriesData` with `{ queryKey: prefix }`)
+ * which targets every list-sets cache slot regardless of input shape.
  */
-const LIST_QUERY_KEY = ['approvals', 'listSets', undefined] as const;
+const LIST_QUERY_PREFIX = ['approvals', 'listSets'] as const;
 
 export function useApprovalSets(): UseApprovalSetsResult {
   const queryClient = useQueryClient();
@@ -120,33 +123,36 @@ export function useApprovalSets(): UseApprovalSetsResult {
     [getPublicBoardUrl]
   );
 
-  // Plain server-call mutation. NO onMutate / onError / onSettled —
-  // optimistic update + rollback are driven synchronously in
-  // updateStatus below. React Query's internal execute() schedules
-  // onMutate on a microtask which is too late: @hello-pangea/dnd's
-  // onDragEnd has already returned, the library sees no state change
-  // in the same tick, and animates the card back to its source. By
-  // doing setQueryData directly in updateStatus we land the cache
-  // change in the same call stack as the drag handler — no revert.
+  // Server-call only. No onMutate/onError/onSettled — those would push
+  // the cache write to a microtask after React Query's internal async
+  // execute(), which is too late: @hello-pangea/dnd's onDragEnd has
+  // already returned by then and the library reverts the card to its
+  // source because it saw no state change in the same tick. The
+  // optimistic update + rollback below run synchronously in the drag
+  // handler's call stack, which is the only timing that makes DnD
+  // libraries with controlled lists behave.
   const statusMutation = trpc.approvals.updateSetStatus.useMutation();
 
   const updateStatus = useCallback(
     (id: number, next: ApprovalStatus): Promise<void> => {
-      // Snapshot for rollback BEFORE we mutate the cache.
-      const previous = queryClient.getQueryData<ApprovalSet[]>(LIST_QUERY_KEY);
+      const filter = { queryKey: LIST_QUERY_PREFIX } as const;
 
-      // Synchronous optimistic update — same tick as DnD's onDragEnd.
-      if (previous) {
-        queryClient.setQueryData<ApprovalSet[]>(
-          LIST_QUERY_KEY,
-          previous.map((s) => (s.id === id ? { ...s, status: next } : s))
-        );
-      }
+      // Snapshot every matching cache slot BEFORE the optimistic
+      // write, so rollback restores the exact state on each.
+      const snapshots = queryClient.getQueriesData<ApprovalSet[]>(filter);
 
-      // Persist to server. Rollback only if the server rejects.
+      // Synchronous optimistic write across every matching slot
+      // (typically the single no-input listSets cache slot). Lands in
+      // the same call stack as DnD's onDragEnd — no revert animation.
+      queryClient.setQueriesData<ApprovalSet[]>(filter, (prev) => {
+        if (!prev) return prev;
+        return prev.map((s) => (s.id === id ? { ...s, status: next } : s));
+      });
+
       return statusMutation.mutateAsync({ id, status: next }).catch((err: unknown) => {
-        if (previous) {
-          queryClient.setQueryData(LIST_QUERY_KEY, previous);
+        // Rollback: restore every snapshot to its original data.
+        for (const [key, data] of snapshots) {
+          if (data !== undefined) queryClient.setQueryData(key, data);
         }
         const message = err instanceof Error ? err.message : 'Failed to move set';
         toast.error(message);
