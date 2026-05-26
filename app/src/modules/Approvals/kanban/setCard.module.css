@@ -1,17 +1,17 @@
 /**
- * SetCard styles — Notion-tight: two lines, no chrome.
+ * SetCard styles — minimal: single-line title, hover-only actions.
  *
- * The card body is always exactly 2 lines (title + meta). The action row
- * is absolutely positioned and overlays the bottom-right on hover, so the
- * card never grows or shifts. Matches the reference Notion screenshot.
+ * The card body is exactly one line (ellipsized title). The action row
+ * is absolutely positioned over the right edge on hover, so the card
+ * never grows or shifts.
  */
 
 .card {
   position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 4px 8px;
+  align-items: center;
+  min-height: var(--pck-card-min-h);
+  padding: var(--pck-card-pad-y) var(--pck-card-pad-x);
   cursor: pointer;
   outline: none;
 }
@@ -21,65 +21,38 @@
   border-radius: var(--pck-radius-card);
 }
 
-/* Line 1 — primary title (composes shared title base + own weight). */
+/* Title — single line, ellipsized. Default 400 weight (composes from base). */
 .title {
   composes: title from './cardBase.module.css';
-  font-weight: var(--pck-font-weight-semi);
   line-height: 1.3;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  width: 100%;
 }
 
 .titleSep {
   color: var(--pck-text-faint);
-  margin: 0 3px;
+  margin: 0 4px;
   font-weight: 400;
 }
 
-/* Line 2 — metadata (project · counts · feedback). The set card meta is
- * always single-line ellipsis (overflow + nowrap) — overrides the wrappable
- * base from cardBase. */
-.meta {
-  composes: meta from './cardBase.module.css';
-  flex-wrap: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.metaItem {
-  white-space: nowrap;
-}
-
-.metaSep {
-  composes: metaSep from './cardBase.module.css';
-}
-
-.metaApproved {
-  color: var(--pck-color-success);
-  font-weight: var(--pck-font-weight-mid);
-}
-
-.metaFeedback {
-  color: var(--pck-color-warning);
-  font-weight: var(--pck-font-weight-mid);
-}
-
 /* ─── Absolutely-positioned action overlay ───
- * The card stays 2 lines tall always. Actions fade in on hover, anchored
- * bottom-right with a subtle gradient mask so they don't visually cut into
- * the meta text behind them.
+ * Card stays single-line always. Actions fade in on hover, anchored
+ * right with a subtle gradient mask so they don't visually cut into the
+ * title text behind them.
  */
 .actions {
   position: absolute;
   right: 4px;
-  bottom: 3px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   gap: 0;
   padding-left: 18px;
-  /* Gradient fades from transparent into the hover-card bg so the chips
-   * never visually clip into the meta text behind them. */
   background: linear-gradient(
     to right,
-    rgba(251, 250, 247, 0) 0%,
+    rgba(255, 255, 255, 0) 0%,
     var(--pck-bg-card-hover) 40%
   );
   opacity: 0;

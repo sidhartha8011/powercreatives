@@ -5,21 +5,22 @@
  * selector establishes the `pck-root` token scope (see tokens.css) so all
  * --pck-* variables cascade to descendants.
  *
- * Layout: transparent board + transparent column containers. Visual
- * identity of each column comes from its full-width colored header pill
- * + the cards inside. Cards render via the consumer's renderCard
- * callback — this stylesheet provides only the wrapper chrome (border,
- * background, hover, shadow).
+ * Layout: transparent board on a white page, light-grey lane trays,
+ * white cards with a hairline border. Lane identity comes from the
+ * inline pill (which hugs its label) — not from a full-width header bar.
+ * Cards render via the consumer's renderCard callback — this stylesheet
+ * provides only the wrapper chrome.
  */
 
 /* ─── Board root ───
- * Transparent — inherits the page background. No padding, no radius,
- * no contained box. The page wrapper provides the bg color edge-to-edge.
+ * Transparent — the page wrapper provides the white background. Fixed
+ * lane width via grid-auto-columns: every lane is the same size so the
+ * board reads as a calm grid, not a stretchy table.
  */
 .root {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(220px, 1fr);
+  grid-auto-columns: var(--pck-lane-width);
   gap: var(--pck-gap-board);
   width: 100%;
   font-family: var(--pck-font-family);
@@ -30,52 +31,47 @@
 }
 
 /* ─── Column (lane) ───
- * White surface sitting on the warm-gray page. Subtle 1px lane-border
- * gives it a defined edge without competing with the colored header
- * pill or the cards inside.
+ * Light-grey tray. No border, no shadow. The pill at the top carries
+ * status identity; the lane is just a soft container that holds cards.
  */
 .column {
   display: flex;
   flex-direction: column;
   gap: var(--pck-gap-column);
   min-height: 120px;
-  background: var(--pck-bg-card);
-  border: 1px solid var(--pck-lane-border);
-  border-radius: var(--pck-radius-card);
-  padding: 8px;
+  background: var(--pck-bg-lane);
+  border-radius: var(--pck-radius-column);
+  padding: var(--pck-lane-padding);
 }
 
 .columnHeader {
   display: flex;
   align-items: center;
+  gap: 6px;
+  padding: 2px 2px 4px;
 }
 
-/* Full-width colored pill — defines the column visually. Compact (≈26px). */
+/* Inline pill — hugs its label. Background tint comes from the column's
+ * accentColor (set inline via style prop), or falls back to the neutral
+ * chip color. */
 .columnHeaderPill {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  width: 100%;
-  padding: 4px 14px;
-  font-size: var(--pck-font-size-sm);
+  padding: var(--pck-pill-pad-y) var(--pck-pill-pad-x);
+  font-size: var(--pck-font-size-pill);
   font-weight: var(--pck-font-weight-mid);
   background: var(--pck-pill-bg);
   color: var(--pck-pill-text);
-  border-radius: var(--pck-radius-sm);
-  gap: 6px;
+  border-radius: var(--pck-radius-pill);
+  line-height: 1.3;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .columnHeaderLabel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Decorative status dot — opt-in via column.dotColor. */
-.columnHeaderDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
 }
 
 .columnList {
@@ -109,14 +105,12 @@
 
 /* ─── Card wrapper ─── */
 /*
- * The board provides the wrapper (background, border, shadow, hover).
- * The card's *content* comes from the consumer. The slightly stronger
- * border + soft shadow lift the white card off the warm-gray column,
- * creating a clear three-layer hierarchy: page → column → card.
+ * White card on a grey lane. Hairline border carries the edge, no shadow
+ * at rest — shadow only on hover for a subtle lift cue.
  */
 .cardWrap {
   background: var(--pck-bg-card);
-  border: 1px solid var(--pck-border);
+  border: 1px solid var(--pck-card-border);
   border-radius: var(--pck-radius-card);
   box-shadow: var(--pck-shadow-card);
   transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast), box-shadow var(--pck-transition-fast);

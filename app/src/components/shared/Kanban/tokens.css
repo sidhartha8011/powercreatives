@@ -1,10 +1,12 @@
 /**
  * Kanban Design Tokens
  *
- * Manus-inspired warm-neutral palette. The kanban primitive renders on
- * top of whatever page background the consumer provides — these tokens
- * cover surface, border, text, semantic, spacing, radius, typography,
- * shadow, and motion concerns *inside* the board.
+ * Minimal-surface palette. Page is white, lanes are soft grey trays,
+ * cards are white with a hairline border, pills hug their text.
+ * The kanban primitive renders on top of whatever page background the
+ * consumer provides — tokens cover surface, border, text, semantic,
+ * spacing, radius, typography, shadow, and motion concerns *inside*
+ * the board.
  *
  * Naming convention: --pck-* (PowerCreatives Kanban) — never collides with
  * other modules. Pair with the `pck-root` selector — the variables cascade
@@ -22,9 +24,12 @@
   --pck-bg-input:         #ffffff;
   --pck-bg-chip:          #ecebe6;
   --pck-bg-chip-active:   #e2e7f0;
+  --pck-bg-lane:          #f5f5f4;
 
   /* ── Borders ── */
   --pck-lane-border:      rgba(0, 0, 0, 0.05);
+  --pck-card-border:      rgba(0, 0, 0, 0.06);
+  --pck-control-border:   rgba(0, 0, 0, 0.08);
   --pck-border:           #e8e6e1;
   --pck-border-strong:    #d6d3cd;
   --pck-border-focus:     #3b82f6;
@@ -41,12 +46,30 @@
   --pck-color-danger:     #d97706;
 
   /* ── Spacing ── */
-  --pck-gap-board:        14px;
-  --pck-gap-column:       3px;
+  --pck-gap-board:        8px;
+  --pck-gap-column:       6px;
+
+  /* ── Lane (column container) ── */
+  --pck-lane-width:       240px;
+  --pck-lane-padding:     8px;
+
+  /* ── Card sizing ── */
+  --pck-card-min-h:       32px;
+  --pck-card-pad-y:       6px;
+  --pck-card-pad-x:       10px;
+
+  /* ── Pill (hugs text, inline) ── */
+  --pck-pill-pad-y:       2px;
+  --pck-pill-pad-x:       8px;
+
+  /* ── Toolbar / controls ── */
+  --pck-toolbar-h:        40px;
+  --pck-toolbar-pad-x:    8px;
+  --pck-control-h:        28px;
 
   /* ── Radii ── */
   --pck-radius-sm:        6px;
-  --pck-radius-card:      8px;
+  --pck-radius-card:      6px;
   --pck-radius-column:    10px;
   --pck-radius-pill:      999px;
   --pck-radius-input:     8px;
@@ -54,16 +77,17 @@
   /* ── Typography ── */
   --pck-font-family:      'Inter', ui-sans-serif, system-ui, sans-serif;
   --pck-font-size-xs:     10px;
+  --pck-font-size-pill:   11px;
   --pck-font-size-meta:   11px;
   --pck-font-size-sm:     12px;
-  --pck-font-size-card:   12px;
+  --pck-font-size-card:   13px;
   --pck-font-size-md:     14px;
   --pck-font-weight-mid:  500;
   --pck-font-weight-semi: 600;
 
   /* ── Shadows ── */
-  --pck-shadow-card:          0 1px 2px rgba(15, 15, 15, 0.04);
-  --pck-shadow-card-hover:    0 2px 4px rgba(15, 15, 15, 0.06);
+  --pck-shadow-card:          none;
+  --pck-shadow-card-hover:    0 1px 2px rgba(15, 15, 15, 0.05);
   --pck-shadow-card-dragging: 0 8px 18px rgba(15, 15, 15, 0.18);
 
   /* ── Column header pill (overridable per-column via accentColor) ── */

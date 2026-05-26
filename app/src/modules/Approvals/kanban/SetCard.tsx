@@ -28,37 +28,23 @@ export interface SetCardProps {
   onOpenPreview: (set: ApprovalSet) => void;
 }
 
-interface ProgressSummary {
-  approved: number;
-  total: number;
-  feedbackCount: number;
-}
-
-function summarize(set: ApprovalSet): ProgressSummary {
-  const media = set.snapshot.media ?? [];
-  const copy = set.snapshot.copy ?? [];
-  const fb = set.reviewFeedback;
-  // Comments are threaded per asset (Record<assetId, CommentEntry[]>).
-  // Total feedback = sum of all entries across all threads.
-  const feedbackCount = Object.values(fb?.comments ?? {}).reduce(
-    (sum, thread) => sum + thread.length,
-    0
-  );
-  return {
-    approved:
-      (fb?.approvedVisualIds?.length ?? 0) + (fb?.approvedCopyIds?.length ?? 0),
-    total: media.length + copy.length,
-    feedbackCount,
-  };
-}
-
 export function SetCard({
   set,
   onCopyLink,
   onOpenFeedback,
   onOpenPreview,
 }: SetCardProps) {
-  const progress = useMemo(() => summarize(set), [set]);
+  // Total feedback = sum of all comment entries across all asset threads
+  // (comments are Record<assetId, CommentEntry[]>). Only used to gate the
+  // "View feedback" action chip.
+  const feedbackCount = useMemo(
+    () =>
+      Object.values(set.reviewFeedback?.comments ?? {}).reduce(
+        (sum, thread) => sum + thread.length,
+        0
+      ),
+    [set]
+  );
 
   const openPreview = useCallback(() => onOpenPreview(set), [onOpenPreview, set]);
 
@@ -78,7 +64,6 @@ export function SetCard({
   const stop = useCallback((e: MouseEvent) => e.stopPropagation(), []);
 
   const brand = set.snapshot.brandName?.trim();
-  const project = set.snapshot.projectName?.trim();
 
   return (
     <article
@@ -99,30 +84,6 @@ export function SetCard({
         <span>{set.name}</span>
       </div>
 
-      <div className={styles.meta}>
-        {project && (
-          <>
-            <span className={styles.metaItem}>{project}</span>
-            <span className={styles.metaSep}>·</span>
-          </>
-        )}
-        <span className={styles.metaItem}>
-          {progress.total === 0
-            ? 'No assets'
-            : progress.approved === progress.total
-              ? <span className={styles.metaApproved}>{progress.total}/{progress.total} approved</span>
-              : `${progress.approved}/${progress.total} approved`}
-        </span>
-        {progress.feedbackCount > 0 && (
-          <>
-            <span className={styles.metaSep}>·</span>
-            <span className={`${styles.metaItem} ${styles.metaFeedback}`}>
-              {progress.feedbackCount} comment{progress.feedbackCount === 1 ? '' : 's'}
-            </span>
-          </>
-        )}
-      </div>
-
       <div className={styles.actions} role="group" aria-label="Set actions">
         <button
           type="button"
@@ -134,7 +95,7 @@ export function SetCard({
           Copy link
         </button>
 
-        {progress.feedbackCount > 0 && (
+        {feedbackCount > 0 && (
           <button
             type="button"
             className={styles.actionBtn}

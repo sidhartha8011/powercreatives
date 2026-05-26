@@ -242,10 +242,10 @@ export function CreativeAssetCard({
       
       {/* Glassmorphic Saving Overlay */}
       {isSavingEdits && (
-        <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] flex items-center justify-center z-50 animate-fade-in select-none">
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/95 shadow-md border border-border/50">
-            <span className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            <span className="text-[11px] font-bold tracking-tight text-slate-800">Saving edits...</span>
+        <div className="pcm-saving-overlay">
+          <div className="pcm-saving-pill">
+            <span className="pcm-saving-spinner" />
+            <span className="pcm-saving-text">Saving edits...</span>
           </div>
         </div>
       )}
@@ -294,7 +294,7 @@ export function CreativeAssetCard({
                 editable={true}
                 onChange={setEditedBody}
                 placeholder="Skriv brödtext..."
-                className="bg-transparent text-[12.5px] leading-normal text-slate-800 font-normal border-none p-0 outline-none focus:ring-0"
+                className="pcm-inline-editor"
               />
             </div>
           ) : (
@@ -305,21 +305,21 @@ export function CreativeAssetCard({
 
           {/* Minimalist Apple-Style Titel & Beskrivning */}
           {(asset.headline || asset.description || isEditingText) && (
-            <div className="border-t border-slate-100/60 mt-auto pt-3.5 pb-3.5" onClick={(e) => e.stopPropagation()}>
+            <div className="pcm-copy-footer" onClick={(e) => e.stopPropagation()}>
               {isEditingText ? (
                 <div className="flex flex-col gap-1 w-full">
                   <input
                     type="text"
                     value={editedHeadline}
                     onChange={(e) => setEditedHeadline(e.target.value)}
-                    className="pcm-copy-headline w-full bg-transparent border-none p-0 outline-none focus:ring-0 placeholder:text-slate-400/50"
+                    className="pcm-copy-headline pcm-edit-input"
                     placeholder="Skriv rubrik..."
                   />
                   <input
                     type="text"
                     value={editedDescription}
                     onChange={(e) => setEditedDescription(e.target.value)}
-                    className="pcm-copy-text w-full mt-1 bg-transparent border-none p-0 outline-none focus:ring-0 placeholder:text-slate-400/50"
+                    className="pcm-copy-text pcm-edit-input" style={{ marginTop: '4px' }}
                     placeholder="Skriv beskrivning..."
                   />
                 </div>
@@ -344,14 +344,14 @@ export function CreativeAssetCard({
 
       {/* Comment Count Badge — opens the thread inspector */}
       {commentCount > 0 && (
-        <div className="px-3.5 pb-3.5 z-10">
+        <div style={{ padding: '0 14px 14px', zIndex: 10 }}>
           <div
             onClick={() => onOpenComments(asset.id)}
-            className="p-2.5 rounded-xl border border-zinc-150 bg-white/45 backdrop-blur-sm text-zinc-700 text-xs flex items-center gap-2 shadow-[0_2px_8px_rgba(0,0,0,0.015)] cursor-pointer hover:bg-white/60 transition-colors"
+            className="pcm-comment-badge"
           >
-            <MessageSquare className="w-3.5 h-3.5 text-zinc-400 shrink-0" aria-hidden="true" />
-            <span className="font-semibold">{commentCount} {commentCount === 1 ? 'comment' : 'comments'}</span>
-            <span className="ml-auto text-[10px] text-zinc-400 font-medium">View thread →</span>
+            <MessageSquare aria-hidden="true" />
+            <span className="pcm-comment-badge-count">{commentCount} {commentCount === 1 ? 'comment' : 'comments'}</span>
+            <span className="pcm-comment-badge-hint">View thread →</span>
           </div>
         </div>
       )}

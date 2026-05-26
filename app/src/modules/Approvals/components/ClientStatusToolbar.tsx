@@ -125,13 +125,13 @@ export function ClientStatusToolbar({
           {/* Autosave Status Indicator */}
           {!isReadOnly && (
             isSaving ? (
-              <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1.5 animate-pulse select-none shrink-0 mr-2">
-                <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />
+              <span className="pcm-autosave-indicator is-saving">
+                <Loader2 className="w-3 h-3 animate-spin" />
                 Saving...
               </span>
             ) : (
-              <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1 select-none shrink-0 mr-2 transition-all duration-200 opacity-80">
-                <Check className="w-3 h-3 text-emerald-500" />
+              <span className="pcm-autosave-indicator">
+                <Check className="w-3 h-3 pcm-autosave-check" />
                 Draft saved
               </span>
             )
@@ -169,15 +169,7 @@ export function ClientStatusToolbar({
 
           {/* Approve All / Confirm Submit — hidden in read-only mode */}
           {isReadOnly ? (
-            <span
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '5px',
-                fontSize: '12px', fontWeight: 600,
-                color: '#18a957',
-                background: 'rgba(24,169,87,0.1)',
-                padding: '6px 14px', borderRadius: '99px',
-              }}
-            >
+            <span className="pcm-bar-completed">
               <CheckCircle2 className="w-3.5 h-3.5" />
               Completed
             </span>

@@ -9,34 +9,37 @@
  * styles back here, stop — shadcn already provides them.
  */
 
-/* ─── Trigger (ghost text + chevron, sits in slim header strip) ───
+/* ─── Trigger (compact pill — sits in the toolbar row) ───
  *
- * No background, no border, no shadow at rest. Hover reveals a subtle
- * chip bg so the cursor target is clear. Active state turns the label
- * blue so applied filters are visible at a glance.
+ * White surface with hairline border so the filter dropdowns read as
+ * proper input affordances, not ghost text. Compact 28px height matches
+ * --pck-control-h. Active state turns the label blue so applied filters
+ * are visible at a glance.
  */
 .trigger {
-  height: 26px;
-  padding: 0 8px;
+  height: var(--pck-control-h);
+  padding: 4px 10px;
   font-size: var(--pck-font-size-sm);
   font-weight: var(--pck-font-weight-mid);
   border-radius: var(--pck-radius-sm);
   gap: 6px;
-  background: transparent;
-  border: 0;
+  background: var(--pck-bg-card);
+  border: 1px solid var(--pck-control-border);
   box-shadow: none;
   color: var(--pck-text);
-  transition: background var(--pck-transition-fast), color var(--pck-transition-fast);
+  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast), color var(--pck-transition-fast);
 }
 
 .trigger:hover {
-  background: var(--pck-bg-chip);
+  background: var(--pck-bg-card-hover);
+  border-color: var(--pck-border-strong);
 }
 
 /* Active state — selection applied. Blue label signals "filter committed". */
 .triggerActive {
   color: var(--pck-text-link);
   background: var(--pck-bg-chip-active);
+  border-color: var(--pck-bg-chip-active);
 }
 
 .triggerLabel {
@@ -46,28 +49,30 @@
   white-space: nowrap;
 }
 
-/* ─── Toolbar = contained control surface ───
+/* ─── Toolbar = single row, spans the board width ───
  *
- * White surface with subtle 1px lane-border — matches the lane treatment
- * so the toolbar reads as part of the same surface family. Filters left,
- * sort pushed right via margin-left:auto on .toolbarRight.
+ * White surface, hairline bottom border, no full enclosure. Filters
+ * left, sort pushed right via margin-left:auto on .toolbarRight. Spans
+ * the full content width above the board.
  */
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
+  gap: 8px;
+  height: var(--pck-toolbar-h);
+  padding: 0 var(--pck-toolbar-pad-x);
   margin-bottom: 12px;
   background: var(--pck-bg-card);
-  border: 1px solid var(--pck-lane-border);
-  border-radius: var(--pck-radius-card);
+  border: 0;
+  border-bottom: 1px solid var(--pck-lane-border);
+  border-radius: 0;
   width: 100%;
 }
 
 .toolbarLeft {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   flex: 0 1 auto;
   min-width: 0;
 }
@@ -136,10 +141,10 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: var(--pck-control-h);
   padding: 0 10px;
-  background: var(--pck-bg-chip);
-  border: 1px solid var(--pck-border);
+  background: var(--pck-bg-card);
+  border: 1px solid var(--pck-control-border);
   border-radius: var(--pck-radius-pill);
   transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast);
 }

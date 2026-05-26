@@ -162,13 +162,6 @@ function KanbanColumn<T extends { id: string | number }>({
     <header className={styles.columnHeader}>
       <span className={styles.columnHeaderPill} style={pillStyle}>
         <span className={styles.columnHeaderLabel}>{column.label}</span>
-        {column.dotColor && (
-          <span
-            className={styles.columnHeaderDot}
-            style={{ background: column.dotColor }}
-            aria-hidden="true"
-          />
-        )}
       </span>
     </header>
   );

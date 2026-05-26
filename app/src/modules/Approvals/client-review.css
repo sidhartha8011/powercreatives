@@ -1,0 +1,1184 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CLIENT REVIEW BOARD — Standalone Design System
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This stylesheet is the SINGLE source of truth for ALL visual styling on
+ * the client-facing creative review board. It is completely self-contained
+ * and isolated from the admin SPA's design system (#pcm-root base).
+ *
+ * WHY THIS EXISTS:
+ * The admin SPA uses a compact 11.5px base font and oklch color tokens
+ * designed for WordPress admin. The client board is a public-facing page
+ * that needs standard 16px web typography and its own warm color palette.
+ * Instead of fighting the admin system with piecemeal overrides, we
+ * establish a complete, independent foundation here.
+ *
+ * ARCHITECTURE:
+ * 1. Foundation reset — neutralizes ALL admin CSS inheritance
+ * 2. Design tokens    — color palette, spacing, timing
+ * 3. Type scale       — named classes for every text size tier
+ * 4. Component styles — hero, toolbar, cards, grid, inspector, etc.
+ *
+ * SCOPING:
+ * All rules are scoped to `#pcm-root .pcm-client-review` which gives
+ * specificity (1,1,0), beating the admin :where() resets at (1,0,x).
+ *
+ * @package PowerCreatives
+ * @module  Approvals
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 1. FOUNDATION RESET
+ *
+ * Complete isolation from #pcm-root's admin base (11.5px, 0.7em paragraphs,
+ * oklch colors). Every HTML element is reset to the client's 16px scale.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#pcm-root .pcm-client-review {
+  /* ── Client base typography ── */
+  font-size: 16px;
+  line-height: 1.5;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* ── Client color foundation ── */
+  color: var(--ink);
+
+  /* ── Layout foundation ── */
+  background: #ffffff;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Wildcard neutralizer: kill the admin's 11.5px cascade on ALL descendants.
+   Uses inherit so elements pick up from .pcm-client-review (16px), not #pcm-root (11.5px). */
+#pcm-root .pcm-client-review *:not(style):not(script) {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* Override #pcm-root :where(p) { font-size: 0.7em } which shrinks
+   all paragraphs to 8px. Review page paragraphs use their own sizes. */
+#pcm-root .pcm-client-review p {
+  font-size: inherit;
+  line-height: inherit;
+  margin: 0;
+}
+
+/* Override admin heading resets — client headings use explicit pcm- classes */
+#pcm-root .pcm-client-review h1,
+#pcm-root .pcm-client-review h2,
+#pcm-root .pcm-client-review h3,
+#pcm-root .pcm-client-review h4,
+#pcm-root .pcm-client-review h5,
+#pcm-root .pcm-client-review h6 {
+  font-size: inherit;
+  font-weight: inherit;
+  margin: 0;
+}
+
+/* Override admin form element resets */
+#pcm-root .pcm-client-review input,
+#pcm-root .pcm-client-review textarea,
+#pcm-root .pcm-client-review select,
+#pcm-root .pcm-client-review button {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 2. DESIGN TOKENS
+ *
+ * Warm, editorial palette inspired by high-end design review platforms.
+ * All component classes reference these tokens — never hardcode colors.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+.pcm-client-review {
+  /* ── Ink scale (warm dark tones) ── */
+  --ink:   #1d1d1f;
+  --ink-2: #4a4239;
+  --ink-3: #6f6a64;
+  --ink-4: #8a7d6d;
+
+  /* ── Structural ── */
+  --line: rgba(0,0,0,0.06);
+
+  /* ── Approval green ── */
+  --approve: #18a957;
+  --approve-soft: rgba(24,169,87,0.12);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 3. TYPE SCALE
+ *
+ * Named, semantic classes for every text size used in the review board.
+ * Components MUST use these instead of ad-hoc px values or Tailwind utilities.
+ *
+ * Scale progression: 10.5 → 11 → 11.5 → 12.5 → 13 → 13.5 → 14 → 15.5 → 17 → 64
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Display — Hero title (Instrument Serif italic) */
+.pcm-text-display {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 64px;
+  letter-spacing: -0.02em;
+  line-height: 1.0;
+  color: var(--ink);
+}
+
+/* Title — Card headlines, copy headlines */
+.pcm-text-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.016em;
+  line-height: 1.22;
+  color: var(--ink);
+}
+
+/* Subtitle — Hero subtitle, large body */
+.pcm-text-subtitle {
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* Body — Card titles, general body text */
+.pcm-text-body {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+/* Caption — Comment text, inspector text, larger action text */
+.pcm-text-caption {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* Label — Action buttons, filter chips, inputs */
+.pcm-text-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--ink-2);
+}
+
+/* Small — Progress, status, timestamps */
+.pcm-text-small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+/* Micro — Eyebrows, badges, uppercase labels */
+.pcm-text-micro {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-4);
+}
+
+/* Eyebrow — Smallest uppercase label */
+.pcm-text-eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 4. COMPONENT STYLES
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* ─── Ambient Glow Blobs ─── */
+#pcm-root .pcm-glow {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(90px);
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform;
+}
+#pcm-root .pcm-glow-1 {
+  top: -20%; left: 35%; width: 680px; height: 680px;
+  background: radial-gradient(circle, #5e8df0 0%, rgba(94,141,240,0) 65%);
+  opacity: 0.75;
+}
+#pcm-root .pcm-glow-2 {
+  bottom: -25%; right: -5%; width: 560px; height: 560px;
+  background: radial-gradient(circle, #3d6fe0 0%, rgba(61,111,224,0) 65%);
+  opacity: 0.55;
+}
+#pcm-root .pcm-glow-3 {
+  top: 30%; left: -10%; width: 480px; height: 480px;
+  background: radial-gradient(circle, #9bb9ff 0%, rgba(155,185,255,0) 65%);
+  opacity: 0.6;
+}
+@media (max-width: 640px) {
+  #pcm-root .pcm-glow-1 { width: 440px; height: 440px; }
+  #pcm-root .pcm-glow-2 { width: 380px; height: 380px; }
+  #pcm-root .pcm-glow-3 { width: 340px; height: 340px; }
+}
+
+
+/* ─── Hero ─── */
+#pcm-root .pcm-hero-eyebrow {
+  font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-4);
+  margin-bottom: 14px;
+}
+#pcm-root .pcm-hero-title {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-style: italic; font-weight: 400;
+  font-size: 64px; letter-spacing: -0.02em;
+  margin: 14px 0 0; line-height: 1.0;
+  color: var(--ink);
+  max-width: 42rem;
+}
+#pcm-root .pcm-hero-subtitle {
+  margin: 18px 0 0; max-width: 580px;
+  font-size: 15.5px; color: var(--ink-2); line-height: 1.55;
+}
+
+
+/* ─── Toolbar ─── */
+.pcm-toolbar {
+  max-width: 1280px;
+  margin: 28px auto 22px;
+  padding: 0 22px;
+  position: sticky;
+  top: 48px;
+  z-index: 40;
+}
+.pcm-toolbar-inner {
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(255,255,255,0.62);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.7);
+  border-radius: 14px;
+  padding: 5px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.7) inset,
+    0 6px 20px rgba(35,18,8,0.05);
+}
+.pcm-toolbar-divider {
+  width: 1px; align-self: stretch;
+  background: rgba(0,0,0,0.07);
+  margin: 6px 8px;
+}
+.pcm-bar-divider {
+  width: 1px; height: 18px;
+  background: rgba(0,0,0,0.08);
+  flex-shrink: 0;
+}
+.pcm-toolbar-right {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 14px;
+  padding-left: 4px;
+}
+.pcm-context-group {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+
+
+/* ─── Filter Chips ─── */
+.pcm-client-review .pcm-filters {
+  display: inline-flex; gap: 2px;
+}
+.pcm-client-review .pcm-chip {
+  appearance: none; border: none; background: transparent;
+  font-family: inherit; font-size: 13.5px; font-weight: 500;
+  color: var(--ink-3); padding: 8px 14px; border-radius: 9px;
+  cursor: pointer; letter-spacing: -0.005em;
+  transition: background .15s ease, color .15s ease;
+}
+.pcm-client-review .pcm-chip:hover { color: var(--ink-2); background: rgba(0,0,0,0.035); }
+.pcm-client-review .pcm-chip.active {
+  background: white; color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.04);
+}
+.pcm-client-review .pcm-chip.active:hover { background: white; }
+
+
+/* ─── Progress ─── */
+.pcm-progress {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; color: var(--ink-3); font-weight: 500;
+  padding-left: 4px;
+}
+.pcm-progress-bar {
+  width: 88px; height: 3px;
+  background: rgba(0,0,0,0.08);
+  border-radius: 99px; overflow: hidden;
+}
+.pcm-progress-bar > div {
+  height: 100%; background: var(--ink);
+  border-radius: 99px;
+  transition: width .35s cubic-bezier(.4,0,.2,1);
+}
+
+
+/* ─── Status Pill ─── */
+.pcm-bar-status {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--ink-2); font-weight: 500;
+  letter-spacing: -0.005em;
+  padding: 7px 12px 7px 10px;
+  background: rgba(212,160,23,0.10);
+  border: 1px solid rgba(212,160,23,0.20);
+  border-radius: 99px;
+  white-space: nowrap;
+}
+.pcm-bar-status .dot {
+  width: 7px; height: 7px; border-radius: 99px;
+  background: #d4a017;
+  box-shadow: 0 0 0 3px rgba(212,160,23,0.18);
+  flex-shrink: 0;
+}
+.pcm-bar-status.is-approved {
+  background: rgba(24,169,87,0.10);
+  border-color: rgba(24,169,87,0.22);
+}
+.pcm-bar-status.is-approved .dot {
+  background: #18a957;
+  box-shadow: 0 0 0 3px rgba(24,169,87,0.18);
+}
+
+/* ─── Completed Badge ─── */
+.pcm-bar-completed {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600;
+  color: var(--approve);
+  background: var(--approve-soft);
+  padding: 6px 14px; border-radius: 99px;
+}
+
+
+/* ─── Deadline ─── */
+.pcm-bar-deadline {
+  font-size: 12.5px; color: var(--ink-3); font-weight: 500;
+  letter-spacing: -0.005em;
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 0 4px 0 8px;
+  white-space: nowrap;
+}
+.pcm-bar-deadline b { font-weight: 600; color: var(--ink-2); }
+.pcm-bar-deadline .countdown { color: var(--ink-4); }
+.pcm-bar-deadline.is-urgent b,
+.pcm-bar-deadline.is-urgent .countdown { color: #b8801a; }
+.pcm-bar-deadline.is-overdue b,
+.pcm-bar-deadline.is-overdue .countdown { color: #c2410c; }
+
+
+/* ─── Approve All Button ─── */
+.pcm-approve-all {
+  appearance: none; border: none; cursor: pointer;
+  color: white;
+  font-family: inherit; font-size: 14.5px; font-weight: 600;
+  padding: 8px 16px; border-radius: 9px;
+  letter-spacing: -0.005em;
+  background-color: var(--approve);
+  background-image: linear-gradient(105deg,
+    rgba(255,255,255,0) 35%,
+    rgba(255,255,255,0.32) 47%,
+    rgba(255,255,255,0.55) 50%,
+    rgba(255,255,255,0.32) 53%,
+    rgba(255,255,255,0) 65%
+  );
+  background-size: 250% 100%;
+  background-position: 220% 0;
+  background-repeat: no-repeat;
+  box-shadow: 0 1px 2px rgba(24,169,87,0.3), 0 2px 8px rgba(24,169,87,0.22);
+  transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease;
+  display: inline-flex; align-items: center; gap: 7px;
+  animation: approveShimmer 5.5s ease-in-out infinite;
+}
+.pcm-approve-all:hover {
+  background-color: #15974d;
+  box-shadow: 0 1px 2px rgba(24,169,87,0.35), 0 4px 12px rgba(24,169,87,0.3);
+}
+.pcm-approve-all:active { transform: translateY(1px); }
+@keyframes approveShimmer {
+  0%   { background-position: 220% 0; }
+  55%  { background-position: -120% 0; }
+  100% { background-position: -120% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pcm-approve-all { animation: none; }
+}
+
+
+/* ─── Confirm Submit Button ─── */
+.pcm-confirm-btn {
+  appearance: none; border: none; cursor: pointer;
+  color: white;
+  font-family: inherit; font-size: 14.5px; font-weight: 600;
+  padding: 8px 16px; border-radius: 9px;
+  letter-spacing: -0.005em;
+  background: #e5790a;
+  box-shadow: 0 1px 2px rgba(229,121,10,0.3), 0 2px 8px rgba(229,121,10,0.22), 0 0 0 2px rgba(229,121,10,0.35);
+  transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+  display: inline-flex; align-items: center; gap: 7px;
+  white-space: nowrap;
+  animation: confirmPulse 2s ease-in-out infinite;
+}
+.pcm-confirm-btn:hover {
+  background: #c2610a;
+  box-shadow: 0 1px 2px rgba(229,121,10,0.35), 0 4px 12px rgba(229,121,10,0.3), 0 0 0 2px rgba(229,121,10,0.45);
+}
+.pcm-confirm-btn:active { transform: translateY(1px); }
+.pcm-confirm-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+@keyframes confirmPulse {
+  0%, 100% { box-shadow: 0 1px 2px rgba(229,121,10,0.3), 0 2px 8px rgba(229,121,10,0.22), 0 0 0 2px rgba(229,121,10,0.35); }
+  50% { box-shadow: 0 1px 2px rgba(229,121,10,0.4), 0 4px 16px rgba(229,121,10,0.3), 0 0 0 4px rgba(229,121,10,0.2); }
+}
+
+
+/* ─── Grid ─── */
+.pcm-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+}
+@media (max-width: 1024px) { .pcm-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px)  { .pcm-grid { grid-template-columns: 1fr; } }
+
+
+/* ─── Cards ─── */
+.pcm-card {
+  position: relative;
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.75);
+  border-radius: 16px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.85) inset,
+    0 12px 28px rgba(50,30,15,0.06);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: transform .2s ease, box-shadow .25s ease;
+}
+.pcm-card.copy {
+  height: 400px;
+  transition: transform .2s ease, box-shadow .25s ease, height .3s ease;
+}
+.pcm-card.copy.expanded {
+  height: auto;
+}
+.pcm-card.copy.expanded .pcm-copy-body {
+  overflow: visible;
+}
+.pcm-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.85) inset,
+    0 18px 38px rgba(50,30,15,0.09);
+}
+
+
+/* ─── Card Media ─── */
+.pcm-card-media {
+  position: relative;
+  background: #efe7df; overflow: hidden;
+}
+.pcm-card-media img {
+  display: block; width: 100%; height: auto;
+  transition: transform .6s cubic-bezier(.2,.6,.2,1);
+}
+.pcm-card:hover .pcm-card-media img { transform: scale(1.03); }
+.pcm-card-media video {
+  display: block; width: 100%; height: auto;
+}
+
+
+/* ─── Badge ─── */
+.pcm-badge {
+  position: absolute; left: 10px; top: 10px;
+  background: rgba(0,0,0,0.55);
+  color: white;
+  padding: 4px 8px 4px 6px;
+  border-radius: 99px;
+  font-size: 10.5px; font-weight: 500;
+  letter-spacing: 0.02em;
+  display: inline-flex; align-items: center; gap: 4px;
+  backdrop-filter: blur(8px);
+}
+.pcm-badge svg { width: 10px; height: 10px; }
+
+
+/* ─── Duration ─── */
+.pcm-duration {
+  position: absolute; right: 10px; bottom: 10px;
+  background: rgba(0,0,0,0.6);
+  color: white;
+  padding: 2px 7px; border-radius: 5px;
+  font-size: 11px; font-weight: 500;
+  backdrop-filter: blur(8px);
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ─── Card Body ─── */
+.pcm-card-body {
+  padding: 12px 14px 0;
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+.pcm-typestrip {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10.5px; color: var(--ink-4); font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase;
+}
+.pcm-typestrip .dot { width: 3px; height: 3px; background: #c8bdb1; border-radius: 99px; }
+#pcm-root .pcm-card-title {
+  margin-top: 5px;
+  font-size: 14px; font-weight: 600;
+  letter-spacing: -0.012em; color: var(--ink);
+  line-height: 1.3;
+}
+
+
+/* ─── Copy Card Variant ─── */
+.pcm-card.copy .pcm-copy-body {
+  padding: 18px 18px 0;
+  flex: 1;
+  display: flex; flex-direction: column; gap: 9px;
+  overflow: hidden;
+}
+.pcm-copy-platform {
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-4);
+}
+.pcm-copy-headline {
+  font-size: 17px; font-weight: 600;
+  letter-spacing: -0.016em; color: var(--ink);
+  line-height: 1.22;
+}
+#pcm-root .pcm-copy-text {
+  font-size: 12.5px; color: var(--ink-2); line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* TiptapBodyEditor inside copy cards (inline edit mode) */
+#pcm-root .pcm-client-review .ProseMirror p {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  margin-bottom: 1rem;
+}
+#pcm-root .pcm-client-review .ProseMirror p:last-child {
+  margin-bottom: 0;
+}
+
+
+/* ─── Card Actions ─── */
+.pcm-card-actions {
+  margin-top: auto;
+  padding: 10px 12px;
+  display: flex; align-items: center; gap: 6px;
+  border-top: 1px solid rgba(0,0,0,0.05);
+}
+.pcm-btn {
+  appearance: none; border: none; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; font-weight: 500;
+  padding: 7px 12px; border-radius: 99px;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: background .15s ease, color .15s ease;
+  letter-spacing: -0.005em;
+}
+.pcm-btn-approve {
+  background: var(--ink); color: white;
+}
+.pcm-btn-approve:hover { background: #000; }
+.pcm-btn-comment {
+  background: transparent; color: var(--ink-2);
+}
+.pcm-btn-comment:hover { background: rgba(0,0,0,0.05); }
+.pcm-btn-download, .pcm-btn-copy {
+  background: rgba(0,0,0,0.05); color: var(--ink-2);
+}
+.pcm-btn-download:hover, .pcm-btn-copy:hover {
+  background: rgba(0,0,0,0.1); color: var(--ink);
+}
+.pcm-btn svg { width: 13px; height: 13px; }
+
+
+/* ─── Card Status ─── */
+.pcm-status {
+  margin-left: auto;
+  font-size: 11px; color: var(--ink-4); font-weight: 500;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.pcm-status .pulse {
+  width: 6px; height: 6px; background: #d8c8b0; border-radius: 99px;
+}
+
+
+/* ─── Approved State ─── */
+.pcm-card.approved {
+  border-color: var(--approve);
+  background: rgba(255,255,255,0.7) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.85) inset,
+    0 0 16px rgba(24,169,87,0.16),
+    0 12px 28px rgba(50,30,15,0.06);
+}
+.pcm-card.approved:hover {
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.85) inset,
+    0 0 22px rgba(24,169,87,0.26),
+    0 18px 38px rgba(50,30,15,0.09);
+}
+.pcm-card.approved .pcm-status { color: var(--approve); }
+.pcm-card.approved .pcm-status .pulse { background: var(--approve); }
+.pcm-card.approved .pcm-btn-approve {
+  background: var(--approve);
+}
+
+
+/* ─── Comment Count Badge ─── */
+.pcm-comment-badge {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  display: flex; align-items: center; gap: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.015);
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.pcm-comment-badge:hover { background: rgba(255,255,255,0.6); }
+.pcm-comment-badge svg { width: 14px; height: 14px; color: var(--ink-4); flex-shrink: 0; }
+.pcm-comment-badge .pcm-comment-badge-count { font-weight: 600; }
+.pcm-comment-badge .pcm-comment-badge-hint {
+  margin-left: auto;
+  font-size: 11px; color: var(--ink-4); font-weight: 500;
+}
+
+
+/* ─── Saving Overlay ─── */
+.pcm-saving-overlay {
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+  animation: pcmFadeIn .2s ease;
+  user-select: none;
+}
+.pcm-saving-pill {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 16px; border-radius: 99px;
+  background: rgba(255,255,255,0.95);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  border: 1px solid var(--line);
+}
+.pcm-saving-pill .pcm-saving-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid var(--ink-4);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: pcmSpin .6s linear infinite;
+}
+.pcm-saving-pill .pcm-saving-text {
+  font-size: 12px; font-weight: 600;
+  letter-spacing: -0.01em; color: var(--ink);
+}
+@keyframes pcmSpin { to { transform: rotate(360deg); } }
+
+
+/* ─── Autosave Status Indicator ─── */
+.pcm-autosave-indicator {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 500;
+  color: var(--ink-4);
+  user-select: none; flex-shrink: 0;
+  margin-right: 8px;
+  transition: all .2s ease;
+}
+.pcm-autosave-indicator.is-saving {
+  animation: pcmPulseOpacity 1.5s ease-in-out infinite;
+}
+.pcm-autosave-indicator svg { width: 12px; height: 12px; }
+.pcm-autosave-indicator .pcm-autosave-check { color: var(--approve); }
+@keyframes pcmPulseOpacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+
+/* ─── Empty State ─── */
+.pcm-empty-state {
+  width: 100%; text-align: center;
+  padding: 64px 24px;
+  background: rgba(255,255,255,0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  user-select: none;
+}
+.pcm-empty-state p {
+  font-size: 14px; font-weight: 600;
+  color: var(--ink-3);
+}
+
+
+/* ─── Image Lightbox ─── */
+.pcm-lightbox {
+  position: fixed; inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px;
+  cursor: zoom-out;
+  animation: pcmFadeIn .2s ease;
+}
+@keyframes pcmFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.pcm-lightbox-img {
+  max-width: 90vw; max-height: 85vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  cursor: default;
+}
+.pcm-lightbox-close {
+  position: absolute; top: 20px; right: 20px;
+  appearance: none; border: none;
+  background: rgba(255,255,255,0.15);
+  color: white;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background .15s ease;
+  backdrop-filter: blur(8px);
+}
+.pcm-lightbox-close:hover {
+  background: rgba(255,255,255,0.3);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * COMMENT INSPECTOR — Side drawer panel
+ * Uses the same --ink palette, font-family, and design tokens
+ * as the rest of the review page. NO inline styles needed.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Backdrop overlay */
+.pcm-inspector-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; justify-content: flex-end;
+  background: rgba(0,0,0,0.08);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Inherit the ink palette from .pcm-client-review */
+  --ink: #1d1d1f;
+  --ink-2: #4a4239;
+  --ink-3: #6f6a64;
+  --ink-4: #8a7d6d;
+  --line: rgba(0,0,0,0.06);
+}
+
+/* Drawer panel */
+.pcm-inspector-drawer {
+  width: 100%; max-width: 420px; height: 100%;
+  display: flex; flex-direction: column;
+  background: rgba(255,255,255,0.97);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border-left: 1px solid var(--line);
+  box-shadow: 0 0 50px rgba(0,0,0,0.1);
+  user-select: none;
+  transition: transform 0.3s ease-out;
+}
+
+/* Header section */
+.pcm-inspector-header {
+  padding: 20px; display: flex; flex-direction: column; gap: 16px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.pcm-inspector-header-row {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.pcm-inspector-title {
+  display: flex; align-items: center; gap: 8px;
+}
+.pcm-inspector-title svg {
+  width: 16px; height: 16px; color: var(--ink-3);
+}
+.pcm-inspector-title span {
+  font-weight: 600; font-size: 13px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--ink);
+}
+.pcm-inspector-count {
+  font-size: 11px; font-weight: 700; color: var(--ink-4);
+  background: rgba(0,0,0,0.04);
+  padding: 2px 7px; border-radius: 99px; margin-left: 4px;
+}
+.pcm-inspector-close {
+  appearance: none; border: none; background: transparent;
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-4); cursor: pointer;
+  transition: background 0.15s ease;
+}
+.pcm-inspector-close:hover { background: rgba(0,0,0,0.04); }
+.pcm-inspector-close svg { width: 16px; height: 16px; }
+
+/* Asset preview card */
+.pcm-inspector-preview {
+  padding: 12px; border-radius: 12px;
+  background: rgba(255,255,255,0.6);
+  border: 1px solid var(--line);
+  display: flex; align-items: center; gap: 12px;
+}
+.pcm-inspector-thumb {
+  width: 48px; height: 48px; border-radius: 8px;
+  overflow: hidden; flex-shrink: 0;
+  background: rgba(0,0,0,0.03);
+  border: 1px solid var(--line);
+}
+.pcm-inspector-thumb img,
+.pcm-inspector-thumb video {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.pcm-inspector-asset-type {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--ink-4);
+}
+.pcm-inspector-asset-name {
+  font-size: 13.5px; font-weight: 600; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: 2px;
+}
+
+/* Scrollable thread area */
+.pcm-inspector-thread {
+  flex: 1; overflow-y: auto;
+  padding: 20px; display: flex; flex-direction: column; gap: 12px;
+}
+
+/* Empty state */
+.pcm-inspector-empty {
+  height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  gap: 8px; padding: 80px 0;
+}
+.pcm-inspector-empty svg {
+  width: 32px; height: 32px; stroke-width: 1.5; color: rgba(0,0,0,0.1);
+}
+.pcm-inspector-empty-title {
+  font-size: 13px; font-weight: 600; color: var(--ink-4);
+}
+.pcm-inspector-empty-text {
+  font-size: 12px; color: var(--ink-4); opacity: 0.8;
+  max-width: 200px; line-height: 1.5;
+}
+
+/* Comment card */
+.pcm-comment {
+  padding: 14px; border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.8);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.pcm-comment.is-reply {
+  margin-left: 24px; margin-top: 8px;
+  border-color: rgba(0,0,0,0.04);
+  background: rgba(0,0,0,0.015);
+}
+.pcm-comment-header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.pcm-comment-author {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+}
+
+/* Status badge dropdown */
+.pcm-comment-status {
+  appearance: none; border: none; outline: none;
+  font-family: inherit;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 3px 10px; border-radius: 99px;
+  cursor: pointer; transition: all 0.15s ease;
+}
+.pcm-comment-status.is-new {
+  background: #eff6ff; color: #2563eb; border: 0.5px solid #bfdbfe;
+}
+.pcm-comment-status.is-team-reply {
+  background: #fffbeb; color: #d97706; border: 0.5px solid #fde68a;
+}
+.pcm-comment-status.is-done {
+  background: #f0fdf4; color: #16a34a; border: 0.5px solid #bbf7d0;
+}
+
+/* Comment body text */
+.pcm-comment-text {
+  font-size: 13.5px; line-height: 1.55; color: var(--ink-2);
+  word-break: break-word; white-space: pre-wrap;
+}
+
+/* Comment footer */
+.pcm-comment-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.03);
+}
+.pcm-comment-time {
+  font-size: 11.5px; font-weight: 500; color: var(--ink-4);
+}
+.pcm-comment-actions {
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* Reply button */
+.pcm-comment-reply-btn {
+  appearance: none; border: none; cursor: pointer;
+  font-family: inherit;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 99px;
+  font-size: 11.5px; font-weight: 600;
+  background: rgba(0,0,0,0.035); color: var(--ink-3);
+  border: 0.5px solid rgba(0,0,0,0.04);
+  transition: background 0.15s ease;
+}
+.pcm-comment-reply-btn:hover { background: rgba(0,0,0,0.06); }
+.pcm-comment-reply-btn:active { transform: scale(0.96); }
+.pcm-comment-reply-btn svg { width: 11px; height: 11px; }
+
+/* Delete button */
+.pcm-comment-delete-btn {
+  appearance: none; border: none; cursor: pointer;
+  background: transparent; color: rgba(0,0,0,0.15);
+  width: 20px; height: 20px; border-radius: 50%; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s ease;
+}
+.pcm-comment-delete-btn:hover { background: rgba(220,38,38,0.06); color: #dc2626; }
+.pcm-comment-delete-btn svg { width: 11px; height: 11px; }
+
+/* Composer area */
+.pcm-inspector-composer {
+  padding: 16px; flex-shrink: 0;
+  border-top: 1px solid var(--line);
+  background: rgba(255,255,255,0.5);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Reply-to indicator */
+.pcm-reply-indicator {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px; padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(37,99,235,0.06);
+  border: 1px solid rgba(37,99,235,0.12);
+  font-size: 11.5px;
+}
+.pcm-reply-indicator svg { width: 12px; height: 12px; color: rgba(37,99,235,0.5); flex-shrink: 0; }
+.pcm-reply-indicator-text {
+  font-weight: 500; color: rgba(37,99,235,0.8);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pcm-reply-indicator-text strong { font-weight: 700; }
+.pcm-reply-indicator-close {
+  appearance: none; border: none; background: transparent;
+  color: rgba(37,99,235,0.5); cursor: pointer; margin-left: auto; padding: 0;
+}
+.pcm-reply-indicator-close:hover { color: rgba(37,99,235,0.8); }
+.pcm-reply-indicator-close svg { width: 12px; height: 12px; }
+
+/* Input row */
+.pcm-inspector-input-row {
+  display: flex; gap: 8px;
+}
+.pcm-inspector-textarea {
+  flex: 1; resize: none; border-radius: 8px; padding: 10px;
+  font-family: inherit; font-size: 13px;
+  background: white; color: var(--ink);
+  border: 1px solid rgba(0,0,0,0.08);
+  outline: none; transition: border-color 0.15s ease;
+}
+.pcm-inspector-textarea:focus {
+  border-color: rgba(0,0,0,0.15);
+}
+.pcm-inspector-textarea::placeholder {
+  color: var(--ink-4); opacity: 0.7;
+}
+
+/* Send button */
+.pcm-inspector-send {
+  appearance: none; border: none; cursor: pointer;
+  align-self: flex-end;
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ink); color: white;
+  transition: background 0.15s ease;
+}
+.pcm-inspector-send:disabled {
+  background: rgba(0,0,0,0.12); cursor: not-allowed;
+}
+.pcm-inspector-send:not(:disabled):hover { background: #000; }
+.pcm-inspector-send svg { width: 14px; height: 14px; }
+
+/* Keyboard hint */
+.pcm-inspector-hint {
+  font-size: 10.5px; color: var(--ink-4);
+  text-align: right; margin-top: 6px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * STATE SCREENS — Loading, Error, Success
+ * Shared layout classes for the early-return fullscreen states.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Wrapper: fullscreen container with glow background */
+.pcm-state-wrapper {
+  display: flex; flex-direction: column;
+  min-height: 100vh;
+  background: #ffffff;
+  position: relative;
+  overflow-x: hidden;
+  color: var(--ink);
+  /* Client-facing typography foundation */
+  font-size: 16px;
+  line-height: 1.5;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Tokens (needed since state wrappers don't have .pcm-client-review parent) */
+  --ink: #1d1d1f;
+  --ink-2: #4a4239;
+  --ink-3: #6f6a64;
+  --ink-4: #8a7d6d;
+  --line: rgba(0,0,0,0.06);
+}
+
+/* Centered content area */
+.pcm-state-center {
+  flex: 1;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 24px; gap: 12px;
+  position: relative; z-index: 10;
+}
+
+/* Loading text */
+.pcm-state-text {
+  font-size: 13px; color: var(--ink-3);
+}
+
+/* Glassmorphism card (error + success) */
+.pcm-state-card {
+  max-width: 420px; width: 100%;
+  padding: 48px 36px;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.75);
+  box-shadow: 0 4px 24px rgba(35,18,8,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  text-align: center;
+}
+
+/* State heading (Instrument Serif) */
+.pcm-state-heading {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-size: 26px; font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 10px; line-height: 1.2;
+}
+
+/* State body text */
+.pcm-state-body {
+  font-size: 13px; line-height: 1.6;
+  color: var(--ink-3); margin: 0;
+}
+
+/* State icons */
+.pcm-state-icon {
+  width: 48px; height: 48px;
+  margin: 0 auto 16px;
+}
+.pcm-state-icon-error { color: #c2410c; }
+.pcm-state-icon-success { color: #18a957; width: 32px; height: 32px; margin: 0; }
+
+/* Success icon circle */
+.pcm-state-icon-circle {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: rgba(24,169,87,0.12);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 20px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * INLINE EDIT STYLES
+ * Used when team members double-click copy cards to edit text.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Tiptap editor wrapper in inline edit mode */
+.pcm-inline-editor {
+  background: transparent;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  font-weight: 400;
+  border: none; padding: 0;
+  outline: none;
+}
+
+/* Placeholder styling for input fields in edit mode */
+.pcm-client-review .pcm-edit-input {
+  width: 100%; background: transparent;
+  border: none; padding: 0;
+  outline: none;
+  font-family: inherit;
+}
+.pcm-client-review .pcm-edit-input:focus {
+  outline: none; box-shadow: none;
+}
+.pcm-client-review .pcm-edit-input::placeholder {
+  color: var(--ink-4); opacity: 0.5;
+}
+
+/* Copy card bottom section (headline + description area) */
+.pcm-copy-footer {
+  border-top: 1px solid rgba(0,0,0,0.04);
+  margin-top: auto;
+  padding-top: 14px; padding-bottom: 14px;
+}
