@@ -381,7 +381,7 @@
 
 
 /* ─── Approve All Button ─── */
-.pcm-approve-all {
+#pcm-root .pcm-approve-all {
   appearance: none; border: none; cursor: pointer;
   color: white;
   font-family: inherit; font-size: 14.5px; font-weight: 600;
@@ -403,23 +403,23 @@
   display: inline-flex; align-items: center; gap: 7px;
   animation: approveShimmer 5.5s ease-in-out infinite;
 }
-.pcm-approve-all:hover {
+#pcm-root .pcm-approve-all:hover {
   background-color: #15974d;
   box-shadow: 0 1px 2px rgba(24,169,87,0.35), 0 4px 12px rgba(24,169,87,0.3);
 }
-.pcm-approve-all:active { transform: translateY(1px); }
+#pcm-root .pcm-approve-all:active { transform: translateY(1px); }
 @keyframes approveShimmer {
   0%   { background-position: 220% 0; }
   55%  { background-position: -120% 0; }
   100% { background-position: -120% 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pcm-approve-all { animation: none; }
+  #pcm-root .pcm-approve-all { animation: none; }
 }
 
 
 /* ─── Confirm Submit Button ─── */
-.pcm-confirm-btn {
+#pcm-root .pcm-confirm-btn {
   appearance: none; border: none; cursor: pointer;
   color: white;
   font-family: inherit; font-size: 14.5px; font-weight: 600;
@@ -432,12 +432,12 @@
   white-space: nowrap;
   animation: confirmPulse 2s ease-in-out infinite;
 }
-.pcm-confirm-btn:hover {
+#pcm-root .pcm-confirm-btn:hover {
   background: #c2610a;
   box-shadow: 0 1px 2px rgba(229,121,10,0.35), 0 4px 12px rgba(229,121,10,0.3), 0 0 0 2px rgba(229,121,10,0.45);
 }
-.pcm-confirm-btn:active { transform: translateY(1px); }
-.pcm-confirm-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+#pcm-root .pcm-confirm-btn:active { transform: translateY(1px); }
+#pcm-root .pcm-confirm-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 @keyframes confirmPulse {
   0%, 100% { box-shadow: 0 1px 2px rgba(229,121,10,0.3), 0 2px 8px rgba(229,121,10,0.22), 0 0 0 2px rgba(229,121,10,0.35); }
   50% { box-shadow: 0 1px 2px rgba(229,121,10,0.4), 0 4px 16px rgba(229,121,10,0.3), 0 0 0 4px rgba(229,121,10,0.2); }

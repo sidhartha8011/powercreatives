@@ -91,7 +91,7 @@ export function ClientStatusToolbar({
       <div className="pcm-toolbar-inner">
         
         {/* Filters / Tabs */}
-        <div className="filters select-none" role="tablist">
+        <div className="pcm-filters select-none" role="tablist">
           {(['images', 'videos', 'copy'] as const)
             .filter((filter) => counts[filter] > 0)
             .map((filter) => {
@@ -109,7 +109,7 @@ export function ClientStatusToolbar({
                 role="tab"
                 aria-selected={isActive}
                 onClick={() => onFilterChange(isActive ? 'all' : filter)}
-                className={`chip cursor-pointer ${isActive ? 'active' : ''}`}
+                className={`pcm-chip cursor-pointer ${isActive ? 'active' : ''}`}
               >
                 {labelMap[filter]}
               </button>
