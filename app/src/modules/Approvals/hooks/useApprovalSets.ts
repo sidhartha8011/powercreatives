@@ -120,44 +120,40 @@ export function useApprovalSets(): UseApprovalSetsResult {
     [getPublicBoardUrl]
   );
 
-  // ── Status mutation with optimistic update ──
-  //
-  // No onSettled invalidate: that triggers an immediate refetch which
-  // races with @hello-pangea/dnd's in-flight drop animation, causing a
-  // visible flip-flop (card moves → snaps back → moves again) even on
-  // success. The optimistic update already mirrors the only field the
-  // server changes (status), so the cache is correct post-mutation.
-  // onError still rolls back if the server rejects; React Query's
-  // refetchOnWindowFocus / staleTime will reconcile any drift later.
-  const statusMutation = trpc.approvals.updateSetStatus.useMutation({
-    onMutate: async (vars: { id: number; status: ApprovalStatus }) => {
-      await queryClient.cancelQueries({ queryKey: LIST_QUERY_KEY });
+  // Plain server-call mutation. NO onMutate / onError / onSettled —
+  // optimistic update + rollback are driven synchronously in
+  // updateStatus below. React Query's internal execute() schedules
+  // onMutate on a microtask which is too late: @hello-pangea/dnd's
+  // onDragEnd has already returned, the library sees no state change
+  // in the same tick, and animates the card back to its source. By
+  // doing setQueryData directly in updateStatus we land the cache
+  // change in the same call stack as the drag handler — no revert.
+  const statusMutation = trpc.approvals.updateSetStatus.useMutation();
+
+  const updateStatus = useCallback(
+    (id: number, next: ApprovalStatus): Promise<void> => {
+      // Snapshot for rollback BEFORE we mutate the cache.
       const previous = queryClient.getQueryData<ApprovalSet[]>(LIST_QUERY_KEY);
 
+      // Synchronous optimistic update — same tick as DnD's onDragEnd.
       if (previous) {
         queryClient.setQueryData<ApprovalSet[]>(
           LIST_QUERY_KEY,
-          previous.map((s) => (s.id === vars.id ? { ...s, status: vars.status } : s))
+          previous.map((s) => (s.id === id ? { ...s, status: next } : s))
         );
       }
 
-      return { previous };
+      // Persist to server. Rollback only if the server rejects.
+      return statusMutation.mutateAsync({ id, status: next }).catch((err: unknown) => {
+        if (previous) {
+          queryClient.setQueryData(LIST_QUERY_KEY, previous);
+        }
+        const message = err instanceof Error ? err.message : 'Failed to move set';
+        toast.error(message);
+        throw err;
+      });
     },
-    onError: (err: unknown, _vars, context: unknown) => {
-      const ctx = context as { previous?: ApprovalSet[] } | undefined;
-      if (ctx?.previous) {
-        queryClient.setQueryData(LIST_QUERY_KEY, ctx.previous);
-      }
-      const message = err instanceof Error ? err.message : 'Failed to move set';
-      toast.error(message);
-    },
-  });
-
-  const updateStatus = useCallback(
-    async (id: number, next: ApprovalStatus): Promise<void> => {
-      await statusMutation.mutateAsync({ id, status: next });
-    },
-    [statusMutation]
+    [queryClient, statusMutation]
   );
 
   const [feedbackSet, setFeedbackSet] = useState<ApprovalSet | null>(null);
