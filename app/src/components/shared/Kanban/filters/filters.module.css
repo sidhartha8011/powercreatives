@@ -1,205 +1,86 @@
 /**
  * Kanban Filter Toolbar Styles
  *
- * CSS Modules — class names are hashed at build time, so the .trigger,
- * .popoverContent, etc. here will never collide with anything else.
+ * Only the layout + pill-trigger styling lives here. All popover, command,
+ * option, search, and dropdown chrome comes from shadcn (Popover, Command,
+ * CommandInput, CommandItem, etc.) and the shared theme.
  *
- * All values reference --pck-* custom properties from tokens.css. Override
- * by re-declaring on a parent .pck-root.
+ * If you find yourself adding popover-content / search-input / option-row
+ * styles back here, stop — shadcn already provides them.
  */
 
-/* ─── Trigger buttons (filter pills) ─── */
+/* ─── Trigger pills (filter + sort pill style) ─── */
 .trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
+  height: 28px;
   padding: 0 10px;
-  font-family: var(--pck-font-family);
   font-size: var(--pck-font-size-sm);
   font-weight: var(--pck-font-weight-mid);
-  color: var(--pck-text);
-  background: var(--pck-bg-chip);
-  border: 1px solid var(--pck-border);
   border-radius: var(--pck-radius-pill);
-  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast);
-  cursor: pointer;
-}
-
-.trigger:hover {
-  background: var(--pck-bg-chip-active);
+  gap: 6px;
 }
 
 .triggerActive {
-  background: var(--pck-bg-chip-active);
   border-color: var(--pck-border-focus);
   color: var(--pck-text-link);
 }
 
 .triggerLabel {
-  max-width: 220px;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.triggerIcon {
-  width: 13px;
-  height: 13px;
-  color: var(--pck-text-muted);
-}
-
-.triggerChevron {
-  width: 12px;
-  height: 12px;
-  color: var(--pck-text-muted);
-  margin-left: 2px;
-}
-
-/* ─── Popover ─── */
-.popoverContent {
-  width: 280px;
-  padding: 0;
-  background: var(--pck-bg-popover);
-  border: 1px solid var(--pck-border);
-  border-radius: var(--pck-radius-input);
-  box-shadow: var(--pck-shadow-popover);
-  font-family: var(--pck-font-family);
-  font-size: var(--pck-font-size-sm);
-  color: var(--pck-text);
-}
-
-/* ─── Search row inside popover ─── */
-.searchRow {
+/* ─── Toolbar layout ─── */
+.toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 0 10px 0;
+}
+
+.toolbarLeft {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--pck-border);
-}
-
-.searchIcon {
-  width: 13px;
-  height: 13px;
-  color: var(--pck-text-muted);
-  flex-shrink: 0;
-}
-
-.searchInput {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  font: inherit;
-  color: var(--pck-text);
-  padding: 0;
 }
 
-.searchInput::placeholder {
-  color: var(--pck-text-faint);
-}
-
-.searchInput::-webkit-search-cancel-button {
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-/* ─── Option list ─── */
-.optionList {
-  max-height: 260px;
-  overflow-y: auto;
-  padding: 4px;
-}
-
-.optionRow {
+.toolbarRight {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 0;
-  background: transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  color: var(--pck-text);
-  transition: background var(--pck-transition-fast);
+  margin-left: auto;
 }
 
-.optionRow:hover,
-.optionRow:focus-visible {
-  background: var(--pck-bg-chip);
-  outline: 0;
-}
-
-.optionRowActive {
-  background: var(--pck-bg-chip-active);
-}
-
-.optionCheckbox {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  pointer-events: none;
-}
-
-.optionLabel {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.optionCount {
-  font-size: 11px;
-  color: var(--pck-text-muted);
-  font-variant-numeric: tabular-nums;
-  background: var(--pck-bg-chip);
-  padding: 1px 6px;
-  border-radius: 999px;
-  flex-shrink: 0;
-}
-
-.optionCheck {
-  width: 13px;
-  height: 13px;
-  color: var(--pck-text-link);
-  flex-shrink: 0;
-}
-
-.optionEmpty {
-  padding: 16px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--pck-text-faint);
-}
-
-/* ─── Popover footer ─── */
-.popoverFooter {
-  padding: 6px 8px;
-  border-top: 1px solid var(--pck-border);
-  text-align: right;
-}
-
-.popoverFooterAction {
+.sortLabel {
   font-size: 11px;
   font-weight: var(--pck-font-weight-mid);
-  color: var(--pck-text-link);
-  background: transparent;
-  border: 0;
-  padding: 4px 6px;
-  cursor: pointer;
-  border-radius: 4px;
+  color: var(--pck-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.popoverFooterAction:hover {
+.clearAll {
+  font-size: 12px;
+  color: var(--pck-text-muted);
+  background: transparent;
+  border: 0;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color var(--pck-transition-fast), background var(--pck-transition-fast);
+}
+
+.clearAll:hover {
+  color: var(--pck-text);
   background: var(--pck-bg-chip);
 }
 
-/* ─── Date range body ─── */
+/* ─── DateRange body (no shadcn equivalent for a two-input range layout) ─── */
 .dateRangeBody {
   display: flex;
   flex-direction: column;
@@ -231,12 +112,12 @@
   color: var(--pck-text);
 }
 
-/* ─── Text control (inline, not in popover) ─── */
+/* ─── Text control (inline search box, not in popover) ─── */
 .textControl {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
+  height: 28px;
   padding: 0 10px;
   background: var(--pck-bg-chip);
   border: 1px solid var(--pck-border);
@@ -290,58 +171,8 @@
   color: var(--pck-text);
 }
 
-/* ─── Toolbar layout ─── */
-.toolbar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 0 12px 0;
-}
-
-.toolbarLeft {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-}
-
-.toolbarRight {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
-.sortLabel {
-  font-size: 11px;
-  font-weight: var(--pck-font-weight-mid);
-  color: var(--pck-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.clearAll {
-  font-size: 12px;
-  color: var(--pck-text-muted);
-  background: transparent;
-  border: 0;
-  padding: 4px 8px;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: color var(--pck-transition-fast), background var(--pck-transition-fast);
-}
-
-.clearAll:hover {
-  color: var(--pck-text);
-  background: var(--pck-bg-chip);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .trigger,
-  .optionRow,
   .textControl,
   .clearAll {
     transition: none;

@@ -558,6 +558,11 @@ const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `approvals/sets/${input.token}/assets/${input.assetId}`, body: input }),
     },
+    "approvals.updateSetStatus": {
+        endpoint: "approvals/sets",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `approvals/sets/${input.id}/status`, body: { status: input.status } }),
+    },
 };
 
 // ============================================

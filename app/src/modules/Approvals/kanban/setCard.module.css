@@ -11,22 +11,27 @@
 .card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: 2px;
+  padding: 6px 10px;
+  cursor: pointer;
+  outline: none;
 }
 
-/* Line 1 — primary title (brand / set name) */
+.card:focus-visible {
+  box-shadow: 0 0 0 2px var(--pck-border-focus);
+  border-radius: var(--pck-radius-card);
+}
+
+/* Line 1 — primary title (brand / set name). Dark, not link-blue. */
 .title {
   font-family: var(--pck-font-family);
   font-size: var(--pck-font-size-card);
-  font-weight: var(--pck-font-weight-mid);
-  color: var(--pck-text-link);
-  line-height: 1.3;
+  font-weight: var(--pck-font-weight-semi);
+  color: var(--pck-text);
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
 }
 
 .titleBrand {
@@ -74,14 +79,19 @@
 .actions {
   display: flex;
   align-items: center;
-  gap: 2px;
-  margin-top: 6px;
+  gap: 0;
+  margin-top: 2px;
+  margin-left: -4px;
+  height: 0;
+  overflow: hidden;
   opacity: 0;
-  transition: opacity var(--pck-transition-fast);
+  transition: opacity var(--pck-transition-fast), height var(--pck-transition-fast), margin-top var(--pck-transition-fast);
 }
 
 .card:hover .actions,
 .card:focus-within .actions {
+  height: 22px;
+  margin-top: 4px;
   opacity: 1;
 }
 

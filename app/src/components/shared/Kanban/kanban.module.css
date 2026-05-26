@@ -71,6 +71,19 @@
   display: flex;
   flex-direction: column;
   gap: var(--pck-gap-column);
+  min-height: 24px;
+  border-radius: var(--pck-radius-card);
+  transition: background var(--pck-transition-fast);
+}
+
+/* Highlight a column while a card is being dragged over it. */
+.columnListOver {
+  background: var(--pck-bg-chip);
+}
+
+/* Card while being dragged — lift it visually. */
+.cardWrapDragging {
+  box-shadow: 0 8px 18px rgba(15, 15, 15, 0.18);
 }
 
 .columnEmpty {

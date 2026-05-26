@@ -5,8 +5,8 @@
 .card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: 2px;
+  padding: 6px 10px;
 }
 
 .title {
@@ -14,12 +14,10 @@
   font-size: var(--pck-font-size-card);
   font-weight: var(--pck-font-weight-mid);
   color: var(--pck-text);
-  line-height: 1.3;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
 }
 
 .meta {

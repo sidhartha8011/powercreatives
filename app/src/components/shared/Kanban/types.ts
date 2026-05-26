@@ -46,10 +46,26 @@ export interface RenderCardContext {
 }
 
 /**
+ * Result of a drag-and-drop operation. Identifiers always match what the
+ * consumer supplied: item.id (stringified) and KanbanColumn.id.
+ */
+export interface KanbanMoveEvent {
+  itemId: string;
+  fromColumnId: string;
+  toColumnId: string;
+  fromIndex: number;
+  toIndex: number;
+}
+
+/**
  * Props for <KanbanBoard>. Empty/loading/error states are required props on
  * the contract — consumers cannot accidentally ship an undefined empty UI.
  * Defaults are exported separately (DefaultEmptyState, DefaultLoadingState,
  * DefaultErrorState) so simple consumers can pass them through.
+ *
+ * Drag-and-drop is opt-in: pass `onItemMove` to enable. The board wires
+ * @hello-pangea/dnd transparently. Without the callback, cards render
+ * statically with no drag overhead.
  */
 export interface KanbanBoardProps<T extends { id: string | number }> {
   columns: ReadonlyArray<KanbanColumn>;
@@ -68,6 +84,12 @@ export interface KanbanBoardProps<T extends { id: string | number }> {
   loadingState?: ReactNode;
   /** Override the default error UI. */
   errorState?: (err: Error) => ReactNode;
+
+  /**
+   * Optional drag-and-drop handler. Pass to enable column-to-column moves.
+   * Called only when the drop destination differs from the origin.
+   */
+  onItemMove?: (event: KanbanMoveEvent) => void;
 
   className?: string;
   style?: CSSProperties;

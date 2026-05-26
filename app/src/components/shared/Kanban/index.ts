@@ -12,6 +12,7 @@ export {
   KANBAN_CONTRACT_VERSION,
   type KanbanBoardProps,
   type KanbanColumn,
+  type KanbanMoveEvent,
   type RenderCardContext,
 } from './types';
 

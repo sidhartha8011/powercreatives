@@ -1,14 +1,15 @@
 /**
- * DateRange filter control — popover with two native date inputs.
+ * DateRange filter control — shadcn Popover with two native date inputs.
  *
- * Uses native <input type="date"> rather than a calendar picker to stay
- * dependency-free and keyboard-friendly. Consumers wanting a fancy calendar
- * can swap in their own control by extending the registry.
+ * Native <input type="date"> chosen over a fancy calendar to stay light and
+ * keyboard-first. The popover chrome (bg, border, shadow) comes from the
+ * shared shadcn theme.
  */
 
 import { useState } from 'react';
-import { CalendarRange, ChevronDown } from 'lucide-react';
+import { CalendarRange, ChevronsUpDown } from 'lucide-react';
 
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
@@ -36,9 +37,7 @@ export function DateRangeControl({
   const [open, setOpen] = useState(false);
 
   const active = Boolean(from || to);
-  const summary = !active
-    ? label
-    : `${label}: ${from ?? '…'} → ${to ?? '…'}`;
+  const summary = !active ? label : `${label}: ${from ?? '…'} → ${to ?? '…'}`;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -47,22 +46,18 @@ export function DateRangeControl({
           type="button"
           variant="outline"
           size="sm"
-          aria-label={ariaLabel ?? label}
-          aria-haspopup="dialog"
+          role="combobox"
           aria-expanded={open}
-          className={`${styles.trigger} ${active ? styles.triggerActive : ''}`}
+          aria-label={ariaLabel ?? label}
+          className={cn(styles.trigger, active && styles.triggerActive)}
         >
-          <CalendarRange className={styles.triggerIcon} aria-hidden="true" />
+          <CalendarRange className="h-3 w-3 opacity-60 shrink-0" aria-hidden="true" />
           <span className={styles.triggerLabel}>{summary}</span>
-          <ChevronDown className={styles.triggerChevron} aria-hidden="true" />
+          <ChevronsUpDown className="h-3 w-3 opacity-60 shrink-0" aria-hidden="true" />
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent
-        align="start"
-        sideOffset={6}
-        className={styles.popoverContent}
-      >
+      <PopoverContent className="p-0 w-[240px]" align="start">
         <div className={styles.dateRangeBody}>
           <label className={styles.dateRangeField}>
             <span className={styles.dateRangeLabel}>From</span>
@@ -85,11 +80,11 @@ export function DateRangeControl({
         </div>
 
         {active && (
-          <div className={styles.popoverFooter}>
+          <div className="border-t px-2 py-1.5 text-right">
             <button
               type="button"
               onClick={() => onChange({ from: undefined, to: undefined })}
-              className={styles.popoverFooterAction}
+              className="text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded"
             >
               Clear range
             </button>

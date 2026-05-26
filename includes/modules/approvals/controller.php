@@ -61,11 +61,12 @@ class PCM_REST_Approvals extends PCM_REST_Base
     protected function routes(): array
     {
         return array(
-            array('GET',  '/approvals/sets',                          'list_sets',           array(), 'read'),
-            array('POST', '/approvals/sets',                          'create_set',          array(), 'edit_posts'),
-            array('GET',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)', 'get_public_set',      array(), 'public'),
-            array('POST', '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/review', 'submit_public_review', array(), 'public'),
-            array('POST', '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/assets/(?P<asset_id>[a-zA-Z0-9_-]+)', 'update_snapshot_asset', array(), 'public'),
+            array('GET',   '/approvals/sets',                          'list_sets',           array(), 'read'),
+            array('POST',  '/approvals/sets',                          'create_set',          array(), 'edit_posts'),
+            array('PATCH', '/approvals/sets/(?P<id>\d+)/status',       'update_set_status',   array(), 'edit_posts'),
+            array('GET',   '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)', 'get_public_set',      array(), 'public'),
+            array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/review', 'submit_public_review', array(), 'public'),
+            array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/assets/(?P<asset_id>[a-zA-Z0-9_-]+)', 'update_snapshot_asset', array(), 'public'),
         );
     }
 
@@ -118,6 +119,40 @@ class PCM_REST_Approvals extends PCM_REST_Base
             return $this->success($set, 201);
         } catch (\Throwable $e) {
             return $this->error('Failed to create approval set: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Update an approval set's status (internal team operation).
+     *
+     * PATCH /approvals/sets/{id}/status  body: { status: <one of STATUSES> }
+     */
+    public function update_set_status(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $id       = (int)$request->get_param('id');
+        $params   = $request->get_json_params();
+        $next     = isset($params['status']) ? sanitize_text_field($params['status']) : '';
+
+        if ($id <= 0 || $next === '') {
+            return $this->error('Set id and status are required.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        if (!in_array($next, PCM_Approvals_Service::STATUSES, true)) {
+            return $this->error('Invalid status: ' . $next);
+        }
+
+        try {
+            $ok = PCM_Approvals_Service::update_status($id, (int)$pcm_user->id, $next);
+            if (!$ok) {
+                return $this->error('Set not found or not owned by this user.', 404);
+            }
+            $set = PCM_Approvals_Service::get_set_by_id($id, (int)$pcm_user->id);
+            return $this->success($set);
+        } catch (\Throwable $e) {
+            return $this->error('Failed to update set status: ' . $e->getMessage(), 500);
         }
     }
 

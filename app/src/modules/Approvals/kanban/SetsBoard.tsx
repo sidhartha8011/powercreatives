@@ -1,10 +1,11 @@
 /**
- * SetsBoard — thin orchestrator that wires
- *   useApprovalSets (data)  +  setColumns / setFilters / setSorts
- *   (declarations)          +  KanbanToolbar + KanbanBoard (chrome).
+ * SetsBoard — thin orchestrator wiring
+ *   useApprovalSets (data + mutations)  +  setColumns / setFilters /
+ *   setSorts (declarations)             +  KanbanToolbar + KanbanBoard
+ *   (chrome + DnD).
  *
- * Holds no domain logic of its own. Adding a new column / filter / sort
- * happens in the declaration files — this orchestrator does not change.
+ * Handles drag-and-drop column moves by translating a KanbanMoveEvent
+ * into a status mutation. Optimistic update lives in the hook.
  */
 
 import { useCallback, type ReactNode } from 'react';
@@ -15,6 +16,7 @@ import {
   KanbanBoard,
   KanbanToolbar,
   useListState,
+  type KanbanMoveEvent,
 } from '@/components/shared/Kanban';
 
 import { FeedbackDialog } from './FeedbackDialog';
@@ -23,11 +25,15 @@ import { setColumns } from './setColumns';
 import { setFilters } from './setFilters';
 import { DEFAULT_SET_SORT, setSorts } from './setSorts';
 import { useApprovalSets } from '../hooks/useApprovalSets';
-import type { ApprovalSet } from '../types';
+import { APPROVAL_STATUSES, type ApprovalSet, type ApprovalStatus } from '../types';
 
 export interface SetsBoardProps {
   /** Optional content rendered at the start of the toolbar row. */
   toolbarLeadingSlot?: ReactNode;
+}
+
+function isApprovalStatus(value: string): value is ApprovalStatus {
+  return (APPROVAL_STATUSES as ReadonlyArray<string>).includes(value);
 }
 
 export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
@@ -37,6 +43,7 @@ export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
     error,
     copyShareLink,
     getPublicBoardUrl,
+    updateStatus,
     feedbackSet,
     openFeedback,
     closeFeedback,
@@ -47,8 +54,8 @@ export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
     defaultSortId: DEFAULT_SET_SORT,
   });
 
-  // Stable identity — KanbanBoard memoizes grouping on these refs.
   const getColumnId = useCallback((set: ApprovalSet) => set.status, []);
+
   const renderCard = useCallback(
     (set: ApprovalSet) => (
       <SetCard
@@ -59,6 +66,16 @@ export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
       />
     ),
     [getPublicBoardUrl, copyShareLink, openFeedback]
+  );
+
+  const handleMove = useCallback(
+    (event: KanbanMoveEvent) => {
+      if (!isApprovalStatus(event.toColumnId)) return;
+      const id = Number(event.itemId);
+      if (!Number.isFinite(id)) return;
+      void updateStatus(id, event.toColumnId);
+    },
+    [updateStatus]
   );
 
   return (
@@ -78,6 +95,7 @@ export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
           items={listState.filteredItems}
           getColumnId={getColumnId}
           renderCard={renderCard}
+          onItemMove={handleMove}
           isLoading={isLoading}
           error={error}
           ariaLabel="Approval sets pipeline"

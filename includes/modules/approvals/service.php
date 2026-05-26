@@ -127,6 +127,39 @@ class PCM_Approvals_Service
     }
 
     /**
+     * Update an approval set's status (internal team operation).
+     *
+     * Validates the new status against the canonical taxonomy. Ownership
+     * is enforced via wpdb update WHERE userId — a user cannot touch
+     * another user's sets.
+     *
+     * @return bool True on success, false if validation/ownership fails.
+     */
+    public static function update_status(int $id, int $user_id, string $next_status): bool
+    {
+        if (!in_array($next_status, self::STATUSES, true)) {
+            return false;
+        }
+
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->update(
+            $table,
+            array(
+                'status'    => $next_status,
+                'updatedAt' => current_time('mysql'),
+            ),
+            array('id' => $id, 'userId' => $user_id),
+            array('%s', '%s'),
+            array('%d', '%d')
+        );
+
+        return $rows !== false && $rows > 0;
+    }
+
+    /**
      * Submit client feedback, lock set, and dispatch outbound webhook.
      */
     public static function submit_review(string $token, string $client_name, array $feedback): bool

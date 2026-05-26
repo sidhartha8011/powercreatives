@@ -1,16 +1,20 @@
 /**
  * SetCard — Notion-style card body for a single approval set.
  *
- * Renders inside the shared Kanban card wrapper (border / hover etc.
- * provided by KanbanBoard). Holds two text lines (brand · set name,
- * metadata) plus a hover-revealed action row (copy link, preview,
- * view feedback).
+ * Interaction model:
+ *   - Click the card        → opens the public preview link in a new tab.
+ *   - Drag the card         → triggers a column-to-column move (handled by
+ *                             the board + onItemMove callback).
+ *   - Click an action chip  → runs that action (stopPropagation prevents
+ *                             the card's onClick from also firing).
  *
- * Pure presentational. All side effects come through props.
+ * @hello-pangea/dnd distinguishes click from drag automatically by mouse
+ * movement threshold, so onClick on the card body Just Works alongside the
+ * drag handle props the board spreads on the wrapper.
  */
 
-import { useMemo } from 'react';
-import { Copy, ExternalLink, MessageSquare } from 'lucide-react';
+import { useCallback, useMemo, type KeyboardEvent, type MouseEvent } from 'react';
+import { Copy, MessageSquare } from 'lucide-react';
 
 import type { ApprovalSet } from '../types';
 
@@ -18,11 +22,8 @@ import styles from './setCard.module.css';
 
 export interface SetCardProps {
   set: ApprovalSet;
-  /** Build the public review URL (from useApprovalSets). */
   getPublicBoardUrl: (token: string) => string;
-  /** Copy the public URL to clipboard with a toast. */
   onCopyLink: (token: string) => void;
-  /** Open the feedback dialog for this set. */
   onOpenFeedback: (set: ApprovalSet) => void;
 }
 
@@ -51,13 +52,42 @@ export function SetCard({
   onOpenFeedback,
 }: SetCardProps) {
   const progress = useMemo(() => summarize(set), [set]);
-  const previewUrl = useMemo(() => getPublicBoardUrl(set.token), [getPublicBoardUrl, set.token]);
+  const previewUrl = useMemo(
+    () => getPublicBoardUrl(set.token),
+    [getPublicBoardUrl, set.token]
+  );
+
+  const openPreview = useCallback(() => {
+    window.open(previewUrl, '_blank', 'noopener,noreferrer');
+  }, [previewUrl]);
+
+  // Card-wide click → preview. Keyboard equivalent via Enter / Space.
+  const handleCardClick = useCallback(() => openPreview(), [openPreview]);
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openPreview();
+      }
+    },
+    [openPreview]
+  );
+
+  // Action chips must not trigger the card-wide click.
+  const stop = useCallback((e: MouseEvent) => e.stopPropagation(), []);
 
   const brand = set.snapshot.brandName?.trim();
   const project = set.snapshot.projectName?.trim();
 
   return (
-    <article className={styles.card}>
+    <article
+      className={styles.card}
+      role="link"
+      tabIndex={0}
+      aria-label={`Open preview for ${set.name}`}
+      onClick={handleCardClick}
+      onKeyDown={handleKeyDown}
+    >
       <div className={styles.title}>
         {brand ? (
           <>
@@ -96,29 +126,18 @@ export function SetCard({
         <button
           type="button"
           className={styles.actionBtn}
-          onClick={() => onCopyLink(set.token)}
+          onClick={(e) => { stop(e); onCopyLink(set.token); }}
           aria-label="Copy client link"
         >
           <Copy className={styles.actionIcon} aria-hidden="true" />
           Copy link
         </button>
 
-        <a
-          href={previewUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={styles.actionBtn}
-          aria-label="Open public preview"
-        >
-          <ExternalLink className={styles.actionIcon} aria-hidden="true" />
-          Preview
-        </a>
-
         {progress.feedbackCount > 0 && (
           <button
             type="button"
             className={styles.actionBtn}
-            onClick={() => onOpenFeedback(set)}
+            onClick={(e) => { stop(e); onOpenFeedback(set); }}
             aria-label="View client feedback"
           >
             <MessageSquare className={styles.actionIcon} aria-hidden="true" />
