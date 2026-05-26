@@ -9,37 +9,33 @@
  * styles back here, stop — shadcn already provides them.
  */
 
-/* ─── Trigger pills inside the connected panel ───
+/* ─── Trigger (ghost text + chevron, sits in slim header strip) ───
  *
- * Each trigger is a WHITE pill that sits on the panel's warm-gray surface.
- * The color contrast is what makes them visibly interactive — without it,
- * triggers and panel would render as the same flat surface and the user
- * cannot tell what's a button. Subtle 1px lane-border seals the chip's
- * edge against the panel.
+ * No background, no border, no shadow at rest. Hover reveals a subtle
+ * chip bg so the cursor target is clear. Active state turns the label
+ * blue so applied filters are visible at a glance.
  */
 .trigger {
-  height: 28px;
-  padding: 0 12px;
+  height: 26px;
+  padding: 0 8px;
   font-size: var(--pck-font-size-sm);
   font-weight: var(--pck-font-weight-mid);
-  border-radius: var(--pck-radius-pill);
+  border-radius: var(--pck-radius-sm);
   gap: 6px;
-  background: var(--pck-bg-card);
-  border: 1px solid var(--pck-lane-border);
-  box-shadow: var(--pck-shadow-card);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   color: var(--pck-text);
-  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast), box-shadow var(--pck-transition-fast);
+  transition: background var(--pck-transition-fast), color var(--pck-transition-fast);
 }
 
 .trigger:hover {
-  background: var(--pck-bg-card-hover);
-  border-color: var(--pck-border-strong);
+  background: var(--pck-bg-chip);
 }
 
-/* Active state — selection applied. Blue tint signals "filter committed". */
+/* Active state — selection applied. Blue label signals "filter committed". */
 .triggerActive {
   color: var(--pck-text-link);
-  border-color: var(--pck-border-focus);
   background: var(--pck-bg-chip-active);
 }
 
@@ -50,26 +46,23 @@
   white-space: nowrap;
 }
 
-/* ─── Toolbar = connected pill panel ───
+/* ─── Toolbar = slim header strip ───
  *
- * The panel uses the page-gray surface so the white trigger pills above
- * it pop with clear contrast. Lane-border 1px gives the panel a defined
- * edge. High border-radius (999px) forms one continuous pill silhouette.
- *
- * Sort sits on the right, separated by a 1px divider matching the panel
- * border. Filters left, sort right, all read as one control.
+ * Edge-to-edge horizontal row with a 1px hairline border-bottom that
+ * separates the header zone from the board zone. Filters left, sort
+ * pushed right via margin-left:auto on .toolbarRight.
  */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 6px;
-  margin-bottom: 10px;
-  background: var(--pck-bg-page);
-  border: 1px solid var(--pck-lane-border);
-  border-radius: var(--pck-radius-pill);
-  width: fit-content;
-  max-width: 100%;
+  padding: 6px 0;
+  margin-bottom: 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--pck-lane-border);
+  border-radius: 0;
+  width: 100%;
 }
 
 .toolbarLeft {
@@ -84,9 +77,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: 6px;
-  padding-left: 10px;
-  border-left: 1px solid var(--pck-lane-border);
+  margin-left: auto;
 }
 
 .sortLabel {

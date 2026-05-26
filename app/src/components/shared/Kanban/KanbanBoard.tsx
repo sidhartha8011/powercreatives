@@ -169,9 +169,6 @@ function KanbanColumn<T extends { id: string | number }>({
             aria-hidden="true"
           />
         )}
-        <span className={styles.columnHeaderCount} aria-hidden="true">
-          {items.length}
-        </span>
       </span>
     </header>
   );

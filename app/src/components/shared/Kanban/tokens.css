@@ -40,12 +40,12 @@
   --pck-color-danger:     #d97706;
 
   /* ── Spacing ── */
-  --pck-gap-board:        10px;
+  --pck-gap-board:        14px;
   --pck-gap-column:       3px;
   --pck-pad-column:       6px;
 
   /* ── Radii ── */
-  --pck-radius-sm:        4px;
+  --pck-radius-sm:        6px;
   --pck-radius-card:      8px;
   --pck-radius-column:    10px;
   --pck-radius-pill:      999px;

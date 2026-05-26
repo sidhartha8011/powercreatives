@@ -31,7 +31,7 @@ export function ApprovalsModule() {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col p-4" style={{ background: '#f8f8f7' }}>
       <div className="flex items-center justify-between mb-4 shrink-0">
         <div className="flex items-center gap-2">
           <KanbanSquare className="w-5 h-5" style={{ color: colors.primary }} />

@@ -183,47 +183,8 @@ class PCM_Approvals_Service
         $sanitized_feedback = array(
             'approvedVisualIds' => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
             'approvedCopyIds'   => array_map('sanitize_text_field', $feedback['approvedCopyIds'] ?? array()),
-            'comments'          => array(),
+            'comments'          => self::sanitize_comment_threads($feedback['comments'] ?? array(), $client_name),
         );
-
-        // Sanitize threaded comments (array-of-objects per asset ID)
-        if (!empty($feedback['comments']) && is_array($feedback['comments'])) {
-            foreach ($feedback['comments'] as $itemId => $threadArray) {
-                $sanitized_item_id = sanitize_text_field($itemId);
-
-                if (is_string($threadArray)) {
-                    // Legacy: single string → convert to single-entry array
-                    $sanitized_feedback['comments'][$sanitized_item_id] = array(
-                        array(
-                            'id'        => wp_generate_uuid4(),
-                            'author'    => $client_name,
-                            'text'      => sanitize_textarea_field($threadArray),
-                            'createdAt' => current_time('c'),
-                            'status'    => 'New',
-                            'parentId'  => null,
-                        ),
-                    );
-                } elseif (is_array($threadArray)) {
-                    $sanitized_thread = array();
-                    foreach ($threadArray as $entry) {
-                        if (!is_array($entry) || empty($entry['text'])) {
-                            continue;
-                        }
-                        $sanitized_thread[] = array(
-                            'id'        => sanitize_text_field($entry['id'] ?? wp_generate_uuid4()),
-                            'author'    => sanitize_text_field($entry['author'] ?? $client_name),
-                            'text'      => sanitize_textarea_field($entry['text']),
-                            'createdAt' => sanitize_text_field($entry['createdAt'] ?? current_time('c')),
-                            'status'    => sanitize_text_field($entry['status'] ?? 'New'),
-                            'parentId'  => isset($entry['parentId']) ? sanitize_text_field($entry['parentId']) : null,
-                        );
-                    }
-                    if (!empty($sanitized_thread)) {
-                        $sanitized_feedback['comments'][$sanitized_item_id] = $sanitized_thread;
-                    }
-                }
-            }
-        }
 
         // Client review submission auto-advances the set to 'create' (next
         // workflow step — campaign creation). History:
@@ -273,49 +234,8 @@ class PCM_Approvals_Service
         $sanitized_feedback = array(
             'approvedVisualIds' => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
             'approvedCopyIds'   => array_map('sanitize_text_field', $feedback['approvedCopyIds'] ?? array()),
-            'comments'          => array(),
+            'comments'          => self::sanitize_comment_threads($feedback['comments'] ?? array(), 'Client'),
         );
-
-        // Sanitize threaded comments (array-of-objects per asset ID)
-        if (!empty($feedback['comments']) && is_array($feedback['comments'])) {
-            foreach ($feedback['comments'] as $itemId => $threadArray) {
-                $sanitized_item_id = sanitize_text_field($itemId);
-
-                // Support both legacy string format and new array format
-                if (is_string($threadArray)) {
-                    // Legacy: single string → convert to array with one entry
-                    $sanitized_feedback['comments'][$sanitized_item_id] = array(
-                        array(
-                            'id'        => wp_generate_uuid4(),
-                            'author'    => 'Client',
-                            'text'      => sanitize_textarea_field($threadArray),
-                            'createdAt' => current_time('c'),
-                            'status'    => 'New',
-                            'parentId'  => null,
-                        ),
-                    );
-                } elseif (is_array($threadArray)) {
-                    // New format: array of comment objects
-                    $sanitized_thread = array();
-                    foreach ($threadArray as $entry) {
-                        if (!is_array($entry) || empty($entry['text'])) {
-                            continue;
-                        }
-                        $sanitized_thread[] = array(
-                            'id'        => sanitize_text_field($entry['id'] ?? wp_generate_uuid4()),
-                            'author'    => sanitize_text_field($entry['author'] ?? 'Client'),
-                            'text'      => sanitize_textarea_field($entry['text']),
-                            'createdAt' => sanitize_text_field($entry['createdAt'] ?? current_time('c')),
-                            'status'    => sanitize_text_field($entry['status'] ?? 'New'),
-                            'parentId'  => isset($entry['parentId']) ? sanitize_text_field($entry['parentId']) : null,
-                        );
-                    }
-                    if (!empty($sanitized_thread)) {
-                        $sanitized_feedback['comments'][$sanitized_item_id] = $sanitized_thread;
-                    }
-                }
-            }
-        }
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $success = $wpdb->update(
@@ -328,6 +248,65 @@ class PCM_Approvals_Service
         );
 
         return $success !== false;
+    }
+
+    /**
+     * Sanitize comment threads for storage.
+     *
+     * Handles both legacy string-per-asset format and new array-of-objects.
+     * Validates comment status against whitelist to prevent arbitrary values.
+     *
+     * @param array  $comments       Raw comments keyed by asset ID.
+     * @param string $default_author Fallback author name for legacy entries.
+     * @return array Sanitized comments keyed by asset ID.
+     */
+    private static function sanitize_comment_threads(array $comments, string $default_author): array
+    {
+        /** Valid statuses for individual comment entries */
+        $allowed_statuses = array('New', 'Team reply', 'Done');
+        $sanitized = array();
+
+        foreach ($comments as $item_id => $thread_array) {
+            $safe_id = sanitize_text_field($item_id);
+
+            if (is_string($thread_array)) {
+                // Legacy: single string → convert to single-entry array
+                $sanitized[$safe_id] = array(
+                    array(
+                        'id'        => wp_generate_uuid4(),
+                        'author'    => $default_author,
+                        'text'      => sanitize_textarea_field($thread_array),
+                        'createdAt' => current_time('c'),
+                        'status'    => 'New',
+                        'parentId'  => null,
+                    ),
+                );
+            } elseif (is_array($thread_array)) {
+                $safe_thread = array();
+                foreach ($thread_array as $entry) {
+                    if (!is_array($entry) || empty($entry['text'])) {
+                        continue;
+                    }
+                    // Validate status against whitelist
+                    $raw_status = sanitize_text_field($entry['status'] ?? 'New');
+                    $status = in_array($raw_status, $allowed_statuses, true) ? $raw_status : 'New';
+
+                    $safe_thread[] = array(
+                        'id'        => sanitize_text_field($entry['id'] ?? wp_generate_uuid4()),
+                        'author'    => sanitize_text_field($entry['author'] ?? $default_author),
+                        'text'      => sanitize_textarea_field($entry['text']),
+                        'createdAt' => sanitize_text_field($entry['createdAt'] ?? current_time('c')),
+                        'status'    => $status,
+                        'parentId'  => isset($entry['parentId']) ? sanitize_text_field($entry['parentId']) : null,
+                    );
+                }
+                if (!empty($safe_thread)) {
+                    $sanitized[$safe_id] = $safe_thread;
+                }
+            }
+        }
+
+        return $sanitized;
     }
 
     /**

@@ -1,20 +1,10 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { X, MessageSquare, CornerDownRight, Send } from 'lucide-react';
+import type { CommentEntry, CommentStatus } from '../types';
+import { isVideoAsset } from './ClientReviewPage';
 
-/* ─── Shared type for a single comment entry ─── */
-export interface CommentEntry {
-  id: string;
-  author: string;
-  text: string;
-  createdAt: string;
-  status: 'New' | 'Team reply' | 'Done';
-  parentId: string | null;
-}
-
-/* ─── Helper: generate a short unique id ─── */
-function uid(): string {
-  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-}
+// Re-export CommentEntry for consumers that import from this file
+export type { CommentEntry } from '../types';
 
 /* ─── Helper: format ISO date to relative label ─── */
 function relativeTime(iso: string): string {
@@ -29,7 +19,7 @@ function relativeTime(iso: string): string {
 }
 
 /* ─── Helper: map status to CSS modifier class ─── */
-function statusClass(status: string): string {
+function statusClass(status: CommentStatus): string {
   if (status === 'New') return 'is-new';
   if (status === 'Team reply') return 'is-team-reply';
   return 'is-done';
@@ -73,12 +63,7 @@ export function ClientCommentInspector({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const isVideo = type === 'media' && !!(
-    asset.mimeType?.startsWith('video/') ||
-    asset.url?.endsWith('.mp4') ||
-    asset.url?.endsWith('.mov') ||
-    asset.url?.endsWith('.webm')
-  );
+  const isVideo = type === 'media' && isVideoAsset(asset);
 
   // Separate top-level comments from replies
   const topLevel = useMemo(() => thread.filter((c) => !c.parentId), [thread]);
@@ -113,7 +98,7 @@ export function ClientCommentInspector({
     if (!text) return;
 
     const entry: CommentEntry = {
-      id: uid(),
+      id: crypto.randomUUID(),
       author: authorName || 'Client',
       text,
       createdAt: new Date().toISOString(),
@@ -143,7 +128,7 @@ export function ClientCommentInspector({
   }, [thread, asset.id, onThreadChange]);
 
   // Change status on a single comment
-  const handleStatusChange = useCallback((commentId: string, newStatus: 'New' | 'Team reply' | 'Done') => {
+  const handleStatusChange = useCallback((commentId: string, newStatus: CommentStatus) => {
     const updated = thread.map((c) => c.id === commentId ? { ...c, status: newStatus } : c);
     onThreadChange(asset.id, updated);
   }, [thread, asset.id, onThreadChange]);
@@ -166,7 +151,7 @@ export function ClientCommentInspector({
             {!isReadOnly && (
               <select
                 value={comment.status}
-                onChange={(e) => handleStatusChange(comment.id, e.target.value as any)}
+                onChange={(e) => handleStatusChange(comment.id, e.target.value as CommentStatus)}
                 className={`pcm-comment-status ${statusClass(comment.status)}`}
               >
                 <option value="New">New</option>

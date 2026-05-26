@@ -38,11 +38,17 @@ function summarize(set: ApprovalSet): ProgressSummary {
   const media = set.snapshot.media ?? [];
   const copy = set.snapshot.copy ?? [];
   const fb = set.reviewFeedback;
+  // Comments are threaded per asset (Record<assetId, CommentEntry[]>).
+  // Total feedback = sum of all entries across all threads.
+  const feedbackCount = Object.values(fb?.comments ?? {}).reduce(
+    (sum, thread) => sum + thread.length,
+    0
+  );
   return {
     approved:
       (fb?.approvedVisualIds?.length ?? 0) + (fb?.approvedCopyIds?.length ?? 0),
     total: media.length + copy.length,
-    feedbackCount: Object.keys(fb?.comments ?? {}).length,
+    feedbackCount,
   };
 }
 

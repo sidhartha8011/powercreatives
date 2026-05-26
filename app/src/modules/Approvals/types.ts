@@ -45,6 +45,24 @@ export interface SnapshotAsset {
   [key: string]: unknown;
 }
 
+/**
+ * Valid statuses for a single comment in a review thread.
+ */
+export type CommentStatus = 'New' | 'Team reply' | 'Done';
+
+/**
+ * A single comment entry in a review thread.
+ * Supports threading via parentId (flat array with references).
+ */
+export interface CommentEntry {
+  id: string;
+  author: string;
+  text: string;
+  createdAt: string;
+  status: CommentStatus;
+  parentId: string | null;
+}
+
 export interface ApprovalSet {
   id: number;
   userId: number;
@@ -63,7 +81,7 @@ export interface ApprovalSet {
   reviewFeedback?: {
     approvedVisualIds: string[];
     approvedCopyIds: string[];
-    comments: Record<string, string>;
+    comments: Record<string, CommentEntry[]>;
   } | null;
   createdAt: string;
   updatedAt: string;

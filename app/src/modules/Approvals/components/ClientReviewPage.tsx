@@ -292,57 +292,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   if (isLoading) {
     return (
-      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen" style={{
-        background: '#ffffff',
-        position: 'relative',
-        overflowX: 'hidden',
-      }}>
-        {/* Ambient blue gradient blobs matching the login screen */}
+      <div className="aurora-mesh-bg pcm-state-wrapper font-sans">
         <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
         <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
         <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
-
-        <style>{`
-          .pcm-glow {
-            position: fixed;
-            border-radius: 50%;
-            filter: blur(90px);
-            pointer-events: none;
-            z-index: 0;
-            will-change: transform;
-          }
-          .pcm-glow-1 {
-            top: -20%; left: 35%; width: 680px; height: 680px;
-            background: radial-gradient(circle, #5e8df0 0%, rgba(94,141,240,0) 65%);
-            opacity: 0.75;
-          }
-          .pcm-glow-2 {
-            bottom: -25%; right: -5%; width: 560px; height: 560px;
-            background: radial-gradient(circle, #3d6fe0 0%, rgba(61,111,224,0) 65%);
-            opacity: 0.55;
-          }
-          .pcm-glow-3 {
-            top: 30%; left: -10%; width: 480px; height: 480px;
-            background: radial-gradient(circle, #9bb9ff 0%, rgba(155,185,255,0) 65%);
-            opacity: 0.6;
-          }
-          @media (max-width: 640px) {
-            .pcm-glow-1 { width: 440px; height: 440px; }
-            .pcm-glow-2 { width: 380px; height: 380px; }
-            .pcm-glow-3 { width: 340px; height: 340px; }
-          }
-        `}</style>
-
-        <div style={{
-          flex: 1,
-          display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center',
-          gap: '12px',
-          position: 'relative',
-          zIndex: 10,
-        }}>
+        <div className="pcm-state-center">
           <Spinner className="w-8 h-8 text-primary" />
-          <span style={{ fontSize: '13px', color: '#6f6a64' }}>Loading client review board...</span>
+          <span className="pcm-state-text">Loading client review board...</span>
         </div>
       </div>
     );
@@ -350,94 +306,15 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   if (error || !set) {
     return (
-      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen" style={{ position: 'relative', overflowX: 'hidden' }}>
-        {/* Ambient blue gradient blobs matching the login screen */}
+      <div className="aurora-mesh-bg pcm-state-wrapper font-sans">
         <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
         <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
         <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
-
-        <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
-          #pcm-root .aurora-mesh-bg {
-            --ink: #1d1d1f;
-            --ink-2: #4a4239;
-            --ink-3: #6f6a64;
-            --ink-4: #8a7d6d;
-            --line: rgba(0,0,0,0.06);
-            background: #ffffff;
-            /* Original Background (Preserved)
-            background: #f6f0ea;
-            background-image:
-              radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
-              radial-gradient(at 88% 12%, #d8d0ff 0px, transparent 45%),
-              radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
-              radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%);
-            background-attachment: fixed;
-            */
-            -webkit-font-smoothing: antialiased;
-          }
-          #pcm-root .pcm-glow {
-            position: fixed;
-            border-radius: 50%;
-            filter: blur(90px);
-            pointer-events: none;
-            z-index: 0;
-            will-change: transform;
-          }
-          #pcm-root .pcm-glow-1 {
-            top: -20%; left: 35%; width: 680px; height: 680px;
-            background: radial-gradient(circle, #5e8df0 0%, rgba(94,141,240,0) 65%);
-            opacity: 0.75;
-          }
-          #pcm-root .pcm-glow-2 {
-            bottom: -25%; right: -5%; width: 560px; height: 560px;
-            background: radial-gradient(circle, #3d6fe0 0%, rgba(61,111,224,0) 65%);
-            opacity: 0.55;
-          }
-          #pcm-root .pcm-glow-3 {
-            top: 30%; left: -10%; width: 480px; height: 480px;
-            background: radial-gradient(circle, #9bb9ff 0%, rgba(155,185,255,0) 65%);
-            opacity: 0.6;
-          }
-          @media (max-width: 640px) {
-            #pcm-root .pcm-glow-1 { width: 440px; height: 440px; }
-            #pcm-root .pcm-glow-2 { width: 380px; height: 380px; }
-            #pcm-root .pcm-glow-3 { width: 340px; height: 340px; }
-          }
-        `}</style>
-
-        <div style={{
-          flex: 1,
-          display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center',
-          padding: '24px',
-        }}>
-          <div style={{
-            maxWidth: '420px', width: '100%',
-            padding: '48px 36px',
-            borderRadius: '16px',
-            background: 'rgba(255,255,255,0.7)',
-            backdropFilter: 'blur(30px) saturate(180%)',
-            WebkitBackdropFilter: 'blur(30px) saturate(180%)',
-            border: '1px solid rgba(255,255,255,0.75)',
-            boxShadow: '0 4px 24px rgba(35,18,8,0.06), 0 1px 2px rgba(0,0,0,0.04)',
-            textAlign: 'center' as const,
-          }}>
-            <HelpCircle className="w-12 h-12 mx-auto mb-4" style={{ color: '#c2410c' }} />
-
-            <h2 style={{
-              fontFamily: '"Instrument Serif", Georgia, serif',
-              fontSize: '24px', fontWeight: 400,
-              color: 'var(--ink)',
-              margin: '0 0 10px', lineHeight: 1.2,
-            }}>
-              Invalid or Expired Board
-            </h2>
-
-            <p style={{
-              fontSize: '13px', lineHeight: 1.6,
-              color: 'var(--ink-3)', margin: 0,
-            }}>
+        <div className="pcm-state-center">
+          <div className="pcm-state-card">
+            <HelpCircle className="pcm-state-icon pcm-state-icon-error" />
+            <h2 className="pcm-state-heading">Invalid or Expired Board</h2>
+            <p className="pcm-state-body">
               This approval set link is invalid, expired, or has been revoked. Please ask the creator for a new link.
             </p>
           </div>
@@ -448,111 +325,19 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   if (isSubmitted && !isTeamMember) {
     return (
-      <div className="aurora-mesh-bg font-sans flex flex-col text-foreground min-h-screen" style={{ position: 'relative', overflowX: 'hidden' }}>
-        {/* Ambient blue gradient blobs matching the login screen */}
+      <div className="aurora-mesh-bg pcm-state-wrapper font-sans">
         <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
         <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
         <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
-
-        <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
-          #pcm-root .aurora-mesh-bg {
-            --ink: #1d1d1f;
-            --ink-2: #4a4239;
-            --ink-3: #6f6a64;
-            --ink-4: #8a7d6d;
-            --line: rgba(0,0,0,0.06);
-            --approve: #18a957;
-            background: #ffffff;
-            /* Original Background (Preserved)
-            background: #f6f0ea;
-            background-image:
-              radial-gradient(at 12% 8%,  #ffd9c2 0px, transparent 45%),
-              radial-gradient(at 88% 12%, #d8d0ff 0px, transparent 45%),
-              radial-gradient(at 50% 92%, #c9f2dc 0px, transparent 50%),
-              radial-gradient(at 92% 78%, #ffe1ec 0px, transparent 42%);
-            background-attachment: fixed;
-            */
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-          }
-          #pcm-root .pcm-glow {
-            position: fixed;
-            border-radius: 50%;
-            filter: blur(90px);
-            pointer-events: none;
-            z-index: 0;
-            will-change: transform;
-          }
-          #pcm-root .pcm-glow-1 {
-            top: -20%; left: 35%; width: 680px; height: 680px;
-            background: radial-gradient(circle, #5e8df0 0%, rgba(94,141,240,0) 65%);
-            opacity: 0.75;
-          }
-          #pcm-root .pcm-glow-2 {
-            bottom: -25%; right: -5%; width: 560px; height: 560px;
-            background: radial-gradient(circle, #3d6fe0 0%, rgba(61,111,224,0) 65%);
-            opacity: 0.55;
-          }
-          #pcm-root .pcm-glow-3 {
-            top: 30%; left: -10%; width: 480px; height: 480px;
-            background: radial-gradient(circle, #9bb9ff 0%, rgba(155,185,255,0) 65%);
-            opacity: 0.6;
-          }
-          @media (max-width: 640px) {
-            #pcm-root .pcm-glow-1 { width: 440px; height: 440px; }
-            #pcm-root .pcm-glow-2 { width: 380px; height: 380px; }
-            #pcm-root .pcm-glow-3 { width: 340px; height: 340px; }
-          }
-        `}</style>
-
-        <div style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '24px',
-        }}>
-          {/* Glassmorphism card matching review page cards */}
-          <div style={{
-            maxWidth: '420px',
-            width: '100%',
-            padding: '48px 36px',
-            borderRadius: '16px',
-            background: 'rgba(255,255,255,0.7)',
-            backdropFilter: 'blur(30px) saturate(180%)',
-            WebkitBackdropFilter: 'blur(30px) saturate(180%)',
-            border: '1px solid rgba(255,255,255,0.75)',
-            boxShadow: '0 4px 24px rgba(35,18,8,0.06), 0 1px 2px rgba(0,0,0,0.04)',
-            textAlign: 'center' as const,
-          }}>
-            {/* Success icon */}
-            <div style={{
-              width: '64px', height: '64px', borderRadius: '50%',
-              background: 'rgba(24,169,87,0.12)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              margin: '0 auto 20px',
-            }}>
-              <Check className="w-8 h-8" style={{ color: '#18a957' }} />
+        <div className="pcm-state-center">
+          <div className="pcm-state-card">
+            <div className="pcm-state-icon-circle">
+              <Check className="pcm-state-icon pcm-state-icon-success" />
             </div>
-
-            <h2 style={{
-              fontFamily: '"Instrument Serif", Georgia, serif',
-              fontSize: '28px', fontWeight: 400,
-              color: 'var(--ink)',
-              margin: '0 0 10px', lineHeight: 1.2,
-            }}>
-              Feedback inskickad!
-            </h2>
-
-            <p style={{
-              fontSize: '13px', lineHeight: 1.6,
-              color: 'var(--ink-3)', margin: '0 0 20px',
-            }}>
+            <h2 className="pcm-state-heading">Feedback inskickad!</h2>
+            <p className="pcm-state-body">
               Tack! Dina godkännanden har skickats till teamet.
             </p>
-
           </div>
         </div>
       </div>
@@ -565,7 +350,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const studioName = set.snapshot.studioName || 'Studio';
 
   return (
-    <div className="aurora-mesh-bg font-sans flex flex-col pb-36 text-foreground min-h-screen" style={{ position: 'relative', overflowX: 'hidden' }}>
+    <div className="aurora-mesh-bg font-sans flex flex-col pb-36 text-foreground min-h-screen">
       {/* Ambient blue gradient blobs matching the login screen */}
       <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
       <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
@@ -604,6 +389,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           */
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;
+          position: relative;
+          overflow-x: hidden;
         }
 
         #pcm-root .pcm-glow {
@@ -1337,6 +1124,78 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         .pcm-inspector-hint {
           font-size: 10.5px; color: var(--ink-4);
           text-align: right; margin-top: 6px;
+        }
+
+        /* ═══════════════════════════════════════════════════════════
+         * STATE SCREENS — Loading, Error, Success
+         * Shared layout classes for the early-return fullscreen states.
+         * ═══════════════════════════════════════════════════════════ */
+
+        /* Wrapper: fullscreen container with glow background */
+        .pcm-state-wrapper {
+          display: flex; flex-direction: column;
+          min-height: 100vh;
+          background: #ffffff;
+          position: relative;
+          overflow-x: hidden;
+          color: var(--ink);
+        }
+
+        /* Centered content area */
+        .pcm-state-center {
+          flex: 1;
+          display: flex; flex-direction: column;
+          align-items: center; justify-content: center;
+          padding: 24px; gap: 12px;
+          position: relative; z-index: 10;
+        }
+
+        /* Loading text */
+        .pcm-state-text {
+          font-size: 13px; color: var(--ink-3);
+        }
+
+        /* Glassmorphism card (error + success) */
+        .pcm-state-card {
+          max-width: 420px; width: 100%;
+          padding: 48px 36px;
+          border-radius: 16px;
+          background: rgba(255,255,255,0.7);
+          backdrop-filter: blur(30px) saturate(180%);
+          -webkit-backdrop-filter: blur(30px) saturate(180%);
+          border: 1px solid rgba(255,255,255,0.75);
+          box-shadow: 0 4px 24px rgba(35,18,8,0.06), 0 1px 2px rgba(0,0,0,0.04);
+          text-align: center;
+        }
+
+        /* State heading (Instrument Serif) */
+        .pcm-state-heading {
+          font-family: "Instrument Serif", Georgia, serif;
+          font-size: 26px; font-weight: 400;
+          color: var(--ink);
+          margin: 0 0 10px; line-height: 1.2;
+        }
+
+        /* State body text */
+        .pcm-state-body {
+          font-size: 13px; line-height: 1.6;
+          color: var(--ink-3); margin: 0;
+        }
+
+        /* State icons */
+        .pcm-state-icon {
+          width: 48px; height: 48px;
+          margin: 0 auto 16px;
+        }
+        .pcm-state-icon-error { color: #c2410c; }
+        .pcm-state-icon-success { color: #18a957; width: 32px; height: 32px; margin: 0; }
+
+        /* Success icon circle */
+        .pcm-state-icon-circle {
+          width: 64px; height: 64px; border-radius: 50%;
+          background: rgba(24,169,87,0.12);
+          display: flex; align-items: center; justify-content: center;
+          margin: 0 auto 20px;
         }
       `}</style>
 

@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { colors } from '@/components/shared/design-tokens';
 
-import type { ApprovalSet, SnapshotAsset } from '../types';
+import type { ApprovalSet, CommentEntry, SnapshotAsset } from '../types';
 
 export interface FeedbackDialogProps {
   set: ApprovalSet | null;
@@ -109,7 +109,9 @@ interface FeedbackSectionProps {
   label: string;
   items: SnapshotAsset[];
   approvedIds: Set<string>;
-  comments: Record<string, string>;
+  /** Threaded comments per asset id. Each thread is a flat array linked
+   *  via parentId; this dialog renders them as a chronological list. */
+  comments: Record<string, CommentEntry[]>;
   renderPreview: (item: SnapshotAsset) => React.ReactNode;
   renderMeta: (item: SnapshotAsset) => React.ReactNode;
   renderBody?: (item: SnapshotAsset) => React.ReactNode;
@@ -133,7 +135,7 @@ function FeedbackSection({
       </span>
       {items.map((item) => {
         const isApproved = approvedIds.has(item.id);
-        const comment = comments[item.id];
+        const thread = comments[item.id] ?? [];
         const hasPreview = renderPreview(item) !== null;
 
         return (
@@ -160,13 +162,24 @@ function FeedbackSection({
 
                 {renderBody?.(item)}
 
-                {comment ? (
-                  <p
-                    className="text-xs p-2 rounded italic"
-                    style={{ background: '#fffbeb', borderLeft: '3px solid #f59e0b', color: colors.text }}
-                  >
-                    “{comment}”
-                  </p>
+                {thread.length > 0 ? (
+                  <ul className="space-y-1.5">
+                    {thread.map((c) => (
+                      <li
+                        key={c.id}
+                        className="text-xs p-2 rounded space-y-1"
+                        style={{ background: '#fffbeb', borderLeft: '3px solid #f59e0b', color: colors.text }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold">{c.author}</span>
+                          <span className="text-[10px]" style={{ color: colors.textMuted }}>
+                            {c.status}
+                          </span>
+                        </div>
+                        <p className="italic">“{c.text}”</p>
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
                   <p className="text-xs" style={{ color: colors.textMuted }}>No comment left.</p>
                 )}
