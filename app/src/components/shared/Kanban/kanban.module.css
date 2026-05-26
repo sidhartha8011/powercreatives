@@ -10,7 +10,7 @@
  * consumer's renderCard — wrapper visuals only.
  */
 
-/* ─── Board root ─── */
+/* ─── Board root (canvas around the lanes) ─── */
 .root {
   display: grid;
   grid-auto-flow: column;
@@ -19,17 +19,21 @@
   width: 100%;
   font-family: var(--pck-font-family);
   color: var(--pck-text);
+  background: var(--pck-bg-page);
+  border-radius: 10px;
+  padding: 12px;
   overflow-x: auto;
   overflow-y: hidden;
   align-items: start;
 }
 
-/* ─── Column ─── */
+/* ─── Column (lane) ─── */
 .column {
   display: flex;
   flex-direction: column;
   gap: var(--pck-gap-column);
   background: var(--pck-bg-column);
+  border: 1px solid var(--pck-lane-border);
   border-radius: var(--pck-radius-column);
   padding: var(--pck-pad-column);
   min-height: 120px;
@@ -96,20 +100,23 @@
 /* ─── Card wrapper ─── */
 /*
  * The board provides the wrapper (background, border, shadow, hover).
- * The card's *content* comes from the consumer. Hover lifts slightly.
+ * The card's *content* comes from the consumer. The slightly stronger
+ * border + soft shadow lift the white card off the warm-gray column,
+ * creating a clear three-layer hierarchy: page → column → card.
  */
 .cardWrap {
   background: var(--pck-bg-card);
   border: 1px solid var(--pck-border);
   border-radius: var(--pck-radius-card);
   box-shadow: var(--pck-shadow-card);
-  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast);
+  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast), box-shadow var(--pck-transition-fast);
   cursor: default;
 }
 
 .cardWrap:hover {
   background: var(--pck-bg-card-hover);
   border-color: var(--pck-border-strong);
+  box-shadow: 0 2px 4px rgba(15, 15, 15, 0.06);
 }
 
 /* ─── Default empty / loading / error states ─── */

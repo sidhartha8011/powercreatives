@@ -22,9 +22,10 @@ import styles from './setCard.module.css';
 
 export interface SetCardProps {
   set: ApprovalSet;
-  getPublicBoardUrl: (token: string) => string;
   onCopyLink: (token: string) => void;
   onOpenFeedback: (set: ApprovalSet) => void;
+  /** Opens the in-app preview dialog (iframe of the public board). */
+  onOpenPreview: (set: ApprovalSet) => void;
 }
 
 interface ProgressSummary {
@@ -47,21 +48,15 @@ function summarize(set: ApprovalSet): ProgressSummary {
 
 export function SetCard({
   set,
-  getPublicBoardUrl,
   onCopyLink,
   onOpenFeedback,
+  onOpenPreview,
 }: SetCardProps) {
   const progress = useMemo(() => summarize(set), [set]);
-  const previewUrl = useMemo(
-    () => getPublicBoardUrl(set.token),
-    [getPublicBoardUrl, set.token]
-  );
 
-  const openPreview = useCallback(() => {
-    window.open(previewUrl, '_blank', 'noopener,noreferrer');
-  }, [previewUrl]);
+  const openPreview = useCallback(() => onOpenPreview(set), [onOpenPreview, set]);
 
-  // Card-wide click → preview. Keyboard equivalent via Enter / Space.
+  // Card-wide click → in-app preview dialog. Keyboard via Enter / Space.
   const handleCardClick = useCallback(() => openPreview(), [openPreview]);
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLElement>) => {

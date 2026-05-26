@@ -18,15 +18,15 @@ export const setFilters: ReadonlyArray<FilterDefinition<ApprovalSet>> = [
     { searchPlaceholder: 'Search brands…' }
   ),
   searchableSelect<ApprovalSet>(
-    'set',
-    'Approval set',
-    (s) => s.name,
-    { searchPlaceholder: 'Search set name…' }
-  ),
-  searchableSelect<ApprovalSet>(
     'project',
     'Project',
     (s) => s.snapshot.projectName ?? null,
     { searchPlaceholder: 'Search projects…' }
+  ),
+  searchableSelect<ApprovalSet>(
+    'set',
+    'Approval set',
+    (s) => s.name,
+    { searchPlaceholder: 'Search set name…' }
   ),
 ];

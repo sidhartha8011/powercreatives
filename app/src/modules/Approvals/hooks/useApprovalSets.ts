@@ -43,6 +43,11 @@ export interface UseApprovalSetsResult {
   feedbackSet: ApprovalSet | null;
   openFeedback: (set: ApprovalSet) => void;
   closeFeedback: () => void;
+
+  /** Currently-previewed set (in-app iframe modal), or null when closed. */
+  previewSet: ApprovalSet | null;
+  openPreview: (set: ApprovalSet) => void;
+  closePreview: () => void;
 }
 
 interface PcmConfig {
@@ -158,6 +163,10 @@ export function useApprovalSets(): UseApprovalSetsResult {
   const openFeedback = useCallback((set: ApprovalSet) => setFeedbackSet(set), []);
   const closeFeedback = useCallback(() => setFeedbackSet(null), []);
 
+  const [previewSet, setPreviewSet] = useState<ApprovalSet | null>(null);
+  const openPreview = useCallback((set: ApprovalSet) => setPreviewSet(set), []);
+  const closePreview = useCallback(() => setPreviewSet(null), []);
+
   return {
     sets,
     isLoading: query.isLoading,
@@ -170,5 +179,8 @@ export function useApprovalSets(): UseApprovalSetsResult {
     feedbackSet,
     openFeedback,
     closeFeedback,
+    previewSet,
+    openPreview,
+    closePreview,
   };
 }

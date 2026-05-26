@@ -44,7 +44,7 @@ export function DateRangeControl({
       <PopoverTrigger asChild>
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
           role="combobox"
           aria-expanded={open}

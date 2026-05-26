@@ -87,7 +87,7 @@ export function SearchableSelect({
         <Button
           ref={triggerRef}
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
           role="combobox"
           aria-expanded={open}

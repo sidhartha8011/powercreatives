@@ -9,19 +9,31 @@
  * styles back here, stop — shadcn already provides them.
  */
 
-/* ─── Trigger pills (filter + sort pill style) ─── */
+/* ─── Trigger pills inside the connected panel ───
+ * Ghost-style: no border, no background, just text + chevron. The
+ * containing .toolbarPanel provides the visual chrome. Hover lights up
+ * an individual chip via .bg-chip without breaking the pill rhythm.
+ */
 .trigger {
-  height: 28px;
+  height: 26px;
   padding: 0 10px;
   font-size: var(--pck-font-size-sm);
   font-weight: var(--pck-font-weight-mid);
-  border-radius: var(--pck-radius-pill);
+  border-radius: 999px;
   gap: 6px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--pck-text);
+}
+
+.trigger:hover {
+  background: var(--pck-bg-chip);
 }
 
 .triggerActive {
-  border-color: var(--pck-border-focus);
   color: var(--pck-text-link);
+  background: var(--pck-bg-chip-active);
 }
 
 .triggerLabel {
@@ -31,29 +43,39 @@
   white-space: nowrap;
 }
 
-/* ─── Toolbar layout ─── */
+/* ─── Toolbar = one connected pill panel ───
+ * Filters live on the left, an auto-margin pushes the sort to the right.
+ * The panel sits on the page-gray canvas, matching the lane palette so
+ * filters + sort visually read as one continuous control.
+ */
 .toolbar {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 0 10px 0;
+  gap: 2px;
+  padding: 4px 6px;
+  margin-bottom: 10px;
+  background: var(--pck-bg-column);
+  border: 1px solid var(--pck-lane-border);
+  border-radius: 999px;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .toolbarLeft {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  flex: 1 1 auto;
+  gap: 2px;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
 .toolbarRight {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-left: auto;
+  gap: 4px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--pck-lane-border);
 }
 
 .sortLabel {

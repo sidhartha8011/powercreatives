@@ -16,47 +16,60 @@ export interface ApprovalSetColumn extends KanbanColumn {
   id: ApprovalStatus;
 }
 
+/**
+ * Column accent palette — warm Manus-inspired pastels.
+ *
+ * Each pill is saturated enough to be scannable in peripheral vision but
+ * desaturated enough to sit calmly on the warm-gray column bg. Sequence
+ * encodes lifecycle state from neutral → active → done → archived:
+ *   draft      ⟶ warm taupe (passive, no action yet)
+ *   internal   ⟶ amber       (needs internal team action)
+ *   client     ⟶ coral       (waiting on external client)
+ *   approved   ⟶ warm yellow (client signed off, ready to ship)
+ *   live       ⟶ moss green  (in market / production)
+ *   archived   ⟶ dusty mauve (closed, historical)
+ */
 export const setColumns: ReadonlyArray<ApprovalSetColumn> = [
   {
     id: 'draft',
     label: 'Draft',
-    accentColor: '#e9eef5',
-    accentText:  '#4b6478',
+    accentColor: '#e8e4dc',
+    accentText:  '#5d564b',
     emptyHint:   ' ',
   },
   {
     id: 'internal',
     label: 'Internal Approval',
-    accentColor: '#fde7d3',
-    accentText:  '#9c5314',
+    accentColor: '#f9d9b4',
+    accentText:  '#8a4a14',
     emptyHint:   ' ',
   },
   {
     id: 'client',
     label: 'Client Approval',
-    accentColor: '#fce4e4',
-    accentText:  '#a83838',
+    accentColor: '#f5c7c2',
+    accentText:  '#933326',
     emptyHint:   ' ',
   },
   {
     id: 'approved',
     label: 'Approved',
-    accentColor: '#fbf3d2',
-    accentText:  '#856414',
+    accentColor: '#f3e4a8',
+    accentText:  '#735410',
     emptyHint:   ' ',
   },
   {
     id: 'live',
     label: 'Live',
-    accentColor: '#dff0db',
-    accentText:  '#386c33',
+    accentColor: '#c8dfb6',
+    accentText:  '#365e26',
     emptyHint:   ' ',
   },
   {
     id: 'archived',
     label: 'Archived',
-    accentColor: '#f5d8d8',
-    accentText:  '#8e3636',
+    accentColor: '#dfc9d2',
+    accentText:  '#6f3c52',
     emptyHint:   ' ',
   },
 ];

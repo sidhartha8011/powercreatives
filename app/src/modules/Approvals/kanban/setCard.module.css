@@ -88,11 +88,13 @@
   bottom: 3px;
   display: flex;
   gap: 0;
-  padding-left: 16px;
+  padding-left: 18px;
+  /* Gradient fades from transparent into the hover-card bg so the chips
+   * never visually clip into the meta text behind them. */
   background: linear-gradient(
     to right,
-    rgba(255, 255, 255, 0) 0%,
-    var(--pck-bg-card) 35%
+    rgba(251, 250, 247, 0) 0%,
+    var(--pck-bg-card-hover) 40%
   );
   opacity: 0;
   pointer-events: none;

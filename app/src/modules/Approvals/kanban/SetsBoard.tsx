@@ -20,6 +20,7 @@ import {
 } from '@/components/shared/Kanban';
 
 import { FeedbackDialog } from './FeedbackDialog';
+import { PreviewDialog } from './PreviewDialog';
 import { SetCard } from './SetCard';
 import { setColumns } from './setColumns';
 import { setFilters } from './setFilters';
@@ -47,6 +48,9 @@ export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
     feedbackSet,
     openFeedback,
     closeFeedback,
+    previewSet,
+    openPreview,
+    closePreview,
   } = useApprovalSets();
 
   const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
@@ -60,12 +64,12 @@ export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
     (set: ApprovalSet) => (
       <SetCard
         set={set}
-        getPublicBoardUrl={getPublicBoardUrl}
         onCopyLink={copyShareLink}
         onOpenFeedback={openFeedback}
+        onOpenPreview={openPreview}
       />
     ),
-    [getPublicBoardUrl, copyShareLink, openFeedback]
+    [copyShareLink, openFeedback, openPreview]
   );
 
   const handleMove = useCallback(
@@ -110,6 +114,11 @@ export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
       </div>
 
       <FeedbackDialog set={feedbackSet} onClose={closeFeedback} />
+      <PreviewDialog
+        set={previewSet}
+        url={previewSet ? getPublicBoardUrl(previewSet.token) : null}
+        onClose={closePreview}
+      />
     </div>
   );
 }
