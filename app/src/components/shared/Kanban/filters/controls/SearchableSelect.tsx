@@ -15,7 +15,6 @@ import { useMemo, useRef, useState } from 'react';
 import { Check, ChevronsUpDown } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
 import {
   Command,
   CommandEmpty,
@@ -84,11 +83,9 @@ export function SearchableSelect({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button
+        <button
           ref={triggerRef}
           type="button"
-          variant="ghost"
-          size="sm"
           role="combobox"
           aria-expanded={open}
           aria-label={ariaLabel ?? label}
@@ -98,8 +95,8 @@ export function SearchableSelect({
           )}
         >
           <span className={styles.triggerLabel}>{summary}</span>
-          <ChevronsUpDown className="h-3 w-3 opacity-60 shrink-0" aria-hidden="true" />
-        </Button>
+          <ChevronsUpDown className={styles.triggerChevron} aria-hidden="true" />
+        </button>
       </PopoverTrigger>
 
       <PopoverContent className="p-0 w-[260px]" align="start">

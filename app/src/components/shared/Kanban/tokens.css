@@ -24,8 +24,8 @@
   --pck-bg-input:         #ffffff;
   --pck-bg-chip:          #ecebe6;
   --pck-bg-chip-active:   #e2e7f0;
-  --pck-bg-lane:          #f4f4f5;
-  --pck-bg-toolbar:       #fbfbfc;
+  --pck-bg-lane:          #eef0f4;
+  --pck-bg-toolbar:       #fafbfc;
 
   /* ── Borders ── */
   --pck-lane-border:      rgba(0, 0, 0, 0.06);

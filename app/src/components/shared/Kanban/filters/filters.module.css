@@ -11,22 +11,32 @@
 
 /* ─── Trigger (compact pill — sits in the toolbar row) ───
  *
- * White surface with stronger border + subtle shadow so the filter
- * dropdowns read as proper input affordances against the bar surface.
- * Compact 28px height matches --pck-control-h. Active state turns the
- * label blue so applied filters are visible at a glance.
+ * Rendered on a raw <button> (not shadcn Button), so this stylesheet owns
+ * every visual property — no fighting Tailwind utilities for specificity.
+ * White surface with visible border + soft shadow so the dropdowns read
+ * as proper input affordances against the bar. Compact 28px height
+ * matches --pck-control-h. Active state turns the label blue so applied
+ * filters are visible at a glance.
  */
 .trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   height: var(--pck-control-h);
   padding: 4px 10px;
+  font-family: inherit;
   font-size: var(--pck-font-size-sm);
   font-weight: var(--pck-font-weight-mid);
+  line-height: 1;
   border-radius: var(--pck-radius-sm);
-  gap: 6px;
   background: var(--pck-bg-card);
   border: 1px solid var(--pck-control-border);
   box-shadow: var(--pck-shadow-control);
   color: var(--pck-text);
+  cursor: pointer;
+  outline: none;
+  white-space: nowrap;
   transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast), box-shadow var(--pck-transition-fast), color var(--pck-transition-fast);
 }
 
@@ -34,6 +44,18 @@
   background: var(--pck-bg-card-hover);
   border-color: var(--pck-border-strong);
   box-shadow: var(--pck-shadow-card-hover);
+}
+
+.trigger:focus-visible {
+  border-color: var(--pck-border-focus);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.triggerChevron {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  opacity: 0.6;
 }
 
 /* Active state — selection applied. Blue label signals "filter committed". */
