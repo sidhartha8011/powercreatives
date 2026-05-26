@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { X, MessageSquare, CornerDownRight, Send } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { X, MessageSquare, CornerDownRight, Send, Loader2, Image as ImageIcon } from 'lucide-react';
 import type { CommentEntry, CommentStatus } from '../types';
 import { isVideoAsset } from './ClientReviewPage';
+import { useImageUpload } from '@/hooks/useImageUpload';
+import { toast } from 'sonner';
 
 // Re-export CommentEntry for consumers that import from this file
 export type { CommentEntry } from '../types';
@@ -59,9 +62,38 @@ export function ClientCommentInspector({
 }: ClientCommentInspectorProps) {
   const [inputText, setInputText] = useState('');
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
+  const [draftAttachments, setDraftAttachments] = useState<string[]>([]);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const { isUploading, uploadImage } = useImageUpload({
+    compress: true,
+    maxWidth: 800,
+    maxHeight: 800,
+    quality: 0.75,
+  });
+
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (!file) continue;
+
+        const toastId = toast.loading('Uploading screenshot from clipboard...');
+        try {
+          const url = await uploadImage(file);
+          setDraftAttachments((prev) => [...prev, url]);
+          toast.success('Screenshot attached successfully', { id: toastId });
+        } catch {
+          toast.error('Failed to upload pasted screenshot', { id: toastId });
+        }
+      }
+    }
+  }, [uploadImage]);
 
   const isVideo = type === 'media' && isVideoAsset(asset);
 
@@ -95,7 +127,7 @@ export function ClientCommentInspector({
   // Add a new comment (top-level or reply)
   const handleSubmitComment = useCallback(() => {
     const text = inputText.trim();
-    if (!text) return;
+    if (!text && draftAttachments.length === 0) return;
 
     const entry: CommentEntry = {
       id: crypto.randomUUID(),
@@ -104,18 +136,20 @@ export function ClientCommentInspector({
       createdAt: new Date().toISOString(),
       status: 'New',
       parentId: replyingToId,
+      attachments: draftAttachments.length > 0 ? draftAttachments : undefined,
     };
 
     const updated = [...thread, entry];
     onThreadChange(asset.id, updated);
     setInputText('');
+    setDraftAttachments([]);
     setReplyingToId(null);
 
     // Scroll to bottom after adding
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     });
-  }, [inputText, replyingToId, authorName, thread, asset.id, onThreadChange]);
+  }, [inputText, replyingToId, authorName, thread, asset.id, onThreadChange, draftAttachments]);
 
   // Delete a single comment (and its replies)
   const handleDelete = useCallback((commentId: string) => {
@@ -162,7 +196,22 @@ export function ClientCommentInspector({
           </div>
 
           {/* Comment body text */}
-          <p className="pcm-comment-text">{comment.text}</p>
+          {comment.text && <p className="pcm-comment-text">{comment.text}</p>}
+
+          {/* Comment attachments */}
+          {comment.attachments && comment.attachments.length > 0 && (
+            <div className="pcm-comment-attachments" onClick={(e) => e.stopPropagation()}>
+              {comment.attachments.map((url, index) => (
+                <div 
+                  key={index} 
+                  className="pcm-comment-attachment-thumb"
+                  onClick={() => setLightboxUrl(url)}
+                >
+                  <img src={url} alt={`Attachment ${index + 1}`} />
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Footer: timestamp + actions */}
           <div className="pcm-comment-footer">
@@ -269,7 +318,8 @@ export function ClientCommentInspector({
                 ref={textareaRef}
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder={replyingToId ? 'Write a reply...' : 'Add a comment...'}
+                onPaste={handlePaste}
+                placeholder={replyingToId ? 'Write a reply... or paste image' : 'Add a comment... or paste image'}
                 rows={2}
                 className="pcm-inspector-textarea"
                 onKeyDown={(e) => {
@@ -281,17 +331,71 @@ export function ClientCommentInspector({
               />
               <button
                 onClick={handleSubmitComment}
-                disabled={!inputText.trim()}
+                disabled={isUploading || (!inputText.trim() && draftAttachments.length === 0)}
                 className="pcm-inspector-send"
                 title="Send comment (⌘+Enter)"
               >
                 <Send />
               </button>
             </div>
-            <div className="pcm-inspector-hint">⌘+Enter to send</div>
+
+            {/* Loading attachment indicator */}
+            {isUploading && (
+              <div className="pcm-composer-loading-attachment">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#2563eb] flex-shrink-0" />
+                <span>Uploading pasted screenshot...</span>
+              </div>
+            )}
+
+            {/* Draft attachments preview */}
+            {draftAttachments.length > 0 && (
+              <div className="pcm-composer-draft-attachments">
+                {draftAttachments.map((url, index) => (
+                  <div key={index} className="pcm-composer-draft-thumb">
+                    <img src={url} alt="Draft screenshot" onClick={() => setLightboxUrl(url)} />
+                    <button 
+                      type="button" 
+                      onClick={() => setDraftAttachments((prev) => prev.filter((_, idx) => idx !== index))}
+                      className="pcm-composer-draft-thumb-remove"
+                      title="Remove image"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="pcm-inspector-hint">⌘+Enter to send · Paste screenshots directly inside input</div>
           </div>
         )}
       </div>
+
+      {/* ─── ATTACHMENT LIGHTBOX OVERLAY ─── */}
+      {lightboxUrl && createPortal(
+        <div
+          className="pcm-lightbox"
+          onClick={() => setLightboxUrl(null)}
+          role="dialog"
+          aria-label="Image preview"
+          style={{ zIndex: 100000 }}
+        >
+          <img
+            src={lightboxUrl}
+            alt="Full size preview"
+            className="pcm-lightbox-img"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            className="pcm-lightbox-close"
+            onClick={() => setLightboxUrl(null)}
+            aria-label="Close preview"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

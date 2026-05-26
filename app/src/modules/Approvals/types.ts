@@ -61,6 +61,7 @@ export interface CommentEntry {
   createdAt: string;
   status: CommentStatus;
   parentId: string | null;
+  attachments?: string[];
 }
 
 export interface ApprovalSet {

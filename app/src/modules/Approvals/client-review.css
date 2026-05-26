@@ -1202,3 +1202,96 @@
   margin-top: auto;
   padding-top: 14px; padding-bottom: 14px;
 }
+
+/* ─── Comment Attachments & Composer Previews ─── */
+.pcm-comment-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+.pcm-comment-attachment-thumb {
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  cursor: zoom-in;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  background: white;
+}
+.pcm-comment-attachment-thumb:hover {
+  opacity: 0.9;
+  transform: scale(1.02);
+}
+.pcm-comment-attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Composer attachment previews */
+.pcm-composer-draft-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 8px;
+  border: 1px dashed var(--line);
+}
+.pcm-composer-draft-thumb {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  background: white;
+}
+.pcm-composer-draft-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  cursor: pointer;
+}
+.pcm-composer-draft-thumb-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease;
+}
+.pcm-composer-draft-thumb-remove:hover {
+  background: rgba(220, 38, 38, 0.9);
+}
+
+/* Uploading loader inside comments composer */
+.pcm-composer-loading-attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  font-size: 11px;
+  color: #2563eb;
+  font-weight: 500;
+  user-select: none;
+  width: max-content;
+}

@@ -1,6 +1,7 @@
 ## Backlog
 
 - [x] Isolera klientgranskningssidans designsystem från admin-SPA:n. Skapade fristående `client-review.css` (650+ rader) med komplett CSS-foundation, admin-reset, design-tokens (--ink-palett), namngiven type scale och alla komponentklasser. Migrerade 4 komponenter (ClientReviewPage, CreativeAssetCard, ClientStatusToolbar, ClientCommentInspector) från Tailwind-utilities + inline `<style>` (852 rader) till exklusivt pcm- klasser. Eliminerade 16+ typografi- och färgdiskrepanser orsakade av admin-arv. [2026-05-26]
+- [x] Implementera urklipps-bildinklistring (Clipboard Screenshot Paste) i kommentarsfältet med automatisk frontend-JPEG-komprimering och skärmdums-bilagor (attachments) sparade säkert i JSON-kommentars-trådar, komplett med lightbox-förhandsvisning. [2026-05-26]
 - [x] Eliminera den separata kommentarsrutan ovanför åtgärdsraden och integrera kommentarstatistik samt pulserande notifikationsindikator (blå `#2563eb` prick + glödande sifferbubbla) direkt i "Comment"-knappen för en extremt ren och premium UX-design. [2026-05-26]
 - [x] Konvertera "Ladda ner"-knappen på mediakort till en helt transparent cirkulär ikonknapp utan textetikett eller bakgrundsfärg, grupperad med kopieringsknappen för högsta kodkvalitet. [2026-05-26]
 - [x] Konvertera "Kopiera text"-knappen på kopieringskort till en ren cirkulär ikonknapp utan textetikett för att förhindra textbrytning och förbättra den visuella harmonin i åtgärdsraden. [2026-05-26]
