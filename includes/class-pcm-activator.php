@@ -105,7 +105,12 @@ class PCM_Activator
             // v1.8.0: Migrate approval_sets.status to the 6-value taxonomy
             // (draft / internal / client / approved / live / archived). Remaps
             // legacy 'review' → 'client' and 'completed' → 'approved'. Idempotent.
-            if (version_compare($installed_version, '1.8.0', '<')) {
+            //
+            // v1.9.0: Extend taxonomy to 7 values (adds 'launch'), rename
+            // 'approved' → 'create'. Same migration method — the
+            // LEGACY_STATUS_MAP now carries both v1.8.0 and v1.9.0 mappings;
+            // running it on any older install converges to the latest schema.
+            if (version_compare($installed_version, '1.9.0', '<')) {
                 PCM_Schema::migrate_approval_set_statuses();
             }
 

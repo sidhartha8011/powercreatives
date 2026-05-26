@@ -1066,6 +1066,278 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         .pcm-lightbox-close:hover {
           background: rgba(255,255,255,0.3);
         }
+
+        /* ═══════════════════════════════════════════════════════════
+         * COMMENT INSPECTOR — Side drawer panel
+         * Uses the same --ink palette, font-family, and design tokens
+         * as the rest of the review page. NO inline styles needed.
+         * ═══════════════════════════════════════════════════════════ */
+
+        /* Backdrop overlay */
+        .pcm-inspector-backdrop {
+          position: fixed; inset: 0; z-index: 50;
+          display: flex; justify-content: flex-end;
+          background: rgba(0,0,0,0.08);
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+          /* Inherit the ink palette from .aurora-mesh-bg */
+          --ink: #1d1d1f;
+          --ink-2: #4a4239;
+          --ink-3: #6f6a64;
+          --ink-4: #8a7d6d;
+          --line: rgba(0,0,0,0.06);
+        }
+
+        /* Drawer panel */
+        .pcm-inspector-drawer {
+          width: 100%; max-width: 420px; height: 100%;
+          display: flex; flex-direction: column;
+          background: rgba(255,255,255,0.97);
+          backdrop-filter: blur(40px);
+          -webkit-backdrop-filter: blur(40px);
+          border-left: 1px solid var(--line);
+          box-shadow: 0 0 50px rgba(0,0,0,0.1);
+          user-select: none;
+          transition: transform 0.3s ease-out;
+        }
+
+        /* Header section */
+        .pcm-inspector-header {
+          padding: 20px; display: flex; flex-direction: column; gap: 16px;
+          border-bottom: 1px solid var(--line);
+          flex-shrink: 0;
+        }
+        .pcm-inspector-header-row {
+          display: flex; align-items: center; justify-content: space-between;
+        }
+        .pcm-inspector-title {
+          display: flex; align-items: center; gap: 8px;
+        }
+        .pcm-inspector-title svg {
+          width: 16px; height: 16px; color: var(--ink-3);
+        }
+        .pcm-inspector-title span {
+          font-weight: 600; font-size: 13px; text-transform: uppercase;
+          letter-spacing: 0.08em; color: var(--ink);
+        }
+        .pcm-inspector-count {
+          font-size: 11px; font-weight: 700; color: var(--ink-4);
+          background: rgba(0,0,0,0.04);
+          padding: 2px 7px; border-radius: 99px; margin-left: 4px;
+        }
+        .pcm-inspector-close {
+          appearance: none; border: none; background: transparent;
+          width: 28px; height: 28px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          color: var(--ink-4); cursor: pointer;
+          transition: background 0.15s ease;
+        }
+        .pcm-inspector-close:hover { background: rgba(0,0,0,0.04); }
+        .pcm-inspector-close svg { width: 16px; height: 16px; }
+
+        /* Asset preview card */
+        .pcm-inspector-preview {
+          padding: 12px; border-radius: 12px;
+          background: rgba(255,255,255,0.6);
+          border: 1px solid var(--line);
+          display: flex; align-items: center; gap: 12px;
+        }
+        .pcm-inspector-thumb {
+          width: 48px; height: 48px; border-radius: 8px;
+          overflow: hidden; flex-shrink: 0;
+          background: rgba(0,0,0,0.03);
+          border: 1px solid var(--line);
+        }
+        .pcm-inspector-thumb img,
+        .pcm-inspector-thumb video {
+          width: 100%; height: 100%; object-fit: cover;
+        }
+        .pcm-inspector-asset-type {
+          font-size: 11px; font-weight: 700; text-transform: uppercase;
+          letter-spacing: 0.1em; color: var(--ink-4);
+        }
+        .pcm-inspector-asset-name {
+          font-size: 13.5px; font-weight: 600; color: var(--ink);
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          margin-top: 2px;
+        }
+
+        /* Scrollable thread area */
+        .pcm-inspector-thread {
+          flex: 1; overflow-y: auto;
+          padding: 20px; display: flex; flex-direction: column; gap: 12px;
+        }
+
+        /* Empty state */
+        .pcm-inspector-empty {
+          height: 100%; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; text-align: center;
+          gap: 8px; padding: 80px 0;
+        }
+        .pcm-inspector-empty svg {
+          width: 32px; height: 32px; stroke-width: 1.5; color: rgba(0,0,0,0.1);
+        }
+        .pcm-inspector-empty-title {
+          font-size: 13px; font-weight: 600; color: var(--ink-4);
+        }
+        .pcm-inspector-empty-text {
+          font-size: 12px; color: var(--ink-4); opacity: 0.8;
+          max-width: 200px; line-height: 1.5;
+        }
+
+        /* Comment card */
+        .pcm-comment {
+          padding: 14px; border-radius: 12px;
+          border: 1px solid var(--line);
+          background: rgba(255,255,255,0.8);
+          box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+          display: flex; flex-direction: column; gap: 8px;
+        }
+        .pcm-comment.is-reply {
+          margin-left: 24px; margin-top: 8px;
+          border-color: rgba(0,0,0,0.04);
+          background: rgba(0,0,0,0.015);
+        }
+        .pcm-comment-header {
+          display: flex; align-items: center; justify-content: space-between;
+        }
+        .pcm-comment-author {
+          font-size: 13px; font-weight: 600; color: var(--ink);
+        }
+
+        /* Status badge dropdown */
+        .pcm-comment-status {
+          appearance: none; border: none; outline: none;
+          font-family: inherit;
+          font-size: 10px; font-weight: 700;
+          letter-spacing: 0.05em; text-transform: uppercase;
+          padding: 3px 10px; border-radius: 99px;
+          cursor: pointer; transition: all 0.15s ease;
+        }
+        .pcm-comment-status.is-new {
+          background: #eff6ff; color: #2563eb; border: 0.5px solid #bfdbfe;
+        }
+        .pcm-comment-status.is-team-reply {
+          background: #fffbeb; color: #d97706; border: 0.5px solid #fde68a;
+        }
+        .pcm-comment-status.is-done {
+          background: #f0fdf4; color: #16a34a; border: 0.5px solid #bbf7d0;
+        }
+
+        /* Comment body text */
+        .pcm-comment-text {
+          font-size: 13.5px; line-height: 1.55; color: var(--ink-2);
+          word-break: break-word; white-space: pre-wrap;
+        }
+
+        /* Comment footer */
+        .pcm-comment-footer {
+          display: flex; align-items: center; justify-content: space-between;
+          padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.03);
+        }
+        .pcm-comment-time {
+          font-size: 11.5px; font-weight: 500; color: var(--ink-4);
+        }
+        .pcm-comment-actions {
+          display: flex; align-items: center; gap: 8px;
+        }
+
+        /* Reply button */
+        .pcm-comment-reply-btn {
+          appearance: none; border: none; cursor: pointer;
+          font-family: inherit;
+          display: inline-flex; align-items: center; gap: 4px;
+          padding: 3px 10px; border-radius: 99px;
+          font-size: 11.5px; font-weight: 600;
+          background: rgba(0,0,0,0.035); color: var(--ink-3);
+          border: 0.5px solid rgba(0,0,0,0.04);
+          transition: background 0.15s ease;
+        }
+        .pcm-comment-reply-btn:hover { background: rgba(0,0,0,0.06); }
+        .pcm-comment-reply-btn:active { transform: scale(0.96); }
+        .pcm-comment-reply-btn svg { width: 11px; height: 11px; }
+
+        /* Delete button */
+        .pcm-comment-delete-btn {
+          appearance: none; border: none; cursor: pointer;
+          background: transparent; color: rgba(0,0,0,0.15);
+          width: 20px; height: 20px; border-radius: 50%; padding: 0;
+          display: flex; align-items: center; justify-content: center;
+          transition: all 0.15s ease;
+        }
+        .pcm-comment-delete-btn:hover { background: rgba(220,38,38,0.06); color: #dc2626; }
+        .pcm-comment-delete-btn svg { width: 11px; height: 11px; }
+
+        /* Composer area */
+        .pcm-inspector-composer {
+          padding: 16px; flex-shrink: 0;
+          border-top: 1px solid var(--line);
+          background: rgba(255,255,255,0.5);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+        }
+
+        /* Reply-to indicator */
+        .pcm-reply-indicator {
+          display: flex; align-items: center; gap: 8px;
+          margin-bottom: 8px; padding: 6px 8px;
+          border-radius: 8px;
+          background: rgba(37,99,235,0.06);
+          border: 1px solid rgba(37,99,235,0.12);
+          font-size: 11.5px;
+        }
+        .pcm-reply-indicator svg { width: 12px; height: 12px; color: rgba(37,99,235,0.5); flex-shrink: 0; }
+        .pcm-reply-indicator-text {
+          font-weight: 500; color: rgba(37,99,235,0.8);
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .pcm-reply-indicator-text strong { font-weight: 700; }
+        .pcm-reply-indicator-close {
+          appearance: none; border: none; background: transparent;
+          color: rgba(37,99,235,0.5); cursor: pointer; margin-left: auto; padding: 0;
+        }
+        .pcm-reply-indicator-close:hover { color: rgba(37,99,235,0.8); }
+        .pcm-reply-indicator-close svg { width: 12px; height: 12px; }
+
+        /* Input row */
+        .pcm-inspector-input-row {
+          display: flex; gap: 8px;
+        }
+        .pcm-inspector-textarea {
+          flex: 1; resize: none; border-radius: 8px; padding: 10px;
+          font-family: inherit; font-size: 13px;
+          background: white; color: var(--ink);
+          border: 1px solid rgba(0,0,0,0.08);
+          outline: none; transition: border-color 0.15s ease;
+        }
+        .pcm-inspector-textarea:focus {
+          border-color: rgba(0,0,0,0.15);
+        }
+        .pcm-inspector-textarea::placeholder {
+          color: var(--ink-4); opacity: 0.7;
+        }
+
+        /* Send button */
+        .pcm-inspector-send {
+          appearance: none; border: none; cursor: pointer;
+          align-self: flex-end;
+          width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+          display: flex; align-items: center; justify-content: center;
+          background: var(--ink); color: white;
+          transition: background 0.15s ease;
+        }
+        .pcm-inspector-send:disabled {
+          background: rgba(0,0,0,0.12); cursor: not-allowed;
+        }
+        .pcm-inspector-send:not(:disabled):hover { background: #000; }
+        .pcm-inspector-send svg { width: 14px; height: 14px; }
+
+        /* Keyboard hint */
+        .pcm-inspector-hint {
+          font-size: 10.5px; color: var(--ink-4);
+          text-align: right; margin-top: 6px;
+        }
       `}</style>
 
 

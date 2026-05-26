@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { X, MessageSquare, CornerDownRight, Send } from 'lucide-react';
-import { Textarea } from '@/components/ui/textarea';
 
 /* ─── Shared type for a single comment entry ─── */
 export interface CommentEntry {
@@ -29,6 +28,13 @@ function relativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
+/* ─── Helper: map status to CSS modifier class ─── */
+function statusClass(status: string): string {
+  if (status === 'New') return 'is-new';
+  if (status === 'Team reply') return 'is-team-reply';
+  return 'is-done';
+}
+
 /* ─── Props ─── */
 interface ClientCommentInspectorProps {
   /** The asset being inspected */
@@ -48,12 +54,9 @@ interface ClientCommentInspectorProps {
  * ClientCommentInspector
  *
  * A right-sliding side panel that displays a chronological list of
- * comments for a single creative asset. Supports:
- *  - Adding new top-level comments
- *  - Replying in-thread (parentId linking)
- *  - Per-comment status (New / Team reply / Done)
- *  - Deleting individual comments
- *  - Real ISO timestamps with relative display
+ * comments for a single creative asset. All styling via pcm-inspector-*
+ * CSS classes defined in the central <style> block of ClientReviewPage.
+ * ZERO inline styles.
  * ════════════════════════════════════════════════════════════════════════ */
 export function ClientCommentInspector({
   asset,
@@ -151,33 +154,20 @@ export function ClientCommentInspector({
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
-  // Render a single comment card
+  // Render a single comment card — all styling via CSS classes
   const renderComment = (comment: CommentEntry, isReply = false) => {
     const replies = repliesMap[comment.id] || [];
     return (
-      <div key={comment.id} className={isReply ? 'ml-6 mt-2' : ''}>
-        <div
-          className="p-3.5 rounded-xl flex flex-col gap-2"
-          style={{
-            border: `1px solid ${isReply ? 'rgba(0,0,0,0.04)' : 'rgba(0,0,0,0.06)'}`,
-            background: isReply ? 'rgba(0,0,0,0.015)' : 'rgba(255,255,255,0.8)',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.03)',
-          }}
-        >
+      <div key={comment.id}>
+        <div className={`pcm-comment${isReply ? ' is-reply' : ''}`}>
           {/* Header row: author + status */}
-          <div className="flex items-center justify-between">
-            <span className="font-semibold text-[11.5px]" style={{ color: 'var(--ink)' }}>{comment.author}</span>
+          <div className="pcm-comment-header">
+            <span className="pcm-comment-author">{comment.author}</span>
             {!isReadOnly && (
               <select
                 value={comment.status}
                 onChange={(e) => handleStatusChange(comment.id, e.target.value as any)}
-                className="text-[9px] font-bold tracking-wide uppercase px-2 py-0.5 rounded-full cursor-pointer outline-none transition-all appearance-none"
-                style={{
-                  fontFamily: 'inherit',
-                  backgroundColor: comment.status === 'New' ? '#eff6ff' : comment.status === 'Team reply' ? '#fffbeb' : '#f0fdf4',
-                  color: comment.status === 'New' ? '#2563eb' : comment.status === 'Team reply' ? '#d97706' : '#16a34a',
-                  border: `0.5px solid ${comment.status === 'New' ? '#bfdbfe' : comment.status === 'Team reply' ? '#fde68a' : '#bbf7d0'}`,
-                }}
+                className={`pcm-comment-status ${statusClass(comment.status)}`}
               >
                 <option value="New">New</option>
                 <option value="Team reply">Team reply</option>
@@ -187,37 +177,21 @@ export function ClientCommentInspector({
           </div>
 
           {/* Comment body text */}
-          <p className="text-[12.5px] leading-relaxed break-words whitespace-pre-wrap" style={{ color: 'var(--ink-2)' }}>{comment.text}</p>
+          <p className="pcm-comment-text">{comment.text}</p>
 
           {/* Footer: timestamp + actions */}
-          <div
-            className="flex items-center justify-between text-[10px] pt-1.5"
-            style={{ color: 'var(--ink-4)', borderTop: '1px solid rgba(0,0,0,0.03)' }}
-          >
-            <span className="font-medium">{relativeTime(comment.createdAt)}</span>
-            <div className="flex items-center gap-2">
+          <div className="pcm-comment-footer">
+            <span className="pcm-comment-time">{relativeTime(comment.createdAt)}</span>
+            <div className="pcm-comment-actions">
               {!isReadOnly && (
-                <button
-                  onClick={() => handleReply(comment.id)}
-                  className="flex items-center gap-1 px-2.5 py-0.5 active:scale-95 transition-all rounded-full font-semibold cursor-pointer"
-                  style={{
-                    background: 'rgba(0,0,0,0.035)',
-                    color: 'var(--ink-3)',
-                    border: '0.5px solid rgba(0,0,0,0.04)',
-                  }}
-                >
-                  <CornerDownRight className="w-2.5 h-2.5" />
+                <button onClick={() => handleReply(comment.id)} className="pcm-comment-reply-btn">
+                  <CornerDownRight />
                   Reply
                 </button>
               )}
               {!isReadOnly && (
-                <button
-                  onClick={() => handleDelete(comment.id)}
-                  className="w-4 h-4 rounded-full flex items-center justify-center transition-all cursor-pointer"
-                  style={{ color: 'rgba(0,0,0,0.15)' }}
-                  title="Delete comment"
-                >
-                  <X className="w-2.5 h-2.5" />
+                <button onClick={() => handleDelete(comment.id)} className="pcm-comment-delete-btn" title="Delete comment">
+                  <X />
                 </button>
               )}
             </div>
@@ -234,81 +208,40 @@ export function ClientCommentInspector({
   const replyingToComment = replyingToId ? thread.find((c) => c.id === replyingToId) : null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex justify-end transition-all duration-300 animate-fade-in"
-      onClick={handleBackdropClick}
-      style={{
-        /* ── Match client review page font + palette exactly ── */
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-        WebkitFontSmoothing: 'antialiased',
-        MozOsxFontSmoothing: 'grayscale',
-        /* Warm ink palette from the review page */
-        ['--ink' as any]: '#1d1d1f',
-        ['--ink-2' as any]: '#4a4239',
-        ['--ink-3' as any]: '#6f6a64',
-        ['--ink-4' as any]: '#8a7d6d',
-        ['--line' as any]: 'rgba(0,0,0,0.06)',
-        backgroundColor: 'rgba(0,0,0,0.08)',
-      }}
-    >
-      <div
-        ref={drawerRef}
-        className="w-full max-w-[420px] h-full flex flex-col transform translate-x-0 transition-transform duration-300 ease-out select-none"
-        style={{
-          background: 'rgba(255,255,255,0.97)',
-          backdropFilter: 'blur(40px)',
-          WebkitBackdropFilter: 'blur(40px)',
-          borderLeft: '1px solid rgba(0,0,0,0.06)',
-          boxShadow: '0 0 50px rgba(0,0,0,0.1)',
-        }}
-      >
+    <div className="pcm-inspector-backdrop" onClick={handleBackdropClick}>
+      <div ref={drawerRef} className="pcm-inspector-drawer">
+
         {/* ─── Header ─── */}
-        <div className="p-5 flex flex-col gap-4 shrink-0" style={{ borderBottom: '1px solid var(--line)' }}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <MessageSquare className="w-4 h-4" style={{ color: 'var(--ink-3)' }} />
-              <span className="font-semibold text-xs uppercase" style={{ color: 'var(--ink)', letterSpacing: '0.08em' }}>Comments</span>
+        <div className="pcm-inspector-header">
+          <div className="pcm-inspector-header-row">
+            <div className="pcm-inspector-title">
+              <MessageSquare />
+              <span>Comments</span>
               {thread.length > 0 && (
-                <span
-                  className="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
-                  style={{ color: 'var(--ink-4)', background: 'rgba(0,0,0,0.04)' }}
-                >
-                  {thread.length}
-                </span>
+                <span className="pcm-inspector-count">{thread.length}</span>
               )}
             </div>
-            <button
-              onClick={onClose}
-              className="w-6 h-6 rounded-full flex items-center justify-center transition-colors cursor-pointer"
-              style={{ color: 'var(--ink-4)' }}
-              title="Close panel"
-            >
-              <X className="w-4 h-4" />
+            <button onClick={onClose} className="pcm-inspector-close" title="Close panel">
+              <X />
             </button>
           </div>
 
           {/* Mini asset preview */}
-          <div
-            className="p-3 rounded-xl flex items-center gap-3"
-            style={{ background: 'rgba(255,255,255,0.6)', border: '1px solid var(--line)' }}
-          >
+          <div className="pcm-inspector-preview">
             {type === 'media' && asset.url && (
-              <div
-                className="w-12 h-12 rounded-lg overflow-hidden shrink-0"
-                style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid var(--line)' }}
-              >
+              <div className="pcm-inspector-thumb">
                 {isVideo ? (
-                  <video src={asset.url} className="w-full h-full object-cover" preload="metadata" />
+                  <video src={asset.url} preload="metadata" />
                 ) : (
-                  <img src={asset.url} alt="preview" className="w-full h-full object-cover" />
+                  <img src={asset.url} alt="preview" />
                 )}
               </div>
             )}
-            <div className="flex-1 min-w-0">
-              <div className="text-[10px] font-bold uppercase" style={{ color: 'var(--ink-4)', letterSpacing: '0.1em' }}>
+            <div>
+              <div className="pcm-inspector-asset-type">
                 {type === 'media' ? (isVideo ? 'Video' : 'Image') : 'Ad Copy'}
               </div>
-              <div className="text-[12px] font-semibold truncate mt-0.5" style={{ color: 'var(--ink)' }}>
+              <div className="pcm-inspector-asset-name">
                 {type === 'media' ? (asset.name || 'Creative Asset') : (asset.headline || 'Ad Copy')}
               </div>
             </div>
@@ -316,12 +249,12 @@ export function ClientCommentInspector({
         </div>
 
         {/* ─── Scrollable Thread ─── */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-3">
+        <div ref={scrollRef} className="pcm-inspector-thread">
           {topLevel.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center gap-2 py-20">
-              <MessageSquare className="w-8 h-8 stroke-[1.5]" style={{ color: 'rgba(0,0,0,0.1)' }} />
-              <div className="text-xs font-semibold" style={{ color: 'var(--ink-4)' }}>No comments yet</div>
-              <p className="text-[11px] max-w-[200px] leading-relaxed" style={{ color: 'var(--ink-4)', opacity: 0.8 }}>
+            <div className="pcm-inspector-empty">
+              <MessageSquare />
+              <div className="pcm-inspector-empty-title">No comments yet</div>
+              <p className="pcm-inspector-empty-text">
                 Start a conversation by adding a comment below.
               </p>
             </div>
@@ -332,42 +265,28 @@ export function ClientCommentInspector({
 
         {/* ─── Composer ─── */}
         {!isReadOnly && (
-          <div className="p-4 shrink-0" style={{ borderTop: '1px solid var(--line)', background: 'rgba(255,255,255,0.5)', backdropFilter: 'blur(20px)' }}>
+          <div className="pcm-inspector-composer">
             {/* Reply-to indicator */}
             {replyingToComment && (
-              <div
-                className="flex items-center gap-2 mb-2 px-2 py-1.5 rounded-lg text-[10.5px]"
-                style={{ background: 'rgba(37,99,235,0.06)', border: '1px solid rgba(37,99,235,0.12)' }}
-              >
-                <CornerDownRight className="w-3 h-3 shrink-0" style={{ color: 'rgba(37,99,235,0.5)' }} />
-                <span className="font-medium truncate" style={{ color: 'rgba(37,99,235,0.8)' }}>
+              <div className="pcm-reply-indicator">
+                <CornerDownRight />
+                <span className="pcm-reply-indicator-text">
                   Replying to <strong>{replyingToComment.author}</strong>
                 </span>
-                <button
-                  onClick={() => setReplyingToId(null)}
-                  className="ml-auto cursor-pointer"
-                  style={{ color: 'rgba(37,99,235,0.5)' }}
-                >
-                  <X className="w-3 h-3" />
+                <button onClick={() => setReplyingToId(null)} className="pcm-reply-indicator-close">
+                  <X />
                 </button>
               </div>
             )}
 
-            <div className="flex gap-2">
-              <Textarea
+            <div className="pcm-inspector-input-row">
+              <textarea
                 ref={textareaRef}
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder={replyingToId ? 'Write a reply...' : 'Add a comment...'}
                 rows={2}
-                className="flex-1 text-xs resize-none rounded-lg p-2.5"
-                style={{
-                  fontFamily: 'inherit',
-                  background: 'white',
-                  border: '1px solid rgba(0,0,0,0.08)',
-                  color: 'var(--ink)',
-                  outline: 'none',
-                }}
+                className="pcm-inspector-textarea"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
@@ -378,16 +297,13 @@ export function ClientCommentInspector({
               <button
                 onClick={handleSubmitComment}
                 disabled={!inputText.trim()}
-                className="self-end h-9 w-9 rounded-full text-white flex items-center justify-center transition-all cursor-pointer disabled:cursor-not-allowed shrink-0"
-                style={{
-                  background: inputText.trim() ? 'var(--ink)' : 'rgba(0,0,0,0.15)',
-                }}
+                className="pcm-inspector-send"
                 title="Send comment (⌘+Enter)"
               >
-                <Send className="w-3.5 h-3.5" />
+                <Send />
               </button>
             </div>
-            <div className="text-[9.5px] mt-1.5 text-right" style={{ color: 'var(--ink-4)' }}>⌘+Enter to send</div>
+            <div className="pcm-inspector-hint">⌘+Enter to send</div>
           </div>
         )}
       </div>

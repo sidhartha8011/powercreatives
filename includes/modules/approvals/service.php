@@ -18,25 +18,32 @@ class PCM_Approvals_Service
      *
      * Order matches the kanban left-to-right flow:
      *   draft     — being assembled by the creator.
-     *   internal  — out for internal team review.
-     *   client    — out for client review (public link sent).
-     *   approved  — client signed off; round complete.
-     *   live      — assets in production / running.
-     *   archived  — closed; retained for reference.
+     *   internal  — out for internal team review (Awaiting Internal Approval).
+     *   client    — out for client review (Awaiting Client Approval).
+     *   create    — client signed off; team is building the campaign assets.
+     *   launch    — campaign is being prepared for launch.
+     *   live      — campaign is running in market.
+     *   archived  — closed or paused; retained for reference.
      *
      * @var string[]
      */
-    public const STATUSES = ['draft', 'internal', 'client', 'approved', 'live', 'archived'];
+    public const STATUSES = ['draft', 'internal', 'client', 'create', 'launch', 'live', 'archived'];
 
     /**
-     * Legacy → new status migration map. Consumed by
-     * PCM_Schema::migrate_approval_set_statuses() (v1.8.0).
+     * Legacy → new status migration map. Iterated in declaration order by
+     * PCM_Schema::migrate_approval_set_statuses() — later entries can
+     * catch values produced by earlier ones in the same pass.
+     *
+     * History:
+     *   v1.8.0: review→client, completed→approved.
+     *   v1.9.0: approved→create (mid-workflow rename for 7-status taxonomy).
      *
      * @var array<string, string>
      */
     public const LEGACY_STATUS_MAP = [
         'review'    => 'client',
         'completed' => 'approved',
+        'approved'  => 'create',
     ];
 
     /**
@@ -218,13 +225,14 @@ class PCM_Approvals_Service
             }
         }
 
-        // Client review submission transitions the set to 'approved'.
-        // (Old taxonomy used 'completed'; v1.8.0 migration remaps legacy data.)
+        // Client review submission auto-advances the set to 'create' (next
+        // workflow step — campaign creation). History:
+        //   v1.7.0 = 'completed', v1.8.0 = 'approved', v1.9.0 = 'create'.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $success = $wpdb->update(
             $table,
             array(
-                'status'         => 'approved',
+                'status'         => 'create',
                 'reviewFeedback' => wp_json_encode($sanitized_feedback),
                 'updatedAt'      => current_time('mysql'),
             ),

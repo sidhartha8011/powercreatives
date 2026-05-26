@@ -2,29 +2,22 @@
  * Public surface of the shared Kanban primitive.
  *
  * Consumers should import from this barrel only — never reach into
- * internal files. The shape of the public API is the stability contract
- * (versioned via KANBAN_CONTRACT_VERSION).
+ * internal files. Internal-only helpers (KanbanErrorBoundary, default
+ * Loading/Error states, etc.) live inside the folder and aren't exposed.
  */
 
 // ─── Core board + types ───
 export { KanbanBoard } from './KanbanBoard';
-export {
-  KANBAN_CONTRACT_VERSION,
-  type KanbanBoardProps,
-  type KanbanColumn,
-  type KanbanMoveEvent,
-  type RenderCardContext,
+export type {
+  KanbanBoardProps,
+  KanbanColumn,
+  KanbanMoveEvent,
+  RenderCardContext,
 } from './types';
 
-// ─── Default state UIs (overrideable) ───
+// ─── Default empty state (consumers may override or pass through) ───
 export { DefaultEmptyState } from './DefaultEmptyState';
 export type { DefaultEmptyStateProps } from './DefaultEmptyState';
-export { DefaultLoadingState } from './DefaultLoadingState';
-export { DefaultErrorState } from './DefaultErrorState';
-export type { DefaultErrorStateProps } from './DefaultErrorState';
-
-// ─── Error boundary (consumers can wrap arbitrary subtrees) ───
-export { KanbanErrorBoundary } from './KanbanErrorBoundary';
 
 // ─── Toolbar ───
 export { KanbanToolbar } from './KanbanToolbar';
@@ -46,8 +39,6 @@ export {
   sortBy,
   textFilter,
 } from './filters/factories';
-export { applyFilters } from './filters/applyFilters';
-export { applySort } from './filters/applySort';
 export { useListState } from './filters/useListState';
 export type {
   UseListStateOptions,

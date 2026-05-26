@@ -20,51 +20,63 @@
   font-family: var(--pck-font-family);
   color: var(--pck-text);
   background: var(--pck-bg-page);
-  border-radius: 10px;
+  border-radius: var(--pck-radius-column);
   padding: 12px;
   overflow-x: auto;
   overflow-y: hidden;
   align-items: start;
 }
 
-/* ─── Column (lane) ─── */
+/* ─── Column (lane) ───
+ * Transparent container. The visual identity of a column comes ENTIRELY
+ * from its header pill (full-width, colored) plus the cards inside. No
+ * box, no border, no background on the column itself.
+ */
 .column {
   display: flex;
   flex-direction: column;
   gap: var(--pck-gap-column);
-  background: var(--pck-bg-column);
-  border: 1px solid var(--pck-lane-border);
-  border-radius: var(--pck-radius-column);
-  padding: var(--pck-pad-column);
   min-height: 120px;
 }
 
 .columnHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 4px 4px 4px;
 }
 
+/* Full-width colored pill — defines the column visually. */
 .columnHeaderPill {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  padding: 2px 8px;
+  width: 100%;
+  padding: 6px 12px;
   font-size: var(--pck-font-size-sm);
   font-weight: var(--pck-font-weight-mid);
   background: var(--pck-pill-bg);
   color: var(--pck-pill-text);
-  border-radius: var(--pck-radius-pill);
-  white-space: nowrap;
-  max-width: 100%;
+  border-radius: var(--pck-radius-sm);
+  gap: 6px;
+}
+
+.columnHeaderLabel {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Decorative status dot — opt-in via column.dotColor. */
+.columnHeaderDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .columnHeaderCount {
   margin-left: auto;
-  font-size: 11px;
-  color: var(--pck-text-muted);
+  font-size: var(--pck-font-size-meta);
+  color: currentColor;
+  opacity: 0.65;
   font-variant-numeric: tabular-nums;
 }
 
@@ -155,7 +167,7 @@
   flex-direction: row;
   padding: 24px;
   color: var(--pck-text-muted);
-  font-size: 12px;
+  font-size: var(--pck-font-size-sm);
 }
 
 .loadingBoardLabel {

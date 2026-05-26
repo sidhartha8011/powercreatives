@@ -5,10 +5,6 @@
  * else to <SetsBoard>, which reads its own data, declarations, and renders
  * through the shared Kanban primitive (with drag-and-drop enabled).
  *
- * The Articles board lives in this folder (ArticlesBoard, useApprovalArticles
- * etc.) and is wired to the same primitive — it's just not surfaced from
- * this module's UI right now. Mount it from another route when needed.
- *
  * @package PowerCreatives
  */
 

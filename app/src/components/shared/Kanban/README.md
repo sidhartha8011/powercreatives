@@ -4,19 +4,6 @@ Domain-agnostic kanban board. Designed so any module can mount it with its
 own data, columns, filters, and card body — without copy-pasting the board
 or coupling to a specific schema.
 
-## Contract
-
-```ts
-KANBAN_CONTRACT_VERSION === 1
-```
-
-Breaking changes bump the version. Pin against it if needed:
-
-```ts
-import { KANBAN_CONTRACT_VERSION } from '@/components/shared/Kanban';
-if (KANBAN_CONTRACT_VERSION !== 1) throw new Error('Kanban contract drift');
-```
-
 ## Three responsibilities, three owners
 
 | Concern | Owner | File |

@@ -22,7 +22,7 @@
   padding: 0 12px;
   font-size: var(--pck-font-size-sm);
   font-weight: var(--pck-font-weight-mid);
-  border-radius: 999px;
+  border-radius: var(--pck-radius-pill);
   gap: 6px;
   background: var(--pck-bg-card);
   border: 1px solid var(--pck-lane-border);
@@ -67,7 +67,7 @@
   margin-bottom: 10px;
   background: var(--pck-bg-page);
   border: 1px solid var(--pck-lane-border);
-  border-radius: 999px;
+  border-radius: var(--pck-radius-pill);
   width: fit-content;
   max-width: 100%;
 }

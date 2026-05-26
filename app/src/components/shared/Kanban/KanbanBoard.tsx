@@ -161,10 +161,17 @@ function KanbanColumn<T extends { id: string | number }>({
   const header = (
     <header className={styles.columnHeader}>
       <span className={styles.columnHeaderPill} style={pillStyle}>
-        {column.label}
-      </span>
-      <span className={styles.columnHeaderCount} aria-hidden="true">
-        {items.length}
+        <span className={styles.columnHeaderLabel}>{column.label}</span>
+        {column.dotColor && (
+          <span
+            className={styles.columnHeaderDot}
+            style={{ background: column.dotColor }}
+            aria-hidden="true"
+          />
+        )}
+        <span className={styles.columnHeaderCount} aria-hidden="true">
+          {items.length}
+        </span>
       </span>
     </header>
   );

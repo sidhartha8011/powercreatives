@@ -8,14 +8,15 @@
 import type { StatusKey } from '@/components/shared/design-tokens';
 
 /**
- * Canonical 6-value approval set lifecycle. Order matches the kanban
+ * Canonical 7-value approval set lifecycle. Order matches the kanban
  * left-to-right flow. Kept in sync with PCM_Approvals_Service::STATUSES.
  */
 export type ApprovalStatus =
   | 'draft'
   | 'internal'
   | 'client'
-  | 'approved'
+  | 'create'
+  | 'launch'
   | 'live'
   | 'archived';
 
@@ -23,7 +24,8 @@ export const APPROVAL_STATUSES: ReadonlyArray<ApprovalStatus> = [
   'draft',
   'internal',
   'client',
-  'approved',
+  'create',
+  'launch',
   'live',
   'archived',
 ] as const;

@@ -16,7 +16,6 @@
 .pck-root {
   /* ── Surfaces ── */
   --pck-bg-page:          #f8f8f7;
-  --pck-bg-column:        #ffffff;
   --pck-bg-card:          #ffffff;
   --pck-bg-card-hover:    #fafaf9;
   --pck-bg-input:         #ffffff;

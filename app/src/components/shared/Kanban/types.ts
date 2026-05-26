@@ -4,14 +4,9 @@
  * Domain-agnostic. The board knows nothing about Approvals, Articles, or any
  * other consumer. All domain shape enters through generic <T> and the
  * renderCard prop.
- *
- * Stability: this is a versioned contract. Breaking changes bump the major
- * via the `KANBAN_CONTRACT_VERSION` constant — consumers can assert it.
  */
 
 import type { CSSProperties, ReactNode } from 'react';
-
-export const KANBAN_CONTRACT_VERSION = 1 as const;
 
 /**
  * Single column declaration. The consumer owns the column list (labels,
@@ -26,6 +21,11 @@ export interface KanbanColumn {
   accentColor?: string;
   /** Optional pill text color. Defaults to neutral. */
   accentText?: string;
+  /**
+   * Optional decorative dot rendered to the right of the label. Useful for
+   * highlighting active-workflow stages (e.g. "in progress" / "live").
+   */
+  dotColor?: string;
   /** Optional hint shown when the column is empty. */
   emptyHint?: string;
 }
