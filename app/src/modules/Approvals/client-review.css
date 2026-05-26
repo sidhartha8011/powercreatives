@@ -37,40 +37,39 @@
  * Complete isolation from #pcm-root's admin base (11.5px, 0.7em paragraphs,
  * oklch colors). Every HTML element is reset to the client's 16px scale.
  * ═══════════════════════════════════════════════════════════════════════════ */
+/* ── Foundation reset ──
+   The admin CSS sets #pcm-root { font-size: 11.5px } and
+   #pcm-root :where(p) { font-size: 0.7em }. These have specificity (1,0,0,0).
 
+   Strategy: ALL rules in this file use at least #pcm-root .pcm-client-review
+   as their selector base, giving (1,1,0,0+). This beats admin rules (1,0,0,x).
+
+   For the wildcard reset (* { font-size: inherit }), the selector is
+   #pcm-root .pcm-client-review * = (1,1,0,0). Component classes like
+   #pcm-root .pcm-hero-title = (1,1,0,0) tie on specificity but WIN because
+   they appear LATER in source order (cascade).                              */
+
+/* Base typography: override #pcm-root's 11.5px */
 #pcm-root .pcm-client-review {
-  /* ── Client base typography ── */
   font-size: 16px;
   line-height: 1.5;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  /* ── Client color foundation ── */
   color: var(--ink);
-
-  /* ── Layout foundation ── */
   background: #ffffff;
   position: relative;
   overflow-x: hidden;
 }
 
-/* Wildcard neutralizer: kill the admin's 11.5px cascade on ALL descendants.
-   Uses inherit so elements pick up from .pcm-client-review (16px), not #pcm-root (11.5px). */
-#pcm-root .pcm-client-review *:not(style):not(script) {
-  font-size: inherit;
-  line-height: inherit;
-}
-
-/* Override #pcm-root :where(p) { font-size: 0.7em } which shrinks
-   all paragraphs to 8px. Review page paragraphs use their own sizes. */
+/* Override #pcm-root :where(p) { font-size: 0.7em } to protect raw paragraph text */
 #pcm-root .pcm-client-review p {
   font-size: inherit;
   line-height: inherit;
   margin: 0;
 }
 
-/* Override admin heading resets — client headings use explicit pcm- classes */
+/* Override admin heading resets for raw headings */
 #pcm-root .pcm-client-review h1,
 #pcm-root .pcm-client-review h2,
 #pcm-root .pcm-client-review h3,
@@ -82,7 +81,7 @@
   margin: 0;
 }
 
-/* Override admin form element resets */
+/* Override admin form element resets for raw inputs and buttons */
 #pcm-root .pcm-client-review input,
 #pcm-root .pcm-client-review textarea,
 #pcm-root .pcm-client-review select,
@@ -92,6 +91,7 @@
   line-height: inherit;
   color: inherit;
 }
+
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -127,7 +127,7 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /* Display — Hero title (Instrument Serif italic) */
-.pcm-text-display {
+#pcm-root .pcm-text-display {
   font-family: "Instrument Serif", Georgia, serif;
   font-style: italic;
   font-weight: 400;
@@ -138,7 +138,7 @@
 }
 
 /* Title — Card headlines, copy headlines */
-.pcm-text-title {
+#pcm-root .pcm-text-title {
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.016em;
@@ -147,14 +147,14 @@
 }
 
 /* Subtitle — Hero subtitle, large body */
-.pcm-text-subtitle {
+#pcm-root .pcm-text-subtitle {
   font-size: 15.5px;
   line-height: 1.55;
   color: var(--ink-2);
 }
 
 /* Body — Card titles, general body text */
-.pcm-text-body {
+#pcm-root .pcm-text-body {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.012em;
@@ -163,14 +163,14 @@
 }
 
 /* Caption — Comment text, inspector text, larger action text */
-.pcm-text-caption {
+#pcm-root .pcm-text-caption {
   font-size: 13.5px;
   line-height: 1.55;
   color: var(--ink-2);
 }
 
 /* Label — Action buttons, filter chips, inputs */
-.pcm-text-label {
+#pcm-root .pcm-text-label {
   font-size: 12.5px;
   font-weight: 500;
   letter-spacing: -0.005em;
@@ -178,21 +178,21 @@
 }
 
 /* Small — Progress, status, timestamps */
-.pcm-text-small {
+#pcm-root .pcm-text-small {
   font-size: 12px;
   font-weight: 500;
   color: var(--ink-3);
 }
 
 /* Micro — Eyebrows, badges, uppercase labels */
-.pcm-text-micro {
+#pcm-root .pcm-text-micro {
   font-size: 11px;
   font-weight: 500;
   color: var(--ink-4);
 }
 
 /* Eyebrow — Smallest uppercase label */
-.pcm-text-eyebrow {
+#pcm-root .pcm-text-eyebrow {
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -303,7 +303,7 @@
 .pcm-client-review .pcm-filters {
   display: inline-flex; gap: 2px;
 }
-.pcm-client-review .pcm-chip {
+#pcm-root .pcm-client-review .pcm-chip {
   appearance: none; border: none; background: transparent;
   font-family: inherit; font-size: 13.5px; font-weight: 500;
   color: var(--ink-3); padding: 8px 14px; border-radius: 9px;
@@ -599,7 +599,7 @@
   display: flex; align-items: center; gap: 6px;
   border-top: 1px solid rgba(0,0,0,0.05);
 }
-.pcm-btn {
+#pcm-root .pcm-btn {
   appearance: none; border: none; cursor: pointer;
   font-family: inherit; font-size: 12.5px; font-weight: 500;
   padding: 7px 12px; border-radius: 99px;
@@ -928,7 +928,7 @@
 }
 
 /* Status badge dropdown */
-.pcm-comment-status {
+#pcm-root .pcm-comment-status {
   appearance: none; border: none; outline: none;
   font-family: inherit;
   font-size: 10px; font-weight: 700;
@@ -936,18 +936,18 @@
   padding: 3px 10px; border-radius: 99px;
   cursor: pointer; transition: all 0.15s ease;
 }
-.pcm-comment-status.is-new {
+#pcm-root .pcm-comment-status.is-new {
   background: #eff6ff; color: #2563eb; border: 0.5px solid #bfdbfe;
 }
-.pcm-comment-status.is-team-reply {
+#pcm-root .pcm-comment-status.is-team-reply {
   background: #fffbeb; color: #d97706; border: 0.5px solid #fde68a;
 }
-.pcm-comment-status.is-done {
+#pcm-root .pcm-comment-status.is-done {
   background: #f0fdf4; color: #16a34a; border: 0.5px solid #bbf7d0;
 }
 
 /* Comment body text */
-.pcm-comment-text {
+#pcm-root .pcm-comment-text {
   font-size: 13.5px; line-height: 1.55; color: var(--ink-2);
   word-break: break-word; white-space: pre-wrap;
 }
@@ -965,7 +965,7 @@
 }
 
 /* Reply button */
-.pcm-comment-reply-btn {
+#pcm-root .pcm-comment-reply-btn {
   appearance: none; border: none; cursor: pointer;
   font-family: inherit;
   display: inline-flex; align-items: center; gap: 4px;
@@ -1025,7 +1025,7 @@
 .pcm-inspector-input-row {
   display: flex; gap: 8px;
 }
-.pcm-inspector-textarea {
+#pcm-root .pcm-inspector-textarea {
   flex: 1; resize: none; border-radius: 8px; padding: 10px;
   font-family: inherit; font-size: 13px;
   background: white; color: var(--ink);
@@ -1067,7 +1067,7 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /* Wrapper: fullscreen container with glow background */
-.pcm-state-wrapper {
+#pcm-root .pcm-state-wrapper {
   display: flex; flex-direction: column;
   min-height: 100vh;
   background: #ffffff;
@@ -1098,7 +1098,7 @@
 }
 
 /* Loading text */
-.pcm-state-text {
+#pcm-root .pcm-state-text {
   font-size: 13px; color: var(--ink-3);
 }
 
@@ -1116,7 +1116,7 @@
 }
 
 /* State heading (Instrument Serif) */
-.pcm-state-heading {
+#pcm-root .pcm-state-heading {
   font-family: "Instrument Serif", Georgia, serif;
   font-size: 26px; font-weight: 400;
   color: var(--ink);
@@ -1124,7 +1124,7 @@
 }
 
 /* State body text */
-.pcm-state-body {
+#pcm-root .pcm-state-body {
   font-size: 13px; line-height: 1.6;
   color: var(--ink-3); margin: 0;
 }
