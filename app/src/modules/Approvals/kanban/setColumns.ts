@@ -23,6 +23,7 @@ export const setColumns: ReadonlyArray<ApprovalSetColumn> = [
     label: 'Draft',
     accentColor: '#f0eee9',
     accentText:  '#6e6259',
+    emptyHint:   'No drafts',
   },
   {
     id: 'internal',
@@ -30,18 +31,21 @@ export const setColumns: ReadonlyArray<ApprovalSetColumn> = [
     accentColor: '#f7e0e5',
     accentText:  '#9c4255',
     dotColor:    '#3b6ad8',
+    emptyHint:   'Nothing awaiting internal review',
   },
   {
     id: 'client',
     label: 'Awaiting Client Approval',
     accentColor: '#faf3d4',
     accentText:  '#9b7c1e',
+    emptyHint:   'Nothing awaiting client review',
   },
   {
     id: 'create',
     label: 'Create Campaign',
     accentColor: '#fcd9d4',
     accentText:  '#a04a40',
+    emptyHint:   'No campaigns to build',
   },
   {
     id: 'launch',
@@ -49,6 +53,7 @@ export const setColumns: ReadonlyArray<ApprovalSetColumn> = [
     accentColor: '#ddd3f4',
     accentText:  '#6948b8',
     dotColor:    '#e88b3a',
+    emptyHint:   'No campaigns ready to launch',
   },
   {
     id: 'live',
@@ -56,11 +61,13 @@ export const setColumns: ReadonlyArray<ApprovalSetColumn> = [
     accentColor: '#d6e0f4',
     accentText:  '#4a6da8',
     dotColor:    '#4a9d4a',
+    emptyHint:   'No live campaigns',
   },
   {
     id: 'archived',
     label: 'Archived/Paused',
     accentColor: '#e7edf3',
     accentText:  '#6e7a8a',
+    emptyHint:   'Nothing archived',
   },
 ];

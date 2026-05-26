@@ -5,15 +5,17 @@
  *   - Owns the columns array (id, label, accent).
  *   - Owns the items list and how each is bucketed (getColumnId).
  *   - Owns the card body (renderCard prop).
+ *   - Owns the empty-state decision (e.g. distinguishing data-empty from
+ *     filter-empty). The board never hides itself based on item count —
+ *     when items is empty, the columns still render with their own
+ *     per-column empty hint.
  *
  * The board owns:
  *   - Column wrapper, header pill, item count, empty-column hint.
  *   - Card wrapper (background, border, hover transition).
- *   - Error boundary, default loading / empty / error states.
+ *   - Error boundary, default loading / error chrome.
  *   - Token scope (--pck-* CSS variables via the `pck-root` class).
  *   - Optional drag-and-drop (via @hello-pangea/dnd) when onItemMove is set.
- *
- * No filter / sort UI here — see KanbanToolbar for that.
  */
 
 import { useCallback, useMemo, type ReactNode } from 'react';
@@ -24,7 +26,6 @@ import {
   type DropResult,
 } from '@hello-pangea/dnd';
 
-import { DefaultEmptyState } from './DefaultEmptyState';
 import { DefaultErrorState } from './DefaultErrorState';
 import { DefaultLoadingState } from './DefaultLoadingState';
 import { KanbanErrorBoundary } from './KanbanErrorBoundary';
@@ -43,9 +44,6 @@ export function KanbanBoard<T extends { id: string | number }>({
   renderCard,
   isLoading = false,
   error = null,
-  emptyState,
-  loadingState,
-  errorState,
   onItemMove,
   className,
   style,
@@ -85,25 +83,18 @@ export function KanbanBoard<T extends { id: string | number }>({
     [onItemMove]
   );
 
-  // Top-level state precedence: error → loading → empty → grid.
+  // Top-level state precedence: error → loading → grid (always).
   if (error) {
     return (
       <div className={`pck-root ${styles.root} ${className ?? ''}`} style={style}>
-        {errorState ? errorState(error) : <DefaultErrorState error={error} />}
+        <DefaultErrorState error={error} />
       </div>
     );
   }
   if (isLoading) {
     return (
       <div className={`pck-root ${styles.root} ${className ?? ''}`} style={style}>
-        {loadingState ?? <DefaultLoadingState />}
-      </div>
-    );
-  }
-  if (items.length === 0) {
-    return (
-      <div className={`pck-root ${styles.root} ${className ?? ''}`} style={style}>
-        {emptyState ?? <DefaultEmptyState />}
+        <DefaultLoadingState />
       </div>
     );
   }

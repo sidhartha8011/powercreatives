@@ -1,8 +1,8 @@
 # Shared Kanban Primitive
 
-Domain-agnostic kanban board. Designed so any module can mount it with its
-own data, columns, filters, and card body — without copy-pasting the board
-or coupling to a specific schema.
+Domain-agnostic kanban board + a pure filter / sort engine. Any module can
+mount it with its own data, columns, and card body — without copy-pasting
+the board or coupling to a specific schema.
 
 ## Three responsibilities, three owners
 
@@ -10,22 +10,25 @@ or coupling to a specific schema.
 |---|---|---|
 | Data fetching + state | Consumer hook | e.g. `useApprovalSets` |
 | Domain card body | Consumer component | e.g. `SetCard` |
-| Column chrome, layout, error boundary | Shared `KanbanBoard` | `KanbanBoard.tsx` |
-| Filter / sort UI | Shared `KanbanToolbar` | `KanbanToolbar.tsx` |
+| Lane chrome, DnD, layout, error boundary | Shared `KanbanBoard` | `KanbanBoard.tsx` |
 | Filter / sort logic | Shared engine | `filters/` |
+| **Toolbar / filter UI** | **Consumer** (shadcn primitives) | per-module |
 
-If you're adding a filter, you write **one entry** in a declaration file.
-If you're adding a control kind, you write **one component + one entry in
-the registry**. You should never touch `KanbanBoard.tsx` or the engine
-files to add a domain feature.
+The toolbar is intentionally owned by the consumer. Each module renders
+its bar with `<Input>` / `<Select>` / `<Button>` from `components/ui` so
+every bar in the platform looks identical without a parallel CSS system.
+The engine exposes state-binding hooks (`useListState`,
+`state.setFilterValue`, `state.setSortId`) the consumer wires to those
+primitives.
 
-## Minimal consumer (50 lines)
+## Minimal consumer (≈ 60 lines)
 
 ```tsx
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   KanbanBoard,
-  KanbanToolbar,
   searchableSelect,
   sortBy,
   useListState,
@@ -40,21 +43,33 @@ const columns: KanbanColumn[] = [
   { id: 'done',  label: 'Done',   accentColor: '#dcfce7', accentText: '#166534' },
 ];
 
-const filters = [
-  searchableSelect<Task>('project', 'Project', t => t.project),
-];
-
-const sorts = [
-  sortBy<Task>('newest', 'Newest first', (a, b) => b.createdAt.localeCompare(a.createdAt)),
-];
+const filters = [searchableSelect<Task>('project', 'Project', (t) => t.project)];
+const sorts   = [sortBy<Task>('newest', 'Newest first', (a, b) => b.createdAt.localeCompare(a.createdAt))];
 
 export function TaskBoard({ tasks }: { tasks: Task[] }) {
   const state = useListState(tasks, filters, sorts, { persistKey: 'tasks', defaultSortId: 'newest' });
-  const getColumnId = useMemo(() => (t: Task) => t.status, []);
+  const projectOptions = useMemo(() => Array.from(new Set(tasks.map(t => t.project))).sort(), [tasks]);
+  const projectValue = state.filterState.project?.kind === 'searchableSelect'
+    ? state.filterState.project.selected[0] ?? '__all__'
+    : '__all__';
+  const getColumnId = useCallback((t: Task) => t.status, []);
 
   return (
     <>
-      <KanbanToolbar items={tasks} filters={filters} sorts={sorts} state={state} />
+      <div className="flex flex-wrap items-center gap-3 mb-6 bg-slate-50/50 p-2 rounded-lg border border-slate-100">
+        <Select
+          value={projectValue}
+          onValueChange={(v) =>
+            state.setFilterValue('project', v === '__all__' ? undefined : { kind: 'searchableSelect', selected: [v] })
+          }
+        >
+          <SelectTrigger className="w-[160px] h-9 bg-white"><SelectValue placeholder="Project" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All projects</SelectItem>
+            {projectOptions.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
       <KanbanBoard
         columns={columns}
         items={state.filteredItems}
@@ -66,36 +81,40 @@ export function TaskBoard({ tasks }: { tasks: Task[] }) {
 }
 ```
 
-## Adding a new filter (1 line)
+## Adding a new filter
 
-```ts
-// existing
-searchableSelect<Task>('project', 'Project', t => t.project),
-// new
-searchableSelect<Task>('assignee', 'Assignee', t => t.assignee),
-```
+1. Declare it via a factory (`searchableSelect`, `textFilter`,
+   `booleanFilter`, `dateRangeFilter`):
 
-That's it. The toolbar renders the new pill, the engine handles the state
-and matching, URL sync picks it up. No other file changes.
+   ```ts
+   searchableSelect<Task>('assignee', 'Assignee', (t) => t.assignee),
+   ```
 
-## Adding a new sort (1 line)
+2. Render the matching control in your bar and bind it to
+   `state.filterState['assignee']` / `state.setFilterValue('assignee', ...)`.
+
+That's all. The engine handles state, matching, and URL sync. No internal
+registry to update.
+
+## Adding a new sort (one line)
 
 ```ts
 sortBy<Task>('priorityDesc', 'High priority first', (a, b) => b.priority - a.priority),
 ```
 
-## Adding a new control kind (≈30 lines)
+Then add a `<SelectItem value="priorityDesc">High priority first</SelectItem>`
+to your bar's sort `<Select>`.
 
-1. Add a variant to `FilterControlSpec` in `filters/types.ts`.
-2. Add a matching variant to `FilterValue`.
-3. Add a `case` in `applyFilters.ts → matches()`.
-4. Create `filters/controls/MyControl.tsx`.
-5. Export it from `filters/controls/index.ts`.
-6. Add a `case` in `KanbanToolbar.tsx → FilterControl`.
-7. Add a factory in `filters/factories.ts`.
+## Empty states are the consumer's job
 
-The compiler will tell you exactly what's missing — every step is type-
-checked. No runtime registry to keep in sync.
+`KanbanBoard` does not hide itself when `items.length === 0`. The lanes
+always render with their per-column `emptyHint`. The consumer decides
+whether to:
+
+- Hide the board entirely (truly-empty data) and show an onboarding state.
+- Keep the board visible (filter-empty data) and show a "no matches" notice.
+
+See `modules/Approvals/kanban/SetsBoard.tsx` for the canonical example.
 
 ## URL synchronization
 
@@ -105,21 +124,24 @@ same page don't collide.
 
 ```ts
 useListState(items, filters, sorts, { persistKey: 'sets' });
-// URL becomes: ?sets.brand=Nike,Adidas&sets.sort=newest
+// URL becomes: ?sets.project=Nike&sets.sort=newest
 ```
 
 ## CSS scoping
 
-Everything is CSS Modules — class names are hashed at build time. The only
-*global* surface is the `--pck-*` CSS custom properties declared on
-`.pck-root`. Override them on any parent element to re-theme:
+The board internals are CSS Modules — class names are hashed at build
+time. The only *global* surface is the `--pck-*` CSS custom properties
+declared on `.pck-root`. Override them on any parent element to re-theme:
 
 ```css
 .my-darker-board.pck-root {
-  --pck-bg-column: #1e1e1e;
+  --pck-bg-lane: #1e1e1e;
   --pck-text: #f4f4f4;
 }
 ```
+
+Toolbar styling lives outside this folder — that's the consumer's
+Tailwind + shadcn surface, not the kanban primitive's concern.
 
 ## Type safety policy
 
@@ -138,17 +160,16 @@ mode were on. Reviewers reject anything that doesn't meet this bar.
 - `role="list"` on the board, `role="listitem"` on columns and cards.
 - Status communicated via the column label *and* its pill color — color is
   never the only carrier.
-- `aria-label` on every interactive control. Filter triggers expose
-  `aria-haspopup` / `aria-expanded`.
+- `aria-label` on every interactive control. Consumers must label their
+  bar inputs (`<Input aria-label="...">`, `<SelectTrigger aria-label="...">`).
 - `prefers-reduced-motion` honored — all hover transitions disable.
 
 ## Out of scope (intentional)
 
-- **Drag-and-drop.** The Card render context exposes `dragHandleProps` and
-  `isDragging` slots so DnD can be added later without breaking card
-  consumers, but no DnD wiring ships today.
-- **Virtualization.** Boards expected to render < 500 cards at once; revisit
-  with `@tanstack/react-virtual` if that changes.
+- **Toolbar component.** Each consumer renders its bar with platform
+  primitives. Removed in favor of design-system consistency.
+- **Virtualization.** Boards expected to render < 500 cards at once;
+  revisit with `@tanstack/react-virtual` if that changes.
 - **Tests.** Repo has no test infrastructure. Engine functions
   (`applyFilters`, `applySort`) are written as pure functions so they're
   trivial to unit-test once infra exists.

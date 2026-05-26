@@ -58,14 +58,19 @@ export interface KanbanMoveEvent {
 }
 
 /**
- * Props for <KanbanBoard>. Empty/loading/error states are required props on
- * the contract — consumers cannot accidentally ship an undefined empty UI.
- * Defaults are exported separately (DefaultEmptyState, DefaultLoadingState,
- * DefaultErrorState) so simple consumers can pass them through.
+ * Props for <KanbanBoard>.
  *
- * Drag-and-drop is opt-in: pass `onItemMove` to enable. The board wires
- * @hello-pangea/dnd transparently. Without the callback, cards render
- * statically with no drag overhead.
+ * The board renders the lane chrome and the wrapper around each card.
+ * Card body, item-to-column mapping, and source data are the consumer's
+ * responsibility. The board makes no decisions about "empty" — when
+ * `items` is an empty array, the columns still render with their own
+ * per-column empty hint. The consumer decides what (if anything) to
+ * show above the board.
+ *
+ * Loading / error chrome render via the built-in default states when the
+ * respective props are set. Drag-and-drop is opt-in: pass `onItemMove`
+ * to enable. Without the callback, cards render statically with no DnD
+ * overhead.
  */
 export interface KanbanBoardProps<T extends { id: string | number }> {
   columns: ReadonlyArray<KanbanColumn>;
@@ -77,13 +82,6 @@ export interface KanbanBoardProps<T extends { id: string | number }> {
 
   isLoading?: boolean;
   error?: Error | null;
-
-  /** Override the default empty-board state (no items at all). */
-  emptyState?: ReactNode;
-  /** Override the default loading skeleton. */
-  loadingState?: ReactNode;
-  /** Override the default error UI. */
-  errorState?: (err: Error) => ReactNode;
 
   /**
    * Optional drag-and-drop handler. Pass to enable column-to-column moves.

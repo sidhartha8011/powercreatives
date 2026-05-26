@@ -48,9 +48,7 @@ export type FilterState = Record<string, FilterValue | undefined>;
 
 /**
  * A filter declaration. Bound to a domain type via generic T. `getValue`
- * exposes the comparable attribute(s) for matching. `getOptions` is optional
- * — when omitted for searchableSelect, options are derived as unique
- * non-null getValue() results.
+ * exposes the comparable attribute(s) for matching.
  */
 export interface FilterDefinition<T> {
   id: string;
@@ -62,18 +60,6 @@ export interface FilterDefinition<T> {
    * undefined for missing data — filtered as "no value".
    */
   getValue: (item: T) => string | string[] | null | undefined;
-  /**
-   * Optional bespoke option list (label + value + count). When omitted the
-   * engine derives unique options from getValue().
-   */
-  getOptions?: (items: ReadonlyArray<T>) => Array<FilterOption>;
-}
-
-export interface FilterOption {
-  value: string;
-  label: string;
-  /** Pre-computed count of matching items. Renders as a badge in the UI. */
-  count?: number;
 }
 
 /**
