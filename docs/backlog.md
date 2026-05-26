@@ -1,6 +1,7 @@
 ## Backlog
 
 - [x] Isolera klientgranskningssidans designsystem från admin-SPA:n. Skapade fristående `client-review.css` (650+ rader) med komplett CSS-foundation, admin-reset, design-tokens (--ink-palett), namngiven type scale och alla komponentklasser. Migrerade 4 komponenter (ClientReviewPage, CreativeAssetCard, ClientStatusToolbar, ClientCommentInspector) från Tailwind-utilities + inline `<style>` (852 rader) till exklusivt pcm- klasser. Eliminerade 16+ typografi- och färgdiskrepanser orsakade av admin-arv. [2026-05-26]
+- [x] Konvertera "Kopiera text"-knappen på kopieringskort till en ren cirkulär ikonknapp utan textetikett för att förhindra textbrytning och förbättra den visuella harmonin i åtgärdsraden. [2026-05-26]
 - [x] Uppgradera kommentarsystemet från en enda textsträng per tillgång till ett riktigt flertrådigt kommentarsystem med obegränsade kommentarer, författaridentitet, tidsstämplar, trådning via svar, och per-kommentar-status (New/Team reply/Done). Backend och frontend har migrerats med bakåtkompatibilitet för äldre data. [2026-05-26]
 - [x] Implementera den minimalistiska, glassmorfiska sidopanels-kommentarsinspektorn (Glass-Sheet Inspector) i Light Mode, fri från profilbilder och med integrerade statuslägen (New, Team reply, Done) synkade i realtid mot databasen. [2026-05-26]
 - [x] Testa klientgranskningssidan med samma rena vita bakgrund och tre flytande omgivande blå lystergradienter som inloggningsskärmen, samtidigt som de ursprungliga gradienterna bevaras inuti kommentarblock. [2026-05-25]
