@@ -207,6 +207,50 @@ class PCM_Approvals_Service
     }
 
     /**
+     * Save client feedback draft (real-time autosave).
+     */
+    public static function save_review_draft(string $token, array $feedback): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+
+        $set = self::get_set_by_token($token);
+        if (!$set) {
+            return false;
+        }
+
+        // Only allow saving draft if the status is still 'draft'
+        if ($set->status !== 'draft') {
+            return false;
+        }
+
+        // Tidy feedback arrays
+        $sanitized_feedback = array(
+            'approvedVisualIds' => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
+            'approvedCopyIds'   => array_map('sanitize_text_field', $feedback['approvedCopyIds'] ?? array()),
+            'comments'          => array(),
+        );
+
+        if (!empty($feedback['comments']) && is_array($feedback['comments'])) {
+            foreach ($feedback['comments'] as $itemId => $commentText) {
+                $sanitized_feedback['comments'][sanitize_text_field($itemId)] = sanitize_textarea_field($commentText);
+            }
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $success = $wpdb->update(
+            $table,
+            array(
+                'reviewFeedback' => wp_json_encode($sanitized_feedback),
+                'updatedAt'      => current_time('mysql'),
+            ),
+            array('id' => (int)$set->id)
+        );
+
+        return $success !== false;
+    }
+
+    /**
      * Format database row JSON strings into standard array formats.
      */
     private static function format_set_row(object $row): object

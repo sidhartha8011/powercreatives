@@ -367,16 +367,21 @@ export function CreativeAssetCard({
 
       {/* Comment Display Section (Feedback) */}
       {comment && !isEditingComment && (
-        <div className="px-3.5 pb-3 z-10">
-          <div className="p-2.5 rounded-xl border border-amber-200/50 border-l-4 border-l-amber-500 bg-amber-50/50 text-amber-900/90 italic text-xs flex justify-between items-start gap-3 shadow-inner">
-            <span className="min-w-0 break-words flex-1 leading-relaxed">"{comment}"</span>
+        <div className="px-3.5 pb-3.5 z-10">
+          <div className="p-3 rounded-xl border border-zinc-150 bg-white/45 backdrop-blur-sm text-zinc-700 text-xs flex justify-between items-start gap-3 shadow-[0_2px_8px_rgba(0,0,0,0.015)]">
+            <div className="flex items-start gap-2 flex-1 min-w-0">
+              <MessageSquare className="w-3.5 h-3.5 text-zinc-400 mt-0.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 break-words leading-relaxed font-normal">{comment}</span>
+            </div>
             {!isSubmitted && (
               <button
                 type="button"
                 onClick={() => onCommentRemove(asset.id)}
-                className="text-[10px] font-bold hover:underline shrink-0 text-red-500 cursor-pointer"
+                className="w-5 h-5 rounded-full hover:bg-zinc-100/80 flex items-center justify-center text-zinc-400 hover:text-zinc-600 transition-all shrink-0 cursor-pointer"
+                title="Remove comment"
+                aria-label="Remove comment"
               >
-                Remove
+                <X className="w-3 h-3" />
               </button>
             )}
           </div>
@@ -385,30 +390,27 @@ export function CreativeAssetCard({
 
       {/* Comment Inline Composer Editor */}
       {isEditingComment && (
-        <div className="px-3.5 pb-3.5 pt-1.5 border-t border-border/30 bg-muted/20 z-10">
-          <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
-            Leave tweak feedback note
-          </label>
+        <div className="px-3.5 pb-3.5 pt-2 border-t border-border/30 z-10 bg-zinc-50/20">
           <Textarea
             value={tempCommentText}
             onChange={(e) => setTempCommentText(e.target.value)}
-            placeholder="Type your feedback tweaks here... (e.g. adjust brightness, replace CTA text...)"
-            rows={3}
-            className="text-xs bg-white resize-none"
+            placeholder="Write feedback tweaks... (e.g. adjust lighting, replace tagline...)"
+            rows={2}
+            className="text-xs bg-white/60 resize-none border border-zinc-200 focus:border-zinc-300 focus:ring-0 focus:ring-offset-0 placeholder:text-zinc-400/90 rounded-lg p-2"
             autoFocus
           />
           <div className="flex justify-end gap-1.5 mt-2">
             <Button
               size="sm"
               variant="ghost"
-              className="h-7 text-[11px] font-semibold"
+              className="h-7 text-[11px] font-medium text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 rounded-full px-3"
               onClick={handleCancel}
             >
               Cancel
             </Button>
             <Button
               size="sm"
-              className="h-7 text-[11px] font-bold bg-slate-900 hover:bg-slate-800"
+              className="h-7 text-[11px] font-medium bg-zinc-900 text-white hover:bg-zinc-800 rounded-full px-3"
               onClick={handleSave}
             >
               Save Note

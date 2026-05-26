@@ -66,6 +66,7 @@ class PCM_REST_Approvals extends PCM_REST_Base
             array('PATCH', '/approvals/sets/(?P<id>\d+)/status',       'update_set_status',   array(), 'edit_posts'),
             array('GET',   '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)', 'get_public_set',      array(), 'public'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/review', 'submit_public_review', array(), 'public'),
+            array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/draft', 'save_public_draft', array(), 'public'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/assets/(?P<asset_id>[a-zA-Z0-9_-]+)', 'update_snapshot_asset', array(), 'public'),
         );
     }
@@ -203,6 +204,36 @@ class PCM_REST_Approvals extends PCM_REST_Base
             return $this->success(array('success' => true));
         } catch (\Throwable $e) {
             return $this->error('Failed to submit client review: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Save client feedback draft in real-time (unauthenticated).
+     */
+    public function save_public_draft(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $token  = sanitize_key($request->get_param('token'));
+        $params = $request->get_json_params();
+
+        if (!isset($params['feedback'])) {
+            return $this->error('Feedback data is required.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $success = PCM_Approvals_Service::save_review_draft(
+                $token,
+                $params['feedback']
+            );
+
+            if (!$success) {
+                return $this->not_found('Approval Set');
+            }
+
+            return $this->success(array('success' => true));
+        } catch (\Throwable $e) {
+            return $this->error('Failed to save client review draft: ' . $e->getMessage(), 500);
         }
     }
 

@@ -1,18 +1,17 @@
 /**
- * SetCard styles — domain-specific card body for the Sets kanban.
+ * SetCard styles — Notion-tight: two lines, no chrome.
  *
- * Notion-style: two text lines, faint actions revealed on hover. The card
- * wrapper (border, background, shadow, hover) is provided by KanbanBoard's
- * .cardWrap — these classes style the inner content only.
- *
- * Class names are CSS-Module-hashed; safe from collisions.
+ * The card body is always exactly 2 lines (title + meta). The action row
+ * is absolutely positioned and overlays the bottom-right on hover, so the
+ * card never grows or shifts. Matches the reference Notion screenshot.
  */
 
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px;
+  gap: 1px;
+  padding: 4px 8px;
   cursor: pointer;
   outline: none;
 }
@@ -22,13 +21,13 @@
   border-radius: var(--pck-radius-card);
 }
 
-/* Line 1 — primary title (brand / set name). Dark, not link-blue. */
+/* Line 1 — primary title. Dark, not link-blue. */
 .title {
   font-family: var(--pck-font-family);
   font-size: var(--pck-font-size-card);
   font-weight: var(--pck-font-weight-semi);
   color: var(--pck-text);
-  line-height: 1.35;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -41,11 +40,11 @@
 
 .titleSep {
   color: var(--pck-text-faint);
-  margin: 0 4px;
+  margin: 0 3px;
   font-weight: 400;
 }
 
-/* Line 2 — metadata (project · counts · timestamp) */
+/* Line 2 — metadata (project · counts · feedback) */
 .meta {
   font-family: var(--pck-font-family);
   font-size: var(--pck-font-size-meta);
@@ -53,8 +52,11 @@
   line-height: 1.3;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .metaItem {
@@ -75,38 +77,46 @@
   font-weight: var(--pck-font-weight-mid);
 }
 
-/* Hover-revealed action row */
+/* ─── Absolutely-positioned action overlay ───
+ * The card stays 2 lines tall always. Actions fade in on hover, anchored
+ * bottom-right with a subtle gradient mask so they don't visually cut into
+ * the meta text behind them.
+ */
 .actions {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
   display: flex;
-  align-items: center;
   gap: 0;
-  margin-top: 2px;
-  margin-left: -4px;
-  height: 0;
-  overflow: hidden;
+  padding-left: 16px;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0) 0%,
+    var(--pck-bg-card) 35%
+  );
   opacity: 0;
-  transition: opacity var(--pck-transition-fast), height var(--pck-transition-fast), margin-top var(--pck-transition-fast);
+  pointer-events: none;
+  transition: opacity var(--pck-transition-fast);
 }
 
 .card:hover .actions,
 .card:focus-within .actions {
-  height: 22px;
-  margin-top: 4px;
   opacity: 1;
+  pointer-events: auto;
 }
 
 .actionBtn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   font-family: var(--pck-font-family);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: var(--pck-font-weight-mid);
   color: var(--pck-text-muted);
   background: transparent;
   border: 0;
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding: 2px 4px;
+  border-radius: 3px;
   cursor: pointer;
   text-decoration: none;
   transition: color var(--pck-transition-fast), background var(--pck-transition-fast);
@@ -118,17 +128,13 @@
 }
 
 .actionIcon {
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .actions,
   .actionBtn {
     transition: none;
-  }
-  /* Always visible when motion is reduced — no opacity gating. */
-  .actions {
-    opacity: 1;
   }
 }

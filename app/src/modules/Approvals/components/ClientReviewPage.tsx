@@ -94,14 +94,39 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     saveDraft(token, { approvedVisualIds, approvedCopyIds, comments, clientName });
   }, [token, approvedVisualIds, approvedCopyIds, comments, clientName, isSubmitted]);
 
-  // Hydrate approved/comment state from server feedback when viewing a completed board
+  // Hydrate approved/comment state from server draft or completed review feedback
   useEffect(() => {
-    if (set?.status === 'completed' && set.reviewFeedback) {
+    if (set?.reviewFeedback) {
       setApprovedVisualIds(set.reviewFeedback.approvedVisualIds || []);
       setApprovedCopyIds(set.reviewFeedback.approvedCopyIds || []);
       setComments(set.reviewFeedback.comments || {});
     }
-  }, [set?.status, set?.reviewFeedback]);
+  }, [set?.reviewFeedback]);
+
+  // Save draft mutation (autosave)
+  const saveDraftMutation = trpc.approvals.saveReviewDraft.useMutation({
+    onError: (err: any) => {
+      console.error('Failed to autosave review draft:', err.message);
+    },
+  });
+
+  // Debounced autosave effect to synchronize approvals and comments in real-time
+  useEffect(() => {
+    if (isSubmitted || !set || set.status !== 'draft') return;
+
+    const timer = setTimeout(() => {
+      saveDraftMutation.mutate({
+        token,
+        feedback: {
+          approvedVisualIds,
+          approvedCopyIds,
+          comments,
+        },
+      });
+    }, 800); // 800ms debounce
+
+    return () => clearTimeout(timer);
+  }, [token, approvedVisualIds, approvedCopyIds, comments, isSubmitted, set]);
 
   // Submit mutation
   const submitMutation = trpc.approvals.submitReview.useMutation({
@@ -139,7 +164,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       ...prev,
       [id]: text
     }));
-    toast('Comment noted — remember to submit before closing', { icon: '📝' });
   }, [isSubmitted]);
 
   const handleClearComment = useCallback((id: string) => {
@@ -149,7 +173,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       delete next[id];
       return next;
     });
-    toast.info('Comment removed');
   }, [isSubmitted]);
 
   const handleApproveAll = useCallback(() => {
@@ -158,7 +181,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     const copyIds = (set.snapshot.copy || []).map((c: any) => c.id);
     setApprovedVisualIds(mediaIds);
     setApprovedCopyIds(copyIds);
-    toast('All assets marked — remember to submit before closing', { icon: '✅' });
   }, [set, isSubmitted]);
 
   const handleSubmitReview = useCallback(() => {
@@ -1049,6 +1071,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         isSubmitting={submitMutation.isPending}
         isConfirmPending={submitMutation.isPending}
         isReadOnly={isReadOnly}
+        isSaving={saveDraftMutation.isPending}
       />
 
       {/* Grid container */}

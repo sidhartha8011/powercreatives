@@ -18,6 +18,7 @@ interface ClientStatusToolbarProps {
   isSubmitting?: boolean;
   isConfirmPending?: boolean;
   isReadOnly?: boolean;
+  isSaving?: boolean;
 }
 
 export function ClientStatusToolbar({
@@ -31,7 +32,8 @@ export function ClientStatusToolbar({
   onConfirmSubmit,
   isSubmitting = false,
   isConfirmPending = false,
-  isReadOnly = false
+  isReadOnly = false,
+  isSaving = false
 }: ClientStatusToolbarProps) {
   
   /** Review period in milliseconds (4 days) */
@@ -120,6 +122,20 @@ export function ClientStatusToolbar({
 
         {/* Right Panel elements */}
         <div className="pcm-toolbar-right w-full md:w-auto">
+          {/* Autosave Status Indicator */}
+          {!isReadOnly && (
+            isSaving ? (
+              <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1.5 animate-pulse select-none shrink-0 mr-2">
+                <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />
+                Saving...
+              </span>
+            ) : (
+              <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1 select-none shrink-0 mr-2 transition-all duration-200 opacity-80">
+                <Check className="w-3 h-3 text-emerald-500" />
+                Draft saved
+              </span>
+            )
+          )}
           
           {/* Progress Indicator */}
           <div className="pcm-progress select-none">

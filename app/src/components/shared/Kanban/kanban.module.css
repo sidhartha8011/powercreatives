@@ -38,8 +38,8 @@
 .columnHeader {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 4px 6px 4px;
+  gap: 6px;
+  padding: 2px 4px 4px 4px;
 }
 
 .columnHeaderPill {

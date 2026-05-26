@@ -553,6 +553,11 @@ const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `approvals/sets/${input.token}/review`, body: input }),
     },
+    "approvals.saveReviewDraft": {
+        endpoint: "approvals/sets",
+        method: "POST",
+        transform: (input: any) => ({ url: `approvals/sets/${input.token}/draft`, body: input }),
+    },
     "approvals.updateSnapshotAsset": {
         endpoint: "approvals/sets",
         method: "POST",

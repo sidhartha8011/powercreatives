@@ -37,9 +37,9 @@
 
   /* Spacing */
   --pck-gap-board:        10px;
-  --pck-gap-column:       4px;
-  --pck-pad-column:       8px;
-  --pck-pad-card:         6px 10px;
+  --pck-gap-column:       3px;
+  --pck-pad-column:       6px;
+  --pck-pad-card:         4px 8px;
 
   /* Radii */
   --pck-radius-card:      4px;
