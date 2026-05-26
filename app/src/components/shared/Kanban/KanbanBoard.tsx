@@ -165,9 +165,7 @@ function KanbanColumn<T extends { id: string | number }>({
         aria-label={`${column.label} (${items.length})`}
       >
         {header}
-        {items.length === 0 ? (
-          <div className={styles.columnEmpty}>{column.emptyHint ?? ' '}</div>
-        ) : (
+        {items.length > 0 && (
           <ol className={styles.columnList} role="list">
             {items.map((item) => (
               <li key={item.id} role="listitem" className={styles.cardWrap}>
@@ -175,6 +173,9 @@ function KanbanColumn<T extends { id: string | number }>({
               </li>
             ))}
           </ol>
+        )}
+        {items.length === 0 && column.emptyHint && (
+          <div className={styles.columnEmpty}>{column.emptyHint}</div>
         )}
       </section>
     );
@@ -195,8 +196,8 @@ function KanbanColumn<T extends { id: string | number }>({
             className={`${styles.columnList} ${droppableSnapshot.isDraggingOver ? styles.columnListOver : ''}`}
             role="list"
           >
-            {items.length === 0 && (
-              <div className={styles.columnEmpty}>{column.emptyHint ?? ' '}</div>
+            {items.length === 0 && column.emptyHint && (
+              <div className={styles.columnEmpty}>{column.emptyHint}</div>
             )}
             {items.map((item, idx) => (
               <Draggable

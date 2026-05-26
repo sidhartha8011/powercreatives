@@ -70,7 +70,7 @@
 
   /* ── Radii ── */
   --pck-radius-sm:        6px;
-  --pck-radius-card:      6px;
+  --pck-radius-card:      10px;
   --pck-radius-column:    10px;
   --pck-radius-pill:      999px;
   --pck-radius-input:     8px;
@@ -81,7 +81,7 @@
   --pck-font-size-pill:   11px;
   --pck-font-size-meta:   11px;
   --pck-font-size-sm:     12px;
-  --pck-font-size-card:   13px;
+  --pck-font-size-card:   12px;
   --pck-font-size-md:     14px;
   --pck-font-weight-mid:  500;
   --pck-font-weight-semi: 600;

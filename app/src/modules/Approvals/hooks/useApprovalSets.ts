@@ -121,11 +121,16 @@ export function useApprovalSets(): UseApprovalSetsResult {
   );
 
   // ── Status mutation with optimistic update ──
+  //
+  // No onSettled invalidate: that triggers an immediate refetch which
+  // races with @hello-pangea/dnd's in-flight drop animation, causing a
+  // visible flip-flop (card moves → snaps back → moves again) even on
+  // success. The optimistic update already mirrors the only field the
+  // server changes (status), so the cache is correct post-mutation.
+  // onError still rolls back if the server rejects; React Query's
+  // refetchOnWindowFocus / staleTime will reconcile any drift later.
   const statusMutation = trpc.approvals.updateSetStatus.useMutation({
     onMutate: async (vars: { id: number; status: ApprovalStatus }) => {
-      // Optimistic: write the new status into the cached list right away,
-      // remember the previous list so onError can revert if the server
-      // rejects (network error, ownership mismatch, invalid status).
       await queryClient.cancelQueries({ queryKey: LIST_QUERY_KEY });
       const previous = queryClient.getQueryData<ApprovalSet[]>(LIST_QUERY_KEY);
 
@@ -145,10 +150,6 @@ export function useApprovalSets(): UseApprovalSetsResult {
       }
       const message = err instanceof Error ? err.message : 'Failed to move set';
       toast.error(message);
-    },
-    onSettled: () => {
-      // Refetch to reconcile with server truth (updatedAt etc.).
-      void queryClient.invalidateQueries({ queryKey: LIST_QUERY_KEY });
     },
   });
 
