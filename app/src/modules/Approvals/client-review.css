@@ -929,46 +929,50 @@
 
 /* Comment card */
 .pcm-comment {
-  padding: 14px; border-radius: 12px;
-  border: 1px solid var(--line);
-  background: rgba(255,255,255,0.8);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+  padding: 12px 14px; border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.04);
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
   display: flex; flex-direction: column; gap: 8px;
+  margin-bottom: 12px;
 }
 .pcm-comment.is-reply {
-  margin-left: 24px; margin-top: 8px;
-  border-color: rgba(0,0,0,0.04);
-  background: rgba(0,0,0,0.015);
+  margin-left: 28px; margin-top: 8px;
+  border-color: rgba(0,0,0,0.03);
+  background: rgba(0,0,0,0.012);
+  box-shadow: none;
 }
 .pcm-comment-header {
   display: flex; align-items: center; justify-content: space-between;
 }
 .pcm-comment-author {
-  font-size: 13px; font-weight: 600; color: var(--ink);
+  font-size: 12.5px; font-weight: 600; color: var(--ink);
+  letter-spacing: -0.01em;
 }
 
 /* Status badge dropdown */
 #pcm-root .pcm-comment-status {
   appearance: none; border: none; outline: none;
   font-family: inherit;
-  font-size: 10px; font-weight: 700;
-  letter-spacing: 0.05em; text-transform: uppercase;
-  padding: 3px 10px; border-radius: 99px;
+  font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 99px;
   cursor: pointer; transition: all 0.15s ease;
 }
 #pcm-root .pcm-comment-status.is-new {
-  background: #eff6ff; color: #2563eb; border: 0.5px solid #bfdbfe;
+  background: rgba(37,99,235,0.07); color: #2563eb; border: 0.5px solid rgba(37,99,235,0.15);
 }
 #pcm-root .pcm-comment-status.is-team-reply {
-  background: #fffbeb; color: #d97706; border: 0.5px solid #fde68a;
+  background: rgba(217,119,6,0.07); color: #d97706; border: 0.5px solid rgba(217,119,6,0.15);
 }
 #pcm-root .pcm-comment-status.is-done {
-  background: #f0fdf4; color: #16a34a; border: 0.5px solid #bbf7d0;
+  background: rgba(22,163,74,0.07); color: #16a34a; border: 0.5px solid rgba(22,163,74,0.15);
 }
 
 /* Comment body text */
 #pcm-root .pcm-comment-text {
-  font-size: 13.5px; line-height: 1.55; color: var(--ink-2);
+  font-size: 13px; line-height: 1.5; color: var(--ink-2);
+  font-weight: 400; letter-spacing: -0.005em;
   word-break: break-word; white-space: pre-wrap;
 }
 
@@ -978,7 +982,8 @@
   padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.03);
 }
 .pcm-comment-time {
-  font-size: 11.5px; font-weight: 500; color: var(--ink-4);
+  font-size: 10.5px; font-weight: 500; color: var(--ink-4);
+  letter-spacing: 0.01em;
 }
 .pcm-comment-actions {
   display: flex; align-items: center; gap: 8px;
@@ -989,26 +994,25 @@
   appearance: none; border: none; cursor: pointer;
   font-family: inherit;
   display: inline-flex; align-items: center; gap: 4px;
-  padding: 3px 10px; border-radius: 99px;
-  font-size: 11.5px; font-weight: 600;
-  background: rgba(0,0,0,0.035); color: var(--ink-3);
-  border: 0.5px solid rgba(0,0,0,0.04);
-  transition: background 0.15s ease;
+  padding: 2px 6px; border-radius: 99px;
+  font-size: 11px; font-weight: 500;
+  background: transparent; color: var(--ink-3);
+  transition: color 0.15s ease;
 }
-.pcm-comment-reply-btn:hover { background: rgba(0,0,0,0.06); }
-.pcm-comment-reply-btn:active { transform: scale(0.96); }
-.pcm-comment-reply-btn svg { width: 11px; height: 11px; }
+#pcm-root .pcm-comment-reply-btn:hover { color: var(--ink); background: transparent; }
+#pcm-root .pcm-comment-reply-btn:active { transform: scale(0.96); }
+#pcm-root .pcm-comment-reply-btn svg { width: 11px; height: 11px; }
 
 /* Delete button */
-.pcm-comment-delete-btn {
+#pcm-root .pcm-comment-delete-btn {
   appearance: none; border: none; cursor: pointer;
-  background: transparent; color: rgba(0,0,0,0.15);
-  width: 20px; height: 20px; border-radius: 50%; padding: 0;
+  background: transparent; color: var(--ink-4);
+  width: 22px; height: 22px; border-radius: 50%; padding: 0;
   display: flex; align-items: center; justify-content: center;
   transition: all 0.15s ease;
 }
-.pcm-comment-delete-btn:hover { background: rgba(220,38,38,0.06); color: #dc2626; }
-.pcm-comment-delete-btn svg { width: 11px; height: 11px; }
+#pcm-root .pcm-comment-delete-btn:hover { background: rgba(220,38,38,0.06); color: #dc2626; }
+#pcm-root .pcm-comment-delete-btn svg { width: 11px; height: 11px; }
 
 /* Composer area */
 .pcm-inspector-composer {
