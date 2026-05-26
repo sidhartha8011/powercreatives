@@ -59,7 +59,11 @@ export function KanbanToolbar<T extends { id: string | number }>({
   leadingSlot,
 }: KanbanToolbarProps<T>) {
   return (
-    <div className={filterStyles.toolbar} role="toolbar" aria-label={ariaLabel}>
+    <div
+      className="flex flex-wrap items-center gap-3 mb-6 bg-slate-50/50 p-2 rounded-lg border border-slate-100"
+      role="toolbar"
+      aria-label={ariaLabel}
+    >
       {leadingSlot}
 
       <div className={filterStyles.toolbarLeft}>
