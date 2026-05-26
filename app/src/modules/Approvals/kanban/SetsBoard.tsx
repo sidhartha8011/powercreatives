@@ -93,7 +93,7 @@ export function SetsBoard({ toolbarLeadingSlot }: SetsBoardProps = {}) {
         leadingSlot={toolbarLeadingSlot}
       />
 
-      <div className="flex-1 min-h-0 overflow-x-auto">
+      <div className="flex-1 min-h-0 overflow-auto">
         <KanbanBoard<ApprovalSet>
           columns={setColumns}
           items={listState.filteredItems}

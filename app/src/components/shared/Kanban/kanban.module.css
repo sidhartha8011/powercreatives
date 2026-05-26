@@ -16,17 +16,22 @@
  * Transparent — the page wrapper provides the white background. Fixed
  * lane width via grid-auto-columns: every lane is the same size so the
  * board reads as a calm grid, not a stretchy table.
+ *
+ * No overflow control here — the consumer's wrapper handles horizontal
+ * scrolling so the scrollbar sits at the bottom of the page area, not
+ * mid-content. min-height: 100% makes the grid fill the wrapper so
+ * empty lanes still extend down to the page bottom.
  */
 .root {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: var(--pck-lane-width);
   gap: var(--pck-gap-board);
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
   font-family: var(--pck-font-family);
   color: var(--pck-text);
-  overflow-x: auto;
-  overflow-y: hidden;
   align-items: start;
 }
 

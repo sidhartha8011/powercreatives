@@ -11,10 +11,10 @@
 
 /* ─── Trigger (compact pill — sits in the toolbar row) ───
  *
- * White surface with hairline border so the filter dropdowns read as
- * proper input affordances, not ghost text. Compact 28px height matches
- * --pck-control-h. Active state turns the label blue so applied filters
- * are visible at a glance.
+ * White surface with stronger border + subtle shadow so the filter
+ * dropdowns read as proper input affordances against the bar surface.
+ * Compact 28px height matches --pck-control-h. Active state turns the
+ * label blue so applied filters are visible at a glance.
  */
 .trigger {
   height: var(--pck-control-h);
@@ -25,14 +25,15 @@
   gap: 6px;
   background: var(--pck-bg-card);
   border: 1px solid var(--pck-control-border);
-  box-shadow: none;
+  box-shadow: var(--pck-shadow-control);
   color: var(--pck-text);
-  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast), color var(--pck-transition-fast);
+  transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast), box-shadow var(--pck-transition-fast), color var(--pck-transition-fast);
 }
 
 .trigger:hover {
   background: var(--pck-bg-card-hover);
   border-color: var(--pck-border-strong);
+  box-shadow: var(--pck-shadow-card-hover);
 }
 
 /* Active state — selection applied. Blue label signals "filter committed". */
@@ -51,9 +52,11 @@
 
 /* ─── Toolbar = single row, spans the board width ───
  *
- * White surface, hairline bottom border, no full enclosure. Filters
- * left, sort pushed right via margin-left:auto on .toolbarRight. Spans
- * the full content width above the board.
+ * Faintly-tinted surface (slightly off-white from the page) plus a soft
+ * shadow below — gives the bar visible presence on a white page so the
+ * dropdowns clearly read as "inside the bar" rather than floating in
+ * empty space. Hairline bottom border carries the seam. Filters left,
+ * sort pushed right via margin-left:auto on .toolbarRight.
  */
 .toolbar {
   display: flex;
@@ -62,10 +65,11 @@
   height: var(--pck-toolbar-h);
   padding: 0 var(--pck-toolbar-pad-x);
   margin-bottom: 12px;
-  background: var(--pck-bg-card);
+  background: var(--pck-bg-toolbar);
   border: 0;
   border-bottom: 1px solid var(--pck-lane-border);
   border-radius: 0;
+  box-shadow: var(--pck-shadow-toolbar);
   width: 100%;
 }
 
