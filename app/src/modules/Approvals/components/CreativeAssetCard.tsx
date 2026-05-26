@@ -393,9 +393,10 @@ export function CreativeAssetCard({
                 type="button"
                 className="pcm-btn pcm-btn-copy"
                 onClick={handleCopyToClipboard}
+                title="Copy Text"
+                aria-label="Copy Text"
               >
                 <Copy className="w-[13px] h-[13px]" />
-                Copy Text
               </button>
             )
           )}

@@ -615,6 +615,11 @@
 #pcm-root .pcm-btn-download:hover, #pcm-root .pcm-btn-copy:hover {
   background: rgba(0,0,0,0.1); color: var(--ink);
 }
+#pcm-root .pcm-btn-copy {
+  width: 30px; height: 30px; padding: 0;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+}
 #pcm-root .pcm-btn svg { width: 13px; height: 13px; }
 
 
