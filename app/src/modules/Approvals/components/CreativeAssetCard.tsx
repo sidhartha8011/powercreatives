@@ -382,9 +382,10 @@ export function CreativeAssetCard({
                 type="button"
                 className="pcm-btn pcm-btn-download"
                 onClick={handleDownload}
+                title="Download"
+                aria-label="Download"
               >
                 <Download className="w-[13px] h-[13px]" />
-                Download
               </button>
             ) : (
               <button
