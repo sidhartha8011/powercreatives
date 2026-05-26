@@ -11,14 +11,14 @@
 
 /* ─── Trigger (compact pill — sits in the toolbar row) ───
  *
- * Rendered on a raw <button> (not shadcn Button), so this stylesheet owns
- * every visual property — no fighting Tailwind utilities for specificity.
- * White surface with visible border + soft shadow so the dropdowns read
- * as proper input affordances against the bar. Compact 28px height
- * matches --pck-control-h. Active state turns the label blue so applied
- * filters are visible at a glance.
+ * Scoped under :global(#pcm-root) so the final compiled selector is
+ *   #pcm-root ._trigger_vychi_21
+ * Specificity 1,1,0,0 — beats Tailwind's @layer base button reset
+ * (0,0,0,1), WP admin's body.wp-admin button (0,1,0,2), and any other
+ * non-ID author rule. The plugin's React app is mounted in #pcm-root in
+ * WP admin DOM, so it's a guaranteed ancestor.
  */
-.trigger {
+:global(#pcm-root) .trigger {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
@@ -40,13 +40,13 @@
   transition: background var(--pck-transition-fast), border-color var(--pck-transition-fast), box-shadow var(--pck-transition-fast), color var(--pck-transition-fast);
 }
 
-.trigger:hover {
+:global(#pcm-root) .trigger:hover {
   background: var(--pck-bg-card-hover);
   border-color: var(--pck-border-strong);
   box-shadow: var(--pck-shadow-card-hover);
 }
 
-.trigger:focus-visible {
+:global(#pcm-root) .trigger:focus-visible {
   border-color: var(--pck-border-focus);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
@@ -59,7 +59,7 @@
 }
 
 /* Active state — selection applied. Blue label signals "filter committed". */
-.triggerActive {
+:global(#pcm-root) .triggerActive {
   color: var(--pck-text-link);
   background: var(--pck-bg-chip-active);
   border-color: var(--pck-bg-chip-active);
