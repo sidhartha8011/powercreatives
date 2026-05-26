@@ -69,7 +69,7 @@ export function ClientCommentInspector({
     >
       <div
         ref={drawerRef}
-        className="w-full max-w-[420px] h-full bg-white/70 backdrop-blur-xl border-l border-white/30 shadow-[0_0_40px_rgba(0,0,0,0.06)] flex flex-col justify-between transform translate-x-0 transition-transform duration-300 ease-out select-none"
+        className="w-full max-w-[420px] h-full bg-slate-50/98 backdrop-blur-2xl border-l border-slate-200 shadow-[0_0_50px_rgba(15,23,42,0.15)] flex flex-col justify-between transform translate-x-0 transition-transform duration-300 ease-out select-none"
       >
         {/* Drawer Header */}
         <div className="p-5 border-b border-slate-100 flex flex-col gap-4">
@@ -157,9 +157,9 @@ export function ClientCommentInspector({
                 <span className="font-medium">Today</span>
                 <button
                   onClick={handleReplyClick}
-                  className="hover:text-slate-700 transition-colors font-semibold flex items-center gap-1 cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-500 hover:text-slate-800 transition-all rounded-full font-semibold cursor-pointer border border-slate-200/50 shadow-sm"
                 >
-                  <CornerDownRight className="w-3 h-3" />
+                  <CornerDownRight className="w-3 h-3 animate-pulse" />
                   Reply in thread
                 </button>
               </div>
