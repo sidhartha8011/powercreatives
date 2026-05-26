@@ -5,9 +5,11 @@
  * selector establishes the `pck-root` token scope (see tokens.css) so all
  * --pck-* variables cascade to descendants.
  *
- * Notion-inspired layout: thin pastel column headers, flat light-gray
- * column body, white cards with a subtle border. Cards render via the
- * consumer's renderCard — wrapper visuals only.
+ * Layout: transparent board + transparent column containers. Visual
+ * identity of each column comes from its full-width colored header pill
+ * + the cards inside. Cards render via the consumer's renderCard
+ * callback — this stylesheet provides only the wrapper chrome (border,
+ * background, hover, shadow).
  */
 
 /* ─── Board root ───
@@ -28,15 +30,19 @@
 }
 
 /* ─── Column (lane) ───
- * Transparent container. The visual identity of a column comes ENTIRELY
- * from its header pill (full-width, colored) plus the cards inside. No
- * box, no border, no background on the column itself.
+ * White surface sitting on the warm-gray page. Subtle 1px lane-border
+ * gives it a defined edge without competing with the colored header
+ * pill or the cards inside.
  */
 .column {
   display: flex;
   flex-direction: column;
   gap: var(--pck-gap-column);
   min-height: 120px;
+  background: var(--pck-bg-card);
+  border: 1px solid var(--pck-lane-border);
+  border-radius: var(--pck-radius-card);
+  padding: 8px;
 }
 
 .columnHeader {

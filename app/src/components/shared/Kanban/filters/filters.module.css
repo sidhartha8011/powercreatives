@@ -46,22 +46,21 @@
   white-space: nowrap;
 }
 
-/* ─── Toolbar = slim header strip ───
+/* ─── Toolbar = contained control surface ───
  *
- * Edge-to-edge horizontal row with a 1px hairline border-bottom that
- * separates the header zone from the board zone. Filters left, sort
- * pushed right via margin-left:auto on .toolbarRight.
+ * White surface with subtle 1px lane-border — matches the lane treatment
+ * so the toolbar reads as part of the same surface family. Filters left,
+ * sort pushed right via margin-left:auto on .toolbarRight.
  */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 0;
+  padding: 6px 10px;
   margin-bottom: 12px;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--pck-lane-border);
-  border-radius: 0;
+  background: var(--pck-bg-card);
+  border: 1px solid var(--pck-lane-border);
+  border-radius: var(--pck-radius-card);
   width: 100%;
 }
 

@@ -391,6 +391,21 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           -moz-osx-font-smoothing: grayscale;
           position: relative;
           overflow-x: hidden;
+          /* Reset the 11.5px admin base back to browser default.
+             This page is client-facing, not WP admin. */
+          font-size: 16px;
+          line-height: 1.5;
+        }
+        /* Override #pcm-root :where(p) { font-size: 0.7em } which shrinks
+           all paragraphs to 8px. Review page paragraphs use their own sizes. */
+        #pcm-root .aurora-mesh-bg p {
+          font-size: inherit;
+          line-height: inherit;
+        }
+        #pcm-root .aurora-mesh-bg h1,
+        #pcm-root .aurora-mesh-bg h2 {
+          font-size: inherit;
+          font-weight: inherit;
         }
 
         #pcm-root .pcm-glow {

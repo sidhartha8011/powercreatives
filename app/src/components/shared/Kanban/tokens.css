@@ -1,8 +1,10 @@
 /**
  * Kanban Design Tokens
  *
- * Manus-inspired warm-neutral palette. Three-layer surface hierarchy:
- *   page (warm gray)  →  lane (white)  →  card (white, bordered).
+ * Manus-inspired warm-neutral palette. The kanban primitive renders on
+ * top of whatever page background the consumer provides — these tokens
+ * cover surface, border, text, semantic, spacing, radius, typography,
+ * shadow, and motion concerns *inside* the board.
  *
  * Naming convention: --pck-* (PowerCreatives Kanban) — never collides with
  * other modules. Pair with the `pck-root` selector — the variables cascade
@@ -15,7 +17,6 @@
 
 .pck-root {
   /* ── Surfaces ── */
-  --pck-bg-page:          #f8f8f7;
   --pck-bg-card:          #ffffff;
   --pck-bg-card-hover:    #fafaf9;
   --pck-bg-input:         #ffffff;
@@ -42,7 +43,6 @@
   /* ── Spacing ── */
   --pck-gap-board:        14px;
   --pck-gap-column:       3px;
-  --pck-pad-column:       6px;
 
   /* ── Radii ── */
   --pck-radius-sm:        6px;
