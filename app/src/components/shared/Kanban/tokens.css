@@ -1,75 +1,76 @@
 /**
  * Kanban Design Tokens
  *
- * Notion-inspired palette for the generic Kanban primitive. Exposed as CSS
- * custom properties so consumers (modules, skins, custom cards) can read them
- * without importing the JS tokens.
+ * Manus-inspired warm-neutral palette. Three-layer surface hierarchy:
+ *   page (warm gray)  →  lane (white)  →  card (white, bordered).
  *
- * Naming convention: --pck-* (PowerCreatives Kanban) to avoid global collisions.
- * Pair with the .pck-board root selector — all variables cascade from there.
+ * Naming convention: --pck-* (PowerCreatives Kanban) — never collides with
+ * other modules. Pair with the `pck-root` selector — the variables cascade
+ * to all descendants.
+ *
+ * Editing rule: add a token only when the value is referenced twice or
+ * has clear semantic meaning. Magic numbers belong here, not in component
+ * CSS.
  */
 
 .pck-root {
-  /* ── Surfaces (Manus-inspired warm neutrals, page-gray inversion) ──
-   * Three-layer hierarchy:  warm-gray page  →  white lane  →  white card.
-   *
-   * The lane border is the page color itself at low alpha, so the lane's
-   * edge dissolves softly into the page rather than drawing a hard line.
-   * Cards get a slightly stronger border + soft shadow so they remain
-   * clearly distinct *inside* the white lane.
-   */
-  --pck-bg-page:          #f8f8f7;  /* warm off-white page canvas */
-  --pck-bg-column:        #ffffff;  /* lane sits on the page, pure white */
-  --pck-bg-card:          #ffffff;  /* cards inside the lane */
+  /* ── Surfaces ── */
+  --pck-bg-page:          #f8f8f7;
+  --pck-bg-column:        #ffffff;
+  --pck-bg-card:          #ffffff;
   --pck-bg-card-hover:    #fafaf9;
-  --pck-bg-popover:       #ffffff;
   --pck-bg-input:         #ffffff;
   --pck-bg-chip:          #ecebe6;
   --pck-bg-chip-active:   #e2e7f0;
 
-  /* Lane border — page color at low alpha. Renders as the hinted-at edge
-   * of the lane against any background, never a stark line. */
+  /* ── Borders ── */
   --pck-lane-border:      rgba(0, 0, 0, 0.05);
-
-  /* Borders — warm taupe, used for cards so they pop inside the white lane */
   --pck-border:           #e8e6e1;
   --pck-border-strong:    #d6d3cd;
   --pck-border-focus:     #3b82f6;
 
-  /* Text — warmer near-black, mid-gray, faint */
+  /* ── Text ── */
   --pck-text:             #1d1d1b;
   --pck-text-muted:       #6f6f6c;
   --pck-text-faint:       #a8a6a0;
   --pck-text-link:        #2563eb;
 
-  /* Column header pill defaults (consumer overrides per-column via accentColor) */
-  --pck-pill-bg:          #ecebe6;
-  --pck-pill-text:        #4a4a45;
+  /* ── Semantic colors (status accents in card meta) ── */
+  --pck-color-success:    #386c33;
+  --pck-color-warning:    #9c5314;
+  --pck-color-danger:     #d97706;
 
-  /* Spacing */
+  /* ── Spacing ── */
   --pck-gap-board:        10px;
   --pck-gap-column:       3px;
   --pck-pad-column:       6px;
-  --pck-pad-card:         4px 8px;
 
-  /* Radii */
+  /* ── Radii ── */
+  --pck-radius-sm:        4px;
   --pck-radius-card:      8px;
   --pck-radius-column:    10px;
   --pck-radius-pill:      999px;
   --pck-radius-input:     8px;
 
-  /* Typography */
+  /* ── Typography ── */
   --pck-font-family:      'Inter', ui-sans-serif, system-ui, sans-serif;
+  --pck-font-size-xs:     10px;
+  --pck-font-size-meta:   11px;
   --pck-font-size-sm:     12px;
   --pck-font-size-card:   12px;
-  --pck-font-size-meta:   11px;
+  --pck-font-size-md:     14px;
   --pck-font-weight-mid:  500;
   --pck-font-weight-semi: 600;
 
-  /* Shadows */
-  --pck-shadow-card:      0 1px 2px rgba(15, 15, 15, 0.04);
-  --pck-shadow-popover:   0 8px 24px rgba(15, 15, 15, 0.12);
+  /* ── Shadows ── */
+  --pck-shadow-card:          0 1px 2px rgba(15, 15, 15, 0.04);
+  --pck-shadow-card-hover:    0 2px 4px rgba(15, 15, 15, 0.06);
+  --pck-shadow-card-dragging: 0 8px 18px rgba(15, 15, 15, 0.18);
 
-  /* Motion (consumer can disable via prefers-reduced-motion) */
+  /* ── Column header pill (overridable per-column via accentColor) ── */
+  --pck-pill-bg:          #ecebe6;
+  --pck-pill-text:        #4a4a45;
+
+  /* ── Motion ── */
   --pck-transition-fast:  120ms cubic-bezier(0.4, 0, 0.2, 1);
 }

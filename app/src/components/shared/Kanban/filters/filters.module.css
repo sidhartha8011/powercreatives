@@ -96,13 +96,13 @@
 }
 
 .clearAll {
-  font-size: 12px;
+  font-size: var(--pck-font-size-sm);
   color: var(--pck-text-muted);
   background: transparent;
   border: 0;
   padding: 4px 8px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--pck-radius-sm);
   transition: color var(--pck-transition-fast), background var(--pck-transition-fast);
 }
 
@@ -126,11 +126,9 @@
 }
 
 .dateRangeLabel {
-  font-size: 11px;
+  font-size: var(--pck-font-size-meta);
   font-weight: var(--pck-font-weight-mid);
   color: var(--pck-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .dateRangeInput {
@@ -194,7 +192,7 @@
   background: transparent;
   color: var(--pck-text-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--pck-radius-sm);
 }
 
 .textControlClear:hover {

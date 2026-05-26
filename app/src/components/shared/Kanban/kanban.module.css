@@ -87,7 +87,7 @@
 
 /* Card while being dragged — lift it visually. */
 .cardWrapDragging {
-  box-shadow: 0 8px 18px rgba(15, 15, 15, 0.18);
+  box-shadow: var(--pck-shadow-card-dragging);
 }
 
 .columnEmpty {
@@ -116,7 +116,7 @@
 .cardWrap:hover {
   background: var(--pck-bg-card-hover);
   border-color: var(--pck-border-strong);
-  box-shadow: 0 2px 4px rgba(15, 15, 15, 0.06);
+  box-shadow: var(--pck-shadow-card-hover);
 }
 
 /* ─── Default empty / loading / error states ─── */
@@ -139,13 +139,13 @@
 }
 
 .emptyBoardTitle {
-  font-size: 14px;
+  font-size: var(--pck-font-size-md);
   font-weight: var(--pck-font-weight-semi);
   margin: 0;
 }
 
 .emptyBoardDescription {
-  font-size: 12px;
+  font-size: var(--pck-font-size-sm);
   color: var(--pck-text-muted);
   margin: 0;
   max-width: 360px;
@@ -159,7 +159,7 @@
 }
 
 .loadingBoardLabel {
-  font-size: 12px;
+  font-size: var(--pck-font-size-sm);
 }
 
 .errorBoard {
@@ -171,17 +171,17 @@
 .errorBoardIcon {
   width: 24px;
   height: 24px;
-  color: #d97706;
+  color: var(--pck-color-danger);
 }
 
 .errorBoardTitle {
-  font-size: 14px;
+  font-size: var(--pck-font-size-md);
   font-weight: var(--pck-font-weight-semi);
   margin: 0;
 }
 
 .errorBoardMessage {
-  font-size: 12px;
+  font-size: var(--pck-font-size-sm);
   color: var(--pck-text-muted);
   margin: 0;
 }

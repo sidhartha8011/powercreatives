@@ -86,7 +86,7 @@ export function SetCard({
       <div className={styles.title}>
         {brand ? (
           <>
-            <span className={styles.titleBrand}>{brand}</span>
+            <span>{brand}</span>
             <span className={styles.titleSep}>/</span>
           </>
         ) : null}
