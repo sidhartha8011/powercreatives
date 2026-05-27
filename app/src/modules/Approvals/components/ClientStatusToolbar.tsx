@@ -45,15 +45,15 @@ export function ClientStatusToolbar({
       const cleanDateStr = typeof createdAt === 'string' ? createdAt.replace(' ', 'T') : createdAt;
       const createdDate = new Date(cleanDateStr);
       if (isNaN(createdDate.getTime())) {
-        return { formattedDueDate: 'No deadline', remainingDaysText: '', urgencyClass: '' };
+        return { formattedDueDate: 'Ingen deadline', remainingDaysText: '', urgencyClass: '' };
       }
       
       const dueDate = new Date(createdDate.getTime() + REVIEW_PERIOD_MS);
       const today = new Date();
       
       // Dynamic date formatting
-      const formatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
-      const formattedDueDate = `Due ${formatter.format(dueDate)}`;
+      const formatter = new Intl.DateTimeFormat('sv-SE', { month: 'short', day: 'numeric' });
+      const formattedDueDate = `Deadline ${formatter.format(dueDate)}`;
       
       // Calculate day difference
       const d1 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -65,21 +65,21 @@ export function ClientStatusToolbar({
       let urgencyClass = '';
       
       if (diffDays > 1) {
-        remainingDaysText = `· ${diffDays} days left`;
+        remainingDaysText = `· ${diffDays} dagar kvar`;
       } else if (diffDays === 1) {
-        remainingDaysText = `· 1 day left`;
+        remainingDaysText = `· 1 dag kvar`;
         urgencyClass = 'is-urgent';
       } else if (diffDays === 0) {
-        remainingDaysText = `· Due today`;
+        remainingDaysText = `· Idag`;
         urgencyClass = 'is-urgent';
       } else {
-        remainingDaysText = `· Overdue`;
+        remainingDaysText = `· Försenad`;
         urgencyClass = 'is-overdue';
       }
       
       return { formattedDueDate, remainingDaysText, urgencyClass };
     } catch {
-      return { formattedDueDate: 'No deadline', remainingDaysText: '', urgencyClass: '' };
+      return { formattedDueDate: 'Ingen deadline', remainingDaysText: '', urgencyClass: '' };
     }
   }, [createdAt]);
 
@@ -97,9 +97,9 @@ export function ClientStatusToolbar({
             .map((filter) => {
             const isActive = activeFilter === filter;
             const labelMap = {
-              images: `Images · ${counts.images}`,
-              videos: `Videos · ${counts.videos}`,
-              copy: `Copy · ${counts.copy}`
+              images: `Bilder · ${counts.images}`,
+              videos: `Video · ${counts.videos}`,
+              copy: `Text · ${counts.copy}`
             };
 
             return (
@@ -134,7 +134,7 @@ export function ClientStatusToolbar({
           {isReadOnly ? (
             <span className="pcm-bar-completed">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              Completed
+              Klar
             </span>
           ) : isAllApproved ? (
             <button
@@ -144,9 +144,9 @@ export function ClientStatusToolbar({
               className="pcm-confirm-btn cursor-pointer select-none"
             >
               {isConfirmPending ? (
-                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting...</>
+                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Skickar...</>
               ) : (
-                <><CheckCircle2 className="w-3.5 h-3.5" /> Click to Confirm</>
+                <><CheckCircle2 className="w-3.5 h-3.5" /> Bekräfta</>
               )}
             </button>
           ) : (
@@ -157,7 +157,7 @@ export function ClientStatusToolbar({
               className="pcm-approve-all cursor-pointer select-none"
             >
               <Check className="w-3.5 h-3.5" />
-              Approve all
+              Godkänn alla
             </button>
           )}
         </div>

@@ -286,11 +286,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Hero subtitle — describes asset breakdown for the client
   const heroSubtitle = useMemo(() => {
     const parts: string[] = [];
-    if (counts.images > 0) parts.push(`${counts.images} image${counts.images !== 1 ? 's' : ''}`);
-    if (counts.videos > 0) parts.push(`${counts.videos} video${counts.videos !== 1 ? 's' : ''}`);
-    if (counts.copy > 0) parts.push(`${counts.copy} copy variation${counts.copy !== 1 ? 's' : ''}`);
-    const assetSummary = parts.length > 0 ? parts.join(', ') : 'your creative assets';
-    return `Review ${assetSummary}. Approve as you read, or sign off the whole set from the bar below.`;
+    if (counts.images > 0) parts.push(`${counts.images} bild${counts.images !== 1 ? 'er' : ''}`);
+    if (counts.videos > 0) parts.push(`${counts.videos} video${counts.videos !== 1 ? 'r' : ''}`);
+    if (counts.copy > 0) parts.push(`${counts.copy} textvariant${counts.copy !== 1 ? 'er' : ''}`);
+    const assetSummary = parts.length > 0 ? parts.join(', ') : 'ditt kreativa material';
+    return `Granska ${assetSummary}. Godkänn allt eftersom, eller signera hela paketet via verktygsfältet.`;
   }, [counts]);
 
   if (isLoading) {
@@ -301,7 +301,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
         <div className="pcm-state-center">
           <Spinner className="w-8 h-8 text-primary" />
-          <span className="pcm-state-text">Loading client review board...</span>
+          <span className="pcm-state-text">Laddar granskning...</span>
         </div>
       </div>
     );
@@ -361,10 +361,10 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       {/* Hero Header */}
       <section className="pcm-hero max-w-[1280px] w-full mx-auto px-7 pt-12 pb-5 select-none">
         <div className="pcm-hero-eyebrow">
-          {campaignName} · Asset Review
+          {campaignName} · Granskning
         </div>
         <h1 className="pcm-hero-title">
-          {totalCount} creative{totalCount !== 1 ? 's' : ''},<br />for your sign-off.
+          {totalCount} kreativ{totalCount !== 1 ? 'a' : 't'} för din signering.
         </h1>
         <p className="pcm-hero-subtitle">
           {heroSubtitle}
@@ -374,7 +374,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         <div className="pcm-hero-status-row">
           <div className="pcm-progress select-none">
             <span className="progress-count">
-              {approvedCount} of {totalCount} approved
+              {approvedCount} av {totalCount} godkända
             </span>
             <div className="pcm-progress-bar">
               <div style={{ width: `${totalCount > 0 ? (approvedCount / totalCount) * 100 : 0}%` }} />
@@ -385,7 +385,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
             title="Status"
           >
             <span className="dot" aria-hidden="true" />
-            {totalCount > 0 && approvedCount === totalCount ? ' Round approved' : ' Awaiting your review'}
+            {totalCount > 0 && approvedCount === totalCount ? ' Omgång godkänd' : ' Inväntar din granskning'}
           </span>
         </div>
       </section>
