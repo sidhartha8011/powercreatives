@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -141,19 +142,32 @@ export function useApprovalSets(): UseApprovalSetsResult {
       // write, so rollback restores the exact state on each.
       const snapshots = queryClient.getQueriesData<ApprovalSet[]>(filter);
 
-      // Synchronous optimistic write across every matching slot
-      // (typically the single no-input listSets cache slot). Lands in
-      // the same call stack as DnD's onDragEnd — no revert animation.
-      queryClient.setQueriesData<ApprovalSet[]>(filter, (prev) => {
-        if (!prev) return prev;
-        return prev.map((s) => (s.id === id ? { ...s, status: next } : s));
+      // Why flushSync: @hello-pangea/dnd transitions to its post-drop
+      // IDLE phase as soon as onDragEnd returns. At that paint, the
+      // dragged card is positioned from the consumer's items prop —
+      // not from the library's internal drag transform. React 18 batches
+      // setQueriesData's observer notification into a deferred render
+      // by default, so without flushSync the next paint sees stale items
+      // (card still in source column) and the user perceives a snap-back.
+      // flushSync forces the cache-write-triggered render to commit
+      // synchronously inside onDragEnd's call stack, so when the library
+      // paints IDLE the items prop already reflects the move.
+      flushSync(() => {
+        queryClient.setQueriesData<ApprovalSet[]>(filter, (prev) => {
+          if (!prev) return prev;
+          return prev.map((s) => (s.id === id ? { ...s, status: next } : s));
+        });
       });
 
       return statusMutation.mutateAsync({ id, status: next }).catch((err: unknown) => {
-        // Rollback: restore every snapshot to its original data.
-        for (const [key, data] of snapshots) {
-          if (data !== undefined) queryClient.setQueryData(key, data);
-        }
+        // Rollback: restore every snapshot to its original data. Also
+        // wrapped in flushSync so a rejection during the drop animation
+        // doesn't leave a stale optimistic state visible for a frame.
+        flushSync(() => {
+          for (const [key, data] of snapshots) {
+            if (data !== undefined) queryClient.setQueryData(key, data);
+          }
+        });
         const message = err instanceof Error ? err.message : 'Failed to move set';
         toast.error(message);
         throw err;
