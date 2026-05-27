@@ -33,10 +33,10 @@ export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
-        className="sm:max-w-[95vw] w-[95vw] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden"
+        className="sm:max-w-[95vw] w-[95vw] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden border-0"
         showCloseButton
       >
-        <DialogHeader className="px-5 py-3 border-b shrink-0 flex-row items-center justify-between space-y-0">
+        <DialogHeader className="px-5 py-3 shrink-0 flex-row items-center justify-between space-y-0">
           <div className="min-w-0 flex-1">
             <DialogTitle className="text-sm font-semibold truncate">
               {set.snapshot.brandName ? `${set.snapshot.brandName} / ` : ''}

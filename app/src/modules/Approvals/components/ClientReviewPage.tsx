@@ -369,6 +369,25 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         <p className="pcm-hero-subtitle">
           {heroSubtitle}
         </p>
+
+        {/* Progress + Status — moved here from toolbar for cleaner layout */}
+        <div className="pcm-hero-status-row">
+          <div className="pcm-progress select-none">
+            <span className="progress-count">
+              {approvedCount} of {totalCount} approved
+            </span>
+            <div className="pcm-progress-bar">
+              <div style={{ width: `${totalCount > 0 ? (approvedCount / totalCount) * 100 : 0}%` }} />
+            </div>
+          </div>
+          <span
+            className={`pcm-bar-status ${totalCount > 0 && approvedCount === totalCount ? 'is-approved' : ''}`}
+            title="Status"
+          >
+            <span className="dot" aria-hidden="true" />
+            {totalCount > 0 && approvedCount === totalCount ? ' Round approved' : ' Awaiting your review'}
+          </span>
+        </div>
       </section>
 
       {/* Sticky Statusbar */}

@@ -122,48 +122,11 @@ export function ClientStatusToolbar({
 
         {/* Right Panel elements */}
         <div className="pcm-toolbar-right w-full md:w-auto">
-          {/* Autosave Status Indicator */}
-          {!isReadOnly && (
-            isSaving ? (
-              <span className="pcm-autosave-indicator is-saving">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Saving...
-              </span>
-            ) : (
-              <span className="pcm-autosave-indicator">
-                <Check className="w-3 h-3 pcm-autosave-check" />
-                Draft saved
-              </span>
-            )
-          )}
-          
-          {/* Progress Indicator */}
-          <div className="pcm-progress select-none">
-            <span className="progress-count">
-              {approvedCount} of {totalCount} approved
-            </span>
-            <div className="pcm-progress-bar">
-              <div style={{ width: `${progressPercent}%` }} />
-            </div>
-          </div>
-
-          {/* Context group (Status + Deadline) */}
-          <div className="pcm-context-group mt-1 md:mt-0">
-            {/* Pulsing Status Pill */}
-            <span 
-              className={`pcm-bar-status ${isAllApproved ? 'is-approved' : ''}`}
-              title="Status"
-            >
-              <span className="dot" aria-hidden="true" />
-              {isAllApproved ? ' Round approved' : ' Awaiting your review'}
-            </span>
-
-            {/* Deadline countdown */}
-            <span className={`pcm-bar-deadline ${urgencyClass}`} title="Response deadline">
-              <b>{formattedDueDate}</b>
-              <span className="countdown">{remainingDaysText}</span>
-            </span>
-          </div>
+          {/* Deadline countdown */}
+          <span className={`pcm-bar-deadline ${urgencyClass}`} title="Response deadline">
+            <b>{formattedDueDate}</b>
+            <span className="countdown">{remainingDaysText}</span>
+          </span>
 
           <span className="pcm-bar-divider" aria-hidden="true" />
 

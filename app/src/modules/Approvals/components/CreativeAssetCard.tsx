@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon, Download, Copy } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon, Download, Copy, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
@@ -285,8 +285,13 @@ export function CreativeAssetCard({
           tabIndex={0}
           aria-expanded={isExpanded}
         >
-          <div className="pcm-copy-platform">
-            {asset.platform || asset.audienceName || 'Ad Copy'} · {asset.type || asset.angleName || 'Primary Text'}
+          {/* Audience/angle metadata — shown as tooltip on hover for clean reading */}
+          <div
+            className="pcm-copy-info-trigger"
+            data-tooltip={`${asset.platform || asset.audienceName || 'Ad Copy'} · ${asset.type || asset.angleName || 'Primary Text'}`}
+            aria-label={`${asset.platform || asset.audienceName || 'Ad Copy'} · ${asset.type || asset.angleName || 'Primary Text'}`}
+          >
+            <Info className="w-3.5 h-3.5" />
           </div>
           
           {isEditingText ? (

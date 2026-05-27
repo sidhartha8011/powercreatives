@@ -249,6 +249,12 @@
   font-size: 15.5px; color: var(--ink-2); line-height: 1.55;
 }
 
+/* Hero status row — progress + status pill moved from toolbar */
+#pcm-root .pcm-hero-status-row {
+  display: flex; align-items: center; gap: 16px;
+  margin-top: 24px; flex-wrap: wrap;
+}
+
 
 /* ─── Toolbar ─── */
 .pcm-toolbar {
@@ -557,10 +563,43 @@
   display: flex; flex-direction: column; gap: 9px;
   overflow: hidden;
 }
-.pcm-copy-platform {
-  font-size: 10.5px; font-weight: 600;
-  letter-spacing: 0.08em; text-transform: uppercase;
+/* Info trigger icon — positioned top-right of the copy card */
+.pcm-copy-info-trigger {
+  position: absolute; top: 12px; right: 12px;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
   color: var(--ink-4);
+  cursor: help;
+  transition: color 0.15s ease, background 0.15s ease;
+  z-index: 2;
+}
+.pcm-copy-info-trigger:hover {
+  color: var(--ink-2);
+  background: rgba(0,0,0,0.05);
+}
+/* CSS-only tooltip via ::after pseudo-element */
+.pcm-copy-info-trigger::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 100%; right: 0;
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 10px; font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.pcm-copy-info-trigger:hover::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 #pcm-root .pcm-copy-headline {
   font-size: 17px; font-weight: 600;
