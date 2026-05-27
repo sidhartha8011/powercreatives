@@ -453,6 +453,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                   isTeamMember={isTeamMember}
                   onAssetUpdate={handleAssetUpdate}
                   onOpenComments={(id) => setActiveAssetIdForComment(id)}
+                  copyIndex={item.type === 'copy' ? copyAssets.findIndex((c: any) => c.id === item.id) : undefined}
                 />
               );
             })}
