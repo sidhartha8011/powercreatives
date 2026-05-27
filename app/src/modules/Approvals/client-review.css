@@ -238,10 +238,13 @@
 }
 #pcm-root .pcm-hero-title {
   font-family: "Instrument Serif", Georgia, serif;
-  font-style: italic; font-weight: 400;
+  font-weight: 400;
   font-size: 64px; letter-spacing: -0.02em;
   margin: 14px 0 0; line-height: 1.0;
   color: var(--ink);
+}
+#pcm-root .pcm-hero-title em {
+  font-style: italic;
 }
 #pcm-root .pcm-hero-subtitle {
   margin: 18px 0 0; max-width: 580px;

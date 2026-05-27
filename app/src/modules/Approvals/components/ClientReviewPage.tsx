@@ -364,7 +364,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           {campaignName} · Granskning
         </div>
         <h1 className="pcm-hero-title">
-          {totalCount} kreativ{totalCount !== 1 ? 'a' : 't'} för din signering.
+          {totalCount} <em>tillgång{totalCount !== 1 ? 'ar' : ''} för din signering.</em>
         </h1>
         <p className="pcm-hero-subtitle">
           {heroSubtitle}
