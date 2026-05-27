@@ -1,9 +1,11 @@
 /**
- * SetCard styles — minimal: single-line title, hover-only actions.
+ * SetCard styles — minimal: single-line title, hover-only actions,
+ * plus a left-anchored checkbox for multi-select.
  *
  * The card body is exactly one line (ellipsized title). The action row
- * is absolutely positioned over the right edge on hover, so the card
- * never grows or shifts.
+ * is absolutely positioned over the right edge on hover; the checkbox
+ * is absolutely positioned over the left edge on hover (or always when
+ * the card is selected / select-mode is active on the board).
  */
 
 .card {
@@ -14,10 +16,20 @@
   padding: var(--pck-card-pad-y) var(--pck-card-pad-x);
   cursor: pointer;
   outline: none;
+  transition: box-shadow var(--pck-transition-fast),
+              background var(--pck-transition-fast);
 }
 
 .card:focus-visible {
   box-shadow: 0 0 0 2px var(--pck-border-focus);
+  border-radius: var(--pck-radius-card);
+}
+
+/* Selected card: subtle blue tint + ring. Stays visible even when not
+ * hovered, since selection is a persistent state. */
+.card[data-selected] {
+  background: rgba(59, 106, 216, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(59, 106, 216, 0.45);
   border-radius: var(--pck-radius-card);
 }
 
@@ -29,6 +41,15 @@
   align-items: center;
   min-width: 0;
   width: 100%;
+  transition: padding-left var(--pck-transition-fast);
+}
+
+/* Reserve left space for the checkbox whenever it's visible. Avoids
+ * overlapping the title text when the user hovers / when in select-mode. */
+.card:hover .title,
+.card[data-selected] .title,
+.card[data-select-mode] .title {
+  padding-left: 22px;
 }
 
 .titleSep {
@@ -37,10 +58,63 @@
   font-weight: 400;
 }
 
+/* ─── Left-anchored multi-select checkbox ───
+ * Fades in on hover, stays visible when the card is selected, OR when
+ * the board is in select-mode (any card is selected). Vertically
+ * centered, mirrors the right-side action overlay's geometry.
+ */
+.checkbox {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pck-bg-card);
+  border: 1.5px solid var(--pck-border, #cbd5e1);
+  border-radius: 4px;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--pck-transition-fast),
+              background var(--pck-transition-fast),
+              border-color var(--pck-transition-fast);
+}
+
+.card:hover .checkbox,
+.card:focus-within .checkbox,
+.card[data-selected] .checkbox,
+.card[data-select-mode] .checkbox {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.card[data-selected] .checkbox {
+  background: #3b6ad8;
+  border-color: #3b6ad8;
+}
+
+.checkbox:hover {
+  border-color: #3b6ad8;
+}
+
+.checkboxIcon {
+  width: 11px;
+  height: 11px;
+  color: #ffffff;
+  stroke-width: 3px;
+}
+
 /* ─── Absolutely-positioned action overlay ───
  * Card stays single-line always. Actions fade in on hover, anchored
  * right with a subtle gradient mask so they don't visually cut into the
- * title text behind them.
+ * title text behind them. Hidden during select-mode — selection takes
+ * precedence over per-card actions to keep the UI predictable.
  */
 .actions {
   position: absolute;
@@ -66,6 +140,13 @@
   pointer-events: auto;
 }
 
+/* Hide hover actions while in select-mode — clicking a card body in
+ * select-mode toggles selection, so chips would conflict. */
+.card[data-select-mode] .actions {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .actionBtn {
   display: inline-flex;
   align-items: center;
@@ -88,6 +169,11 @@
   background: var(--pck-bg-chip);
 }
 
+.actionBtnDanger:hover {
+  color: #b91c1c;
+  background: rgba(185, 28, 28, 0.08);
+}
+
 .actionIcon {
   width: 10px;
   height: 10px;
@@ -95,7 +181,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .actions,
-  .actionBtn {
+  .actionBtn,
+  .checkbox,
+  .title,
+  .card {
     transition: none;
   }
 }

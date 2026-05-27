@@ -2,10 +2,9 @@
  * useApprovalSets — single owner of approval-set data + side effects.
  *
  * Wraps the tRPC list query, derives counts, exposes typed handlers, owns
- * the feedback-dialog open state, and owns the status-change mutation
- * with optimistic update. Cache key is preserved (trpc.approvals.listSets
- * .useQuery() is called verbatim) so any other consumer reading the same
- * query sees the same data.
+ * the feedback/preview dialog open state, owns the status-change
+ * mutation with optimistic update, owns single + bulk delete mutations,
+ * and owns the multi-select selection state for the bulk-action UI.
  *
  * No JSX. No global side effects. Pure data + actions.
  */
@@ -39,6 +38,10 @@ export interface UseApprovalSetsResult {
 
   /** Move a set to a new status (optimistic). Returns a promise. */
   updateStatus: (id: number, next: ApprovalStatus) => Promise<void>;
+  /** Delete a single set (optimistic). Returns a promise. */
+  deleteSet: (id: number) => Promise<void>;
+  /** Delete many sets in one server call (optimistic). Returns a promise. */
+  bulkDeleteSets: (ids: ReadonlyArray<number>) => Promise<void>;
 
   /** Currently-open feedback set, or null when the dialog is closed. */
   feedbackSet: ApprovalSet | null;
@@ -49,6 +52,20 @@ export interface UseApprovalSetsResult {
   previewSet: ApprovalSet | null;
   openPreview: (set: ApprovalSet) => void;
   closePreview: () => void;
+
+  // ─── Multi-select for bulk actions ────────────────────────────
+  /** Numeric ids of currently-selected cards. */
+  selectedIds: ReadonlySet<number>;
+  /** Whether any card is currently selected (drives select-mode UI). */
+  hasSelection: boolean;
+  /** True if the given id is currently selected. */
+  isSelected: (id: number) => boolean;
+  /** Toggle a single id's selection state. */
+  toggleSelection: (id: number) => void;
+  /** Replace the entire selection with the given ids. */
+  setSelection: (ids: ReadonlyArray<number>) => void;
+  /** Clear all selection (exits select-mode). */
+  clearSelection: () => void;
 }
 
 interface PcmConfig {
@@ -74,14 +91,11 @@ function emptyCounts(): ApprovalSetCountsByStatus {
 }
 
 /**
- * Cache-key PREFIX for the list query. The tRPC adapter at
- * `lib/trpc.ts` constructs the full TanStack Query key as
- * `[...path, input]`, which means a no-input call ends up with a
- * trailing `undefined` slot. Rather than mirror that exact internal
- * shape (fragile — couples this hook to the adapter's implementation
- * details), we operate on the cache via partial-prefix matching
- * (`getQueriesData` / `setQueriesData` with `{ queryKey: prefix }`)
- * which targets every list-sets cache slot regardless of input shape.
+ * Cache-key PREFIX for the list query. The tRPC adapter at `lib/trpc.ts`
+ * constructs the full TanStack Query key as `[...path, input]`, which
+ * for a no-input call produces `['approvals', 'listSets', undefined]`.
+ * We operate via prefix-matching (`setQueriesData({ queryKey: prefix })`)
+ * so cache writes target every list-sets slot regardless of input shape.
  */
 const LIST_QUERY_PREFIX = ['approvals', 'listSets'] as const;
 
@@ -99,11 +113,9 @@ export function useApprovalSets(): UseApprovalSetsResult {
     if (!Array.isArray(query.data)) return [];
     // Boundary normalization. WordPress / MySQL serializes BIGINT
     // columns as JSON strings (`{"id":"6","userId":"1","brandId":"11"}`).
-    // The declared TS types (`id: number`, …) are a lie without
-    // coercion, and every downstream `s.id === id` strict equality
-    // silently fails — that is the root cause of the DnD jump-back
-    // bug. Normalize once here so the declared types are honest for
-    // every consumer.
+    // Coerce to numbers here so the declared TS types are honest and
+    // every downstream `s.id === id` strict-equality predicate actually
+    // matches (the root cause of the v1.4.x DnD jump-back bug).
     return (query.data as ApprovalSet[]).map((raw) => ({
       ...raw,
       id: Number(raw.id),
@@ -138,45 +150,18 @@ export function useApprovalSets(): UseApprovalSetsResult {
     [getPublicBoardUrl]
   );
 
-  // Server-call only. No onMutate/onError/onSettled — those would push
-  // the cache write to a microtask after React Query's internal async
-  // execute(), which is too late: @hello-pangea/dnd's onDragEnd has
-  // already returned by then and the library reverts the card to its
-  // source because it saw no state change in the same tick. The
-  // optimistic update + rollback below run synchronously in the drag
-  // handler's call stack, which is the only timing that makes DnD
-  // libraries with controlled lists behave.
+  // ─── Status mutation (DnD column moves) ──────────────────────
+  // No onMutate/onError/onSettled on the useMutation itself — the
+  // optimistic write below runs inside DnD's `onDragEnd` call stack
+  // (synchronously via flushSync) so @hello-pangea/dnd's post-drop
+  // IDLE paint sees the new items prop and does not snap back.
   const statusMutation = trpc.approvals.updateSetStatus.useMutation();
 
   const updateStatus = useCallback(
     (id: number, next: ApprovalStatus): Promise<void> => {
       const filter = { queryKey: LIST_QUERY_PREFIX } as const;
-
-      // ── DIAGNOSTIC INSTRUMENTATION (DnD jump-back v1.4.10) ──
-      // Temporary. Remove once root cause is confirmed and fixed.
-      // Logs every boundary in the optimistic-update + mutation flow so
-      // the next session has real data instead of theory.
-      const t0 = performance.now();
-      const allKeys = queryClient.getQueryCache().getAll().map((q) => q.queryKey);
       const snapshots = queryClient.getQueriesData<ApprovalSet[]>(filter);
-      const beforeData = snapshots[0]?.[1];
-      // Number() coercion: cache holds raw server data where BIGINT
-      // columns are serialized as JSON strings; `id` parameter is a
-      // number. Without coercion the find / map predicates always miss.
-      const beforeCard = beforeData?.find((s) => Number(s.id) === id);
-      // eslint-disable-next-line no-console
-      console.group(`[approvals-dnd] updateStatus id=${id} → ${next}  (t=${t0.toFixed(1)}ms)`);
-      // eslint-disable-next-line no-console
-      console.log('all queryKeys in cache:', allKeys);
-      // eslint-disable-next-line no-console
-      console.log('matched slots via prefix:', snapshots.length, 'snapshots:', snapshots);
-      // eslint-disable-next-line no-console
-      console.log('card BEFORE optimistic write:', beforeCard);
-      // eslint-disable-next-line no-console
-      console.groupEnd();
 
-      // Optimistic write — flushSync forces synchronous commit so
-      // @hello-pangea/dnd's post-drop IDLE paint sees the new items prop.
       flushSync(() => {
         queryClient.setQueriesData<ApprovalSet[]>(filter, (prev) => {
           if (!prev) return prev;
@@ -186,54 +171,114 @@ export function useApprovalSets(): UseApprovalSetsResult {
         });
       });
 
-      // ── DIAGNOSTIC: cache state immediately after flushSync ──
-      const afterData = queryClient.getQueriesData<ApprovalSet[]>(filter)[0]?.[1];
-      const afterCard = afterData?.find((s) => Number(s.id) === id);
-      // eslint-disable-next-line no-console
-      console.log(
-        `[approvals-dnd] AFTER flushSync cache state — card status:`,
-        afterCard?.status,
-        `(expected ${next})  (t=${(performance.now() - t0).toFixed(1)}ms)`
-      );
-
       return statusMutation
         .mutateAsync({ id, status: next })
-        .then((res: unknown) => {
-          // eslint-disable-next-line no-console
-          console.log(
-            `[approvals-dnd] mutateAsync RESOLVED for id=${id}  (t=${(performance.now() - t0).toFixed(1)}ms)`,
-            res
-          );
-          // ── DIAGNOSTIC: cache state at resolution time ──
-          const postRes = queryClient.getQueriesData<ApprovalSet[]>(filter)[0]?.[1];
-          const postCard = postRes?.find((s) => Number(s.id) === id);
-          // eslint-disable-next-line no-console
-          console.log(
-            `[approvals-dnd] cache state at resolve — card status:`,
-            postCard?.status,
-            `(expected still ${next})`
-          );
-        })
+        .then(() => undefined)
         .catch((err: unknown) => {
-          // eslint-disable-next-line no-console
-          console.error(
-            `[approvals-dnd] mutateAsync REJECTED for id=${id}  (t=${(performance.now() - t0).toFixed(1)}ms)`,
-            err
-          );
-          // Rollback wrapped in flushSync so the revert is a single frame.
           flushSync(() => {
             for (const [key, data] of snapshots) {
               if (data !== undefined) queryClient.setQueryData(key, data);
             }
           });
-          const message = err instanceof Error ? err.message : 'Failed to move set';
-          toast.error(message);
+          toast.error(err instanceof Error ? err.message : 'Failed to move set');
           throw err;
         });
     },
     [queryClient, statusMutation]
   );
 
+  // ─── Delete mutations (single + bulk) ────────────────────────
+  const deleteMutation = trpc.approvals.deleteSet.useMutation();
+  const bulkDeleteMutation = trpc.approvals.bulkDeleteSets.useMutation();
+
+  const deleteSet = useCallback(
+    (id: number): Promise<void> => {
+      const filter = { queryKey: LIST_QUERY_PREFIX } as const;
+      const snapshots = queryClient.getQueriesData<ApprovalSet[]>(filter);
+
+      // Optimistic filter — drop the deleted set from every cache slot.
+      queryClient.setQueriesData<ApprovalSet[]>(filter, (prev) => {
+        if (!prev) return prev;
+        return prev.filter((s) => Number(s.id) !== id);
+      });
+
+      return deleteMutation
+        .mutateAsync({ id })
+        .then(() => {
+          toast.success('Set deleted');
+        })
+        .catch((err: unknown) => {
+          for (const [key, data] of snapshots) {
+            if (data !== undefined) queryClient.setQueryData(key, data);
+          }
+          toast.error(err instanceof Error ? err.message : 'Failed to delete set');
+          throw err;
+        });
+    },
+    [queryClient, deleteMutation]
+  );
+
+  const bulkDeleteSets = useCallback(
+    (ids: ReadonlyArray<number>): Promise<void> => {
+      if (ids.length === 0) return Promise.resolve();
+
+      const filter = { queryKey: LIST_QUERY_PREFIX } as const;
+      const snapshots = queryClient.getQueriesData<ApprovalSet[]>(filter);
+      const idSet = new Set(ids.map((n) => Number(n)));
+
+      queryClient.setQueriesData<ApprovalSet[]>(filter, (prev) => {
+        if (!prev) return prev;
+        return prev.filter((s) => !idSet.has(Number(s.id)));
+      });
+
+      return bulkDeleteMutation
+        .mutateAsync({ ids: Array.from(idSet) })
+        .then((res: unknown) => {
+          const deleted =
+            res && typeof res === 'object' && 'deleted' in res
+              ? Number((res as { deleted: unknown }).deleted) || ids.length
+              : ids.length;
+          toast.success(`Deleted ${deleted} set${deleted === 1 ? '' : 's'}`);
+        })
+        .catch((err: unknown) => {
+          for (const [key, data] of snapshots) {
+            if (data !== undefined) queryClient.setQueryData(key, data);
+          }
+          toast.error(err instanceof Error ? err.message : 'Failed to delete sets');
+          throw err;
+        });
+    },
+    [queryClient, bulkDeleteMutation]
+  );
+
+  // ─── Selection state for bulk actions ────────────────────────
+  const [selectedIds, setSelectedIdsInternal] = useState<ReadonlySet<number>>(
+    () => new Set()
+  );
+
+  const toggleSelection = useCallback((id: number) => {
+    setSelectedIdsInternal((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const setSelection = useCallback((ids: ReadonlyArray<number>) => {
+    setSelectedIdsInternal(new Set(ids));
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIdsInternal(new Set());
+  }, []);
+
+  const isSelected = useCallback(
+    (id: number) => selectedIds.has(id),
+    [selectedIds]
+  );
+
+  // ─── Dialog open-state ───────────────────────────────────────
   const [feedbackSet, setFeedbackSet] = useState<ApprovalSet | null>(null);
   const openFeedback = useCallback((set: ApprovalSet) => setFeedbackSet(set), []);
   const closeFeedback = useCallback(() => setFeedbackSet(null), []);
@@ -251,11 +296,19 @@ export function useApprovalSets(): UseApprovalSetsResult {
     getPublicBoardUrl,
     copyShareLink,
     updateStatus,
+    deleteSet,
+    bulkDeleteSets,
     feedbackSet,
     openFeedback,
     closeFeedback,
     previewSet,
     openPreview,
     closePreview,
+    selectedIds,
+    hasSelection: selectedIds.size > 0,
+    isSelected,
+    toggleSelection,
+    setSelection,
+    clearSelection,
   };
 }

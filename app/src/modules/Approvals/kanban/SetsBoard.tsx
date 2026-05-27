@@ -4,21 +4,30 @@
  * Owns:
  *   - The filter / sort bar (rendered inline with shadcn primitives so it
  *     matches every other module bar pixel-for-pixel — see Projects).
+ *   - The bulk-action bar — replaces the filter bar when any card is
+ *     selected. Hosts Delete + Cancel; selection state lives in the
+ *     useApprovalSets hook so multiple consumers stay in sync.
+ *   - Single-card + bulk-delete confirmation via shadcn AlertDialog.
  *   - The two distinct empty states:
  *       * truly-empty data  → ad-hoc empty state, board hidden.
  *       * filter-empty data → notice + Clear-filters, board kept visible
  *         so the user keeps her mental model of the pipeline.
  *   - DnD column moves → status mutation via useApprovalSets.
- *
- * The shared kanban primitive renders the lanes and cards. The filter
- * engine (useListState, applyFilters, applySort, factories) provides the
- * derived list; the visual control surface here is plain Tailwind +
- * shadcn so we never fight a custom-CSS specificity ladder again.
  */
 
-import { useCallback, useMemo, type ChangeEvent } from 'react';
-import { KanbanSquare, Search, X } from 'lucide-react';
+import { useCallback, useMemo, useState, type ChangeEvent } from 'react';
+import { KanbanSquare, Search, Trash2, X } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -85,6 +94,15 @@ function readSelect(state: FilterState, filterId: string): string {
   return ALL_VALUE;
 }
 
+/**
+ * Pending-deletion intent. Drives the AlertDialog and, on confirm,
+ * which mutation to invoke. `null` = no dialog open.
+ */
+type PendingDelete =
+  | { kind: 'single'; set: ApprovalSet }
+  | { kind: 'bulk'; ids: ReadonlyArray<number> }
+  | null;
+
 export function SetsBoard() {
   const {
     sets,
@@ -93,12 +111,19 @@ export function SetsBoard() {
     copyShareLink,
     getPublicBoardUrl,
     updateStatus,
+    deleteSet,
+    bulkDeleteSets,
     feedbackSet,
     openFeedback,
     closeFeedback,
     previewSet,
     openPreview,
     closePreview,
+    selectedIds,
+    hasSelection,
+    isSelected,
+    toggleSelection,
+    clearSelection,
   } = useApprovalSets();
 
   const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
@@ -106,8 +131,6 @@ export function SetsBoard() {
     defaultSortId: DEFAULT_SET_SORT,
   });
 
-  // Option lists for the three single-select dropdowns — derived from the
-  // current dataset so they stay in sync when sets are added or removed.
   const brandOptions = useMemo(
     () => uniqueValues(sets, (s) => s.snapshot.brandName),
     [sets]
@@ -159,6 +182,36 @@ export function SetsBoard() {
 
   const getColumnId = useCallback((s: ApprovalSet) => s.status, []);
 
+  // ─── Delete confirmation flow ────────────────────────────────
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
+
+  const requestSingleDelete = useCallback((s: ApprovalSet) => {
+    setPendingDelete({ kind: 'single', set: s });
+  }, []);
+
+  const requestBulkDelete = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    setPendingDelete({ kind: 'bulk', ids: Array.from(selectedIds) });
+  }, [selectedIds]);
+
+  const cancelDelete = useCallback(() => setPendingDelete(null), []);
+
+  const confirmDelete = useCallback(() => {
+    if (!pendingDelete) return;
+    if (pendingDelete.kind === 'single') {
+      void deleteSet(pendingDelete.set.id);
+    } else {
+      void bulkDeleteSets(pendingDelete.ids);
+      clearSelection();
+    }
+    setPendingDelete(null);
+  }, [pendingDelete, deleteSet, bulkDeleteSets, clearSelection]);
+
+  const handleToggleSelect = useCallback(
+    (s: ApprovalSet) => toggleSelection(s.id),
+    [toggleSelection]
+  );
+
   const renderCard = useCallback(
     (s: ApprovalSet) => (
       <SetCard
@@ -166,168 +219,181 @@ export function SetsBoard() {
         onCopyLink={copyShareLink}
         onOpenFeedback={openFeedback}
         onOpenPreview={openPreview}
+        onRequestDelete={requestSingleDelete}
+        onToggleSelect={handleToggleSelect}
+        isSelected={isSelected(s.id)}
+        selectMode={hasSelection}
       />
     ),
-    [copyShareLink, openFeedback, openPreview]
+    [
+      copyShareLink,
+      openFeedback,
+      openPreview,
+      requestSingleDelete,
+      handleToggleSelect,
+      isSelected,
+      hasSelection,
+    ]
   );
 
   const handleMove = useCallback(
     (event: KanbanMoveEvent) => {
-      // ── DIAGNOSTIC INSTRUMENTATION (DnD jump-back v1.4.10) ──
-      // eslint-disable-next-line no-console
-      console.log('[approvals-dnd] handleMove event:', event);
-      if (!isApprovalStatus(event.toColumnId)) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          '[approvals-dnd] handleMove BAILED: toColumnId is not a valid ApprovalStatus:',
-          event.toColumnId
-        );
-        return;
-      }
+      if (!isApprovalStatus(event.toColumnId)) return;
       const id = Number(event.itemId);
-      if (!Number.isFinite(id)) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          '[approvals-dnd] handleMove BAILED: itemId is not a finite number:',
-          event.itemId
-        );
-        return;
-      }
+      if (!Number.isFinite(id)) return;
       void updateStatus(id, event.toColumnId);
     },
     [updateStatus]
   );
 
-  // ── DIAGNOSTIC INSTRUMENTATION (DnD jump-back v1.4.10) ──
-  // Trace each render of SetsBoard so we can see whether the optimistic
-  // cache write actually triggers a re-render with new items.
-  // eslint-disable-next-line no-console
-  console.log(
-    '[approvals-dnd] SetsBoard render — sets:',
-    sets.length,
-    'filteredItems:',
-    listState.filteredItems.length,
-    'sample statuses:',
-    sets.slice(0, 3).map((s) => `${s.id}:${s.status}`)
-  );
-
   const hasActiveFilter = listState.activeFilterCount > 0;
-  // Two empty states. They are mutually exclusive: data-empty hides the
-  // board, filter-empty keeps it visible with empty lanes so the user
-  // does not lose her mental model of the pipeline columns.
   const isDataEmpty = !isLoading && sets.length === 0;
   const isFilterEmpty =
     !isLoading && sets.length > 0 && listState.filteredItems.length === 0;
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Global filter / sort bar — mirrors modules/Projects/index.tsx:518 */}
-      <div className="flex flex-wrap items-center gap-3 mb-6 bg-slate-50/50 p-2 rounded-lg border border-slate-100">
-        <div className="relative flex-1 min-w-[200px] max-w-[300px]">
-          <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            placeholder="Search approval sets..."
-            value={searchQuery}
-            onChange={handleSearchChange}
-            className="pl-9 h-9 bg-white"
-            aria-label="Search approval sets"
-          />
-        </div>
-
-        <Select
-          value={brandValue}
-          onValueChange={(v) => handleSelectChange('brand', v)}
+      {/* Top bar: bulk-action bar when any card is selected, otherwise
+          the standard filter/sort bar. They occupy the same slot so the
+          layout below never shifts. */}
+      {hasSelection ? (
+        <div
+          className="flex flex-wrap items-center gap-3 mb-6 bg-blue-50 p-2 rounded-lg border border-blue-200"
+          role="region"
+          aria-label="Bulk actions"
         >
-          <SelectTrigger className="w-[160px] h-9 bg-white" aria-label="Brand">
-            <SelectValue placeholder="Brand" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_VALUE}>All brands</SelectItem>
-            {brandOptions.map((b) => (
-              <SelectItem key={b} value={b}>
-                {b}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={projectValue}
-          onValueChange={(v) => handleSelectChange('project', v)}
-        >
-          <SelectTrigger
-            className="w-[160px] h-9 bg-white"
-            aria-label="Project"
-          >
-            <SelectValue placeholder="Project" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_VALUE}>All projects</SelectItem>
-            {projectOptions.map((p) => (
-              <SelectItem key={p} value={p}>
-                {p}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={setValue}
-          onValueChange={(v) => handleSelectChange('set', v)}
-        >
-          <SelectTrigger
-            className="w-[160px] h-9 bg-white"
-            aria-label="Approval set"
-          >
-            <SelectValue placeholder="Approval set" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_VALUE}>All sets</SelectItem>
-            {setNameOptions.map((n) => (
-              <SelectItem key={n} value={n}>
-                {n}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {hasActiveFilter && (
+          <div className="text-sm font-medium text-blue-900 pl-2">
+            {selectedIds.size} selected
+          </div>
           <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={requestBulkDelete}
+            className="h-9"
+          >
+            <Trash2 className="w-4 h-4 mr-1.5" aria-hidden="true" />
+            Delete
+          </Button>
+          <Button
+            type="button"
             variant="ghost"
             size="sm"
-            onClick={listState.clearAll}
-            className="h-9 px-2 text-slate-500"
+            onClick={clearSelection}
+            className="h-9 ml-auto text-slate-600"
           >
             <X className="w-4 h-4 mr-1" aria-hidden="true" />
-            Clear filters
+            Cancel
           </Button>
-        )}
-
-        <div className="ml-auto flex items-center gap-3">
-          <div className="text-xs text-slate-500 font-medium">
-            Showing {listState.filteredItems.length} set
-            {listState.filteredItems.length === 1 ? '' : 's'}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3 mb-6 bg-slate-50/50 p-2 rounded-lg border border-slate-100">
+          <div className="relative flex-1 min-w-[200px] max-w-[300px]">
+            <Search
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
+              placeholder="Search approval sets..."
+              value={searchQuery}
+              onChange={handleSearchChange}
+              className="pl-9 h-9 bg-white"
+              aria-label="Search approval sets"
+            />
           </div>
-          <Select value={sortValue} onValueChange={handleSortChange}>
-            <SelectTrigger className="w-[170px] h-9 bg-white" aria-label="Sort">
-              <SelectValue placeholder="Sort" />
+
+          <Select
+            value={brandValue}
+            onValueChange={(v) => handleSelectChange('brand', v)}
+          >
+            <SelectTrigger className="w-[160px] h-9 bg-white" aria-label="Brand">
+              <SelectValue placeholder="Brand" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={NO_SORT_VALUE}>No sort</SelectItem>
-              {setSorts.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.label}
+              <SelectItem value={ALL_VALUE}>All brands</SelectItem>
+              {brandOptions.map((b) => (
+                <SelectItem key={b} value={b}>
+                  {b}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-        </div>
-      </div>
 
-      {/* Body: data-empty hides the board; filter-empty keeps it with a notice. */}
+          <Select
+            value={projectValue}
+            onValueChange={(v) => handleSelectChange('project', v)}
+          >
+            <SelectTrigger
+              className="w-[160px] h-9 bg-white"
+              aria-label="Project"
+            >
+              <SelectValue placeholder="Project" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_VALUE}>All projects</SelectItem>
+              {projectOptions.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {p}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={setValue}
+            onValueChange={(v) => handleSelectChange('set', v)}
+          >
+            <SelectTrigger
+              className="w-[160px] h-9 bg-white"
+              aria-label="Approval set"
+            >
+              <SelectValue placeholder="Approval set" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_VALUE}>All sets</SelectItem>
+              {setNameOptions.map((n) => (
+                <SelectItem key={n} value={n}>
+                  {n}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {hasActiveFilter && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={listState.clearAll}
+              className="h-9 px-2 text-slate-500"
+            >
+              <X className="w-4 h-4 mr-1" aria-hidden="true" />
+              Clear filters
+            </Button>
+          )}
+
+          <div className="ml-auto flex items-center gap-3">
+            <div className="text-xs text-slate-500 font-medium">
+              Showing {listState.filteredItems.length} set
+              {listState.filteredItems.length === 1 ? '' : 's'}
+            </div>
+            <Select value={sortValue} onValueChange={handleSortChange}>
+              <SelectTrigger className="w-[170px] h-9 bg-white" aria-label="Sort">
+                <SelectValue placeholder="Sort" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_SORT_VALUE}>No sort</SelectItem>
+                {setSorts.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
+
+      {/* Body */}
       {isDataEmpty ? (
         <DefaultEmptyState
           icon={<KanbanSquare className="h-8 w-8" />}
@@ -367,6 +433,40 @@ export function SetsBoard() {
         url={previewSet ? getPublicBoardUrl(previewSet.token) : null}
         onClose={closePreview}
       />
+
+      {/* Delete confirmation — used for both single and bulk. The
+          AlertDialog primitive blocks interaction until confirmed or
+          cancelled, which is the correct UX for a destructive action. */}
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => { if (!open) cancelDelete(); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingDelete?.kind === 'single'
+                ? `Delete "${pendingDelete.set.name}"?`
+                : pendingDelete?.kind === 'bulk'
+                  ? `Delete ${pendingDelete.ids.length} approval set${pendingDelete.ids.length === 1 ? '' : 's'}?`
+                  : 'Delete'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. The set
+              {pendingDelete?.kind === 'bulk' ? 's' : ''} will be permanently
+              removed along with all of its review feedback.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={cancelDelete}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

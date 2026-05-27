@@ -167,6 +167,68 @@ class PCM_Approvals_Service
     }
 
     /**
+     * Delete an approval set.
+     *
+     * Ownership-scoped: the WHERE clause includes userId so a user can
+     * only delete their own sets. Returns true only when exactly one row
+     * is affected; false on validation, ownership mismatch, or already-
+     * deleted records.
+     */
+    public static function delete_set(int $id, int $user_id): bool
+    {
+        if ($id <= 0 || $user_id <= 0) {
+            return false;
+        }
+
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->delete(
+            $table,
+            array('id' => $id, 'userId' => $user_id),
+            array('%d', '%d')
+        );
+
+        return $rows !== false && $rows > 0;
+    }
+
+    /**
+     * Bulk-delete approval sets owned by the caller.
+     *
+     * Returns the number of rows actually deleted (0 if nothing matched,
+     * which can happen if any ids are not owned by the user — silent
+     * skip rather than partial-rollback, matching the bulk pattern used
+     * by other modules like brands).
+     */
+    public static function bulk_delete_sets(array $ids, int $user_id): int
+    {
+        if ($user_id <= 0) {
+            return 0;
+        }
+
+        // Normalize + filter: only positive integers survive.
+        $ids = array_values(array_filter(array_map('intval', $ids), static fn($n) => $n > 0));
+        if (empty($ids)) {
+            return 0;
+        }
+
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+        $placeholders = implode(',', array_fill(0, count($ids), '%d'));
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+        $deleted = $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$table} WHERE userId = %d AND id IN ({$placeholders})",
+                array_merge(array($user_id), $ids)
+            )
+        );
+
+        return (int)($deleted ?: 0);
+    }
+
+    /**
      * Submit client feedback, lock set, and dispatch outbound webhook.
      */
     public static function submit_review(string $token, string $client_name, array $feedback): bool

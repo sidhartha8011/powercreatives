@@ -568,6 +568,15 @@ const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "PATCH",
         transform: (input: any) => ({ url: `approvals/sets/${input.id}/status`, body: { status: input.status } }),
     },
+    "approvals.deleteSet": {
+        endpoint: "approvals/sets",
+        method: "DELETE",
+        transform: (input: any) => ({ url: `approvals/sets/${input.id}` }),
+    },
+    "approvals.bulkDeleteSets": {
+        endpoint: "approvals/sets/bulk/delete",
+        method: "POST",
+    },
 };
 
 // ============================================

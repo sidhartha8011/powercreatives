@@ -61,9 +61,11 @@ class PCM_REST_Approvals extends PCM_REST_Base
     protected function routes(): array
     {
         return array(
-            array('GET',   '/approvals/sets',                          'list_sets',           array(), 'read'),
-            array('POST',  '/approvals/sets',                          'create_set',          array(), 'edit_posts'),
-            array('PATCH', '/approvals/sets/(?P<id>\d+)/status',       'update_set_status',   array(), 'edit_posts'),
+            array('GET',    '/approvals/sets',                          'list_sets',           array(), 'read'),
+            array('POST',   '/approvals/sets',                          'create_set',          array(), 'edit_posts'),
+            array('PATCH',  '/approvals/sets/(?P<id>\d+)/status',       'update_set_status',   array(), 'edit_posts'),
+            array('DELETE', '/approvals/sets/(?P<id>\d+)',              'delete_set',          array(), 'edit_posts'),
+            array('POST',   '/approvals/sets/bulk/delete',              'bulk_delete_sets',    array(), 'edit_posts'),
             array('GET',   '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)', 'get_public_set',      array(), 'public'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/review', 'submit_public_review', array(), 'public'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/draft', 'save_public_draft', array(), 'public'),
@@ -154,6 +156,58 @@ class PCM_REST_Approvals extends PCM_REST_Base
             return $this->success($set);
         } catch (\Throwable $e) {
             return $this->error('Failed to update set status: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Delete a single approval set.
+     *
+     * DELETE /approvals/sets/{id}
+     */
+    public function delete_set(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $id       = (int)$request->get_param('id');
+
+        if ($id <= 0) {
+            return $this->error('Set id is required.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $ok = PCM_Approvals_Service::delete_set($id, (int)$pcm_user->id);
+            if (!$ok) {
+                return $this->error('Set not found or not owned by this user.', 404);
+            }
+            return $this->success(array('id' => $id, 'deleted' => true));
+        } catch (\Throwable $e) {
+            return $this->error('Failed to delete set: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Bulk-delete approval sets owned by the caller.
+     *
+     * POST /approvals/sets/bulk/delete  body: { ids: number[] }
+     */
+    public function bulk_delete_sets(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $params   = $request->get_json_params();
+        $ids      = isset($params['ids']) && is_array($params['ids']) ? $params['ids'] : array();
+
+        if (empty($ids)) {
+            return $this->error('ids array is required.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $deleted = PCM_Approvals_Service::bulk_delete_sets($ids, (int)$pcm_user->id);
+            return $this->success(array('deleted' => $deleted));
+        } catch (\Throwable $e) {
+            return $this->error('Failed to bulk-delete sets: ' . $e->getMessage(), 500);
         }
     }
 
