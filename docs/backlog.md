@@ -1,5 +1,8 @@
 ## Backlog
 
+- [x] Byt klientgranskningssidans bakgrund från kliniskt vit (#ffffff) till varm cream (#faf8f5) och ändra glow-blobbarna från kalla blå till varma amber/sand/honey-toner som harmoniserar med ink-paletten. [2026-05-27]
+- [x] Flytta progress bar ("4 of 5 approved") och status-pille ("Awaiting your review") från sticky toolbar till hero-sektionen. Ta bort "Draft saved"-indikatorn. Resulterar i en renare, tunnare toolbar med bara flikar, deadline och approve-knapp. [2026-05-27]
+- [x] Ersätt den synliga audience/angle-metadata-texten på copy-kort med en diskret ℹ️-ikon i övre högra hörnet med CSS-only tooltip vid hover. Renare annonsläsning utan att förlora metadata-åtkomst. [2026-05-27]
 - [x] Isolera klientgranskningssidans designsystem från admin-SPA:n. Skapade fristående `client-review.css` (650+ rader) med komplett CSS-foundation, admin-reset, design-tokens (--ink-palett), namngiven type scale och alla komponentklasser. Migrerade 4 komponenter (ClientReviewPage, CreativeAssetCard, ClientStatusToolbar, ClientCommentInspector) från Tailwind-utilities + inline `<style>` (852 rader) till exklusivt pcm- klasser. Eliminerade 16+ typografi- och färgdiskrepanser orsakade av admin-arv. [2026-05-26]
 - [x] Implementera urklipps-bildinklistring (Clipboard Screenshot Paste) i kommentarsfältet med automatisk frontend-JPEG-komprimering och skärmdums-bilagor (attachments) sparade säkert i JSON-kommentars-trådar, komplett med lightbox-förhandsvisning. [2026-05-26]
 - [x] Putsat kommentarsfältets hierarki, typsnittsfärger, avstånd och storlekar till pixel-perfektion med softa tonade status-badges (transparenta RGBA-ytor) och minimalistiska inline-åtgärder. [2026-05-26]
