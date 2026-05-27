@@ -138,20 +138,28 @@ export function useApprovalSets(): UseApprovalSetsResult {
     (id: number, next: ApprovalStatus): Promise<void> => {
       const filter = { queryKey: LIST_QUERY_PREFIX } as const;
 
-      // Snapshot every matching cache slot BEFORE the optimistic
-      // write, so rollback restores the exact state on each.
+      // ── DIAGNOSTIC INSTRUMENTATION (DnD jump-back v1.4.10) ──
+      // Temporary. Remove once root cause is confirmed and fixed.
+      // Logs every boundary in the optimistic-update + mutation flow so
+      // the next session has real data instead of theory.
+      const t0 = performance.now();
+      const allKeys = queryClient.getQueryCache().getAll().map((q) => q.queryKey);
       const snapshots = queryClient.getQueriesData<ApprovalSet[]>(filter);
+      const beforeData = snapshots[0]?.[1];
+      const beforeCard = beforeData?.find((s) => s.id === id);
+      // eslint-disable-next-line no-console
+      console.group(`[approvals-dnd] updateStatus id=${id} → ${next}  (t=${t0.toFixed(1)}ms)`);
+      // eslint-disable-next-line no-console
+      console.log('all queryKeys in cache:', allKeys);
+      // eslint-disable-next-line no-console
+      console.log('matched slots via prefix:', snapshots.length, 'snapshots:', snapshots);
+      // eslint-disable-next-line no-console
+      console.log('card BEFORE optimistic write:', beforeCard);
+      // eslint-disable-next-line no-console
+      console.groupEnd();
 
-      // Why flushSync: @hello-pangea/dnd transitions to its post-drop
-      // IDLE phase as soon as onDragEnd returns. At that paint, the
-      // dragged card is positioned from the consumer's items prop —
-      // not from the library's internal drag transform. React 18 batches
-      // setQueriesData's observer notification into a deferred render
-      // by default, so without flushSync the next paint sees stale items
-      // (card still in source column) and the user perceives a snap-back.
-      // flushSync forces the cache-write-triggered render to commit
-      // synchronously inside onDragEnd's call stack, so when the library
-      // paints IDLE the items prop already reflects the move.
+      // Optimistic write — flushSync forces synchronous commit so
+      // @hello-pangea/dnd's post-drop IDLE paint sees the new items prop.
       flushSync(() => {
         queryClient.setQueriesData<ApprovalSet[]>(filter, (prev) => {
           if (!prev) return prev;
@@ -159,19 +167,50 @@ export function useApprovalSets(): UseApprovalSetsResult {
         });
       });
 
-      return statusMutation.mutateAsync({ id, status: next }).catch((err: unknown) => {
-        // Rollback: restore every snapshot to its original data. Also
-        // wrapped in flushSync so a rejection during the drop animation
-        // doesn't leave a stale optimistic state visible for a frame.
-        flushSync(() => {
-          for (const [key, data] of snapshots) {
-            if (data !== undefined) queryClient.setQueryData(key, data);
-          }
+      // ── DIAGNOSTIC: cache state immediately after flushSync ──
+      const afterData = queryClient.getQueriesData<ApprovalSet[]>(filter)[0]?.[1];
+      const afterCard = afterData?.find((s) => s.id === id);
+      // eslint-disable-next-line no-console
+      console.log(
+        `[approvals-dnd] AFTER flushSync cache state — card status:`,
+        afterCard?.status,
+        `(expected ${next})  (t=${(performance.now() - t0).toFixed(1)}ms)`
+      );
+
+      return statusMutation
+        .mutateAsync({ id, status: next })
+        .then((res: unknown) => {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[approvals-dnd] mutateAsync RESOLVED for id=${id}  (t=${(performance.now() - t0).toFixed(1)}ms)`,
+            res
+          );
+          // ── DIAGNOSTIC: cache state at resolution time ──
+          const postRes = queryClient.getQueriesData<ApprovalSet[]>(filter)[0]?.[1];
+          const postCard = postRes?.find((s) => s.id === id);
+          // eslint-disable-next-line no-console
+          console.log(
+            `[approvals-dnd] cache state at resolve — card status:`,
+            postCard?.status,
+            `(expected still ${next})`
+          );
+        })
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[approvals-dnd] mutateAsync REJECTED for id=${id}  (t=${(performance.now() - t0).toFixed(1)}ms)`,
+            err
+          );
+          // Rollback wrapped in flushSync so the revert is a single frame.
+          flushSync(() => {
+            for (const [key, data] of snapshots) {
+              if (data !== undefined) queryClient.setQueryData(key, data);
+            }
+          });
+          const message = err instanceof Error ? err.message : 'Failed to move set';
+          toast.error(message);
+          throw err;
         });
-        const message = err instanceof Error ? err.message : 'Failed to move set';
-        toast.error(message);
-        throw err;
-      });
     },
     [queryClient, statusMutation]
   );

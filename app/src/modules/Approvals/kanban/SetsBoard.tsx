@@ -173,12 +173,42 @@ export function SetsBoard() {
 
   const handleMove = useCallback(
     (event: KanbanMoveEvent) => {
-      if (!isApprovalStatus(event.toColumnId)) return;
+      // ── DIAGNOSTIC INSTRUMENTATION (DnD jump-back v1.4.10) ──
+      // eslint-disable-next-line no-console
+      console.log('[approvals-dnd] handleMove event:', event);
+      if (!isApprovalStatus(event.toColumnId)) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[approvals-dnd] handleMove BAILED: toColumnId is not a valid ApprovalStatus:',
+          event.toColumnId
+        );
+        return;
+      }
       const id = Number(event.itemId);
-      if (!Number.isFinite(id)) return;
+      if (!Number.isFinite(id)) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[approvals-dnd] handleMove BAILED: itemId is not a finite number:',
+          event.itemId
+        );
+        return;
+      }
       void updateStatus(id, event.toColumnId);
     },
     [updateStatus]
+  );
+
+  // ── DIAGNOSTIC INSTRUMENTATION (DnD jump-back v1.4.10) ──
+  // Trace each render of SetsBoard so we can see whether the optimistic
+  // cache write actually triggers a re-render with new items.
+  // eslint-disable-next-line no-console
+  console.log(
+    '[approvals-dnd] SetsBoard render — sets:',
+    sets.length,
+    'filteredItems:',
+    listState.filteredItems.length,
+    'sample statuses:',
+    sets.slice(0, 3).map((s) => `${s.id}:${s.status}`)
   );
 
   const hasActiveFilter = listState.activeFilterCount > 0;
