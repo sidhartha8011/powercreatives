@@ -96,7 +96,21 @@ export function useApprovalSets(): UseApprovalSetsResult {
   };
 
   const sets = useMemo<ApprovalSet[]>(() => {
-    return Array.isArray(query.data) ? (query.data as ApprovalSet[]) : [];
+    if (!Array.isArray(query.data)) return [];
+    // Boundary normalization. WordPress / MySQL serializes BIGINT
+    // columns as JSON strings (`{"id":"6","userId":"1","brandId":"11"}`).
+    // The declared TS types (`id: number`, …) are a lie without
+    // coercion, and every downstream `s.id === id` strict equality
+    // silently fails — that is the root cause of the DnD jump-back
+    // bug. Normalize once here so the declared types are honest for
+    // every consumer.
+    return (query.data as ApprovalSet[]).map((raw) => ({
+      ...raw,
+      id: Number(raw.id),
+      userId: Number(raw.userId),
+      brandId: raw.brandId != null ? Number(raw.brandId) : null,
+      projectId: raw.projectId != null ? Number(raw.projectId) : null,
+    }));
   }, [query.data]);
 
   const countsByStatus = useMemo<ApprovalSetCountsByStatus>(() => {
@@ -146,7 +160,10 @@ export function useApprovalSets(): UseApprovalSetsResult {
       const allKeys = queryClient.getQueryCache().getAll().map((q) => q.queryKey);
       const snapshots = queryClient.getQueriesData<ApprovalSet[]>(filter);
       const beforeData = snapshots[0]?.[1];
-      const beforeCard = beforeData?.find((s) => s.id === id);
+      // Number() coercion: cache holds raw server data where BIGINT
+      // columns are serialized as JSON strings; `id` parameter is a
+      // number. Without coercion the find / map predicates always miss.
+      const beforeCard = beforeData?.find((s) => Number(s.id) === id);
       // eslint-disable-next-line no-console
       console.group(`[approvals-dnd] updateStatus id=${id} → ${next}  (t=${t0.toFixed(1)}ms)`);
       // eslint-disable-next-line no-console
@@ -163,13 +180,15 @@ export function useApprovalSets(): UseApprovalSetsResult {
       flushSync(() => {
         queryClient.setQueriesData<ApprovalSet[]>(filter, (prev) => {
           if (!prev) return prev;
-          return prev.map((s) => (s.id === id ? { ...s, status: next } : s));
+          return prev.map((s) =>
+            Number(s.id) === id ? { ...s, status: next } : s
+          );
         });
       });
 
       // ── DIAGNOSTIC: cache state immediately after flushSync ──
       const afterData = queryClient.getQueriesData<ApprovalSet[]>(filter)[0]?.[1];
-      const afterCard = afterData?.find((s) => s.id === id);
+      const afterCard = afterData?.find((s) => Number(s.id) === id);
       // eslint-disable-next-line no-console
       console.log(
         `[approvals-dnd] AFTER flushSync cache state — card status:`,
@@ -187,7 +206,7 @@ export function useApprovalSets(): UseApprovalSetsResult {
           );
           // ── DIAGNOSTIC: cache state at resolution time ──
           const postRes = queryClient.getQueriesData<ApprovalSet[]>(filter)[0]?.[1];
-          const postCard = postRes?.find((s) => s.id === id);
+          const postCard = postRes?.find((s) => Number(s.id) === id);
           // eslint-disable-next-line no-console
           console.log(
             `[approvals-dnd] cache state at resolve — card status:`,

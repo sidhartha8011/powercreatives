@@ -57,7 +57,7 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color: var(--ink);
-  background: #ffffff;
+  background: #faf8f5;
   position: relative;
   overflow-x: hidden;
 }
@@ -209,18 +209,18 @@
 }
 #pcm-root .pcm-glow-1 {
   top: -20%; left: 35%; width: 680px; height: 680px;
-  background: radial-gradient(circle, #5e8df0 0%, rgba(94,141,240,0) 65%);
-  opacity: 0.75;
+  background: radial-gradient(circle, #d4a574 0%, rgba(212,165,116,0) 65%);
+  opacity: 0.45;
 }
 #pcm-root .pcm-glow-2 {
   bottom: -25%; right: -5%; width: 560px; height: 560px;
-  background: radial-gradient(circle, #3d6fe0 0%, rgba(61,111,224,0) 65%);
-  opacity: 0.55;
+  background: radial-gradient(circle, #c9956a 0%, rgba(201,149,106,0) 65%);
+  opacity: 0.35;
 }
 #pcm-root .pcm-glow-3 {
   top: 30%; left: -10%; width: 480px; height: 480px;
-  background: radial-gradient(circle, #9bb9ff 0%, rgba(155,185,255,0) 65%);
-  opacity: 0.6;
+  background: radial-gradient(circle, #e8d5b8 0%, rgba(232,213,184,0) 65%);
+  opacity: 0.4;
 }
 @media (max-width: 640px) {
   #pcm-root .pcm-glow-1 { width: 440px; height: 440px; }
