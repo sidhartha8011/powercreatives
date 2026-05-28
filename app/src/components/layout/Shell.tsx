@@ -61,8 +61,17 @@ export function Shell() {
   const ActiveModuleComponent = moduleRegistry[activeModule];
   const isFullBleed = fullBleedModules.includes(activeModule);
 
+  // Conditional shell background. Default is the platform-wide grey
+  // (#f8f9fa) that list/form modules rely on. Board modules with their
+  // own white surface (Deliveries — and in time Approvals/Projects)
+  // opt into a white shell so the page reads as a single white canvas
+  // instead of a white module floating inside a grey frame.
+  // Trivially reversible: drop this constant + revert the two style
+  // bindings below to the literal '#f8f9fa'.
+  const shellBg = activeModule === 'deliveries' ? '#ffffff' : '#f8f9fa';
+
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#f8f9fa' }}>
+    <div className="flex h-screen overflow-hidden" style={{ background: shellBg }}>
       {/* Sidebar - Fixed navigation */}
       <Sidebar />
 
@@ -81,11 +90,11 @@ export function Shell() {
           </div>
         ) : (
           // Standard layout with padding for other modules
-          <div 
+          <div
             className="h-full overflow-auto"
-            style={{ 
+            style={{
               padding: '1.25rem',
-              background: '#f8f9fa'
+              background: shellBg,
             }}
           >
             {ActiveModuleComponent ? (
