@@ -444,6 +444,25 @@ class PCM_Schema
         ) $charset_collate;";
         dbDelta($sql);
 
+        // ── Deliveries ──
+        // Continual-fulfilment client deliveries. Standalone module on par
+        // with Brands and Sites; status column drives the Kanban pipeline
+        // (active / paused / completed). Other modules reference deliveryId
+        // by FK in their own payloads — Deliveries never tracks back.
+        $sql = "CREATE TABLE {$prefix}deliveries (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            userId int(11) NOT NULL,
+            name varchar(256) NOT NULL,
+            clientName varchar(256) DEFAULT NULL,
+            status varchar(50) DEFAULT 'active' NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_userId (userId),
+            KEY idx_status (status)
+        ) $charset_collate;";
+        dbDelta($sql);
+
         // ── Approval Sets ──
         // Packages generated copy and media assets into client-shareable boards.
         // Stores client approvals, element comments, and frozen snapshots.
@@ -817,6 +836,7 @@ class PCM_Schema
         $prefix = self::prefix();
         $tables = array(
             'approval_sets',
+            'deliveries',
             'sites',
             'articles',
             'strategy_items',
