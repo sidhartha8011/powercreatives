@@ -1,0 +1,37 @@
+/**
+ * DeliveryCard styles — composes from the shared card primitive.
+ *
+ * Same single-line + hover-anchored-actions chrome as SetCard, because
+ * both compose from the same `card.module.css` in shared/Kanban/. Any
+ * Delivery-specific tweaks would live here as diffs from the shared
+ * base — currently none are needed.
+ */
+
+.card {
+  composes: card from '@/components/shared/Kanban/card.module.css';
+}
+
+.title {
+  composes: title from '@/components/shared/Kanban/card.module.css';
+}
+
+.titleSep {
+  composes: titleSep from '@/components/shared/Kanban/card.module.css';
+}
+
+.actions {
+  composes: actions from '@/components/shared/Kanban/card.module.css';
+}
+
+.actionBtn {
+  composes: actionBtn from '@/components/shared/Kanban/card.module.css';
+}
+
+.actionBtnDanger {
+  composes: actionBtn from '@/components/shared/Kanban/card.module.css';
+  composes: actionBtnDanger from '@/components/shared/Kanban/card.module.css';
+}
+
+.actionIcon {
+  composes: actionIcon from '@/components/shared/Kanban/card.module.css';
+}

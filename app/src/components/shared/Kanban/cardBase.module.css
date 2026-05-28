@@ -1,0 +1,21 @@
+/**
+ * Card Base Styles — shared kanban card typography.
+ *
+ * Verbatim copy of modules/Approvals/kanban/cardBase.module.css, promoted
+ * to shared/Kanban/ so any module can compose from the same typographic
+ * base. The original file in Approvals is left untouched (zero-risk
+ * promotion). If both diverge in the future, the canonical version lives
+ * here.
+ *
+ * Composed via the CSS Modules `composes:` keyword so each card declares
+ * only the diffs.
+ */
+
+.title {
+  font-family: var(--pck-font-family);
+  font-size: var(--pck-font-size-card);
+  color: var(--pck-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
