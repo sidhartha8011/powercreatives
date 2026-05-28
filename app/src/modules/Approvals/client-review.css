@@ -1220,17 +1220,26 @@
   outline: none;
 }
 
-/* Placeholder styling for input fields in edit mode */
+/* Input fields in edit mode — must render identically to their h4/p view
+   counterparts. appearance: none + height: auto neutralize browser input
+   defaults (implicit height, internal padding). The font properties use
+   inherit but are overridden by the higher-specificity pcm-copy-headline
+   and pcm-copy-text rules that also apply to these elements. */
 .pcm-client-review .pcm-edit-input {
   width: 100%; background: transparent;
-  border: none; padding: 0;
+  border: none; padding: 0; margin: 0;
   outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  height: auto;
   font-family: inherit;
   font-size: inherit;
   font-weight: inherit;
   line-height: inherit;
   color: inherit;
   letter-spacing: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .pcm-client-review .pcm-edit-input:focus {
   outline: none; box-shadow: none;

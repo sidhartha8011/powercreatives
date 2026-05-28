@@ -313,7 +313,7 @@ export function CreativeAssetCard({
           {(asset.headline || asset.description || isEditingText) && (
             <div className="pcm-copy-footer" onClick={(e) => e.stopPropagation()}>
               {isEditingText ? (
-                <div className="flex flex-col gap-1 w-full">
+                <div className="flex flex-col gap-0.5 w-full">
                   <input
                     type="text"
                     value={editedHeadline}
@@ -325,7 +325,7 @@ export function CreativeAssetCard({
                     type="text"
                     value={editedDescription}
                     onChange={(e) => setEditedDescription(e.target.value)}
-                    className="pcm-copy-text pcm-edit-input" style={{ marginTop: '4px' }}
+                    className="pcm-copy-text pcm-edit-input mt-1"
                     placeholder="Skriv beskrivning..."
                   />
                 </div>
