@@ -6,6 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { isVideoAsset } from './ClientReviewPage';
 import { TiptapBodyEditor } from '@/components/shared/TiptapBodyEditor';
+import { useAutoResizeTextarea } from '@/hooks/useAutoResizeTextarea';
 import { trpc } from '@/lib/trpc';
 
 export interface CreativeAsset {
@@ -76,6 +77,10 @@ export function CreativeAssetCard({
   const [isSavingEdits, setIsSavingEdits] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+
+  /* Auto-resize textarea height to match content (mirrors <h4>/<p> view mode) */
+  const headlineRef = useAutoResizeTextarea(editedHeadline);
+  const descriptionRef = useAutoResizeTextarea(editedDescription);
 
   const updateMutation = trpc.approvals.updateSnapshotAsset.useMutation();
 
@@ -307,19 +312,23 @@ export function CreativeAssetCard({
             <div className="pcm-copy-footer" onClick={(e) => e.stopPropagation()}>
               {isEditingText ? (
                 <div className="flex flex-col gap-0.5 w-full">
-                  <input
-                    type="text"
+                  {/* Headline — textarea for proper text wrapping (input is single-line only) */}
+                  <textarea
+                    ref={headlineRef}
                     value={editedHeadline}
                     onChange={(e) => setEditedHeadline(e.target.value)}
                     className="pcm-copy-headline pcm-edit-input"
                     placeholder="Skriv rubrik..."
+                    rows={1}
                   />
-                  <input
-                    type="text"
+                  {/* Description — textarea for multi-line support matching <p> view mode */}
+                  <textarea
+                    ref={descriptionRef}
                     value={editedDescription}
                     onChange={(e) => setEditedDescription(e.target.value)}
                     className="pcm-copy-text pcm-edit-input mt-1"
                     placeholder="Skriv beskrivning..."
+                    rows={1}
                   />
                 </div>
               ) : (

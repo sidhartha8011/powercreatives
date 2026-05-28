@@ -222,6 +222,25 @@ const ROUTE_MAP: Record<string, RouteConfig> = {
     },
     "brands.scrapeUrl": { endpoint: "brands/scrape-url", method: "POST" },
 
+    // ── Deliveries ──
+    "deliveries.list": { endpoint: "deliveries", method: "GET" },
+    "deliveries.getById": {
+        endpoint: "deliveries",
+        method: "GET",
+        transform: (input: any) => ({ url: `deliveries/${input.id}` }),
+    },
+    "deliveries.create": { endpoint: "deliveries", method: "POST" },
+    "deliveries.update": {
+        endpoint: "deliveries",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `deliveries/${input.id}`, body: input }),
+    },
+    "deliveries.delete": {
+        endpoint: "deliveries",
+        method: "DELETE",
+        transform: (input: any) => ({ url: `deliveries/${input.id}` }),
+    },
+
     // ── Strategy ──
     "strategy.create": { endpoint: "strategies", method: "POST" },
     "strategy.list": { endpoint: "strategies", method: "GET" },

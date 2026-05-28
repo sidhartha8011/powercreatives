@@ -410,6 +410,120 @@ class PCM_DB
     }
 
     // =========================================================================
+    // DELIVERIES
+    // =========================================================================
+
+    /**
+     * Get all deliveries for a user.
+     *
+     * Cached for 5 minutes. The list is the only delivery query frequent
+     * enough to warrant caching — single-row reads bypass it. Invalidation
+     * fires on every write below.
+     *
+     * @param int $user_id User ID.
+     * @return array Delivery objects ordered by recency.
+     */
+    public static function get_user_deliveries(int $user_id): array
+    {
+        return self::cached(self::cache_key('deliveries', $user_id), function () use ($user_id) {
+            global $wpdb;
+            $table = self::t('deliveries');
+            return $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT * FROM {$table} WHERE userId = %d ORDER BY updatedAt DESC, id DESC",
+                    $user_id
+                )
+            );
+        });
+    }
+
+    /**
+     * Get a single delivery by ID and user (ownership-scoped).
+     *
+     * @param int $id      Delivery ID.
+     * @param int $user_id User ID.
+     * @return object|null Delivery row or null.
+     */
+    public static function get_delivery_by_id(int $id, int $user_id): ?object
+    {
+        global $wpdb;
+        $table = self::t('deliveries');
+        return $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM {$table} WHERE id = %d AND userId = %d",
+                $id,
+                $user_id
+            )
+        );
+    }
+
+    /**
+     * Create a delivery.
+     *
+     * @param array $data Delivery data (userId required).
+     * @return int|false Delivery ID or false.
+     */
+    public static function create_delivery(array $data): int|false
+    {
+        global $wpdb;
+        $result = $wpdb->insert(self::t('deliveries'), $data);
+        if ($result) {
+            self::invalidate('deliveries', (int)$data['userId']);
+            return $wpdb->insert_id;
+        }
+        return false;
+    }
+
+    /**
+     * Update a delivery (ownership-scoped).
+     *
+     * Auto-stamps updatedAt so the list ORDER BY updatedAt stays meaningful
+     * without requiring callers to remember.
+     *
+     * @param int   $id      Delivery ID.
+     * @param int   $user_id User ID for ownership check.
+     * @param array $data    Column-value pairs to update.
+     * @return bool True on success.
+     */
+    public static function update_delivery(int $id, int $user_id, array $data): bool
+    {
+        global $wpdb;
+        $data['updatedAt'] = current_time('mysql');
+        $rows = $wpdb->update(
+            self::t('deliveries'),
+            $data,
+            array('id' => $id, 'userId' => $user_id)
+        );
+        if ($rows !== false) {
+            self::invalidate('deliveries', $user_id);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Delete a delivery (ownership-scoped).
+     *
+     * @param int $id      Delivery ID.
+     * @param int $user_id User ID for ownership check.
+     * @return bool True on success.
+     */
+    public static function delete_delivery(int $id, int $user_id): bool
+    {
+        global $wpdb;
+        $rows = $wpdb->delete(
+            self::t('deliveries'),
+            array('id' => $id, 'userId' => $user_id),
+            array('%d', '%d')
+        );
+        if ($rows > 0) {
+            self::invalidate('deliveries', $user_id);
+            return true;
+        }
+        return false;
+    }
+
+    // =========================================================================
     // DOMAIN NORMALIZATION (shared utility for all modules)
     // =========================================================================
 

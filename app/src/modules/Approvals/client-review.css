@@ -1226,6 +1226,8 @@
   appearance: none;
   -webkit-appearance: none;
   height: auto;
+  resize: none;          /* No manual resize handle on textarea */
+  overflow: hidden;      /* Prevents scrollbar — auto-resize JS handles height */
   font-family: inherit;
   font-size: inherit;
   font-weight: inherit;
