@@ -586,7 +586,9 @@
 /* TiptapBodyEditor inside copy cards (inline edit mode)
    Must match .pcm-copy-text exactly so view↔edit transition is pixel-identical.
    font-family: inherit — inherits Inter from .pcm-client-review (was missing Inter,
-   causing text to render in system font with different glyph metrics). */
+   causing text to render in system font with different glyph metrics).
+   margin-bottom: 1.55em — matches the visual gap of \n\n in view mode's
+   white-space: pre-wrap (one blank line = 1 × line-height = 1.55em). */
 #pcm-root .pcm-client-review .ProseMirror p {
   font-family: inherit;
   font-size: 13.5px;
@@ -595,7 +597,7 @@
   letter-spacing: -0.005em;
   white-space: pre-wrap;
   word-break: break-word;
-  margin-bottom: 1rem;
+  margin-bottom: 1.55em;
 }
 #pcm-root .pcm-client-review .ProseMirror p:last-child {
   margin-bottom: 0;
