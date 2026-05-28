@@ -583,13 +583,18 @@
   word-break: break-word;
 }
 
-/* TiptapBodyEditor inside copy cards (inline edit mode) */
+/* TiptapBodyEditor inside copy cards (inline edit mode)
+   Must match .pcm-copy-text exactly so view↔edit transition is pixel-identical.
+   font-family: inherit — inherits Inter from .pcm-client-review (was missing Inter,
+   causing text to render in system font with different glyph metrics). */
 #pcm-root .pcm-client-review .ProseMirror p {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: inherit;
   font-size: 13.5px;
   color: var(--ink-2);
   line-height: 1.55;
   letter-spacing: -0.005em;
+  white-space: pre-wrap;
+  word-break: break-word;
   margin-bottom: 1rem;
 }
 #pcm-root .pcm-client-review .ProseMirror p:last-child {
@@ -1200,12 +1205,14 @@
  * Used when team members double-click copy cards to edit text.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Tiptap editor wrapper in inline edit mode */
+/* Tiptap editor wrapper in inline edit mode.
+   font-size/line-height: inherit — the <p> inside has explicit 13.5px/1.55
+   matching .pcm-copy-text. The wrapper must not set a competing value. */
 .pcm-inline-editor {
   background: transparent;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--ink);
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
   font-weight: 400;
   border: none; padding: 0;
   outline: none;
