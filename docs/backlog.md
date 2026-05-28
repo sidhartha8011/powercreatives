@@ -1,5 +1,6 @@
 ## Backlog
 
+- [x] Fixa view/edit parity för titel och description i copy-kort — wrapper gap, margin, och browser input-defaults matchade inte view mode. [2026-05-28]
 - [x] Fixa view/edit text parity bugg i copy-kort på klientgranskningssidan — texten ändrade utseende vid dubbelklick-editering p.g.a. CSS-diskrepanser (font-family saknade Inter, white-space och word-break saknades i edit mode). [2026-05-28]
 - [x] Byt klientgranskningssidans bakgrund från kliniskt vit (#ffffff) till varm cream (#faf8f5) och ändra glow-blobbarna från kalla blå till varma amber/sand/honey-toner som harmoniserar med ink-paletten. [2026-05-27]
 - [x] Flytta progress bar ("4 of 5 approved") och status-pille ("Awaiting your review") från sticky toolbar till hero-sektionen. Ta bort "Draft saved"-indikatorn. Resulterar i en renare, tunnare toolbar med bara flikar, deadline och approve-knapp. [2026-05-27]
