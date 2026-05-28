@@ -53,7 +53,16 @@ export function DeliveriesModule() {
   const dialogOpen = isCreateOpen || editDelivery !== null;
 
   return (
-    <div className="module-container animate-fade-in flex flex-col h-full min-h-0">
+    // Board-module convention: white inline bg + flex column layout,
+    // same shape Approvals uses. Deliveries is a Kanban board, so it
+    // follows the board-module pattern (not the .module-container grey
+    // pattern used by Brands / Templates / Settings / Integrations).
+    // The Kanban primitive's tokens.css explicitly assumes a white page
+    // background for lane contrast.
+    <div
+      className="h-full flex flex-col p-4 animate-fade-in"
+      style={{ background: '#ffffff' }}
+    >
       <ModuleHeader
         title="Deliveries"
         description="Continual-fulfilment client deliveries organised as a Kanban pipeline."

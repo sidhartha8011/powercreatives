@@ -207,8 +207,10 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Filter / sort bar */}
-      <div className="flex flex-wrap items-center gap-3 mb-6 bg-slate-50/50 p-2 rounded-lg border border-slate-100">
+      {/* Filter / sort bar. Stronger grey (slate-100) than Approvals'
+          bar so it remains visibly distinct on the white page background
+          the board-module convention establishes. */}
+      <div className="flex flex-wrap items-center gap-3 mb-6 bg-slate-100 p-2 rounded-lg border border-slate-200">
         <div className="relative flex-1 min-w-[200px] max-w-[300px]">
           <Search
             className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
