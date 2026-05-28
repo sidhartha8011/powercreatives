@@ -597,13 +597,6 @@
 }
 
 
-/* Copy card footer — headline + description section (link preview area) */
-.pcm-copy-footer {
-  border-top: 1px solid rgba(0,0,0,0.08);
-  padding-top: 10px;
-  margin-top: 4px;
-}
-
 /* ─── Card Actions ─── */
 .pcm-card-actions {
   margin-top: auto;
@@ -1224,6 +1217,11 @@
   border: none; padding: 0;
   outline: none;
   font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  color: inherit;
+  letter-spacing: inherit;
 }
 .pcm-client-review .pcm-edit-input:focus {
   outline: none; box-shadow: none;

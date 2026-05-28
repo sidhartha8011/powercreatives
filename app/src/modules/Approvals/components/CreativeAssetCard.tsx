@@ -294,7 +294,7 @@ export function CreativeAssetCard({
           </div>
           
           {isEditingText ? (
-            <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
+            <div className="w-full" onClick={(e) => e.stopPropagation()}>
               <TiptapBodyEditor
                 content={editedBody}
                 editable={true}

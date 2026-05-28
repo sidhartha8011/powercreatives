@@ -110,7 +110,6 @@ function TiptapBodyEditorInner({
     editorProps: {
       attributes: {
         class: `outline-none min-h-[3rem] ${className}`,
-        style: 'font-size: 0.8125rem; line-height: 1.65; color: #374151;',
       },
     },
   });

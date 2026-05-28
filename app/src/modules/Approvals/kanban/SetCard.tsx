@@ -149,9 +149,9 @@ export function SetCard({
           className={styles.actionBtn}
           onClick={(e) => { stop(e); onCopyLink(set.token); }}
           aria-label="Copy client link"
+          title="Copy client link"
         >
           <Copy className={styles.actionIcon} aria-hidden="true" />
-          Copy link
         </button>
 
         {feedbackCount > 0 && (
@@ -160,9 +160,9 @@ export function SetCard({
             className={styles.actionBtn}
             onClick={(e) => { stop(e); onOpenFeedback(set); }}
             aria-label="View client feedback"
+            title="View client feedback"
           >
             <MessageSquare className={styles.actionIcon} aria-hidden="true" />
-            View feedback
           </button>
         )}
 
@@ -171,9 +171,9 @@ export function SetCard({
           className={`${styles.actionBtn} ${styles.actionBtnDanger}`}
           onClick={handleDelete}
           aria-label={`Delete ${set.name}`}
+          title="Delete"
         >
           <Trash2 className={styles.actionIcon} aria-hidden="true" />
-          Delete
         </button>
       </div>
     </article>
