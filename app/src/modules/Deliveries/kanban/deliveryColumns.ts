@@ -22,20 +22,17 @@ export const deliveryColumns: ReadonlyArray<DeliveryColumn> = [
     accentColor: '#dcfce7',
     accentText:  '#166534',
     dotColor:    '#4a9d4a',
-    emptyHint:   'No active deliveries.',
   },
   {
     id: 'paused',
     label: 'Paused',
     accentColor: '#fef3c7',
     accentText:  '#92400e',
-    emptyHint:   'No paused deliveries.',
   },
   {
     id: 'completed',
     label: 'Completed',
     accentColor: '#e7edf3',
     accentText:  '#6e7a8a',
-    emptyHint:   'No completed deliveries.',
   },
 ];
