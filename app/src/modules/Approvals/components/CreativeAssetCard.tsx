@@ -65,7 +65,7 @@ export function CreativeAssetCard({
   onOpenComments,
   copyIndex
 }: CreativeAssetCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  // isExpanded state removed — copy cards are always fully expanded now
   const [showLightbox, setShowLightbox] = useState(false);
 
   // Text Inline Edits state
@@ -164,15 +164,10 @@ export function CreativeAssetCard({
     }
   }, [asset]);
 
+  /* Single-click enters edit mode for team members.
+     No expand/collapse step — copy cards are always fully visible. */
   const handleCardClick = useCallback(() => {
-    if (!isEditingText) {
-      setIsExpanded((prev) => !prev);
-    }
-  }, [isEditingText]);
-
-  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if (isTeamMember && !isEditingText && !isSubmitted) {
-      e.stopPropagation();
       setIsEditingText(true);
     }
   }, [isTeamMember, isEditingText, isSubmitted]);
@@ -240,9 +235,8 @@ export function CreativeAssetCard({
   return (
     <div 
       ref={containerRef} 
-      className={`pcm-card ${isApproved ? 'approved' : ''} ${type === 'copy' ? 'copy' : ''} ${isExpanded ? 'expanded' : ''} relative`}
+      className={`pcm-card ${isApproved ? 'approved' : ''} ${type === 'copy' ? 'copy' : ''} relative`}
       onClick={type === 'copy' ? handleCardClick : undefined}
-      onDoubleClick={type === 'copy' ? handleDoubleClick : undefined}
     >
       
       {/* Glassmorphic Saving Overlay */}
@@ -283,10 +277,9 @@ export function CreativeAssetCard({
       {type === 'copy' && (
         <div
           className="pcm-copy-body select-none flex flex-col flex-1 min-h-0"
-          style={{ cursor: isTeamMember ? 'pointer' : 'pointer' }}
+          style={{ cursor: isTeamMember ? 'pointer' : 'default' }}
           role="button"
           tabIndex={0}
-          aria-expanded={isExpanded}
         >
           {/* Short label: "Copy 1: [angle]" */}
           <div className="pcm-copy-platform">

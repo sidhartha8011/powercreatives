@@ -457,6 +457,7 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 22px;
+  align-items: start; /* Each card keeps its own content-driven height */
 }
 @media (max-width: 1024px) { .pcm-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 640px)  { .pcm-grid { grid-template-columns: 1fr; } }
@@ -478,17 +479,10 @@
   transition: transform .2s ease, box-shadow .25s ease;
 }
 .pcm-card.copy {
-  min-height: 400px;
-  height: auto;
-  transition: transform .2s ease, box-shadow .25s ease, min-height .3s ease;
-}
-.pcm-card.copy.expanded {
   min-height: auto;
   height: auto;
 }
-.pcm-card.copy.expanded .pcm-copy-body {
-  overflow: visible;
-}
+/* .expanded rules removed — copy cards are always fully expanded now */
 .pcm-card:hover {
   transform: translateY(-2px);
   box-shadow:
@@ -563,7 +557,7 @@
   padding: 18px 18px 0;
   flex: 1;
   display: flex; flex-direction: column; gap: 9px;
-  overflow: hidden;
+  overflow: visible; /* Always show all text — no clipping */
 }
 /* Copy card eyebrow label — "Copy 1: [angle]" */
 .pcm-copy-platform {
