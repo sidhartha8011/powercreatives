@@ -1,5 +1,6 @@
 ## Backlog
 
+- [x] Ändra copy-kort till 1-klick-editering (ta bort dubbelklick + expand-mellansteg), alltid fullt expanderade (visar all text), och oberoende korthöjder (grid align-items: start). [2026-05-28]
 - [x] Fixa view/edit parity för titel och description i copy-kort — wrapper gap, margin, och browser input-defaults matchade inte view mode. [2026-05-28]
 - [x] Fixa view/edit text parity bugg i copy-kort på klientgranskningssidan — texten ändrade utseende vid dubbelklick-editering p.g.a. CSS-diskrepanser (font-family saknade Inter, white-space och word-break saknades i edit mode). [2026-05-28]
 - [x] Byt klientgranskningssidans bakgrund från kliniskt vit (#ffffff) till varm cream (#faf8f5) och ändra glow-blobbarna från kalla blå till varma amber/sand/honey-toner som harmoniserar med ink-paletten. [2026-05-27]
