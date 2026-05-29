@@ -114,6 +114,14 @@ export function getEditorExtensions(options?: EditorExtensionOptions): Extension
               return { 'data-media-id': attributes['data-media-id'] };
             },
           },
+          'data-original-prompt': {
+            default: null,
+            parseHTML: (element) => element.getAttribute('data-original-prompt'),
+            renderHTML: (attributes) => {
+              if (!attributes['data-original-prompt']) return {};
+              return { 'data-original-prompt': attributes['data-original-prompt'] };
+            },
+          },
         };
       },
       // Custom React NodeView — renders ImageNodeViewComponent with hover overlay

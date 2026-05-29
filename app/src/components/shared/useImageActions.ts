@@ -83,8 +83,8 @@ export function useImageActions(): UseImageActionsReturn {
       return;
     }
 
-    // Build prompt: use alt text as base (original generation prompt), append instructions
-    const basePrompt = node.attrs.alt || 'A professional image';
+    // Build prompt: prioritize the stored original detailed prompt, fallback to alt text
+    const basePrompt = node.attrs['data-original-prompt'] || node.attrs.alt || 'A professional image';
     const finalPrompt = additionalPrompt
       ? `${basePrompt}. Additional instructions: ${additionalPrompt}`
       : basePrompt;

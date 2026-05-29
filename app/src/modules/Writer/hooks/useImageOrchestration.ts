@@ -60,7 +60,8 @@ export function useImageOrchestration({ editor, brandId }: UseImageOrchestration
     editor: Editor,
     mediaId: string,
     url: string,
-    altText?: string
+    altText?: string,
+    originalPrompt?: string
   ) => {
     const { doc, tr } = editor.state;
     let posToUpdate: number | null = null;
@@ -79,6 +80,7 @@ export function useImageOrchestration({ editor, brandId }: UseImageOrchestration
         ...nodeToUpdate.attrs,
         src: url,
         alt: altText || nodeToUpdate.attrs.alt || '',
+        'data-original-prompt': originalPrompt || '',
         class: 'pcm-generated-image',
         'data-media-id': undefined,  // Clear so it won't be matched again
       });
@@ -168,7 +170,7 @@ export function useImageOrchestration({ editor, brandId }: UseImageOrchestration
           // Replace skeleton in Tiptap with real image + SEO alt-text
           if (response?.url) {
             setCompletedImages(prev => ({ ...prev, [key]: response.url }));
-            replaceSkeletonWithImage(editor, mediaId, response.url, item.alt_text);
+            replaceSkeletonWithImage(editor, mediaId, response.url, item.alt_text, item.prompt);
           }
         } catch (error) {
           console.error(`[ImageOrchestration] Failed ${key}:`, error);
