@@ -33,6 +33,19 @@ export const APPROVAL_STATUSES: ReadonlyArray<ApprovalStatus> = [
 ] as const;
 
 /**
+ * Statuses where the set has been submitted by the client and now lives in the
+ * team's post-review pipeline. The client review surface MUST be read-only
+ * when the server reports any of these — `submit_review` is not idempotent on
+ * the server (re-fires the webhook on every call), so the client surface is
+ * the last line of defence against accidental re-submission after refresh.
+ */
+export const POST_SUBMIT_STATUSES: ReadonlyArray<ApprovalStatus> = ['launch', 'live', 'archived'];
+
+export function isPostSubmitStatus(status: ApprovalStatus | undefined | null): boolean {
+  return status != null && POST_SUBMIT_STATUSES.includes(status);
+}
+
+/**
  * A single creative asset inside an approval-set snapshot. The exact shape
  * depends on whether it's media or copy — both share the id + type fields.
  */

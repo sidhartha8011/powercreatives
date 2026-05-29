@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 
 import { trpc } from '@/lib/trpc';
 
+import { isPostSubmitStatus } from '../types';
+
 // Standalone client-facing design system — isolated from admin SPA tokens
 import '../client-review.css';
 
@@ -49,6 +51,7 @@ function loadDraft(token: string) {
 function saveDraft(token: string, data: {
   approvedVisualIds: string[];
   approvedCopyIds: string[];
+  approvedArticleIds: string[];
   comments: Record<string, CommentEntry[]>;
   clientName: string;
 }) {
@@ -86,8 +89,16 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'all' | 'images' | 'videos' | 'copy' | 'articles'>('all');
 
-  // Derived: board is read-only when already completed on server
-  const isReadOnly = set?.status === 'completed';
+  // Server-persisted truth: set has been submitted and entered the team pipeline.
+  // Survives page refresh (unlike isSubmitted, which is local React state).
+  const isReadOnly = isPostSubmitStatus(set?.status);
+
+  // Combined lockdown: either we just submitted in this session, or the server
+  // says the set is past the client-review phase. Every interactivity guard,
+  // every "thanks" view, and the read-only props to children must consult this
+  // instead of isSubmitted alone — otherwise refresh-then-re-submit re-fires
+  // the outbound webhook.
+  const isLocked = isSubmitted || isReadOnly;
 
   // Check if current user is a logged-in team member
   const isTeamMember = useMemo(() => {
@@ -97,9 +108,9 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   // Auto-save draft to localStorage on every state change
   useEffect(() => {
-    if (isSubmitted) return;
+    if (isLocked) return;
     saveDraft(token, { approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, clientName });
-  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, clientName, isSubmitted]);
+  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, clientName, isLocked]);
 
   // Hydrate approved/comment state from server draft or completed review feedback
   // Handles both legacy string-per-asset format and new array-of-objects format
@@ -140,7 +151,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   // Debounced autosave effect to synchronize approvals and comments in real-time
   useEffect(() => {
-    if (isSubmitted || !set || set.status !== 'draft') return;
+    if (isLocked || !set || set.status !== 'draft') return;
 
     const timer = setTimeout(() => {
       saveDraftMutation.mutate({
@@ -155,7 +166,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     }, 800); // 800ms debounce
 
     return () => clearTimeout(timer);
-  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, isSubmitted, set]);
+  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, isLocked, set]);
 
   // Submit mutation
   const submitMutation = trpc.approvals.submitReview.useMutation({
@@ -171,7 +182,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
 
   // Toggles
   const handleToggleApprove = useCallback((id: string) => {
-    if (isSubmitted || !set) return;
+    if (isLocked || !set) return;
 
     // Check if ID belongs to media, copy, or article
     const isMedia = set.snapshot.media?.some((m: any) => m.id === id);
@@ -189,11 +200,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
       );
     }
-  }, [set, isSubmitted]);
+  }, [set, isLocked]);
 
   // Thread change handler — receives the full updated thread array for an asset
   const handleThreadChange = useCallback((assetId: string, thread: CommentEntry[]) => {
-    if (isSubmitted) return;
+    if (isLocked) return;
     setComments((prev) => {
       if (thread.length === 0) {
         // Remove the key entirely if thread is empty
@@ -203,19 +214,20 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       }
       return { ...prev, [assetId]: thread };
     });
-  }, [isSubmitted]);
+  }, [isLocked]);
 
   const handleApproveAll = useCallback(() => {
-    if (isSubmitted || !set) return;
+    if (isLocked || !set) return;
     const mediaIds = (set.snapshot.media || []).map((m: any) => m.id);
     const copyIds = (set.snapshot.copy || []).map((c: any) => c.id);
     const articleIds = (set.snapshot.articles || []).map((a: any) => a.id);
     setApprovedVisualIds(mediaIds);
     setApprovedCopyIds(copyIds);
     setApprovedArticleIds(articleIds);
-  }, [set, isSubmitted]);
+  }, [set, isLocked]);
 
   const handleSubmitReview = useCallback(() => {
+    if (isLocked) return;
     if (!clientName.trim()) {
       toast.error('Please enter your name before submitting.');
       return;
@@ -231,10 +243,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         comments,
       },
     });
-  }, [token, clientName, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, submitMutation]);
+  }, [token, clientName, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, submitMutation, isLocked]);
 
   // Confirm submit handler — direct submission without name prompt
   const handleConfirmSubmit = useCallback(() => {
+    if (isLocked) return;
     submitMutation.mutate({
       token,
       clientName: 'Client',
@@ -245,7 +258,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         comments,
       },
     });
-  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, submitMutation]);
+  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, submitMutation, isLocked]);
 
   const utils = trpc.useUtils();
   const handleAssetUpdate = useCallback(() => {
@@ -347,7 +360,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     );
   }
 
-  if (isSubmitted && !isTeamMember) {
+  if (isLocked && !isTeamMember) {
     return (
       <div className="pcm-state-wrapper">
         <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
@@ -472,7 +485,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                   brandLogoUrl={set.snapshot.brandLogoUrl}
                   brandName={brandName}
                   pairedMediaUrl={pairedMediaUrl}
-                  isSubmitted={isReadOnly || submitMutation.isPending}
+                  isSubmitted={isLocked || submitMutation.isPending}
                   isTeamMember={isTeamMember}
                   onAssetUpdate={handleAssetUpdate}
                   onOpenComments={(id) => setActiveAssetIdForComment(id)}
