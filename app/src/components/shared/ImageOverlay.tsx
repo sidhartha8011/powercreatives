@@ -6,6 +6,7 @@
  *
  * Architecture: This component is DUMB — no API calls, no state management.
  * All callbacks are injected via props from useImageActions hook.
+ * All UI primitives are from the existing design system (ui/).
  *
  * @package PowerCreatives
  * @module  Shared
@@ -13,13 +14,17 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { RefreshCw, Pencil, ChevronDown, Loader2, Sparkles, X } from 'lucide-react';
-
-interface ImageModel {
-  modelId: string;
-  provider: string;
-  customName?: string;
-  originalName?: string;
-}
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+} from '@/components/ui/select';
+import { colors, typography } from '@/components/shared/design-tokens';
+import type { ImageModel } from './useImageActions';
 
 interface ImageOverlayProps {
   /** Whether the overlay is visible */
@@ -36,49 +41,6 @@ interface ImageOverlayProps {
   onRegenerate: (additionalPrompt?: string) => void;
   /** Edit image with instructions */
   onEdit: (instructions: string) => void;
-}
-
-/** Shared button style for overlay actions */
-function OverlayButton({
-  onClick,
-  disabled = false,
-  title,
-  children,
-  variant = 'default',
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-  title: string;
-  children: React.ReactNode;
-  variant?: 'default' | 'primary';
-}) {
-  return (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      disabled={disabled}
-      title={title}
-      className="pcm-img-overlay-btn"
-      style={{
-        background: variant === 'primary' ? 'rgba(99, 102, 241, 0.9)' : 'rgba(24, 24, 27, 0.85)',
-        color: '#f0f0f0',
-        border: '1px solid rgba(255,255,255,0.1)',
-        borderRadius: '8px',
-        padding: '6px 10px',
-        fontSize: '12px',
-        fontWeight: 500,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.5 : 1,
-        display: 'flex',
-        alignItems: 'center',
-        gap: '5px',
-        transition: 'all 0.15s ease',
-        backdropFilter: 'blur(8px)',
-      }}
-    >
-      {children}
-    </button>
-  );
 }
 
 export function ImageOverlay({
@@ -116,10 +78,7 @@ export function ImageOverlay({
 
   if (!isVisible && !showDropdown) return null;
 
-  const handleQuickRegenerate = () => {
-    onRegenerate();
-  };
-
+  /** Submit prompt for edit or regenerate */
   const handleSubmitPrompt = () => {
     if (mode === 'edit') {
       onEdit(promptText);
@@ -153,130 +112,113 @@ export function ImageOverlay({
       {/* Loading spinner during processing */}
       {isProcessing ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-          <Loader2 className="w-6 h-6 animate-spin" style={{ color: '#a5b4fc' }} />
-          <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)' }}>Generating...</span>
+          <Loader2 className="w-6 h-6 animate-spin" style={{ color: colors.primary }} />
+          <span style={{ fontSize: typography.xs, color: 'rgba(255,255,255,0.7)' }}>Generating...</span>
         </div>
       ) : (
         <>
-          {/* Edit button */}
-          <OverlayButton
-            onClick={() => { setMode('edit'); setShowDropdown(true); }}
-            title="Edit image with instructions"
+          {/* Edit button — opens prompt input for edit instructions */}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={(e) => { e.stopPropagation(); setMode('edit'); setShowDropdown(true); }}
+            className="gap-1.5"
           >
             <Pencil className="w-3.5 h-3.5" />
             Edit
-          </OverlayButton>
+          </Button>
 
-          {/* Regenerate button + dropdown toggle */}
+          {/* Regenerate button group + dropdown */}
           <div style={{ position: 'relative' }} ref={dropdownRef}>
-            <div style={{ display: 'flex', gap: '1px' }}>
+            <div className="flex gap-0.5">
               {/* Quick regenerate (same prompt) */}
-              <OverlayButton onClick={handleQuickRegenerate} title="Regenerate with same prompt" variant="primary">
+              <Button
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); onRegenerate(); }}
+                className="gap-1.5 rounded-r-none"
+                style={{ background: colors.primary }}
+              >
                 <RefreshCw className="w-3.5 h-3.5" />
                 Regenerate
-              </OverlayButton>
+              </Button>
 
               {/* Dropdown arrow — prompt + model options */}
-              <OverlayButton
-                onClick={() => { setMode('regenerate'); setShowDropdown(!showDropdown); }}
-                title="Regenerate with options"
-                variant="primary"
+              <Button
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); setMode('regenerate'); setShowDropdown(!showDropdown); }}
+                className="rounded-l-none px-2"
+                style={{ background: colors.primary }}
               >
                 <ChevronDown className="w-3.5 h-3.5" />
-              </OverlayButton>
+              </Button>
             </div>
 
             {/* Dropdown panel */}
             {showDropdown && (
               <div
+                className="rounded-lg border shadow-lg"
                 style={{
                   position: 'absolute',
                   bottom: '100%',
                   right: 0,
                   marginBottom: '6px',
-                  background: '#18181b',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '10px',
+                  background: colors.bgSurface,
+                  borderColor: colors.border,
                   padding: '10px',
                   minWidth: '260px',
-                  boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
-                  backdropFilter: 'blur(12px)',
                   zIndex: 20,
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                {/* Mode label */}
-                <div style={{
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  color: 'rgba(255,255,255,0.5)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  marginBottom: '8px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}>
-                  <span>{mode === 'edit' ? 'Edit Image' : 'Regenerate with Instructions'}</span>
-                  <button
-                    type="button"
+                {/* Mode label + close */}
+                <div className="flex justify-between items-center" style={{ marginBottom: '8px' }}>
+                  <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    {mode === 'edit' ? 'Edit Image' : 'Regenerate with Instructions'}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
                     onClick={() => { setShowDropdown(false); setMode(null); }}
-                    style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '2px' }}
+                    className="h-5 w-5"
                   >
                     <X className="w-3 h-3" />
-                  </button>
+                  </Button>
                 </div>
 
                 {/* Prompt input */}
-                <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
-                  <input
+                <div className="flex gap-1" style={{ marginBottom: '8px' }}>
+                  <Input
                     ref={inputRef}
-                    type="text"
                     value={promptText}
                     onChange={(e) => setPromptText(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleSubmitPrompt(); }}
                     placeholder={mode === 'edit' ? 'Describe what to change...' : 'Additional instructions...'}
-                    style={{
-                      flex: 1,
-                      background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: '6px',
-                      padding: '6px 8px',
-                      fontSize: '12px',
-                      color: '#e4e4e7',
-                      outline: 'none',
-                    }}
+                    className="h-8 text-xs"
                   />
-                  <OverlayButton onClick={handleSubmitPrompt} title="Submit" variant="primary">
+                  <Button size="sm" onClick={handleSubmitPrompt} style={{ background: colors.primary }} className="h-8 px-2">
                     <Sparkles className="w-3.5 h-3.5" />
-                  </OverlayButton>
+                  </Button>
                 </div>
 
                 {/* Model selector */}
                 {imageModels.length > 1 && (
                   <div>
-                    <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginBottom: '4px' }}>Model</div>
-                    <select
+                    <div style={{ fontSize: typography.xxs, color: colors.textMuted, marginBottom: '4px' }}>Model</div>
+                    <Select
                       value={selectedModel || imageModels[0]?.modelId}
-                      onChange={(e) => onModelChange(e.target.value)}
-                      style={{
-                        width: '100%',
-                        background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        borderRadius: '6px',
-                        padding: '5px 8px',
-                        fontSize: '11px',
-                        color: '#e4e4e7',
-                        outline: 'none',
-                        cursor: 'pointer',
-                      }}
+                      onValueChange={onModelChange}
                     >
-                      {imageModels.map((m) => (
-                        <option key={m.modelId} value={m.modelId}>
-                          {m.customName || m.originalName || m.modelId}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Select model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {imageModels.map((m) => (
+                          <SelectItem key={m.modelId} value={m.modelId}>
+                            {m.customName || m.originalName || m.modelId}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 )}
               </div>
