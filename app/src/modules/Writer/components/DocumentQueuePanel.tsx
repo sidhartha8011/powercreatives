@@ -33,7 +33,7 @@ interface Props {
 
 export function DocumentQueuePanel({ isCollapsed = false, onToggleCollapse }: Props) {
   const documents = useAtomValue(filteredDocumentsAtom);
-  const projectsQuery = trpc.assets.getProjects.useQuery();
+  const projectsQuery = trpc.assets.getProjects.useQuery(undefined, { retry: false });
   const dbProjects = projectsQuery.data ?? [];
   const [activeDocId, setActiveDocId] = useAtom(activeDocumentIdAtom);
   const [activeProjectId, setActiveProjectId] = useAtom(activeProjectIdAtom);
@@ -153,17 +153,21 @@ export function DocumentQueuePanel({ isCollapsed = false, onToggleCollapse }: Pr
           <Select
             value={activeProjectId || 'all'}
             onValueChange={(val) => setActiveProjectId(val === 'all' ? null : val)}
+            disabled={projectsQuery.isLoading}
           >
             <SelectTrigger className="w-full h-8 text-xs bg-white">
-              <SelectValue placeholder="All Projects" />
+              {projectsQuery.isLoading ? (
+                <div className="flex items-center gap-2 text-left w-full">
+                  <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" style={{ color: colors.primary }} />
+                  <span className="truncate" style={{ color: colors.textMuted }}>Loading projects...</span>
+                </div>
+              ) : (
+                <SelectValue placeholder="All Projects" />
+              )}
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">
-                {projectsQuery.isLoading ? (
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="w-3 h-3 animate-spin md:mr-2" /> Loading...
-                  </div>
-                ) : 'All Projects'}
+                All Projects
               </SelectItem>
               {dbProjects.map((proj) => (
                 <SelectItem key={proj.id} value={proj.id.toString()}>
