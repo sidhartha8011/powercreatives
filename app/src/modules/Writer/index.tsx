@@ -14,7 +14,7 @@ import {
   ResizableHandle,
 } from '@/components/ui/resizable';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { activeDocumentAtom, addDocumentsAtom, writerSelectedModelAtom } from './store';
+import { activeDocumentAtom, addDocumentsAtom, writerSelectedModelAtom, writerDocumentsAtom, selectedDocumentIdsAtom } from './store';
 import type { WriterDocument } from './store';
 import { DocumentQueuePanel } from './components/DocumentQueuePanel';
 import { ContextGenerationPanel } from './components/ContextGenerationPanel';
@@ -56,6 +56,8 @@ export function WriterModule() {
   const activeDoc = useAtomValue(activeDocumentAtom);
   const addDocuments = useSetAtom(addDocumentsAtom);
   const setSelectedModel = useSetAtom(writerSelectedModelAtom);
+  const writerDocs = useAtomValue(writerDocumentsAtom);
+  const selectedIds = useAtomValue(selectedDocumentIdsAtom);
   const { state, dispatch } = useApp();
   const { settings } = useSettings();
 
@@ -138,23 +140,40 @@ export function WriterModule() {
 
   /** Freeze current article into a snapshot and create an approval set */
   const handleCreateApprovalSet = useCallback(() => {
-    if (!activeDoc || !approvalSetName.trim()) {
+    if (!approvalSetName.trim()) {
       toast.error('Please enter a name for the approval set.');
       return;
     }
 
-    // Freeze article snapshot — same pattern as Ads snapshot freeze
-    const articleSnapshot = {
-      id: activeDoc.id,
-      title: activeDoc.title,
-      slug: activeDoc.slug,
-      content: activeDoc.content,
-      metaTitle: activeDoc.metaTitle,
-      metaDescription: activeDoc.metaDescription,
-      schemaType: activeDoc.schemaType,
-      status: activeDoc.status,
-      featuredImage: activeDoc.featuredImage,
-    };
+    // Determine target articles: selected ones, or fallback to active document
+    const targetDocs = selectedIds.length > 0
+      ? writerDocs.filter((d) => selectedIds.includes(d.id))
+      : activeDoc ? [activeDoc] : [];
+
+    if (targetDocs.length === 0) {
+      toast.error('No articles selected to send.');
+      return;
+    }
+
+    // Ensure all target documents have content to display
+    const hasEmptyDoc = targetDocs.some((d) => !d.content);
+    if (hasEmptyDoc) {
+      toast.error('Cannot send empty articles. Please generate or write content first.');
+      return;
+    }
+
+    // Freeze snapshot data for all target articles
+    const articleSnapshots = targetDocs.map((doc) => ({
+      id: doc.id,
+      title: doc.title || 'Untitled Article',
+      slug: doc.slug,
+      content: doc.content,
+      metaTitle: doc.metaTitle,
+      metaDescription: doc.metaDescription,
+      schemaType: doc.schemaType,
+      status: doc.status,
+      featuredImage: doc.featuredImage,
+    }));
 
     createApprovalMutation.mutate({
       name: approvalSetName.trim(),
@@ -163,21 +182,28 @@ export function WriterModule() {
       snapshot: {
         media: [],
         copy: [],
-        articles: [articleSnapshot],
+        articles: articleSnapshots,
         brandName: 'PowerCreatives',
         brandLogoUrl: null,
       },
     });
-  }, [activeDoc, approvalSetName, createApprovalMutation]);
+  }, [activeDoc, writerDocs, selectedIds, approvalSetName, createApprovalMutation]);
 
   /** Open the dialog with a sensible default name */
   const handleOpenApprovalDialog = useCallback(() => {
     const dateStr = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    setApprovalSetName(`Article Review — ${activeDoc?.title || 'Draft'} (${dateStr})`);
+    if (selectedIds.length > 1) {
+      setApprovalSetName(`Articles Campaign Review — (${selectedIds.length} articles) (${dateStr})`);
+    } else {
+      const singleDoc = selectedIds.length === 1
+        ? writerDocs.find((d) => d.id === selectedIds[0])
+        : activeDoc;
+      setApprovalSetName(`Article Review — ${singleDoc?.title || 'Draft'} (${dateStr})`);
+    }
     setShareableLink('');
     setLinkCopied(false);
     setShowApprovalDialog(true);
-  }, [activeDoc]);
+  }, [activeDoc, writerDocs, selectedIds]);
 
   return (
     <div
@@ -294,9 +320,17 @@ export function WriterModule() {
             variant="active"
             icon={<Share2 />}
             onClick={handleOpenApprovalDialog}
-            disabled={!activeDoc || !activeDoc.content}
+            disabled={
+              selectedIds.length > 0
+                ? writerDocs.filter((d) => selectedIds.includes(d.id)).some((d) => !d.content) || writerDocs.filter((d) => selectedIds.includes(d.id)).length === 0
+                : !activeDoc || !activeDoc.content
+            }
           >
-            Send to Approvals
+            {selectedIds.length > 1
+              ? `Send ${selectedIds.length} Articles to Approvals`
+              : selectedIds.length === 1
+                ? 'Send 1 Article to Approvals'
+                : 'Send to Approvals'}
           </PillButton>
         </div>
       </header>

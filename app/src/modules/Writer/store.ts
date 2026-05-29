@@ -42,6 +42,9 @@ export const writerDocumentsAtom = atom<WriterDocument[]>([]);
 /** ID of the currently active/selected document. Null when queue is empty. */
 export const activeDocumentIdAtom = atom<string | null>(null);
 
+/** Checked document IDs for multi-selection in queue */
+export const selectedDocumentIdsAtom = atom<string[]>([]);
+
 /** Active project filter for queue panel */
 export const activeProjectIdAtom = atom<string | null>(null);
 

@@ -6,10 +6,12 @@ import {
   activeProjectIdAtom,
   removeDocumentAtom,
   addDocumentAtom,
+  selectedDocumentIdsAtom,
 } from '../store';
 import type { WriterDocument } from '../store';
 import { buildDefaultWriterFormValues } from '../writerConfig';
 import { SectionLabel, StatusBadge, colors, typography } from '@/components/shared';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -37,6 +39,7 @@ export function DocumentQueuePanel({ isCollapsed = false, onToggleCollapse }: Pr
   const [activeProjectId, setActiveProjectId] = useAtom(activeProjectIdAtom);
   const removeDocument = useSetAtom(removeDocumentAtom);
   const addDocument = useSetAtom(addDocumentAtom);
+  const [selectedIds, setSelectedIds] = useAtom(selectedDocumentIdsAtom);
 
   // Track which doc is being confirmed for deletion
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -114,14 +117,35 @@ export function DocumentQueuePanel({ isCollapsed = false, onToggleCollapse }: Pr
             )}
             <SectionLabel count={documents.length}>Queue</SectionLabel>
           </button>
-          <button
-            onClick={handleCreateDocument}
-            title="Create New Document"
-            className="flex items-center justify-center rounded transition-colors hover:bg-black/5"
-            style={{ width: 22, height: 22, color: colors.textMuted }}
-          >
-            <Plus style={{ width: 14, height: 14 }} />
-          </button>
+          <div className="flex items-center gap-2">
+            {documents.length > 0 && !isCollapsed && (
+              <div className="flex items-center gap-1.5 pr-1" style={{ fontSize: '10px', color: colors.textMuted }}>
+                <button
+                  onClick={() => setSelectedIds(documents.map((d) => d.id))}
+                  className="hover:underline focus:outline-none"
+                  style={{ color: colors.primary, fontWeight: typography.medium }}
+                >
+                  Select all
+                </button>
+                <span style={{ color: colors.border }}>|</span>
+                <button
+                  onClick={() => setSelectedIds([])}
+                  className="hover:underline focus:outline-none"
+                  style={{ color: colors.textMuted }}
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+            <button
+              onClick={handleCreateDocument}
+              title="Create New Document"
+              className="flex items-center justify-center rounded transition-colors hover:bg-black/5"
+              style={{ width: 22, height: 22, color: colors.textMuted }}
+            >
+              <Plus style={{ width: 14, height: 14 }} />
+            </button>
+          </div>
         </div>
 
         {/* Project Filter — hidden when collapsed */}
@@ -161,16 +185,30 @@ export function DocumentQueuePanel({ isCollapsed = false, onToggleCollapse }: Pr
             return (
               <div
                 key={doc.id}
-                className="relative group"
+                className="relative group flex items-center gap-2 px-2 py-1 rounded transition-colors"
+                style={{
+                  background: isActive ? colors.primaryLight : 'transparent',
+                }}
               >
+                {/* Checkbox for multi-selection */}
+                <div className="shrink-0 pl-0.5">
+                  <Checkbox
+                    checked={selectedIds.includes(doc.id)}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setSelectedIds((prev) => [...prev, doc.id]);
+                      } else {
+                        setSelectedIds((prev) => prev.filter((id) => id !== doc.id));
+                      }
+                    }}
+                  />
+                </div>
+
                 <button
                   onClick={() => setActiveDocId(doc.id)}
-                  className="w-full flex items-center justify-between px-2 py-2 rounded transition-colors text-left"
-                  style={{
-                    background: isActive ? colors.primaryLight : 'transparent',
-                  }}
+                  className="flex-1 flex items-center justify-between text-left py-1 min-w-0"
                 >
-                  <div className="flex flex-col gap-0.5 overflow-hidden pr-6">
+                  <div className="flex flex-col gap-0.5 overflow-hidden pr-6 min-w-0">
                     <span
                       className="truncate"
                       style={{
