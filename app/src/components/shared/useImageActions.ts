@@ -16,7 +16,7 @@ import { trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
 import type { Editor } from '@tiptap/react';
 
-interface ImageModel {
+export interface ImageModel {
   id?: string | number;
   modelId: string;
   provider: string;
