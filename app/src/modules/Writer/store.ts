@@ -37,19 +37,19 @@ export interface WriterDocument {
 
 // ─── Base atoms ──────────────────────────────────────────
 /** All documents in the Writer queue. Starts empty — populated via Keywords transfer or manual creation. */
-export const writerDocumentsAtom = atom<WriterDocument[]>([]);
+export const writerDocumentsAtom = atom([] as WriterDocument[]);
 
 /** ID of the currently active/selected document. Null when queue is empty. */
-export const activeDocumentIdAtom = atom<string | null>(null);
+export const activeDocumentIdAtom = atom(null as string | null);
 
 /** Checked document IDs for multi-selection in queue */
-export const selectedDocumentIdsAtom = atom<string[]>([]);
+export const selectedDocumentIdsAtom = atom([] as string[]);
 
 /** Active project filter for queue panel */
-export const activeProjectIdAtom = atom<string | null>(null);
+export const activeProjectIdAtom = atom(null as string | null);
 
 /** Selected model ID for generation. Synced from Settings defaultWriterModel on mount. */
-export const writerSelectedModelAtom = atom<string>('auto');
+export const writerSelectedModelAtom = atom('auto');
 
 // ─── Derived atoms (read-only) ──────────────────────────
 /** The currently active document object */
@@ -109,7 +109,7 @@ export const addDocumentAtom = atom(
   (get, set, newDoc: WriterDocument) => {
     const docs = get(writerDocumentsAtom);
     set(writerDocumentsAtom, [newDoc, ...docs]);
-    set(activeDocumentIdAtom, newDoc.id);
+    set(activeDocumentIdAtom, newDoc.id as string | null);
   },
 );
 
@@ -120,7 +120,7 @@ export const addDocumentsAtom = atom(
     if (newDocs.length === 0) return;
     const docs = get(writerDocumentsAtom);
     set(writerDocumentsAtom, [...newDocs, ...docs]);
-    set(activeDocumentIdAtom, newDocs[0].id);
+    set(activeDocumentIdAtom, newDocs[0].id as string | null);
   },
 );
 
@@ -147,11 +147,11 @@ export const removeDocumentAtom = atom(
     // If we removed the active doc, select the closest neighbor
     if (activeId === docId) {
       if (remaining.length === 0) {
-        set(activeDocumentIdAtom, null);
+        set(activeDocumentIdAtom, null as string | null);
       } else {
         // Select the item at the same index (or last if we removed the last)
         const nextIndex = Math.min(index, remaining.length - 1);
-        set(activeDocumentIdAtom, remaining[nextIndex].id);
+        set(activeDocumentIdAtom, remaining[nextIndex].id as string | null);
       }
     }
   },

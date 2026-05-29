@@ -22,7 +22,7 @@ import { ReviewEditorCanvas } from './components/ReviewEditorCanvas';
 import { AiRevisionsPanel } from './components/AiRevisionsPanel';
 import { PillButton, StatusBadge, colors, typography } from '@/components/shared';
 import { Link2, Send, PanelRightOpen, PanelLeftOpen, History, Share2, Copy, Check, Loader2 } from 'lucide-react';
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { ImperativePanelHandle } from 'react-resizable-panels';
 import { useApp } from '@/contexts/AppContext';
 import { useSettings } from '@/contexts/AppContext';
