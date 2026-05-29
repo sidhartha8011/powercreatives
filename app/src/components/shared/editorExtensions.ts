@@ -29,7 +29,9 @@ import { TextStyle } from '@tiptap/extension-text-style';
 import Typography from '@tiptap/extension-typography';
 import { FileHandler } from '@tiptap/extension-file-handler';
 import UniqueID from '@tiptap/extension-unique-id';
+import { ReactNodeViewRenderer } from '@tiptap/react';
 import { AiSuggestionMark } from './AiSuggestionMark';
+import { ImageNodeViewComponent } from './ImageNodeView';
 import type { Extensions } from '@tiptap/react';
 
 /** Options for customizing the editor extension set */
@@ -113,6 +115,10 @@ export function getEditorExtensions(options?: EditorExtensionOptions): Extension
             },
           },
         };
+      },
+      // Custom React NodeView — renders ImageNodeViewComponent with hover overlay
+      addNodeView() {
+        return ReactNodeViewRenderer(ImageNodeViewComponent);
       },
     }).configure({
       inline: false,          // Render as block element (own paragraph)
