@@ -20,14 +20,15 @@ class PCM_Approvals_Service
      *   draft     — being assembled by the creator.
      *   internal  — out for internal team review (Awaiting Internal Approval).
      *   client    — out for client review (Awaiting Client Approval).
-     *   create    — client signed off; team is building the campaign assets.
-     *   launch    — campaign is being prepared for launch.
+     *   launch    — client signed off; team is building + preparing the
+     *               campaign for launch. (v1.11.0 collapsed the previous
+     *               separate 'create' stage into this one.)
      *   live      — campaign is running in market.
      *   archived  — closed or paused; retained for reference.
      *
      * @var string[]
      */
-    public const STATUSES = ['draft', 'internal', 'client', 'create', 'launch', 'live', 'archived'];
+    public const STATUSES = ['draft', 'internal', 'client', 'launch', 'live', 'archived'];
 
     /**
      * Legacy → new status migration map. Iterated in declaration order by
@@ -37,13 +38,17 @@ class PCM_Approvals_Service
      * History:
      *   v1.8.0: review→client, completed→approved.
      *   v1.9.0: approved→create (mid-workflow rename for 7-status taxonomy).
+     *   v1.11.0: create→launch (collapse the create + launch stages into a
+     *            single 'launch' stage; also re-points approved at the
+     *            new destination so older installs converge in one pass).
      *
      * @var array<string, string>
      */
     public const LEGACY_STATUS_MAP = [
         'review'    => 'client',
         'completed' => 'approved',
-        'approved'  => 'create',
+        'approved'  => 'launch',
+        'create'    => 'launch',
     ];
 
     /**
@@ -248,14 +253,15 @@ class PCM_Approvals_Service
             'comments'          => self::sanitize_comment_threads($feedback['comments'] ?? array(), $client_name),
         );
 
-        // Client review submission auto-advances the set to 'create' (next
-        // workflow step — campaign creation). History:
-        //   v1.7.0 = 'completed', v1.8.0 = 'approved', v1.9.0 = 'create'.
+        // Client review submission auto-advances the set to 'launch' (next
+        // workflow step — campaign build + launch prep). History:
+        //   v1.7.0 = 'completed', v1.8.0 = 'approved', v1.9.0 = 'create',
+        //   v1.11.0 = 'launch' (collapsed create+launch into a single stage).
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $success = $wpdb->update(
             $table,
             array(
-                'status'         => 'create',
+                'status'         => 'launch',
                 'reviewFeedback' => wp_json_encode($sanitized_feedback),
                 'updatedAt'      => current_time('mysql'),
             ),

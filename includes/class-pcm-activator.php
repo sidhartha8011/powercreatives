@@ -114,6 +114,15 @@ class PCM_Activator
                 PCM_Schema::migrate_approval_set_statuses();
             }
 
+            // v1.11.0: Collapse the 'create' + 'launch' stages into a single
+            // 'launch' stage. LEGACY_STATUS_MAP gains 'create' → 'launch' and
+            // re-points 'approved' at 'launch' so installs already on 1.9.0
+            // or 1.10.0 (which carry rows with status='create') converge in
+            // the same idempotent pass.
+            if (version_compare($installed_version, '1.11.0', '<')) {
+                PCM_Schema::migrate_approval_set_statuses();
+            }
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

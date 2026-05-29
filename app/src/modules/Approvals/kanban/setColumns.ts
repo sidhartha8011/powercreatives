@@ -38,21 +38,15 @@ export const setColumns: ReadonlyArray<ApprovalSetColumn> = [
     accentText:  '#9b7c1e',
   },
   {
-    id: 'create',
-    label: 'Create Campaign',
-    accentColor: '#fcd9d4',
-    accentText:  '#a04a40',
-  },
-  {
     id: 'launch',
-    label: 'Launch Campaign',
+    label: 'Launch',
     accentColor: '#ddd3f4',
     accentText:  '#6948b8',
     dotColor:    '#e88b3a',
   },
   {
     id: 'live',
-    label: 'Campaign Live',
+    label: 'Live',
     accentColor: '#d6e0f4',
     accentText:  '#4a6da8',
     dotColor:    '#4a9d4a',
