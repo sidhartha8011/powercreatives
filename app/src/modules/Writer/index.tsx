@@ -21,12 +21,24 @@ import { ContextGenerationPanel } from './components/ContextGenerationPanel';
 import { ReviewEditorCanvas } from './components/ReviewEditorCanvas';
 import { AiRevisionsPanel } from './components/AiRevisionsPanel';
 import { PillButton, StatusBadge, colors, typography } from '@/components/shared';
-import { Link2, Send, PanelRightOpen, PanelLeftOpen, History } from 'lucide-react';
-import { useRef, useState, useEffect } from 'react';
+import { Link2, Send, PanelRightOpen, PanelLeftOpen, History, Share2, Copy, Check, Loader2 } from 'lucide-react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { ImperativePanelHandle } from 'react-resizable-panels';
 import { useApp } from '@/contexts/AppContext';
 import { useSettings } from '@/contexts/AppContext';
 import { buildDefaultWriterFormValues } from './writerConfig';
+import { trpc } from '@/lib/trpc';
+import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 // ── Helpers ──
 
@@ -46,6 +58,12 @@ export function WriterModule() {
   const setSelectedModel = useSetAtom(writerSelectedModelAtom);
   const { state, dispatch } = useApp();
   const { settings } = useSettings();
+
+  // ── Send to Approvals dialog state ──
+  const [showApprovalDialog, setShowApprovalDialog] = useState(false);
+  const [approvalSetName, setApprovalSetName] = useState('');
+  const [shareableLink, setShareableLink] = useState('');
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // ── Initialize model selection from Settings default ──
   useEffect(() => {
@@ -103,6 +121,63 @@ export function WriterModule() {
   const [isContextCollapsed, setIsContextCollapsed] = useState(false);
   const [isAiCollapsed, setIsAiCollapsed] = useState(false);
   const [isQueueListCollapsed, setIsQueueListCollapsed] = useState(false);
+
+  // ── Approvals mutation — same pattern as Ads module ──
+  const createApprovalMutation = trpc.approvals.createSet.useMutation({
+    onSuccess: (data: any) => {
+      const config = window.pcmConfig ?? { shortcodePageUrl: window.location.origin + '/' };
+      const baseUrl = config.shortcodePageUrl || (window.location.origin + '/');
+      const separator = baseUrl.includes('?') ? '&' : '?';
+      setShareableLink(`${baseUrl}${separator}pcm_public_token=${data.token}`);
+      toast.success('Article approval board created!');
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to create approval set.');
+    },
+  });
+
+  /** Freeze current article into a snapshot and create an approval set */
+  const handleCreateApprovalSet = useCallback(() => {
+    if (!activeDoc || !approvalSetName.trim()) {
+      toast.error('Please enter a name for the approval set.');
+      return;
+    }
+
+    // Freeze article snapshot — same pattern as Ads snapshot freeze
+    const articleSnapshot = {
+      id: activeDoc.id,
+      title: activeDoc.title,
+      slug: activeDoc.slug,
+      content: activeDoc.content,
+      metaTitle: activeDoc.metaTitle,
+      metaDescription: activeDoc.metaDescription,
+      schemaType: activeDoc.schemaType,
+      status: activeDoc.status,
+      featuredImage: activeDoc.featuredImage,
+    };
+
+    createApprovalMutation.mutate({
+      name: approvalSetName.trim(),
+      brandId: null,
+      projectId: null,
+      snapshot: {
+        media: [],
+        copy: [],
+        articles: [articleSnapshot],
+        brandName: 'PowerCreatives',
+        brandLogoUrl: null,
+      },
+    });
+  }, [activeDoc, approvalSetName, createApprovalMutation]);
+
+  /** Open the dialog with a sensible default name */
+  const handleOpenApprovalDialog = useCallback(() => {
+    const dateStr = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    setApprovalSetName(`Article Review — ${activeDoc?.title || 'Draft'} (${dateStr})`);
+    setShareableLink('');
+    setLinkCopied(false);
+    setShowApprovalDialog(true);
+  }, [activeDoc]);
 
   return (
     <div
@@ -217,9 +292,11 @@ export function WriterModule() {
 
           <PillButton
             variant="active"
-            icon={<Send />}
+            icon={<Share2 />}
+            onClick={handleOpenApprovalDialog}
+            disabled={!activeDoc || !activeDoc.content}
           >
-            Publish to Queue
+            Send to Approvals
           </PillButton>
         </div>
       </header>
@@ -298,6 +375,90 @@ export function WriterModule() {
 
         </ResizablePanelGroup>
       </div>
+
+      {/* ── Send to Approvals Dialog ──────────────────── */}
+      <Dialog open={showApprovalDialog} onOpenChange={setShowApprovalDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Share2 className="w-5 h-5" style={{ color: colors.primary }} />
+              Send Article to Client
+            </DialogTitle>
+            <DialogDescription>
+              Package "{activeDoc?.title || 'Untitled'}" into a secure shareable client review board.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {!shareableLink ? (
+              <div className="space-y-2">
+                <label
+                  htmlFor="approval-set-name"
+                  style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}
+                >
+                  Approval Set Name (Visible to Client)
+                </label>
+                <Input
+                  id="approval-set-name"
+                  value={approvalSetName}
+                  onChange={(e) => setApprovalSetName(e.target.value)}
+                  placeholder="e.g., Blog Post Review — May 29"
+                  disabled={createApprovalMutation.isPending}
+                />
+              </div>
+            ) : (
+              <div className="space-y-3 rounded-lg p-4" style={{ background: colors.bgPage, border: `1px solid ${colors.border}` }}>
+                <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
+                  Generated Shareable Client Board Link
+                </span>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={shareableLink}
+                    readOnly
+                    className="font-mono text-xs select-all shrink"
+                    style={{ background: colors.bgSurface }}
+                  />
+                  <Button
+                    size="icon"
+                    className="shrink-0"
+                    style={{ background: colors.primary }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(shareableLink).then(() => {
+                        setLinkCopied(true);
+                        toast.success('Link copied!');
+                        setTimeout(() => setLinkCopied(false), 2000);
+                      });
+                    }}
+                  >
+                    {linkCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            {!shareableLink ? (
+              <>
+                <Button variant="ghost" onClick={() => setShowApprovalDialog(false)} disabled={createApprovalMutation.isPending}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCreateApprovalSet} disabled={createApprovalMutation.isPending} className="gap-2" style={{ background: colors.primary }}>
+                  {createApprovalMutation.isPending ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Creating...</>
+                  ) : (
+                    <><Share2 className="w-4 h-4" /> Generate Share Link</>
+                  )}
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => setShowApprovalDialog(false)} variant="secondary" className="w-full">
+                Done & Close
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

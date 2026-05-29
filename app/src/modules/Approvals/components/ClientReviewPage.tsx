@@ -78,12 +78,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Local Review State — initialized from draft if available
   const [approvedVisualIds, setApprovedVisualIds] = useState<string[]>(draft?.approvedVisualIds ?? []);
   const [approvedCopyIds, setApprovedCopyIds] = useState<string[]>(draft?.approvedCopyIds ?? []);
+  const [approvedArticleIds, setApprovedArticleIds] = useState<string[]>(draft?.approvedArticleIds ?? []);
   // Threaded comments: array of CommentEntry per asset ID
   const [comments, setComments] = useState<Record<string, CommentEntry[]>>(draft?.comments ?? {});
   const [activeAssetIdForComment, setActiveAssetIdForComment] = useState<string | null>(null);
   const [clientName, setClientName] = useState(draft?.clientName ?? '');
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<'all' | 'images' | 'videos' | 'copy'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'images' | 'videos' | 'copy' | 'articles'>('all');
 
   // Derived: board is read-only when already completed on server
   const isReadOnly = set?.status === 'completed';
@@ -97,8 +98,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Auto-save draft to localStorage on every state change
   useEffect(() => {
     if (isSubmitted) return;
-    saveDraft(token, { approvedVisualIds, approvedCopyIds, comments, clientName });
-  }, [token, approvedVisualIds, approvedCopyIds, comments, clientName, isSubmitted]);
+    saveDraft(token, { approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, clientName });
+  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, clientName, isSubmitted]);
 
   // Hydrate approved/comment state from server draft or completed review feedback
   // Handles both legacy string-per-asset format and new array-of-objects format
@@ -106,6 +107,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     if (set?.reviewFeedback) {
       setApprovedVisualIds(set.reviewFeedback.approvedVisualIds || []);
       setApprovedCopyIds(set.reviewFeedback.approvedCopyIds || []);
+      setApprovedArticleIds(set.reviewFeedback.approvedArticleIds || []);
 
       // Migrate legacy comments (string) to new format (CommentEntry[])
       const rawComments = set.reviewFeedback.comments || {};
@@ -146,13 +148,14 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         feedback: {
           approvedVisualIds,
           approvedCopyIds,
+          approvedArticleIds,
           comments,
         },
       });
     }, 800); // 800ms debounce
 
     return () => clearTimeout(timer);
-  }, [token, approvedVisualIds, approvedCopyIds, comments, isSubmitted, set]);
+  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, isSubmitted, set]);
 
   // Submit mutation
   const submitMutation = trpc.approvals.submitReview.useMutation({
@@ -170,10 +173,15 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const handleToggleApprove = useCallback((id: string) => {
     if (isSubmitted || !set) return;
 
-    // Check if ID belongs to media or copy
+    // Check if ID belongs to media, copy, or article
     const isMedia = set.snapshot.media?.some((m: any) => m.id === id);
+    const isArticle = set.snapshot.articles?.some((a: any) => a.id === id);
     if (isMedia) {
       setApprovedVisualIds((prev) =>
+        prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+      );
+    } else if (isArticle) {
+      setApprovedArticleIds((prev) =>
         prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
       );
     } else {
@@ -201,8 +209,10 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     if (isSubmitted || !set) return;
     const mediaIds = (set.snapshot.media || []).map((m: any) => m.id);
     const copyIds = (set.snapshot.copy || []).map((c: any) => c.id);
+    const articleIds = (set.snapshot.articles || []).map((a: any) => a.id);
     setApprovedVisualIds(mediaIds);
     setApprovedCopyIds(copyIds);
+    setApprovedArticleIds(articleIds);
   }, [set, isSubmitted]);
 
   const handleSubmitReview = useCallback(() => {
@@ -217,10 +227,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       feedback: {
         approvedVisualIds,
         approvedCopyIds,
+        approvedArticleIds,
         comments,
       },
     });
-  }, [token, clientName, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
+  }, [token, clientName, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, submitMutation]);
 
   // Confirm submit handler — direct submission without name prompt
   const handleConfirmSubmit = useCallback(() => {
@@ -230,10 +241,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       feedback: {
         approvedVisualIds,
         approvedCopyIds,
+        approvedArticleIds,
         comments,
       },
     });
-  }, [token, approvedVisualIds, approvedCopyIds, comments, submitMutation]);
+  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, submitMutation]);
 
   const utils = trpc.useUtils();
   const handleAssetUpdate = useCallback(() => {
@@ -243,13 +255,15 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Combined asset lists & counts
   const mediaAssets = useMemo(() => set?.snapshot?.media || [], [set]);
   const copyAssets = useMemo(() => set?.snapshot?.copy || [], [set]);
+  const articleAssets = useMemo(() => set?.snapshot?.articles || [], [set]);
   
   const counts = useMemo(() => {
     const videos = mediaAssets.filter((item: any) => isVideoAsset(item)).length;
     const images = mediaAssets.length - videos;
     const copy = copyAssets.length;
-    return { all: mediaAssets.length + copy, images, videos, copy };
-  }, [mediaAssets, copyAssets]);
+    const articles = articleAssets.length;
+    return { all: mediaAssets.length + copy + articles, images, videos, copy, articles };
+  }, [mediaAssets, copyAssets, articleAssets]);
 
   const allMergedAssets = useMemo(() => {
     const media = mediaAssets.map((item: any) => ({
@@ -262,8 +276,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       type: 'copy' as const,
       data: item
     }));
-    return [...media, ...copy];
-  }, [mediaAssets, copyAssets]);
+    const articles = articleAssets.map((item: any) => ({
+      id: item.id,
+      type: 'article' as const,
+      data: item
+    }));
+    return [...media, ...copy, ...articles];
+  }, [mediaAssets, copyAssets, articleAssets]);
 
   const activeAssetForComment = useMemo(() => {
     if (!activeAssetIdForComment) return null;
@@ -276,11 +295,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     if (activeFilter === 'images') return allMergedAssets.filter(item => item.type === 'media' && !isVideoAsset(item.data));
     if (activeFilter === 'videos') return allMergedAssets.filter(item => item.type === 'media' && isVideoAsset(item.data));
     if (activeFilter === 'copy') return allMergedAssets.filter(item => item.type === 'copy');
+    if (activeFilter === 'articles') return allMergedAssets.filter(item => item.type === 'article');
     return allMergedAssets;
   }, [activeFilter, allMergedAssets]);
 
   const totalCount = counts.all;
-  const approvedCount = approvedVisualIds.length + approvedCopyIds.length;
+  const approvedCount = approvedVisualIds.length + approvedCopyIds.length + approvedArticleIds.length;
   const reviewedCount = approvedCount + Object.keys(comments).length;
 
   // Hero subtitle — describes asset breakdown for the client
@@ -289,6 +309,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     if (counts.images > 0) parts.push(`${counts.images} bild${counts.images !== 1 ? 'er' : ''}`);
     if (counts.videos > 0) parts.push(`${counts.videos} video${counts.videos !== 1 ? 'r' : ''}`);
     if (counts.copy > 0) parts.push(`${counts.copy} textvariant${counts.copy !== 1 ? 'er' : ''}`);
+    if (counts.articles > 0) parts.push(`${counts.articles} artikel${counts.articles !== 1 ? 'ar' : ''}`);
     const assetSummary = parts.length > 0 ? parts.join(', ') : 'ditt kreativa material';
     return `Granska ${assetSummary}. Godkänn allt eftersom, eller signera hela paketet via verktygsfältet.`;
   }, [counts]);
@@ -417,7 +438,9 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
             {filteredAssets.map((item) => {
               const isApproved = item.type === 'media'
                 ? approvedVisualIds.includes(item.id)
-                : approvedCopyIds.includes(item.id);
+                : item.type === 'article'
+                  ? approvedArticleIds.includes(item.id)
+                  : approvedCopyIds.includes(item.id);
               const threadForAsset = comments[item.id] || [];
               const userRole = isTeamMember ? 'team' : 'client';
               const hasNewComment = threadForAsset.some(c => {

@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon, Download, Copy } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon, Download, Copy, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
@@ -8,6 +8,8 @@ import { isVideoAsset } from './ClientReviewPage';
 import { TiptapBodyEditor } from '@/components/shared/TiptapBodyEditor';
 import { useAutoResizeTextarea } from '@/hooks/useAutoResizeTextarea';
 import { trpc } from '@/lib/trpc';
+import { useEditor, EditorContent } from '@tiptap/react';
+import { getEditorExtensions } from '@/components/shared/editorExtensions';
 
 export interface CreativeAsset {
   id: string;
@@ -28,12 +30,115 @@ export interface CreativeAsset {
   width?: number;
   height?: number;
   duration?: string;
+  // Article-specific fields (from Writer module snapshot)
+  title?: string;
+  content?: string;
+  slug?: string;
+  metaTitle?: string;
+  metaDescription?: string;
+  schemaType?: string;
+  featuredImage?: string;
   [key: string]: unknown;
+}
+
+/** Read-only article viewer using the full shared Tiptap extension set */
+function ArticleViewerDialog({ content, title, metaTitle, metaDescription, onClose }: {
+  content: string;
+  title: string;
+  metaTitle?: string;
+  metaDescription?: string;
+  onClose: () => void;
+}) {
+  const editor = useEditor({
+    extensions: getEditorExtensions({ placeholder: '' }),
+    content: content || '<p></p>',
+    editable: false,
+    editorProps: {
+      attributes: { class: 'outline-none prose prose-sm max-w-none' },
+    },
+  });
+
+  // Close on Escape + prevent body scroll
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      document.body.style.overflow = '';
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="pcm-lightbox"
+      onClick={onClose}
+      role="dialog"
+      aria-label="Article preview"
+      style={{ alignItems: 'flex-start', paddingTop: '3vh' }}
+    >
+      <div
+        className="pcm-article-viewer"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#111214',
+          borderRadius: '16px',
+          maxWidth: '780px',
+          width: '90vw',
+          maxHeight: '90vh',
+          overflow: 'auto',
+          padding: '2.5rem 2rem',
+          position: 'relative',
+          border: '1px solid rgba(255,255,255,0.06)',
+          boxShadow: '0 40px 80px rgba(0,0,0,0.6)',
+        }}
+      >
+        <button
+          type="button"
+          className="pcm-lightbox-close"
+          onClick={onClose}
+          aria-label="Close preview"
+          style={{ position: 'absolute', top: '1rem', right: '1rem' }}
+        >
+          <X className="w-5 h-5" />
+        </button>
+
+        {/* Article title */}
+        <h1 style={{
+          fontSize: '1.65rem',
+          fontWeight: 700,
+          color: '#f0f0f0',
+          lineHeight: 1.3,
+          marginBottom: '0.5rem',
+        }}>{title}</h1>
+
+        {/* Meta info bar */}
+        {(metaTitle || metaDescription) && (
+          <div style={{
+            fontSize: '0.75rem',
+            color: 'rgba(255,255,255,0.4)',
+            marginBottom: '1.5rem',
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+            paddingBottom: '1rem',
+          }}>
+            {metaTitle && <div><strong>Meta Title:</strong> {metaTitle}</div>}
+            {metaDescription && <div style={{ marginTop: '0.25rem' }}><strong>Meta Description:</strong> {metaDescription}</div>}
+          </div>
+        )}
+
+        {/* Tiptap read-only rendered content */}
+        <div className="pcm-article-content" style={{ color: '#d4d4d4', lineHeight: 1.7, fontSize: '0.95rem' }}>
+          {editor && <EditorContent editor={editor} />}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
 }
 
 interface CreativeAssetCardProps {
   asset: CreativeAsset;
-  type: 'media' | 'copy';
+  type: 'media' | 'copy' | 'article';
   isApproved: boolean;
   /** Number of comments for this asset (0 means no comments yet) */
   commentCount: number;
@@ -68,6 +173,23 @@ export function CreativeAssetCard({
 }: CreativeAssetCardProps) {
   // isExpanded state removed — copy cards are always fully expanded now
   const [showLightbox, setShowLightbox] = useState(false);
+  const [showArticleViewer, setShowArticleViewer] = useState(false);
+
+  // Extract first image URL from article HTML content for thumbnail preview
+  const articleThumbnail = useMemo(() => {
+    if (type !== 'article') return null;
+    if (asset.featuredImage) return asset.featuredImage;
+    // Extract first <img src> from HTML content
+    const match = asset.content?.match(/<img[^>]+src=["']([^"']+)["']/);
+    return match?.[1] ?? null;
+  }, [type, asset.featuredImage, asset.content]);
+
+  // Extract plain-text snippet from article HTML for preview card
+  const articleSnippet = useMemo(() => {
+    if (type !== 'article' || !asset.content) return '';
+    const text = asset.content.replace(/<[^>]*>/g, '').trim();
+    return text.length > 120 ? text.slice(0, 120) + '…' : text;
+  }, [type, asset.content]);
 
   // Text Inline Edits state
   const [isEditingText, setIsEditingText] = useState(false);
@@ -350,6 +472,51 @@ export function CreativeAssetCard({
         </div>
       )}
 
+      {/* ─── ARTICLE CARD LAYOUT ─── */}
+      {type === 'article' && (
+        <div
+          className="pcm-copy-body select-none flex flex-col flex-1 min-h-0"
+          style={{ cursor: 'pointer' }}
+          role="button"
+          tabIndex={0}
+          onClick={() => setShowArticleViewer(true)}
+        >
+          {/* Thumbnail or icon */}
+          {articleThumbnail ? (
+            <div className="pcm-card-media select-none" style={{ maxHeight: '160px' }}>
+              <img src={articleThumbnail} alt={asset.title || 'Article'} style={{ objectFit: 'cover', width: '100%', height: '100%' }} />
+            </div>
+          ) : (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              height: '80px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', marginBottom: '0.75rem',
+            }}>
+              <FileText className="w-8 h-8" style={{ color: 'rgba(255,255,255,0.15)' }} />
+            </div>
+          )}
+
+          {/* Article label */}
+          <div className="pcm-copy-platform">Article</div>
+
+          {/* Title */}
+          <h4 className="pcm-copy-headline" style={{ marginBottom: '0.25rem' }}>
+            {asset.title || 'Untitled Article'}
+          </h4>
+
+          {/* Text snippet */}
+          {articleSnippet && (
+            <p className="pcm-copy-text" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+              {articleSnippet}
+            </p>
+          )}
+
+          {/* Click hint */}
+          <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: 'auto', paddingTop: '0.5rem' }}>
+            Klicka för att läsa hela artikeln →
+          </span>
+        </div>
+      )}
+
       {/* Card actions (shared for media + copy) */}
       <div className="pcm-card-actions select-none">
         <button
@@ -435,6 +602,17 @@ export function CreativeAssetCard({
           </button>
         </div>,
         document.body
+      )}
+
+      {/* ─── ARTICLE VIEWER DIALOG (full read-only Tiptap) ─── */}
+      {showArticleViewer && type === 'article' && (
+        <ArticleViewerDialog
+          content={asset.content || ''}
+          title={asset.title || 'Untitled Article'}
+          metaTitle={asset.metaTitle}
+          metaDescription={asset.metaDescription}
+          onClose={() => setShowArticleViewer(false)}
+        />
       )}
     </div>
   );

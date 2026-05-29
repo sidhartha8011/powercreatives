@@ -2,13 +2,14 @@ import { useMemo } from 'react';
 import { Check, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 
 interface ClientStatusToolbarProps {
-  activeFilter: 'all' | 'images' | 'videos' | 'copy';
-  onFilterChange: (filter: 'all' | 'images' | 'videos' | 'copy') => void;
+  activeFilter: 'all' | 'images' | 'videos' | 'copy' | 'articles';
+  onFilterChange: (filter: 'all' | 'images' | 'videos' | 'copy' | 'articles') => void;
   counts: {
     all: number;
     images: number;
     videos: number;
     copy: number;
+    articles: number;
   };
   approvedCount: number;
   totalCount: number;
@@ -92,14 +93,15 @@ export function ClientStatusToolbar({
         
         {/* Filters / Tabs */}
         <div className="pcm-filters select-none" role="tablist">
-          {(['images', 'videos', 'copy'] as const)
+          {(['images', 'videos', 'copy', 'articles'] as const)
             .filter((filter) => counts[filter] > 0)
             .map((filter) => {
             const isActive = activeFilter === filter;
             const labelMap = {
               images: `Bilder · ${counts.images}`,
               videos: `Video · ${counts.videos}`,
-              copy: `Text · ${counts.copy}`
+              copy: `Text · ${counts.copy}`,
+              articles: `Artiklar · ${counts.articles}`,
             };
 
             return (
