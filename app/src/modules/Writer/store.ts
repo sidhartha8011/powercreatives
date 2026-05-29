@@ -138,6 +138,12 @@ export const removeDocumentAtom = atom(
 
     set(writerDocumentsAtom, remaining);
 
+    // Clean up from selectedDocumentIdsAtom if the deleted document was checked
+    const selectedIds = get(selectedDocumentIdsAtom);
+    if (selectedIds.includes(docId)) {
+      set(selectedDocumentIdsAtom, selectedIds.filter((id) => id !== docId));
+    }
+
     // If we removed the active doc, select the closest neighbor
     if (activeId === docId) {
       if (remaining.length === 0) {

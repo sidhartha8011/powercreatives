@@ -61,6 +61,18 @@ export function WriterModule() {
   const { state, dispatch } = useApp();
   const { settings } = useSettings();
 
+  // ── Memoized calculations for approvals packaging ──
+  const targetDocs = useMemo(() => {
+    if (selectedIds.length === 0) return activeDoc ? [activeDoc] : [];
+    return writerDocs.filter((d) => selectedIds.includes(d.id));
+  }, [selectedIds, writerDocs, activeDoc]);
+
+  const hasEmptyDoc = useMemo(() => {
+    return targetDocs.some((d) => !d.content);
+  }, [targetDocs]);
+
+  const canSendApprovals = targetDocs.length > 0 && !hasEmptyDoc;
+
   // ── Send to Approvals dialog state ──
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [approvalSetName, setApprovalSetName] = useState('');
@@ -145,18 +157,11 @@ export function WriterModule() {
       return;
     }
 
-    // Determine target articles: selected ones, or fallback to active document
-    const targetDocs = selectedIds.length > 0
-      ? writerDocs.filter((d) => selectedIds.includes(d.id))
-      : activeDoc ? [activeDoc] : [];
-
     if (targetDocs.length === 0) {
       toast.error('No articles selected to send.');
       return;
     }
 
-    // Ensure all target documents have content to display
-    const hasEmptyDoc = targetDocs.some((d) => !d.content);
     if (hasEmptyDoc) {
       toast.error('Cannot send empty articles. Please generate or write content first.');
       return;
@@ -187,7 +192,7 @@ export function WriterModule() {
         brandLogoUrl: null,
       },
     });
-  }, [activeDoc, writerDocs, selectedIds, approvalSetName, createApprovalMutation]);
+  }, [targetDocs, hasEmptyDoc, approvalSetName, createApprovalMutation]);
 
   /** Open the dialog with a sensible default name */
   const handleOpenApprovalDialog = useCallback(() => {
@@ -320,11 +325,7 @@ export function WriterModule() {
             variant="active"
             icon={<Share2 />}
             onClick={handleOpenApprovalDialog}
-            disabled={
-              selectedIds.length > 0
-                ? writerDocs.filter((d) => selectedIds.includes(d.id)).some((d) => !d.content) || writerDocs.filter((d) => selectedIds.includes(d.id)).length === 0
-                : !activeDoc || !activeDoc.content
-            }
+            disabled={!canSendApprovals}
           >
             {selectedIds.length > 1
               ? `Send ${selectedIds.length} Articles to Approvals`
