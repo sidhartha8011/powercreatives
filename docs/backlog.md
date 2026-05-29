@@ -1,5 +1,6 @@
 ## Backlog
 
+- [x] Multi-Artikel urval och approvals-paketering i Content Writer — val av flera dokument i kön med checkboxar, Select All / Clear, och paketering i delad Client Review Board med fullständig typsäkerhet och useMemo-optimeringar. [2026-05-29]
 - [x] Ändra copy-kort till 1-klick-editering (ta bort dubbelklick + expand-mellansteg), alltid fullt expanderade (visar all text), och oberoende korthöjder (grid align-items: start). [2026-05-28]
 - [x] Fixa view/edit parity för titel och description i copy-kort — wrapper gap, margin, och browser input-defaults matchade inte view mode. [2026-05-28]
 - [x] Fixa view/edit text parity bugg i copy-kort på klientgranskningssidan — texten ändrade utseende vid dubbelklick-editering p.g.a. CSS-diskrepanser (font-family saknade Inter, white-space och word-break saknades i edit mode). [2026-05-28]
