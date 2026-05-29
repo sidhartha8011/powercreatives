@@ -55,7 +55,13 @@ export function useImageActions(): UseImageActionsReturn {
    * Replace an image node at `pos` with a new URL.
    * Re-reads state fresh to avoid stale ProseMirror positions.
    */
-  const replaceImageAtPos = useCallback((editor: Editor, pos: number, newUrl: string, altText?: string) => {
+  const replaceImageAtPos = useCallback((
+    editor: Editor,
+    pos: number,
+    newUrl: string,
+    altText?: string,
+    newOriginalPrompt?: string
+  ) => {
     const { doc, tr } = editor.state;
     const node = doc.nodeAt(pos);
     if (!node || node.type.name !== 'image') return;
@@ -64,6 +70,7 @@ export function useImageActions(): UseImageActionsReturn {
       ...node.attrs,
       src: newUrl,
       alt: altText || node.attrs.alt || '',
+      'data-original-prompt': newOriginalPrompt || node.attrs['data-original-prompt'] || '',
     });
     editor.view.dispatch(tr);
   }, []);
@@ -98,7 +105,7 @@ export function useImageActions(): UseImageActionsReturn {
       }) as { url?: string };
 
       if (result?.url) {
-        replaceImageAtPos(editor, pos, result.url, node.attrs.alt);
+        replaceImageAtPos(editor, pos, result.url, node.attrs.alt, finalPrompt);
         toast.success('Image regenerated!');
       }
     } catch (error) {
