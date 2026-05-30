@@ -1,5 +1,11 @@
 ## Backlog
 
+- [x] Writer DB-persistens: Koppla ihop Jotai in-memory store med WordPress REST API via ny `useWriterPersistence`-hook (debounced autosave, load on mount, create/delete sync) + ny `POST /articles` CREATE-endpoint + `writer.create` tRPC-route. Artiklar sparas nu i databasen och överlever page refresh. [2026-05-30]
+- [x] Approvals articles typsäkerhet: Lade till `articles?: SnapshotAsset[]` i snapshot-typ, `approvedArticleIds?: string[]` i reviewFeedback-typ, uppdaterade PHP `update_snapshot_asset()` att söka i articles-array, och lade till `approvedArticleIds`-sanitering i `submit_review()` + `save_review_draft()`. [2026-05-30]
+- [x] Fixade dead "Copy Link"-knapp i Writer — lade till onClick-handler som kopierar URL till clipboard med toast-notifikation. [2026-05-30]
+- [ ] Heartbeat-baserad realtidsuppdatering av Approvals kanban-kort (planerat i HANDOVER-20260529 §2.1, BEFORE checkpoint 2578dbb).
+- [ ] WordPress-publicering via `wp_insert_post()` (kräver Writer DB-persistens som nu är klar).
+- [ ] Writer Phase 2 AI Chat Bubble (WriterAiChatBubble, useWriterAiChat, AiSuggestionActions, suggestionResolver).
 - [x] Multi-Artikel urval och approvals-paketering i Content Writer — val av flera dokument i kön med checkboxar, Select All / Clear, och paketering i delad Client Review Board med fullständig typsäkerhet och useMemo-optimeringar. [2026-05-29]
 - [x] Ändra copy-kort till 1-klick-editering (ta bort dubbelklick + expand-mellansteg), alltid fullt expanderade (visar all text), och oberoende korthöjder (grid align-items: start). [2026-05-28]
 - [x] Fixa view/edit parity för titel och description i copy-kort — wrapper gap, margin, och browser input-defaults matchade inte view mode. [2026-05-28]
