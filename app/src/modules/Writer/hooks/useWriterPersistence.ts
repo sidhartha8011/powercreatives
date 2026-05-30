@@ -17,7 +17,7 @@
  */
 
 import { useEffect, useRef, useCallback } from 'react';
-import { useAtom, useAtomValue, useSetAtom } from 'jotai';
+import { useAtom, useSetAtom } from 'jotai';
 import {
   writerDocumentsAtom,
   activeDocumentIdAtom,
