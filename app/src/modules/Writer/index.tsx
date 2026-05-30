@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useWriterPersistence } from './hooks/useWriterPersistence';
 
 // ── Helpers ──
 
@@ -60,6 +61,9 @@ export function WriterModule() {
   const selectedIds = useAtomValue(selectedDocumentIdsAtom);
   const { state, dispatch } = useApp();
   const { settings } = useSettings();
+
+  // ── DB Persistence — loads from server, autosaves changes, syncs creates/deletes ──
+  const { isLoading: isPersistenceLoading } = useWriterPersistence();
 
   // ── Memoized calculations for approvals packaging ──
   const targetDocs = useMemo(() => {
@@ -301,6 +305,11 @@ export function WriterModule() {
           <PillButton
             variant="subtle"
             icon={<Link2 />}
+            onClick={() => {
+              navigator.clipboard.writeText(window.location.href).then(() => {
+                toast.success('Link copied to clipboard!');
+              });
+            }}
           >
             Copy Link
           </PillButton>

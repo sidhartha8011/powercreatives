@@ -94,10 +94,14 @@ export interface ApprovalSet {
     projectName?: string;
     media: SnapshotAsset[];
     copy: SnapshotAsset[];
+    /** Writer articles packaged into this approval set (v1.12.0+) */
+    articles?: SnapshotAsset[];
   };
   reviewFeedback?: {
     approvedVisualIds: string[];
     approvedCopyIds: string[];
+    /** Article IDs approved by the client (v1.12.0+) */
+    approvedArticleIds?: string[];
     comments: Record<string, CommentEntry[]>;
   } | null;
   createdAt: string;

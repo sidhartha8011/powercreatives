@@ -248,9 +248,10 @@ class PCM_Approvals_Service
 
         // Tidy feedback arrays
         $sanitized_feedback = array(
-            'approvedVisualIds' => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
-            'approvedCopyIds'   => array_map('sanitize_text_field', $feedback['approvedCopyIds'] ?? array()),
-            'comments'          => self::sanitize_comment_threads($feedback['comments'] ?? array(), $client_name),
+            'approvedVisualIds'  => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
+            'approvedCopyIds'    => array_map('sanitize_text_field', $feedback['approvedCopyIds'] ?? array()),
+            'approvedArticleIds' => array_map('sanitize_text_field', $feedback['approvedArticleIds'] ?? array()),
+            'comments'           => self::sanitize_comment_threads($feedback['comments'] ?? array(), $client_name),
         );
 
         // Client review submission auto-advances the set to 'launch' (next
@@ -300,9 +301,10 @@ class PCM_Approvals_Service
 
         // Tidy feedback arrays
         $sanitized_feedback = array(
-            'approvedVisualIds' => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
-            'approvedCopyIds'   => array_map('sanitize_text_field', $feedback['approvedCopyIds'] ?? array()),
-            'comments'          => self::sanitize_comment_threads($feedback['comments'] ?? array(), 'Client'),
+            'approvedVisualIds'  => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
+            'approvedCopyIds'    => array_map('sanitize_text_field', $feedback['approvedCopyIds'] ?? array()),
+            'approvedArticleIds' => array_map('sanitize_text_field', $feedback['approvedArticleIds'] ?? array()),
+            'comments'           => self::sanitize_comment_threads($feedback['comments'] ?? array(), 'Client'),
         );
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -475,6 +477,28 @@ class PCM_Approvals_Service
                 if (isset($item['id']) && (string)$item['id'] === (string)$asset_id) {
                     if (isset($updates['name'])) {
                         $item['name'] = sanitize_text_field($updates['name']);
+                    }
+                    $updated = true;
+                    break;
+                }
+            }
+        }
+
+        // Search in articles snapshot assets (Writer articles in approval sets)
+        if (!$updated && !empty($snapshot['articles']) && is_array($snapshot['articles'])) {
+            foreach ($snapshot['articles'] as &$item) {
+                if (isset($item['id']) && (string)$item['id'] === (string)$asset_id) {
+                    if (isset($updates['title'])) {
+                        $item['title'] = sanitize_text_field($updates['title']);
+                    }
+                    if (isset($updates['content'])) {
+                        $item['content'] = wp_kses_post($updates['content']);
+                    }
+                    if (isset($updates['metaTitle'])) {
+                        $item['metaTitle'] = sanitize_text_field($updates['metaTitle']);
+                    }
+                    if (isset($updates['metaDescription'])) {
+                        $item['metaDescription'] = sanitize_textarea_field($updates['metaDescription']);
                     }
                     $updated = true;
                     break;

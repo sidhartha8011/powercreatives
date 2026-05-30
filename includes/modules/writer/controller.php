@@ -25,6 +25,7 @@ class PCM_REST_Writer extends PCM_REST_Base
     {
         return array(
             array('GET', '/articles', 'list_articles'),
+            array('POST', '/articles', 'create_article'),
             array('GET', '/articles/(?P<id>\d+)', 'get_article'),
             array('PATCH', '/articles/(?P<id>\d+)', 'update_article'),
             array('DELETE', '/articles/(?P<id>\d+)', 'delete_article'),
@@ -54,6 +55,61 @@ class PCM_REST_Writer extends PCM_REST_Base
         );
 
         return $this->success($articles);
+    }
+
+    /**
+     * Create a new article.
+     *
+     * Accepts title and optional metadata. Content starts empty — the user
+     * writes or generates it in the editor. Follows the same pattern as
+     * Deliveries and Strategy controllers.
+     */
+    public function create_article(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $params   = $request->get_json_params();
+
+        if (empty($params['title'])) {
+            return $this->error('Title is required.');
+        }
+
+        // Whitelist fields that can be set at creation time
+        $data = array(
+            'userId' => (int) $pcm_user->id,
+            'title'  => sanitize_text_field($params['title']),
+            'slug'   => sanitize_text_field($params['slug'] ?? ''),
+            'status' => 'draft',
+        );
+
+        // Optional fields — only include if provided
+        $optional_text = array('content', 'metaTitle', 'metaDescription', 'schemaType', 'featuredImage');
+        foreach ($optional_text as $field) {
+            if (isset($params[$field])) {
+                $data[$field] = $field === 'content'
+                    ? wp_kses_post($params[$field])
+                    : sanitize_text_field($params[$field]);
+            }
+        }
+
+        // Optional integer references
+        if (isset($params['brandId'])) {
+            $data['brandId'] = (int) $params['brandId'];
+        }
+        if (isset($params['strategyId'])) {
+            $data['strategyId'] = (int) $params['strategyId'];
+        }
+        if (isset($params['siteId'])) {
+            $data['siteId'] = (int) $params['siteId'];
+        }
+
+        $article_id = PCM_DB::create_article($data);
+        if (!$article_id) {
+            return $this->error('Failed to create article.', 500);
+        }
+
+        // Return the full created article
+        $article = PCM_DB::get_article($article_id, (int) $pcm_user->id);
+        return $this->success($article);
     }
 
     /**

@@ -272,6 +272,7 @@ const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `articles/${input.id}` }),
     },
+    "writer.create": { endpoint: "articles", method: "POST" },
     "writer.update": {
         endpoint: "articles",
         method: "PATCH",
