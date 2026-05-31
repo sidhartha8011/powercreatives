@@ -1934,7 +1934,17 @@ Provide a concise market research summary (max 300 words) that can inform audien
         if (!empty($creative_brief))
             $parts[] = "Creative Brief: {$creative_brief}";
 
-        return implode("\n", $parts);
+        $result = implode("\n", $parts);
+
+        // [PCM_DIAG] Temporary diagnostic — log what extract_brief() produces
+        // to verify creative brief reaches the LLM prompt. Remove after investigation.
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('[PCM_DIAG extract_brief] creativeBrief key present: ' . (isset($form_values['creativeBrief']) ? 'YES' : 'NO'));
+            error_log('[PCM_DIAG extract_brief] creativeBrief value: ' . substr($creative_brief, 0, 200));
+            error_log('[PCM_DIAG extract_brief] full brief output: ' . substr($result, 0, 500));
+        }
+
+        return $result;
     }
 
     /**
