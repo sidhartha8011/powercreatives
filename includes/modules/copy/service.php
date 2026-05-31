@@ -1484,6 +1484,9 @@ BUSINESS CONTEXT:
 {{referenceCopy}}
 {{reviewsContext}}
 
+CREATIVE BRIEF (follow these instructions closely — this is the user's primary directive):
+{{creativeBrief}}
+
 OUTPUT FORMAT:
 Return a JSON object with: headline, body, cta, hashtags (EMPTY array for ads), description.
 
@@ -1503,7 +1506,7 @@ TASK:
 Write a {{typeLabel}} for this specific audience and angle:
 TARGET AUDIENCE: {{audience}}
 MARKETING ANGLE: {{angle}}
-Tailor the copy specifically to resonate with '{{audience}}' using the '{{angle}}' approach. Make it feel personal and relevant to this exact audience segment.",
+Follow the creative brief above. Tailor the copy specifically to resonate with '{{audience}}' using the '{{angle}}' approach. Make it feel personal and relevant to this exact audience segment.",
 
             // ── Copy Generation (Organic) ──────────────────────────
             'system_prompt_organic' => "You are an expert social media content creator.
@@ -1516,6 +1519,9 @@ BUSINESS CONTEXT:
 {{referenceCopy}}
 {{reviewsContext}}
 {{organicContext}}
+
+CREATIVE BRIEF (follow these instructions closely — this is the user's primary directive):
+{{creativeBrief}}
 
 OUTPUT FORMAT:
 Return a JSON object with: headline (empty string for organic), body, cta (empty string for organic), hashtags (3-6 relevant hashtags with # prefix), description (empty string for organic).
@@ -1535,7 +1541,7 @@ TASK:
 Write a {{typeLabel}} for this specific audience and angle:
 TARGET AUDIENCE: {{audience}}
 MARKETING ANGLE: {{angle}}
-Tailor the copy specifically to resonate with '{{audience}}' using the '{{angle}}' approach. Make it feel personal and relevant to this exact audience segment.",
+Follow the creative brief above. Tailor the copy specifically to resonate with '{{audience}}' using the '{{angle}}' approach. Make it feel personal and relevant to this exact audience segment.",
 
             // ── Angle Generation ───────────────────────────────────
             'angle_generation' => "You generate creative marketing angles/hooks for advertising copy.
@@ -1546,6 +1552,9 @@ Product/Service: {{product}}
 Description: {{description}}
 Tonality: {{tone}}
 {{campaignContext}}
+
+CREATIVE BRIEF:
+{{creativeBrief}}
 
 REFERENCE ADS (study these for style and angle inspiration):
 {{referenceAds}}
@@ -1574,6 +1583,9 @@ Description: {{description}}
 Tonality: {{tone}}
 {{campaignContext}}
 
+CREATIVE BRIEF:
+{{creativeBrief}}
+
 REFERENCE ADS (study these to understand existing targeting):
 {{referenceAds}}
 
@@ -1598,6 +1610,9 @@ Product/Service: {{product}}
 Description: {{description}}
 Tonality: {{tone}}
 {{campaignContext}}
+
+CREATIVE BRIEF:
+{{creativeBrief}}
 
 REFERENCE ADS:
 {{referenceAds}}
@@ -1630,6 +1645,9 @@ Brand: {{brandName}}
 Product/Service: {{product}}
 Description: {{description}}
 {{campaignContext}}
+
+CREATIVE BRIEF:
+{{creativeBrief}}
 
 RESEARCH OBJECTIVES:
 - Who searches for this type of product/service?
@@ -1747,6 +1765,10 @@ Provide a concise market research summary (max 300 words) that can inform audien
         $vars = array(
             'language' => $language,
             'brief' => $brief,
+            // Creative brief — user's free-form instructions for the copy.
+            // Separated from {{brief}} so it gets its own section with proper
+            // emphasis in the prompt (not buried in business metadata).
+            'creativeBrief' => trim($form_values['creativeBrief'] ?? ''),
             'referenceCopy' => $reference_copy,
             'reviewsContext' => $reviews_context,
             'organicContext' => $organic_context,
@@ -1929,22 +1951,11 @@ Provide a concise market research summary (max 300 words) that can inform audien
         if (!empty($phone))
             $parts[] = "Phone: {$phone}";
 
-        // Creative Brief — free-form user directions
-        $creative_brief = $form_values['creativeBrief'] ?? '';
-        if (!empty($creative_brief))
-            $parts[] = "Creative Brief: {$creative_brief}";
+        // NOTE: creativeBrief is intentionally NOT included here.
+        // It has its own {{creativeBrief}} placeholder so it gets proper
+        // emphasis in the prompt instead of being buried in business context.
 
-        $result = implode("\n", $parts);
-
-        // [PCM_DIAG] Temporary diagnostic — log what extract_brief() produces
-        // to verify creative brief reaches the LLM prompt. Remove after investigation.
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[PCM_DIAG extract_brief] creativeBrief key present: ' . (isset($form_values['creativeBrief']) ? 'YES' : 'NO'));
-            error_log('[PCM_DIAG extract_brief] creativeBrief value: ' . substr($creative_brief, 0, 200));
-            error_log('[PCM_DIAG extract_brief] full brief output: ' . substr($result, 0, 500));
-        }
-
-        return $result;
+        return implode("\n", $parts);
     }
 
     /**

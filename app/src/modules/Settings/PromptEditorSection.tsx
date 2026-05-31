@@ -97,11 +97,11 @@ const PLACEHOLDERS: Record<string, PlaceholderGroup[]> = {
       group: 'Business',
       icon: Briefcase,
       items: [
-        { key: '{{brief}}', description: 'All business info combined: name, industry, offer, pricing, contact, and creative brief (Ads/Organic prompts)' },
+        { key: '{{brief}}', description: 'Business metadata: name, industry, offer, pricing, contact info (Ads/Organic prompts)' },
         { key: '{{brandName}}', description: 'Brand/business name — from Business Info → Name (Angle/Audience prompts)' },
         { key: '{{product}}', description: 'Product or service — from Business Info → Product/Service (Angle/Audience prompts)' },
         { key: '{{description}}', description: 'Business description — from Business Info → Description (Angle/Audience prompts)' },
-        { key: '{{creativeBrief}}', description: 'Free-form user directions — from Creative Brief textarea (Angle/Audience prompts)' },
+        { key: '{{creativeBrief}}', description: 'Free-form user directions — from Creative Brief textarea. Gets its own section in the prompt for emphasis (all prompts)' },
       ],
     },
     {
@@ -185,11 +185,11 @@ const PLACEHOLDERS: Record<string, PlaceholderGroup[]> = {
       group: 'Business',
       icon: Briefcase,
       items: [
-        { key: '{{brief}}', description: 'All business info combined: name, industry, offer, pricing, contact, and creative brief' },
+        { key: '{{brief}}', description: 'Business metadata: name, industry, offer, pricing, contact info (Ads/Organic prompts)' },
         { key: '{{brandName}}', description: 'Brand/business name — from Business Info → Name (Angle/Audience prompts)' },
         { key: '{{product}}', description: 'Product or service — from Business Info → Product/Service (Angle/Audience prompts)' },
         { key: '{{description}}', description: 'Business description — from Business Info → Description (Angle/Audience prompts)' },
-        { key: '{{creativeBrief}}', description: 'Free-form user directions — from Creative Brief textarea (Angle/Audience prompts)' },
+        { key: '{{creativeBrief}}', description: 'Free-form user directions — from Creative Brief textarea. Gets its own section in the prompt for emphasis (all prompts)' },
       ],
     },
     {
