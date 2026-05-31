@@ -183,6 +183,52 @@ class PCM_Prompt_Seeds
                 'variantName' => 'Default Audience Research',
                 'content' => $copy_defaults['audience_research'],
             ),
+
+            // ── Ads Module (7 sections — own namespace for independent customization) ──
+            // Same default content as Copy, but stored under module='ads' so
+            // Ads users can customize prompts without affecting the Copy module.
+                array(
+                'module' => 'ads',
+                'section' => 'system_prompt_ads_system',
+                'variantName' => 'Default Ads System Prompt',
+                'content' => $copy_defaults['system_prompt_ads_system'],
+            ),
+                array(
+                'module' => 'ads',
+                'section' => 'system_prompt_ads',
+                'variantName' => 'Default Ads User Prompt',
+                'content' => $copy_defaults['system_prompt_ads'],
+            ),
+                array(
+                'module' => 'ads',
+                'section' => 'system_prompt_organic',
+                'variantName' => 'Default Organic Prompt',
+                'content' => $copy_defaults['system_prompt_organic'],
+            ),
+                array(
+                'module' => 'ads',
+                'section' => 'angle_generation',
+                'variantName' => 'Default Angle Generation',
+                'content' => $copy_defaults['angle_generation'],
+            ),
+                array(
+                'module' => 'ads',
+                'section' => 'audience_generation',
+                'variantName' => 'Default Audience Generation',
+                'content' => $copy_defaults['audience_generation'],
+            ),
+                array(
+                'module' => 'ads',
+                'section' => 'angle_generation_with_audiences',
+                'variantName' => 'Default Audience-Aware Angles',
+                'content' => $copy_defaults['angle_generation_with_audiences'],
+            ),
+                array(
+                'module' => 'ads',
+                'section' => 'audience_research',
+                'variantName' => 'Default Audience Research',
+                'content' => $copy_defaults['audience_research'],
+            ),
         );
 
         // ── Video Module ──

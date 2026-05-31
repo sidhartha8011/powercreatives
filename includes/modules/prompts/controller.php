@@ -492,6 +492,38 @@ class PCM_REST_Prompts extends PCM_REST_Base
                 'description' => 'Prompt for generating angles specific to audience segments. Supports {{brandName}}, {{product}}, {{description}}, {{referenceAds}}, {{tone}}, {{audiences}}, {{anglesPerAudience}}, {{totalAngles}}, {{campaignContext}}.',
             ),
 
+            // Ads module — own namespace, mirrors copy prompts for ad-specific generation.
+            // These prompts are stored separately from copy so Ads users can customize
+            // their ad-generation prompts without affecting the Copy module.
+            'ads.system_prompt_ads_system' => array(
+                'label' => 'Ad Copy — System Prompt',
+                'description' => 'Persona and formatting rules sent as role:system before every ad copy generation in the Ads module. Controls the LLM\'s behavior and output format. Does NOT support {{placeholders}}.',
+            ),
+            'ads.system_prompt_ads' => array(
+                'label' => 'Ad Copy — User Prompt',
+                'description' => 'Business context, style rules, and task instructions sent as role:user for ad copy. Supports {{language}}, {{brief}}, {{campaignContext}}, {{referenceCopy}}, {{reviewsContext}}, {{toneInstruction}}, {{emojiInstruction}}, {{ctaInstruction}}, {{typeLabel}}, {{audience}}, {{angle}}.',
+            ),
+            'ads.system_prompt_organic' => array(
+                'label' => 'Organic Copy — System Prompt',
+                'description' => 'Prompt for organic social media posts generated from the Ads module. Supports {{language}}, {{brief}}, {{campaignContext}}, {{referenceCopy}}, {{reviewsContext}}, {{organicContext}}, {{toneInstruction}}, {{emojiInstruction}}, {{typeLabel}}, {{audience}}, {{angle}}.',
+            ),
+            'ads.angle_generation' => array(
+                'label' => 'Angle Generation',
+                'description' => 'Prompt for auto-generating marketing angles in the Ads module. Supports {{brandName}}, {{product}}, {{description}}, {{referenceAds}}, {{tone}}, {{count}}, {{campaignContext}}.',
+            ),
+            'ads.audience_generation' => array(
+                'label' => 'Audience Generation',
+                'description' => 'Prompt for auto-generating target audiences in the Ads module. Supports {{brandName}}, {{product}}, {{description}}, {{referenceAds}}, {{tone}}, {{count}}, {{campaignContext}}, {{researchContext}}.',
+            ),
+            'ads.audience_research' => array(
+                'label' => 'Audience Research',
+                'description' => 'Grounding step: Gemini performs real Google Searches for market data. Results are injected into the Audience Generation prompt via {{researchContext}}. Supports {{brandName}}, {{product}}, {{description}}, {{campaignContext}}.',
+            ),
+            'ads.angle_generation_with_audiences' => array(
+                'label' => 'Angle Generation (Audience-Aware)',
+                'description' => 'Prompt for generating angles tailored to specific audience segments. Supports {{brandName}}, {{product}}, {{description}}, {{referenceAds}}, {{tone}}, {{audiences}}, {{anglesPerAudience}}, {{totalAngles}}, {{campaignContext}}.',
+            ),
+
             // Video module
             'video.concept_suggestions' => array(
                 'label' => 'Concept Suggestions',
@@ -562,13 +594,14 @@ class PCM_REST_Prompts extends PCM_REST_Base
     private function get_default_sections(string $module): array
     {
         // Section names must match what the service layer uses.
-        // Copy: system prompts + generation + research steps.
-        // Video: concept suggestions + compose + enhance.
-        // Image: concept suggestions.
+        // Each module's sections are the prompts exposed in the Prompt Editor UI.
         $registry = array(
             // Copy: system prompt (role:system) + user prompt (role:user) for ads,
             // plus organic prompt and all generation + research sections.
             'copy' => array('system_prompt_ads_system', 'system_prompt_ads', 'system_prompt_organic', 'angle_generation', 'audience_generation', 'audience_research', 'angle_generation_with_audiences'),
+            // Ads: own namespace — same section names as copy's ad-related prompts.
+            // Stored separately so Ads users can customize without affecting Copy module.
+            'ads' => array('system_prompt_ads_system', 'system_prompt_ads', 'system_prompt_organic', 'angle_generation', 'audience_generation', 'audience_research', 'angle_generation_with_audiences'),
             'image' => array('prompt_suggestions_system', 'prompt_suggestions', 'context_suggestions_system', 'context_suggestions', 'concept_suggestions', 'concept_suggestions_user', 'brief_optimization', 'brief_optimization_user', 'final_prompt'),
             'video' => array('concept_suggestions', 'compose', 'enhance'),
             'writer' => array('writer_system', 'writer_user'),
@@ -601,6 +634,15 @@ class PCM_REST_Prompts extends PCM_REST_Base
         // Copy module: delegate to the service's default templates.
         // These contain {{placeholders}} resolved at generation time.
         if ($module === 'copy') {
+            $defaults = PCM_Copy_Service::get_default_prompts();
+            return $defaults[$section] ?? '';
+        }
+
+        // Ads module: uses the same default templates as Copy.
+        // Ads prompts are stored in their own namespace (module='ads') so users
+        // can customize ad-generation prompts independently from the Copy module.
+        // Default content is seeded from Copy's templates.
+        if ($module === 'ads') {
             $defaults = PCM_Copy_Service::get_default_prompts();
             return $defaults[$section] ?? '';
         }

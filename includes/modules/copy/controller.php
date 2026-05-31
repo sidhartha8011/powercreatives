@@ -94,6 +94,8 @@ class PCM_REST_Copy extends PCM_REST_Base
         $type = sanitize_text_field($params['type'] ?? '');
         $count = min(10, max(1, (int)($params['count'] ?? 3)));
         $form_values = $params['formValues'] ?? array();
+        // Module namespace for prompt resolution ('copy' or 'ads')
+        $suggest_module = sanitize_text_field($params['module'] ?? 'copy');
 
         if (!in_array($type, array('angles', 'audiences'), true)) {
             return $this->error('Invalid type. Must be "angles" or "audiences".');
@@ -111,7 +113,8 @@ class PCM_REST_Copy extends PCM_REST_Base
                     $audiences,
                     $form_values,
                     $model_id,
-                    $user->id
+                    $user->id,
+                    $suggest_module
                 );
                 return $this->success(array('items' => $items));
             }
@@ -126,7 +129,8 @@ class PCM_REST_Copy extends PCM_REST_Base
                     $model_id,
                     $user->id,
                     $use_research,
-                    $research_model
+                    $research_model,
+                    $suggest_module
                 );
                 return $this->success(array(
                     'items' => $result['audiences'],
@@ -168,6 +172,10 @@ class PCM_REST_Copy extends PCM_REST_Base
             $form_values = $params['formValues'] ?? array();
             $scope = $params['scope'] ?? 'all';
             $scope_filter = $params['scopeFilter'] ?? array();
+            // Module namespace for prompt resolution: 'copy' (default) or 'ads'.
+            // When the Ads module calls /copy/generate, it passes module='ads'
+            // so prompts are resolved from the ads namespace in prompt_overrides.
+            $module = sanitize_text_field($params['module'] ?? 'copy');
 
             // Read research settings from frontend (localStorage-based settings)
             $use_research = (bool)($params['useResearch'] ?? false);
@@ -180,7 +188,8 @@ class PCM_REST_Copy extends PCM_REST_Base
                 $model_id,
                 $user->id,
                 $use_research,
-                $research_model
+                $research_model,
+                $module
             );
             $audiences = $audience_result['audiences'];
 
@@ -190,7 +199,8 @@ class PCM_REST_Copy extends PCM_REST_Base
                 $audiences,
                 $form_values,
                 $model_id,
-                $user->id
+                $user->id,
+                $module
             );
 
             // Step 3: Filter copy types and build task matrix
@@ -248,7 +258,8 @@ class PCM_REST_Copy extends PCM_REST_Base
                         $task['angle'],
                         $form_values,
                         $model_id,
-                        $user->id
+                        $user->id,
+                        $module
                     );
 
                     // Store result via service

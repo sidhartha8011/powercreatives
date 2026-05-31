@@ -71,6 +71,7 @@ import {
   Target,
   Settings2,
   Search,
+  Megaphone,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
@@ -78,6 +79,7 @@ import { toast } from "sonner";
 /** Module definitions for tabs */
 const MODULES = [
   { id: "copy" as const, label: "Copy", icon: Pen },
+  { id: "ads" as const, label: "Ads", icon: Megaphone },
   { id: "image" as const, label: "Image", icon: Image },
   { id: "video" as const, label: "Video", icon: Video },
 ];
@@ -175,10 +177,65 @@ const PLACEHOLDERS: Record<string, PlaceholderGroup[]> = {
       ],
     },
   ],
+  // Ads module — same placeholders as copy since Ads delegates to Copy service.
+  // These help the user understand which {{variables}} are available when editing
+  // their Ads-specific prompts in Settings → Default Prompts → Ads tab.
+  ads: [
+    {
+      group: 'Business',
+      icon: Briefcase,
+      items: [
+        { key: '{{brief}}', description: 'All business info combined: name, industry, offer, pricing, contact, and creative brief' },
+        { key: '{{brandName}}', description: 'Brand/business name — from Business Info → Name (Angle/Audience prompts)' },
+        { key: '{{product}}', description: 'Product or service — from Business Info → Product/Service (Angle/Audience prompts)' },
+        { key: '{{description}}', description: 'Business description — from Business Info → Description (Angle/Audience prompts)' },
+        { key: '{{creativeBrief}}', description: 'Free-form user directions — from Creative Brief textarea (Angle/Audience prompts)' },
+      ],
+    },
+    {
+      group: 'Style & Tone',
+      icon: Palette,
+      items: [
+        { key: '{{toneInstruction}}', description: 'Resolved tone rules as full instruction text — priority: template tonality > dropdown > auto (Ads/Organic prompts)' },
+        { key: '{{tone}}', description: 'Raw tone key (e.g. "professional", "casual") — from Tone dropdown (Angle/Audience prompts)' },
+        { key: '{{emojiInstruction}}', description: 'Emoji usage rules — from Advanced Options → Emoji Level (Ads/Organic prompts)' },
+        { key: '{{ctaInstruction}}', description: 'CTA style rules — from Advanced Options → CTA Style. Only injected for Ads prompts' },
+        { key: '{{language}}', description: 'Target language (e.g. "Swedish", "English") — from Settings → Language' },
+      ],
+    },
+    {
+      group: 'Reference Material',
+      icon: Paperclip,
+      items: [
+        { key: '{{referenceCopy}}', description: 'Reference ads with style analysis context — from Reference Ads section (Ads/Organic prompts)' },
+        { key: '{{referenceAds}}', description: 'Reference ads raw text — same source as {{referenceCopy}} but for Angle/Audience prompts' },
+        { key: '{{reviewsContext}}', description: 'Customer reviews — from Customer Reviews section (Ads/Organic prompts)' },
+        { key: '{{researchContext}}', description: 'Market research data from the research step — auto-injected when research is enabled (Audience prompts)' },
+      ],
+    },
+    {
+      group: 'Campaign',
+      icon: Target,
+      items: [
+        { key: '{{campaignContext}}', description: 'Season/event + campaign theme — from Theme section (all prompts)' },
+        { key: '{{organicContext}}', description: 'Content pillar + post format — Organic-specific fields. Only injected for Organic prompts' },
+      ],
+    },
+    {
+      group: 'Runtime (auto-injected)',
+      icon: Settings2,
+      items: [
+        { key: '{{angle}}', description: 'Current angle name being generated — set automatically per generation task' },
+        { key: '{{audience}}', description: 'Current audience name being generated — set automatically per generation task' },
+        { key: '{{count}}', description: 'Number of items to generate — from the Auto mode count selector' },
+        { key: '{{audienceList}}', description: 'JSON array of all audiences — auto-injected in Angle Generation (Audience-Aware) prompt only' },
+      ],
+    },
+  ],
   video: [],
 };
 
-type PromptModuleId = "copy" | "image" | "video";
+type PromptModuleId = "copy" | "ads" | "image" | "video";
 
 /**
  * Variant editor — shows all variants as tabs with the active variant's textarea.
@@ -714,25 +771,23 @@ export function PromptEditorSection() {
 
   // Fetch section metadata for all modules
   const copyList = trpc.promptOverrides.list.useQuery({ module: "copy" });
+  const adsList = trpc.promptOverrides.list.useQuery({ module: "ads" });
   const imageList = trpc.promptOverrides.list.useQuery({ module: "image" });
   const videoList = trpc.promptOverrides.list.useQuery({ module: "video" });
 
+  /** Helper to map section response to UI-friendly shape */
+  const mapSections = (data: typeof copyList.data) =>
+    data?.sections.map((s) => ({
+      section: s.section,
+      label: s.label,
+      description: s.description,
+    })) ?? [];
+
   const sectionsByModule: Record<PromptModuleId, Array<{ section: string; label: string; description: string }>> = {
-    copy: copyList.data?.sections.map((s) => ({
-      section: s.section,
-      label: s.label,
-      description: s.description,
-    })) ?? [],
-    image: imageList.data?.sections.map((s) => ({
-      section: s.section,
-      label: s.label,
-      description: s.description,
-    })) ?? [],
-    video: videoList.data?.sections.map((s) => ({
-      section: s.section,
-      label: s.label,
-      description: s.description,
-    })) ?? [],
+    copy: mapSections(copyList.data),
+    ads: mapSections(adsList.data),
+    image: mapSections(imageList.data),
+    video: mapSections(videoList.data),
   };
 
   /** Export state to prevent double-click */

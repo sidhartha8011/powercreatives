@@ -56,7 +56,8 @@ class PCM_Copy_Service
         string $model_id,
         int $user_id = 0,
         bool $use_research = false,
-        string $research_model_id = ''
+        string $research_model_id = '',
+        string $module = 'copy'
         ): array
     {
         $mode = $audience_config['mode'] ?? 'manual';
@@ -121,7 +122,7 @@ class PCM_Copy_Service
             else {
                 // All prerequisites met — run grounded research
                 try {
-                    $research_prompt_template = $this->get_system_prompt('audience_research', $user_id);
+                    $research_prompt_template = $this->get_system_prompt('audience_research', $user_id, $module);
                     $research_prompt = $this->resolve_prompt_placeholders($research_prompt_template, $prompt_vars);
 
                     $research_messages = array(
@@ -158,7 +159,7 @@ class PCM_Copy_Service
         $prompt_vars['researchContext'] = $research_context;
 
         // Get the editable prompt template (DB override or built-in default)
-        $prompt_template = $this->get_system_prompt('audience_generation', $user_id);
+        $prompt_template = $this->get_system_prompt('audience_generation', $user_id, $module);
         $resolved_prompt = $this->resolve_prompt_placeholders($prompt_template, $prompt_vars);
 
         $messages = array(
@@ -222,7 +223,7 @@ class PCM_Copy_Service
      *
      * @return array Array of { id, name } angle objects.
      */
-    public function resolve_angles(array $angle_config, array $form_values, int $audience_count, string $model_id, int $user_id = 0): array
+    public function resolve_angles(array $angle_config, array $form_values, int $audience_count, string $model_id, int $user_id = 0, string $module = 'copy'): array
     {
         $mode = $angle_config['mode'] ?? 'manual';
 
@@ -242,7 +243,7 @@ class PCM_Copy_Service
         $prompt_vars = $this->build_generation_context($form_values, $count);
 
         // Get the editable prompt template (DB override or built-in default)
-        $prompt_template = $this->get_system_prompt('angle_generation', $user_id);
+        $prompt_template = $this->get_system_prompt('angle_generation', $user_id, $module);
         $resolved_prompt = $this->resolve_prompt_placeholders($prompt_template, $prompt_vars);
 
         $messages = array(
@@ -297,7 +298,8 @@ class PCM_Copy_Service
         array $audiences,
         array $form_values,
         string $model_id,
-        int $user_id = 0
+        int $user_id = 0,
+        string $module = 'copy'
         ): array
     {
         $mode = $angle_config['mode'] ?? 'manual';
@@ -320,7 +322,7 @@ class PCM_Copy_Service
 
         // No audiences? Fall back to generic angle generation
         if (empty($audiences)) {
-            $generic = $this->resolve_angles($angle_config, $form_values, 0, $model_id, $user_id);
+            $generic = $this->resolve_angles($angle_config, $form_values, 0, $model_id, $user_id, $module);
             return array_map(function ($a) {
                 $a['audienceId'] = '*';
                 return $a;
@@ -344,7 +346,7 @@ class PCM_Copy_Service
         $prompt_vars['totalAngles'] = (string)($count * count($audiences));
 
         // Get the editable prompt template (DB override or built-in default)
-        $prompt_template = $this->get_system_prompt('angle_generation_with_audiences', $user_id);
+        $prompt_template = $this->get_system_prompt('angle_generation_with_audiences', $user_id, $module);
         $resolved_prompt = $this->resolve_prompt_placeholders($prompt_template, $prompt_vars);
 
         $messages = array(
@@ -362,7 +364,7 @@ class PCM_Copy_Service
 
         if (empty($parsed)) {
             // Fallback: generate generic angles with wildcard audienceId
-            $generic = $this->resolve_angles($angle_config, $form_values, 0, $model_id, $user_id);
+            $generic = $this->resolve_angles($angle_config, $form_values, 0, $model_id, $user_id, $module);
             return array_map(function ($a) {
                 $a['audienceId'] = '*';
                 return $a;
@@ -620,11 +622,12 @@ class PCM_Copy_Service
         array $angle,
         array $form_values,
         string $model_id,
-        int $user_id
+        int $user_id,
+        string $module = 'copy'
         ): array
     {
         // Build the fully resolved user prompt — business context + style + task.
-        $resolved_prompt = $this->build_copy_system_prompt($form_values, $copy_type, $user_id, $audience, $angle);
+        $resolved_prompt = $this->build_copy_system_prompt($form_values, $copy_type, $user_id, $audience, $angle, $module);
 
         // Fetch the system prompt for this copy type.
         // Ads use a dedicated system section; organic falls back to the combined prompt.
@@ -634,7 +637,7 @@ class PCM_Copy_Service
         $messages = array();
 
         if ($system_section) {
-            $system_content = $this->get_system_prompt($system_section, $user_id);
+            $system_content = $this->get_system_prompt($system_section, $user_id, $module);
             $messages[] = array('role' => 'system', 'content' => $system_content);
         }
 
@@ -1396,10 +1399,14 @@ class PCM_Copy_Service
      *
      * @param string $section_or_type Section name or legacy copy_type (social_ads, social_organic).
      * @param int    $user_id         PCM user ID.
+     * @param string $module          Module namespace to read from ('copy' or 'ads').
+     *                                Defaults to 'copy' for backward compatibility.
+     *                                When 'ads', checks for ads-specific overrides first,
+     *                                then falls back to 'copy' prompts.
      *
      * @return string System prompt template (may contain {{placeholders}}).
      */
-    public function get_system_prompt(string $section_or_type, int $user_id): string
+    public function get_system_prompt(string $section_or_type, int $user_id, string $module = 'copy'): string
     {
         global $wpdb;
 
@@ -1414,14 +1421,24 @@ class PCM_Copy_Service
 
         // Check for user override (DB = single source of truth)
         if ($user_id > 0) {
-            $override = $wpdb->get_var($wpdb->prepare(
-                "SELECT content FROM $table WHERE userId = %d AND module = 'copy' AND section = %s AND isActive = 1 ORDER BY updatedAt DESC LIMIT 1",
-                $user_id,
-                $section
-            ));
+            // When module is 'ads', check ads namespace first, then fall back to copy.
+            // This allows Ads users to customize prompts independently, while new users
+            // who haven't customized yet get the Copy module's active prompt.
+            $modules_to_check = ($module === 'ads')
+                ? array('ads', 'copy')
+                : array($module);
 
-            if (!empty($override)) {
-                return $override;
+            foreach ($modules_to_check as $mod) {
+                $override = $wpdb->get_var($wpdb->prepare(
+                    "SELECT content FROM $table WHERE userId = %d AND module = %s AND section = %s AND isActive = 1 ORDER BY updatedAt DESC LIMIT 1",
+                    $user_id,
+                    $mod,
+                    $section
+                ));
+
+                if (!empty($override)) {
+                    return $override;
+                }
             }
         }
 
@@ -1639,9 +1656,9 @@ Provide a concise market research summary (max 300 words) that can inform audien
      *
      * @return string Fully resolved system prompt ready for LLM.
      */
-    public function build_copy_system_prompt(array $form_values, string $copy_type, int $user_id, array $audience = array(), array $angle = array()): string
+    public function build_copy_system_prompt(array $form_values, string $copy_type, int $user_id, array $audience = array(), array $angle = array(), string $module = 'copy'): string
     {
-        $template = $this->get_system_prompt($copy_type, $user_id);
+        $template = $this->get_system_prompt($copy_type, $user_id, $module);
 
         $locale_code = substr(get_locale(), 0, 2);
         $language = $this->get_language_label($form_values['language'] ?? $locale_code);

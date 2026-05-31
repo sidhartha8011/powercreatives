@@ -210,7 +210,13 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
         'Content-Type': 'application/json',
         'X-WP-Nonce': config.nonce,
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({
+        ...input,
+        // Tell the Copy service to resolve prompts from the 'ads' namespace.
+        // This enables independent prompt customization in Settings → Ads tab
+        // without affecting the Copy module's prompts.
+        module: 'ads',
+      }),
       signal,
     });
 
@@ -541,6 +547,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       count: params.count,
       formValues: { ...params.formValues, creativeBrief: params.brief },
       modelId: params.textModelId,
+      module: 'ads',
     });
     return (res as any).items ?? [];
   }, [suggestMutation]);
@@ -561,6 +568,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       audiences: params.audiences.length > 0 ? params.audiences : undefined,
       formValues: { ...params.formValues, creativeBrief: params.brief },
       modelId: params.textModelId,
+      module: 'ads',
     });
     return (res as any).items ?? [];
   }, [suggestMutation]);
