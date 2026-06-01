@@ -334,7 +334,7 @@ OUTPUT FORMAT:
             // ─────────────────────────────────────────────
             // COPY: Epiphany Bridge (Full) — Russell Brunson
             // Long-form framework from Expert Secrets / Perfect Webinar.
-            // Populates creativeBrief with the framework structure.
+            // Subtype 'framework' → appears in the Copy Framework dropdown, injected as {{copyFramework}}.
             // ─────────────────────────────────────────────
             array(
                 'name' => 'Epiphany Bridge (Full)',
@@ -347,7 +347,7 @@ OUTPUT FORMAT:
                     'entries' => array(
                         array(
                             'key' => 'epiphany_bridge_framework',
-                            'category' => 'brief',
+                            'category' => 'framework',
                             'label' => 'Copy Framework',
                             'value' => 'Follow the Epiphany Bridge framework (Russell Brunson) exactly in this order. Do NOT use a personal founder story — use customer perspective and industry-level narratives instead.
 
@@ -413,7 +413,7 @@ PHASE 3 — THE STACK & CLOSE:
             // ─────────────────────────────────────────────
             // COPY: Hook-Story-Offer (HSO) — Russell Brunson
             // Short-form framework from DotCom Secrets.
-            // Populates creativeBrief with the framework structure.
+            // Subtype 'framework' → appears in the Copy Framework dropdown, injected as {{copyFramework}}.
             // ─────────────────────────────────────────────
             array(
                 'name' => 'Hook-Story-Offer',
@@ -426,7 +426,7 @@ PHASE 3 — THE STACK & CLOSE:
                     'entries' => array(
                         array(
                             'key' => 'hso_framework',
-                            'category' => 'brief',
+                            'category' => 'framework',
                             'label' => 'Copy Framework',
                             'value' => 'Follow the Hook-Story-Offer (HSO) framework (Russell Brunson) exactly. Do NOT use a personal founder story — use customer perspective and brand differentiation instead.
 
@@ -460,7 +460,7 @@ Present the product/service as the logical solution to the story\'s problem.
             // COPY: Emotion Speed Fire — Direct Response Ad Framework
             // Story-driven, open-loop copywriting with identity-level
             // persuasion. Produces 3 versions (long/medium/short).
-            // Brand name revealed late (step 10). Populates creativeBrief.
+            // Brand name revealed late (step 10). Subtype 'framework' → Copy Framework dropdown ({{copyFramework}}).
             // ─────────────────────────────────────────────
             array(
                 'name' => 'Emotion Speed Fire',
@@ -473,7 +473,7 @@ Present the product/service as the logical solution to the story\'s problem.
                     'entries' => array(
                         array(
                             'key' => 'emotion_speed_fire_framework',
-                            'category' => 'brief',
+                            'category' => 'framework',
                             'label' => 'Copy Framework',
                             'value' => 'Follow the Emotion Speed Fire framework exactly. Every sentence sells the next sentence. Every emoji intensifies emotion without feeling cheap.
 
