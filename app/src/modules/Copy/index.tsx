@@ -17,7 +17,7 @@
  * Selection state managed by useSelection hook.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { PenLine } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { useSettings } from '@/contexts/AppContext';
@@ -47,7 +47,6 @@ import { TemplateDropdown } from './components/TemplateDropdown';
 import { ReferenceAdsSection } from './components/ReferenceAdsSection';
 import type { TemplateEntryData, TemplateApplyPayload } from './components/TemplateDropdown';
 import { buildTemplatePopulation, buildTemplateClearUpdates } from './templatePopulator';
-import { BUILT_IN_FRAMEWORKS, type FrameworkOption } from './frameworks';
 import { ResultsPanel } from './components/ResultsPanel';
 import { useCopyGeneration, type GenerateScope } from './useCopyGeneration';
 import { useSelection } from './useSelection';
@@ -55,6 +54,9 @@ import { useTextModels } from './useTextModels';
 import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
 import { getBrandLogo } from '@shared/brandAssetResolver';
 import { SaveBrandButton } from '@/components/shared/SaveBrandButton';
+
+/** A selectable copy framework: name shown in the dropdown, text injected as {{copyFramework}}. */
+interface FrameworkOption { name: string; text: string }
 
 export interface GenerationSettings {
   anglesMode: GenerationMode;
@@ -242,17 +244,28 @@ export function CopyModule() {
     handleTemplateEntries(entries);
   }, []);
 
-  // Remember the exact brief/tonality/framework the last template applied, so
-  // that when the template is cleared we can tell whether the user edited those
-  // fields by hand afterwards and preserve their manual edits (see
-  // buildTemplateClearUpdates). Empty string = template applied nothing.
+  // Remember the exact brief/tonality the last template applied, so that when the
+  // template is cleared we can tell whether the user edited those fields by hand
+  // afterwards and preserve their manual edits (see buildTemplateClearUpdates).
   const lastAppliedBriefRef = useRef<string>('');
   const lastAppliedTonalityRef = useRef<string>('');
-  const lastAppliedFrameworkRef = useRef<string>('');
 
-  // Framework dropdown options: built-in library + frameworks carried by the
-  // applied template. Reset to built-ins when the template is cleared.
-  const [frameworkOptions, setFrameworkOptions] = useState<FrameworkOption[]>(BUILT_IN_FRAMEWORKS);
+  // Framework dropdown options — sourced from copy templates whose entry subtype
+  // is 'framework' (NOT hardcoded). Add a framework in the Templates module and it
+  // appears here. Standalone selection: unaffected by applying/clearing templates.
+  const copyTemplatesQuery = trpc.templates.list.useQuery({ module: 'copy' });
+  const frameworkOptions: FrameworkOption[] = useMemo(() => {
+    const list = (copyTemplatesQuery.data ?? []) as Array<{
+      name: string;
+      entries?: Array<{ category?: string; value?: string }>;
+    }>;
+    const opts: FrameworkOption[] = [];
+    for (const t of list) {
+      const fe = (t.entries ?? []).find((e) => e.category === 'framework');
+      if (fe) opts.push({ name: t.name, text: fe.value ?? '' });
+    }
+    return opts;
+  }, [copyTemplatesQuery.data]);
 
   const handleTemplateEntries = useCallback((entries: TemplateEntryData[] | null) => {
     if (entries === null) {
@@ -263,9 +276,7 @@ export function CopyModule() {
           ((prev.creativeBrief as string | undefined) ?? '') !== lastAppliedBriefRef.current;
         const tonalityWasModified =
           ((prev.template_tonality as string | undefined) ?? '') !== lastAppliedTonalityRef.current;
-        const frameworkWasModified =
-          ((prev.copyFrameworkName as string | undefined) ?? '') !== lastAppliedFrameworkRef.current;
-        const clearUpdates = buildTemplateClearUpdates(prev, briefWasModified, tonalityWasModified, frameworkWasModified);
+        const clearUpdates = buildTemplateClearUpdates(prev, briefWasModified, tonalityWasModified);
         const next = { ...prev };
         for (const [key, val] of Object.entries(clearUpdates)) {
           if (val === undefined) {
@@ -279,22 +290,7 @@ export function CopyModule() {
       // Reset baseline — there's no longer a template-applied value to compare against.
       lastAppliedBriefRef.current = '';
       lastAppliedTonalityRef.current = '';
-      lastAppliedFrameworkRef.current = '';
-      // Drop template-provided frameworks; keep the built-in library available.
-      setFrameworkOptions(BUILT_IN_FRAMEWORKS);
     } else {
-      // Framework options derive from the (always-fresh) entries arg, so we set
-      // them outside the state updater — no setState-inside-updater. Built-ins
-      // first, then any template-provided frameworks not already built in.
-      const tplFrameworks: FrameworkOption[] = entries
-        .filter((e) => e.category === 'framework')
-        .map((e) => ({ name: e.label, text: e.value }));
-      setFrameworkOptions([
-        ...BUILT_IN_FRAMEWORKS,
-        ...tplFrameworks.filter((f) => !BUILT_IN_FRAMEWORKS.some((b) => b.name === f.name)),
-      ]);
-      lastAppliedFrameworkRef.current = tplFrameworks[0]?.name ?? '';
-
       // Template selected — populate form fields from entries
       setFormValues((prev) => {
         const { formUpdates } = buildTemplatePopulation(entries, prev);
@@ -648,7 +644,7 @@ export function CopyModule() {
                   {f.name}
                 </option>
               ))}
-              {/* Keep a persisted/template selection visible even if not in the current list */}
+              {/* Keep a persisted selection visible even if not in the current list */}
               {(formValues.copyFrameworkName as string) &&
                 !frameworkOptions.some((f) => f.name === formValues.copyFrameworkName) && (
                   <option value={formValues.copyFrameworkName as string}>
@@ -656,6 +652,11 @@ export function CopyModule() {
                   </option>
                 )}
             </select>
+            {frameworkOptions.length === 0 && (
+              <p className="text-xs" style={{ color: colors.textSecondary }}>
+                No frameworks yet — create a Copy template with Subtype = Framework in the Templates module.
+              </p>
+            )}
           </div>
 
           {/* Theme — rendered after Creative Brief */}
