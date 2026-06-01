@@ -65,6 +65,7 @@ import {
   PencilLine,
   Download,
   Upload,
+  RefreshCw,
   Briefcase,
   Palette,
   Paperclip,
@@ -943,6 +944,60 @@ export function PromptEditorSection() {
     }
   };
 
+  /** Sync state to prevent double-trigger. */
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  /**
+   * Inject any newly-shipped placeholders (e.g. {{creativeBrief}}) into the
+   * user's saved prompt overrides. Idempotent + customization-safe on the
+   * backend — see PCM_Prompt_Placeholders::sync_all().
+   */
+  const handleSyncPlaceholders = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+
+    try {
+      const res = await apiFetch<{
+        patched: number;
+        skipped: number;
+        failed: number;
+        errors: string[];
+        locked?: boolean;
+      }>("prompts/sync-placeholders", { method: "POST" });
+
+      if (res.locked) {
+        toast.warning("Sync already in progress — try again in a moment.");
+        return;
+      }
+
+      const hadIssues = res.failed > 0 || (res.errors?.length ?? 0) > 0;
+      if (hadIssues) {
+        toast.warning(
+          `Synced ${res.patched} prompt${res.patched !== 1 ? "s" : ""}` +
+            (res.failed > 0 ? `, ${res.failed} failed` : "") +
+            (res.errors?.[0] ? ` — ${res.errors[0]}` : ""),
+        );
+      } else if (res.patched === 0) {
+        toast.success("All prompts are already up to date");
+      } else {
+        toast.success(
+          `Synced ${res.patched} prompt${res.patched !== 1 ? "s" : ""} to the latest schema`,
+        );
+      }
+
+      // Refresh the editor so any injected placeholders show immediately.
+      for (const mod of MODULES) {
+        for (const sec of sectionsByModule[mod.id] ?? []) {
+          utils.promptOverrides.variants.invalidate({ module: mod.id, section: sec.section });
+        }
+      }
+    } catch {
+      toast.error("Failed to sync prompts");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   return (
     <Tabs defaultValue="copy" className="w-full">
       {/* Header with export button */}
@@ -964,28 +1019,45 @@ export function PromptEditorSection() {
             );
           })}
         </TabsList>
-        <Button variant="outline" size="icon" onClick={handleExportCsv} disabled={isExporting} title="Export all prompts as CSV">
-          {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={() => importFileRef.current?.click()}
-          disabled={isImporting}
-          title="Import prompts from CSV"
-        >
-          {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-        </Button>
-        <input
-          ref={importFileRef}
-          type="file"
-          accept=".csv"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleImportCsv(file);
-          }}
-        />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSyncPlaceholders}
+            disabled={isSyncing}
+            title="Inject newly-added placeholders (e.g. {{creativeBrief}}) into your saved prompts — safe to run anytime"
+            className="gap-1.5"
+          >
+            {isSyncing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            Sync to latest
+          </Button>
+          <Button variant="outline" size="icon" onClick={handleExportCsv} disabled={isExporting} title="Export all prompts as CSV">
+            {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => importFileRef.current?.click()}
+            disabled={isImporting}
+            title="Import prompts from CSV"
+          >
+            {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          </Button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".csv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleImportCsv(file);
+            }}
+          />
+        </div>
       </div>
 
       {MODULES.map((mod) => (

@@ -17,7 +17,7 @@
  * Selection state managed by useSelection hook.
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { PenLine } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { useSettings } from '@/contexts/AppContext';
@@ -241,11 +241,23 @@ export function CopyModule() {
     handleTemplateEntries(entries);
   }, []);
 
+  // Remember the exact brief/tonality text the last template applied, so that
+  // when the template is cleared we can tell whether the user edited those
+  // fields by hand afterwards and preserve their manual edits (see
+  // buildTemplateClearUpdates). Empty string = template applied nothing.
+  const lastAppliedBriefRef = useRef<string>('');
+  const lastAppliedTonalityRef = useRef<string>('');
+
   const handleTemplateEntries = useCallback((entries: TemplateEntryData[] | null) => {
     if (entries === null) {
-      // Template cleared — remove template-populated fields
+      // Template cleared — remove template-populated fields, but keep brief /
+      // tonality if the user manually changed them since the template applied.
       setFormValues((prev) => {
-        const clearUpdates = buildTemplateClearUpdates(prev);
+        const briefWasModified =
+          ((prev.creativeBrief as string | undefined) ?? '') !== lastAppliedBriefRef.current;
+        const tonalityWasModified =
+          ((prev.template_tonality as string | undefined) ?? '') !== lastAppliedTonalityRef.current;
+        const clearUpdates = buildTemplateClearUpdates(prev, briefWasModified, tonalityWasModified);
         const next = { ...prev };
         for (const [key, val] of Object.entries(clearUpdates)) {
           if (val === undefined) {
@@ -256,10 +268,16 @@ export function CopyModule() {
         }
         return next;
       });
+      // Reset baseline — there's no longer a template-applied value to compare against.
+      lastAppliedBriefRef.current = '';
+      lastAppliedTonalityRef.current = '';
     } else {
       // Template selected — populate form fields from entries
       setFormValues((prev) => {
         const { formUpdates } = buildTemplatePopulation(entries, prev);
+        // Record what the template applied as the new "unmodified" baseline.
+        lastAppliedBriefRef.current = (formUpdates.creativeBrief as string | undefined) ?? '';
+        lastAppliedTonalityRef.current = (formUpdates.template_tonality as string | undefined) ?? '';
         const next = { ...prev };
         for (const [key, val] of Object.entries(formUpdates)) {
           if (val === undefined) {

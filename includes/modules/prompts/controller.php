@@ -54,6 +54,7 @@ class PCM_REST_Prompts extends PCM_REST_Base
 
             // Actions
                 array('POST', '/prompts/(?P<id>\\d+)/default', 'set_default'),
+                array('POST', '/prompts/sync-placeholders', 'sync_placeholders'),
         );
     }
 
@@ -428,6 +429,23 @@ class PCM_REST_Prompts extends PCM_REST_Base
         return $this->success(array('success' => true));
     }
 
+    /**
+     * POST /prompts/sync-placeholders — Inject missing placeholders into
+     * existing DB-stored prompt overrides.
+     *
+     * Idempotent + customization-safe. See PCM_Prompt_Placeholders::sync_all()
+     * for the full contract. Returns the per-row outcome counts so the admin UI
+     * can surface what happened (especially anchor-missing warnings).
+     *
+     * Permissions: handled by PCM_REST_Base::make_permission_callback (default
+     * 'manage_options' + nonce). No custom permission_callback needed.
+     */
+    public function sync_placeholders(WP_REST_Request $request): WP_REST_Response
+    {
+        $result = PCM_Prompt_Placeholders::sync_all();
+        return $this->success($result);
+    }
+
     // =========================================================================
     // PRIVATE HELPERS
     // =========================================================================
@@ -461,14 +479,17 @@ class PCM_REST_Prompts extends PCM_REST_Base
     {
         return array(
             // Copy module
-            // Ads — system prompt (persona + global formatting rules, role:system)
+            // System prompt (persona + global formatting rules, role:system).
+            // Key stays 'system_prompt_ads_system' for DB/generation compatibility;
+            // label drops "Ads" so it doesn't collide with the separate Ads module.
             'copy.system_prompt_ads_system' => array(
-                'label' => 'Ads System Prompt',
-                'description' => 'Persona and global formatting rules sent as role:system before every ad generation. Controls the LLM\'s behavior and output format. Does NOT support {{placeholders}}.',
+                'label' => 'System Prompt',
+                'description' => 'Persona and global formatting rules sent as role:system before every copy generation. Controls the LLM\'s behavior and output format. Does NOT support {{placeholders}}.',
             ),
-            // Ads — user prompt (business context + style + task, role:user)
+            // User prompt (business context + style + task, role:user).
+            // Key stays 'system_prompt_ads' for DB/generation compatibility.
             'copy.system_prompt_ads' => array(
-                'label' => 'Ads User Prompt',
+                'label' => 'User Prompt',
                 'description' => 'Business context, style rules, and task instructions sent as role:user. Supports {{language}}, {{brief}}, {{campaignContext}}, {{referenceCopy}}, {{reviewsContext}}, {{toneInstruction}}, {{emojiInstruction}}, {{ctaInstruction}}, {{typeLabel}}, {{audience}}, {{angle}}.',
             ),
             'copy.system_prompt_organic' => array(

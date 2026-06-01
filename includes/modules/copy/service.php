@@ -1464,18 +1464,24 @@ class PCM_Copy_Service
     public static function get_default_prompts(): array
     {
         return array(
-            // ── Copy Generation — System Prompt (Ads) ─────────────
+            // ── Copy Generation — System Prompt for AD-TYPE copy (paid social ads) ──
+            // "Ad-type" = the copy type this prompt produces (vs the Organic prompt
+            //  below); it is NOT related to the separate Ads module. Key keeps its
+            //  historical 'ads' suffix; UI label is just "System Prompt".
             // Sent as role:system — persona + output format instruction.
-            // Editable in Settings → Prompt Editor → "Ads System Prompt".
+            // Editable in Settings → Prompt Editor → Copy → "System Prompt".
             // Does NOT support {{placeholders}}.
             'system_prompt_ads_system' => "You are an expert copywriter specializing in paid social media advertising.
 
 IMPORTANT FOR OUTPUT:
 The main body copy must use \\n for line breaks between paragraphs. Include formatting like numbered lists where appropriate. Never return a wall of text without paragraph breaks.",
 
-            // ── Copy Generation — User Prompt (Ads) ───────────────
+            // ── Copy Generation — User Prompt for AD-TYPE copy (paid social ads) ──
+            // "Ad-type" = the copy type this prompt produces (vs the Organic prompt
+            //  below); it is NOT related to the separate Ads module. Key keeps its
+            //  historical 'ads' suffix; UI label is just "User Prompt".
             // Sent as role:user — language, business context, style rules, and task.
-            // Editable in Settings → Prompt Editor → "Ads User Prompt".
+            // Editable in Settings → Prompt Editor → Copy → "User Prompt".
             'system_prompt_ads' => "Your task: Write a single high-converting social media ad in {{language}}.
 
 BUSINESS CONTEXT:

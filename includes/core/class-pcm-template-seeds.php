@@ -331,6 +331,214 @@ OUTPUT FORMAT:
                 ),
             ),
 
+            // ─────────────────────────────────────────────
+            // COPY: Epiphany Bridge (Full) — Russell Brunson
+            // Long-form framework from Expert Secrets / Perfect Webinar.
+            // Populates creativeBrief with the framework structure.
+            // ─────────────────────────────────────────────
+            array(
+                'name' => 'Epiphany Bridge (Full)',
+                'module' => 'copy',
+                'description' => 'Russell Brunson\'s long-form persuasion framework from Expert Secrets. Includes rapport-building, 3 Secrets (false belief breaking), and Stack close. Best for sales pages, webinars, and long video scripts.',
+                'isDefault' => 1,
+                'formData' => array(
+                    'type' => 'social_ads',
+                    'niche' => 'General',
+                    'entries' => array(
+                        array(
+                            'key' => 'epiphany_bridge_framework',
+                            'category' => 'brief',
+                            'label' => 'Copy Framework',
+                            'value' => 'Follow the Epiphany Bridge framework (Russell Brunson) exactly in this order. Do NOT use a personal founder story — use customer perspective and industry-level narratives instead.
+
+PHASE 1 — INTRODUCTION (Rapport):
+
+1. THE BIG PROMISE
+State what they will achieve and what pain they will avoid. Format: "How to [result] without [pain point]."
+
+2. "IT\'S NOT YOUR FAULT"
+Relieve them of blame for past failures. They failed because of bad information, wrong tools, or industry practices — not their own inability.
+
+3. ALLAY THEIR FEARS
+Address their specific fears about trying again. Reassure them they CAN succeed with the right guide.
+
+4. CONFIRM THEIR SUSPICIONS
+Validate what they already suspect about the industry/problem. "If you\'ve ever thought [X was broken], you\'re right."
+
+5. THROW ROCKS AT THE ENEMY
+Identify and criticize the common enemy — the old way, bad industry practices, or myths. Create "us vs them" bonding.
+
+6. ENCOURAGE THEIR DREAMS
+Validate their ultimate desire. The dream IS possible.
+
+7. EPIPHANY BRIDGE STORY (customer perspective — no founder story needed):
+- Backstory: Relatable customer situation
+- Desires: What they wanted (external goal + emotional need)
+- The Wall: What they tried that did not work
+- The Epiphany: The realization that there is a different way
+- The Plan: What makes this brand/approach different
+- The Conflict: Challenges even with the right approach
+- Achievement: The result / proof
+- Transformation: How the situation changed on a deeper level
+
+PHASE 2 — THE 3 SECRETS (Belief-Shifting):
+
+For each secret, first map out:
+a) The false belief they currently hold
+b) Why they hold it (the experience behind it)
+c) The story they tell themselves because of it
+Then based on a-b-c, craft the appropriate Epiphany Bridge to break that belief.
+
+SECRET #1 — VEHICLE BELIEF:
+"This method/product won\'t work" → Bridge that proves it does.
+
+SECRET #2 — INTERNAL BELIEF:
+"I\'m not capable / I can\'t evaluate this" → Bridge that shows they can.
+
+SECRET #3 — EXTERNAL BELIEF:
+"I don\'t have time/money/support" → Bridge that removes the excuse.
+
+PHASE 3 — THE STACK & CLOSE:
+
+8. THE STACK — Present each component of the offer one by one with its value.
+9. "IF ALL" QUESTION — "If all [product] did was [one benefit], would it be worth [price]?"
+10. PRICE REVEAL — Show price against total stacked value.
+11. OBJECTION CLOSE — Knock out remaining objections one by one: acknowledge → reframe with evidence → show how the solution eliminates that barrier.
+12. SCARCITY/URGENCY — Time-limited bonus, limited availability, deadline.',
+                        ),
+                    ),
+                ),
+            ),
+
+            // ─────────────────────────────────────────────
+            // COPY: Hook-Story-Offer (HSO) — Russell Brunson
+            // Short-form framework from DotCom Secrets.
+            // Populates creativeBrief with the framework structure.
+            // ─────────────────────────────────────────────
+            array(
+                'name' => 'Hook-Story-Offer',
+                'module' => 'copy',
+                'description' => 'Russell Brunson\'s short-form ad framework from DotCom Secrets. Three blocks: Hook (stop the scroll), Story (build trust with rapport elements), Offer (drive action). Best for social media ads, emails, and short copy.',
+                'isDefault' => 1,
+                'formData' => array(
+                    'type' => 'social_ads',
+                    'niche' => 'General',
+                    'entries' => array(
+                        array(
+                            'key' => 'hso_framework',
+                            'category' => 'brief',
+                            'label' => 'Copy Framework',
+                            'value' => 'Follow the Hook-Story-Offer (HSO) framework (Russell Brunson) exactly. Do NOT use a personal founder story — use customer perspective and brand differentiation instead.
+
+1. HOOK (Stop the scroll)
+Its ONLY job is to make the reader stop and pay attention. It does NOT sell the product yet.
+Hook types to choose from:
+- Curiosity: Tease an outcome without revealing everything
+- Empathy: Call out a specific pain point or fear
+- Promise: State a clear benefit
+- Pattern interrupt: Say something unexpected
+
+2. STORY (Build trust & connection)
+Share a relatable narrative. Position the customer as the hero, the product as the guide.
+Weave in these rapport elements naturally where they fit:
+- "It\'s not your fault" — Relieve blame. They failed because of bad info/tools.
+- Confirm suspicions — Validate what they suspect about the industry.
+- Throw rocks — Criticize the old way / the common enemy.
+The story should lead naturally to: "There IS a better way."
+
+3. OFFER (Make it irresistible)
+Present the product/service as the logical solution to the story\'s problem.
+- Value clearly stated (why it is a no-brainer)
+- Clear call-to-action
+- Urgency, scarcity, or guarantee to reduce risk',
+                        ),
+                    ),
+                ),
+            ),
+
+            // ─────────────────────────────────────────────
+            // COPY: Emotion Speed Fire — Direct Response Ad Framework
+            // Story-driven, open-loop copywriting with identity-level
+            // persuasion. Produces 3 versions (long/medium/short).
+            // Brand name revealed late (step 10). Populates creativeBrief.
+            // ─────────────────────────────────────────────
+            array(
+                'name' => 'Emotion Speed Fire',
+                'module' => 'copy',
+                'description' => 'Direct response, story-driven ad framework. Open-loop copywriting with identity-level persuasion. Every sentence sells the next. Brand name revealed late. Produces 3 versions: long, medium, and short — all different angles.',
+                'isDefault' => 1,
+                'formData' => array(
+                    'type' => 'social_ads',
+                    'niche' => 'General',
+                    'entries' => array(
+                        array(
+                            'key' => 'emotion_speed_fire_framework',
+                            'category' => 'brief',
+                            'label' => 'Copy Framework',
+                            'value' => 'Follow the Emotion Speed Fire framework exactly. Every sentence sells the next sentence. Every emoji intensifies emotion without feeling cheap.
+
+GENERAL FORMATTING RULES:
+- Short sentences that end in cliffhangers. The reader MUST continue to get the payoff.
+- Never give away the answer before tension is built. Make the reader ask "HOW?" or "WHERE?" first.
+- Break lines ONLY at strategic curiosity gaps — not after every sentence.
+- Emojis go at emotional peaks only. Never decorative. Max one per section.
+- One blank line between every section (breathing room for mobile).
+- Use DIFFERENT wordings, DIFFERENT core problems, and DIFFERENT visualizations in each ad version.
+- Speak directly to the reader — "you" in singular.
+- Do NOT mention brand name or product name BEFORE step 10.
+- Produce at least 1 LONG, 1 MEDIUM, and 1 SHORT version — all different angles.
+
+EMOJI GUIDELINES (by emotion):
+- Confusion & Chaos: 🤷 🤯 😵‍💫 ❓
+- Exhaustion & Stress: 😩 😮‍💨 🥵 😴
+- Frustration & Irritation: 🤦 😤 🙄 🤬
+- Money Loss: 💸 📉 🔥 🥶
+- Skepticism & Doubt: 🤨 🤔 😒 🧐
+- Physical Pain: ⚡️ 🤕 😣 😖
+- Time Wasting: ⏳ 🐌 ⏰ 📅
+
+STRUCTURE (follow in this exact order):
+
+1. CALLOUT / HOOK / PROBLEM STATEMENT
+Both header and first question end with an emotional emoji. Stop the scroll with a bold, relatable pain point.
+
+2. EXPLAIN AWAY THEIR PROBLEMS
+"It\\\'s not your fault" or "that\\\'s what most of our clients also experienced." Make them feel they are not alone.
+
+3. PAINT THE DREAM OUTCOME
+Show what life looks like when the problem is solved. Vivid and specific.
+
+4. PROBLEM STACK (2-3 HIDDEN IDENTITY-LEVEL PROBLEMS)
+Not surface problems — problems tied to who they SEE themselves as. Fears and thoughts holding them back that they have not articulated.
+
+5. SIMPLE TURNAROUND
+"What if I told you that\\\'s not a problem?" or "We solved that." Short pivot that makes them wonder what comes next.
+
+6. SOLUTION STACK
+Explain the solution framework or strategy WITHOUT revealing the service name. Keep it high-level and intriguing.
+
+7. SOLIDIFY — PAINT THE GOAL WITHOUT PROBLEMS
+Tie all solutions together into ONE sentence that makes the whole package feel inevitable and effortless.
+
+8. KISSOFF — STATUS & DEEP DESIRES
+Paint how the result increases their status or what they deeply value. Extremely audience-specific: revenue, happy kids, peace of mind, respect, freedom, etc.
+
+9. SOCIAL PROOF
+One line of broad social proof (years of experience, number of customers). If a REAL testimonial exists, include it in italics. NEVER fabricate.
+
+10. PRESENT THE VEHICLE (SUPERMAN POSE)
+HERE you introduce brand name and service name as the vehicle to their dreams. Summarize promise in one punchy line. Position them as the hero — they enjoy, you handle the rest.
+
+11. URGENCY + SCARCITY
+Must flow organically from step 10. Make it feel like there is still a window but it is closing. Be specific.
+
+12. CTA
+Simple. Clear. Point down. 👇 + action text.',
+                        ),
+                    ),
+                ),
+            ),
+
         );
     }
 }

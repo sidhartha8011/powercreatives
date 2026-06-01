@@ -23,7 +23,7 @@ if (!defined('ABSPATH')) {
 
 // ── Plugin Constants ──
 define('PCM_VERSION', '1.7.0');
-define('PCM_DB_VERSION', '1.11.0');
+define('PCM_DB_VERSION', '1.12.0');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -39,6 +39,7 @@ require_once PCM_PLUGIN_DIR . 'includes/class-pcm-shortcode-admin.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-activator.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-template-seeds.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-prompt-seeds.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-prompt-placeholders.php';
 
 // ── Core: Provider metadata & image utilities ──
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-providers.php';

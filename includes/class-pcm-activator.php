@@ -123,6 +123,14 @@ class PCM_Activator
                 PCM_Schema::migrate_approval_set_statuses();
             }
 
+            // v1.12.0: Inject the {{creativeBrief}} placeholder (and any future
+            // declarative placeholders) into legacy DB-stored prompt overrides
+            // that pre-date the placeholder being added to the default templates.
+            // Idempotent + customization-safe — see PCM_Prompt_Placeholders.
+            if (version_compare($installed_version, '1.12.0', '<')) {
+                PCM_Prompt_Placeholders::sync_all();
+            }
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

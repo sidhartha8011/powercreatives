@@ -121,9 +121,17 @@ export function buildTemplatePopulation(
 /**
  * Build form field updates to clear all template-populated fields.
  * Called when the user clears the template selection (X button).
+ *
+ * `briefWasModified` / `tonalityWasModified` signal that the user manually
+ * edited the Creative Brief / Template Tonality fields AFTER the template
+ * populated them. When true, those fields are left untouched on clear so the
+ * user's manual edits are never silently discarded — matching the existing
+ * preset-field policy below.
  */
 export function buildTemplateClearUpdates(
-  currentValues: CopyFormValues
+  currentValues: CopyFormValues,
+  briefWasModified = false,
+  tonalityWasModified = false
 ): Record<string, string | undefined> {
   const updates: Record<string, string | undefined> = {};
 
@@ -134,9 +142,14 @@ export function buildTemplateClearUpdates(
     }
   }
 
-  // Clear template tonality and brief
-  updates["template_tonality"] = undefined;
-  updates["creativeBrief"] = undefined;
+  // Clear template tonality and brief — unless the user edited them by hand
+  // after the template applied them (see param docs above).
+  if (!tonalityWasModified) {
+    updates["template_tonality"] = undefined;
+  }
+  if (!briefWasModified) {
+    updates["creativeBrief"] = undefined;
+  }
 
   // Note: we do NOT clear preset fields (business_name, language, etc.)
   // because the user may have edited them and clearing would lose their changes.
