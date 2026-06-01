@@ -92,6 +92,18 @@ class PCM_Prompt_Placeholders
             'anchor'      => 'RESEARCH OBJECTIVES:',
             'block'       => "CREATIVE BRIEF:\n{{creativeBrief}}\n\n",
         ),
+        // {{copyFramework}} — the selected copywriting framework. Sits right after
+        // the CREATIVE BRIEF section and before OUTPUT FORMAT in the copy-generation
+        // prompts. Runs after creativeBrief_system (same anchor), so on already-
+        // patched rows it lands between the brief block and OUTPUT FORMAT.
+        // Only the final-copy prompts — angle/audience generation don't use frameworks.
+        'copyFramework_system' => array(
+            'placeholder' => 'copyFramework',
+            'modules'     => array('copy', 'ads'),
+            'sections'    => array('system_prompt_ads', 'system_prompt_organic'),
+            'anchor'      => 'OUTPUT FORMAT:',
+            'block'       => "COPY FRAMEWORK (structure the copy using this framework when provided):\n{{copyFramework}}\n\n",
+        ),
     );
 
     /**

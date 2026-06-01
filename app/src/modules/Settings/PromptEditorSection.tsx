@@ -103,6 +103,7 @@ const PLACEHOLDERS: Record<string, PlaceholderGroup[]> = {
         { key: '{{product}}', description: 'Product or service — from Business Info → Product/Service (Angle/Audience prompts)' },
         { key: '{{description}}', description: 'Business description — from Business Info → Description (Angle/Audience prompts)' },
         { key: '{{creativeBrief}}', description: 'Free-form user directions — from Creative Brief textarea. Gets its own section in the prompt for emphasis (all prompts)' },
+        { key: '{{copyFramework}}', description: 'Selected copywriting framework (e.g. Hook-Story-Offer) — chosen from the Framework dropdown in the Copy sidebar. Its own section in the Ads/Organic prompts; empty if none selected' },
       ],
     },
     {
@@ -191,6 +192,7 @@ const PLACEHOLDERS: Record<string, PlaceholderGroup[]> = {
         { key: '{{product}}', description: 'Product or service — from Business Info → Product/Service (Angle/Audience prompts)' },
         { key: '{{description}}', description: 'Business description — from Business Info → Description (Angle/Audience prompts)' },
         { key: '{{creativeBrief}}', description: 'Free-form user directions — from Creative Brief textarea. Gets its own section in the prompt for emphasis (all prompts)' },
+        { key: '{{copyFramework}}', description: 'Selected copywriting framework (e.g. Hook-Story-Offer) — chosen from the Framework dropdown in the Copy sidebar. Its own section in the Ads/Organic prompts; empty if none selected' },
       ],
     },
     {

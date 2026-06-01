@@ -12,6 +12,7 @@
 
 import type { CopyFormValues } from "./types";
 import { REFERENCE_AD_PREFIX } from "./components/ReferenceAdsSection";
+import type { FrameworkOption } from "./frameworks";
 
 // ── Types ──
 
@@ -27,11 +28,14 @@ interface TemplateEntry {
 export interface TemplatePopulationResult {
   /** New form values to merge into state */
   formUpdates: Record<string, string | undefined>;
+  /** Frameworks the template carries (name + instruction text) for the Framework dropdown */
+  frameworks: FrameworkOption[];
   /** Summary of what was populated (for UI feedback) */
   summary: {
     referenceAdsCount: number;
     tonalityPopulated: boolean;
     briefPopulated: boolean;
+    frameworkPopulated: boolean;
     presetsApplied: string[];
   };
 }
@@ -51,6 +55,7 @@ export function buildTemplatePopulation(
     referenceAdsCount: 0,
     tonalityPopulated: false,
     briefPopulated: false,
+    frameworkPopulated: false,
     presetsApplied: [] as string[],
   };
 
@@ -66,6 +71,7 @@ export function buildTemplatePopulation(
   const tonalityEntries: TemplateEntry[] = [];
   const briefEntries: TemplateEntry[] = [];
   const presetEntries: TemplateEntry[] = [];
+  const frameworkEntries: TemplateEntry[] = [];
 
   for (const entry of entries) {
     switch (entry.category) {
@@ -80,6 +86,9 @@ export function buildTemplatePopulation(
         break;
       case "preset":
         presetEntries.push(entry);
+        break;
+      case "framework":
+        frameworkEntries.push(entry);
         break;
       // "prompt" entries are intentionally ignored — no template_instructions field
     }
@@ -115,23 +124,37 @@ export function buildTemplatePopulation(
     summary.presetsApplied.push(entry.key);
   }
 
-  return { formUpdates, summary };
+  // Collect frameworks (name = label, text = value). Default-select the first
+  // so the Framework dropdown reflects the template immediately. The resolved
+  // text is written into copyFramework so it reaches the backend like creativeBrief.
+  const frameworks: FrameworkOption[] = frameworkEntries.map((e) => ({
+    name: e.label,
+    text: e.value,
+  }));
+  if (frameworks.length > 0) {
+    formUpdates["copyFrameworkName"] = frameworks[0].name;
+    formUpdates["copyFramework"] = frameworks[0].text;
+    summary.frameworkPopulated = true;
+  }
+
+  return { formUpdates, frameworks, summary };
 }
 
 /**
  * Build form field updates to clear all template-populated fields.
  * Called when the user clears the template selection (X button).
  *
- * `briefWasModified` / `tonalityWasModified` signal that the user manually
- * edited the Creative Brief / Template Tonality fields AFTER the template
- * populated them. When true, those fields are left untouched on clear so the
- * user's manual edits are never silently discarded — matching the existing
- * preset-field policy below.
+ * `briefWasModified` / `tonalityWasModified` / `frameworkWasModified` signal that
+ * the user manually edited the Creative Brief / Template Tonality / Framework
+ * AFTER the template populated them. When true, those fields are left untouched
+ * on clear so the user's manual edits are never silently discarded — matching the
+ * existing preset-field policy below.
  */
 export function buildTemplateClearUpdates(
   currentValues: CopyFormValues,
   briefWasModified = false,
-  tonalityWasModified = false
+  tonalityWasModified = false,
+  frameworkWasModified = false
 ): Record<string, string | undefined> {
   const updates: Record<string, string | undefined> = {};
 
@@ -149,6 +172,13 @@ export function buildTemplateClearUpdates(
   }
   if (!briefWasModified) {
     updates["creativeBrief"] = undefined;
+  }
+
+  // Clear the framework (name + resolved text) — unless the user changed the
+  // dropdown by hand after the template applied it.
+  if (!frameworkWasModified) {
+    updates["copyFrameworkName"] = undefined;
+    updates["copyFramework"] = undefined;
   }
 
   // Note: we do NOT clear preset fields (business_name, language, etc.)

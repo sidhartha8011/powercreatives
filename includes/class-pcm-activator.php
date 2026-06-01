@@ -131,6 +131,14 @@ class PCM_Activator
                 PCM_Prompt_Placeholders::sync_all();
             }
 
+            // v1.13.0: Inject the {{copyFramework}} placeholder into existing
+            // copy/ads system prompts (registry gained the copyFramework_system
+            // entry). Same idempotent, customization-safe sync — already-present
+            // placeholders are skipped, so re-running is a no-op.
+            if (version_compare($installed_version, '1.13.0', '<')) {
+                PCM_Prompt_Placeholders::sync_all();
+            }
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

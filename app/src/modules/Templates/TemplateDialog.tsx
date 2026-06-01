@@ -121,6 +121,7 @@ const CATEGORY_BADGE_COLORS: Record<TemplateCategory, string> = {
   prompt: "bg-sky-50 text-sky-700 border-sky-200",
   preset: "bg-slate-50 text-slate-600 border-slate-200",
   brief: "bg-yellow-50 text-yellow-700 border-yellow-200",
+  framework: "bg-indigo-50 text-indigo-700 border-indigo-200",
 };
 
 const MODULE_BADGE_COLORS: Record<TemplateModule, string> = {
@@ -153,6 +154,8 @@ function getLabelPlaceholder(category: TemplateCategory, module?: string, type?:
       return "e.g. Business Name Preset";
     case "brief":
       return "e.g. Campaign Creative Brief";
+    case "framework":
+      return "e.g. Hook-Story-Offer";
     default:
       return "Template name...";
   }
@@ -177,6 +180,8 @@ function getValuePlaceholder(category: TemplateCategory, module?: string, type?:
       return "Pre-filled value (e.g. business name, language, target audience)...";
     case "brief":
       return "Enter the creative brief details, goals, and core messages...";
+    case "framework":
+      return "Describe the copywriting framework/structure the AI must follow (steps, sections, rules)...";
     default:
       return "Enter value...";
   }

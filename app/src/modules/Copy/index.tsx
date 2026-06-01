@@ -47,6 +47,7 @@ import { TemplateDropdown } from './components/TemplateDropdown';
 import { ReferenceAdsSection } from './components/ReferenceAdsSection';
 import type { TemplateEntryData, TemplateApplyPayload } from './components/TemplateDropdown';
 import { buildTemplatePopulation, buildTemplateClearUpdates } from './templatePopulator';
+import { BUILT_IN_FRAMEWORKS, type FrameworkOption } from './frameworks';
 import { ResultsPanel } from './components/ResultsPanel';
 import { useCopyGeneration, type GenerateScope } from './useCopyGeneration';
 import { useSelection } from './useSelection';
@@ -241,12 +242,17 @@ export function CopyModule() {
     handleTemplateEntries(entries);
   }, []);
 
-  // Remember the exact brief/tonality text the last template applied, so that
-  // when the template is cleared we can tell whether the user edited those
+  // Remember the exact brief/tonality/framework the last template applied, so
+  // that when the template is cleared we can tell whether the user edited those
   // fields by hand afterwards and preserve their manual edits (see
   // buildTemplateClearUpdates). Empty string = template applied nothing.
   const lastAppliedBriefRef = useRef<string>('');
   const lastAppliedTonalityRef = useRef<string>('');
+  const lastAppliedFrameworkRef = useRef<string>('');
+
+  // Framework dropdown options: built-in library + frameworks carried by the
+  // applied template. Reset to built-ins when the template is cleared.
+  const [frameworkOptions, setFrameworkOptions] = useState<FrameworkOption[]>(BUILT_IN_FRAMEWORKS);
 
   const handleTemplateEntries = useCallback((entries: TemplateEntryData[] | null) => {
     if (entries === null) {
@@ -257,7 +263,9 @@ export function CopyModule() {
           ((prev.creativeBrief as string | undefined) ?? '') !== lastAppliedBriefRef.current;
         const tonalityWasModified =
           ((prev.template_tonality as string | undefined) ?? '') !== lastAppliedTonalityRef.current;
-        const clearUpdates = buildTemplateClearUpdates(prev, briefWasModified, tonalityWasModified);
+        const frameworkWasModified =
+          ((prev.copyFrameworkName as string | undefined) ?? '') !== lastAppliedFrameworkRef.current;
+        const clearUpdates = buildTemplateClearUpdates(prev, briefWasModified, tonalityWasModified, frameworkWasModified);
         const next = { ...prev };
         for (const [key, val] of Object.entries(clearUpdates)) {
           if (val === undefined) {
@@ -271,7 +279,22 @@ export function CopyModule() {
       // Reset baseline — there's no longer a template-applied value to compare against.
       lastAppliedBriefRef.current = '';
       lastAppliedTonalityRef.current = '';
+      lastAppliedFrameworkRef.current = '';
+      // Drop template-provided frameworks; keep the built-in library available.
+      setFrameworkOptions(BUILT_IN_FRAMEWORKS);
     } else {
+      // Framework options derive from the (always-fresh) entries arg, so we set
+      // them outside the state updater — no setState-inside-updater. Built-ins
+      // first, then any template-provided frameworks not already built in.
+      const tplFrameworks: FrameworkOption[] = entries
+        .filter((e) => e.category === 'framework')
+        .map((e) => ({ name: e.label, text: e.value }));
+      setFrameworkOptions([
+        ...BUILT_IN_FRAMEWORKS,
+        ...tplFrameworks.filter((f) => !BUILT_IN_FRAMEWORKS.some((b) => b.name === f.name)),
+      ]);
+      lastAppliedFrameworkRef.current = tplFrameworks[0]?.name ?? '';
+
       // Template selected — populate form fields from entries
       setFormValues((prev) => {
         const { formUpdates } = buildTemplatePopulation(entries, prev);
@@ -584,6 +607,55 @@ export function CopyModule() {
                 resize: 'vertical' as const,
               }}
             />
+          </div>
+
+          {/* Copy Framework — named structure injected as {{copyFramework}}, kept out of the Creative Brief */}
+          <div
+            className="rounded-lg border p-3 space-y-2"
+            style={{ borderColor: colors.border, background: colors.bgMuted }}
+          >
+            <label
+              className="block"
+              style={{
+                fontSize: typography.micro,
+                fontWeight: typography.semibold,
+                textTransform: 'uppercase' as const,
+                letterSpacing: '0.05em',
+                color: colors.textSecondary,
+              }}
+            >
+              Copy Framework
+            </label>
+            <select
+              value={(formValues.copyFrameworkName as string) ?? ''}
+              onChange={(e) => {
+                const name = e.target.value;
+                const opt = frameworkOptions.find((f) => f.name === name);
+                handleFieldChange('copyFrameworkName', name);
+                handleFieldChange('copyFramework', opt?.text ?? '');
+              }}
+              className="w-full rounded-md border px-2 py-1.5 text-sm transition-colors focus:outline-none focus:ring-1"
+              style={{
+                borderColor: colors.border,
+                background: colors.bgSurface,
+                color: colors.text,
+                fontSize: typography.sm,
+              }}
+            >
+              <option value="">No framework</option>
+              {frameworkOptions.map((f) => (
+                <option key={f.name} value={f.name}>
+                  {f.name}
+                </option>
+              ))}
+              {/* Keep a persisted/template selection visible even if not in the current list */}
+              {(formValues.copyFrameworkName as string) &&
+                !frameworkOptions.some((f) => f.name === formValues.copyFrameworkName) && (
+                  <option value={formValues.copyFrameworkName as string}>
+                    {formValues.copyFrameworkName as string}
+                  </option>
+                )}
+            </select>
           </div>
 
           {/* Theme — rendered after Creative Brief */}

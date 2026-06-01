@@ -22,6 +22,7 @@ export const TEMPLATE_CATEGORIES = [
   "prompt",
   "preset",
   "brief",
+  "framework",
 ] as const;
 
 export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number];
@@ -35,6 +36,7 @@ export const CATEGORY_LABELS: Record<TemplateCategory, string> = {
   prompt: "Prompt",
   preset: "Preset",
   brief: "Brief",
+  framework: "Framework",
 };
 
 /**
@@ -52,6 +54,8 @@ export const CATEGORY_DESCRIPTIONS: Record<TemplateCategory, string> = {
     "Pre-filled form values (business name, language, etc.) applied when the template is selected.",
   brief:
     "Creative brief instructions: campaign goals, target audience, key messages, and offers.",
+  framework:
+    "A named copywriting framework/structure (e.g. Hook-Story-Offer, AIDA, PAS). Label = the name shown in the Copy module's Framework dropdown; value = the structure the AI follows. Injected as {{copyFramework}}.",
 };
 
 // ============================================

@@ -1493,6 +1493,9 @@ BUSINESS CONTEXT:
 CREATIVE BRIEF (follow these instructions closely — this is the user's primary directive):
 {{creativeBrief}}
 
+COPY FRAMEWORK (structure the copy using this framework when provided):
+{{copyFramework}}
+
 OUTPUT FORMAT:
 Return a JSON object with: headline, body, cta, hashtags (EMPTY array for ads), description.
 
@@ -1528,6 +1531,9 @@ BUSINESS CONTEXT:
 
 CREATIVE BRIEF (follow these instructions closely — this is the user's primary directive):
 {{creativeBrief}}
+
+COPY FRAMEWORK (structure the copy using this framework when provided):
+{{copyFramework}}
 
 OUTPUT FORMAT:
 Return a JSON object with: headline (empty string for organic), body, cta (empty string for organic), hashtags (3-6 relevant hashtags with # prefix), description (empty string for organic).
@@ -1775,6 +1781,10 @@ Provide a concise market research summary (max 300 words) that can inform audien
             // Separated from {{brief}} so it gets its own section with proper
             // emphasis in the prompt (not buried in business metadata).
             'creativeBrief' => trim($form_values['creativeBrief'] ?? ''),
+            // Copy framework — the selected copywriting structure (e.g. Hook-Story-Offer),
+            // chosen from the Framework dropdown. Resolved text arrives in form_values;
+            // its own placeholder keeps it out of the creative brief. Empty → vanishes.
+            'copyFramework' => trim($form_values['copyFramework'] ?? ''),
             'referenceCopy' => $reference_copy,
             'reviewsContext' => $reviews_context,
             'organicContext' => $organic_context,
