@@ -539,6 +539,73 @@ Simple. Clear. Point down. 👇 + action text.',
                 ),
             ),
 
+            // ─────────────────────────────────────────────
+            // COPY: AIDA — Attention, Interest, Desire, Action
+            // Subtype 'framework' → Copy Framework dropdown ({{copyFramework}}).
+            // ─────────────────────────────────────────────
+            array(
+                'name' => 'AIDA',
+                'module' => 'copy',
+                'description' => 'Classic four-step direct-response framework: Attention, Interest, Desire, Action. Versatile for ads, emails, and landing pages.',
+                'isDefault' => 0,
+                'formData' => array(
+                    'type' => 'social_ads',
+                    'niche' => 'General',
+                    'entries' => array(
+                        array(
+                            'key' => 'aida_framework',
+                            'category' => 'framework',
+                            'label' => 'Copy Framework',
+                            'value' => 'Follow the AIDA framework:
+
+1. ATTENTION
+A strong hook or headline that stops the reader. Lead with the single most arresting idea.
+
+2. INTEREST
+Relevant, specific details that deepen engagement and speak directly to the reader and their situation. Keep the momentum building.
+
+3. DESIRE
+Make them want the outcome. Stack the benefits, the proof, and the emotional payoff of solving the problem.
+
+4. ACTION
+One clear, low-friction call-to-action. Tell them exactly what to do next.',
+                        ),
+                    ),
+                ),
+            ),
+
+            // ─────────────────────────────────────────────
+            // COPY: PAS — Problem, Agitate, Solution
+            // Subtype 'framework' → Copy Framework dropdown ({{copyFramework}}).
+            // ─────────────────────────────────────────────
+            array(
+                'name' => 'PAS',
+                'module' => 'copy',
+                'description' => 'Problem-Agitate-Solution: a tight three-step persuasion framework. Great for short ads and pain-led copy.',
+                'isDefault' => 0,
+                'formData' => array(
+                    'type' => 'social_ads',
+                    'niche' => 'General',
+                    'entries' => array(
+                        array(
+                            'key' => 'pas_framework',
+                            'category' => 'framework',
+                            'label' => 'Copy Framework',
+                            'value' => 'Follow the PAS framework:
+
+1. PROBLEM
+Name the reader main pain point clearly and directly.
+
+2. AGITATE
+Make the pain vivid. Spell out the consequences, the frustrations, and what it costs them to stay stuck.
+
+3. SOLUTION
+Present the product or service as the relief that removes the pain, then close with one clear call-to-action.',
+                        ),
+                    ),
+                ),
+            ),
+
         );
     }
 }
