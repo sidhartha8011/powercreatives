@@ -47,6 +47,7 @@ import { TemplateDropdown } from './components/TemplateDropdown';
 import { ReferenceAdsSection } from './components/ReferenceAdsSection';
 import type { TemplateEntryData, TemplateApplyPayload } from './components/TemplateDropdown';
 import { buildTemplatePopulation, buildTemplateClearUpdates } from './templatePopulator';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ResultsPanel } from './components/ResultsPanel';
 import { useCopyGeneration, type GenerateScope } from './useCopyGeneration';
 import { useSelection } from './useSelection';
@@ -57,6 +58,9 @@ import { SaveBrandButton } from '@/components/shared/SaveBrandButton';
 
 /** A selectable copy framework: name shown in the dropdown, text injected as {{copyFramework}}. */
 interface FrameworkOption { name: string; text: string }
+
+/** shadcn Select can't hold an empty-string value, so the "no framework" choice uses a sentinel. */
+const FRAMEWORK_NONE = '__none__';
 
 export interface GenerationSettings {
   anglesMode: GenerationMode;
@@ -622,37 +626,36 @@ export function CopyModule() {
             >
               Copy Framework
             </label>
-            <select
-              value={(formValues.copyFrameworkName as string) ?? ''}
-              onChange={(e) => {
-                const name = e.target.value;
+            <Select
+              value={(formValues.copyFrameworkName as string) || FRAMEWORK_NONE}
+              onValueChange={(v) => {
+                const name = v === FRAMEWORK_NONE ? '' : v;
                 const opt = frameworkOptions.find((f) => f.name === name);
                 handleFieldChange('copyFrameworkName', name);
                 handleFieldChange('copyFramework', opt?.text ?? '');
               }}
-              className="w-full rounded-md border px-2 py-1.5 text-sm transition-colors focus:outline-none focus:ring-1"
-              style={{
-                borderColor: colors.border,
-                background: colors.bgSurface,
-                color: colors.text,
-                fontSize: typography.sm,
-              }}
+              disabled={copyTemplatesQuery.isLoading}
             >
-              <option value="">No framework</option>
-              {frameworkOptions.map((f) => (
-                <option key={f.name} value={f.name}>
-                  {f.name}
-                </option>
-              ))}
-              {/* Keep a persisted selection visible even if not in the current list */}
-              {(formValues.copyFrameworkName as string) &&
-                !frameworkOptions.some((f) => f.name === formValues.copyFrameworkName) && (
-                  <option value={formValues.copyFrameworkName as string}>
-                    {formValues.copyFrameworkName as string}
-                  </option>
-                )}
-            </select>
-            {frameworkOptions.length === 0 && (
+              <SelectTrigger className="h-9 text-sm w-full">
+                <SelectValue placeholder={copyTemplatesQuery.isLoading ? 'Loading frameworks…' : 'No framework'} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={FRAMEWORK_NONE}>No framework</SelectItem>
+                {frameworkOptions.map((f) => (
+                  <SelectItem key={f.name} value={f.name}>
+                    {f.name}
+                  </SelectItem>
+                ))}
+                {/* Keep a persisted selection visible even if it is not in the current list */}
+                {(formValues.copyFrameworkName as string) &&
+                  !frameworkOptions.some((f) => f.name === formValues.copyFrameworkName) && (
+                    <SelectItem value={formValues.copyFrameworkName as string}>
+                      {formValues.copyFrameworkName as string}
+                    </SelectItem>
+                  )}
+              </SelectContent>
+            </Select>
+            {!copyTemplatesQuery.isLoading && frameworkOptions.length === 0 && (
               <p className="text-xs" style={{ color: colors.textSecondary }}>
                 No frameworks yet — create a Copy template with Subtype = Framework in the Templates module.
               </p>
