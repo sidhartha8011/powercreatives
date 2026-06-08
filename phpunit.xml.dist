@@ -12,7 +12,7 @@
             <directory suffix="Test.php">tests/unit</directory>
         </testsuite>
     </testsuites>
-    <source>
+    <coverage>
         <include>
             <directory suffix=".php">includes</directory>
         </include>
@@ -20,5 +20,5 @@
             <directory>vendor</directory>
             <directory>tests</directory>
         </exclude>
-    </source>
+    </coverage>
 </phpunit>

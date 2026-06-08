@@ -163,6 +163,14 @@ class PCM_REST_Copy extends PCM_REST_Base
      */
     public function generate(WP_REST_Request $request)
     {
+        // Lift PHP's max_execution_time up-front. Audience research (Gemini
+        // grounding) + audience/angle generation run several blocking LLM calls
+        // BEFORE the SSE stream raises the limit (PCM_SSE::start), so without this
+        // a research-enabled run can exceed the default 30s and fatal mid-request.
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
+        }
+
         $user = $this->get_current_pcm_user();
         $params = $request->get_json_params();
 

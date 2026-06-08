@@ -483,6 +483,7 @@ class PCM_Brands_Service
             'niche' => $brand->niche ?? '',
             'location' => $brand->location ?? '',
             'phone' => $brand->phone ?? '',
+            'clientEmail' => $brand->clientEmail ?? '',
             'businessSummary' => $brand->businessSummary ?? '',
             'language' => $brand->language ?? '',
             'description' => $brand->description ?? '',

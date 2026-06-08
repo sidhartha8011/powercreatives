@@ -23,7 +23,7 @@ if (!defined('ABSPATH')) {
 
 // ── Plugin Constants ──
 define('PCM_VERSION', '1.7.0');
-define('PCM_DB_VERSION', '1.13.0');
+define('PCM_DB_VERSION', '1.16.0');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -51,6 +51,33 @@ require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-gate-auth.php';
 
 // ── Core: Base controller (abstract REST class) ──
 require_once PCM_PLUGIN_DIR . 'includes/core/base-controller.php';
+
+// ── Core: Automations engine + channels (shared dispatch layer) ──
+// Loaded before modules so Approvals (and future modules) can call
+// PCM_Automation_Engine::dispatch() during their own request handling.
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/class-pcm-automation-events.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/class-pcm-automation-triggers.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/class-pcm-automation-actions.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/templates/class-pcm-automation-templates.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/channels/interface-pcm-automation-channel.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/channels/class-pcm-webhook-channel.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/channels/class-pcm-brevo-email-channel.php';
+// Cross-module action handlers + input mapping (loaded before modules so each
+// module's automations.php can register triggers/actions/handlers at discover()).
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/class-pcm-automation-mapping.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/handlers/interface-pcm-automation-action-handler.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/handlers/class-pcm-webhook-action-handler.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/handlers/class-pcm-email-action-handler.php';
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/service.php';
+
+// ── Module-owned Automations registration ──
+// Each module declares its triggers/actions/handlers in its own
+// includes/modules/{id}/automations.php. Load them here (the module-loader does
+// not auto-require this file), so the trigger/action registries are populated
+// before rest_api_init and before any fire_trigger() during request handling.
+foreach (glob(PCM_PLUGIN_DIR . 'includes/modules/*/automations.php') as $pcm_automations_file) {
+    require_once $pcm_automations_file;
+}
 
 // ── Core: Infrastructure services ──
 require_once PCM_PLUGIN_DIR . 'includes/core/storage/class-pcm-storage.php';

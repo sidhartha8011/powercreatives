@@ -149,6 +149,7 @@ class PCM_REST_Brands extends PCM_REST_Base
             'niche' => sanitize_text_field($request->get_param('niche') ?? ''),
             'location' => sanitize_text_field($request->get_param('location') ?? ''),
             'phone' => sanitize_text_field($request->get_param('phone') ?? ''),
+            'clientEmail' => sanitize_email($request->get_param('clientEmail') ?? ''),
             'businessSummary' => sanitize_textarea_field($request->get_param('businessSummary') ?? ''),
             'language' => sanitize_text_field($request->get_param('language') ?? ''),
             'description' => sanitize_textarea_field($request->get_param('description') ?? ''),
@@ -164,6 +165,25 @@ class PCM_REST_Brands extends PCM_REST_Base
             $data['scrapedAt'] = gmdate('Y-m-d H:i:s', strtotime($scraped_at));
         }
 
+        // Determine up-front whether this will be a genuine new insert vs a
+        // domain-collision update (upsert_brand dedupes by domain). This lets us
+        // fire the Automations trigger ONLY on a real creation. No website/domain
+        // → always an insert.
+        $is_new_brand = true;
+        if (!empty($data['website'])) {
+            $domain = PCM_DB::normalize_domain($data['website']);
+            if ($domain) {
+                global $wpdb;
+                $brands_table = PCM_Schema::table('brands');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $existing = $wpdb->get_var($wpdb->prepare(
+                    "SELECT id FROM {$brands_table} WHERE domain = %s LIMIT 1",
+                    $domain
+                ));
+                $is_new_brand = empty($existing);
+            }
+        }
+
         // Upsert: if a brand with the same domain already exists, update it
         // instead of creating a duplicate. See PCM_DB::upsert_brand().
         $brand_id = PCM_DB::upsert_brand($data);
@@ -175,6 +195,22 @@ class PCM_REST_Brands extends PCM_REST_Base
         // Return the full formatted brand so the frontend can populate
         // forms immediately without a second fetch.
         $brand = PCM_DB::get_brand_by_id($brand_id, $user->id);
+
+        // Fire the Automations 'brands.brand_created' trigger only on a real new
+        // brand (cross-module: e.g. Brand created → send webhook/email).
+        if ($brand && $is_new_brand && class_exists('PCM_Automation_Engine')) {
+            PCM_Automation_Engine::fire_trigger(
+                'brands.brand_created',
+                array(
+                    'brandId' => (int) $brand->id,
+                    'name'    => (string) $brand->name,
+                    'website' => (string) ($brand->website ?? ''),
+                    'niche'   => (string) ($brand->niche ?? ''),
+                ),
+                (int) $user->id
+            );
+        }
+
         if ($brand) {
             return $this->success($this->service->format_brand($brand), 201);
         }
@@ -203,6 +239,12 @@ class PCM_REST_Brands extends PCM_REST_Base
                     ? esc_url_raw($val)
                     : sanitize_textarea_field($val);
             }
+        }
+
+        // Client email — validated as an email rather than free text.
+        $client_email = $request->get_param('clientEmail');
+        if (null !== $client_email) {
+            $update['clientEmail'] = sanitize_email($client_email);
         }
 
         $json_fields = array('colors', 'fonts');

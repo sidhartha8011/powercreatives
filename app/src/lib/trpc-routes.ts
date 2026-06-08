@@ -490,4 +490,42 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "approvals/sets/bulk/delete",
         method: "POST",
     },
+    // Public client actions (token-scoped)
+    "approvals.addPublicComment": {
+        endpoint: "approvals/sets",
+        method: "POST",
+        transform: (input: any) => ({ url: `approvals/sets/${input.token}/comment`, body: input }),
+    },
+    "approvals.approveAsset": {
+        endpoint: "approvals/sets",
+        method: "POST",
+        transform: (input: any) => ({ url: `approvals/sets/${input.token}/approve`, body: input }),
+    },
+    // Authenticated team actions (id-scoped)
+    "approvals.addTeamComment": {
+        endpoint: "approvals/sets",
+        method: "POST",
+        transform: (input: any) => ({ url: `approvals/sets/${input.id}/reply`, body: input }),
+    },
+    "approvals.shareSet": {
+        endpoint: "approvals/sets",
+        method: "POST",
+        transform: (input: any) => ({ url: `approvals/sets/${input.id}/share`, body: { email: input.email } }),
+    },
+
+    // ── Automations (trigger → condition → action rules) ──
+    "automations.list":    { endpoint: "automations", method: "GET" },
+    "automations.catalog": { endpoint: "automations/catalog", method: "GET" },
+    "automations.create":  { endpoint: "automations", method: "POST" },
+    "automations.update": {
+        endpoint: "automations",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `automations/${input.id}`, body: input }),
+    },
+    "automations.delete": {
+        endpoint: "automations",
+        method: "DELETE",
+        transform: (input: any) => ({ url: `automations/${input.id}` }),
+    },
+    "automations.test":    { endpoint: "automations/test", method: "POST" },
 };

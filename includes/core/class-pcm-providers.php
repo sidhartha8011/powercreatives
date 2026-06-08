@@ -192,6 +192,16 @@ class PCM_Providers
             // Custom capabilities flag — not an AI provider, but an SEO data provider
             'supportsSeo' => true,
         ),
+        'brevo' => array(
+            'id'          => 'brevo',
+            'name'        => 'Brevo (Email)',
+            'apiKeyUrl'   => 'https://app.brevo.com/settings/keys/api',
+            'isBuiltIn'   => false,
+            // Brevo sends transactional email for the Automations module — it is
+            // not an AI generation provider, so knownModels is empty.
+            'knownModels' => array(),
+            'supportsEmail' => true,
+        ),
     );
 
     /**
@@ -312,6 +322,7 @@ class PCM_Providers
             'kieai'     => 'https://api.kie.ai/api/v1/jobs/createTask',
             'fal'       => 'https://api.fal.ai/v1/models',
             'ahrefs'    => 'https://api.ahrefs.com/mcp/mcp',
+            'brevo'     => 'https://api.brevo.com/v3/account',
         );
 
         // Built-in providers don't need validation
@@ -364,6 +375,11 @@ class PCM_Providers
         // --- Ahrefs: MCP JSON-RPC initialize handshake ---
         if ('ahrefs' === $provider_id) {
             return self::validate_ahrefs_key($api_key);
+        }
+
+        // --- Brevo: GET /v3/account with the api-key header ---
+        if ('brevo' === $provider_id) {
+            return self::validate_brevo_key($api_key);
         }
 
         // Provider-specific auth headers
@@ -639,6 +655,69 @@ class PCM_Providers
                 'text'   => false,
                 'vision' => false,
                 'seo'    => true, // Ahrefs provides SEO data, not AI generation
+            ),
+            'models' => array(),
+        );
+    }
+
+    /**
+     * Validate a Brevo API key using GET /v3/account.
+     *
+     * Brevo authenticates transactional-email requests with an `api-key`
+     * header (not Bearer). A 200 from /v3/account confirms the key works;
+     * 401 indicates an invalid key. Brevo has no AI models, so a valid key
+     * reports the `email` capability only.
+     *
+     * @param string $api_key Brevo API v3 key.
+     * @return array Validation result.
+     */
+    private static function validate_brevo_key(string $api_key): array
+    {
+        $response = wp_remote_get('https://api.brevo.com/v3/account', array(
+            'headers' => array(
+                'api-key' => $api_key,
+                'Accept'  => 'application/json',
+            ),
+            'timeout' => 15,
+        ));
+
+        if (is_wp_error($response)) {
+            return array(
+                'valid'        => false,
+                'error'        => 'Connection failed: ' . $response->get_error_message(),
+                'capabilities' => array('image' => false, 'video' => false, 'text' => false, 'vision' => false),
+                'models'       => array(),
+            );
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+
+        if ($code === 401 || $code === 403) {
+            return array(
+                'valid'        => false,
+                'error'        => 'Invalid Brevo API key — check your key at https://app.brevo.com/settings/keys/api',
+                'capabilities' => array('image' => false, 'video' => false, 'text' => false, 'vision' => false),
+                'models'       => array(),
+            );
+        }
+
+        if ($code < 200 || $code >= 300) {
+            return array(
+                'valid'        => false,
+                'error'        => "Brevo API key validation failed (HTTP {$code})",
+                'capabilities' => array('image' => false, 'video' => false, 'text' => false, 'vision' => false),
+                'models'       => array(),
+            );
+        }
+
+        return array(
+            'valid'        => true,
+            'capabilities' => array(
+                'image'  => false,
+                'video'  => false,
+                'text'   => false,
+                'vision' => false,
+                'email'  => true,
             ),
             'models' => array(),
         );

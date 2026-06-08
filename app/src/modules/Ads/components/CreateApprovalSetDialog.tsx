@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Share2, Copy, Check, Loader2 } from 'lucide-react';
+import { Share2, Copy, Check, Loader2, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -27,6 +27,8 @@ interface CreateApprovalSetDialogProps {
   projectId?: number | null;
   brandName?: string | null;
   brandLogoUrl?: string | null;
+  /** Pre-fills the "send invite" email from the brand's saved client email. */
+  brandClientEmail?: string | null;
 }
 
 export function CreateApprovalSetDialog({
@@ -40,10 +42,14 @@ export function CreateApprovalSetDialog({
   projectId,
   brandName,
   brandLogoUrl,
+  brandClientEmail,
 }: CreateApprovalSetDialogProps) {
   const [setName, setSetName] = useState('');
   const [shareableLink, setShareableLink] = useState('');
   const [copied, setCopied] = useState(false);
+  const [setId, setSetId] = useState<number | null>(null);
+  const [clientEmail, setClientEmail] = useState('');
+  const [inviteSent, setInviteSent] = useState(false);
 
   // Set default name with campaign info & date
   useEffect(() => {
@@ -55,8 +61,14 @@ export function CreateApprovalSetDialog({
       setSetName(`Ad Campaign Set — ${brandName || 'Draft'} (${dateStr})`);
       setShareableLink('');
       setCopied(false);
+      setSetId(null);
+      setClientEmail(brandClientEmail || '');
+      setInviteSent(false);
     }
-  }, [isOpen, brandName]);
+  }, [isOpen, brandName, brandClientEmail]);
+
+  // Moves the set into the "Awaiting Client Approval" lane (status 'client').
+  const moveStatusMutation = trpc.approvals.updateSetStatus.useMutation();
 
   // tRPC Mutation to create set
   const createMutation = trpc.approvals.createSet.useMutation({
@@ -64,18 +76,42 @@ export function CreateApprovalSetDialog({
       // Build the absolute client review URL using the dynamic WordPress page that hosts the shortcode
       const config = window.pcmConfig ?? { shortcodePageUrl: window.location.origin + '/' };
       const baseUrl = config.shortcodePageUrl || (window.location.origin + '/');
-      
+
       // Determine separator for query parameters (e.g. ? or &)
       const separator = baseUrl.includes('?') ? '&' : '?';
       const publicLink = `${baseUrl}${separator}pcm_public_token=${data.token}`;
-      
+
       setShareableLink(publicLink);
+      setSetId(Number(data.id));
+      // Sharing the link == the set is now out for client review. Move it to the
+      // "Awaiting Client Approval" lane immediately.
+      moveStatusMutation.mutate({ id: Number(data.id), status: 'client' });
       toast.success('Client sharing board created successfully!');
     },
     onError: (err: any) => {
       toast.error(err.message || 'Failed to generate approval set.');
     },
   });
+
+  // tRPC Mutation to email the client an invite (Brevo via Automations)
+  const shareMutation = trpc.approvals.shareSet.useMutation({
+    onSuccess: () => {
+      setInviteSent(true);
+      toast.success('Invite email sent to the client.');
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to send invite email.');
+    },
+  });
+
+  const handleSendInvite = useCallback(() => {
+    const email = clientEmail.trim();
+    if (!setId || !email) {
+      toast.error('Enter the client email to send an invite.');
+      return;
+    }
+    shareMutation.mutate({ id: setId, email });
+  }, [setId, clientEmail, shareMutation]);
 
   const handleGenerateLink = useCallback(() => {
     if (!setName.trim()) {
@@ -226,8 +262,44 @@ export function CreateApprovalSetDialog({
                 </Button>
               </div>
               <p style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '8px' }}>
-                Your client can open this link in any browser, see dynamic platform mockups, granularly comment, and click "Submit" to trigger your webhooks!
+                Your client can open this link in any browser, see dynamic platform mockups, granularly comment, and approve each asset.
               </p>
+
+              {/* Send the invite by email (auto-filled from brand info) */}
+              <div className="space-y-2 pt-2" style={{ borderTop: `1px solid ${colors.border}` }}>
+                <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
+                  Or email the link to your client
+                </span>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="email"
+                    value={clientEmail}
+                    onChange={(e) => { setClientEmail(e.target.value); setInviteSent(false); }}
+                    placeholder="client@company.com"
+                    className="text-sm shrink"
+                    style={{ background: colors.bgSurface }}
+                    disabled={shareMutation.isLoading}
+                  />
+                  <Button
+                    onClick={handleSendInvite}
+                    className="shrink-0 gap-2"
+                    style={{ background: colors.primary }}
+                    disabled={shareMutation.isLoading || !clientEmail.trim() || inviteSent}
+                  >
+                    {shareMutation.isLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : inviteSent ? (
+                      <Check className="w-4 h-4" />
+                    ) : (
+                      <Mail className="w-4 h-4" />
+                    )}
+                    {inviteSent ? 'Sent' : 'Send'}
+                  </Button>
+                </div>
+                <p style={{ fontSize: typography.xs, color: colors.textMuted }}>
+                  Sends a professional invite via your Brevo integration. Requires a Brevo API key and sender email in Settings.
+                </p>
+              </div>
             </div>
           )}
         </div>

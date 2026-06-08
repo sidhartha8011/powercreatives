@@ -1,0 +1,118 @@
+### Approvals flow + Automations — API smoke harness
+#
+# Walks the full client-approval loop against a live WordPress install. Use with
+# the VS Code "REST Client" extension, JetBrains HTTP client, or translate to
+# curl. Run top-to-bottom; later requests reuse values captured from earlier
+# responses (token, setId).
+#
+# Prereqts on the target WP:
+#   - Plugin active, DB upgraded to >= 1.14.0 (tables wp_pcm_automations,
+#     wp_pcm_automation_logs; columns brands.clientEmail, approval_sets.clientEmail).
+#   - A published page containing the [power_creatives] shortcode (for share links).
+#   - Logged-in admin session OR an X-WP-Nonce for the authenticated calls.
+#   - (For real email) a Brevo integration row (provider='brevo') + Settings
+#     automations_from_email; (for real webhooks) Settings global_webhook_url
+#     or a brand additionalContext.webhookUrl. Without these, dispatch is logged
+#     as "skipped"/no-op — the flow still returns 2xx.
+
+@base = http://powercreatives.local/wp-json/pcm/v1
+@nonce = REPLACE_WITH_WP_REST_NONCE
+@token = REPLACE_WITH_TOKEN_FROM_CREATE
+@setId = REPLACE_WITH_ID_FROM_CREATE
+
+### 1. Create an approval set (authenticated team action)
+# Capture `token` and `id` from the response into @token / @setId above.
+POST {{base}}/approvals/sets
+X-WP-Nonce: {{nonce}}
+Content-Type: application/json
+
+{
+  "name": "Smoke Test Set",
+  "brandId": null,
+  "projectId": null,
+  "snapshot": {
+    "brandName": "Acme",
+    "media": [{ "id": "m1", "type": "image", "url": "https://example.com/a.png" }],
+    "copy":  [{ "id": "c1", "headline": "Hello", "body": "Body" }]
+  }
+}
+
+### 2. Share the set with a client by email (authenticated)
+# Dispatches approval.set.shared → Brevo invite email (or logged "skipped").
+POST {{base}}/approvals/sets/{{setId}}/share
+X-WP-Nonce: {{nonce}}
+Content-Type: application/json
+
+{ "email": "client@example.com" }
+
+### 3. Client opens the set by token (public, no auth)
+GET {{base}}/approvals/sets/{{token}}
+
+### 4. Client posts a comment on an asset (public)
+# Dispatches approval.comment.created → team webhook. Returns the new comment
+# with a server-generated UUID + status "New".
+POST {{base}}/approvals/sets/{{token}}/comment
+Content-Type: application/json
+
+{ "assetId": "m1", "body": "Can we brighten this image?", "author": "Client" }
+
+### 5. Team replies in the thread (authenticated)
+# Dispatches approval.comment.team_reply → client email.
+POST {{base}}/approvals/sets/{{setId}}/reply
+X-WP-Nonce: {{nonce}}
+Content-Type: application/json
+
+{ "assetId": "m1", "body": "Done — brightened version attached." }
+
+### 6. Client approves the first asset (public)
+POST {{base}}/approvals/sets/{{token}}/approve
+Content-Type: application/json
+
+{ "assetId": "m1", "approved": true }
+
+### 7. Client approves the rest → set auto-advances to "launch"
+# When every snapshot asset is approved, the response status becomes "launch"
+# and approval.all_approved fires the team webhook exactly once (idempotent —
+# re-running this request does NOT re-fire it).
+POST {{base}}/approvals/sets/{{token}}/approve
+Content-Type: application/json
+
+{ "approveAll": true }
+
+### 8. Verify final state (status should be "launch")
+GET {{base}}/approvals/sets/{{token}}
+
+### --- Automations module management (authenticated) ---
+
+### 9. List automation rules
+GET {{base}}/automations
+X-WP-Nonce: {{nonce}}
+
+### 10. Inspect the event/channel catalog
+GET {{base}}/automations/events
+X-WP-Nonce: {{nonce}}
+
+### 11. Create an explicit webhook rule (overrides the default)
+POST {{base}}/automations
+X-WP-Nonce: {{nonce}}
+Content-Type: application/json
+
+{
+  "event": "approval.all_approved",
+  "channel": "webhook",
+  "config": { "url": "https://hooks.example.com/pcm", "secret": "shared-secret" }
+}
+
+### 12. Send a test webhook (blocks, returns the HTTP result)
+POST {{base}}/automations/test
+X-WP-Nonce: {{nonce}}
+Content-Type: application/json
+
+{ "channel": "webhook", "config": { "url": "https://hooks.example.com/pcm" } }
+
+### 13. Send a test email via Brevo
+POST {{base}}/automations/test
+X-WP-Nonce: {{nonce}}
+Content-Type: application/json
+
+{ "channel": "email", "to": "you@example.com" }

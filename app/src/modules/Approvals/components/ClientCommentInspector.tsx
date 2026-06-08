@@ -42,6 +42,12 @@ interface ClientCommentInspectorProps {
   onClose: () => void;
   /** Called with the full updated thread array whenever anything changes */
   onThreadChange: (assetId: string, thread: CommentEntry[]) => void;
+  /**
+   * Called once when a brand-new comment is submitted (not for edits/reads).
+   * The parent uses this to persist + notify via the dedicated REST endpoints
+   * (client comment → team webhook, team reply → client email).
+   */
+  onCommentAdded?: (assetId: string, entry: CommentEntry) => void;
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -61,6 +67,7 @@ export function ClientCommentInspector({
   isTeamMember = false,
   onClose,
   onThreadChange,
+  onCommentAdded,
 }: ClientCommentInspectorProps) {
   const [inputText, setInputText] = useState('');
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
@@ -143,7 +150,7 @@ export function ClientCommentInspector({
 
     // After 1.5 seconds, mark all unread comments in this thread as read by current user role
     const timer = setTimeout(() => {
-      const updated = thread.map((c) => {
+      const updated: CommentEntry[] = thread.map((c) => {
         const isAuthorTeam = c.author === 'Team';
         const isCurrentTeam = isTeamMember;
         const isSelf = (isCurrentTeam && isAuthorTeam) || (!isCurrentTeam && !isAuthorTeam);
@@ -199,6 +206,9 @@ export function ClientCommentInspector({
     }
 
     onThreadChange(asset.id, updated);
+    // Notify the parent so it can persist + dispatch the webhook/email for this
+    // new comment via the dedicated REST endpoint.
+    onCommentAdded?.(asset.id, entry);
     setInputText('');
     setDraftAttachments([]);
     setReplyingToId(null);
@@ -222,7 +232,7 @@ export function ClientCommentInspector({
   // Change status on a single comment
   const handleStatusChange = useCallback((commentId: string, newStatus: CommentStatus) => {
     const userRole = isTeamMember ? 'team' : 'client';
-    const updated = thread.map((c) => c.id === commentId ? { ...c, status: newStatus, readBy: [userRole] } : c);
+    const updated: CommentEntry[] = thread.map((c) => c.id === commentId ? { ...c, status: newStatus, readBy: [userRole] } : c);
     onThreadChange(asset.id, updated);
   }, [thread, asset.id, onThreadChange, isTeamMember]);
 

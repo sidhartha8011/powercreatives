@@ -531,7 +531,8 @@ export function CreativeAssetCard({
         
         <button
           type="button"
-          disabled={isSubmitted}
+          /* Comments stay open after submit/approval so the client and team can
+             keep the conversation going — only approving is locked. */
           className={`pcm-btn pcm-btn-comment ${commentCount > 0 ? 'has-comments' : ''} ${hasNewComment ? 'has-new-comments' : ''}`}
           onClick={() => onOpenComments(asset.id)}
         >

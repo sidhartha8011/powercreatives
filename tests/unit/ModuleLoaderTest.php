@@ -90,7 +90,7 @@ class ModuleLoaderTest extends TestCase
 
         // We need to test with the actual directory, so we temporarily adjust
         // This tests the core logic: scandir + config validation
-        $this->assertIsArray(PCM_Module_Loader::get_all());
+        $this->assertIsArray(PCM_Module_Loader::get_modules());
     }
 
     /**
@@ -105,7 +105,7 @@ class ModuleLoaderTest extends TestCase
         file_put_contents($module_dir . 'config.php', '<?php return array("id" => "bad");');
 
         // After discovery, it should not be registered
-        $all = PCM_Module_Loader::get_all();
+        $all = PCM_Module_Loader::get_modules();
         $this->assertArrayNotHasKey('bad', $all, 'Modules without controller should be skipped');
     }
 
@@ -114,7 +114,7 @@ class ModuleLoaderTest extends TestCase
      */
     public function test_get_all_returns_array(): void
     {
-        $result = PCM_Module_Loader::get_all();
+        $result = PCM_Module_Loader::get_modules();
         $this->assertIsArray($result);
     }
 
@@ -124,10 +124,10 @@ class ModuleLoaderTest extends TestCase
     public function test_discover_only_runs_once(): void
     {
         PCM_Module_Loader::discover();
-        $first = PCM_Module_Loader::get_all();
+        $first = PCM_Module_Loader::get_modules();
 
         PCM_Module_Loader::discover();
-        $second = PCM_Module_Loader::get_all();
+        $second = PCM_Module_Loader::get_modules();
 
         $this->assertSame($first, $second, 'Multiple discover() calls should return same result');
     }

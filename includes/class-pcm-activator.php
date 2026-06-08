@@ -139,6 +139,23 @@ class PCM_Activator
                 PCM_Prompt_Placeholders::sync_all();
             }
 
+            // v1.14.0: Approvals flow + Automations module. Adds two tables
+            // (wp_pcm_automations, wp_pcm_automation_logs) and two nullable
+            // columns (brands.clientEmail, approval_sets.clientEmail). All
+            // changes are additive, so the create_tables() call above (which
+            // runs on every upgrade) applies them via dbDelta — no bespoke
+            // migration method is required.
+
+            // v1.15.0: Automations rule model. Adds name/triggerId/conditions/
+            // actionId columns to wp_pcm_automations (additive via dbDelta) and
+            // relaxes the legacy event/channel columns to nullable
+            // (PCM_Schema::migrate_automations_columns, invoked from
+            // create_tables() above). No separate gate needed here.
+
+            // v1.16.0: Cross-module automations. Adds the inputMapping column to
+            // wp_pcm_automations (additive via dbDelta) for trigger-context →
+            // action-input mapping. No separate gate needed.
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

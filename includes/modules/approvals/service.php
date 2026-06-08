@@ -65,7 +65,7 @@ class PCM_Approvals_Service
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, userId, brandId, projectId, name, token, status, createdAt, updatedAt FROM {$table} WHERE userId = %d ORDER BY createdAt DESC",
+                "SELECT id, userId, brandId, projectId, name, token, status, clientEmail, createdAt, updatedAt FROM {$table} WHERE userId = %d ORDER BY createdAt DESC",
                 $user_id
             )
         );
@@ -153,6 +153,14 @@ class PCM_Approvals_Service
             return false;
         }
 
+        // Load first so we know the previous lane (to fire the trigger only on
+        // an actual change) and have the name/token for the payload.
+        $set = self::get_set_by_id($id, $user_id);
+        if (!$set) {
+            return false;
+        }
+        $previous = $set->status;
+
         global $wpdb;
         $table = PCM_Schema::table('approval_sets');
 
@@ -168,7 +176,45 @@ class PCM_Approvals_Service
             array('%d', '%d')
         );
 
-        return $rows !== false && $rows > 0;
+        if ($rows === false || $rows <= 0) {
+            return false;
+        }
+
+        // Fire the Automations trigger when the set actually enters a new lane
+        // (e.g. dragged into Launch on the kanban).
+        if ($previous !== $next_status) {
+            $set->status = $next_status;
+            self::fire_status_trigger($set, $next_status);
+        }
+
+        return true;
+    }
+
+    /**
+     * Notify the Automations engine that an approval set entered a lane.
+     * Powers user-defined rules such as "lane = Launch → send webhook".
+     *
+     * @param object $set        Approval set row (must have id, name, token, userId, brandId).
+     * @param string $new_status The lane the set just entered.
+     * @return void
+     */
+    private static function fire_status_trigger(object $set, string $new_status): void
+    {
+        if (!class_exists('PCM_Automation_Engine')) {
+            return;
+        }
+        PCM_Automation_Engine::fire_trigger(
+            'approvals.set_status_changed',
+            array(
+                'setId'   => (int) $set->id,
+                'name'    => (string) $set->name,
+                'status'  => $new_status,
+                'token'   => (string) $set->token,
+                'link'    => self::build_share_url((string) $set->token),
+                'brandId' => !empty($set->brandId) ? (int) $set->brandId : null,
+            ),
+            (int) $set->userId
+        );
     }
 
     /**
@@ -270,7 +316,22 @@ class PCM_Approvals_Service
         );
 
         if ($success !== false) {
-            self::dispatch_webhook($set, $client_name, $sanitized_feedback);
+            // Legacy single-submit event — preserved for existing webhook
+            // consumers (fires only if a global/brand webhook URL is configured).
+            PCM_Automation_Engine::dispatch(
+                PCM_Automation_Events::APPROVAL_COMPLETED,
+                self::build_event_context($set, array(
+                    'clientName' => $client_name,
+                    'feedback'   => $sanitized_feedback,
+                )),
+                (int) $set->userId
+            );
+            // The set also entered the Launch lane → fire the Automations trigger
+            // so user-defined "lane = Launch → …" rules run.
+            if ($set->status !== 'launch') {
+                $set->status = 'launch';
+                self::fire_status_trigger($set, 'launch');
+            }
             return true;
         }
 
@@ -343,12 +404,14 @@ class PCM_Approvals_Service
                 // Legacy: single string → convert to single-entry array
                 $sanitized[$safe_id] = array(
                     array(
-                        'id'        => wp_generate_uuid4(),
-                        'author'    => $default_author,
-                        'text'      => sanitize_textarea_field($thread_array),
-                        'createdAt' => current_time('c'),
-                        'status'    => 'New',
-                        'parentId'  => null,
+                        'id'          => wp_generate_uuid4(),
+                        'author'      => $default_author,
+                        'text'        => sanitize_textarea_field($thread_array),
+                        'createdAt'   => current_time('c'),
+                        'status'      => 'New',
+                        'parentId'    => null,
+                        'attachments' => array(),
+                        'readBy'      => array(),
                     ),
                 );
             } elseif (is_array($thread_array)) {
@@ -362,12 +425,19 @@ class PCM_Approvals_Service
                     $status = in_array($raw_status, $allowed_statuses, true) ? $raw_status : 'New';
 
                     $safe_thread[] = array(
-                        'id'        => sanitize_text_field($entry['id'] ?? wp_generate_uuid4()),
-                        'author'    => sanitize_text_field($entry['author'] ?? $default_author),
-                        'text'      => sanitize_textarea_field($entry['text']),
-                        'createdAt' => sanitize_text_field($entry['createdAt'] ?? current_time('c')),
-                        'status'    => $status,
-                        'parentId'  => isset($entry['parentId']) ? sanitize_text_field($entry['parentId']) : null,
+                        'id'          => sanitize_text_field($entry['id'] ?? wp_generate_uuid4()),
+                        'author'      => sanitize_text_field($entry['author'] ?? $default_author),
+                        'text'        => sanitize_textarea_field($entry['text']),
+                        'createdAt'   => sanitize_text_field($entry['createdAt'] ?? current_time('c')),
+                        'status'      => $status,
+                        'parentId'    => isset($entry['parentId']) ? sanitize_text_field($entry['parentId']) : null,
+                        // Preserve attachments + read receipts (previously dropped
+                        // server-side, so they only survived in localStorage).
+                        'attachments' => self::sanitize_attachments($entry['attachments'] ?? array()),
+                        'readBy'      => array_values(array_map(
+                            'sanitize_text_field',
+                            is_array($entry['readBy'] ?? null) ? $entry['readBy'] : array()
+                        )),
                     );
                 }
                 if (!empty($safe_thread)) {
@@ -377,6 +447,40 @@ class PCM_Approvals_Service
         }
 
         return $sanitized;
+    }
+
+    /**
+     * Sanitize a comment's attachment list.
+     *
+     * Each attachment is { url, name?, type? }. Entries without a valid URL
+     * are dropped.
+     *
+     * @param mixed $attachments Raw attachments array.
+     * @return array<int, array{ url: string, name: string, type: string }>
+     */
+    private static function sanitize_attachments($attachments): array
+    {
+        if (!is_array($attachments)) {
+            return array();
+        }
+
+        $clean = array();
+        foreach ($attachments as $att) {
+            if (!is_array($att) || empty($att['url'])) {
+                continue;
+            }
+            $url = esc_url_raw((string) $att['url']);
+            if ($url === '') {
+                continue;
+            }
+            $clean[] = array(
+                'url'  => $url,
+                'name' => sanitize_text_field((string) ($att['name'] ?? '')),
+                'type' => sanitize_text_field((string) ($att['type'] ?? '')),
+            );
+        }
+
+        return $clean;
     }
 
     /**
@@ -390,50 +494,448 @@ class PCM_Approvals_Service
     }
 
     /**
-     * Dispatch client review webhook (non-blocking).
+     * Statuses in which approval/submission is locked (post client sign-off).
+     * Comments remain open in these statuses to support ongoing back-and-forth.
+     *
+     * @var string[]
      */
-    private static function dispatch_webhook(object $set, string $client_name, array $feedback): void
-    {
-        $webhook_url = '';
+    public const POST_SUBMIT_STATUSES = ['launch', 'live', 'archived'];
 
-        // 1. Check Brand Settings override
-        if (!empty($set->brandId)) {
-            $brand = PCM_DB::get_brand_by_id((int)$set->brandId, (int)$set->userId);
-            if ($brand && !empty($brand->additionalContext)) {
-                $context = json_decode($brand->additionalContext, true);
-                if (is_array($context) && !empty($context['webhookUrl'])) {
-                    $webhook_url = esc_url_raw($context['webhookUrl']);
+    /**
+     * Build the public client review URL for a token.
+     *
+     * Mirrors the frontend link: the published page containing the
+     * [power_creatives] shortcode, plus ?pcm_public_token=<token>.
+     *
+     * @param string $token Share token.
+     * @return string Absolute URL (falls back to home URL).
+     */
+    public static function build_share_url(string $token): string
+    {
+        global $wpdb;
+
+        $base = home_url('/');
+        $like = '%' . $wpdb->esc_like('[power_creatives]') . '%';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $page_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_content LIKE %s LIMIT 1",
+            $like
+        ));
+        if ($page_id) {
+            $base = get_permalink((int) $page_id);
+        }
+
+        return add_query_arg('pcm_public_token', $token, $base);
+    }
+
+    /**
+     * Assemble the event context passed to the Automations engine.
+     *
+     * @param object $set   Approval set row (snapshot may be array or json).
+     * @param array  $extra Extra context to merge (assetId, body, etc.).
+     * @return array
+     */
+    private static function build_event_context(object $set, array $extra = array()): array
+    {
+        $snapshot = is_array($set->snapshot ?? null)
+            ? $set->snapshot
+            : (json_decode($set->snapshot ?? '', true) ?: array());
+
+        $share_url = self::build_share_url((string) $set->token);
+
+        $context = array(
+            'setId'       => (int) $set->id,
+            'setName'     => (string) $set->name,
+            'token'       => (string) $set->token,
+            'brandId'     => !empty($set->brandId) ? (int) $set->brandId : null,
+            'brandName'   => (string) ($snapshot['brandName'] ?? ''),
+            'clientEmail' => isset($set->clientEmail) ? (string) $set->clientEmail : '',
+            'shareUrl'    => $share_url,
+        );
+
+        // Allow callers to point the email/webhook at a specific asset thread.
+        if (!empty($extra['assetId'])) {
+            $context['assetUrl'] = $share_url . '#asset-' . rawurlencode((string) $extra['assetId']);
+        }
+
+        return array_merge($context, $extra);
+    }
+
+    /**
+     * Read the current reviewFeedback structure for a set, normalised.
+     *
+     * @param object $set Approval set row.
+     * @return array{ approvedVisualIds: array, approvedCopyIds: array, approvedArticleIds: array, comments: array }
+     */
+    private static function feedback_struct(object $set): array
+    {
+        $fb = is_array($set->reviewFeedback ?? null)
+            ? $set->reviewFeedback
+            : (json_decode($set->reviewFeedback ?? '', true) ?: array());
+
+        return array(
+            'approvedVisualIds'  => array_values($fb['approvedVisualIds'] ?? array()),
+            'approvedCopyIds'    => array_values($fb['approvedCopyIds'] ?? array()),
+            'approvedArticleIds' => array_values($fb['approvedArticleIds'] ?? array()),
+            'comments'           => is_array($fb['comments'] ?? null) ? $fb['comments'] : array(),
+        );
+    }
+
+    /**
+     * Persist a feedback structure back to the set.
+     *
+     * @param int   $set_id   Set id.
+     * @param array $feedback Feedback structure.
+     * @return bool
+     */
+    private static function save_feedback(int $set_id, array $feedback): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $result = $wpdb->update(
+            $table,
+            array(
+                'reviewFeedback' => wp_json_encode($feedback),
+                'updatedAt'      => current_time('mysql'),
+            ),
+            array('id' => $set_id)
+        );
+
+        return $result !== false;
+    }
+
+    /**
+     * Append a comment to an asset thread and dispatch the matching event.
+     *
+     * Shared by the public (client) and authenticated (team) comment endpoints.
+     * Commenting is intentionally NOT gated by set status, so the conversation
+     * can continue after the client has signed off.
+     *
+     * @param object $set      Approval set row.
+     * @param string $asset_id Asset id the comment is attached to.
+     * @param string $body     Comment text.
+     * @param string $author   Author display name.
+     * @param string $status   Comment status ('New' | 'Team reply').
+     * @param string|null $parent_id Optional parent comment id for threading.
+     * @param string $event    Automation event to dispatch.
+     * @return array|false The created comment entry, or false on failure.
+     */
+    private static function append_comment(object $set, string $asset_id, string $body, string $author, string $status, ?string $parent_id, string $event): array|false
+    {
+        $asset_id = sanitize_text_field($asset_id);
+        $body     = sanitize_textarea_field($body);
+        if ($asset_id === '' || $body === '') {
+            return false;
+        }
+
+        $feedback = self::feedback_struct($set);
+
+        $comment = array(
+            'id'        => wp_generate_uuid4(),
+            'author'    => sanitize_text_field($author),
+            'text'      => $body,
+            'createdAt' => current_time('c'),
+            'status'    => $status,
+            'parentId'  => $parent_id ? sanitize_text_field($parent_id) : null,
+        );
+
+        if (!isset($feedback['comments'][$asset_id]) || !is_array($feedback['comments'][$asset_id])) {
+            $feedback['comments'][$asset_id] = array();
+        }
+        $feedback['comments'][$asset_id][] = $comment;
+
+        if (!self::save_feedback((int) $set->id, $feedback)) {
+            return false;
+        }
+
+        PCM_Automation_Engine::dispatch(
+            $event,
+            self::build_event_context($set, array(
+                'assetId'   => $asset_id,
+                'commentId' => $comment['id'],
+                'author'    => $comment['author'],
+                'body'      => $comment['text'],
+            )),
+            (int) $set->userId
+        );
+
+        return $comment;
+    }
+
+    /**
+     * Client adds a comment (public, token-scoped).
+     *
+     * @param string $token     Share token.
+     * @param string $asset_id  Asset id.
+     * @param string $body      Comment text.
+     * @param string|null $author Optional author name (defaults to 'Client').
+     * @param string|null $parent_id Optional parent comment id.
+     * @return array|false
+     */
+    public static function add_public_comment(string $token, string $asset_id, string $body, ?string $author = null, ?string $parent_id = null): array|false
+    {
+        $set = self::get_set_by_token($token);
+        if (!$set) {
+            return false;
+        }
+
+        return self::append_comment(
+            $set,
+            $asset_id,
+            $body,
+            $author ?: 'Client',
+            'New',
+            $parent_id,
+            PCM_Automation_Events::APPROVAL_COMMENT_CREATED
+        );
+    }
+
+    /**
+     * Team member replies in a thread (authenticated, ownership-scoped).
+     *
+     * @param int    $set_id    Set id.
+     * @param int    $user_id   PCM user id (owner).
+     * @param string $asset_id  Asset id.
+     * @param string $body      Reply text.
+     * @param string $author    Author name.
+     * @param string|null $parent_id Optional parent comment id.
+     * @return array|false
+     */
+    public static function add_team_comment(int $set_id, int $user_id, string $asset_id, string $body, string $author, ?string $parent_id = null): array|false
+    {
+        $set = self::get_set_by_id($set_id, $user_id);
+        if (!$set) {
+            return false;
+        }
+
+        return self::append_comment(
+            $set,
+            $asset_id,
+            $body,
+            $author ?: 'Team',
+            'Team reply',
+            $parent_id,
+            PCM_Automation_Events::APPROVAL_COMMENT_TEAM_REPLY
+        );
+    }
+
+    /**
+     * Determine which approved-id bucket an asset belongs to by scanning the
+     * snapshot. Returns 'approvedVisualIds' | 'approvedCopyIds' |
+     * 'approvedArticleIds' or null when the asset is not in the snapshot.
+     *
+     * @param array  $snapshot Snapshot array.
+     * @param string $asset_id Asset id.
+     * @return string|null
+     */
+    private static function bucket_for_asset(array $snapshot, string $asset_id): ?string
+    {
+        $map = array(
+            'media'    => 'approvedVisualIds',
+            'copy'     => 'approvedCopyIds',
+            'articles' => 'approvedArticleIds',
+        );
+        foreach ($map as $key => $bucket) {
+            if (!empty($snapshot[$key]) && is_array($snapshot[$key])) {
+                foreach ($snapshot[$key] as $item) {
+                    if (isset($item['id']) && (string) $item['id'] === $asset_id) {
+                        return $bucket;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether every asset in the snapshot has been approved.
+     *
+     * @param array $snapshot Snapshot array.
+     * @param array $feedback Feedback structure.
+     * @return bool True only when the set is non-empty and fully approved.
+     */
+    private static function is_fully_approved(array $snapshot, array $feedback): bool
+    {
+        $checks = array(
+            'media'    => 'approvedVisualIds',
+            'copy'     => 'approvedCopyIds',
+            'articles' => 'approvedArticleIds',
+        );
+
+        $total = 0;
+        foreach ($checks as $key => $bucket) {
+            $items = (!empty($snapshot[$key]) && is_array($snapshot[$key])) ? $snapshot[$key] : array();
+            $total += count($items);
+            $approved = array_map('strval', $feedback[$bucket] ?? array());
+            foreach ($items as $item) {
+                if (!isset($item['id']) || !in_array((string) $item['id'], $approved, true)) {
+                    return false;
                 }
             }
         }
 
-        // 2. Fallback to Global Settings
-        if (empty($webhook_url)) {
-            $webhook_url = PCM_Settings::get('global_webhook_url', '');
+        return $total > 0;
+    }
+
+    /**
+     * Approve / unapprove one asset, or approve everything. Persists immediately
+     * and, when the set becomes fully approved, advances it to 'launch' and
+     * dispatches the approval.all_approved event (idempotent — only on the
+     * transition into a post-submit status).
+     *
+     * @param string $token Share token.
+     * @param array  $args  { approveAll?: bool, assetId?: string, type?: string, approved?: bool }.
+     * @return object|false Updated set, or false if not found.
+     */
+    public static function approve_assets(string $token, array $args): object|false
+    {
+        $set = self::get_set_by_token($token);
+        if (!$set) {
+            return false;
         }
 
-        if (empty($webhook_url)) {
-            return; // Webhook URL not configured
+        // Locked once signed off — return the set unchanged.
+        if (in_array($set->status, self::POST_SUBMIT_STATUSES, true)) {
+            return $set;
         }
 
-        $payload = array(
-            'event'      => 'approval.completed',
-            'setId'      => (int)$set->id,
-            'setName'    => $set->name,
-            'token'      => $set->token,
-            'clientName' => $client_name,
-            'feedback'   => $feedback,
-            'timestamp'  => current_time('c'),
+        $snapshot = is_array($set->snapshot) ? $set->snapshot : array();
+        $feedback = self::feedback_struct($set);
+
+        if (!empty($args['approveAll'])) {
+            $feedback['approvedVisualIds']  = self::collect_ids($snapshot, 'media');
+            $feedback['approvedCopyIds']    = self::collect_ids($snapshot, 'copy');
+            $feedback['approvedArticleIds'] = self::collect_ids($snapshot, 'articles');
+        } else {
+            $asset_id = sanitize_text_field($args['assetId'] ?? '');
+            if ($asset_id === '') {
+                return $set;
+            }
+            $bucket = self::bucket_for_asset($snapshot, $asset_id);
+            if ($bucket === null) {
+                return $set;
+            }
+            $approved = array_map('strval', $feedback[$bucket]);
+            $is_on    = in_array($asset_id, $approved, true);
+            $want_on  = array_key_exists('approved', $args) ? (bool) $args['approved'] : !$is_on;
+
+            if ($want_on && !$is_on) {
+                $approved[] = $asset_id;
+            } elseif (!$want_on && $is_on) {
+                $approved = array_values(array_diff($approved, array($asset_id)));
+            }
+            $feedback[$bucket] = $approved;
+        }
+
+        self::save_feedback((int) $set->id, $feedback);
+
+        // Auto-advance into Launch when every asset is approved, and fire the
+        // Automations "set entered lane" trigger (same path as a kanban drag),
+        // so a "lane = Launch → webhook" rule runs exactly once on the transition.
+        if ($set->status !== 'launch' && self::is_fully_approved($snapshot, $feedback)) {
+            self::update_status_unscoped((int) $set->id, 'launch');
+            $set->status = 'launch';
+            self::fire_status_trigger($set, 'launch');
+        }
+
+        return self::get_set_by_token($token);
+    }
+
+    /**
+     * Collect snapshot asset ids for a bucket key.
+     *
+     * @param array  $snapshot Snapshot array.
+     * @param string $key      'media' | 'copy' | 'articles'.
+     * @return string[]
+     */
+    private static function collect_ids(array $snapshot, string $key): array
+    {
+        $ids = array();
+        if (!empty($snapshot[$key]) && is_array($snapshot[$key])) {
+            foreach ($snapshot[$key] as $item) {
+                if (isset($item['id'])) {
+                    $ids[] = (string) $item['id'];
+                }
+            }
+        }
+        return $ids;
+    }
+
+    /**
+     * Update status without an ownership check (internal, after we've already
+     * validated the set via token). Distinct from update_status() which is
+     * user-scoped for the team kanban.
+     *
+     * @param int    $set_id Set id.
+     * @param string $status New status (assumed valid).
+     * @return void
+     */
+    private static function update_status_unscoped(int $set_id, string $status): void
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update(
+            $table,
+            array('status' => $status, 'updatedAt' => current_time('mysql')),
+            array('id' => $set_id)
+        );
+    }
+
+    /**
+     * Share a set with a client: store the recipient email and dispatch the
+     * invite event (Brevo email). Ownership-scoped.
+     *
+     * @param int    $set_id  Set id.
+     * @param int    $user_id PCM user id (owner).
+     * @param string $email   Recipient email.
+     * @return object|false Updated set, or false if not found / invalid email.
+     */
+    public static function share_set(int $set_id, int $user_id, string $email): object|false
+    {
+        $email = sanitize_email($email);
+        if ($email === '' || !is_email($email)) {
+            return false;
+        }
+
+        $set = self::get_set_by_id($set_id, $user_id);
+        if (!$set) {
+            return false;
+        }
+
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+
+        $update = array('clientEmail' => $email, 'updatedAt' => current_time('mysql'));
+        // Sharing sends the set out for client review → move it into the
+        // "Awaiting Client Approval" lane, unless it has already advanced past it.
+        if (in_array($set->status, array('draft', 'internal'), true)) {
+            $update['status'] = 'client';
+            $set->status = 'client';
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update(
+            $table,
+            $update,
+            array('id' => $set_id, 'userId' => $user_id)
+        );
+        $set->clientEmail = $email;
+
+        // Remember the recipient on the brand so future shares auto-fill.
+        if (!empty($set->brandId)) {
+            PCM_DB::update_brand((int) $set->brandId, $user_id, array('clientEmail' => $email));
+        }
+
+        PCM_Automation_Engine::dispatch(
+            PCM_Automation_Events::APPROVAL_SET_SHARED,
+            self::build_event_context($set),
+            $user_id
         );
 
-        // Perform non-blocking outbound HTTP POST
-        wp_remote_post($webhook_url, array(
-            'headers'     => array('Content-Type' => 'application/json'),
-            'body'        => wp_json_encode($payload),
-            'timeout'     => 15,
-            'redirection' => 5,
-            'blocking'    => false, // Non-blocking
-        ));
+        return self::get_set_by_id($set_id, $user_id);
     }
 
     /**

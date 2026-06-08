@@ -180,6 +180,32 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     },
   });
 
+  // Shared cache utils (used to refetch when the set auto-advances to launch).
+  const utils = trpc.useUtils();
+
+  // Live per-asset approval — persists immediately so the server can
+  // auto-advance the set to 'launch' and fire the team webhook once every
+  // asset is approved (the server enforces idempotency).
+  const approveAssetMutation = trpc.approvals.approveAsset.useMutation({
+    onSuccess: (data: any) => {
+      if (data?.status && isPostSubmitStatus(data.status)) {
+        utils.approvals.getPublicSet.invalidate({ token });
+      }
+    },
+    onError: (err: any) => {
+      console.error('Failed to persist approval:', err.message);
+    },
+  });
+
+  // New client comment → notifies the team via webhook.
+  const addPublicCommentMutation = trpc.approvals.addPublicComment.useMutation({
+    onError: (err: any) => console.error('Failed to post comment:', err.message),
+  });
+  // New team reply → emails the client.
+  const addTeamCommentMutation = trpc.approvals.addTeamComment.useMutation({
+    onError: (err: any) => console.error('Failed to post reply:', err.message),
+  });
+
   // Toggles
   const handleToggleApprove = useCallback((id: string) => {
     if (isLocked || !set) return;
@@ -187,6 +213,15 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     // Check if ID belongs to media, copy, or article
     const isMedia = set.snapshot.media?.some((m: any) => m.id === id);
     const isArticle = set.snapshot.articles?.some((a: any) => a.id === id);
+
+    // Compute the next approval state so the server persists the same value.
+    const currentlyApproved = isMedia
+      ? approvedVisualIds.includes(id)
+      : isArticle
+        ? approvedArticleIds.includes(id)
+        : approvedCopyIds.includes(id);
+    const nextApproved = !currentlyApproved;
+
     if (isMedia) {
       setApprovedVisualIds((prev) =>
         prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
@@ -200,11 +235,29 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
       );
     }
-  }, [set, isLocked]);
 
-  // Thread change handler — receives the full updated thread array for an asset
+    // Persist immediately; the server flips the set to 'launch' + fires the
+    // team webhook when this completes full approval.
+    approveAssetMutation.mutate({ token, assetId: id, approved: nextApproved });
+  }, [set, isLocked, approvedVisualIds, approvedArticleIds, approvedCopyIds, token, approveAssetMutation]);
+
+  // New-comment handler — routes through the dedicated endpoint so the team
+  // (client comment) or client (team reply) is notified, and so the comment
+  // persists even after the set has left 'draft'.
+  const handleCommentAdded = useCallback((assetId: string, entry: CommentEntry) => {
+    if (!set || !entry.text?.trim()) return;
+    const parentId = entry.parentId ?? undefined;
+    if (isTeamMember) {
+      addTeamCommentMutation.mutate({ id: Number(set.id), assetId, body: entry.text, parentId });
+    } else {
+      addPublicCommentMutation.mutate({ token, assetId, body: entry.text, parentId, author: entry.author });
+    }
+  }, [set, token, isTeamMember, addTeamCommentMutation, addPublicCommentMutation]);
+
+  // Thread change handler — receives the full updated thread array for an asset.
+  // Intentionally NOT gated by isLocked: comment threads stay open for ongoing
+  // client/team conversation even after the set is submitted/launched.
   const handleThreadChange = useCallback((assetId: string, thread: CommentEntry[]) => {
-    if (isLocked) return;
     setComments((prev) => {
       if (thread.length === 0) {
         // Remove the key entirely if thread is empty
@@ -214,7 +267,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       }
       return { ...prev, [assetId]: thread };
     });
-  }, [isLocked]);
+  }, []);
 
   const handleApproveAll = useCallback(() => {
     if (isLocked || !set) return;
@@ -224,7 +277,9 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     setApprovedVisualIds(mediaIds);
     setApprovedCopyIds(copyIds);
     setApprovedArticleIds(articleIds);
-  }, [set, isLocked]);
+    // Persist + let the server advance to 'launch' and notify the team.
+    approveAssetMutation.mutate({ token, approveAll: true });
+  }, [set, isLocked, token, approveAssetMutation]);
 
   const handleSubmitReview = useCallback(() => {
     if (isLocked) return;
@@ -260,7 +315,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     });
   }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, submitMutation, isLocked]);
 
-  const utils = trpc.useUtils();
   const handleAssetUpdate = useCallback(() => {
     utils.approvals.getPublicSet.invalidate({ token });
   }, [utils, token]);
@@ -360,26 +414,10 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     );
   }
 
-  if (isLocked && !isTeamMember) {
-    return (
-      <div className="pcm-state-wrapper">
-        <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
-        <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
-        <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
-        <div className="pcm-state-center">
-          <div className="pcm-state-card">
-            <div className="pcm-state-icon-circle">
-              <Check className="pcm-state-icon pcm-state-icon-success" />
-            </div>
-            <h2 className="pcm-state-heading">Feedback inskickad!</h2>
-            <p className="pcm-state-body">
-              Tack! Dina godkännanden har skickats till teamet.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Intentionally NO full-screen "thank you" takeover when the set is locked.
+  // The client keeps access to the board (approvals become read-only) so they
+  // can still open asset threads and continue the conversation after approval.
+  // A banner (rendered below) communicates the locked/approved state.
 
   const primaryMediaUrl = mediaAssets[0]?.url || '';
   const brandName = set.snapshot.brandName || 'Client Board';
@@ -392,6 +430,24 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       <div className="pcm-glow pcm-glow-1" aria-hidden="true" />
       <div className="pcm-glow pcm-glow-2" aria-hidden="true" />
       <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
+
+      {/* Locked/approved banner — board stays accessible so the client can
+          continue commenting even after submitting/approving. */}
+      {isLocked && (
+        <div style={{ maxWidth: 1280, width: '100%', margin: '0 auto', padding: '14px 28px 0' }}>
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              background: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.30)',
+              color: '#065f46', borderRadius: 12, padding: '10px 16px', fontSize: 13, fontWeight: 500,
+            }}
+          >
+            <Check className="w-4 h-4" style={{ flexShrink: 0 }} />
+            <span>This set has been approved and sent to the team. You can still open any asset to read and add comments.</span>
+          </div>
+        </div>
+      )}
+
       {/* Hero Header */}
       <section className="pcm-hero max-w-[1280px] w-full mx-auto px-7 pt-12 pb-5 select-none">
         <div className="pcm-hero-eyebrow">
@@ -504,10 +560,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           type={activeAssetForComment.type}
           thread={comments[activeAssetForComment.id] || []}
           authorName={clientName || (isTeamMember ? 'Team' : 'Client')}
-          isReadOnly={isReadOnly}
+          // Comments stay open even after submit/launch so the client and team
+          // can keep the conversation going (approvals themselves remain locked).
+          isReadOnly={false}
           isTeamMember={isTeamMember}
           onClose={() => setActiveAssetIdForComment(null)}
           onThreadChange={handleThreadChange}
+          onCommentAdded={handleCommentAdded}
         />
       )}
     </div>

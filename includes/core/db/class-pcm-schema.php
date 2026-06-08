@@ -286,6 +286,7 @@ class PCM_Schema
             niche varchar(256) DEFAULT NULL,
             location varchar(512) DEFAULT NULL,
             phone varchar(100) DEFAULT NULL,
+            clientEmail varchar(256) DEFAULT NULL,
             businessSummary text DEFAULT NULL,
             language varchar(50) DEFAULT NULL,
             description text DEFAULT NULL,
@@ -474,6 +475,7 @@ class PCM_Schema
             name varchar(256) NOT NULL,
             token varchar(128) NOT NULL,
             status varchar(50) DEFAULT 'draft' NOT NULL,
+            clientEmail varchar(256) DEFAULT NULL,
             snapshot longtext NOT NULL,
             reviewFeedback longtext DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -482,6 +484,65 @@ class PCM_Schema
             UNIQUE KEY idx_token (token),
             KEY idx_userId (userId),
             KEY idx_brandId (brandId)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // ── Automations ──
+        // User-defined IF-THEN rules for the Automations module. Each row binds
+        // a `triggerId` (e.g. 'approvals.set_status_changed') + JSON `conditions`
+        // (e.g. {"status":"launch"}) to an `actionId` (e.g. 'webhook') + JSON
+        // `config` (e.g. {"url":"…","secret":"…"}). An optional `brandId` scopes
+        // a rule to one brand; NULL = account-wide. `triggerId`/`actionId` avoid
+        // the SQL reserved words `trigger`/`action`. The legacy `event`/`channel`
+        // columns (v1.14.0) are retained for the built-in approval notifications
+        // and are nullable for rule rows.
+        $sql = "CREATE TABLE {$prefix}automations (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            userId int(11) NOT NULL,
+            brandId int(11) DEFAULT NULL,
+            name varchar(191) DEFAULT NULL,
+            triggerId varchar(64) DEFAULT NULL,
+            conditions longtext DEFAULT NULL,
+            actionId varchar(64) DEFAULT NULL,
+            inputMapping longtext DEFAULT NULL,
+            event varchar(64) DEFAULT NULL,
+            channel varchar(32) DEFAULT NULL,
+            config longtext DEFAULT NULL,
+            isActive tinyint(1) DEFAULT 1 NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_userId (userId),
+            KEY idx_triggerId (triggerId)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // v1.15.0: the v1.14.0 table created event/channel as NOT NULL. dbDelta
+        // cannot relax nullability, so ALTER them to DEFAULT NULL on existing
+        // installs (rule rows use triggerId/actionId, not event/channel).
+        self::migrate_automations_columns($prefix);
+
+        // ── Automation Logs ──
+        // Append-only dispatch audit trail. Powers idempotency checks
+        // (e.g. fire `approval.all_approved` only once per set) and debugging.
+        // Stores a `payloadHash` (sha256), never the raw payload or secrets.
+        $sql = "CREATE TABLE {$prefix}automation_logs (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            userId int(11) NOT NULL,
+            automationId int(11) DEFAULT NULL,
+            event varchar(64) NOT NULL,
+            channel varchar(32) NOT NULL,
+            target varchar(255) DEFAULT NULL,
+            dedupeKey varchar(191) DEFAULT NULL,
+            payloadHash char(64) DEFAULT NULL,
+            status varchar(16) NOT NULL,
+            httpCode int(11) DEFAULT NULL,
+            error text DEFAULT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_userId (userId),
+            KEY idx_event (event),
+            KEY idx_dedupeKey (dedupeKey)
         ) $charset_collate;";
         dbDelta($sql);
     }
@@ -613,6 +674,39 @@ class PCM_Schema
             if ($col['Field'] === 'projectId' && $col['Null'] === 'NO') {
                 $wpdb->query("ALTER TABLE {$table} MODIFY `projectId` int(11) DEFAULT NULL");
                 break;
+            }
+        }
+    }
+
+    /**
+     * Relax automations.event / .channel to nullable (v1.15.0).
+     *
+     * The v1.14.0 table created these NOT NULL. User-defined rule rows use
+     * triggerId/actionId instead, so event/channel must be nullable. dbDelta
+     * cannot change nullability, so ALTER explicitly. Idempotent + best-effort
+     * (skips columns already nullable). Note: PCM_Automation_Engine::create_rule
+     * also mirrors triggerId/actionId into event/channel, so inserts succeed even
+     * where the driver does not support the ALTER.
+     *
+     * @param string $prefix Table prefix.
+     * @return void
+     */
+    private static function migrate_automations_columns(string $prefix): void
+    {
+        global $wpdb;
+
+        $table = "{$prefix}automations";
+        $columns = $wpdb->get_results("SHOW COLUMNS FROM {$table}", ARRAY_A);
+        if (empty($columns)) {
+            return;
+        }
+
+        foreach ($columns as $col) {
+            if ($col['Field'] === 'event' && $col['Null'] === 'NO') {
+                $wpdb->query("ALTER TABLE {$table} MODIFY `event` varchar(64) DEFAULT NULL");
+            }
+            if ($col['Field'] === 'channel' && $col['Null'] === 'NO') {
+                $wpdb->query("ALTER TABLE {$table} MODIFY `channel` varchar(32) DEFAULT NULL");
             }
         }
     }
@@ -835,6 +929,8 @@ class PCM_Schema
 
         $prefix = self::prefix();
         $tables = array(
+            'automation_logs',
+            'automations',
             'approval_sets',
             'deliveries',
             'sites',

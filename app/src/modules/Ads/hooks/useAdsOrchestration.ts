@@ -175,15 +175,24 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     const config = window.pcmConfig ?? { restUrl: '/wp-json/pcm/v1/', nonce: '' };
     const url = `${config.restUrl}copy/generate`;
 
-    // Build payload matching Copy controller's expected input
-    const payloadParams = resolveGenerationPayload({
-      contextData: params.contextData,
-      formValues: params.formValues,
-      sessionReferenceImages: params.sessionReferenceImages,
-    });
-    
-    // Build payload matching Copy controller's expected input
-    // Uses dynamic audiences/angles/copyTypes from user selections
+    // Brand toggles — same source the image phase uses (line ~295). Controls
+    // which brand signals are included, matching the standalone Copy module.
+    const toggles = { ...DEFAULT_BRAND_TOGGLES, ...params.contextData.brandToggles };
+
+    // Toggle-aware form values — mirror Copy: drop the business summary when the
+    // user has toggled it off, and inject the brief under the key the Copy
+    // service reads (`creativeBrief`).
+    const finalFormValues: Record<string, string | number | undefined> = {
+      ...params.formValues,
+      creativeBrief: params.brief,
+    };
+    if (!toggles.useSummary) {
+      finalFormValues.business_summary = '';
+    }
+
+    // Build the payload to MATCH the standalone Copy module's /copy/generate
+    // request, so Ads gets the same audience market-research grounding (the real
+    // driver of brand-specific copy). Only `module: 'ads'` differs (set below).
     const input = {
       copyTypes: params.copyTypes.length > 0 ? params.copyTypes : [ADS_DEFAULTS.copyType],
       audiences: params.audiences.mode === 'manual' && params.audiences.items?.length
@@ -193,15 +202,13 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
         ? { mode: 'manual' as const, items: params.angles.items }
         : { mode: 'auto' as const, count: params.angles.count },
       modelId: params.textModelId,
-      formValues: {
-        ...params.formValues,
-        // Map to 'creativeBrief' — the key extract_brief() reads in Copy service.
-        // Using 'brief' was silently dropped, causing brand-only copy output.
-        creativeBrief: params.brief,
-      },
+      formValues: finalFormValues,
+      // Audience market research — standalone Copy sends these; Ads previously
+      // omitted them, so its audiences (and copy) were generated without
+      // grounding and read generically. Default on, matching the Copy tab.
+      useResearch: true,
+      researchModelId: settings.defaultCopyResearchModel ?? '',
       scope: 'all_types' as const,
-      // Pass the resolved brand context (though copy might reconstruct it)
-      brandContext: payloadParams.brandContext,
     };
 
     const response = await fetch(url, {

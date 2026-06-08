@@ -69,6 +69,12 @@ class PCM_REST_Approvals extends PCM_REST_Base
             array('GET',   '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)', 'get_public_set',      array(), 'public'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/review', 'submit_public_review', array(), 'public'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/draft', 'save_public_draft', array(), 'public'),
+            // Public client actions (token-scoped, rate-limited inside the handler).
+            array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/comment', 'add_public_comment', array(), 'public'),
+            array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/approve', 'approve_public', array(), 'public'),
+            // Authenticated team actions (ownership-scoped).
+            array('POST',  '/approvals/sets/(?P<id>\d+)/reply', 'add_team_reply', array(), 'edit_posts'),
+            array('POST',  '/approvals/sets/(?P<id>\d+)/share', 'share_set', array(), 'edit_posts'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/assets/(?P<asset_id>[a-zA-Z0-9_-]+)', 'update_snapshot_asset', array(), 'public'),
         );
     }
@@ -316,5 +322,179 @@ class PCM_REST_Approvals extends PCM_REST_Base
         } catch (\Throwable $e) {
             return $this->error('Failed to update snapshot asset: ' . $e->getMessage(), 500);
         }
+    }
+
+    /**
+     * Client adds a comment to an asset thread (public, token-scoped).
+     *
+     * POST /approvals/sets/{token}/comment  body: { assetId, body, parentId?, author? }
+     */
+    public function add_public_comment(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        if ($this->is_rate_limited('comment')) {
+            return $this->error('Too many requests. Please slow down.', 429, 'pcm_rate_limited');
+        }
+
+        $token  = sanitize_key($request->get_param('token'));
+        $params = $request->get_json_params() ?: array();
+
+        $asset_id = sanitize_text_field($params['assetId'] ?? '');
+        $body     = sanitize_textarea_field($params['body'] ?? '');
+
+        if ($asset_id === '' || $body === '') {
+            return $this->error('assetId and body are required.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $comment = PCM_Approvals_Service::add_public_comment(
+                $token,
+                $asset_id,
+                $body,
+                isset($params['author']) ? sanitize_text_field($params['author']) : null,
+                isset($params['parentId']) ? sanitize_text_field($params['parentId']) : null
+            );
+
+            if ($comment === false) {
+                return $this->not_found('Approval Set');
+            }
+            return $this->success($comment, 201);
+        } catch (\Throwable $e) {
+            return $this->error('Failed to add comment: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Client approves/unapproves an asset or approves all (public, token-scoped).
+     *
+     * POST /approvals/sets/{token}/approve  body: { approveAll? } | { assetId, type?, approved? }
+     */
+    public function approve_public(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        if ($this->is_rate_limited('approve')) {
+            return $this->error('Too many requests. Please slow down.', 429, 'pcm_rate_limited');
+        }
+
+        $token  = sanitize_key($request->get_param('token'));
+        $params = $request->get_json_params() ?: array();
+
+        require_once __DIR__ . '/service.php';
+
+        $args = array();
+        if (!empty($params['approveAll'])) {
+            $args['approveAll'] = true;
+        } else {
+            $args['assetId'] = sanitize_text_field($params['assetId'] ?? '');
+            if ($args['assetId'] === '') {
+                return $this->error('assetId (or approveAll) is required.');
+            }
+            if (array_key_exists('approved', $params)) {
+                $args['approved'] = (bool) $params['approved'];
+            }
+        }
+
+        try {
+            $set = PCM_Approvals_Service::approve_assets($token, $args);
+            if ($set === false) {
+                return $this->not_found('Approval Set');
+            }
+            return $this->success($set);
+        } catch (\Throwable $e) {
+            return $this->error('Failed to update approval: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Team member replies in a comment thread (authenticated, ownership-scoped).
+     *
+     * POST /approvals/sets/{id}/reply  body: { assetId, body, parentId? }
+     */
+    public function add_team_reply(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $id       = (int) $request->get_param('id');
+        $params   = $request->get_json_params() ?: array();
+
+        $asset_id = sanitize_text_field($params['assetId'] ?? '');
+        $body     = sanitize_textarea_field($params['body'] ?? '');
+
+        if ($id <= 0 || $asset_id === '' || $body === '') {
+            return $this->error('Set id, assetId and body are required.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $comment = PCM_Approvals_Service::add_team_comment(
+                $id,
+                (int) $pcm_user->id,
+                $asset_id,
+                $body,
+                $pcm_user->name ?: 'Team',
+                isset($params['parentId']) ? sanitize_text_field($params['parentId']) : null
+            );
+
+            if ($comment === false) {
+                return $this->not_found('Approval Set');
+            }
+            return $this->success($comment, 201);
+        } catch (\Throwable $e) {
+            return $this->error('Failed to add reply: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Share a set with a client by email (authenticated, ownership-scoped).
+     *
+     * POST /approvals/sets/{id}/share  body: { email }
+     */
+    public function share_set(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $id       = (int) $request->get_param('id');
+        $params   = $request->get_json_params() ?: array();
+        $email    = sanitize_email($params['email'] ?? '');
+
+        if ($id <= 0 || $email === '' || !is_email($email)) {
+            return $this->error('A valid email is required.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $set = PCM_Approvals_Service::share_set($id, (int) $pcm_user->id, $email);
+            if ($set === false) {
+                return $this->not_found('Approval Set');
+            }
+            return $this->success($set);
+        } catch (\Throwable $e) {
+            return $this->error('Failed to share set: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Lightweight per-IP rate limit for the public client endpoints, mirroring
+     * the shortcode gate's transient pattern. Returns true when the caller has
+     * exceeded the window and should be rejected.
+     *
+     * @param string $bucket Logical bucket name (e.g. 'comment', 'approve').
+     * @return bool
+     */
+    private function is_rate_limited(string $bucket): bool
+    {
+        $max    = 40;   // requests
+        $window = 300;  // seconds (5 min)
+
+        $ip  = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown';
+        $key = 'pcm_ap_rl_' . $bucket . '_' . md5($ip);
+
+        $count = (int) get_transient($key);
+        if ($count >= $max) {
+            return true;
+        }
+
+        set_transient($key, $count + 1, $window);
+        return false;
     }
 }

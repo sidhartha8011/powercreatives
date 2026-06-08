@@ -65,6 +65,18 @@ class PCM_Settings
         'shortcode_cookie_lifetime' => 604800,
         // Whether to apply rate limiting (5 attempts / 15 min / IP) on the login form
         'shortcode_rate_limit_enabled' => true,
+
+        // ── Automations module (v1.14.0) ────────────────────────────
+        // Default outbound webhook URL used when a brand has no override and
+        // no explicit automation rule is configured. (Previously read as an
+        // implicit key by the Approvals webhook — now declared for the UI.)
+        'global_webhook_url' => '',
+        // Optional HMAC secret. When set, webhooks are signed with
+        // X-PCM-Signature: sha256=<hmac(secret, body)> so receivers can verify.
+        'automations_webhook_secret' => '',
+        // Sender identity for Brevo transactional emails.
+        'automations_from_email' => '',
+        'automations_from_name' => 'Power Creatives',
     );
 
     /**

@@ -247,7 +247,7 @@ export function AdsModule() {
             <div className="flex items-center gap-3 bg-muted/50 border border-border px-4 py-1.5 rounded-full">
               <Loader2 className="w-3 h-3 text-primary animate-spin" />
               <span className="text-xs font-medium text-muted-foreground truncate max-w-[200px]">
-                {orchestration.progress?.message || 'Generating...'}
+                {orchestration.progress?.label || 'Generating...'}
               </span>
               {orchestration.progress && orchestration.progress.total > 0 && (
                 <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
@@ -365,6 +365,7 @@ export function AdsModule() {
         projectId={contextData.brand ? (contextData.brand as any).projectId : null}
         brandName={contextData.brand ? contextData.brand.name : null}
         brandLogoUrl={contextData.brand ? (getBrandLogo(contextData.brand as any)?.url ?? null) : null}
+        brandClientEmail={contextData.brand ? ((contextData.brand as any).clientEmail ?? null) : null}
       />
       </div>
     </div>

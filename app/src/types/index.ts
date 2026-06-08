@@ -57,7 +57,7 @@ export interface AIModel {
 // Module Types
 // ============================================
 
-export type ModuleId = 'deliveries' | 'projects' | 'assets' | 'copy' | 'image' | 'video' | 'text' | 'brands' | 'templates' | 'settings' | 'integrations' | 'keywords' | 'writer' | 'strategies' | 'sites' | 'approvals' | 'ads';
+export type ModuleId = 'deliveries' | 'projects' | 'assets' | 'copy' | 'image' | 'video' | 'text' | 'brands' | 'templates' | 'settings' | 'integrations' | 'keywords' | 'writer' | 'strategies' | 'sites' | 'approvals' | 'ads' | 'automations';
 
 export interface ModuleConfig {
   id: ModuleId;
