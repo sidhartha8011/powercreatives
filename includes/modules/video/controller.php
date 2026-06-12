@@ -24,6 +24,11 @@ if (!defined('ABSPATH')) {
 
 class PCM_REST_Video extends PCM_REST_Base
 {
+    // Work module — usable by non-admin team members (assigned access).
+    protected string $default_capability = 'edit_posts';
+    // Per-delivery module grant ids (see PCM_REST_Base::$module_grant_keys).
+    protected array $module_grant_keys = array('video');
+
 
     /**
      * Service instance — holds video generation business logic.
@@ -125,6 +130,11 @@ PROMPT;
                 array('POST', '/video/enhance-prompt', 'enhance_prompt'),
                 array('POST', '/video/compose-prompt', 'compose_prompt'),
                 array('POST', '/video/generate', 'generate'),
+                // Async pair for Kie.ai models — shared hosting kills the
+                // blocking generate poll loop (up to 600s), so: create the
+                // task, poll cheaply, persist on completion.
+                array('POST', '/video/generate-task', 'create_generation_task'),
+                array('POST', '/video/task-result', 'get_generation_result'),
                 array('POST', '/video/status', 'check_status'),
                 array('GET', '/video/capabilities', 'get_capabilities'),
         );
@@ -547,6 +557,149 @@ PROMPT;
      * @param WP_REST_Request $request
      * @return WP_REST_Response|WP_Error
      */
+    /**
+     * POST /video/generate-task — create an async Kie.ai video task.
+     * Same validation/normalization as generate(); returns { taskId, prompt }
+     * immediately so shared-hosting request timeouts can't kill the run.
+     */
+    public function create_generation_task(WP_REST_Request $request)
+    {
+        $user   = $this->get_current_pcm_user();
+        $params = $request->get_json_params() ?? array();
+
+        $prompt   = $params['prompt'] ?? '';
+        $model_id = $params['modelId'] ?? $params['model'] ?? null;
+        $provider = $params['provider'] ?? null;
+        $duration = $params['duration'] ?? null;
+        $format   = $params['format'] ?? '16:9';
+        $input_urls = $params['inputUrls'] ?? [];
+        if (empty($input_urls) && !empty($params['inputUrl'])) {
+            $input_urls = [$params['inputUrl']];
+        }
+
+        if (empty($prompt)) {
+            return $this->error('Prompt is required.');
+        }
+        if (empty($model_id)) {
+            return $this->error('Model is required. Send "model" or "modelId" in the request body.');
+        }
+        if ($provider !== 'kieai') {
+            return $this->error('Async generation is only available for Kie.ai models.', 400, 'pcm_async_unsupported');
+        }
+
+        $format_map   = array('landscape' => '16:9', 'portrait' => '9:16', 'square' => '1:1');
+        $aspect_ratio = $format_map[strtolower((string) $format)] ?? $format;
+
+        try {
+            $api_key  = $this->get_provider_api_key($provider, $user->id);
+            $instance = PCM_Provider_Registry::get($provider, $api_key);
+            $task     = $instance->create_video_task((string) $model_id, array(
+                'prompt'      => $prompt,
+                'aspectRatio' => $aspect_ratio,
+                'format'      => $format,
+                'duration'    => $duration,
+                'inputUrls'   => $input_urls,
+            ));
+
+            return $this->success(array(
+                'taskId' => (string) $task['taskId'],
+                'prompt' => $prompt,
+            ), 201);
+        } catch (\Exception $e) {
+            return $this->error($e->getMessage(), 500, 'pcm_generation_error');
+        }
+    }
+
+    /**
+     * POST /video/task-result — poll an async Kie.ai video task.
+     * On completion runs the SAME fail-soft persistence tail as generate():
+     * media-library store + pcm asset row, response always carries a playable
+     * URL. processing/failed mirror the image module's contract.
+     */
+    public function get_generation_result(WP_REST_Request $request)
+    {
+        $user   = $this->get_current_pcm_user();
+        $params = $request->get_json_params() ?? array();
+
+        $task_id  = sanitize_text_field($params['taskId'] ?? '');
+        $model_id = sanitize_text_field($params['modelId'] ?? $params['model'] ?? '');
+        $provider = sanitize_text_field($params['provider'] ?? 'kieai');
+        $prompt   = $params['prompt'] ?? '';
+        $duration = $params['duration'] ?? null;
+        $format   = $params['format'] ?? '16:9';
+
+        if ($task_id === '') {
+            return $this->error('taskId is required.', 400, 'pcm_missing_task');
+        }
+
+        $format_map   = array('landscape' => '16:9', 'portrait' => '9:16', 'square' => '1:1');
+        $aspect_ratio = $format_map[strtolower((string) $format)] ?? $format;
+
+        try {
+            $api_key = $this->get_provider_api_key($provider, $user->id);
+            $status  = PCM_Kie_Api::get_task_status($api_key, $task_id, $model_id ?: null);
+
+            if (($status['status'] ?? '') === 'failed') {
+                return $this->success(array(
+                    'status' => 'failed',
+                    'error'  => (string) ($status['error'] ?? __('Generation failed.', 'power-creatives')),
+                ));
+            }
+
+            if (($status['status'] ?? '') !== 'completed') {
+                return $this->success(array(
+                    'status'   => 'processing',
+                    'progress' => $status['progress'] ?? null,
+                ));
+            }
+
+            $video_url = $status['url'] ?? ($status['urls'][0] ?? '');
+            if (empty($video_url)) {
+                return $this->success(array(
+                    'status' => 'failed',
+                    'error'  => __('The model completed without returning a video.', 'power-creatives'),
+                ));
+            }
+
+            // Fail-soft persistence — mirrors generate(): storage problems
+            // never block the playable external URL from reaching the user.
+            $attachment_id = null;
+            try {
+                $saved = $this->service->persist_video($video_url, $model_id, $provider, $prompt, array(
+                    'duration'     => $duration,
+                    'format'       => $format,
+                    'aspect_ratio' => $aspect_ratio,
+                ));
+                $video_url     = $saved['url'];
+                $attachment_id = $saved['id'];
+            } catch (\Exception $storage_error) {
+                error_log('PCM Video Storage (async): failed to persist — ' . $storage_error->getMessage());
+            }
+
+            $asset_id = null;
+            try {
+                $asset = $this->service->save_asset($user->id, $prompt, $model_id, $provider, $video_url, array(
+                    'duration'     => $duration,
+                    'format'       => $format,
+                    'aspect_ratio' => $aspect_ratio,
+                ));
+                $asset_id = $asset['id'];
+            } catch (\Exception $asset_error) {
+                error_log('PCM Video Asset (async): failed to save to pcm_assets — ' . $asset_error->getMessage());
+            }
+
+            return $this->success(array(
+                'status'       => 'completed',
+                'success'      => true,
+                'url'          => $video_url,
+                'attachmentId' => $attachment_id,
+                'assetId'      => $asset_id,
+            ));
+        } catch (\Exception $e) {
+            return $this->error($e->getMessage(), 500, 'pcm_generation_error');
+        }
+    }
+
     public function generate(WP_REST_Request $request)
     {
         $user = $this->get_current_pcm_user();

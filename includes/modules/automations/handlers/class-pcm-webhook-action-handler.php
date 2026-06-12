@@ -50,6 +50,18 @@ class PCM_Webhook_Action_Handler implements PCM_Automation_Action_Handler
                 'status' => (string) ($context['status'] ?? ''),
                 'setId'  => isset($context['setId']) ? (int) $context['setId'] : null,
             );
+            // Enrichment keys (approvals comment/approval triggers): included
+            // when the trigger provides them, so the default webhook carries
+            // brand/delivery/project context + deep links without any mapping.
+            foreach (array(
+                'brandId', 'brandName', 'deliveryId', 'deliveryName',
+                'projectId', 'projectName', 'projectAssignee',
+                'commentUrl', 'dashboardUrl', 'author', 'body', 'assetId',
+            ) as $key) {
+                if (isset($context[$key]) && $context[$key] !== '') {
+                    $payload[$key] = (string) $context[$key];
+                }
+            }
         }
 
         // Reuse the signed, non-blocking webhook channel for transport.

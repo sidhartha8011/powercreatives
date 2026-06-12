@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
+import { runKieTask } from '@/lib/kieTask';
 import { toast } from 'sonner';
 import { STYLE_PRESETS, ASPECT_RATIOS } from '@/modules/Image/imageConfig';
 
@@ -51,6 +52,9 @@ export function useWriterImageGeneration(initialContext: string = ''): UseWriter
     }, [selectedModel, imageModels]);
 
     const generateImageMutation = trpc.image.generate.useMutation();
+    // Async pair for Kie.ai models (blocking generate dies on shared hosting).
+    const createImageTaskMutation = trpc.image.createTask.useMutation();
+    const imageTaskResultMutation = trpc.image.taskResult.useMutation();
     const suggestMutation = trpc.image.generateSuggestions.useMutation();
 
     const suggestPrompt = useCallback(async (contextText: string) => {
@@ -103,7 +107,7 @@ export function useWriterImageGeneration(initialContext: string = ''): UseWriter
                 ? prompt 
                 : `${styleObj.prefix} ${prompt} ${styleObj.suffix}`.trim();
 
-            const result = await generateImageMutation.mutateAsync({
+            const payload = {
                 prompt: fullPrompt,
                 model: selectedModel,
                 provider,
@@ -112,7 +116,14 @@ export function useWriterImageGeneration(initialContext: string = ''): UseWriter
                 aspectRatio: selectedRatio, // Pass string ratio as well for flexbility
                 negativePrompt: styleObj.negativePrompt,
                 style: selectedStyle
-            }) as GenerateImageResult;
+            };
+            const result = (provider === 'kieai'
+                ? (await runKieTask({
+                    createTask: () => createImageTaskMutation.mutateAsync(payload) as Promise<{ taskId: string; prompt?: string }>,
+                    pollTask: (body) => imageTaskResultMutation.mutateAsync(body) as Promise<any>,
+                    payload,
+                })).asset
+                : await generateImageMutation.mutateAsync(payload)) as GenerateImageResult;
 
             const url = result?.url;
             if (url) {
@@ -125,7 +136,7 @@ export function useWriterImageGeneration(initialContext: string = ''): UseWriter
         } finally {
             setIsGenerating(false);
         }
-    }, [prompt, selectedModel, selectedStyle, selectedRatio, imageModels, generateImageMutation]);
+    }, [prompt, selectedModel, selectedStyle, selectedRatio, imageModels, generateImageMutation, createImageTaskMutation, imageTaskResultMutation]);
 
     return {
         prompt,

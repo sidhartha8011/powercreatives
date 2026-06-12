@@ -101,6 +101,11 @@ export function VideoModule() {
   const generateConceptsMutation = trpc.video.generateConcepts.useMutation();
   const composePromptMutation = trpc.video.composePrompt.useMutation();
   const generateVideoMutation = trpc.video.generate.useMutation();
+  // Async pair for Kie.ai models: the blocking /video/generate poll loop
+  // (up to 600s) gets killed by shared hosts' request timeouts. Create the
+  // task, then poll a cheap status endpoint instead.
+  const createVideoTaskMutation = trpc.video.createTask.useMutation();
+  const videoTaskResultMutation = trpc.video.taskResult.useMutation();
   const { data: videoCapabilities } = trpc.video.getCapabilities.useQuery();
 
 
@@ -395,8 +400,7 @@ export function VideoModule() {
             setVideos(prev => [...prev, placeholderVideo]);
 
             try {
-              // Generate video using tRPC
-              const result = await generateVideoMutation.mutateAsync({
+              const payload = {
                 prompt: version.prompt ?? version.description,
                 model: modelId,
                 // Provider from model registry — same pattern as Image module.
@@ -412,7 +416,41 @@ export function VideoModule() {
                 voiceoverScript: generateAudio && voiceoverScript ? voiceoverScript : undefined,
                 textOverlayContent: textOverlay.isActive && textOverlay.text ? textOverlay.text : undefined,
                 textOverlayPlacement: textOverlay.isActive ? textOverlay.placement : undefined,
-              });
+              };
+
+              let result: any;
+              if (model?.provider === 'kieai') {
+                // Async path: create task, poll every 10s (videos take
+                // minutes), 20-minute cap, tolerate transient poll errors.
+                const task: any = await createVideoTaskMutation.mutateAsync(payload);
+                const deadline = Date.now() + 20 * 60_000;
+                let pollErrors = 0;
+                result = null;
+                while (Date.now() < deadline) {
+                  await new Promise(r => setTimeout(r, 10_000));
+                  let poll: any;
+                  try {
+                    poll = await videoTaskResultMutation.mutateAsync({
+                      ...payload,
+                      prompt: task.prompt ?? payload.prompt,
+                      taskId: task.taskId,
+                    });
+                  } catch (pollError) {
+                    if (++pollErrors >= 3) throw pollError;
+                    continue;
+                  }
+                  pollErrors = 0;
+                  if (poll.status === 'completed') { result = poll; break; }
+                  if (poll.status === 'failed') {
+                    throw new Error(poll.error || 'Generation failed.');
+                  }
+                }
+                if (!result) {
+                  throw new Error('Timed out after 20 minutes — the task may still finish on Kie.ai.');
+                }
+              } else {
+                result = await generateVideoMutation.mutateAsync(payload);
+              }
 
               // Update with generated video.
               // CRITICAL: Capture result.assetId (DB autoincrement from pcm_assets)
@@ -753,6 +791,7 @@ export function VideoModule() {
 
             {/* Brand / URL / Theme Context — shared ContextPanel */}
             <ContextPanel
+              moduleId="video"
               value={contextData}
               onChange={setContextData}
             />

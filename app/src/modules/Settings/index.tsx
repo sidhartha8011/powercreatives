@@ -37,6 +37,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { ModelRegistrySection } from './ModelRegistrySection';
 import { PromptEditorSection } from './PromptEditorSection';
+import { DeliveryTypesSection } from './DeliveryTypesSection';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -97,6 +98,7 @@ export function SettingsModule() {
           <TabsTrigger value="registry">Model Registry</TabsTrigger>
           <TabsTrigger value="defaults">Module Defaults</TabsTrigger>
           <TabsTrigger value="prompts">Prompts</TabsTrigger>
+          <TabsTrigger value="delivery-types">Delivery Types</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
         </TabsList>
 
@@ -378,6 +380,13 @@ export function SettingsModule() {
             </section>
 
           </div>
+        </TabsContent>
+
+        {/* ── Tab: Delivery Types ─────────────────────────────── */}
+        <TabsContent value="delivery-types">
+          <section className="card-powerkeys p-5">
+            <DeliveryTypesSection />
+          </section>
         </TabsContent>
 
         {/* ── Tab: Prompts ────────────────────────────────────── */}

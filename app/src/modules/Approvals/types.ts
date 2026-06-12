@@ -85,6 +85,10 @@ export interface ApprovalSet {
   userId: number;
   brandId?: number | null;
   projectId?: number | null;
+  /** Delivery picked in the share dialog (v1.20). */
+  deliveryId?: number | null;
+  /** Resolved client-side from deliveries.list for the board filter. */
+  deliveryName?: string | null;
   name: string;
   token: string;
   status: ApprovalStatus;

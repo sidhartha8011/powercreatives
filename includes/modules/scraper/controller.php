@@ -26,6 +26,10 @@ if (!defined('ABSPATH')) {
 
 class PCM_REST_Scraper extends PCM_REST_Base
 {
+    // Admin-only: these routes fetch arbitrary caller-supplied URLs server-side
+    // (SSRF surface). Not in the user-facing work-module set (brand/copy
+    // "Fetch Info" use their own module routes), so it stays manage_options.
+
 
     /**
      * Service instance — holds all business logic.

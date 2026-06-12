@@ -28,6 +28,93 @@ class PCM_Deliveries_Service
      *
      * @var string[]
      */
+    /**
+     * Module ids (frontend nav ids) a delivery can grant to its assignees.
+     * 'ads' implies the copy+image backends (Ads is a frontend over both) —
+     * see the controllers' $module_grant_keys.
+     */
+    public const GRANTABLE_MODULES = ['copy', 'image', 'video', 'writer', 'keywords', 'strategies', 'sites', 'ads'];
+
+    /**
+     * Central delivery-type → module-preset mapping. Picking a type when
+     * creating/editing a delivery pre-fills its `modules` grants. THIS is the
+     * single place to extend as new types/modules are added; module ids must
+     * stay within GRANTABLE_MODULES. Filterable for site-specific overrides.
+     */
+    public const TYPE_PRESETS = [
+        'seo'        => ['label' => 'SEO',        'modules' => ['writer', 'keywords', 'strategies', 'sites']],
+        'google_ads' => ['label' => 'Google Ads', 'modules' => ['ads', 'copy', 'image', 'keywords']],
+        'meta_ads'   => ['label' => 'Meta Ads',   'modules' => ['ads', 'copy', 'image']],
+    ];
+
+    /** PCM_Settings key holding the admin-customized presets (Settings UI). */
+    public const TYPE_PRESETS_SETTING = 'delivery_type_presets';
+
+    /**
+     * Resolved type presets: the admin-customized setting when present and
+     * valid, else the built-in TYPE_PRESETS. Stored values are normalized on
+     * read (keys sanitized, labels text-sanitized, modules whitelisted) so a
+     * bad/legacy option blob can never reach SQL or the UI raw. Filterable
+     * via 'pcm_delivery_type_presets'.
+     *
+     * @return array<string, array{label: string, modules: string[]}>
+     */
+    public static function type_presets(): array
+    {
+        $stored  = class_exists('PCM_Settings') ? PCM_Settings::get(self::TYPE_PRESETS_SETTING) : null;
+        $presets = self::normalize_presets($stored);
+        if (empty($presets)) {
+            $presets = self::TYPE_PRESETS;
+        }
+        $filtered = apply_filters('pcm_delivery_type_presets', $presets);
+        return is_array($filtered) ? $filtered : $presets;
+    }
+
+    /**
+     * Normalize a raw presets blob into the canonical shape. Entries with an
+     * empty key or label are dropped; module lists are whitelist-filtered.
+     *
+     * @param mixed $raw Stored setting value.
+     * @return array<string, array{label: string, modules: string[]}>
+     */
+    public static function normalize_presets(mixed $raw): array
+    {
+        if (!is_array($raw)) {
+            return array();
+        }
+        $clean = array();
+        foreach ($raw as $key => $entry) {
+            $key = sanitize_key((string) $key);
+            if ($key === '' || !is_array($entry)) {
+                continue;
+            }
+            $label = sanitize_text_field((string) ($entry['label'] ?? ''));
+            if ($label === '') {
+                continue;
+            }
+            $clean[$key] = array(
+                'label'   => $label,
+                'modules' => self::sanitize_modules($entry['modules'] ?? array()),
+            );
+        }
+        return $clean;
+    }
+
+    /**
+     * Validate a delivery type against the preset keys.
+     *
+     * @param mixed $type Candidate type value.
+     * @return string|null Validated type key or null.
+     */
+    public static function sanitize_type(mixed $type): ?string
+    {
+        if (!is_string($type) || $type === '') {
+            return null;
+        }
+        $type = sanitize_key($type);
+        return array_key_exists($type, self::type_presets()) ? $type : null;
+    }
+
     public const STATUSES = ['active', 'paused', 'completed'];
 
     /**
@@ -56,9 +143,49 @@ class PCM_Deliveries_Service
             'name'       => $row->name,
             'clientName' => $row->clientName ?? null,
             'status'     => $row->status,
+            'type'       => isset($row->type) && $row->type !== null && $row->type !== '' ? (string) $row->type : null,
+            'brandId'    => isset($row->brandId) && $row->brandId !== null ? (int) $row->brandId : null,
+            'projectId'  => isset($row->projectId) && $row->projectId !== null ? (int) $row->projectId : null,
+            'modules'    => self::decode_modules($row->modules ?? null),
             'createdAt'  => $row->createdAt,
             'updatedAt'  => $row->updatedAt,
         );
+    }
+
+    /**
+     * Whitelist-filter a modules payload against GRANTABLE_MODULES.
+     *
+     * @param mixed $modules Raw request value.
+     * @return string[] Clean module ids (deduped, order preserved).
+     */
+    public static function sanitize_modules(mixed $modules): array
+    {
+        if (!is_array($modules)) {
+            return array();
+        }
+        $clean = array();
+        foreach ($modules as $module) {
+            $module = sanitize_text_field((string) $module);
+            if (in_array($module, self::GRANTABLE_MODULES, true) && !in_array($module, $clean, true)) {
+                $clean[] = $module;
+            }
+        }
+        return $clean;
+    }
+
+    /**
+     * Decode the stored modules JSON into a clean array.
+     *
+     * @param string|null $blob Stored JSON.
+     * @return string[]
+     */
+    private static function decode_modules(?string $blob): array
+    {
+        if (empty($blob)) {
+            return array();
+        }
+        $list = json_decode((string) $blob, true);
+        return is_array($list) ? array_values(array_map('strval', $list)) : array();
     }
 
     /**

@@ -23,6 +23,9 @@ if (!defined('ABSPATH')) {
 
 class PCM_REST_Deliveries extends PCM_REST_Base
 {
+    // Work module — usable by non-admin team members (assigned access).
+    protected string $default_capability = 'edit_posts';
+
 
     /**
      * Service instance — formatting + status validation.
@@ -44,17 +47,35 @@ class PCM_REST_Deliveries extends PCM_REST_Base
     protected function routes(): array
     {
         return array(
+            // Static segment before the (?P<id>\d+) routes so it can't be
+            // swallowed by the numeric matcher. Presets feed the admin-only
+            // delivery dialog / Settings tab.
+            array('GET',    '/deliveries/type-presets',       'get_type_presets', array(), 'manage_options'),
             array('GET',    '/deliveries',                    'list_items'),
             array('GET',    '/deliveries/(?P<id>\\d+)',       'get_by_id'),
-            array('POST',   '/deliveries',                    'create_item'),
-            array('PATCH',  '/deliveries/(?P<id>\\d+)',       'update_item'),
-            array('DELETE', '/deliveries/(?P<id>\\d+)',       'delete_item'),
+            // Writes are admin-only; team members only view assigned deliveries.
+            array('POST',   '/deliveries',                    'create_item', array(), 'manage_options'),
+            array('PATCH',  '/deliveries/(?P<id>\\d+)',       'update_item', array(), 'manage_options'),
+            array('DELETE', '/deliveries/(?P<id>\\d+)',       'delete_item', array(), 'manage_options'),
         );
     }
 
     // =========================================================================
     // READ
     // =========================================================================
+
+    /**
+     * GET /deliveries/type-presets — Resolved delivery-type → modules map.
+     * Central setting: admin-customized via the Settings UI
+     * (pcm_settings.delivery_type_presets), built-in defaults otherwise.
+     */
+    public function get_type_presets(WP_REST_Request $request): WP_REST_Response
+    {
+        return $this->success(array(
+            'presets'          => PCM_Deliveries_Service::type_presets(),
+            'grantableModules' => PCM_Deliveries_Service::GRANTABLE_MODULES,
+        ));
+    }
 
     /** GET /deliveries — List all deliveries for the current user. */
     public function list_items(WP_REST_Request $request): WP_REST_Response
@@ -115,6 +136,27 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             'status'     => $status,
         );
 
+        // Optional brand/project linkage — must belong to the caller.
+        $links = $this->resolve_link_ids($request, (int) $user->id);
+        if ($links instanceof WP_Error) {
+            return $links;
+        }
+        $data = array_merge($data, $links);
+
+        // Optional type + module grants (both whitelist-validated). A type
+        // without explicit modules expands to its central preset, so API
+        // callers get the same shortcut as the dialog.
+        $params = $request->get_json_params() ?: array();
+        if (array_key_exists('type', $params)) {
+            $data['type'] = PCM_Deliveries_Service::sanitize_type($params['type']);
+        }
+        if (array_key_exists('modules', $params)) {
+            $data['modules'] = wp_json_encode(PCM_Deliveries_Service::sanitize_modules($params['modules']));
+        } elseif (!empty($data['type'])) {
+            $preset          = PCM_Deliveries_Service::type_presets()[$data['type']]['modules'] ?? array();
+            $data['modules'] = wp_json_encode(PCM_Deliveries_Service::sanitize_modules($preset));
+        }
+
         $id = PCM_DB::create_delivery($data);
         if (!$id) {
             return $this->error('Failed to create delivery.', 500);
@@ -139,6 +181,13 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         $existing = PCM_DB::get_delivery_by_id($id, $user->id);
         if (!$existing) {
             return $this->not_found('Delivery');
+        }
+        // get_delivery_by_id also returns deliveries merely ASSIGNED to the
+        // caller (view + use). Editing stays owner-only, so reject a non-owner
+        // explicitly instead of letting the owner-scoped UPDATE silently no-op
+        // and return a misleading success.
+        if ((int) $existing->userId !== (int) $user->id) {
+            return $this->error('You can view this delivery but not edit it.', 403, 'pcm_forbidden');
         }
 
         $update = array();
@@ -170,6 +219,26 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             $update['status'] = $status;
         }
 
+        // Optional brand/project linkage — must belong to the caller.
+        $links = $this->resolve_link_ids($request, (int) $user->id);
+        if ($links instanceof WP_Error) {
+            return $links;
+        }
+        $update = array_merge($update, $links);
+
+        // Optional type + module grants (both whitelist-validated). On PATCH
+        // a type change without explicit modules also re-applies the preset.
+        $params = $request->get_json_params() ?: array();
+        if (array_key_exists('type', $params)) {
+            $update['type'] = PCM_Deliveries_Service::sanitize_type($params['type']);
+        }
+        if (array_key_exists('modules', $params)) {
+            $update['modules'] = wp_json_encode(PCM_Deliveries_Service::sanitize_modules($params['modules']));
+        } elseif (!empty($update['type'])) {
+            $preset            = PCM_Deliveries_Service::type_presets()[$update['type']]['modules'] ?? array();
+            $update['modules'] = wp_json_encode(PCM_Deliveries_Service::sanitize_modules($preset));
+        }
+
         if (!empty($update)) {
             PCM_DB::update_delivery($id, $user->id, $update);
         }
@@ -189,5 +258,54 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         }
 
         return $this->success(array('success' => true));
+    }
+
+    /**
+     * Read optional brandId/projectId params, validating each belongs to the
+     * caller. Returns only the keys present in the request (so PATCHes that
+     * omit them leave the columns untouched); explicit null/0 clears the link.
+     *
+     * @param WP_REST_Request $request Request.
+     * @param int             $user_id Caller's PCM user id.
+     * @return array|WP_Error Update fragment or error.
+     */
+    private function resolve_link_ids(WP_REST_Request $request, int $user_id): array|WP_Error
+    {
+        global $wpdb;
+        $out = array();
+
+        $params = $request->get_json_params() ?: array();
+
+        if (array_key_exists('brandId', $params)) {
+            $brand_id = absint($params['brandId'] ?? 0);
+            if ($brand_id === 0) {
+                $out['brandId'] = null;
+            } elseif (PCM_DB::get_brand_by_id($brand_id, $user_id)) {
+                $out['brandId'] = $brand_id;
+            } else {
+                return $this->error('Brand not found.', 404, 'pcm_brand_not_found');
+            }
+        }
+
+        if (array_key_exists('projectId', $params)) {
+            $project_id = absint($params['projectId'] ?? 0);
+            if ($project_id === 0) {
+                $out['projectId'] = null;
+            } else {
+                $projects = PCM_Schema::table('projects');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $found = $wpdb->get_var($wpdb->prepare(
+                    "SELECT id FROM {$projects} WHERE id = %d AND userId = %d",
+                    $project_id,
+                    $user_id
+                ));
+                if (!$found) {
+                    return $this->error('Project not found.', 404, 'pcm_project_not_found');
+                }
+                $out['projectId'] = $project_id;
+            }
+        }
+
+        return $out;
     }
 }

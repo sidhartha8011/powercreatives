@@ -62,13 +62,33 @@ class PCM_Approvals_Service
         global $wpdb;
         $table = PCM_Schema::table('approval_sets');
 
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, userId, brandId, projectId, name, token, status, clientEmail, createdAt, updatedAt FROM {$table} WHERE userId = %d ORDER BY createdAt DESC",
-                $user_id
-            )
-        );
+        // Visibility: admins see every set (team-wide oversight); others see
+        // their own plus sets in their granted brand/project scope, so a
+        // teammate's work on a shared engagement is visible to everyone with
+        // that access (and notification jumps resolve on both sides).
+        $cols = "id, userId, brandId, projectId, name, token, status, clientEmail, createdAt, updatedAt";
+        if (class_exists('PCM_Access') && PCM_Access::is_admin($user_id)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $rows = $wpdb->get_results("SELECT {$cols} FROM {$table} ORDER BY createdAt DESC");
+        } else {
+            $clauses = array('userId = %d');
+            $params  = array($user_id);
+            $brand_ids   = class_exists('PCM_Access') ? PCM_Access::granted_brand_ids($user_id) : array();
+            $project_ids = class_exists('PCM_Access') ? PCM_Access::granted_project_ids($user_id) : array();
+            if (!empty($brand_ids)) {
+                $clauses[] = 'brandId IN (' . implode(',', array_fill(0, count($brand_ids), '%d')) . ')';
+                $params    = array_merge($params, $brand_ids);
+            }
+            if (!empty($project_ids)) {
+                $clauses[] = 'projectId IN (' . implode(',', array_fill(0, count($project_ids), '%d')) . ')';
+                $params    = array_merge($params, $project_ids);
+            }
+            $where = implode(' OR ', $clauses);
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL -- clause built from %d placeholders only.
+            $rows = $wpdb->get_results(
+                $wpdb->prepare("SELECT {$cols} FROM {$table} WHERE {$where} ORDER BY createdAt DESC", ...$params)
+            );
+        }
 
         return array_map(function ($row) {
             return self::format_set_row($row);
@@ -82,6 +102,109 @@ class PCM_Approvals_Service
     {
         $row = PCM_DB::get_by_id('approval_sets', $id, $user_id);
         return $row ? self::format_set_row($row) : null;
+    }
+
+    /**
+     * Retrieve a set the user may VIEW (and append to): their own, any set
+     * for admins, or a set within their granted brand/project scope.
+     * Destructive operations (status/delete/share/reply) stay owner-scoped
+     * via get_set_by_id.
+     */
+    public static function get_set_scoped(int $id, int $user_id): ?object
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id));
+        if (!$row) {
+            return null;
+        }
+        $allowed = (int) $row->userId === $user_id
+            || (class_exists('PCM_Access') && (
+                PCM_Access::is_admin($user_id)
+                || (!empty($row->brandId) && in_array((int) $row->brandId, PCM_Access::granted_brand_ids($user_id), true))
+                || (!empty($row->projectId) && in_array((int) $row->projectId, PCM_Access::granted_project_ids($user_id), true))
+            ));
+        return $allowed ? self::format_set_row($row) : null;
+    }
+
+    /**
+     * Merge additional snapshot buckets into an existing snapshot, deduped
+     * by item id (existing items win; order preserved, new items appended).
+     *
+     * @param array $base Existing snapshot.
+     * @param array $add  Incoming { media?, copy?, articles? } buckets.
+     * @return array Merged snapshot.
+     */
+    public static function merge_snapshot(array $base, array $add): array
+    {
+        foreach (array('media', 'copy', 'articles') as $bucket) {
+            $incoming = (!empty($add[$bucket]) && is_array($add[$bucket])) ? $add[$bucket] : array();
+            if (empty($incoming)) {
+                continue;
+            }
+            $existing = (!empty($base[$bucket]) && is_array($base[$bucket])) ? $base[$bucket] : array();
+            $seen     = array();
+            foreach ($existing as $item) {
+                if (is_array($item) && isset($item['id'])) {
+                    $seen[(string) $item['id']] = true;
+                }
+            }
+            foreach ($incoming as $item) {
+                if (!is_array($item) || !isset($item['id']) || isset($seen[(string) $item['id']])) {
+                    continue;
+                }
+                $seen[(string) $item['id']] = true;
+                $existing[] = $item;
+            }
+            $base[$bucket] = $existing;
+        }
+        return $base;
+    }
+
+    /**
+     * Append assets to an existing set. Only allowed while the set is still
+     * in review — not in a post-submit lane and not fully approved.
+     *
+     * @param int   $set_id  Set id.
+     * @param int   $user_id Caller's PCM user id (view-scoped access).
+     * @param array $add     Incoming { media?, copy?, articles? } buckets.
+     * @return object|string Updated set, or error code 'not_found' | 'locked'.
+     */
+    public static function append_to_set(int $set_id, int $user_id, array $add): object|string
+    {
+        $set = self::get_set_scoped($set_id, $user_id);
+        if (!$set) {
+            return 'not_found';
+        }
+
+        $snapshot = is_array($set->snapshot) ? $set->snapshot : array();
+        if (in_array($set->status, self::POST_SUBMIT_STATUSES, true)
+            || self::is_fully_approved($snapshot, self::feedback_struct($set))
+        ) {
+            return 'locked';
+        }
+
+        $merged = self::merge_snapshot($snapshot, $add);
+
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+        // Ownership already established by the scoped read above.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update(
+            $table,
+            array(
+                'snapshot'  => wp_json_encode($merged),
+                'updatedAt' => current_time('mysql'),
+            ),
+            array('id' => $set_id),
+            array('%s', '%s'),
+            array('%d')
+        );
+
+        $set->snapshot  = $merged;
+        $set->updatedAt = current_time('mysql');
+        return $set;
     }
 
     /**
@@ -125,13 +248,14 @@ class PCM_Approvals_Service
         $result = $wpdb->insert(
             $table,
             array(
-                'userId'    => $user_id,
-                'brandId'   => $data['brandId'] ?? null,
-                'projectId' => $data['projectId'] ?? null,
-                'name'      => $data['name'],
-                'token'     => $token,
-                'status'    => 'draft',
-                'snapshot'  => $snapshot,
+                'userId'     => $user_id,
+                'brandId'    => $data['brandId'] ?? null,
+                'projectId'  => $data['projectId'] ?? null,
+                'deliveryId' => $data['deliveryId'] ?? null,
+                'name'       => $data['name'],
+                'token'      => $token,
+                'status'     => 'draft',
+                'snapshot'   => $snapshot,
             )
         );
 
@@ -164,15 +288,22 @@ class PCM_Approvals_Service
         global $wpdb;
         $table = PCM_Schema::table('approval_sets');
 
+        // Stamp clientSentAt on the transition INTO the 'client' lane (and only
+        // then). This is the stable anchor the pending-client reminder scanner
+        // uses to compute daysSinceSent — `updatedAt` would drift on any edit.
+        $update_data    = array('status' => $next_status, 'updatedAt' => current_time('mysql'));
+        $update_formats = array('%s', '%s');
+        if ($previous !== 'client' && $next_status === 'client') {
+            $update_data['clientSentAt']    = current_time('mysql');
+            $update_formats[]               = '%s';
+        }
+
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $rows = $wpdb->update(
             $table,
-            array(
-                'status'    => $next_status,
-                'updatedAt' => current_time('mysql'),
-            ),
+            $update_data,
             array('id' => $id, 'userId' => $user_id),
-            array('%s', '%s'),
+            $update_formats,
             array('%d', '%d')
         );
 
@@ -661,7 +792,124 @@ class PCM_Approvals_Service
             (int) $set->userId
         );
 
+        // User-editable automation trigger (covers BOTH client comments and
+        // team replies — append_comment is the single funnel). Powers the
+        // seeded in-app notification rule + any user rules (e.g. webhooks).
+        PCM_Automation_Engine::fire_trigger(
+            'approvals.comment_added',
+            array_merge(
+                array(
+                    'setId'     => (int) $set->id,
+                    'name'      => (string) $set->name,
+                    'token'     => (string) $set->token,
+                    'link'      => self::build_share_url((string) $set->token),
+                    'assetId'   => $asset_id,
+                    'commentId' => $comment['id'],
+                    'author'    => $comment['author'],
+                    'body'      => $comment['text'],
+                    'brandId'   => !empty($set->brandId) ? (int) $set->brandId : null,
+                ),
+                self::enrich_context($set, $asset_id)
+            ),
+            (int) $set->userId
+        );
+
         return $comment;
+    }
+
+    /**
+     * Cross-entity enrichment for approval triggers/webhooks: resolves the
+     * client (brand) name, the delivery + project the set belongs to (via the
+     * brand link on deliveries), who is assigned, and stable deep links.
+     *
+     * @param object      $set      Approval set row.
+     * @param string|null $asset_id Optional asset id for the comment deep link.
+     * @return array
+     */
+    private static function enrich_context(object $set, ?string $asset_id = null): array
+    {
+        global $wpdb;
+
+        $owner_id = (int) $set->userId;
+        $brand_id = !empty($set->brandId) ? (int) $set->brandId : 0;
+
+        $brand_name = '';
+        if ($brand_id > 0) {
+            $brand      = PCM_DB::get_brand_by_id($brand_id, $owner_id);
+            $brand_name = $brand ? (string) $brand->name : '';
+        }
+
+        // Delivery for the set: prefer the EXPLICIT deliveryId chosen in the
+        // share dialog (v1.20); fall back to the latest delivery linked to the
+        // set's brand for older sets.
+        $delivery_name = '';
+        $delivery_id   = 0;
+        $project_name  = '';
+        $project_id    = 0;
+        $assignees     = '';
+        $delivery      = null;
+        $deliveries_t  = PCM_Schema::table('deliveries');
+        if (!empty($set->deliveryId)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $delivery = $wpdb->get_row($wpdb->prepare(
+                "SELECT id, name, projectId FROM {$deliveries_t} WHERE id = %d",
+                (int) $set->deliveryId
+            ));
+        }
+        if (!$delivery && $brand_id > 0) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $delivery = $wpdb->get_row($wpdb->prepare(
+                "SELECT id, name, projectId FROM {$deliveries_t}
+                 WHERE userId = %d AND brandId = %d
+                 ORDER BY updatedAt DESC, id DESC LIMIT 1",
+                $owner_id,
+                $brand_id
+            ));
+        }
+        if ($delivery) {
+            $delivery_name = (string) $delivery->name;
+            $delivery_id   = (int) $delivery->id;
+
+            if (!empty($delivery->projectId)) {
+                $project_id = (int) $delivery->projectId;
+                $projects_t = PCM_Schema::table('projects');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $project_name = (string) ($wpdb->get_var($wpdb->prepare(
+                    "SELECT name FROM {$projects_t} WHERE id = %d",
+                    (int) $delivery->projectId
+                )) ?? '');
+            }
+
+            $assignments_t = PCM_Schema::table('delivery_assignments');
+            $users_t       = PCM_Schema::table('users');
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $names = $wpdb->get_col($wpdb->prepare(
+                "SELECT u.name FROM {$assignments_t} a
+                 INNER JOIN {$users_t} u ON u.id = a.userId
+                 WHERE a.deliveryId = %d",
+                (int) $delivery->id
+            ));
+            $assignees = implode(', ', array_filter(array_map('strval', $names ?: array())));
+        }
+
+        $share_url = self::build_share_url((string) $set->token);
+
+        return array(
+            // IDs are exposed alongside names so webhook consumers (n8n etc.)
+            // can key off stable identifiers, not just display strings. Empty
+            // ids are emitted as '' (the webhook handler drops empty values).
+            'brandId'         => $brand_id > 0 ? $brand_id : '',
+            'brandName'       => $brand_name,
+            'deliveryId'      => $delivery_id > 0 ? $delivery_id : '',
+            'deliveryName'    => $delivery_name,
+            'projectId'       => $project_id > 0 ? $project_id : '',
+            'projectName'     => $project_name,
+            'projectAssignee' => $assignees,
+            'commentUrl'      => $asset_id !== null && $asset_id !== ''
+                ? $share_url . '#asset-' . rawurlencode($asset_id)
+                : $share_url,
+            'dashboardUrl'    => admin_url('admin.php?page=power-creatives'),
+        );
     }
 
     /**
@@ -705,7 +953,11 @@ class PCM_Approvals_Service
      */
     public static function add_team_comment(int $set_id, int $user_id, string $asset_id, string $body, string $author, ?string $parent_id = null): array|false
     {
-        $set = self::get_set_by_id($set_id, $user_id);
+        // View-scoped, not owner-scoped: the board lists granted sets too, and
+        // commenting is collaboration — anyone who can SEE the set (owner,
+        // admin, granted brand/project) can reply. Destructive ops stay
+        // owner-scoped.
+        $set = self::get_set_scoped($set_id, $user_id);
         if (!$set) {
             return false;
         }
@@ -804,10 +1056,16 @@ class PCM_Approvals_Service
         $snapshot = is_array($set->snapshot) ? $set->snapshot : array();
         $feedback = self::feedback_struct($set);
 
+        // Track the approve TRANSITION (never unapprove) so the
+        // approvals.asset_approved trigger fires exactly when something new
+        // got approved — 'all' for the approve-all action.
+        $approved_asset = null;
+
         if (!empty($args['approveAll'])) {
             $feedback['approvedVisualIds']  = self::collect_ids($snapshot, 'media');
             $feedback['approvedCopyIds']    = self::collect_ids($snapshot, 'copy');
             $feedback['approvedArticleIds'] = self::collect_ids($snapshot, 'articles');
+            $approved_asset = 'all';
         } else {
             $asset_id = sanitize_text_field($args['assetId'] ?? '');
             if ($asset_id === '') {
@@ -823,6 +1081,7 @@ class PCM_Approvals_Service
 
             if ($want_on && !$is_on) {
                 $approved[] = $asset_id;
+                $approved_asset = $asset_id;
             } elseif (!$want_on && $is_on) {
                 $approved = array_values(array_diff($approved, array($asset_id)));
             }
@@ -831,13 +1090,47 @@ class PCM_Approvals_Service
 
         self::save_feedback((int) $set->id, $feedback);
 
-        // Auto-advance into Launch when every asset is approved, and fire the
-        // Automations "set entered lane" trigger (same path as a kanban drag),
-        // so a "lane = Launch → webhook" rule runs exactly once on the transition.
-        if ($set->status !== 'launch' && self::is_fully_approved($snapshot, $feedback)) {
-            self::update_status_unscoped((int) $set->id, 'launch');
-            $set->status = 'launch';
-            self::fire_status_trigger($set, 'launch');
+        // User-editable automation trigger — powers the seeded in-app
+        // notification rule + any user rules (e.g. enriched webhooks).
+        if ($approved_asset !== null && class_exists('PCM_Automation_Engine')) {
+            PCM_Automation_Engine::fire_trigger(
+                'approvals.asset_approved',
+                array_merge(
+                    array(
+                        'setId'   => (int) $set->id,
+                        'name'    => (string) $set->name,
+                        'token'   => (string) $set->token,
+                        'link'    => self::build_share_url((string) $set->token),
+                        'assetId' => $approved_asset,
+                        'brandId' => !empty($set->brandId) ? (int) $set->brandId : null,
+                    ),
+                    self::enrich_context($set, $approved_asset === 'all' ? null : $approved_asset)
+                ),
+                (int) $set->userId
+            );
+        }
+
+        // Auto-advance into Launch when every asset is approved. The lane move is
+        // NO LONGER hardcoded — it is driven by the editable "Approval set is fully
+        // approved → move to Launch" automation rule. We fire the trigger exactly
+        // once on the transition into full approval; the rule's move_to_lane action
+        // sets 'launch', which in turn fires approvals.set_status_changed so any
+        // "lane = Launch → webhook" rule still chains.
+        if ($set->status !== 'launch'
+            && self::is_fully_approved($snapshot, $feedback)
+            && class_exists('PCM_Automation_Engine')
+        ) {
+            PCM_Automation_Engine::fire_trigger(
+                'approvals.set_fully_approved',
+                array(
+                    'setId'   => (int) $set->id,
+                    'name'    => (string) $set->name,
+                    'token'   => (string) $set->token,
+                    'link'    => self::build_share_url((string) $set->token),
+                    'brandId' => !empty($set->brandId) ? (int) $set->brandId : null,
+                ),
+                (int) $set->userId
+            );
         }
 
         return self::get_set_by_token($token);
@@ -864,36 +1157,16 @@ class PCM_Approvals_Service
     }
 
     /**
-     * Update status without an ownership check (internal, after we've already
-     * validated the set via token). Distinct from update_status() which is
-     * user-scoped for the team kanban.
-     *
-     * @param int    $set_id Set id.
-     * @param string $status New status (assumed valid).
-     * @return void
-     */
-    private static function update_status_unscoped(int $set_id, string $status): void
-    {
-        global $wpdb;
-        $table = PCM_Schema::table('approval_sets');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $wpdb->update(
-            $table,
-            array('status' => $status, 'updatedAt' => current_time('mysql')),
-            array('id' => $set_id)
-        );
-    }
-
-    /**
      * Share a set with a client: store the recipient email and dispatch the
      * invite event (Brevo email). Ownership-scoped.
      *
      * @param int    $set_id  Set id.
      * @param int    $user_id PCM user id (owner).
      * @param string $email   Recipient email.
+     * @param string $message Optional custom invite message (already sanitized).
      * @return object|false Updated set, or false if not found / invalid email.
      */
-    public static function share_set(int $set_id, int $user_id, string $email): object|false
+    public static function share_set(int $set_id, int $user_id, string $email, string $message = ''): object|false
     {
         $email = sanitize_email($email);
         if ($email === '' || !is_email($email)) {
@@ -908,18 +1181,25 @@ class PCM_Approvals_Service
         global $wpdb;
         $table = PCM_Schema::table('approval_sets');
 
-        $update = array('clientEmail' => $email, 'updatedAt' => current_time('mysql'));
-        // Sharing sends the set out for client review → move it into the
-        // "Awaiting Client Approval" lane, unless it has already advanced past it.
-        if (in_array($set->status, array('draft', 'internal'), true)) {
-            $update['status'] = 'client';
-            $set->status = 'client';
-        }
+        // Persist the recipient email. The lane move is NO LONGER hardcoded here —
+        // it is driven by the editable "Approval set is sent to client → move to
+        // 'Sent to Client for Approval'" automation rule (fired below). That rule's
+        // move_to_lane action calls update_status(), which stamps clientSentAt on
+        // entry into the 'client' lane.
+        //
+        // Fire for any pre-submit lane INCLUDING 'client': the share dialogs
+        // pre-move the set to 'client' at link-generation time, so restricting
+        // to draft/internal would mean user rules on "set is sent to client"
+        // (e.g. notify Slack) never fire from the primary UI flows. Re-firing
+        // while already in 'client' is safe — move_to_lane no-ops on an
+        // unchanged lane. Post-submit lanes (launch/live/archived) stay
+        // excluded so a re-share can't drag a launched set backwards.
+        $needs_share = !in_array($set->status, self::POST_SUBMIT_STATUSES, true);
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $wpdb->update(
             $table,
-            $update,
+            array('clientEmail' => $email, 'updatedAt' => current_time('mysql')),
             array('id' => $set_id, 'userId' => $user_id)
         );
         $set->clientEmail = $email;
@@ -929,9 +1209,27 @@ class PCM_Approvals_Service
             PCM_DB::update_brand((int) $set->brandId, $user_id, array('clientEmail' => $email));
         }
 
+        // Fire the editable "sent to client" automation trigger — only when the
+        // set is actually being sent out (not already past the client lane), to
+        // preserve the original no-downgrade guard.
+        if ($needs_share && class_exists('PCM_Automation_Engine')) {
+            PCM_Automation_Engine::fire_trigger(
+                'approvals.set_shared',
+                array(
+                    'setId'       => (int) $set->id,
+                    'name'        => (string) $set->name,
+                    'token'       => (string) $set->token,
+                    'link'        => self::build_share_url((string) $set->token),
+                    'clientEmail' => $email,
+                    'brandId'     => !empty($set->brandId) ? (int) $set->brandId : null,
+                ),
+                $user_id
+            );
+        }
+
         PCM_Automation_Engine::dispatch(
             PCM_Automation_Events::APPROVAL_SET_SHARED,
-            self::build_event_context($set),
+            self::build_event_context($set, array('customMessage' => $message)),
             $user_id
         );
 

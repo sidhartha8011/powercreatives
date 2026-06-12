@@ -22,6 +22,7 @@ import { SectionPanel } from "./SectionPanel";
 import { ActionButton } from "./ActionButton";
 import { useImageModelsForGeneration } from "@/hooks/useModelsForGeneration";
 import { trpc } from "@/lib/trpc";
+import { runKieTask } from "@/lib/kieTask";
 import { toast } from "sonner";
 import type { Asset, VariationResult } from "./types";
 
@@ -52,6 +53,9 @@ export function VariationsPanel({
   const { imageModels: genModelsList, isLoading: isLoadingModels } = useImageModelsForGeneration();
   const genModels = genModelsList.map((m: { id: string; name: string; provider: string }) => ({ modelId: m.id, displayName: m.name, provider: m.provider }));
   const generateImageMutation = trpc.image.generate.useMutation();
+  // Async pair for Kie.ai models (blocking generate dies on shared hosting).
+  const createImageTaskMutation = trpc.image.createTask.useMutation();
+  const imageTaskResultMutation = trpc.image.taskResult.useMutation();
 
   const handleToggleModel = (modelId: string) => {
     setSelectedModelIds(prev =>
@@ -113,12 +117,19 @@ export function VariationsPanel({
           throw new Error(`No provider found for model ${placeholder.modelId}. Check the model registry.`);
         }
 
-        const generated = await generateImageMutation.mutateAsync({
+        const payload = {
           prompt: resolvedPrompt,
           model: placeholder.modelId,
           provider,
           originalImageUrl: asset.url,
-        });
+        };
+        const generated: any = provider === 'kieai'
+          ? (await runKieTask({
+              createTask: () => createImageTaskMutation.mutateAsync(payload) as Promise<{ taskId: string; prompt?: string }>,
+              pollTask: (body) => imageTaskResultMutation.mutateAsync(body) as Promise<any>,
+              payload,
+            })).asset
+          : await generateImageMutation.mutateAsync(payload);
 
         onUpdateVariationResult(placeholder.id, {
           status: "success",

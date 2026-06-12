@@ -20,7 +20,7 @@ export const setFilters: ReadonlyArray<FilterDefinition<ApprovalSet>> = [
     'search',
     'Search',
     (s) =>
-      [s.snapshot.brandName, s.snapshot.projectName, s.name]
+      [s.snapshot.brandName, s.snapshot.projectName, s.name, s.deliveryName ?? undefined]
         .filter((v): v is string => Boolean(v))
         .join(' '),
     { placeholder: 'Search approval sets…' }
@@ -36,6 +36,12 @@ export const setFilters: ReadonlyArray<FilterDefinition<ApprovalSet>> = [
     'Project',
     (s) => s.snapshot.projectName ?? null,
     { searchPlaceholder: 'Search projects…' }
+  ),
+  searchableSelect<ApprovalSet>(
+    'delivery',
+    'Delivery',
+    (s) => s.deliveryName ?? null,
+    { searchPlaceholder: 'Search deliveries…' }
   ),
   searchableSelect<ApprovalSet>(
     'set',

@@ -604,9 +604,17 @@ class PCM_Image_Service
 
         $table = PCM_Schema::table('assets');
 
+        // Non-admin team members: default generated output into the project of
+        // the assigned delivery (brand-matched when the request carries one).
+        $project_id = $params['projectId'] ?? null;
+        if (empty($project_id) && class_exists('PCM_Access') && !PCM_Access::is_admin($user_id)) {
+            $brand_id   = !empty($params['brandId']) ? (int) $params['brandId'] : null;
+            $project_id = PCM_Access::auto_project_id($user_id, $brand_id);
+        }
+
         $inserted = $wpdb->insert($table, array(
             'userId' => $user_id,
-            'projectId' => $params['projectId'] ?? null,
+            'projectId' => $project_id,
             'type' => 'image',
             'url' => $url,
             'prompt' => $prompt,

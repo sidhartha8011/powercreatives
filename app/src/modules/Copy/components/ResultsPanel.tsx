@@ -24,6 +24,7 @@ import {
   FolderPlus,
   FolderOpen,
   Loader2,
+  Share2,
 } from 'lucide-react';
 import { PillButton, colors, typography, spacing } from '@/components/shared';
 import type { CopyType, CopyVariation, CopyResults, CopyAudience } from '../types';
@@ -50,6 +51,8 @@ import {
 } from '@/components/ui/select';
 import { trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
+import { SendToApprovalSetDialog } from '@/components/shared/SendToApprovalSetDialog';
+import { BulkActionBar } from '@/components/shared/BulkActionBar';
 
 // ─── Types ───
 
@@ -102,6 +105,12 @@ interface Props {
   hasRealResults?: boolean;
   /** Selection state from useSelection hook */
   selection: UseSelectionReturn;
+  /** Brand/project context for the "Send to Approval Set" flow. */
+  brandId?: number | null;
+  brandName?: string | null;
+  projectId?: number | null;
+  brandClientEmail?: string | null;
+  brandLogoUrl?: string | null;
 }
 
 // ─── Shared control style ───
@@ -422,6 +431,11 @@ export function ResultsPanel({
   regeneratingCards: externalRegeneratingCards,
   hasRealResults = false,
   selection,
+  brandId,
+  brandName,
+  projectId,
+  brandClientEmail,
+  brandLogoUrl,
 }: Props) {
   const activeTypes = (Object.keys(selectedTypes) as CopyType[]).filter((t) => selectedTypes[t]);
   const hasResults =
@@ -441,6 +455,7 @@ export function ResultsPanel({
   // Generate scope — default to all_types for simplicity
   const [generateScope] = useState<GenerateScope>('all_types');
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [isApprovalDialogOpen, setIsApprovalDialogOpen] = useState(false);
 
   useEffect(() => {
     if (activeTypes.length === 0) {
@@ -1003,6 +1018,42 @@ export function ResultsPanel({
           selection.clearSelection();
         }}
       />
+
+      {/* ── Send to Approval Set Dialog ── mounted only while open, so the
+          snapshot mapping below isn't recomputed on every panel render. */}
+      {isApprovalDialogOpen && (
+      <SendToApprovalSetDialog
+        isOpen={isApprovalDialogOpen}
+        onClose={() => setIsApprovalDialogOpen(false)}
+        copy={selection.getSelectedVariations().map((v) => ({
+          id: String(v.id),
+          headline: v.headline,
+          body: v.body,
+          cta: v.cta || '',
+          description: v.description || '',
+          hashtags: v.hashtags || [],
+          audienceName: audiences.find((a) => a.id === v.audienceId)?.name || '',
+          angleName: v.angleName || '',
+          modelUsed: v.modelUsed,
+        }))}
+        defaultName={`Copy Set — ${brandName || 'Draft'} (${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`}
+        brandId={brandId}
+        projectId={projectId}
+        brandName={brandName}
+        brandLogoUrl={brandLogoUrl}
+        brandClientEmail={brandClientEmail}
+        itemSummary={`${selection.selectedCount} ${selection.selectedCount === 1 ? 'copy' : 'copies'}`}
+      />
+      )}
+
+      {/* ── Floating bulk-action bar (mirrors Ads/Image) — appears on selection ── */}
+      <BulkActionBar count={selection.selectedCount} onClear={selection.clearSelection}>
+        <BulkActionBar.Action
+          icon={Share2}
+          label="Send to Approval Set"
+          onClick={() => setIsApprovalDialogOpen(true)}
+        />
+      </BulkActionBar>
     </div>
   );
 }

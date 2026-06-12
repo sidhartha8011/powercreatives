@@ -25,6 +25,11 @@ if (!defined('ABSPATH')) {
 
 class PCM_REST_Image extends PCM_REST_Base
 {
+    // Work module — usable by non-admin team members (assigned access).
+    protected string $default_capability = 'edit_posts';
+    // Per-delivery module grant ids (see PCM_REST_Base::$module_grant_keys).
+    protected array $module_grant_keys = array('image', 'ads');
+
 
     /**
      * Service instance — holds all business logic.
@@ -52,8 +57,13 @@ class PCM_REST_Image extends PCM_REST_Base
             // Core generation endpoints
                 array('POST', '/image/concepts', 'suggest_concepts'),
                 array('POST', '/image/generate', 'generate_single'),
+                // Async pair for Kie.ai models — shared hosting kills the
+                // blocking generate poll loop, so: create task, poll cheaply.
+                array('POST', '/image/generate-task', 'create_generation_task'),
+                array('POST', '/image/task-result', 'get_generation_result'),
                 array('POST', '/image/generate-batch', 'generate_batch'),
                 array('POST', '/image/edit', 'edit_image'),
+                array('POST', '/image/edit-task', 'create_edit_task'),
                 array('POST', '/image/upscale', 'upscale'),
 
             // Suggestion / optimization endpoints (used by ImageModule frontend)
@@ -153,23 +163,7 @@ class PCM_REST_Image extends PCM_REST_Base
         // variables via the editable "Final Prompt" template. If no
         // brandContext is sent, the prompt passes through unchanged
         // (backward-compatible).
-        $brand_context = $params['brandContext'] ?? null;
-
-
-
-        if (!empty($brand_context)) {
-            $final_template = $this->get_prompt_override($user->id, 'image', 'final_prompt');
-            if (!$final_template) {
-                $defaults = PCM_Image_Service::get_default_prompts();
-                $final_template = $defaults['final_prompt'];
-            }
-
-            $vars = $this->service->build_final_prompt_context($brand_context);
-            $vars['brief'] = $prompt;
-            $prompt = $this->service->resolve_final_prompt($final_template, $vars);
-
-
-        }
+        $prompt = $this->resolve_final_brand_prompt($user, $prompt, $params);
 
         // Override the prompt in params so save_asset() stores the resolved version
         $params['prompt'] = $prompt;
@@ -183,6 +177,180 @@ class PCM_REST_Image extends PCM_REST_Base
             return $this->success($asset, 201);
         }
         catch (\Exception $e) {
+            return $this->error($e->getMessage(), 500, 'pcm_generation_error');
+        }
+    }
+
+    /**
+     * Resolve the brand "Final Prompt" template around a raw brief. Shared by
+     * the sync (generate_single) and async (create_generation_task) paths so
+     * both store/send the identical resolved prompt.
+     *
+     * @param object $user   PCM user.
+     * @param string $prompt Raw (sanitized) brief.
+     * @param array  $params Request params (reads brandContext).
+     * @return string Resolved prompt (unchanged when no brandContext).
+     */
+    private function resolve_final_brand_prompt(object $user, string $prompt, array $params): string
+    {
+        $brand_context = $params['brandContext'] ?? null;
+        if (empty($brand_context)) {
+            return $prompt;
+        }
+        $final_template = $this->get_prompt_override($user->id, 'image', 'final_prompt');
+        if (!$final_template) {
+            $defaults = PCM_Image_Service::get_default_prompts();
+            $final_template = $defaults['final_prompt'];
+        }
+        $vars = $this->service->build_final_prompt_context($brand_context);
+        $vars['brief'] = $prompt;
+        return $this->service->resolve_final_prompt($final_template, $vars);
+    }
+
+    /**
+     * POST /image/generate-task — create an async Kie.ai generation task.
+     *
+     * Returns { taskId, prompt } immediately (the resolved prompt is echoed
+     * so the frontend can send it back to /image/task-result for storage).
+     * Exists because the blocking /image/generate poll loop gets killed by
+     * shared hosts' request timeouts on slow models (observed: GPT Image
+     * variations failing with opaque 500s / slots stuck "Generating…").
+     */
+    public function create_generation_task(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user   = $this->get_current_pcm_user();
+        $params = $request->get_json_params() ?? array();
+
+        $prompt   = sanitize_text_field($params['prompt'] ?? '');
+        $model_id = sanitize_text_field($params['model'] ?? $params['modelId'] ?? '');
+        $provider = sanitize_text_field($params['provider'] ?? '');
+
+        if (empty($prompt)) {
+            return $this->error('Prompt is required.', 400, 'pcm_missing_prompt');
+        }
+        if ($provider !== 'kieai') {
+            return $this->error('Async generation is only available for Kie.ai models.', 400, 'pcm_async_unsupported');
+        }
+
+        $prompt = $this->resolve_final_brand_prompt($user, $prompt, $params);
+        $params['prompt'] = $prompt;
+
+        try {
+            $api_key  = $this->get_provider_api_key($provider, $user->id);
+            $instance = PCM_Provider_Registry::get($provider, $api_key);
+            $task     = $instance->create_image_task($model_id, $params);
+
+            return $this->success(array(
+                'taskId' => (string) $task['taskId'],
+                'prompt' => $prompt,
+            ), 201);
+        } catch (\Exception $e) {
+            return $this->error($e->getMessage(), 500, 'pcm_generation_error');
+        }
+    }
+
+    /**
+     * POST /image/edit-task — create an async Kie.ai image-EDIT task.
+     * Same contract as create_generation_task; poll /image/task-result with
+     * storageContext: 'image-edit'.
+     */
+    public function create_edit_task(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user   = $this->get_current_pcm_user();
+        $params = $request->get_json_params() ?? array();
+
+        $image_url = esc_url_raw($params['imageUrl'] ?? '');
+        $prompt    = sanitize_text_field($params['prompt'] ?? '');
+        $model_id  = sanitize_text_field($params['model'] ?? $params['modelId'] ?? '');
+        $provider  = sanitize_text_field($params['provider'] ?? '');
+        if (!empty($params['referenceImageUrl'])) {
+            $params['referenceImageUrl'] = esc_url_raw($params['referenceImageUrl']);
+        }
+
+        if (empty($image_url) || empty($prompt)) {
+            return $this->error('imageUrl and prompt are required.', 400, 'pcm_missing_params');
+        }
+        if ($provider !== 'kieai') {
+            return $this->error('Async editing is only available for Kie.ai models.', 400, 'pcm_async_unsupported');
+        }
+
+        $params['imageUrl'] = $image_url;
+        $params['prompt']   = $prompt;
+
+        try {
+            $api_key  = $this->get_provider_api_key($provider, $user->id);
+            $instance = PCM_Provider_Registry::get($provider, $api_key);
+            $task     = $instance->create_edit_task($model_id, $params);
+
+            return $this->success(array(
+                'taskId' => (string) $task['taskId'],
+                'prompt' => $prompt,
+            ), 201);
+        } catch (\Exception $e) {
+            return $this->error($e->getMessage(), 500, 'pcm_edit_error');
+        }
+    }
+
+    /**
+     * POST /image/task-result — poll an async Kie.ai task.
+     *
+     * processing → { status: 'processing', progress? }
+     * failed     → { status: 'failed', error }
+     * completed  → stores the image (media library + wp_pcm_image_assets,
+     *              same tail as generate_single) and returns
+     *              { status: 'completed', asset }.
+     */
+    public function get_generation_result(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user   = $this->get_current_pcm_user();
+        $params = $request->get_json_params() ?? array();
+
+        $task_id  = sanitize_text_field($params['taskId'] ?? '');
+        $model_id = sanitize_text_field($params['model'] ?? $params['modelId'] ?? '');
+        $provider = sanitize_text_field($params['provider'] ?? 'kieai');
+        $prompt   = sanitize_text_field($params['prompt'] ?? '');
+
+        if ($task_id === '') {
+            return $this->error('taskId is required.', 400, 'pcm_missing_task');
+        }
+
+        try {
+            $api_key = $this->get_provider_api_key($provider, $user->id);
+            $status  = PCM_Kie_Api::get_task_status($api_key, $task_id, $model_id);
+
+            if (($status['status'] ?? '') === 'completed') {
+                $image_url = $status['url'] ?? ($status['urls'][0] ?? '');
+                if (empty($image_url)) {
+                    // Upstream "success" without an image (e.g. silent safety
+                    // block) — surface as a failure instead of a blank card.
+                    return $this->success(array(
+                        'status' => 'failed',
+                        'error'  => __('The model completed without returning an image.', 'power-creatives'),
+                    ));
+                }
+                $params['prompt'] = $prompt;
+                // Optional storage context (e.g. 'image-edit' from the async
+                // edit flow) — mirrors the sync handlers' filename prefixes.
+                $storage_context = sanitize_key($params['storageContext'] ?? '');
+                $wp_url = $storage_context !== ''
+                    ? $this->service->store_to_media_library($image_url, $user->id, $storage_context)
+                    : $this->service->store_to_media_library($image_url, $user->id);
+                $asset  = $this->service->save_asset($user->id, $prompt, $model_id, $provider, $wp_url, $params);
+                return $this->success(array('status' => 'completed', 'asset' => $asset));
+            }
+
+            if (($status['status'] ?? '') === 'failed') {
+                return $this->success(array(
+                    'status' => 'failed',
+                    'error'  => (string) ($status['error'] ?? __('Generation failed.', 'power-creatives')),
+                ));
+            }
+
+            return $this->success(array(
+                'status'   => 'processing',
+                'progress' => $status['progress'] ?? null,
+            ));
+        } catch (\Exception $e) {
             return $this->error($e->getMessage(), 500, 'pcm_generation_error');
         }
     }

@@ -23,6 +23,7 @@ import { Plus } from 'lucide-react';
 
 import { ModuleHeader } from '@/components/shared/ModuleHeader';
 import { Button } from '@/components/ui/button';
+import { getIsAdmin } from '@/lib/pcmConfig';
 
 import { DeliveryDialog } from './DeliveryDialog';
 import { DeliveriesBoard } from './kanban/DeliveriesBoard';
@@ -67,10 +68,13 @@ export function DeliveriesModule() {
         title="Deliveries"
         description="Continual-fulfilment client deliveries organised as a Kanban pipeline."
         action={
-          <Button onClick={openCreate} className="gap-2">
-            <Plus className="w-4 h-4" />
-            New Delivery
-          </Button>
+          // Delivery creation/editing is admin-only — assignees only view.
+          getIsAdmin() ? (
+            <Button onClick={openCreate} className="gap-2">
+              <Plus className="w-4 h-4" />
+              New Delivery
+            </Button>
+          ) : undefined
         }
       />
 

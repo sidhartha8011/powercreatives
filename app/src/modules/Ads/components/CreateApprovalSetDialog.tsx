@@ -12,8 +12,14 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { colors, typography, shadows } from '@/components/shared/design-tokens';
 import { trpc } from '@/lib/trpc';
+import { buildDefaultInviteMessage } from '@/components/shared/SendToApprovalSetDialog';
+import { ApprovalSetPicker, type AppendableSet } from '@/components/shared/ApprovalSetPicker';
 import type { MediaSlot, TextSlot } from '../types';
 
 interface CreateApprovalSetDialogProps {
@@ -49,9 +55,28 @@ export function CreateApprovalSetDialog({
   const [copied, setCopied] = useState(false);
   const [setId, setSetId] = useState<number | null>(null);
   const [clientEmail, setClientEmail] = useState('');
+  const [clientMessage, setClientMessage] = useState('');
   const [inviteSent, setInviteSent] = useState(false);
+  // '' = none — Select values are strings; converted to number|null on submit.
+  const [deliveryId, setDeliveryId] = useState('');
+  // 'create' = new set (existing flow); 'append' = add to an open set.
+  const [mode, setMode] = useState<'create' | 'append'>('create');
+  const [targetSet, setTargetSet] = useState<AppendableSet | null>(null);
 
-  // Set default name with campaign info & date
+  // Deliveries for the linkage picker (stored on the set → Approvals Delivery
+  // filter + webhook enrichment).
+  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
+  const deliveries: { id: number; name: string; brandId: number | null }[] = Array.isArray(deliveriesRaw)
+    ? deliveriesRaw.map((d: any) => ({
+        id: Number(d.id),
+        name: String(d.name),
+        brandId: d.brandId != null ? Number(d.brandId) : null,
+      }))
+    : [];
+
+  // Reset to defaults ONLY when the dialog opens — depending on the brand props
+  // here would re-run the effect if async brand context resolves while open,
+  // wiping the user's in-progress name/email/message edits.
   useEffect(() => {
     if (isOpen) {
       const dateStr = new Date().toLocaleDateString(undefined, {
@@ -63,12 +88,25 @@ export function CreateApprovalSetDialog({
       setCopied(false);
       setSetId(null);
       setClientEmail(brandClientEmail || '');
+      setClientMessage(buildDefaultInviteMessage(brandName));
       setInviteSent(false);
+      setMode('create');
+      setTargetSet(null);
+      // Pre-pick the delivery linked to the current brand, when there is one.
+      const brandDelivery = brandId
+        ? deliveries.find((d) => d.brandId === Number(brandId))
+        : undefined;
+      setDeliveryId(brandDelivery ? String(brandDelivery.id) : '');
     }
-  }, [isOpen, brandName, brandClientEmail]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // Moves the set into the "Awaiting Client Approval" lane (status 'client').
-  const moveStatusMutation = trpc.approvals.updateSetStatus.useMutation();
+  const moveStatusMutation = trpc.approvals.updateSetStatus.useMutation({
+    onError: (err: any) => {
+      toast.error(err.message || 'Set created, but moving it to the client lane failed — drag it on the Approvals board.');
+    },
+  });
 
   // tRPC Mutation to create set
   const createMutation = trpc.approvals.createSet.useMutation({
@@ -110,17 +148,13 @@ export function CreateApprovalSetDialog({
       toast.error('Enter the client email to send an invite.');
       return;
     }
-    shareMutation.mutate({ id: setId, email });
-  }, [setId, clientEmail, shareMutation]);
+    shareMutation.mutate({ id: setId, email, message: clientMessage.trim() });
+  }, [setId, clientEmail, clientMessage, shareMutation]);
 
-  const handleGenerateLink = useCallback(() => {
-    if (!setName.trim()) {
-      toast.error('Please enter an approval set name.');
-      return;
-    }
-
-    // Freeze snapshot data
-    const selectedMedia = mediaSlots
+  // Freeze the selected slots into snapshot buckets (shared by both the
+  // create and append paths).
+  const buildBuckets = useCallback(() => {
+    const media = mediaSlots
       .filter((m) => selectedVisualIds.includes(m.id))
       .map((m) => ({
         id: m.id,
@@ -131,7 +165,7 @@ export function CreateApprovalSetDialog({
         modelId: m.modelId,
       }));
 
-    const selectedCopy = textSlots
+    const copy = textSlots
       .filter((t) => selectedCopyIds.includes(t.id))
       .map((t) => ({
         id: t.id,
@@ -145,10 +179,45 @@ export function CreateApprovalSetDialog({
         modelUsed: t.modelUsed,
       }));
 
+    return { media, copy };
+  }, [mediaSlots, selectedVisualIds, textSlots, selectedCopyIds]);
+
+  const appendMutation = trpc.approvals.appendToSet.useMutation({
+    onSuccess: () => {
+      toast.success(`Added ${selectedCopyIds.length + selectedVisualIds.length} item(s) to “${targetSet?.name ?? 'the set'}”.`);
+      onClose();
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to add items to the approval set.');
+    },
+  });
+
+  const handleAppend = useCallback(() => {
+    if (!targetSet) {
+      toast.error('Pick the approval set to add to.');
+      return;
+    }
+    const { media, copy } = buildBuckets();
+    if (media.length === 0 && copy.length === 0) {
+      toast.error('Select at least one item to send for approval.');
+      return;
+    }
+    appendMutation.mutate({ id: targetSet.id, snapshot: { media, copy } });
+  }, [targetSet, buildBuckets, appendMutation]);
+
+  const handleGenerateLink = useCallback(() => {
+    if (!setName.trim()) {
+      toast.error('Please enter an approval set name.');
+      return;
+    }
+
+    const { media: selectedMedia, copy: selectedCopy } = buildBuckets();
+
     createMutation.mutate({
       name: setName.trim(),
       brandId: brandId || null,
       projectId: projectId || null,
+      deliveryId: deliveryId ? Number(deliveryId) : null,
       snapshot: {
         media: selectedMedia,
         copy: selectedCopy,
@@ -156,7 +225,7 @@ export function CreateApprovalSetDialog({
         brandLogoUrl: brandLogoUrl || null,
       },
     });
-  }, [setName, mediaSlots, selectedVisualIds, textSlots, selectedCopyIds, brandId, projectId, brandName, brandLogoUrl, createMutation]);
+  }, [setName, buildBuckets, brandId, projectId, deliveryId, brandName, brandLogoUrl, createMutation]);
 
   const handleCopyLink = useCallback(() => {
     if (!shareableLink) return;
@@ -231,19 +300,80 @@ export function CreateApprovalSetDialog({
         <div className="space-y-4 py-4">
           {!shareableLink ? (
             <div className="space-y-2">
+              {/* Create a new set, or append to one still in review. */}
               <label
-                htmlFor="set-name"
                 style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}
               >
-                Approval Set Name (Visible to Client)
+                Destination
               </label>
-              <Input
-                id="set-name"
-                value={setName}
-                onChange={(e) => setSetName(e.target.value)}
-                placeholder="e.g., Summer Product Launch"
-                disabled={createMutation.isLoading}
-              />
+              <Select
+                value={mode}
+                onValueChange={(v) => setMode(v as 'create' | 'append')}
+                disabled={createMutation.isLoading || appendMutation.isLoading}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="create">Create a new approval set</SelectItem>
+                  <SelectItem value="append">Add to an existing set</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {mode === 'append' ? (
+                <>
+                  <label
+                    style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}
+                  >
+                    Approval set (still in review)
+                  </label>
+                  <ApprovalSetPicker
+                    value={targetSet?.id ?? null}
+                    onChange={setTargetSet}
+                    disabled={appendMutation.isLoading}
+                  />
+                  <p style={{ fontSize: typography.xs, color: colors.textMuted }}>
+                    Fully approved or launched sets can’t receive new items — create a new set for those.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <label
+                    htmlFor="set-name"
+                    style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}
+                  >
+                    Approval Set Name (Visible to Client)
+                  </label>
+                  <Input
+                    id="set-name"
+                    value={setName}
+                    onChange={(e) => setSetName(e.target.value)}
+                    placeholder="e.g., Summer Product Launch"
+                    disabled={createMutation.isLoading}
+                  />
+
+                  <label
+                    style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}
+                  >
+                    Delivery (optional)
+                  </label>
+                  <Select
+                    value={deliveryId || 'none'}
+                    onValueChange={(v) => setDeliveryId(v === 'none' ? '' : v)}
+                    disabled={createMutation.isLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="No delivery linked" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No delivery</SelectItem>
+                      {deliveries.map((d) => (
+                        <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-3 rounded-lg p-4" style={{ background: colors.bgPage, border: `1px solid ${colors.border}` }}>
@@ -296,6 +426,22 @@ export function CreateApprovalSetDialog({
                     {inviteSent ? 'Sent' : 'Send'}
                   </Button>
                 </div>
+
+                {/* Editable invite message — prefilled with a default; the sender
+                    can rewrite it before sending. Blank → standard template. */}
+                <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
+                  Message to client
+                </span>
+                <Textarea
+                  value={clientMessage}
+                  onChange={(e) => { setClientMessage(e.target.value); setInviteSent(false); }}
+                  rows={4}
+                  placeholder="Write a short note to your client…"
+                  className="text-sm"
+                  style={{ background: colors.bgSurface }}
+                  disabled={shareMutation.isLoading}
+                />
+
                 <p style={{ fontSize: typography.xs, color: colors.textMuted }}>
                   Sends a professional invite via your Brevo integration. Requires a Brevo API key and sender email in Settings.
                 </p>
@@ -307,22 +453,38 @@ export function CreateApprovalSetDialog({
         <DialogFooter className="gap-2 sm:gap-0">
           {!shareableLink ? (
             <>
-              <Button variant="ghost" onClick={onClose} disabled={createMutation.isLoading}>
+              <Button variant="ghost" onClick={onClose} disabled={createMutation.isLoading || appendMutation.isLoading}>
                 Cancel
               </Button>
-              <Button onClick={handleGenerateLink} disabled={createMutation.isLoading} className="gap-2" style={{ background: colors.primary }}>
-                {createMutation.isLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Generating link...
-                  </>
-                ) : (
-                  <>
-                    <Share2 className="w-4 h-4" />
-                    Generate Share Link
-                  </>
-                )}
-              </Button>
+              {mode === 'append' ? (
+                <Button onClick={handleAppend} disabled={appendMutation.isLoading || !targetSet} className="gap-2" style={{ background: colors.primary }}>
+                  {appendMutation.isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Adding…
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-4 h-4" />
+                      Add to Set
+                    </>
+                  )}
+                </Button>
+              ) : (
+                <Button onClick={handleGenerateLink} disabled={createMutation.isLoading} className="gap-2" style={{ background: colors.primary }}>
+                  {createMutation.isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating link...
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-4 h-4" />
+                      Generate Share Link
+                    </>
+                  )}
+                </Button>
+              )}
             </>
           ) : (
             <Button onClick={onClose} variant="secondary" className="w-full">

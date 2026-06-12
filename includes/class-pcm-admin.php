@@ -203,9 +203,57 @@ class PCM_Admin
                 'role' => current_user_can('manage_options') ? 'admin' : 'user',
                 'avatarUrl' => get_avatar_url($current_user->ID),
                 'isLoggedIn' => true,
+                // Per-delivery module grants (null = unrestricted/admin). The
+                // sidebar uses this for UX; the REST layer enforces it anyway.
+                'allowedModules' => self::allowed_modules_for_current_user(),
+                // Per-module brand grants (null = unrestricted/admin). UX
+                // filter for brand pickers; the REST layer enforces it anyway.
+                'brandsByModule' => self::brands_by_module_for_current_user(),
             ),
+            // Central delivery-type → module presets (deliveries dialog).
+            'deliveryTypePresets' => class_exists('PCM_Deliveries_Service')
+                ? PCM_Deliveries_Service::type_presets()
+                : array(),
             // Plugin version
             'version' => PCM_VERSION,
         );
+    }
+
+    /**
+     * Module ids granted to the current WP user via assigned deliveries.
+     * Null = unrestricted (admins, or grant infra unavailable). Computed at
+     * page load — grant changes apply on the next reload.
+     *
+     * @return string[]|null
+     */
+    public static function allowed_modules_for_current_user(): ?array
+    {
+        if (current_user_can('manage_options')
+            || !class_exists('PCM_Access')
+            || !class_exists('PCM_DB')
+        ) {
+            return null;
+        }
+        $pcm_user = PCM_DB::get_user_by_open_id('wp_' . get_current_user_id());
+        return $pcm_user ? PCM_Access::granted_module_ids((int) $pcm_user->id) : array();
+    }
+
+    /**
+     * Map of granted module id → usable brand ids for the current WP user.
+     * Null = unrestricted (admins, or grant infra unavailable). Same
+     * page-load semantics as allowed_modules_for_current_user().
+     *
+     * @return array<string, int[]>|null
+     */
+    public static function brands_by_module_for_current_user(): ?array
+    {
+        if (current_user_can('manage_options')
+            || !class_exists('PCM_Access')
+            || !class_exists('PCM_DB')
+        ) {
+            return null;
+        }
+        $pcm_user = PCM_DB::get_user_by_open_id('wp_' . get_current_user_id());
+        return $pcm_user ? PCM_Access::brands_by_module((int) $pcm_user->id) : array();
     }
 }

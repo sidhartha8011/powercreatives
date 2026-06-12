@@ -15,7 +15,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import { Image as ImageIcon, Play, RefreshCw, Download, Trash2 } from 'lucide-react';
+import { Image as ImageIcon, Play, RefreshCw, Download, Trash2, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AssetDetailView } from '@/components/AssetDetailView';
 import type { Asset } from '@/components/AssetDetailView';
@@ -39,6 +39,7 @@ import { ImageSidebar } from './components/ImageSidebar';
 import { ImageResultsGrid } from './components/ImageResultsGrid';
 import { BulkSaveToProject } from './components/BulkSaveToProject';
 import { BulkActionBar } from '@/components/shared/BulkActionBar';
+import { SendToApprovalSetDialog } from '@/components/shared/SendToApprovalSetDialog';
 
 // ============================================================================
 // Component
@@ -61,6 +62,9 @@ export function ImageModule() {
   // ── Detail view ──
   const [selectedAsset, setSelectedAsset] = useState<GeneratedAsset | null>(null);
   const [isDetailViewOpen, setIsDetailViewOpen] = useState(false);
+
+  // ── Send to Approval Set ──
+  const [isApprovalDialogOpen, setIsApprovalDialogOpen] = useState(false);
 
   // ── Hooks ──
   const assetHook = useImageAssets();
@@ -362,8 +366,33 @@ export function ImageModule() {
           selectedAssets={genHook.selectedAssets}
           onComplete={genHook.clearAssetSelection}
         />
+        <BulkActionBar.Action icon={Share2} label="Send to Approval Set" onClick={() => setIsApprovalDialogOpen(true)} />
         <BulkActionBar.Action icon={Trash2} label="Remove" onClick={genHook.bulkRemove} variant="destructive" />
       </BulkActionBar>
+
+      {/* Send to Approval Set — packages selected images into a client board.
+          Mounted only while open so the media mapping isn't recomputed per render. */}
+      {isApprovalDialogOpen && (
+      <SendToApprovalSetDialog
+        isOpen={isApprovalDialogOpen}
+        onClose={() => setIsApprovalDialogOpen(false)}
+        media={genHook.selectedAssets.map((asset) => ({
+          id: String(asset.id),
+          type: 'image',
+          url: asset.url || '',
+          prompt: asset.prompt,
+          provider: genHook.displayModels.find((m) => m.id === asset.modelId)?.provider ?? '',
+          modelId: asset.modelId,
+        }))}
+        defaultName={`Image Set — ${(contextData.brand as any)?.name || 'Draft'} (${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`}
+        brandId={contextData.brandId}
+        projectId={(contextData.brand as any)?.projectId}
+        brandName={(contextData.brand as any)?.name}
+        brandLogoUrl={getBrandLogo(contextData.brand as any)?.url}
+        brandClientEmail={(contextData.brand as any)?.clientEmail}
+        itemSummary={`${genHook.selectedAssets.length} ${genHook.selectedAssets.length === 1 ? 'image' : 'images'}`}
+      />
+      )}
     </div>
   );
 }

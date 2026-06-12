@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { Plus, Trash2, Workflow, Zap, ArrowRight, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Workflow, Zap, ArrowRight, Loader2, Check, ChevronsUpDown } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -7,16 +7,125 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
+import { useSortableTable } from '@/hooks/useSortableTable';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import {
-  Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel,
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '@/components/ui/select';
+import * as PopoverPrimitive from '@radix-ui/react-popover';
+import { Popover, PopoverTrigger } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
+import {
+  Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem,
+} from '@/components/ui/command';
+
+/* ── Searchable Combobox (module-grouped, "coming soon" aware) ───────────────
+ * Reusable for both the trigger and action dropdowns. Keeps grouping by
+ * `module`, disables `implemented:false` entries, and supports filter-as-you-type
+ * via shadcn Command (cmdk).
+ */
+interface ComboItem { id: string; module: string; label: string; description?: string; implemented?: boolean }
+function ItemCombobox({
+  items, value, onChange, placeholder, emptyText,
+}: {
+  items: ComboItem[]; value: string; onChange: (id: string) => void;
+  placeholder: string; emptyText: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = items.find((i) => i.id === value);
+  const groups = useMemo(() => {
+    const m: Record<string, ComboItem[]> = {};
+    items.forEach((it) => { (m[it.module] ||= []).push(it); });
+    return Object.entries(m);
+  }, [items]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          <span className="truncate text-left">
+            {selected ? selected.label : <span className="text-muted-foreground">{placeholder}</span>}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      {/* NOTE: rendered WITHOUT a Portal on purpose. This combobox lives inside a
+          Radix Dialog, whose react-remove-scroll lock blocks wheel/touch scroll on
+          any node outside the dialog subtree (i.e. a portalled popover). Keeping the
+          content inline (inside the dialog) lets the list scroll normally.
+
+          Height is bounded on the CONTENT element itself (a plain div we fully
+          control): a flex column capped at 20rem with overflow-hidden. The
+          CommandList then scrolls inside via `min-h-0 flex-1 overflow-y-auto` — this
+          does NOT depend on cmdk's internal max-height, which was unreliable here. */}
+      <PopoverPrimitive.Content
+        align="start"
+        sideOffset={4}
+        collisionPadding={8}
+        className={cn(
+          'z-50 flex max-h-80 w-[--radix-popover-trigger-width] flex-col overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md outline-hidden',
+          'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+        )}
+      >
+        <Command
+          className="flex min-h-0 flex-1 flex-col"
+          filter={(itemValue, search) => {
+            // itemValue is the CommandItem `value` (we pack module+id+label there).
+            return itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
+          }}
+        >
+          <CommandInput placeholder="Search…" />
+          {/* Redundant hard cap on the scroll list itself (max-h-72) — independent
+              of the flex chain — guarantees it scrolls even if flex sizing is off. */}
+          <CommandList className="min-h-0 max-h-72 flex-1 overflow-y-auto">
+            <CommandEmpty>{emptyText}</CommandEmpty>
+            {groups.map(([mod, list]) => (
+              <CommandGroup key={mod} heading={mod}>
+                {list.map((it) => {
+                  const disabled = it.implemented === false;
+                  return (
+                    <CommandItem
+                      key={it.id}
+                      // include module + id + label so search matches across them
+                      value={`${it.module} ${it.id} ${it.label}`}
+                      disabled={disabled}
+                      onSelect={() => { if (!disabled) { onChange(it.id); setOpen(false); } }}
+                      className={disabled ? 'opacity-50' : ''}
+                    >
+                      <Check className={`mr-2 h-4 w-4 ${value === it.id ? 'opacity-100' : 'opacity-0'}`} />
+                      <div className="min-w-0">
+                        <div className="truncate">
+                          {it.label}{disabled ? <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground">· coming soon</span> : null}
+                        </div>
+                        {it.description && (
+                          <div className="truncate text-xs text-muted-foreground">{it.description}</div>
+                        )}
+                      </div>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverPrimitive.Content>
+    </Popover>
+  );
+}
 
 /* ── Types (catalog is dynamic, kept loose like other modules) ── */
 interface ConditionField { key: string; label: string; type: string; options?: { value: string; label: string }[]; default?: string; }
-interface ConfigField { key: string; label: string; type: string; required?: boolean; placeholder?: string; }
+interface ConfigField { key: string; label: string; type: string; required?: boolean; placeholder?: string; options?: { value: string; label: string }[]; default?: string; }
 interface InputField { key: string; label: string; }
 interface TriggerDef { id: string; module: string; label: string; description?: string; implemented?: boolean; conditionFields?: ConditionField[]; contextKeys?: string[]; }
 interface ActionDef { id: string; module: string; label: string; description?: string; implemented?: boolean; configFields?: ConfigField[]; inputSchema?: InputField[]; }
@@ -44,22 +153,21 @@ export function AutomationsModule() {
   const [conditions, setConditions] = useState<Record<string, string>>({});
   const [actionId, setActionId] = useState('');
   const [config, setConfig] = useState<Record<string, string>>({});
-  const [mapping, setMapping] = useState<Record<string, string>>({});
+  // Payload properties as ORDERED rows (not a Record) so renaming a property
+  // mid-typing doesn't collapse or reorder entries. Users can rename, remove,
+  // and add properties freely — the action's inputSchema only seeds starters.
+  const [mappingRows, setMappingRows] = useState<{ key: string; value: string }[]>([]);
 
   const selectedTrigger = useMemo(() => triggers.find((t) => t.id === triggerId), [triggers, triggerId]);
   const selectedAction = useMemo(() => actions.find((a) => a.id === actionId), [actions, actionId]);
 
-  // Group the catalog by module so the dropdowns show the cross-module surface.
-  const triggerGroups = useMemo(() => {
-    const m: Record<string, TriggerDef[]> = {};
-    triggers.forEach((t) => { (m[t.module] ||= []).push(t); });
-    return Object.entries(m);
-  }, [triggers]);
-  const actionGroups = useMemo(() => {
-    const m: Record<string, ActionDef[]> = {};
-    actions.forEach((a) => { (m[a.module] ||= []).push(a); });
-    return Object.entries(m);
-  }, [actions]);
+  // Suggested starter rows for an action: its inputSchema keys, blank values.
+  const seedRows = (action?: ActionDef): { key: string; value: string }[] =>
+    (action?.inputSchema ?? []).map((f) => ({ key: f.key, value: '' }));
+
+  // The ItemCombobox (above) groups items by `module` internally; no extra memo
+  // needed here. Keeping this comment as a breadcrumb for the previous Select-
+  // based implementation that did grouping inline.
 
   const resetForm = useCallback(() => {
     // Default to the first *implemented* trigger/action (skip "coming soon").
@@ -72,7 +180,7 @@ export function AutomationsModule() {
     (firstTrigger?.conditionFields ?? []).forEach((f) => { cond[f.key] = f.default ?? ''; });
     setConditions(cond);
     setConfig({});
-    setMapping({});
+    setMappingRows(seedRows(firstAction));
   }, [triggers, actions]);
 
   // Open the dialog to create a new rule (blank, sensible defaults).
@@ -90,9 +198,10 @@ export function AutomationsModule() {
     setActionId(rule.actionId);
     setConditions({ ...(rule.conditions ?? {}) });
     setConfig({ ...(rule.config ?? {}) });
-    setMapping({ ...(rule.inputMapping ?? {}) });
+    const saved = Object.entries(rule.inputMapping ?? {}).map(([key, value]) => ({ key, value }));
+    setMappingRows(saved.length > 0 ? saved : seedRows(actions.find((a) => a.id === rule.actionId)));
     setDialogOpen(true);
-  }, []);
+  }, [actions]);
 
   // When the user changes the trigger, reseed its condition defaults.
   const onTriggerChange = useCallback((id: string) => {
@@ -102,6 +211,17 @@ export function AutomationsModule() {
     (t?.conditionFields ?? []).forEach((f) => { cond[f.key] = f.default ?? ''; });
     setConditions(cond);
   }, [triggers]);
+
+  // When the user changes the action, reseed its config defaults (e.g. the
+  // move_to_lane action's lane select defaults to 'client').
+  const onActionChange = useCallback((id: string) => {
+    setActionId(id);
+    const a = actions.find((x) => x.id === id);
+    const cfg: Record<string, string> = {};
+    (a?.configFields ?? []).forEach((f) => { cfg[f.key] = f.default ?? ''; });
+    setConfig(cfg);
+    setMappingRows(seedRows(a));
+  }, [actions]);
 
   const createMutation = trpc.automations.create.useMutation({
     onSuccess: () => { toast.success('Automation created'); setDialogOpen(false); refetch(); },
@@ -127,10 +247,19 @@ export function AutomationsModule() {
         return;
       }
     }
-    // Only send non-empty mapping entries — blank fields fall back to the
-    // action handler's default payload (e.g. webhook = name + link).
+    // Only send rows with both a property name and a value — blank rows fall
+    // back to the action handler's default payload (e.g. webhook = name + link).
     const inputMapping: Record<string, string> = {};
-    Object.entries(mapping).forEach(([k, v]) => { if (v.trim()) inputMapping[k] = v.trim(); });
+    for (const row of mappingRows) {
+      const key = row.key.trim();
+      const value = row.value.trim();
+      if (!key || !value) continue;
+      if (key in inputMapping) {
+        toast.error(`Duplicate payload property "${key}"`);
+        return;
+      }
+      inputMapping[key] = value;
+    }
 
     const payload = { name: name.trim() || undefined, triggerId, conditions, actionId, config, inputMapping };
 
@@ -141,7 +270,7 @@ export function AutomationsModule() {
     } else {
       createMutation.mutate({ ...payload, isActive: true });
     }
-  }, [editingId, name, triggerId, conditions, actionId, config, mapping, selectedAction, createMutation, updateMutation, refetch]);
+  }, [editingId, name, triggerId, conditions, actionId, config, mappingRows, selectedAction, createMutation, updateMutation, refetch]);
 
   const toggleActive = useCallback((rule: AutomationRule) => {
     updateMutation.mutate({ id: rule.id, isActive: !rule.isActive });
@@ -166,6 +295,40 @@ export function AutomationsModule() {
       target: rule.config?.url ?? '',
     };
   }, [triggers, actions]);
+
+  /* ── Derived rows for the sortable table ── */
+  const tableRows = useMemo(
+    () =>
+      rules.map((rule) => {
+        const d = describeRule(rule);
+        return {
+          rule,
+          name: rule.name || d.triggerLabel,
+          triggerLabel: d.triggerLabel,
+          actionLabel: d.actionLabel,
+          condText: d.condText,
+          target: d.target,
+          // 1 = active sorts above 0 = paused on a descending click.
+          statusValue: rule.isActive ? 1 : 0,
+        };
+      }),
+    [rules, describeRule],
+  );
+
+  type RowKey = 'name' | 'triggerLabel' | 'actionLabel' | 'statusValue';
+  const { sortKey, sortDir, toggleSort, sortedData } = useSortableTable<
+    (typeof tableRows)[number],
+    RowKey
+  >(tableRows, {
+    defaultKey: 'name',
+    defaultDir: 'asc',
+    accessors: {
+      name: (r) => r.name.toLowerCase(),
+      triggerLabel: (r) => r.triggerLabel.toLowerCase(),
+      actionLabel: (r) => r.actionLabel.toLowerCase(),
+      statusValue: (r) => r.statusValue,
+    },
+  });
 
   if (catalogLoading || listLoading) {
     return (
@@ -209,21 +372,13 @@ export function AutomationsModule() {
                 <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                   <Zap className="w-3.5 h-3.5" /> IF — when this happens
                 </label>
-                <Select value={triggerId} onValueChange={onTriggerChange}>
-                  <SelectTrigger><SelectValue placeholder="Select a trigger" /></SelectTrigger>
-                  <SelectContent>
-                    {triggerGroups.map(([mod, items]) => (
-                      <SelectGroup key={mod}>
-                        <SelectLabel className="capitalize">{mod}</SelectLabel>
-                        {items.map((t) => (
-                          <SelectItem key={t.id} value={t.id} disabled={t.implemented === false}>
-                            {t.label}{t.implemented === false ? ' · coming soon' : ''}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <ItemCombobox
+                  items={triggers}
+                  value={triggerId}
+                  onChange={onTriggerChange}
+                  placeholder="Select a trigger"
+                  emptyText="No matching triggers"
+                />
                 {selectedTrigger?.description && (
                   <p className="text-xs text-muted-foreground">{selectedTrigger.description}</p>
                 )}
@@ -253,21 +408,13 @@ export function AutomationsModule() {
                 <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                   <ArrowRight className="w-3.5 h-3.5" /> THEN — do this
                 </label>
-                <Select value={actionId} onValueChange={setActionId}>
-                  <SelectTrigger><SelectValue placeholder="Select an action" /></SelectTrigger>
-                  <SelectContent>
-                    {actionGroups.map(([mod, items]) => (
-                      <SelectGroup key={mod}>
-                        <SelectLabel className="capitalize">{mod}</SelectLabel>
-                        {items.map((a) => (
-                          <SelectItem key={a.id} value={a.id} disabled={a.implemented === false}>
-                            {a.label}{a.implemented === false ? ' · coming soon' : ''}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <ItemCombobox
+                  items={actions}
+                  value={actionId}
+                  onChange={onActionChange}
+                  placeholder="Select an action"
+                  emptyText="No matching actions"
+                />
                 {selectedAction?.description && (
                   <p className="text-xs text-muted-foreground">{selectedAction.description}</p>
                 )}
@@ -279,34 +426,73 @@ export function AutomationsModule() {
                   <label className="text-xs font-semibold text-muted-foreground">
                     {f.label}{f.required ? ' *' : ''}
                   </label>
-                  <Input
-                    type={f.type === 'url' ? 'url' : 'text'}
-                    value={config[f.key] ?? ''}
-                    onChange={(e) => setConfig((c) => ({ ...c, [f.key]: e.target.value }))}
-                    placeholder={f.placeholder}
-                  />
+                  {f.type === 'select' && f.options ? (
+                    <Select value={config[f.key] ?? f.default ?? ''} onValueChange={(v) => setConfig((c) => ({ ...c, [f.key]: v }))}>
+                      <SelectTrigger><SelectValue placeholder={f.label} /></SelectTrigger>
+                      <SelectContent>
+                        {f.options.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      type={f.type === 'url' ? 'url' : 'text'}
+                      value={config[f.key] ?? ''}
+                      onChange={(e) => setConfig((c) => ({ ...c, [f.key]: e.target.value }))}
+                      placeholder={f.placeholder}
+                    />
+                  )}
                 </div>
               ))}
 
               {/* Optional payload mapping — wires trigger context → action inputs.
-                  Blank = the action's default payload (e.g. webhook = name + link). */}
+                  Dynamic key/value rows: rename properties, remove them, or add
+                  more. All-blank = the action's default payload. */}
               {(selectedAction?.inputSchema?.length ?? 0) > 0 && (
                 <div className="space-y-2 pt-1">
                   <label className="text-xs font-semibold text-muted-foreground">Payload (optional)</label>
                   <p className="text-[11px] text-muted-foreground">
-                    {'Leave blank for the default. Use tokens like {{name}} from the trigger.'}
+                    {'Name each property and set its value — rows without both are skipped (all blank = default payload). Use tokens like {{name}} from the trigger.'}
                   </p>
-                  {(selectedAction?.inputSchema ?? []).map((f) => (
-                    <div key={f.key} className="flex items-center gap-2 pl-3 border-l-2 border-border">
-                      <span className="text-xs text-muted-foreground w-16 shrink-0">{f.label}</span>
+                  {mappingRows.map((row, i) => (
+                    <div key={i} className="flex items-center gap-2 pl-3 border-l-2 border-border">
                       <Input
-                        value={mapping[f.key] ?? ''}
-                        onChange={(e) => setMapping((m) => ({ ...m, [f.key]: e.target.value }))}
-                        placeholder={`{{${f.key}}}`}
-                        className="text-sm"
+                        value={row.key}
+                        onChange={(e) => setMappingRows((rows) => rows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))}
+                        placeholder="property"
+                        className="text-sm w-36 shrink-0"
+                        aria-label="Payload property name"
                       />
+                      <Input
+                        value={row.value}
+                        onChange={(e) => setMappingRows((rows) => rows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))}
+                        placeholder={row.key.trim() ? `{{${row.key.trim()}}}` : 'value or {{token}}'}
+                        className="text-sm"
+                        aria-label="Payload property value"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0"
+                        onClick={() => setMappingRows((rows) => rows.filter((_, j) => j !== i))}
+                        aria-label="Remove payload property"
+                      >
+                        <Trash2 className="w-4 h-4 text-muted-foreground" />
+                      </Button>
                     </div>
                   ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="ml-3 gap-1.5"
+                    onClick={() => setMappingRows((rows) => [...rows, { key: '', value: '' }])}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add property
+                  </Button>
                   {(selectedTrigger?.contextKeys?.length ?? 0) > 0 && (
                     <p className="text-[11px] text-muted-foreground">
                       Available: {(selectedTrigger?.contextKeys ?? []).map((k) => `{{${k}}}`).join(', ')}
@@ -337,42 +523,88 @@ export function AutomationsModule() {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {rules.map((rule) => {
-            const d = describeRule(rule);
-            return (
-              <div key={rule.id} className="flex items-center justify-between gap-4 border border-border rounded-xl px-4 py-3 bg-card">
-                <div
-                  className="min-w-0 cursor-pointer flex-1"
-                  role="button"
-                  tabIndex={0}
-                  title="Edit automation"
-                  onClick={() => openEdit(rule)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(rule); } }}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium truncate">{rule.name || d.triggerLabel}</span>
-                    {!rule.isActive && (
-                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1.5 py-0.5">Paused</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5 flex-wrap">
-                    <Zap className="w-3 h-3" />
-                    <span>{d.triggerLabel}{d.condText ? ` (${d.condText})` : ''}</span>
-                    <ArrowRight className="w-3 h-3" />
-                    <span>{d.actionLabel}</span>
-                    {d.target && <span className="text-muted-foreground/70 truncate">· {d.target}</span>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <Switch checked={rule.isActive} onCheckedChange={() => toggleActive(rule)} />
-                  <Button variant="ghost" size="icon" onClick={() => deleteMutation.mutate({ id: rule.id })} title="Delete">
-                    <Trash2 className="w-4 h-4 text-muted-foreground" />
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
+        <div className="border border-border rounded-xl overflow-hidden bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/60">
+                <SortableTableHead
+                  columnKey="name"
+                  label="Name"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onToggle={toggleSort}
+                  style={{ width: '30%' }}
+                />
+                <SortableTableHead
+                  columnKey="triggerLabel"
+                  label="Trigger (IF)"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onToggle={toggleSort}
+                  style={{ width: '30%' }}
+                />
+                <SortableTableHead
+                  columnKey="actionLabel"
+                  label="Action (THEN)"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onToggle={toggleSort}
+                  style={{ width: '22%' }}
+                />
+                <SortableTableHead
+                  columnKey="statusValue"
+                  label="Status"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onToggle={toggleSort}
+                  className="text-center"
+                  style={{ width: '10%' }}
+                />
+                <TableHead style={{ width: '8%' }} className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sortedData.map(({ rule, name, triggerLabel, actionLabel, condText, target }) => (
+                <TableRow key={rule.id} className={rule.isActive ? '' : 'opacity-60'}>
+                  <TableCell
+                    className="font-medium cursor-pointer"
+                    role="button"
+                    tabIndex={0}
+                    title="Edit automation"
+                    onClick={() => openEdit(rule)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(rule); } }}
+                  >
+                    <span className="truncate">{name}</span>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Zap className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{triggerLabel}{condText ? ` (${condText})` : ''}</span>
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    <span className="inline-flex items-center gap-1.5">
+                      <ArrowRight className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{actionLabel}</span>
+                      {target && <span className="text-muted-foreground/70 truncate">· {target}</span>}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Switch
+                      checked={rule.isActive}
+                      onCheckedChange={() => toggleActive(rule)}
+                      aria-label={rule.isActive ? 'Pause automation' : 'Activate automation'}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="ghost" size="icon" onClick={() => deleteMutation.mutate({ id: rule.id })} title="Delete">
+                      <Trash2 className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>

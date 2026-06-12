@@ -50,6 +50,43 @@ export function useImageActions(): UseImageActionsReturn {
 
   const generateMutation = trpc.image.generate.useMutation();
   const editMutation = trpc.image.editImage.useMutation();
+  // Async pair for Kie.ai models — the blocking generate/edit requests get
+  // killed by shared hosts' timeouts on slow models. Create task → poll.
+  const createTaskMutation = trpc.image.createTask.useMutation();
+  const createEditTaskMutation = trpc.image.createEditTask.useMutation();
+  const taskResultMutation = trpc.image.taskResult.useMutation();
+
+  /**
+   * Run a Kie.ai task to completion: create it via `create`, then poll
+   * /image/task-result every 5s (12-min cap, tolerates 2 transient poll
+   * errors). Resolves to the stored asset ({ url, ... }).
+   */
+  const runKieTask = useCallback(async (
+    create: () => Promise<{ taskId: string; prompt?: string }>,
+    pollPayload: Record<string, unknown>,
+  ): Promise<{ url?: string }> => {
+    const task = await create();
+    const deadline = Date.now() + 12 * 60_000;
+    let pollErrors = 0;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5000));
+      let poll: any;
+      try {
+        poll = await taskResultMutation.mutateAsync({
+          ...pollPayload,
+          prompt: task.prompt ?? pollPayload.prompt,
+          taskId: task.taskId,
+        });
+      } catch (pollError) {
+        if (++pollErrors >= 3) throw pollError;
+        continue;
+      }
+      pollErrors = 0;
+      if (poll.status === 'completed') return poll.asset as { url?: string };
+      if (poll.status === 'failed') throw new Error(poll.error || 'Generation failed.');
+    }
+    throw new Error('Timed out after 12 minutes — the task may still finish on Kie.ai.');
+  }, [taskResultMutation]);
 
   /**
    * Replace an image node at `pos` with a new URL.
@@ -98,11 +135,17 @@ export function useImageActions(): UseImageActionsReturn {
 
     setIsProcessing(true);
     try {
-      const result = await generateMutation.mutateAsync({
+      const payload = {
         prompt: finalPrompt,
         model: modelObj.modelId,
         provider: modelObj.provider,
-      }) as { url?: string };
+      };
+      const result = modelObj.provider === 'kieai'
+        ? await runKieTask(
+            () => createTaskMutation.mutateAsync(payload) as Promise<{ taskId: string; prompt?: string }>,
+            payload,
+          )
+        : await generateMutation.mutateAsync(payload) as { url?: string };
 
       if (result?.url) {
         replaceImageAtPos(editor, pos, result.url, node.attrs.alt, finalPrompt);
@@ -114,7 +157,7 @@ export function useImageActions(): UseImageActionsReturn {
     } finally {
       setIsProcessing(false);
     }
-  }, [imageModels, selectedModel, generateMutation, replaceImageAtPos]);
+  }, [imageModels, selectedModel, generateMutation, createTaskMutation, runKieTask, replaceImageAtPos]);
 
   /**
    * Edit the image at `pos` using the image.editImage API.
@@ -138,12 +181,18 @@ export function useImageActions(): UseImageActionsReturn {
 
     setIsProcessing(true);
     try {
-      const result = await editMutation.mutateAsync({
+      const payload = {
         imageUrl,
         prompt: instructions,
         model: modelObj.modelId,
         provider: modelObj.provider,
-      }) as { url?: string };
+      };
+      const result = modelObj.provider === 'kieai'
+        ? await runKieTask(
+            () => createEditTaskMutation.mutateAsync(payload) as Promise<{ taskId: string; prompt?: string }>,
+            { ...payload, storageContext: 'image-edit' },
+          )
+        : await editMutation.mutateAsync(payload) as { url?: string };
 
       if (result?.url) {
         replaceImageAtPos(editor, pos, result.url, node.attrs.alt);
@@ -155,7 +204,7 @@ export function useImageActions(): UseImageActionsReturn {
     } finally {
       setIsProcessing(false);
     }
-  }, [imageModels, selectedModel, editMutation, replaceImageAtPos]);
+  }, [imageModels, selectedModel, editMutation, createEditTaskMutation, runKieTask, replaceImageAtPos]);
 
   return {
     imageModels,

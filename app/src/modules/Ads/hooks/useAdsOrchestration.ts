@@ -138,6 +138,11 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
 
   // ── tRPC mutations for image generation ──
   const generateImageMutation = trpc.image.generate.useMutation();
+  // Async pair for Kie.ai models — the blocking /image/generate poll loop
+  // gets killed by shared hosts' timeouts on slow models (same fix as the
+  // Image module's useImageGeneration).
+  const createImageTaskMutation = trpc.image.createTask.useMutation();
+  const imageTaskResultMutation = trpc.image.taskResult.useMutation();
   const optimizeBriefMutation = trpc.image.optimizeBrief.useMutation();
   const generateConceptsMutation = trpc.image.generateConcepts.useMutation();
   const suggestMutation = trpc.copy.suggest.useMutation();
@@ -373,13 +378,49 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
             setMediaSlots((prev) => [...prev, placeholder]);
 
             try {
-              const result = await generateImageMutation.mutateAsync({
+              const payload = {
                 prompt: fullPrompt,
                 model: modelId,
                 provider: resolvedProvider,
                 brandContext: brandCtx,
                 ...(refUrls.length > 0 ? { inputUrls: refUrls, referenceImageIntents: refIntents } : {}),
-              });
+              };
+
+              let result: any;
+              if (resolvedProvider === 'kieai') {
+                // Async path: create the task, poll every 5s (12-min cap,
+                // tolerate transient poll errors). Short requests survive
+                // shared-hosting timeouts and worker limits.
+                const task: any = await createImageTaskMutation.mutateAsync(payload);
+                const deadline = Date.now() + 12 * 60_000;
+                let pollErrors = 0;
+                result = null;
+                while (Date.now() < deadline) {
+                  if (signal.aborted) throw new Error('Generation cancelled.');
+                  await new Promise((r) => setTimeout(r, 5000));
+                  let poll: any;
+                  try {
+                    poll = await imageTaskResultMutation.mutateAsync({
+                      ...payload,
+                      prompt: task.prompt ?? fullPrompt,
+                      taskId: task.taskId,
+                    });
+                  } catch (pollError) {
+                    if (++pollErrors >= 3) throw pollError;
+                    continue;
+                  }
+                  pollErrors = 0;
+                  if (poll.status === 'completed') { result = poll.asset; break; }
+                  if (poll.status === 'failed') {
+                    throw new Error(poll.error || 'Generation failed.');
+                  }
+                }
+                if (!result) {
+                  throw new Error('Timed out after 12 minutes — the task may still finish on Kie.ai.');
+                }
+              } else {
+                result = await generateImageMutation.mutateAsync(payload);
+              }
 
               // Update placeholder with completed result
               const completedSlot: MediaSlot = {
@@ -512,7 +553,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       toast.error(message);
       console.error('[AdsOrchestration] Generate failed:', err);
     }
-  }, [generateImageMutation, imageModels, settings, optimizeBriefMutation, generateConceptsMutation]);
+  }, [generateImageMutation, createImageTaskMutation, imageTaskResultMutation, imageModels, settings, optimizeBriefMutation, generateConceptsMutation]);
 
   // ── Update text (inline editing) ──
   const updateTextSlot = useCallback(

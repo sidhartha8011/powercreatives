@@ -32,7 +32,12 @@ import {
   LogOut,
   Megaphone,
   Workflow,
+  Users,
+  Bell,
 } from 'lucide-react';
+import { useState } from 'react';
+import { trpc } from '@/lib/trpc';
+import { NotificationsPanel } from '@/components/shared/NotificationsPanel';
 
 interface NavItem {
   id: ModuleId;
@@ -65,6 +70,12 @@ const configNavItems: NavItem[] = [
   { id: 'integrations', label: 'Integrations', icon: <Plug className="w-[1.2rem] h-[1.2rem]" /> },
 ];
 
+// Admin-only items — appended to the config group for admins. The backend
+// enforces manage_options on these routes regardless; hiding is UX only.
+const adminNavItems: NavItem[] = [
+  { id: 'users', label: 'Users', icon: <Users className="w-[1.2rem] h-[1.2rem]" /> },
+];
+
 // ============================================
 // Helpers — user identity + logout
 // ============================================
@@ -76,12 +87,21 @@ interface PcmUser {
   email: string;
   role: string;
   avatarUrl: string;
+  /** Per-delivery module grants; null/undefined = unrestricted (admins). */
+  allowedModules?: string[] | null;
 }
 
 function getPcmUser(): PcmUser {
   const w = window as unknown as { pcmConfig?: { user?: PcmUser } };
   return w.pcmConfig?.user ?? { id: 0, name: 'User', email: '', role: 'user', avatarUrl: '' };
 }
+
+/**
+ * Modules every team member sees regardless of grants — their data inside is
+ * already per-user / per-assignment scoped. Everything else in the main nav
+ * requires a per-delivery module grant for non-admins (backend enforces too).
+ */
+const ALWAYS_VISIBLE_MODULES: ModuleId[] = ['brands', 'deliveries', 'projects', 'assets', 'approvals'];
 
 /** First letter of the user's display name (uppercase) */
 function getInitial(name: string): string {
@@ -115,6 +135,14 @@ export function Sidebar() {
   const { state, setActiveModule } = useApp();
   const { activeModule } = state;
   const user = getPcmUser();
+
+  // Approval-flow notifications: unseen count drives the red badge on the
+  // Approvals nav item; the bell row opens the side panel.
+  const [notifOpen, setNotifOpen] = useState(false);
+  const { data: notifData } = trpc.notifications.list.useQuery(undefined, {
+    refetchInterval: 60000,
+  });
+  const unseen: number = Number(notifData?.unseen ?? 0);
 
   return (
     <aside 
@@ -154,8 +182,14 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex flex-col flex-1">
-        {/* Main workflow items */}
-        {mainNavItems.map((item) => (
+        {/* Main workflow items — non-admins only see the always-visible basics
+            plus modules granted via their assigned deliveries (UX layer; the
+            REST permission callback enforces the same grants server-side). */}
+        {mainNavItems.filter((item) => {
+          if (user.role === 'admin') return true;
+          if (ALWAYS_VISIBLE_MODULES.includes(item.id)) return true;
+          return (user.allowedModules ?? []).includes(item.id);
+        }).map((item) => (
           <button
             key={item.id}
             onClick={() => setActiveModule(item.id)}
@@ -189,8 +223,61 @@ export function Sidebar() {
               {item.icon}
             </span>
             {item.label}
+            {item.id === 'approvals' && unseen > 0 && (
+              <span
+                aria-label={`${unseen} new notifications`}
+                style={{
+                  marginLeft: 'auto',
+                  background: '#e03131',
+                  color: '#fff',
+                  borderRadius: '999px',
+                  fontSize: '0.65rem',
+                  fontWeight: 700,
+                  minWidth: '16px',
+                  height: '16px',
+                  lineHeight: '16px',
+                  textAlign: 'center',
+                  padding: '0 4px',
+                }}
+              >
+                {unseen > 9 ? '9+' : unseen}
+              </span>
+            )}
           </button>
         ))}
+
+        {/* Notifications bell — opens the side panel */}
+        <button
+          onClick={() => setNotifOpen(true)}
+          className="flex items-center justify-start text-left"
+          style={{
+            background: 'transparent',
+            color: '#555',
+            padding: '6px 14px',
+            borderRadius: '999px',
+            fontSize: '0.85rem',
+            marginBottom: '1px',
+            border: '1px solid transparent',
+            gap: '8px',
+            fontWeight: 500,
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#f1f3f5'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={{ color: '#888', position: 'relative' }}>
+            <Bell className="w-[1.2rem] h-[1.2rem]" />
+            {unseen > 0 && (
+              <span
+                style={{
+                  position: 'absolute', top: '-2px', right: '-2px',
+                  width: '8px', height: '8px', borderRadius: '999px',
+                  background: '#e03131',
+                }}
+              />
+            )}
+          </span>
+          Notifications
+        </button>
 
         {/* Spacer */}
         <div className="flex-1" />
@@ -198,8 +285,8 @@ export function Sidebar() {
         {/* Separator */}
         <div style={{ height: '1px', background: '#ededed', margin: '6px 8px' }} />
 
-        {/* Config items at bottom */}
-        {configNavItems.map((item) => (
+        {/* Config items at bottom (admins also get the Users section) */}
+        {[...configNavItems, ...(user.role === 'admin' ? adminNavItems : [])].map((item) => (
           <button
             key={item.id}
             onClick={() => setActiveModule(item.id)}
@@ -314,6 +401,8 @@ export function Sidebar() {
         <LogOut className="w-[1rem] h-[1rem]" />
         Sign Out
       </button>
+      {/* Notifications side panel (marks all seen on open) */}
+      <NotificationsPanel open={notifOpen} onOpenChange={setNotifOpen} />
     </aside>
   );
 }

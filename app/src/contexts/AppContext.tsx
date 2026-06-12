@@ -61,6 +61,8 @@ interface AppState {
   /** Cross-module data transfer */
   pendingVideoData: PendingVideoData | null;
   pendingWriterData: PendingWriterData | null;
+  /** Notification → Approvals: focus the board on one set (one-shot). */
+  pendingApprovalSetId: number | null;
 
   /** Event subscribers */
   eventListeners: Map<AppEventType, Set<(event: AppEvent) => void>>;
@@ -75,7 +77,8 @@ type AppAction =
   | { type: 'SET_ACTIVE_MODULE'; payload: ModuleId }
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_PENDING_VIDEO_DATA'; payload: PendingVideoData | null }
-  | { type: 'SET_PENDING_WRITER_DATA'; payload: PendingWriterData | null };
+  | { type: 'SET_PENDING_WRITER_DATA'; payload: PendingWriterData | null }
+  | { type: 'SET_PENDING_APPROVAL_SET'; payload: number | null };
 
 // ============================================
 // Initial State
@@ -107,6 +110,7 @@ const initialState: AppState = {
   isLoading: false,
   pendingVideoData: null,
   pendingWriterData: null,
+  pendingApprovalSetId: null,
   eventListeners: new Map(),
 };
 
@@ -142,6 +146,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         pendingVideoData: action.payload,
       };
 
+    case 'SET_PENDING_APPROVAL_SET':
+      return {
+        ...state,
+        pendingApprovalSetId: action.payload,
+      };
+
     case 'SET_PENDING_WRITER_DATA':
       return {
         ...state,
@@ -172,6 +182,8 @@ interface AppContextValue {
   consumePendingVideoData: () => PendingVideoData | null;
   navigateToWriterWithKeywords: (data: Omit<PendingWriterData, 'sourceModule'>) => void;
   consumePendingWriterData: () => PendingWriterData | null;
+  navigateToApprovalsWithSet: (setId: number) => void;
+  consumePendingApprovalSetId: () => number | null;
 
   /** Event system */
   emit: (event: AppEvent) => void;
@@ -227,6 +239,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return data;
   }, [state.pendingWriterData]);
 
+  // Cross-module data transfer: Notification → Approvals (focus one set)
+  const navigateToApprovalsWithSet = useCallback((setId: number) => {
+    dispatch({ type: 'SET_PENDING_APPROVAL_SET', payload: setId });
+    dispatch({ type: 'SET_ACTIVE_MODULE', payload: 'approvals' });
+  }, []);
+
+  const consumePendingApprovalSetId = useCallback((): number | null => {
+    const id = state.pendingApprovalSetId;
+    if (id !== null) {
+      dispatch({ type: 'SET_PENDING_APPROVAL_SET', payload: null });
+    }
+    return id;
+  }, [state.pendingApprovalSetId]);
+
   // Event system
   const emit = useCallback(
     (event: AppEvent) => {
@@ -278,6 +304,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     consumePendingVideoData,
     navigateToWriterWithKeywords,
     consumePendingWriterData,
+    navigateToApprovalsWithSet,
+    consumePendingApprovalSetId,
     emit,
     subscribe,
   };

@@ -66,6 +66,74 @@ class PCM_Provider_KieAI implements PCM_Provider_Interface
     }
 
     /**
+     * Create an image generation task WITHOUT waiting for the result — the
+     * async seam for shared hosting, where the blocking generate_image()
+     * poll loop gets killed by the host's request timeout. The caller polls
+     * PCM_Kie_Api::get_task_status() from separate cheap requests.
+     *
+     * @param string $model_id Kie.ai model ID.
+     * @param array  $params   Same shape generate_image() accepts.
+     * @return array { taskId: string }
+     */
+    public function create_image_task(string $model_id, array $params): array
+    {
+        $input_urls = $params['inputUrls'] ?? [];
+        if (!empty($input_urls)) {
+            $input_urls = PCM_Kie_Upload::resolve_input_urls($this->api_key, $input_urls);
+        }
+
+        return PCM_Kie_Api::create_task($this->api_key, $model_id, [
+            'prompt' => $params['prompt'] ?? '',
+            'aspectRatio' => $params['aspectRatio'] ?? $params['format'] ?? '1:1',
+            'inputUrls' => $input_urls,
+        ]);
+    }
+
+    /**
+     * Create an image EDIT task without waiting — async seam for edit_image()
+     * (same imageUrl/referenceImageUrl → inputUrls mapping).
+     *
+     * @param string $model_id Kie.ai model ID.
+     * @param array  $params   Same shape edit_image() accepts.
+     * @return array { taskId: string }
+     */
+    public function create_edit_task(string $model_id, array $params): array
+    {
+        $edit_params = $params;
+        $inputUrls = [$params['image_url'] ?? $params['imageUrl'] ?? ''];
+        if (!empty($params['referenceImageUrl'])) {
+            $inputUrls[] = $params['referenceImageUrl'];
+        }
+        $edit_params['inputUrls'] = $inputUrls;
+        return $this->create_image_task($model_id, $edit_params);
+    }
+
+    /**
+     * Create a video generation task without waiting — async seam for
+     * generate_video() (same param mapping, including the model_id passthrough
+     * the dedicated-body builder needs).
+     *
+     * @param string $model_id Kie.ai model ID.
+     * @param array  $params   Same shape generate_video() accepts.
+     * @return array { taskId: string }
+     */
+    public function create_video_task(string $model_id, array $params): array
+    {
+        $input_urls = $params['inputUrls'] ?? [];
+        if (!empty($input_urls)) {
+            $input_urls = PCM_Kie_Upload::resolve_input_urls($this->api_key, $input_urls);
+        }
+
+        return PCM_Kie_Api::create_task($this->api_key, $model_id, [
+            'prompt' => $params['prompt'] ?? '',
+            'aspectRatio' => $params['aspectRatio'] ?? $params['format'] ?? '16:9',
+            'duration' => $params['duration'] ?? null,
+            'inputUrls' => $input_urls,
+            'model_id' => $model_id,
+        ]);
+    }
+
+    /**
      * Generate a video via Kie.ai (marketplace or dedicated model).
      *
      * If inputUrls contain base64 data URLs (from local file uploads),

@@ -87,7 +87,7 @@ class PCM_REST_Automations extends PCM_REST_Base
                 'conditions'   => $this->sanitize_conditions($params['conditions'] ?? array()),
                 'actionId'     => $action,
                 'config'       => $this->sanitize_config($action, $params['config'] ?? array()),
-                'inputMapping' => $this->sanitize_conditions($params['inputMapping'] ?? array()),
+                'inputMapping' => $this->sanitize_mapping($params['inputMapping'] ?? array()),
                 'brandId'      => !empty($params['brandId']) ? (int) $params['brandId'] : null,
                 'isActive'     => $params['isActive'] ?? true,
             ));
@@ -132,10 +132,17 @@ class PCM_REST_Automations extends PCM_REST_Base
             $update['conditions'] = $this->sanitize_conditions($params['conditions'] ?? array());
         }
         if (array_key_exists('config', $params)) {
-            $update['config'] = $this->sanitize_config($action_for_config ?? 'webhook', $params['config'] ?? array());
+            // When the PATCH doesn't change the action, sanitize against the
+            // rule's CURRENT action — a hardcoded fallback would strip every
+            // key that isn't a webhook field.
+            if ($action_for_config === null) {
+                $existing          = PCM_Automation_Engine::get_rule($id, (int) $user->id);
+                $action_for_config = $existing ? (string) $existing->actionId : '';
+            }
+            $update['config'] = $this->sanitize_config($action_for_config, $params['config'] ?? array());
         }
         if (array_key_exists('inputMapping', $params)) {
-            $update['inputMapping'] = $this->sanitize_conditions($params['inputMapping'] ?? array());
+            $update['inputMapping'] = $this->sanitize_mapping($params['inputMapping'] ?? array());
         }
         if (array_key_exists('brandId', $params)) {
             $update['brandId'] = $params['brandId'];
@@ -279,24 +286,59 @@ class PCM_REST_Automations extends PCM_REST_Base
             return array();
         }
 
-        if ($action === 'webhook') {
-            $clean = array();
-            if (isset($config['url'])) {
-                $clean['url'] = esc_url_raw((string) $config['url']);
-            }
-            if (isset($config['secret'])) {
-                $clean['secret'] = sanitize_text_field((string) $config['secret']);
-            }
-            return $clean;
-        }
+        // Data-driven: keep only the keys the action's registered configFields
+        // declare, sanitized by field type. This automatically covers every
+        // action (webhook url/secret, email fromEmail/fromName, move_to_lane
+        // lane, and any future action) without per-action branches here.
+        $def    = PCM_Automation_Actions::get($action);
+        $fields = is_array($def['configFields'] ?? null) ? $def['configFields'] : array();
 
-        // email (test channel)
         $clean = array();
-        if (isset($config['fromEmail'])) {
-            $clean['fromEmail'] = sanitize_email((string) $config['fromEmail']);
+        foreach ($fields as $field) {
+            $key = (string) ($field['key'] ?? '');
+            if ($key === '' || !isset($config[$key]) || is_array($config[$key])) {
+                continue;
+            }
+            $value = (string) $config[$key];
+            $type  = (string) ($field['type'] ?? 'text');
+
+            if ($type === 'url') {
+                $clean[$key] = esc_url_raw($value);
+            } elseif ($type === 'select') {
+                // Whitelist: only a declared option value survives.
+                $options = is_array($field['options'] ?? null) ? $field['options'] : array();
+                $allowed = array_map(static fn($o) => (string) ($o['value'] ?? ''), $options);
+                if (in_array($value, $allowed, true)) {
+                    $clean[$key] = $value;
+                }
+            } elseif (stripos($key, 'email') !== false) {
+                $clean[$key] = sanitize_email($value);
+            } else {
+                $clean[$key] = sanitize_text_field($value);
+            }
         }
-        if (isset($config['fromName'])) {
-            $clean['fromName'] = sanitize_text_field((string) $config['fromName']);
+        return $clean;
+    }
+
+    /**
+     * Sanitize an inputMapping payload. Unlike conditions, mapping values are
+     * multi-line message bodies — sanitize_textarea_field preserves the \n
+     * line breaks the email templates rely on.
+     *
+     * @param mixed $mapping Raw inputMapping.
+     * @return array
+     */
+    private function sanitize_mapping($mapping): array
+    {
+        if (!is_array($mapping)) {
+            return array();
+        }
+        $clean = array();
+        foreach ($mapping as $key => $value) {
+            if (is_array($value)) {
+                continue;
+            }
+            $clean[sanitize_text_field((string) $key)] = sanitize_textarea_field((string) $value);
         }
         return $clean;
     }

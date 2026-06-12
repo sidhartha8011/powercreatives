@@ -83,12 +83,15 @@ class PCM_DB
      * Deletes the primary list cache key. For tables with variant
      * queries (e.g. templates with module filter), also clears those.
      *
+     * Public so cross-cutting features (e.g. delivery assignments granting
+     * access) can bust a user's cached lists when their visible set changes.
+     *
      * @param string $table   Short table name.
      * @param int    $user_id User ID.
      *
      * @return void
      */
-    private static function invalidate(string $table, int $user_id): void
+    public static function invalidate(string $table, int $user_id): void
     {
         delete_transient(self::cache_key($table, $user_id));
 
@@ -319,8 +322,15 @@ class PCM_DB
         return self::cached(self::cache_key('brands', $user_id), function () use ($user_id) {
             global $wpdb;
             $table = self::t('brands');
+            // Admins see every user's brands (team-wide oversight).
+            if (PCM_Access::is_admin($user_id)) {
+                return $wpdb->get_results("SELECT * FROM {$table} ORDER BY name ASC"); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            }
+            // Owned OR granted via an assigned delivery (view + use).
+            $scope = PCM_Access::scope_clause('userId', 'id', $user_id, PCM_Access::granted_brand_ids($user_id));
+            // phpcs:ignore WordPress.DB.PreparedSQL -- clause built from %d placeholders only.
             return $wpdb->get_results(
-                $wpdb->prepare("SELECT * FROM {$table} WHERE userId = %d ORDER BY name ASC", $user_id)
+                $wpdb->prepare("SELECT * FROM {$table} WHERE {$scope['sql']} ORDER BY name ASC", ...$scope['params'])
             );
         });
     }
@@ -355,9 +365,20 @@ class PCM_DB
         global $wpdb;
 
         $table = self::t('brands');
-        return $wpdb->get_row(
+        $row = $wpdb->get_row(
             $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d AND userId = %d", $id, $user_id)
         );
+        if ($row) {
+            return $row;
+        }
+        // Not owned — readable when granted via an assigned delivery (view +
+        // use), or by an admin (team-wide oversight).
+        if (PCM_Access::is_admin($user_id) || in_array($id, PCM_Access::granted_brand_ids($user_id), true)) {
+            return $wpdb->get_row(
+                $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id)
+            );
+        }
+        return null;
     }
 
     /**
@@ -428,10 +449,17 @@ class PCM_DB
         return self::cached(self::cache_key('deliveries', $user_id), function () use ($user_id) {
             global $wpdb;
             $table = self::t('deliveries');
+            // Admins see every user's deliveries (team-wide oversight).
+            if (PCM_Access::is_admin($user_id)) {
+                return $wpdb->get_results("SELECT * FROM {$table} ORDER BY updatedAt DESC, id DESC"); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            }
+            // Owned OR assigned to this user (view + use).
+            $scope = PCM_Access::scope_clause('userId', 'id', $user_id, PCM_Access::granted_delivery_ids($user_id));
+            // phpcs:ignore WordPress.DB.PreparedSQL -- clause built from %d placeholders only.
             return $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT * FROM {$table} WHERE userId = %d ORDER BY updatedAt DESC, id DESC",
-                    $user_id
+                    "SELECT * FROM {$table} WHERE {$scope['sql']} ORDER BY updatedAt DESC, id DESC",
+                    ...$scope['params']
                 )
             );
         });
@@ -448,13 +476,24 @@ class PCM_DB
     {
         global $wpdb;
         $table = self::t('deliveries');
-        return $wpdb->get_row(
+        $row = $wpdb->get_row(
             $wpdb->prepare(
                 "SELECT * FROM {$table} WHERE id = %d AND userId = %d",
                 $id,
                 $user_id
             )
         );
+        if ($row) {
+            return $row;
+        }
+        // Not owned — readable when assigned to this user (view + use), or by
+        // an admin (team-wide oversight).
+        if (PCM_Access::is_admin($user_id) || in_array($id, PCM_Access::granted_delivery_ids($user_id), true)) {
+            return $wpdb->get_row(
+                $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id)
+            );
+        }
+        return null;
     }
 
     /**

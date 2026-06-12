@@ -125,6 +125,7 @@ export const ImageSidebar = memo(function ImageSidebar({
                 {/* 1. Brand / URL Context
                  * Theme is hidden and rendered separately below. */}
                 <ContextPanel
+                    moduleId="image"
                     value={contextData}
                     onChange={(newData) => {
                         onContextChange(newData);

@@ -470,6 +470,10 @@ class PCM_Shortcode
                 'role' => current_user_can('manage_options') ? 'admin' : 'user',
                 'avatarUrl' => get_avatar_url($wp_user->ID),
                 'isLoggedIn' => $is_team_member,
+                // Per-delivery module grants (null = unrestricted/admin).
+                'allowedModules' => PCM_Admin::allowed_modules_for_current_user(),
+                // Per-module brand grants (null = unrestricted/admin).
+                'brandsByModule' => PCM_Admin::brands_by_module_for_current_user(),
             );
         } else {
             // FIX: previously we sent hardcoded id=0, which could break any frontend
@@ -493,6 +497,10 @@ class PCM_Shortcode
                 'role' => 'user',
                 'avatarUrl' => '',
                 'isLoggedIn' => $is_team_member,
+                // Gate visitors operate in the shared workspace — unrestricted
+                // (matches the REST layer, which bypasses module grants for them).
+                'allowedModules' => null,
+                'brandsByModule' => null,
             );
         }
 
@@ -516,6 +524,10 @@ class PCM_Shortcode
             'pluginUrl' => esc_url(PCM_PLUGIN_URL),
             'shortcodePageUrl' => esc_url_raw($shortcode_page_url),
             'user' => $user_payload,
+            // Central delivery-type → module presets (deliveries dialog).
+            'deliveryTypePresets' => class_exists('PCM_Deliveries_Service')
+                ? PCM_Deliveries_Service::type_presets()
+                : array(),
             'version' => PCM_VERSION,
         );
     }

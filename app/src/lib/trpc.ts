@@ -76,7 +76,19 @@ async function apiFetch<T>(
     }
 
     const config = getConfig();
-    const url = `${config.restUrl}${endpoint.replace(/^\//, "")}`;
+    // Compose path + query separately: on "Plain" permalinks restUrl is
+    // `/?rest_route=/pcm/v1/`, so a naive `endpoint?x=y` append would create a
+    // second `?` and WordPress would fail to match the route (observed as
+    // empty module-filtered template lists on hosts without pretty
+    // permalinks). Re-attach the endpoint's query with the right separator.
+    const cleaned = endpoint.replace(/^\//, "");
+    const qIndex = cleaned.indexOf("?");
+    const path = qIndex === -1 ? cleaned : cleaned.slice(0, qIndex);
+    const query = qIndex === -1 ? "" : cleaned.slice(qIndex + 1);
+    let url = `${config.restUrl}${path}`;
+    if (query) {
+        url += (url.includes("?") ? "&" : "?") + query;
+    }
 
     const response = await fetch(url, {
         ...options,

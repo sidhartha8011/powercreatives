@@ -55,6 +55,17 @@ class PCM_Settings_Controller extends PCM_REST_Base
             return $this->error('No settings provided to update.', 400);
         }
 
+        // Delivery-type presets are structured data — normalize on write
+        // (keys/labels sanitized, module ids whitelist-filtered) so the
+        // option never stores junk. Explicit null resets to the built-ins.
+        if (class_exists('PCM_Deliveries_Service')
+            && array_key_exists(PCM_Deliveries_Service::TYPE_PRESETS_SETTING, $params)
+        ) {
+            $raw = $params[PCM_Deliveries_Service::TYPE_PRESETS_SETTING];
+            $params[PCM_Deliveries_Service::TYPE_PRESETS_SETTING] =
+                $raw === null ? null : PCM_Deliveries_Service::normalize_presets($raw);
+        }
+
         PCM_Settings::set_many($params);
 
         return $this->success(PCM_Settings::get_all());

@@ -29,6 +29,23 @@ abstract class PCM_REST_Base
     protected string $namespace = 'pcm/v1';
 
     /**
+     * Fallback capability for routes that don't specify one (5th element).
+     * Work-module controllers override this to 'edit_posts' so non-admin team
+     * members can use them; admin-only modules (users, settings, integrations,
+     * automations, templates) keep the manage_options default.
+     */
+    protected string $default_capability = 'manage_options';
+
+    /**
+     * Per-delivery module grants. When non-empty, a logged-in NON-admin user
+     * must hold at least one of these module ids (union of `modules` across
+     * their assigned deliveries — PCM_Access::granted_module_ids) to use this
+     * controller. Admins (manage_options) and gate-auth visitors bypass.
+     * E.g. copy => ['copy','ads'] (granting Ads implies the copy backend).
+     */
+    protected array $module_grant_keys = array();
+
+    /**
      * Register all routes defined by the child controller.
      * Called via `rest_api_init` hook.
      *
@@ -41,7 +58,14 @@ abstract class PCM_REST_Base
             $path = $route_def[1]; // Route path (e.g. '/integrations')
             $callback = $route_def[2]; // Method name on this class
             $args = $route_def[3] ?? array(); // Optional: validation args
-            $permission = $route_def[4] ?? 'manage_options'; // WP capability
+            $permission = $route_def[4] ?? $this->default_capability; // WP capability
+
+            // 'manage_options:strict' = real WP admin ONLY (no shortcode-gate
+            // bypass). Used by endpoints that expose cross-user data (e.g. the
+            // WP user directory) which a shared-password gate visitor must not see.
+            $permission_callback = ($permission === 'manage_options:strict')
+                ? $this->make_strict_admin_callback()
+                : $this->make_permission_callback($permission);
 
             register_rest_route(
                 $this->namespace,
@@ -49,7 +73,7 @@ abstract class PCM_REST_Base
                 array(
                 'methods' => $method,
                 'callback' => array($this, $callback),
-                'permission_callback' => $this->make_permission_callback($permission),
+                'permission_callback' => $permission_callback,
                 'args' => $args,
             )
             );
@@ -99,6 +123,33 @@ abstract class PCM_REST_Base
 
             // Source 1: WP user with required capability
             if (current_user_can($capability)) {
+                // Per-delivery module grants: admins pass unconditionally; a
+                // non-admin must hold one of this controller's module ids via
+                // an assigned delivery. (Sidebar hiding is UX — this is the
+                // actual enforcement.)
+                if (!empty($this->module_grant_keys)
+                    && !current_user_can('manage_options')
+                    && is_user_logged_in()
+                ) {
+                    $pcm_user = PCM_DB::get_user_by_open_id('wp_' . get_current_user_id());
+                    $granted  = $pcm_user
+                        ? PCM_Access::granted_module_ids((int) $pcm_user->id)
+                        : array();
+                    if (empty(array_intersect($this->module_grant_keys, $granted))) {
+                        return new WP_Error(
+                            'pcm_module_not_granted',
+                            __('This module is not part of your assigned deliveries.', 'power-creatives'),
+                            array('status' => 403)
+                        );
+                    }
+                    // Per-module brand scoping: a granted brand is only
+                    // usable inside the modules of the delivery that granted
+                    // it. Owned brands always pass.
+                    $brand_check = $this->check_module_brand($request, $pcm_user);
+                    if ($brand_check instanceof WP_Error) {
+                        return $brand_check;
+                    }
+                }
                 return true;
             }
 
@@ -115,6 +166,82 @@ abstract class PCM_REST_Base
             return new WP_Error(
                 'pcm_forbidden',
                 __('You do not have permission to perform this action.', 'power-creatives'),
+                array('status' => 403)
+            );
+        };
+    }
+
+    /**
+     * Validate the request's `brandId` (when present) against the caller's
+     * per-module brand grants. Runs only for logged-in non-admins on
+     * controllers that declare $module_grant_keys. A brand passes when the
+     * caller OWNS it, or when it was granted via an assigned delivery whose
+     * modules intersect this controller's grant keys.
+     *
+     * @param WP_REST_Request $request  Request.
+     * @param object|null     $pcm_user Resolved PCM user row.
+     * @return true|WP_Error
+     */
+    private function check_module_brand(WP_REST_Request $request, ?object $pcm_user): bool|WP_Error
+    {
+        $brand_id = absint($request->get_param('brandId') ?? 0);
+        if ($brand_id === 0) {
+            return true; // No brand in play — nothing to scope.
+        }
+        if (!$pcm_user) {
+            return true; // No PCM row yet → no grants and no owned brands.
+        }
+
+        global $wpdb;
+        $brands = PCM_Schema::table('brands');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $owned = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$brands} WHERE id = %d AND userId = %d",
+            $brand_id,
+            (int) $pcm_user->id
+        ));
+        if ($owned) {
+            return true;
+        }
+
+        $allowed = PCM_Access::granted_brand_ids_for_modules((int) $pcm_user->id, $this->module_grant_keys);
+        if (in_array($brand_id, $allowed, true)) {
+            return true;
+        }
+
+        return new WP_Error(
+            'pcm_brand_not_granted',
+            __('This brand is not part of your assigned deliveries for this module.', 'power-creatives'),
+            array('status' => 403)
+        );
+    }
+
+    /**
+     * Permission callback for REAL WP administrators only — nonce + a genuine
+     * `manage_options` WP capability, with NO shortcode-gate bypass. The gate
+     * grants shared-password visitors `manage_options`-level access to ordinary
+     * endpoints; routes that expose cross-user data (the WP user directory) must
+     * not be reachable that way.
+     *
+     * @return callable
+     */
+    protected function make_strict_admin_callback(): callable
+    {
+        return function (WP_REST_Request $request) {
+            $nonce = $request->get_header('X-WP-Nonce');
+            if (!$nonce || !wp_verify_nonce($nonce, 'wp_rest')) {
+                return new WP_Error(
+                    'pcm_invalid_nonce',
+                    __('Security check failed.', 'power-creatives'),
+                    array('status' => 403)
+                );
+            }
+            if (current_user_can('manage_options')) {
+                return true;
+            }
+            return new WP_Error(
+                'pcm_forbidden',
+                __('Administrator access required.', 'power-creatives'),
                 array('status' => 403)
             );
         };
@@ -186,9 +313,33 @@ abstract class PCM_REST_Base
             // any users exist, so new users would never get their default prompts.
             if ($user_id) {
                 PCM_Prompt_Seeds::seed_for_user((int) $user_id);
+                // Also seed the default automation rules (idempotent — no-op if
+                // already seeded). Same chicken-and-egg as prompts.
+                if (class_exists('PCM_Automation_Seeds')) {
+                    PCM_Automation_Seeds::seed_for_user((int) $user_id);
+                }
             }
 
             $pcm_user = PCM_DB::get_user_by_open_id($open_id);
+        }
+
+        // Keep the stored access level mirroring WordPress: if the WP role
+        // changed since the row was created (e.g. user promoted to admin),
+        // sync it on the next request. One cheap UPDATE, only when stale.
+        if ($pcm_user && is_user_logged_in()) {
+            $live_role = current_user_can('manage_options') ? 'admin' : 'user';
+            if (($pcm_user->role ?? '') !== $live_role) {
+                global $wpdb;
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update(
+                    PCM_Schema::table('users'),
+                    array('role' => $live_role),
+                    array('id' => (int) $pcm_user->id),
+                    array('%s'),
+                    array('%d')
+                );
+                $pcm_user->role = $live_role;
+            }
         }
 
         return $pcm_user;

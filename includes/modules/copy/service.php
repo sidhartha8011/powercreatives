@@ -789,9 +789,31 @@ class PCM_Copy_Service
 
         $result_table = PCM_Schema::table('copy_results');
 
+        // Non-admin team members: default generated copy into the project of
+        // the assigned delivery (brand-matched via the job's brandId). Cached
+        // per job — store_result runs once per generated card.
+        static $auto_project_by_job = array();
+        $project_id = null;
+        if (class_exists('PCM_Access') && !PCM_Access::is_admin($user_id)) {
+            if (!array_key_exists($job_id, $auto_project_by_job)) {
+                $jobs_table = PCM_Schema::table('copy_jobs');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $job_brand = $wpdb->get_var($wpdb->prepare(
+                    "SELECT brandId FROM {$jobs_table} WHERE id = %d",
+                    $job_id
+                ));
+                $auto_project_by_job[$job_id] = PCM_Access::auto_project_id(
+                    $user_id,
+                    $job_brand ? (int) $job_brand : null
+                );
+            }
+            $project_id = $auto_project_by_job[$job_id];
+        }
+
         $wpdb->insert($result_table, array(
             'jobId' => $job_id,
             'userId' => $user_id,
+            'projectId' => $project_id,
             'copyType' => $task['copyType'],
             'audienceId' => $task['audience']['id'],
             'audienceName' => $task['audience']['name'],

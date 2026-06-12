@@ -75,6 +75,9 @@ class PCM_REST_Approvals extends PCM_REST_Base
             // Authenticated team actions (ownership-scoped).
             array('POST',  '/approvals/sets/(?P<id>\d+)/reply', 'add_team_reply', array(), 'edit_posts'),
             array('POST',  '/approvals/sets/(?P<id>\d+)/share', 'share_set', array(), 'edit_posts'),
+            // Append assets to an in-review set (id is numeric, so it can't
+            // collide with the token-based public asset route below).
+            array('POST',  '/approvals/sets/(?P<id>\d+)/assets', 'append_assets', array(), 'edit_posts'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/assets/(?P<asset_id>[a-zA-Z0-9_-]+)', 'update_snapshot_asset', array(), 'public'),
         );
     }
@@ -112,12 +115,20 @@ class PCM_REST_Approvals extends PCM_REST_Base
 
         require_once __DIR__ . '/service.php';
 
+        // Optional delivery linkage — must be a delivery the caller owns or is
+        // assigned (get_delivery_by_id is owned-OR-granted).
+        $delivery_id = !empty($params['deliveryId']) ? absint($params['deliveryId']) : null;
+        if ($delivery_id !== null && !PCM_DB::get_delivery_by_id($delivery_id, (int) $pcm_user->id)) {
+            return $this->not_found('Delivery');
+        }
+
         try {
             $set_id = PCM_Approvals_Service::create_set((int)$pcm_user->id, array(
-                'name'      => sanitize_text_field($params['name']),
-                'brandId'   => !empty($params['brandId']) ? (int)$params['brandId'] : null,
-                'projectId' => !empty($params['projectId']) ? (int)$params['projectId'] : null,
-                'snapshot'  => $params['snapshot'], // Sanitized in service layer
+                'name'       => sanitize_text_field($params['name']),
+                'brandId'    => !empty($params['brandId']) ? (int)$params['brandId'] : null,
+                'projectId'  => !empty($params['projectId']) ? (int)$params['projectId'] : null,
+                'deliveryId' => $delivery_id,
+                'snapshot'   => $params['snapshot'], // Sanitized in service layer
             ));
 
             if (!$set_id) {
@@ -128,6 +139,44 @@ class PCM_REST_Approvals extends PCM_REST_Base
             return $this->success($set, 201);
         } catch (\Throwable $e) {
             return $this->error('Failed to create approval set: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Append assets to an existing approval set (cross-module workflow).
+     *
+     * POST /approvals/sets/{id}/assets  body: { snapshot: {media?, copy?, articles?} }
+     * Allowed only while the set is still in review — not in a post-submit
+     * lane and not fully approved (409 pcm_set_locked otherwise).
+     */
+    public function append_assets(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $id       = absint($request->get_param('id'));
+        $params   = $request->get_json_params() ?: array();
+
+        $snapshot = isset($params['snapshot']) && is_array($params['snapshot']) ? $params['snapshot'] : array();
+        if (empty($snapshot['media']) && empty($snapshot['copy']) && empty($snapshot['articles'])) {
+            return $this->error('Nothing to append — snapshot data cannot be empty.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $result = PCM_Approvals_Service::append_to_set($id, (int) $pcm_user->id, $snapshot);
+            if ($result === 'not_found') {
+                return $this->not_found('Approval set');
+            }
+            if ($result === 'locked') {
+                return $this->error(
+                    __('This set is fully approved — create a new set instead.', 'power-creatives'),
+                    409,
+                    'pcm_set_locked'
+                );
+            }
+            return $this->success($result);
+        } catch (\Throwable $e) {
+            return $this->error('Failed to append to approval set: ' . $e->getMessage(), 500);
         }
     }
 
@@ -447,7 +496,7 @@ class PCM_REST_Approvals extends PCM_REST_Base
     /**
      * Share a set with a client by email (authenticated, ownership-scoped).
      *
-     * POST /approvals/sets/{id}/share  body: { email }
+     * POST /approvals/sets/{id}/share  body: { email, message? }
      */
     public function share_set(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
@@ -455,6 +504,9 @@ class PCM_REST_Approvals extends PCM_REST_Base
         $id       = (int) $request->get_param('id');
         $params   = $request->get_json_params() ?: array();
         $email    = sanitize_email($params['email'] ?? '');
+        // Optional custom invite message (editable in the share dialog). Multi-line
+        // plain text — sanitized, then escaped + nl2br'd in the email template.
+        $message  = isset($params['message']) ? sanitize_textarea_field((string) $params['message']) : '';
 
         if ($id <= 0 || $email === '' || !is_email($email)) {
             return $this->error('A valid email is required.');
@@ -463,7 +515,7 @@ class PCM_REST_Approvals extends PCM_REST_Base
         require_once __DIR__ . '/service.php';
 
         try {
-            $set = PCM_Approvals_Service::share_set($id, (int) $pcm_user->id, $email);
+            $set = PCM_Approvals_Service::share_set($id, (int) $pcm_user->id, $email, $message);
             if ($set === false) {
                 return $this->not_found('Approval Set');
             }

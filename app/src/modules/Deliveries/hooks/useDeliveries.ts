@@ -34,6 +34,10 @@ export interface CreateDeliveryInput {
   name: string;
   clientName?: string;
   status?: DeliveryStatus;
+  type?: string | null;
+  brandId?: number | null;
+  projectId?: number | null;
+  modules?: string[];
 }
 
 export interface UpdateDeliveryInput {
@@ -41,6 +45,10 @@ export interface UpdateDeliveryInput {
   name?: string;
   clientName?: string | null;
   status?: DeliveryStatus;
+  type?: string | null;
+  brandId?: number | null;
+  projectId?: number | null;
+  modules?: string[];
 }
 
 export interface UseDeliveriesResult {

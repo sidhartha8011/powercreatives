@@ -31,6 +31,9 @@ if (!defined('ABSPATH')) {
 
 class PCM_REST_Assets extends PCM_REST_Base
 {
+    // Work module — usable by non-admin team members (assigned access).
+    protected string $default_capability = 'edit_posts';
+
 
     /**
      * Define all asset routes.
@@ -361,9 +364,12 @@ class PCM_REST_Assets extends PCM_REST_Base
         
         $include_thumbnails = filter_var($request->get_param('includeThumbnails'), FILTER_VALIDATE_BOOLEAN);
 
+        // Owned OR granted via an assigned delivery (view + use).
+        $scope = PCM_Access::scope_clause('userId', 'id', (int) $user->id, PCM_Access::granted_project_ids((int) $user->id));
+        // phpcs:ignore WordPress.DB.PreparedSQL -- clause built from %d placeholders only.
         $results = $wpdb->get_results($wpdb->prepare(
-            "SELECT id, name, description, status, settings, createdAt FROM $table WHERE userId = %d ORDER BY name ASC",
-            $user->id
+            "SELECT id, name, description, status, settings, createdAt FROM $table WHERE {$scope['sql']} ORDER BY name ASC",
+            ...$scope['params']
         ));
 
         if (empty($results)) {

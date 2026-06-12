@@ -70,4 +70,11 @@ export interface ContextPanelProps {
   hideTheme?: boolean;
   /** Hide the Brand panel header (use when parent already provides one) */
   hideBrandHeader?: boolean;
+  /**
+   * Hosting module's nav id (e.g. 'ads', 'image'). When set and the current
+   * user has per-module brand grants (pcmConfig.user.brandsByModule), the
+   * brand picker is filtered to the brands usable in that module. The REST
+   * layer enforces this server-side regardless.
+   */
+  moduleId?: string;
 }

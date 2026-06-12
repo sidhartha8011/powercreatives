@@ -122,6 +122,7 @@ export function useApprovalSets(): UseApprovalSetsResult {
       userId: Number(raw.userId),
       brandId: raw.brandId != null ? Number(raw.brandId) : null,
       projectId: raw.projectId != null ? Number(raw.projectId) : null,
+      deliveryId: raw.deliveryId != null ? Number(raw.deliveryId) : null,
     }));
   }, [query.data]);
 

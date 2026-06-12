@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-08_
+_Last updated: 2026-06-09_
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -11,7 +11,7 @@ _Last updated: 2026-06-08_
 | Name / slug / text-domain | Power Creatives / `power-creatives` |
 | Main file | `power-creatives.php` |
 | Version (`PCM_VERSION`) | **1.7.0** |
-| DB version (`PCM_DB_VERSION`) | **1.16.0** (separate from plugin version) |
+| DB version (`PCM_DB_VERSION`) | **1.17.0** (separate from plugin version) |
 | Requires WP / PHP | 6.4+ / 8.1+ |
 | Const prefix | `PCM_` |
 | Composer package | `antigravity/power-creatives` (type `wordpress-plugin`) |
@@ -101,7 +101,7 @@ uses `pcm/v1` + the path in `routes()`.
 
 | Module | rest_namespace (declared) | Purpose |
 |---|---|---|
-| approvals | pcm/v1/approvals | Client approval boards + public share links. Public routes (`/sets/{token}/comment`,`/approve`,`/review`,`/draft`) + auth routes (`/sets/{id}/reply`,`/share`,`/status`). Emits the `approvals.set_status_changed` automation trigger. |
+| approvals | pcm/v1/approvals | Client approval boards + public share links. Public routes (`/sets/{token}/comment`,`/approve`,`/review`,`/draft`) + auth routes (`/sets/{id}/reply`,`/share`,`/status`). Emits `approvals.set_status_changed` / `set_shared` / `set_fully_approved` automation triggers (the lane move on share/full-approval is rule-driven, not hardcoded). |
 | automations | pcm/v1/automations | **Cross-module IF→THEN engine** (triggers → conditions → actions). CRUD + `/catalog` + `/test`. See the Automations section below. |
 | assets | pcm/v1/assets | Generated asset CRUD, refine, export |
 | brands | pcm/v1/brands | Business profiles, logos, colors |
@@ -125,9 +125,14 @@ uses `pcm/v1` + the path in `routes()`.
   `approvals/controller.php` (overrides `register()` for public token routes). Public
   routes opt in via `'public'` + are rate-limited; all others carry nonce + capability.
 - **AJAX**: none (no `wp_ajax_*`). Everything is REST.
-- **Cron**: one hook — `add_action('pcm_automation_run_action', …)` in
-  `automations/service.php` (the dormant async seam for long-running automation actions
-  via `wp_schedule_single_event`). No recurring cron.
+- **Cron**: two hooks in `automations/service.php`:
+  - `pcm_automation_run_action` — dormant async seam (`wp_schedule_single_event`)
+    for long-running automation actions.
+  - `pcm_automation_check_pending_approvals` — **recurring daily** event scheduled
+    in `pcm_init()` via `wp_schedule_event(..., 'daily', ...)`. Callback
+    `PCM_Automation_Engine::run_pending_client_scan()` powers the
+    `approvals.set_pending_in_client` trigger (X-day reminder loop while a set
+    sits in the "Sent to Client for Approval" lane).
 - **Shortcodes**: 1 — `add_shortcode('power_creatives', …)` in `class-pcm-shortcode.php`.
 - **Blocks / widgets**: none.
 
@@ -147,6 +152,10 @@ uses `pcm/v1` + the path in `routes()`.
   - **1.15.0** — `automations.{name,triggerId,conditions,actionId}`; relax legacy
     `event/channel` to nullable (`migrate_automations_columns`).
   - **1.16.0** — `automations.inputMapping` (trigger-context → action-input mapping).
+  - **1.17.0** — `approval_sets.clientSentAt` (stable anchor for the pending-client
+    reminder scanner). The 1.17.0 activator gate ALSO one-shot seeds default
+    automation rules for every existing PCM user (idempotent — re-running is a
+    no-op via the `__seedKey` marker in each rule's `config`).
 - **`wp_pcm_automations`** = automation rules: `triggerId, conditions(JSON), actionId,
   config(JSON), inputMapping(JSON), brandId, isActive` (+ legacy `event/channel` mirrored).
   **`wp_pcm_automation_logs`** = append-only dispatch audit (stores `payloadHash`, never secrets).
@@ -173,7 +182,15 @@ A small rules engine: a **trigger** (something happens in module A) + **conditio
 - **Engine** `service.php` (`PCM_Automation_Engine`): `fire_trigger($triggerId,$context,$userId)`
   loads active rules (`wp_pcm_automations`), evaluates conditions (`{key:value}` equality),
   resolves `inputMapping` → action inputs, dispatches to the action **handler**, logs to
-  `wp_pcm_automation_logs`. Also `register_action_handler()`, rule CRUD, and the
+  `wp_pcm_automation_logs`. **Rule scope**: fire_trigger runs the event owner's
+  rules PLUS admin-owned CUSTOM rules (no `__seedKey` in config) — automations
+  created by admins apply to every user's events; seeded defaults stay
+  per-user (each user has their own copies — global seeded copies would
+  duplicate notifications/lane-moves). Handlers still receive the EVENT
+  owner's userId. inputMapping is free-form key→template; the rule dialog
+  edits it as dynamic key/value rows (rename / remove / "+ Add property") with the
+  action's `inputSchema` only seeding starter rows — webhook payload = `{event, ...inputs}`.
+  Also `register_action_handler()`, rule CRUD, and the
   `run_scheduled_action()` wp-cron callback (async seam). Legacy `dispatch($event,…)` path
   still powers the built-in approval notifications (comment webhooks / share+reply emails).
 - **Registries** `class-pcm-automation-triggers.php` / `-actions.php` (`register/all/get/is_valid`).
@@ -192,10 +209,225 @@ A small rules engine: a **trigger** (something happens in module A) + **conditio
   action inputs; literals supported; read-only, never `eval`).
 - **Webhook payload**: default `{event,name,link,status,setId,timestamp}`; signed header
   `X-PCM-Signature: sha256=hmac(secret, body)` when a secret is set; `X-PCM-Event` always.
-- **Frontend** `app/src/modules/Automations/index.tsx`: catalog-driven builder (triggers/actions
-  grouped by module, "coming soon" disabled), list + create/**edit** dialog + active toggle/delete.
-- **Live today**: only `approvals.set_status_changed` (→ webhook/email) and `brands.brand_created`
-  (→ webhook/email) are functional; everything else is registered-but-inert.
+- **Dedupe** (`already_sent`): a log row with the given `dedupeKey` for the user — in
+  **any** status (`sent`/`skipped`/`failed`) — short-circuits a repeat call within
+  that slice. Callers pick a fresh key for the next slice (e.g. day:N+1).
+- **Pending-client reminder scanner** `run_pending_client_scan()` — wp-cron `daily`
+  callback. Reads rules with trigger `approvals.set_pending_in_client`, scans
+  `client`-lane sets, computes `daysSinceSent = floor((now − clientSentAt)/DAY_IN_SECONDS)`,
+  and fires the trigger when `days ≥ minDays`, deduped per minDays-CYCLE via
+  `pending:set:{id}:rule:{ruleId}:day:{cycleStart}` (cycle start = `intdiv(days,min)*min`),
+  so reminders repeat every X days AND a missed cron day fires a catch-up instead of
+  skipping the cycle. Pure helpers (`pending_should_fire`, `pending_cycle_day`,
+  `pending_dedupe_key`) — unit-tested.
+- **Default-rule seeder** `class-pcm-automation-seeds.php` (`PCM_Automation_Seeds::seed_for_user`)
+  — idempotent (each seeded rule carries a `__seedKey` in its `config` JSON). Five
+  defaults, all `isActive=true`: **set shared → move to `client` lane**; **set fully
+  approved → move to `launch` lane** (these two are the formerly-hardcoded approval-flow
+  transitions, now editable rules); lane=Launch → webhook (URL blank → user fills in);
+  pending-client → email client (mapping uses `{{clientEmail}}`); pending-client →
+  webhook team. Invoked from `PCM_REST_Base::get_current_pcm_user()` (new users) AND
+  the 1.17.0 activator gate (existing users).
+- **Frontend** `app/src/modules/Automations/index.tsx`: catalog-driven builder with a
+  **searchable Combobox** (shadcn `Command` + `Popover`) — module-grouped, "coming
+  soon" disabled, filter-as-you-type. List + create/**edit** dialog + active toggle/delete.
+- **Live today** (functional triggers/actions):
+  - Triggers: `approvals.set_status_changed`, `approvals.set_shared`,
+    `approvals.set_fully_approved`, `approvals.set_pending_in_client`,
+    `brands.brand_created`.
+  - Actions: `webhook` (HMAC-signed, non-blocking), `email.send` (Brevo),
+    `approvals.move_to_lane` (set status to a configurable lane via
+    `update_status`; handler in `approvals/class-pcm-move-lane-action-handler.php`).
+  - Everything else is registered but `implemented:false` (catalog-visible, blocked
+    by the controller, no emitter/handler).
+- **Send-to-approval flow (cross-module)**: `app/src/components/shared/SendToApprovalSetDialog.tsx`
+  — generic "package selected items into an approval set" dialog (create →
+  move-to-`client` lane → share link / email invite with an **editable message**).
+  Used by Copy (`ResultsPanel.tsx` + bottom `BulkActionBar`) and Image
+  (`Image/index.tsx` bulk bar). Ads keeps its own near-identical
+  `Ads/components/CreateApprovalSetDialog.tsx` (dup noted for future unify).
+  Backend: `POST /approvals/sets/{id}/share` accepts `{ email, message? }` —
+  `message` is `sanitize_textarea_field`'d and rendered escaped (nl2br) by
+  `PCM_Automation_Templates::client_invite` (blank → default template).
+- **Brand website scraper** (`includes/core/class-pcm-website-scraper.php`):
+  `fetch_html` sends a browser-like UA + Accept headers (bare bot UAs get 403'd
+  by WAFs); 401/403/429 surface a "site has bot protection" message.
+
+## Team access model (v1.18.0, DB 1.18.0 — 19 modules)
+- **Users module** (`includes/modules/users/`, routes `manage_options`-only):
+  `GET /users` mirrors every WP user into `wp_pcm_users` (openId `wp_{ID}`) with
+  LIVE access level (`manage_options` → admin, else user; re-synced on each
+  request in `get_current_pcm_user`); `PUT /users/{id}/deliveries` replaces a
+  user's assignment set (deliveries must be OWNED by the caller).
+- **Assignments**: `wp_pcm_delivery_assignments` (deliveryId, userId=assignee,
+  assignedBy; UNIQUE pair). Deliveries carry nullable `brandId`/`projectId` —
+  assigning a delivery grants **view + use** (never edit/delete) of the delivery
+  + its linked brand + project. `PCM_Access` (includes/core/class-pcm-access.php)
+  returns granted ids + builds the "(owned OR granted)" `scope_clause`; reads in
+  `PCM_DB::get_user_deliveries/get_delivery_by_id/get_user_brands/get_brand_by_id`
+  and assets `get_projects` are scope-widened; ALL writes stay `WHERE userId`.
+  Assignment changes must call `PCM_DB::invalidate('deliveries'|'brands', $assignee)`
+  (lists are transient-cached).
+- **Capabilities**: work modules (brands, assets/projects, deliveries, copy,
+  image, video, writer, keywords, strategy, sites, scraper, models) override
+  `protected string $default_capability = 'edit_posts'`; admin-only modules
+  (users, settings, integrations, automations, templates) keep `manage_options`.
+- **Frontend**: `users` ModuleId → `app/src/modules/Users/index.tsx` (table +
+  AssignDeliveriesDialog); sidebar entry admin-gated via `pcmConfig.user.role`;
+  DeliveryDialog has Brand/Project selects.
+
+## Notifications (v1.19.0, DB 1.19.0 — 20 modules)
+- **Events → rules**: triggers `approvals.comment_added` (fired from
+  `append_comment`, covers client comments AND team replies) and
+  `approvals.asset_approved` (fired from `approve_assets` on approve
+  transitions only; `assetId='all'` for approve-all). Both carry an
+  ENRICHMENT block built by `PCM_Approvals_Service::enrich_context()`:
+  `brandId/brandName, deliveryId/deliveryName, projectId/projectName,
+  projectAssignee` (specific IDs exposed next to names so webhook consumers
+  key off stable identifiers; latest delivery linked to the set's brand + its
+  assignees), `commentUrl` (share URL `#asset-{id}`), `dashboardUrl`
+  (`admin.php?page=power-creatives`). The webhook handler's default-payload
+  whitelist + each trigger's `contextKeys` include all of these.
+  Seeded editable rules `approvals.notify.comment` / `approvals.notify.approval`
+  → action `notifications.create` (handler in
+  `approvals/class-pcm-notification-action-handler.php`) → seeder now 7 defaults.
+- **Storage**: `wp_pcm_notifications` — ONE row per event
+  (ownerId/brandId/setId/type/title/excerpt/link); read-state =
+  `users.notificationsSeenAt` anchor (no per-recipient fan-out).
+- **Notifications module** (`includes/modules/notifications/`, `edit_posts`):
+  `GET /notifications` → `{items(≤50), unseen}` with server-side visibility
+  (admin → all; user → owned OR brandId ∈ granted brands;
+  `PCM_Notifications_Service::visibility_clause` is unit-tested);
+  `POST /notifications/seen` sets the anchor.
+- **Webhook default payload** (`class-pcm-webhook-action-handler.php`): when a
+  rule has no inputMapping, whitelisted enrichment keys are merged in
+  (brandName/deliveryName/projectName/projectAssignee/commentUrl/dashboardUrl/
+  author/body/assetId) — additive, backwards-compatible.
+- **Frontend**: red count bubble on the Approvals nav item + a "Notifications"
+  bell row in `Sidebar.tsx` (60s poll), opening
+  `components/shared/NotificationsPanel.tsx` (right Sheet; marks all seen on
+  open; per-item "Open board" deep link + "Approvals" focused jump).
+
+## Delivery linkage on approval sets (v1.20.0, DB 1.20.0)
+- `wp_pcm_approval_sets.deliveryId` (nullable). Both share dialogs
+  (`SendToApprovalSetDialog` for Copy/Image, Ads' `CreateApprovalSetDialog`)
+  have a **Delivery select** (pre-picked by brand match) → `createSet` payload;
+  controller validates via owned-OR-granted `get_delivery_by_id` (404 otherwise).
+  `enrich_context()` prefers the explicit delivery; latest-by-brand stays the
+  fallback for old sets. Approvals board: sets are joined with delivery names
+  client-side (`SetsBoard.tsx`) and `setFilters.ts` gained a **Delivery**
+  searchable filter (+ search includes deliveryName).
+- **Notification → focused card**: `AppContext` one-shot
+  `pendingApprovalSetId` (`navigateToApprovalsWithSet` /
+  `consumePendingApprovalSetId`, mirrors pendingVideoData);
+  NotificationsPanel's "Approvals" button uses it; `SetsBoard` consumes it once
+  sets load and applies the existing Set filter to that set's name.
+
+## Per-delivery module grants (v1.21.0, DB 1.21.0)
+- `wp_pcm_deliveries.modules` (JSON of nav ids; whitelist
+  `PCM_Deliveries_Service::GRANTABLE_MODULES` =
+  copy/image/video/writer/keywords/strategies/sites/ads — **ads implies the
+  copy+image backends**). "Modules needed" checkbox group in DeliveryDialog.
+- `PCM_Access::granted_module_ids(uid)` (union over assigned deliveries),
+  `is_admin(uid)`, `auto_project_id(uid, brandId?)` (brand-matched assigned
+  delivery's project, else single-project fallback, else null).
+- **Enforcement**: `PCM_REST_Base::$module_grant_keys` — set on the 7 work
+  controllers (copy `['copy','ads']`, image `['image','ads']`, video, writer,
+  keywords, strategy→'strategies', sites); checked in
+  `make_permission_callback` for logged-in NON-admins only (admins + gate
+  visitors bypass). Sidebar mirrors it via `pcmConfig.user.allowedModules`
+  (null = unrestricted; computed at page load by
+  `PCM_Admin::allowed_modules_for_current_user`, also used by the shortcode);
+  non-admins see ALWAYS_VISIBLE (brands/deliveries/projects/assets/approvals)
+  + granted modules.
+- **Auto-project**: non-admin generated output defaults `projectId` to the
+  assigned delivery's project — image `save_asset` (brandId param) and copy
+  `store_result` (job's brandId, cached per job). Admin saves unchanged.
+
+## Delivery type presets + per-module brand scoping (v1.22.0, DB 1.22.0)
+- `wp_pcm_deliveries.type` (varchar 64, preset key or NULL). **Central
+  type→modules mapping, admin-editable**: stored in
+  `pcm_settings.delivery_type_presets` (Settings → "Delivery Types" tab,
+  saved via `POST /settings` which normalizes on write); resolved by
+  `PCM_Deliveries_Service::type_presets()` = stored setting (normalized via
+  `normalize_presets()`: keys/labels sanitized, modules whitelisted) →
+  fallback `TYPE_PRESETS` const (seo / google_ads / meta_ads) → filter
+  `pcm_delivery_type_presets`. Saving `null` resets to the built-ins.
+  Create/PATCH with `type` but no explicit `modules` expands the preset
+  server-side; `sanitize_type()` whitelists against the resolved set.
+  `GET /deliveries/type-presets` serves the live map; the frontend reads it
+  via `useTypePresets()` (Deliveries hook, falls back to
+  `pcmConfig.deliveryTypePresets` while loading); DeliveryDialog "Type"
+  select pre-fills the module checkboxes (still editable);
+  `Settings/DeliveryTypesSection.tsx` is the management UI (add/rename/
+  delete types, per-type module checkboxes, reset to defaults).
+- **Per-module brand scoping**: a granted brand is only usable inside the
+  modules of the delivery that granted it.
+  `PCM_Access::granted_brand_ids_for_modules(uid, keys)` (memoized) +
+  `brands_by_module(uid)` (map incl. OWNED brands). Enforced centrally in
+  `PCM_REST_Base::make_permission_callback` → `check_module_brand()`: on
+  controllers with `$module_grant_keys`, a non-admin's `brandId` param must be
+  owned or module-granted, else 403 `pcm_brand_not_granted`. Flat
+  `granted_brand_ids` still drives read visibility (Brands page).
+- Frontend UX mirror: `pcmConfig.user.brandsByModule` (null = unrestricted;
+  `PCM_Admin::brands_by_module_for_current_user`), read via
+  `app/src/lib/pcmConfig.ts` (`getBrandsForModule`, `getDeliveryTypePresets`).
+  `ContextPanel` takes `moduleId` (set at the Ads/Video/Image/Writer/Copy
+  mounts) and filters its brand picker; Keywords' SendToWriterDialog filters
+  by `'keywords'`.
+
+## Append-to-set + team visibility model (post-1.22, no DB change)
+- **Append**: `POST /approvals/sets/{id}/assets` (edit_posts) →
+  `PCM_Approvals_Service::append_to_set` — scoped read via `get_set_scoped`
+  (own / admin / granted brand-or-project), rejects post-submit lanes
+  (launch/live/archived) and fully-approved sets (409 `pcm_set_locked`),
+  merges snapshot buckets via `merge_snapshot` (dedupe by item id, existing
+  wins). Frontend: both share dialogs have a Destination select
+  ("Create new" / "Add to existing") with the shared searchable
+  `ApprovalSetPicker` (non-portal popover — the in-dialog pattern) filtered
+  to draft/internal/client; trpc `approvals.appendToSet`.
+- **Visibility**: ADMINS see ALL brands / deliveries / approval sets
+  (`PCM_Access::is_admin` branch in `PCM_DB::get_user_brands/
+  get_brand_by_id/get_user_deliveries/get_delivery_by_id` and
+  `list_sets_by_user`); non-admins keep owned-OR-granted, and approval sets
+  widen to own OR granted brandId/projectId — so user-created sets appear
+  for admins + brand-granted teammates and notification jumps resolve.
+  Team replies (`add_team_comment`) are view-scoped via `get_set_scoped` —
+  anyone who can see the set can comment. Destructive set ops
+  (status/delete/share) stay owner-scoped via `get_set_by_id`.
+- **Writes admin-only**: brands POST/PATCH/DELETE/bulk/assets/colors/
+  scrape-url and deliveries POST/PATCH/DELETE carry per-route
+  `'manage_options'`; `GET /deliveries/type-presets` is manage_options too.
+  UI: `getIsAdmin()` (`app/src/lib/pcmConfig.ts`, pcmConfig.user.role) hides
+  the New Brand / New Delivery buttons for non-admins.
+- Flagged: admin-all lists share the per-user transient cache semantics
+  (another user's change appears after TTL/invalidation).
+- **DB 1.22.1**: pcm rows have TWO creation paths and BOTH must seed —
+  `get_current_pcm_user()` (self-login) and the Users-module mirror
+  (`PCM_Users_Service::list_users` → upsert_user). The mirror used to skip
+  seeding, leaving mirrored users with zero automation rules (their approval
+  sets produced NO notifications) and zero prompt overrides. Fixed at the
+  mirror site + idempotent back-fill gate (`< 1.22.1` → both seeders for all
+  users) in `PCM_Activator::maybe_upgrade`.
+
+## Async Kie.ai generation (shared-hosting safe)
+The original `/image/generate`, `/image/edit`, and `/video/generate` block
+the HTTP request while polling Kie.ai (up to 600–800s) — shared hosts kill
+those requests (opaque 500s / stuck "Generating…"). The async seam:
+- Create: `POST /image/generate-task`, `/image/edit-task`,
+  `/video/generate-task` → provider `create_image_task/create_edit_task/
+  create_video_task` (`class-pcm-provider-kieai.php`, identical param
+  mapping as the blocking methods) → `PCM_Kie_Api::create_task` →
+  `{taskId, prompt}` (prompt = resolved brand template, echoed back).
+- Poll: `POST /image/task-result` (optional `storageContext` for the
+  filename prefix) / `POST /video/task-result` — cheap
+  `PCM_Kie_Api::get_task_status`; on completed they run the SAME
+  store/save tails as the sync handlers; completed-without-URL → failed.
+- Frontend branches on `provider === 'kieai'`: `useImageGeneration`
+  (5s/12min), `useImageActions.runKieTask` (5s/12min, regenerate+edit),
+  Video module (10s/20min); all tolerate 2 transient poll errors; other
+  providers keep the sync endpoints. Kie-only — extend per provider if
+  fal/google queue APIs are ever needed.
 
 ## Where to add a <thing>
 - **New REST module** (the standard way to add a feature):

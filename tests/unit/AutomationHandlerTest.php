@@ -61,6 +61,49 @@ class AutomationHandlerTest extends TestCase
         $this->assertSame(7, $body['setId']);
     }
 
+    public function test_default_payload_merges_enrichment_keys(): void
+    {
+        $captured = null;
+        $this->mock_transport($captured);
+
+        $context = array(
+            'event'           => 'approvals.comment_added',
+            'name'            => 'Acme Set',
+            'link'            => 'https://site/?pcm_public_token=abc',
+            'setId'           => 7,
+            'brandId'         => 3,
+            'brandName'       => 'Acme Inc',
+            'deliveryId'      => 11,
+            'deliveryName'    => 'May retainer',
+            'projectId'       => 22,
+            'projectName'     => 'Spring launch',
+            'projectAssignee' => 'Jane, John',
+            'commentUrl'      => 'https://site/?pcm_public_token=abc#asset-m1',
+            'dashboardUrl'    => 'https://site/wp-admin/admin.php?page=power-creatives',
+            'author'          => 'Client',
+            'body'            => 'Please tweak this',
+            'someUnknownKey'  => 'should be dropped',
+        );
+
+        (new PCM_Webhook_Action_Handler())->run(
+            array('url' => 'https://hooks.example.com/x', 'secret' => 'topsecret'),
+            array(), // no mapping → default payload + enrichment whitelist
+            $context,
+            1
+        );
+
+        $body = json_decode($captured['args']['body'], true);
+        foreach (array('brandName', 'deliveryName', 'projectName', 'projectAssignee', 'commentUrl', 'dashboardUrl', 'author', 'body') as $key) {
+            $this->assertSame($context[$key], $body[$key], "enrichment key {$key} missing from default payload");
+        }
+        // Specific identifiers are merged too (cast to string by the handler).
+        foreach (array('brandId', 'deliveryId', 'projectId') as $key) {
+            $this->assertSame((string) $context[$key], $body[$key], "enrichment id {$key} missing from default payload");
+        }
+        // Only whitelisted keys are merged — arbitrary context keys stay out.
+        $this->assertArrayNotHasKey('someUnknownKey', $body);
+    }
+
     public function test_mapping_inputs_become_the_payload(): void
     {
         $captured = null;

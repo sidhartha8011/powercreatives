@@ -110,6 +110,12 @@ export function useImageGeneration({
     // ── tRPC mutations ──
     const generateConceptsMutation = trpc.image.generateConcepts.useMutation();
     const generateImageMutation = trpc.image.generate.useMutation();
+    // Async pair for Kie.ai models: create the upstream task, then poll a
+    // cheap status endpoint. The blocking /image/generate request gets killed
+    // by shared hosts' timeouts on slow models (GPT Image etc.), which showed
+    // up as opaque "API error: 500" failures and slots stuck on Generating.
+    const createImageTaskMutation = trpc.image.createTask.useMutation();
+    const imageTaskResultMutation = trpc.image.taskResult.useMutation();
     const optimizeBriefMutation = trpc.image.optimizeBrief.useMutation();
 
     // ── Model registry (generation-capable image models only) ──
@@ -438,7 +444,7 @@ export function useImageGeneration({
                         setAssets((prev) => [...prev, placeholder]);
 
                         try {
-                            const result = await generateImageMutation.mutateAsync({
+                            const payload = {
                                 prompt: fullPrompt,
                                 model: modelId,
                                 provider: resolvedProvider,
@@ -446,7 +452,44 @@ export function useImageGeneration({
                                 brandContext: hasBrandCtx ? brandCtx : undefined,
                                 ...(refUrls.length > 0 ? { inputUrls: refUrls, referenceImageIntents: refIntents } : {}),
                                 ...pipelineExtra,
-                            });
+                            };
+
+                            let result: unknown;
+                            if (resolvedProvider === 'kieai') {
+                                // Async path: create the task, then poll every 5s.
+                                // Each request is short, so host timeouts and
+                                // worker limits can't kill the generation.
+                                const task: any = await createImageTaskMutation.mutateAsync(payload);
+                                const deadline = Date.now() + 12 * 60_000;
+                                let pollErrors = 0;
+                                result = null;
+                                while (Date.now() < deadline) {
+                                    await new Promise((r) => setTimeout(r, 5000));
+                                    let poll: any;
+                                    try {
+                                        poll = await imageTaskResultMutation.mutateAsync({
+                                            ...payload,
+                                            prompt: task.prompt ?? fullPrompt,
+                                            taskId: task.taskId,
+                                        });
+                                    } catch (pollError) {
+                                        // Tolerate transient poll failures (network
+                                        // blips) — the upstream task keeps running.
+                                        if (++pollErrors >= 3) throw pollError;
+                                        continue;
+                                    }
+                                    pollErrors = 0;
+                                    if (poll.status === 'completed') { result = poll.asset; break; }
+                                    if (poll.status === 'failed') {
+                                        throw new Error(poll.error || 'Generation failed.');
+                                    }
+                                }
+                                if (!result) {
+                                    throw new Error('Timed out after 12 minutes — the task may still finish on Kie.ai.');
+                                }
+                            } else {
+                                result = await generateImageMutation.mutateAsync(payload);
+                            }
 
                             // Replace placeholder with completed asset
                             const dbId = (result as any).id;

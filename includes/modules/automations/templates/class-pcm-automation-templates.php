@@ -65,7 +65,7 @@ class PCM_Automation_Templates
     /**
      * Client invite email — sent when a set is shared for review.
      *
-     * @param array $vars { brandName, setName, shareUrl, clientName? }
+     * @param array $vars { brandName, setName, shareUrl, clientName?, customMessage? }
      * @return array{ subject: string, html: string }
      */
     public static function client_invite(array $vars): array
@@ -73,6 +73,7 @@ class PCM_Automation_Templates
         $brand_name = (string) ($vars['brandName'] ?? '');
         $set_name   = (string) ($vars['setName'] ?? '');
         $share_url  = (string) ($vars['shareUrl'] ?? '');
+        $custom_msg = trim((string) ($vars['customMessage'] ?? ''));
         $greeting   = !empty($vars['clientName'])
             ? sprintf(/* translators: %s: client name */ __('Hi %s,', 'power-creatives'), $vars['clientName'])
             : __('Hi there,', 'power-creatives');
@@ -81,17 +82,26 @@ class PCM_Automation_Templates
             ? sprintf(/* translators: %s: brand name */ __('Your creatives are ready for review — %s', 'power-creatives'), $brand_name)
             : __('Your creatives are ready for review', 'power-creatives');
 
-        $body = '<p style="margin:0 0 12px;">' . esc_html($greeting) . '</p>'
-            . '<p style="margin:0 0 12px;">'
-            . sprintf(
-                /* translators: %s: approval set name */
-                esc_html__('A new set of creatives, %s, is ready for your review. You can approve each item, leave comments, or approve everything in one click.', 'power-creatives'),
-                '<strong>' . esc_html($set_name) . '</strong>'
-            )
-            . '</p>'
-            . '<p style="margin:0 0 4px;">'
-            . esc_html__('Click below to open your private review board:', 'power-creatives')
-            . '</p>';
+        if ($custom_msg !== '') {
+            // Sender-authored message from the share dialog. Plain text → escape +
+            // preserve line breaks. The review-board CTA button is still appended below.
+            $body = '<p style="margin:0 0 12px;">' . nl2br(esc_html($custom_msg)) . '</p>'
+                . '<p style="margin:0 0 4px;">'
+                . esc_html__('Click below to open your private review board:', 'power-creatives')
+                . '</p>';
+        } else {
+            $body = '<p style="margin:0 0 12px;">' . esc_html($greeting) . '</p>'
+                . '<p style="margin:0 0 12px;">'
+                . sprintf(
+                    /* translators: %s: approval set name */
+                    esc_html__('A new set of creatives, %s, is ready for your review. You can approve each item, leave comments, or approve everything in one click.', 'power-creatives'),
+                    '<strong>' . esc_html($set_name) . '</strong>'
+                )
+                . '</p>'
+                . '<p style="margin:0 0 4px;">'
+                . esc_html__('Click below to open your private review board:', 'power-creatives')
+                . '</p>';
+        }
 
         return array(
             'subject' => $subject,

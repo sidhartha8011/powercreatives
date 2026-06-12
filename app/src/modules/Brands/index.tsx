@@ -20,6 +20,7 @@
 
 import { ModuleHeader } from "@/components/shared/ModuleHeader";
 import { BulkActionBar } from "@/components/shared/BulkActionBar";
+import { getIsAdmin } from "@/lib/pcmConfig";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -218,10 +219,14 @@ export function BrandsModule() {
         title="Brands"
         description="Saved business profiles reusable across Copy, Image, and Video modules"
         action={
-          <Button onClick={handleCreate} className="gap-2">
-            <Plus className="w-4 h-4" />
-            New Brand
-          </Button>
+          // Brand creation is admin-only — team members view + use granted
+          // brands (server enforces manage_options on the write routes).
+          getIsAdmin() ? (
+            <Button onClick={handleCreate} className="gap-2">
+              <Plus className="w-4 h-4" />
+              New Brand
+            </Button>
+          ) : undefined
         }
       />
 

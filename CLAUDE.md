@@ -9,10 +9,11 @@ Also authoritative (read before changing anything): `docs/ARCHITECTURE.md`,
 `docs/CHANGELOG-*` / `docs/HANDOVER-*`.
 
 ## What this is
-WordPress plugin (PHP 8.1+, slug/text-domain `power-creatives`, v1.7.0, DB v1.13.0)
-wrapping a React/TypeScript (Vite) SPA. Vertical-slice modular monolith: 17 REST
+WordPress plugin (PHP 8.1+, slug/text-domain `power-creatives`, v1.7.0, DB v1.17.0)
+wrapping a React/TypeScript (Vite) SPA. Vertical-slice modular monolith: 18 REST
 modules auto-discovered from `includes/modules/*/config.php`; shared infra in
-`includes/core/`; frontend in `app/`.
+`includes/core/`; frontend in `app/`. Includes a cross-module **Automations**
+engine (trigger → condition → action) with WP-cron-driven daily reminders.
 
 ## Non-negotiables for this plugin
 - **Every REST handler**: nonce check + capability check + sanitize input + escape
@@ -33,6 +34,14 @@ modules auto-discovered from `includes/modules/*/config.php`; shared infra in
   with `Number()` (wpdb returns strings); wrap DnD optimistic updates in `flushSync()`.
 - **`wp_pcm_assets` is off-limits** to the Approvals domain (per-item metadata → snapshot JSON).
 - Provider routing is **data-driven** — send/require `model.provider`; `detect_provider()` is deprecated.
+- **Automations**: a module's triggers/actions/handlers go in `includes/modules/{id}/automations.php`
+  (loaded by the `power-creatives.php` glob). Emit via
+  `PCM_Automation_Engine::fire_trigger($triggerId, $context, $userId [, $opts])`; use the
+  optional `dedupeKey` for time-sliced loops (matches any prior log row in that slice).
+  Long-running actions declare `mode() === 'async'`; the engine schedules them via
+  `wp_schedule_single_event`. **Don't hardcode** business detail in the seeder — URLs,
+  days, recipients stay user-editable on the rule. See `.claude/CODEBASE_MAP.md` →
+  *Automations engine*.
 
 ## Verify
 - PHP: `composer test` (PHPUnit + Brain Monkey + wp_mock). Frontend: `cd app && npm run check && npm run build`.

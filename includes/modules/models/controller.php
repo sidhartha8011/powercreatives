@@ -34,6 +34,9 @@ if (!defined('ABSPATH')) {
 
 class PCM_REST_Models extends PCM_REST_Base
 {
+    // Work module — usable by non-admin team members (assigned access).
+    protected string $default_capability = 'edit_posts';
+
 
     /**
      * Service instance — holds all business logic.

@@ -164,6 +164,7 @@ export function ContextGenerationPanel({ onCollapse }: Props) {
           {/* Brand & Theme Context */}
           <div className="rounded-lg border p-3" style={{ borderColor: colors.borderLight, background: colors.bgSurface }}>
             <ContextPanel
+              moduleId="writer"
               value={contextData}
               onChange={handleContextChange}
               hideTheme={true}

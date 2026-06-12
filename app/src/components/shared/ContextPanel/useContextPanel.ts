@@ -2,11 +2,12 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { trpc, apiFetch } from "@/lib/trpc";
 import { useSettings } from "@/contexts/AppContext";
 import { normalizeUrl } from "./utils";
+import { getBrandsForModule } from "@/lib/pcmConfig";
 import type { Brand } from "../../../../../drizzle/schema";
 import type { ContextData, ScrapedBusinessData, ContextPanelProps } from "./types";
 import type { ImageInfo } from "@/components/shared/LogoSelectionDialog";
 
-export function useContextPanel({ value, onChange, onUrlFetched }: ContextPanelProps) {
+export function useContextPanel({ value, onChange, onUrlFetched, moduleId }: ContextPanelProps) {
   const [brandOpen, setBrandOpen] = useState(false);
   const [brandSearch, setBrandSearch] = useState("");
 
@@ -27,7 +28,13 @@ export function useContextPanel({ value, onChange, onUrlFetched }: ContextPanelP
   } | null>(null);
 
   const { data: brands, isLoading: brandsLoading } = trpc.brands.list.useQuery();
-  const brandList = brands ?? [];
+  // Per-module brand scoping (UX — the REST layer enforces it anyway):
+  // restricted users only see brands usable in the hosting module. The map
+  // is built server-side and already includes the user's own brands.
+  const allowedBrandIds = moduleId ? getBrandsForModule(moduleId) : null;
+  const brandList = (brands ?? []).filter(
+    (b) => allowedBrandIds === null || allowedBrandIds.includes(Number(b.id))
+  );
   const selectedBrand = brandList.find((b) => b.id === value.brandId);
   const utils = trpc.useUtils();
 

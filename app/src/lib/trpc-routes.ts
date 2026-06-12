@@ -347,6 +347,9 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     // Aliases used internally by AssetDetailView (backward-compat)
     "image.suggestConcepts": { endpoint: "image/concepts", method: "POST" },
     "image.generateSingle": { endpoint: "image/generate", method: "POST" },
+    "image.createTask": { endpoint: "image/generate-task", method: "POST" },
+    "image.taskResult": { endpoint: "image/task-result", method: "POST" },
+    "image.createEditTask": { endpoint: "image/edit-task", method: "POST" },
     "image.generateBatch": { endpoint: "image/generate-batch", method: "POST" },
     "image.editImage": { endpoint: "image/edit", method: "POST" },
     "image.upscale": { endpoint: "image/upscale", method: "POST" },
@@ -363,6 +366,8 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "video.enhancePrompt": { endpoint: "video/enhance-prompt", method: "POST" },
     "video.composePrompt": { endpoint: "video/compose-prompt", method: "POST" },
     "video.generate": { endpoint: "video/generate", method: "POST" },
+    "video.createTask": { endpoint: "video/generate-task", method: "POST" },
+    "video.taskResult": { endpoint: "video/task-result", method: "POST" },
     "video.checkStatus": { endpoint: "video/status", method: "POST" },
     "video.getCapabilities": { endpoint: "video/capabilities", method: "GET" },
 
@@ -456,6 +461,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     // ── Approvals (Client Sharing & Webhooks) ──
     "approvals.listSets": { endpoint: "approvals/sets", method: "GET" },
     "approvals.createSet": { endpoint: "approvals/sets", method: "POST" },
+    "approvals.appendToSet": {
+        endpoint: "approvals/sets",
+        method: "POST",
+        transform: (input: any) => ({ url: `approvals/sets/${input.id}/assets`, body: { snapshot: input.snapshot } }),
+    },
     "approvals.getPublicSet": {
         endpoint: "approvals/sets",
         method: "GET",
@@ -510,7 +520,19 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "approvals.shareSet": {
         endpoint: "approvals/sets",
         method: "POST",
-        transform: (input: any) => ({ url: `approvals/sets/${input.id}/share`, body: { email: input.email } }),
+        transform: (input: any) => ({ url: `approvals/sets/${input.id}/share`, body: { email: input.email, message: input.message } }),
+    },
+
+    // ── Notifications (approval-flow activity feed) ──
+    "notifications.list": { endpoint: "notifications", method: "GET" },
+    "notifications.markSeen": { endpoint: "notifications/seen", method: "POST" },
+
+    // ── Users (admin-only user management) ──
+    "users.list": { endpoint: "users", method: "GET" },
+    "users.assignDeliveries": {
+        endpoint: "users",
+        method: "PUT",
+        transform: (input: any) => ({ url: `users/${input.pcmId}/deliveries`, body: { deliveryIds: input.deliveryIds } }),
     },
 
     // ── Automations (trigger → condition → action rules) ──

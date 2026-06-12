@@ -33,6 +33,9 @@ if (!defined('ABSPATH')) {
 
 class PCM_REST_Brands extends PCM_REST_Base
 {
+    // Work module — usable by non-admin team members (assigned access).
+    protected string $default_capability = 'edit_posts';
+
 
     /**
      * Service instance — holds all business logic.
@@ -62,28 +65,30 @@ class PCM_REST_Brands extends PCM_REST_Base
                 array('GET', '/brands/(?P<id>\\d+)', 'get_by_id'),
                 array('GET', '/brands/by-website', 'find_by_website'),
 
-            // CRUD
-                array('POST', '/brands', 'create_item'),
-                array('PATCH', '/brands/(?P<id>\\d+)', 'update_item'),
-                array('DELETE', '/brands/(?P<id>\\d+)', 'delete_item'),
+            // CRUD — writes are admin-only; team members view + use granted
+            // brands but never create or mutate them.
+                array('POST', '/brands', 'create_item', array(), 'manage_options'),
+                array('PATCH', '/brands/(?P<id>\\d+)', 'update_item', array(), 'manage_options'),
+                array('DELETE', '/brands/(?P<id>\\d+)', 'delete_item', array(), 'manage_options'),
 
-            // Bulk operations
-                array('POST', '/brands/bulk/delete', 'bulk_delete'),
-                array('POST', '/brands/bulk/duplicate', 'bulk_duplicate'),
+            // Bulk operations (admin-only writes)
+                array('POST', '/brands/bulk/delete', 'bulk_delete', array(), 'manage_options'),
+                array('POST', '/brands/bulk/duplicate', 'bulk_duplicate', array(), 'manage_options'),
 
-            // Asset management
-                array('POST', '/brands/(?P<id>\\d+)/fetch-assets', 'fetch_assets'),
-                array('POST', '/brands/(?P<id>\\d+)/assets', 'add_asset'),
-                array('POST', '/brands/(?P<id>\\d+)/assets/from-url', 'add_asset_from_url'),
-                array('DELETE', '/brands/(?P<id>\\d+)/assets', 'remove_asset'),
-                array('POST', '/brands/(?P<id>\\d+)/assets/reorder', 'reorder_assets'),
-                array('POST', '/brands/(?P<id>\\d+)/assets/set-logo', 'set_asset_as_logo'),
+            // Asset management (admin-only writes)
+                array('POST', '/brands/(?P<id>\\d+)/fetch-assets', 'fetch_assets', array(), 'manage_options'),
+                array('POST', '/brands/(?P<id>\\d+)/assets', 'add_asset', array(), 'manage_options'),
+                array('POST', '/brands/(?P<id>\\d+)/assets/from-url', 'add_asset_from_url', array(), 'manage_options'),
+                array('DELETE', '/brands/(?P<id>\\d+)/assets', 'remove_asset', array(), 'manage_options'),
+                array('POST', '/brands/(?P<id>\\d+)/assets/reorder', 'reorder_assets', array(), 'manage_options'),
+                array('POST', '/brands/(?P<id>\\d+)/assets/set-logo', 'set_asset_as_logo', array(), 'manage_options'),
 
-            // Color management
-                array('POST', '/brands/(?P<id>\\d+)/colors', 'update_colors'),
+            // Color management (admin-only writes)
+                array('POST', '/brands/(?P<id>\\d+)/colors', 'update_colors', array(), 'manage_options'),
 
-            // Unified URL scraping (text + colors + images with dimensions)
-                array('POST', '/brands/scrape-url', 'scrape_url'),
+            // Unified URL scraping (text + colors + images with dimensions) —
+            // feeds brand creation, so admin-only as well.
+                array('POST', '/brands/scrape-url', 'scrape_url', array(), 'manage_options'),
         );
     }
 
@@ -227,6 +232,12 @@ class PCM_REST_Brands extends PCM_REST_Base
         $existing = PCM_DB::get_brand_by_id($id, $user->id);
         if (!$existing) {
             return $this->not_found('Brand');
+        }
+        // get_brand_by_id also returns brands GRANTED to the caller via a
+        // delivery assignment (view + use). Editing the brand record stays
+        // owner-only — reject a non-owner rather than no-op + return success.
+        if ((int) $existing->userId !== (int) $user->id) {
+            return $this->error('You can view this brand but not edit it.', 403, 'pcm_forbidden');
         }
 
         $update = array();

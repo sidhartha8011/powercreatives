@@ -241,6 +241,7 @@ export const AdsSidebar = memo(function AdsSidebar({
         <AccordionSection title="Brand" defaultOpen={true}>
           {/* Brand / URL Context */}
           <ContextPanel
+            moduleId="ads"
             value={contextData}
             onChange={(newData) => {
               onContextChange(newData);

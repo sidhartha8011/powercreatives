@@ -41,11 +41,59 @@ class PCM_Activator
         // Seed Fal.ai models into wp_pcm_models (idempotent — upserts)
         PCM_Fal_Seed::seed();
 
+        // Mirror every existing WP user into wp_pcm_users and seed their
+        // default prompts + automation rules NOW — so the Automations module
+        // is fully populated right after activation instead of lazily on each
+        // user's first plugin request. Idempotent (seedKey markers / existing
+        // rows are skipped), so re-activation is safe.
+        self::seed_all_wp_users();
+
         // Store DB version for future migration checks
         update_option('pcm_db_version', PCM_DB_VERSION);
 
         // Flush rewrite rules (in case we add custom post types later)
         flush_rewrite_rules();
+    }
+
+    /**
+     * Mirror all WP users into wp_pcm_users and run the per-user seeders
+     * (default prompts + default automation rules). Same mirror shape as
+     * PCM_Users_Service::list_users() and the lazy path in
+     * PCM_REST_Base::get_current_pcm_user(). All steps are idempotent.
+     *
+     * @return void
+     */
+    public static function seed_all_wp_users(): void
+    {
+        if (!function_exists('get_users')) {
+            return;
+        }
+        // Sane cap — agency installs are small; avoids pathological loops on
+        // sites with thousands of subscribers.
+        $wp_users = get_users(array('number' => 500, 'fields' => 'all'));
+        foreach ($wp_users as $wp_user) {
+            $open_id  = 'wp_' . $wp_user->ID;
+            $pcm_user = PCM_DB::get_user_by_open_id($open_id);
+            if (!$pcm_user) {
+                PCM_DB::upsert_user(array(
+                    'openId'    => $open_id,
+                    'name'      => $wp_user->display_name,
+                    'email'     => $wp_user->user_email,
+                    'role'      => user_can($wp_user, 'manage_options') ? 'admin' : 'user',
+                    'avatarUrl' => get_avatar_url($wp_user->ID),
+                ));
+                $pcm_user = PCM_DB::get_user_by_open_id($open_id);
+            }
+            if (!$pcm_user) {
+                continue; // degenerate: insert failed — skip rather than fatal.
+            }
+            if (class_exists('PCM_Prompt_Seeds')) {
+                PCM_Prompt_Seeds::seed_for_user((int) $pcm_user->id);
+            }
+            if (class_exists('PCM_Automation_Seeds')) {
+                PCM_Automation_Seeds::seed_for_user((int) $pcm_user->id);
+            }
+        }
     }
 
     /**
@@ -155,6 +203,45 @@ class PCM_Activator
             // v1.16.0: Cross-module automations. Adds the inputMapping column to
             // wp_pcm_automations (additive via dbDelta) for trigger-context →
             // action-input mapping. No separate gate needed.
+
+            // Back-fill default automation rules for EXISTING users on any
+            // upgrade that added new defaults (v1.17 reminders, v1.18 flow rules,
+            // v1.19 notification rules). seed_for_user is idempotent — already-
+            // seeded keys are skipped via the __seedKey marker — so re-running it
+            // only adds the missing rules. Gated at the latest seed-bearing
+            // version so installs already at an intermediate version still get
+            // the newer rules. Per-user seeding for NEW users happens in
+            // PCM_REST_Base::get_current_pcm_user().
+            if (version_compare($installed_version, '1.19.0', '<')
+                && class_exists('PCM_Automation_Seeds')) {
+                global $wpdb;
+                $users_table = PCM_Schema::table('users');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $user_ids = $wpdb->get_col("SELECT id FROM {$users_table}");
+                foreach (($user_ids ?: array()) as $uid) {
+                    PCM_Automation_Seeds::seed_for_user((int) $uid);
+                }
+            }
+
+            // v1.22.1 — heal users mirrored by the Users module without seeds.
+            // PCM_Users_Service::list_users() created pcm rows via upsert_user,
+            // bypassing the per-user seeding in get_current_pcm_user(), so those
+            // users had NO automation rules (notifications never fired for their
+            // approval sets) and no default prompts. Both seeders are idempotent.
+            if (version_compare($installed_version, '1.22.1', '<')) {
+                global $wpdb;
+                $users_table = PCM_Schema::table('users');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $user_ids = $wpdb->get_col("SELECT id FROM {$users_table}");
+                foreach (($user_ids ?: array()) as $uid) {
+                    if (class_exists('PCM_Automation_Seeds')) {
+                        PCM_Automation_Seeds::seed_for_user((int) $uid);
+                    }
+                    if (class_exists('PCM_Prompt_Seeds')) {
+                        PCM_Prompt_Seeds::seed_for_user((int) $uid);
+                    }
+                }
+            }
 
             update_option('pcm_db_version', PCM_DB_VERSION);
         }

@@ -380,10 +380,19 @@ class PCM_Website_Scraper
      */
     private static function fetch_html(string $url): string
     {
+        // Present as a real browser. Many sites (and CDNs/WAFs like Cloudflare)
+        // return 403 to non-browser user-agents, so a bare "Brand Scraper" UA gets
+        // blocked. A realistic UA + Accept headers clears the common UA-sniffing
+        // 403s (it does NOT defeat full JS/challenge-based bot protection).
         $response = wp_remote_get($url, array(
-            'timeout'    => self::HTTP_TIMEOUT,
-            'user-agent' => 'PowerCreatives/1.0 (Brand Scraper)',
-            'sslverify'  => false,
+            'timeout'     => self::HTTP_TIMEOUT,
+            'user-agent'  => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'sslverify'   => false,
+            'redirection' => 5,
+            'headers'     => array(
+                'Accept'          => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language' => 'en-US,en;q=0.9',
+            ),
         ));
 
         if (is_wp_error($response)) {
@@ -392,6 +401,11 @@ class PCM_Website_Scraper
 
         $status = wp_remote_retrieve_response_code($response);
         if ($status >= 400) {
+            // 401/403/429 are almost always the target site's bot protection, not a
+            // bug on our side — give the user an actionable hint.
+            if (in_array($status, array(401, 403, 429), true)) {
+                throw new \RuntimeException("The website blocked our request (HTTP {$status}) — it likely has bot protection. Try entering the brand details manually.");
+            }
             throw new \RuntimeException("HTTP {$status} error fetching URL.");
         }
 

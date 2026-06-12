@@ -15,8 +15,11 @@
  *   - DnD column moves → status mutation via useApprovalSets.
  */
 
-import { useCallback, useMemo, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { KanbanSquare, Search, Trash2, X } from 'lucide-react';
+
+import { trpc } from '@/lib/trpc';
+import { useApp } from '@/contexts/AppContext';
 
 import {
   AlertDialog,
@@ -126,10 +129,52 @@ export function SetsBoard() {
     clearSelection,
   } = useApprovalSets();
 
-  const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
+  // Resolve delivery names onto the set rows (sets only carry deliveryId) so
+  // the Delivery filter + search work on human-readable names.
+  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
+  const deliveryNameById = useMemo(() => {
+    const m = new Map<number, string>();
+    (Array.isArray(deliveriesRaw) ? deliveriesRaw : []).forEach((d: any) =>
+      m.set(Number(d.id), String(d.name))
+    );
+    return m;
+  }, [deliveriesRaw]);
+  const setsWithDelivery = useMemo<ApprovalSet[]>(
+    () =>
+      sets.map((s) => ({
+        ...s,
+        deliveryName:
+          s.deliveryId != null ? deliveryNameById.get(s.deliveryId) ?? null : null,
+      })),
+    [sets, deliveryNameById]
+  );
+
+  const listState = useListState<ApprovalSet>(setsWithDelivery, setFilters, setSorts, {
     persistKey: 'pcm.approvals.sets',
     defaultSortId: DEFAULT_SET_SORT,
   });
+
+  // Notification → Approvals: consume the one-shot focus request and apply the
+  // existing Set filter so only that card shows (Clear filters resets).
+  // Depends on the PENDING VALUE itself (not just sets.length) so the jump
+  // also works when the board is already mounted — clicking the panel button
+  // while ON the Approvals tab changes no module and loads no new sets.
+  const { consumePendingApprovalSetId, state: appState } = useApp();
+  const pendingFocusId = appState.pendingApprovalSetId;
+  useEffect(() => {
+    if (pendingFocusId === null || sets.length === 0) return;
+    const focusId = consumePendingApprovalSetId();
+    if (focusId === null) return;
+    // Number(): notification setIds arrive as strings (wpdb BIGINT JSON).
+    const target = sets.find((s) => Number(s.id) === Number(focusId));
+    if (target) {
+      listState.setFilterValue('set', {
+        kind: 'searchableSelect',
+        selected: [target.name],
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFocusId, sets.length]);
 
   const brandOptions = useMemo(
     () => uniqueValues(sets, (s) => s.snapshot.brandName),
@@ -143,10 +188,15 @@ export function SetsBoard() {
     () => uniqueValues(sets, (s) => s.name),
     [sets]
   );
+  const deliveryOptions = useMemo(
+    () => uniqueValues(setsWithDelivery, (s) => s.deliveryName ?? undefined),
+    [setsWithDelivery]
+  );
 
   const searchQuery = readSearch(listState.filterState);
   const brandValue = readSelect(listState.filterState, 'brand');
   const projectValue = readSelect(listState.filterState, 'project');
+  const deliveryValue = readSelect(listState.filterState, 'delivery');
   const setValue = readSelect(listState.filterState, 'set');
   const sortValue = listState.sortId ?? NO_SORT_VALUE;
 
@@ -334,6 +384,26 @@ export function SetsBoard() {
               {projectOptions.map((p) => (
                 <SelectItem key={p} value={p}>
                   {p}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={deliveryValue}
+            onValueChange={(v) => handleSelectChange('delivery', v)}
+          >
+            <SelectTrigger
+              className="w-[160px] h-9 bg-white"
+              aria-label="Delivery"
+            >
+              <SelectValue placeholder="Delivery" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_VALUE}>All deliveries</SelectItem>
+              {deliveryOptions.map((d) => (
+                <SelectItem key={d} value={d}>
+                  {d}
                 </SelectItem>
               ))}
             </SelectContent>

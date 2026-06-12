@@ -77,6 +77,7 @@ class PCM_Schema
             email varchar(256) DEFAULT NULL,
             role varchar(50) DEFAULT 'user' NOT NULL,
             avatarUrl text DEFAULT NULL,
+            notificationsSeenAt datetime DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             lastSignedIn datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -450,17 +451,62 @@ class PCM_Schema
         // with Brands and Sites; status column drives the Kanban pipeline
         // (active / paused / completed). Other modules reference deliveryId
         // by FK in their own payloads — Deliveries never tracks back.
+        // brandId/projectId (v1.18.0) link the delivery to the client's brand
+        // and project so assigning the delivery grants view+use access to both.
         $sql = "CREATE TABLE {$prefix}deliveries (
             id int(11) NOT NULL AUTO_INCREMENT,
             userId int(11) NOT NULL,
             name varchar(256) NOT NULL,
             clientName varchar(256) DEFAULT NULL,
             status varchar(50) DEFAULT 'active' NOT NULL,
+            type varchar(64) DEFAULT NULL,
+            brandId int(11) DEFAULT NULL,
+            projectId int(11) DEFAULT NULL,
+            modules text DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
             KEY idx_userId (userId),
             KEY idx_status (status)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // ── Notifications (v1.19.0) ──
+        // One row per approval-flow EVENT (comment / approval) — no per-user
+        // fan-out. Visibility is computed at read time: admins see all rows,
+        // others see rows they own or whose brandId is granted to them via a
+        // delivery assignment. Read-state = users.notificationsSeenAt anchor.
+        $sql = "CREATE TABLE {$prefix}notifications (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            ownerId int(11) NOT NULL,
+            brandId int(11) DEFAULT NULL,
+            setId int(11) NOT NULL,
+            type varchar(30) NOT NULL,
+            title varchar(256) NOT NULL,
+            excerpt text DEFAULT NULL,
+            link text DEFAULT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_ownerId (ownerId),
+            KEY idx_brandId (brandId),
+            KEY idx_createdAt (createdAt)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // ── Delivery assignments (v1.18.0) ──
+        // Team access: an admin assigns a delivery to a PCM user (userId =
+        // assignee). The assignee gains VIEW + USE access to the delivery and
+        // its linked brand/project (reads become "owned OR granted" via
+        // PCM_Access; writes stay owner-scoped).
+        $sql = "CREATE TABLE {$prefix}delivery_assignments (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            deliveryId int(11) NOT NULL,
+            userId int(11) NOT NULL,
+            assignedBy int(11) NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY uniq_delivery_user (deliveryId,userId),
+            KEY idx_userId (userId)
         ) $charset_collate;";
         dbDelta($sql);
 
@@ -472,10 +518,12 @@ class PCM_Schema
             userId int(11) NOT NULL,
             brandId int(11) DEFAULT NULL,
             projectId int(11) DEFAULT NULL,
+            deliveryId int(11) DEFAULT NULL,
             name varchar(256) NOT NULL,
             token varchar(128) NOT NULL,
             status varchar(50) DEFAULT 'draft' NOT NULL,
             clientEmail varchar(256) DEFAULT NULL,
+            clientSentAt datetime DEFAULT NULL,
             snapshot longtext NOT NULL,
             reviewFeedback longtext DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -932,6 +980,8 @@ class PCM_Schema
             'automation_logs',
             'automations',
             'approval_sets',
+            'notifications',
+            'delivery_assignments',
             'deliveries',
             'sites',
             'articles',

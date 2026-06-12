@@ -532,6 +532,7 @@ export function CopyModule() {
         >
           {/* Brand / URL — shared ContextPanel (Theme hidden, rendered below) */}
           <ContextPanel
+            moduleId="copy"
             value={contextData}
             onChange={handleContextChange}
             onUrlFetched={handleUrlFetched}
@@ -772,6 +773,11 @@ export function CopyModule() {
             regeneratingCards={regeneratingCards}
             hasRealResults={hasResults}
             selection={selection}
+            brandId={contextData.brandId}
+            brandName={(contextData.brand as any)?.name}
+            projectId={(contextData.brand as any)?.projectId}
+            brandClientEmail={(contextData.brand as any)?.clientEmail}
+            brandLogoUrl={getBrandLogo(contextData.brand as any)?.url}
           />
         </div>
       </div>

@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { KeywordPicker, AsyncSelectField, UNSELECTED } from '@/components/shared';
+import { getBrandsForModule } from '@/lib/pcmConfig';
 import {
   Select,
   SelectContent,
@@ -26,7 +27,7 @@ import {
 import type { PendingWriterData } from '@/contexts/AppContext';
 import { trpc } from '@/lib/trpc';
 import { toOptions, toSiteOptions, parseId } from '@/lib/select-helpers';
-import type { SiteRecord } from '@/lib/select-helpers';
+import type { NamedRecord, SiteRecord } from '@/lib/select-helpers';
 
 // ── Types ──
 
@@ -57,7 +58,14 @@ export function SendToWriterDialog({
   const { data: templates, isLoading: templatesLoading } = trpc.templates.list.useQuery({ module: 'writer' });
 
   const sites = useMemo<SiteRecord[]>(() => (Array.isArray(sitesRaw) ? sitesRaw : []), [sitesRaw]);
-  const brandOptions = useMemo(() => toOptions(brands as NamedRecord[] | undefined), [brands]);
+  // Per-module brand scoping (UX — the REST layer enforces it server-side).
+  const brandOptions = useMemo(() => {
+    const allowed = getBrandsForModule('keywords');
+    const list = (brands as NamedRecord[] | undefined)?.filter(
+      (b) => allowed === null || allowed.includes(Number(b.id))
+    );
+    return toOptions(list);
+  }, [brands]);
   const siteOptions = useMemo(() => toSiteOptions(sites), [sites]);
   const templateOptions = useMemo(() => toOptions(templates as NamedRecord[] | undefined), [templates]);
 

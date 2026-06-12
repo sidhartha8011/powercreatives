@@ -23,7 +23,7 @@ if (!defined('ABSPATH')) {
 
 // ── Plugin Constants ──
 define('PCM_VERSION', '1.7.0');
-define('PCM_DB_VERSION', '1.16.0');
+define('PCM_DB_VERSION', '1.22.1');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -33,6 +33,7 @@ define('PCM_PLUGIN_BASENAME', plugin_basename(__FILE__));
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-settings.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/db/class-pcm-schema.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/db/class-pcm-db.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-access.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-admin.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-shortcode.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-shortcode-admin.php';
@@ -69,6 +70,9 @@ require_once PCM_PLUGIN_DIR . 'includes/modules/automations/handlers/interface-p
 require_once PCM_PLUGIN_DIR . 'includes/modules/automations/handlers/class-pcm-webhook-action-handler.php';
 require_once PCM_PLUGIN_DIR . 'includes/modules/automations/handlers/class-pcm-email-action-handler.php';
 require_once PCM_PLUGIN_DIR . 'includes/modules/automations/service.php';
+// Default-rule seeder (per-user, idempotent). Loaded after the engine so it can
+// call PCM_Automation_Engine::create_rule().
+require_once PCM_PLUGIN_DIR . 'includes/modules/automations/class-pcm-automation-seeds.php';
 
 // ── Module-owned Automations registration ──
 // Each module declares its triggers/actions/handlers in its own
@@ -138,6 +142,13 @@ function pcm_init(): void
 
     // Register REST API endpoints via module-loader
     add_action('rest_api_init', 'pcm_register_rest_routes');
+
+    // Schedule the daily reminder scanner once. The hook itself is registered
+    // at file-load in includes/modules/automations/service.php.
+    if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event')
+        && !wp_next_scheduled('pcm_automation_check_pending_approvals')) {
+        wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'pcm_automation_check_pending_approvals');
+    }
 }
 add_action('plugins_loaded', 'pcm_init');
 

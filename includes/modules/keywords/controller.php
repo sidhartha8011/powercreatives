@@ -18,6 +18,11 @@ if (!defined('ABSPATH')) {
 
 class PCM_REST_Keywords extends PCM_REST_Base
 {
+    // Work module — usable by non-admin team members (assigned access).
+    protected string $default_capability = 'edit_posts';
+    // Per-delivery module grant ids (see PCM_REST_Base::$module_grant_keys).
+    protected array $module_grant_keys = array('keywords');
+
 
     /**
      * Define all keyword explorer routes.
