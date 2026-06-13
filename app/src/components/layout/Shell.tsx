@@ -29,6 +29,7 @@ import { ApprovalsModule } from '@/modules/Approvals';
 import { AdsModule } from '@/modules/Ads';
 import { AutomationsModule } from '@/modules/Automations';
 import { UsersModule } from '@/modules/Users';
+import { SEOModule } from '@/modules/SEO';
 import type { ModuleId } from '@/types';
 
 // Module registry - maps module IDs to their components
@@ -52,6 +53,7 @@ const moduleRegistry: Record<ModuleId, React.ComponentType> = {
   ads: AdsModule,
   automations: AutomationsModule,
   users: UsersModule,
+  seo: SEOModule,
 };
 
 // Modules that need full-bleed layout (no padding, full height)

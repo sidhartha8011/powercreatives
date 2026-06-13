@@ -58,15 +58,20 @@ export function NotificationsPanel({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[380px] sm:max-w-[380px] overflow-y-auto">
-        <SheetHeader>
+      {/* overflow-hidden on the panel + a dedicated flex-1/min-h-0 scroll
+          region below = the header stays put and the LIST scrolls. Putting
+          overflow on the whole SheetContent (its default is flex-col h-full)
+          clipped a long list instead of scrolling it — only the first few
+          notifications were reachable. */}
+      <SheetContent side="right" className="w-[380px] sm:max-w-[380px] overflow-hidden">
+        <SheetHeader className="shrink-0">
           <SheetTitle>Notifications</SheetTitle>
           <SheetDescription>
             Comments and approvals on the approval sets you have access to.
           </SheetDescription>
         </SheetHeader>
 
-        <div className="mt-4 space-y-2">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-2">
           {items.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
               <BellOff className="h-6 w-6" />

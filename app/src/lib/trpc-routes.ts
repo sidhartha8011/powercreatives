@@ -265,6 +265,17 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     },
 
     // ── Templates ──
+    // ── SEO (content-SEO workbench) ──
+    "seo.listContent": { endpoint: "seo/content", method: "GET" },
+    "seo.contentOptions": { endpoint: "seo/content/options", method: "GET" },
+    "seo.quickCreate": { endpoint: "seo/content", method: "POST" },
+    "seo.saveCell": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/cell`, body: { field: input.field, value: input.value } }),
+    },
+    "seo.bulkDelete": { endpoint: "seo/content/bulk-delete", method: "POST" },
+
     "templates.list": { endpoint: "templates", method: "GET" },
     "templates.getById": {
         endpoint: "templates",

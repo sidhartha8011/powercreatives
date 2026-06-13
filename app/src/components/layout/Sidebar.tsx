@@ -34,6 +34,7 @@ import {
   Workflow,
   Users,
   Bell,
+  Gauge,
 } from 'lucide-react';
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc';
@@ -56,6 +57,7 @@ const mainNavItems: NavItem[] = [
   { id: 'strategies', label: 'Strategies', icon: <Layers className="w-[1.2rem] h-[1.2rem]" /> },
   { id: 'writer', label: 'Writer', icon: <FileEdit className="w-[1.2rem] h-[1.2rem]" /> },
   { id: 'sites', label: 'Sites', icon: <Globe className="w-[1.2rem] h-[1.2rem]" /> },
+  { id: 'seo', label: 'SEO', icon: <Gauge className="w-[1.2rem] h-[1.2rem]" /> },
   { id: 'approvals', label: 'Approvals', icon: <KanbanSquare className="w-[1.2rem] h-[1.2rem]" /> },
   { id: 'image', label: 'Image', icon: <Image className="w-[1.2rem] h-[1.2rem]" /> },
   { id: 'video', label: 'Video', icon: <Video className="w-[1.2rem] h-[1.2rem]" /> },

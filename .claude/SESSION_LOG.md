@@ -1,5 +1,76 @@
 # Session Log
 
+## 2026-06-13 — SEO port Phase 2: Content-SEO React module (wired + shipped)
+- **Task (/build "phase 2 and all other"):** make the Phase 1 backend usable;
+  begin the remaining phases.
+- **Built (Phase 2, inline):** `app/src/modules/SEO/` — `useSeoContent` hook
+  (list + options queries; optimistic cell-save patching the cache to the
+  server's canonical value; quick-create; bulk-delete) + `SEOModule` content
+  table: sortable (useSortableTable/SortableTableHead), inline-editable cells
+  (title + meta title/description/primary-kw/meta-keywords), status dropdown,
+  type filter (all/post/page), detected-SEO-plugin badge, multi-select + Move
+  to Trash, New Post/Page quick-create. Wiring: `ModuleId += 'seo'`; trpc
+  routes `seo.listContent/contentOptions/quickCreate/saveCell/bulkDelete`;
+  Sidebar nav item (Gauge icon, after Sites); Shell moduleRegistry.
+- **Verified:** tsc — 0 errors in all new/touched files (56-error ImageSidebar
+  baseline unchanged); build clean. Backend contract already live-verified in
+  Phase 1. UI is WP-backed (logged-in posts + nonce) so the Vite preview can't
+  exercise it standalone — eyeball after reload. Deploy zip rebuilt (17:56).
+- **Remaining:** Phases 3–9 (AI-Optimize + prompt seeding, schema/sameAs,
+  AI-readiness virtual routes, site settings, GBP, hub connectors,
+  export-import) per `.claude/SEO_PORT_PLAN.md` — large multi-module effort;
+  not attempted this turn to preserve quality + spend (parallel agents flagged
+  to the user as the costly path).
+- **Uncommitted** (Phase 1 + 2).
+
+## 2026-06-13 — SEO suite port (Optimizer Simple → PC): plan + Phase 1
+- **Task (/build):** replicate ALL 9 modules of the standalone "Optimizer
+  Simple" SEO plugin as NATIVE PC modules (user chose: native + everything).
+- **Process:** extracted the zip to /tmp; 3 parallel general-purpose agents
+  produced faithful inventories (content-SEO + seo-integration; AI provider
+  + verbatim prompts + templates/ai-bulk/integrations; site + ai-readiness +
+  business/GBP + hub + export-import + security). Synthesised a full phased
+  plan → `.claude/SEO_PORT_PLAN.md` (source→PC reuse map, 9 phases, verbatim
+  prompt inventory, the cross-plugin key-map). Genuinely-new domains
+  identified: AI-readiness (virtual routes/llms.txt/markdown), schema JSON-LD,
+  hub connector-provisioning, GBP normalize, staging-buffer UX; the rest
+  overlay PC's models/prompts/integrations/brands/sites.
+- **Phase 1 built (backend, verified):** new `seo` module — `PCM_SEO_Service`
+  (verbatim port of `seo-integration.php`: detect Yoast/RankMath/SEOPress/
+  simple, per-plugin key-map with `pcm_seo_` backups, read active→backup→'',
+  DUAL-WRITE active+backup) + content row builder + cell-save whitelist
+  (native title/slug/status/author, `seo:*` dual-write, internal meta);
+  `PCM_REST_SEO` (`pcm/v1/seo`, edit_posts + per-post caps): list /
+  options / quick-create / cell-save / bulk-delete.
+- **Verified:** suite 76 tests / 251 assertions green (new SeoIntegrationTest:
+  key-map faithfulness, detection, read-chain, dual-write routing, whitelist);
+  PHP lint clean; `composer dump-autoload` for the new class. Live wp-cli
+  (deleted after): 4 routes registered; detect=simple; content list carries
+  SEO fields; native title/status save + bad-status WP_Error; **Yoast-active
+  dual-write writes both `_yoast_wpseo_title` and `pcm_seo_meta_title`, read
+  prefers active and falls back to backup**; metaDescription dual-writes.
+- **Not yet:** Phase 1 is backend-only (no React UI/nav, deploy zip NOT
+  rebuilt — wire UI in Phase 2 first). Phases 2–9 per the plan doc.
+- **Uncommitted.**
+
+## 2026-06-13 — Fix: notifications panel can't scroll to show more
+- **Report (clarified from screenshot, task text was empty):** the panel is
+  "overloaded, not showing more notifications" — a long list was clipped and
+  only the first item(s) reachable.
+- **Root cause:** `NotificationsPanel` put `overflow-y-auto` on the whole
+  `SheetContent` (whose base is `flex flex-col h-full`) and let the list
+  render at natural height. With a tall list the flex children had no proper
+  scroll region, so content clipped instead of scrolling.
+- **Fix (one file, NotificationsPanel.tsx):** canonical fixed-header +
+  scroll-body layout — `SheetContent` → `overflow-hidden`, header
+  `shrink-0`, list wrapper `flex-1 min-h-0 overflow-y-auto px-4 pb-4`
+  (same scroll-in-flex pattern the Automations combobox uses). Server still
+  returns up to 50 (unchanged); now all of them are reachable.
+- **Verified:** tsc 0 errors in the file (56 baseline unchanged); build
+  clean. WP-backed logged-in flow → preview can't exercise it; eyeball after
+  reload (the list scrolls, header stays). Deploy zip rebuilt (14:36).
+- **Uncommitted.**
+
 ## 2026-06-13 — Webhook ID variables + Automations sortable table
 - **Task:** (1) webhooks expose more specific variable names (deliveryId,
   deliveryName, brandId, projectId); (2) render the Automations list as a

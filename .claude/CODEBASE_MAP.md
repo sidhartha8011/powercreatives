@@ -429,6 +429,26 @@ those requests (opaque 500s / stuck "Generating…"). The async seam:
   providers keep the sync endpoints. Kie-only — extend per provider if
   fal/google queue APIs are ever needed.
 
+## SEO suite (port from "Optimizer Simple" — in progress)
+Full phased plan: `.claude/SEO_PORT_PLAN.md` (9 source modules → native PC
+modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
+`seo` module (`includes/modules/seo/`) — content-SEO backend.
+- `PCM_SEO_Service`: cross-plugin SEO meta (faithful port of the source's
+  `seo-integration.php`). `detect_seo_plugin()` (Yoast `WPSEO_VERSION` >
+  RankMath `class RankMath` > SEOPress `seopress_init` > `simple`);
+  `seo_key_map()` (per-plugin title/description/keyword keys + `pcm_seo_`
+  prefixed backups); `seo_get` (active → backup → '') / `seo_update`
+  (DUAL-WRITE: active key + internal backup so values survive a plugin
+  switch). Content rows (posts/pages, SEO field set), `save_cell` whitelist
+  (native title/slug/status/author + `seo:*` dual-write + internal meta).
+- `PCM_REST_SEO` (`pcm/v1/seo`, edit_posts + per-post `edit_post`/`delete_post`
+  checks): `GET /seo/content`, `GET /seo/content/options`,
+  `POST /seo/content` (quick-create), `POST /seo/content/{id}/cell`,
+  `POST /seo/content/bulk-delete`.
+- Backend-only so far (no React UI / nav yet → Phase 2). Tests:
+  `SeoIntegrationTest` (key-map faithfulness, detection, read-chain,
+  dual-write routing, whitelist).
+
 ## Where to add a <thing>
 - **New REST module** (the standard way to add a feature):
   1. `includes/modules/{name}/config.php` → return `['id','name','version','controller'=>'PCM_REST_Name','rest_namespace'=>'pcm/v1/name']`
