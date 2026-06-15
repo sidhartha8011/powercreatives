@@ -1,5 +1,291 @@
 # Session Log
 
+## 2026-06-14 — SEO prompts editable in Settings → Prompts (new "SEO" tab)
+- **Task:** "where are the prompts written for all the generations? it should be
+  same from the zip and in this it should be in the template section with new
+  tabs." Answered: SEO generation prompts live verbatim in
+  `includes/modules/seo/prompts.php` (5 keys × generate/optimize, ported from
+  the source's `optimizer_site_prompt_templates`); every OTHER generation's
+  prompts (copy/ads/image/video/writer) were already editable in **Settings →
+  Prompts**, but SEO was code-only. Per the user's choice, wired SEO into that
+  same Prompt Editor as a new module tab (NOT the form-field Templates page).
+- **Built (minimal diff, no DB migration):**
+  - `seo/service.php`: `get_default_prompts()` flattens `prompts.php` into the
+    8-section `{use}_{mode}` registry; `resolve_prompt($section,$default,$userId)`
+    returns the active `prompt_overrides` row (module='seo') or the default
+    (mirrors `PCM_Writer_Service::get_system_prompt`). `generate_field` /
+    `optimize_body` now take `?int $user_id` and use the resolver →
+    precedence DB override > `pcm_seo_field_prompts` filter > file.
+  - `seo/controller.php`: threads the PCM user id (`get_current_pcm_user()->id`)
+    into both generate/optimize calls.
+  - `prompts/controller.php`: registered `seo` in `get_default_sections`
+    (8 sections), `get_section_meta` (labels + placeholder docs), and
+    `get_default_prompt` (delegates to `PCM_SEO_Service::get_default_prompts`).
+  - `app/src/modules/Settings/PromptEditorSection.tsx`: added `seo` to `MODULES`
+    (Search icon), `PromptModuleId`, `PLACEHOLDERS` (Page + Business/Site), the
+    `seoList` query, and `sectionsByModule`.
+- **Why no migration:** `list_variants` serves a virtual "Built-in" default from
+  `get_default_prompt` when no DB rows exist and `create_variant` accepts any
+  module — so editing just creates a row on save (same as the other modules).
+- **Verified:** PHP lint clean (3 files); `npm run check` 0 new errors (56-error
+  baseline unchanged, my file clean); `npm run build` clean.
+- **Hardened (/ship):** +4 PHPUnit tests in `SeoIntegrationTest` —
+  `get_default_prompts` 8-section contract + `resolve_prompt` precedence
+  (no-user→default, active override wins, blank override→default; `$wpdb`
+  mocked); full suite **97/97 green** (317 assertions, no mock leakage).
+  Registration-integrity proof: a source cross-check confirms
+  `get_default_sections('seo')` ≡ `seo.*` section-meta labels ≡
+  `get_default_prompts()` keys (all 8 — editor cannot show a blank/orphan tab).
+  Verified the 6→11 advertised `{{placeholders}}` are all produced by
+  `build_field_vars` (no literal-token leak) and expanded the guide with the
+  local-SEO `{{business.*}}` fields. Confirmed safe: `get_current_pcm_user()` is
+  typed `: object` (never null) and the prompt placeholder-sync (`sync_all`) is
+  scoped to its copy/ads INJECTIONS registry, so it never touches `seo` rows.
+  No live wp-cli round-trip — `wp` not on PATH + local DB down; the override
+  query mirrors the proven `PCM_Writer_Service::get_system_prompt`.
+- **Pickup:** local plugin is symlinked → hard reload (⌥⌘R) to see the new SEO
+  tab under Settings → Prompts. Deploy `power-creatives.zip` is now STALE (not
+  rebuilt). Uncommitted on `feat/seo-suite-port`.
+
+## 2026-06-14 — Research: Persuaide image pipeline vs PC (no code change)
+- **Task:** study `github.com/SoftEXedge/Persuaide-main` (cloned to /tmp,
+  reference only) and recommend why its brand-guideline-driven image gen beats
+  PC's, and what to adopt. Analysis-only — **no PC files changed**, map unaffected.
+- **Persuaide's edge (key files):** `imagePromptV2.service.ts` co-generates a
+  single creative concept `{conceptIdea, headline, lines, scene}` (anchorage) via
+  a heavy "creative-director" system instruction (photographic specs + hard
+  constraints + per-gen variation seeding from a curated SCENE_ANGLES list);
+  `behavioralScience.service.ts` maps objective→principles (Scarcity/Social
+  Proof/Loss Aversion…) injected into the prompt; `types/brandGuidelines.ts` is
+  a rich structured brand schema (colors+do/dont, typography, imagery
+  mood/composition/do/avoid, voice, logo, constraints) extracted from brand PDFs;
+  `imageGenV2.service.ts` generates a TEXT-FREE image (Gemini 3 Pro Image / Nano
+  Banana on Vertex) then overlays the headline via a deterministic layout
+  planner/solver + adaptive colours sampled from pixels; OCR baked-text regen
+  (×2) + `imageQualityCheckV2.service.ts` vision-judge rubric (9 criteria + 1-5
+  score) regenerating with fix-instructions (×3) on fail.
+- **PC gap:** raw brief → optional optimize/concepts → thin `final_prompt`
+  brand wrap → single provider call → store, text BAKED IN, no quality gate, no
+  overlay, no variation seeding, thin brand context, no behavioral layer.
+- **Recommended (prioritised, not yet built — awaiting go-ahead):** T1 (cheap,
+  prompt-only, fits prompt_overrides): co-generate headline+scene concept;
+  port the creative-director system prompt + hard constraints; richer brand
+  context; per-gen variation seed. T2 (bigger): vision quality-gate + capped
+  auto-regen (COST ⚠ — toggle/cap), text-free + overlay, OCR guard. T3: add a
+  stronger image model via the data-driven provider registry; behavioral-science
+  principle injection if PC gains a campaign-objective concept.
+
+## 2026-06-13 — SEO table wrapping: real fix (override shadcn cell nowrap)
+- **Report:** cells still on one line, widening the table (long meta-keywords
+  pushed the other columns off-screen).
+- **Root cause:** the shadcn `TableCell`/`TableHead` ship with
+  `whitespace-nowrap`; my prior `whitespace-normal` on the inner button didn't
+  reliably override the cell-level rule, so cells stayed single-line and
+  (table-auto) expanded to fit.
+- **Fix (`SEO/index.tsx`):** override at the table via the higher-specificity
+  descendant selector — `<Table className="table-fixed w-full [&_td]:align-top
+  [&_td]:whitespace-normal [&_td]:break-words">` — which beats the cell's own
+  `whitespace-nowrap`; dropped the conflicting `truncate` on the Author cell.
+  Now every cell wraps within its fixed-% column. (Local WP plugin is
+  symlinked to the working dir, so a hard reload ⌥⌘R picks it up.)
+- **Verified:** tsc 0 errors in SEO files (56 baseline); build clean. Visual —
+  confirm after hard reload. Zip rebuilt (19:59).
+- **Uncommitted.**
+
+## 2026-06-13 — SEO content table: wrap cells instead of widening
+- **Task:** generated/cell values should wrap to multiple lines in the row
+  rather than growing the table horizontally.
+- **Changed (frontend only, `SEO/index.tsx` + `types.ts`):** EditableCell
+  display `truncate` → `whitespace-normal break-words leading-snug min-w-0`
+  (long meta values now flow onto multiple lines); `<Table>` →
+  `table-fixed w-full [&_td]:align-top` (respects column widths, wraps
+  content, top-aligns multi-line rows); trimmed column widths from a 112%
+  total to ~100% so it fits the container without horizontal overflow. The
+  staged-suggestion card already used `break-words`. No logic change.
+- **Verified:** tsc 0 errors in SEO files (56 baseline); build clean. Zip
+  rebuilt (19:44). Visual change — confirm after reload.
+- **Uncommitted.**
+
+## 2026-06-13 — Fix: SEO cells not editable (camelCase) + bulk AI toolbar
+- **Report:** "not able to enter primary keyword"; + bring in the source's
+  content-table options / a toolbar with bulk actions.
+- **Root-cause bug (high):** the seo controller's `save_cell` AND
+  `generate_field` sanitized the `field` param with `sanitize_key()`, which
+  LOWERCASES — so every camelCase field (`primaryKeyword`, `metaTitle`,
+  `metaDescription`, `metaKeywords`, `supportingKeyword`, `clusterLabel`)
+  failed the whitelist lookup → inline edits and per-field AI generation
+  silently broke for all of them (only `title`/`status` worked). Earlier
+  Phase 1/3 verifications called the SERVICE directly, bypassing the
+  controller's sanitize, so they missed it. **Fix:** `sanitize_text_field`
+  (case-preserving; the field is whitelist-validated downstream).
+- **Toolbar (from the source UX):** bulk-actions bar on selection — "AI
+  generate: Title / Meta Title / Meta Desc / Keywords" runs that field for
+  every selected row (sequential), staging each result; plus a global
+  "N AI suggestions pending — Accept all & save / Discard all" bar (mirrors
+  the source's pending-changes bar). Per-row sparkle + Optimize modal
+  unchanged.
+- **Verified:** PHPUnit 93/304 green; tsc 0 errors in SEO files (56
+  baseline); build clean. Live wp-cli through the REAL REST path: save_cell
+  for primaryKeyword/metaTitle/metaDescription/metaKeywords all → 200 and
+  persist; generate `metaTitle` no longer returns `pcm_seo_not_generatable`.
+  Zip rebuilt (19:31).
+- **Uncommitted.**
+
+## 2026-06-13 — SEO port Phases 3b (Optimize modal) + 8 (Hub) — SUITE COMPLETE
+- **Phase 3b — Optimize Content:** prompts.php +`content` optimize prompt;
+  `PCM_SEO_Service::optimize_body` (full-body SEO/AEO rewrite via PCM_LLM,
+  not saved); REST `GET/POST /seo/content/{id}/body` + `/optimize`. Frontend:
+  per-row Sparkle → `OptimizeModal` (Before/After + a client-side SEO
+  scorecard: word count, KW density, KW-in-first-100, KW-in-headings,
+  headings, FAQ, lists, avg sentence length) → Accept&Save. `scorecard.ts`.
+- **Phase 8 — Hub (multi-site connectors):** DB 1.23.0 — `seo_tenants` +
+  `seo_hmac_nonces` (PCM_Schema dbDelta; maybe_upgrade auto-creates).
+  `seohub` module: `PCM_SEOHub_Service` — HMAC sign/verify (sha256 over
+  ts.nonce.body, ±300s window, nonce replay guard), tenant CRUD (uuid
+  clientId + 32-byte secret), `register_ping` (handshake → active + captured
+  Application Password), remote proxy (Basic auth), and a single-file
+  **connector-plugin ZIP generator** (bakes client_id/secret/hub-url;
+  registers SEO meta in REST; sends an HMAC-signed hello on activation).
+  `PCM_REST_SEOHub`: tenant CRUD (`manage_options:strict` — rows hold
+  secrets), a **streamed** connector download (kept out of public uploads),
+  and a public HMAC-verified `/seohub/connector/hello`. Frontend: SEO "Hub"
+  tab (`HubPanel` — add site, download connector via nonce'd blob fetch,
+  revoke/delete; secrets never sent to the client).
+- **Verified:** PHPUnit 93 tests / 304 assertions green (new: scorecard via
+  tsc; HMAC sign determinism + sensitivity). tsc 0 errors in SEO files (56
+  baseline); build clean. Live wp-cli (deleted): hub routes; tenant create
+  (secret redacted in list); HMAC valid→passes, bad-sig/replay/stale all
+  rejected with the right codes; register_ping→active; connector ZIP bakes
+  id+secret + registers meta; **1.22.1→1.23.0 upgrade auto-creates both
+  tables**. Zip rebuilt (19:20).
+- **SEO SUITE COMPLETE** — all 9 source modules ported as native PC modules
+  (Phases 1–9 + 3b). Remote connector handshake from a real external site is
+  the only thing not locally testable (HMAC verify + ZIP gen are).
+- **Uncommitted.**
+
+## 2026-06-13 — SEO port Phases 7 (GBP, n8n provider-swappable) + 9 (export/import)
+- **Decision confirmed:** existing n8n webhook tested LIVE and working
+  (HTTP 200, real Google Places New v1 data for "Smålands Tak"); Google
+  billing already lives in n8n. So GBP reuses n8n, behind a provider
+  interface so a direct-Google client can drop in later.
+- **Phase 7 — GBP (`gbp.php`):** `PCM_SEO_GBP_Provider` interface +
+  `PCM_SEO_GBP_N8N_Provider` (posts the source's exact search_places/
+  get_business_details contract to the configured webhook, optional
+  `X-PCM-Secret`) + factory `PCM_SEO_GBP::provider()` (filterable
+  `pcm_seo_gbp_providers`; swap = new class + `seo_gbp_provider` setting).
+  Shared `normalize()` (Places New v1 + legacy keys). Per-brand storage
+  (option `pcm_seo_gbp_{id}`: snapshot + manual overrides that survive
+  refresh). `build_field_vars` now enriches `{{business.address/phone/
+  category/hours/rating/lat/lng/types}}` from the brand's GBP. REST
+  search/save/get/overrides (admin). Frontend: SEO "Business" tab
+  (`BusinessPanel`) — webhook config, brand select, search, save-to-brand,
+  editable overrides.
+- **Phase 9 — Export/Import (`export.php`):** `PCM_SEO_Export` bundles the
+  agency-reusable SEO config (site schema/robots, AI-readiness settings, GBP
+  provider+webhook) as portable JSON; import is plugin-key-checked +
+  whitelist-applied. REST `GET /seo/export`, `POST /seo/import`. Frontend:
+  Export/Import buttons in the Site tab.
+- **Verified:** PHPUnit 91 tests / 300 assertions green (new: GBP normalize
+  v1+legacy, provider factory). tsc 0 errors in SEO files (56 baseline);
+  build clean. Live wp-cli (deleted): n8n webhook works; GBP routes + factory
+  + normalize + snapshot/override-merge surviving refresh + prompt-var
+  enrichment; export→import round-trip restores config, wrong-plugin
+  rejected. Zip rebuilt (19:07).
+- **Remaining:** Phase 3b (Optimize-Content modal + SEO scorecard) and
+  Phase 8 (hub multi-site connectors). **Phase 8 intentionally NOT rushed
+  into this turn** — it's a large security-sensitive subsystem (connector
+  plugin ZIP generation, HMAC handshake, WP application-password capture,
+  tenant DB tables) that warrants its own focused build.
+- **Uncommitted.**
+
+## 2026-06-13 — SEO port Phases 4 (Schema) + 6 (Site settings)
+- **Task (/build "phase 4 and 6"):** built both inline from source (minimum
+  token cost, no fresh agents).
+- **Phase 4 — Schema (`includes/modules/seo/schema.php`):** faithful port of
+  the JSON-LD renderer — `PCM_SEO_Schema` emits enriched Schema.org on
+  `wp_head` (is_singular) for Article / WebPage / BreadcrumbList / FAQPage /
+  HowTo / Product, with publisher Organization + logo fallback chain
+  (plugin→customizer→Yoast/RankMath/SEOPress→site-icon), about/mentions Thing
+  + sameAs, speakable, ReadAction. Description/keywords/primary-kw come
+  through the Phase 1 cross-plugin `seo_get`. Meta `pcm_seo_schema[_faq/
+  _howto/_sameas]`; whitelist-validated. REST `GET/POST /seo/content/{id}/
+  schema`. Frontend: per-row `SchemaCell` popover; `schemaTypes` on each row.
+- **Phase 6 — Site (`includes/modules/seo/site.php`):** `PCM_SEO_Site` —
+  custom robots.txt (`robots_txt` filter), site-wide LocalBusiness JSON-LD +
+  `<meta name=keywords>` on `wp_head`, language/timezone apply with restorable
+  backups. REST `GET/POST /seo/site`, `POST /seo/site/restore`. Frontend:
+  third SEO tab `SiteSettingsPanel`.
+- Both required from service.php (hooks every request).
+- **Verified:** PHPUnit 88 tests / 283 assertions green (new: schema
+  whitelist filter + types round-trip, site default-robots, robots-filter
+  passthrough); tsc 0 errors in SEO files (56 baseline); build clean. Live
+  wp-cli (deleted): schema set/round-trip + Article(publisher/about/
+  speakable/wordCount)/Product(category/brand/keywords)/FAQPage build, valid
+  JSON-LD; robots filter on/off, site LocalBusiness head emit, timezone
+  apply+backup+restore. (wp_head JSON-LD emit on singular runs on the live
+  site.) Zip rebuilt (18:35).
+- **Remaining:** Phase 3b (Optimize modal + scorecard), 7 (GBP), 8 (hub),
+  9 (export-import).
+- **Uncommitted.**
+
+## 2026-06-13 — SEO port Phase 5: AI-Readiness (llms.txt + virtual routes)
+- **Task (/build "next phase 4-9"):** continue the SEO port. Delivered the
+  highest-value genuinely-new domain — AI-Readiness — fully this turn
+  (building all six of 4–9 at mergeable quality in one turn isn't feasible;
+  built inline from the held inventory specs = minimum token cost, no fresh
+  agents).
+- **Built (backend, `includes/modules/seo/ai-readiness.php`):** faithful port
+  — `PCM_SEO_AIReadiness`: virtual routes `^llms\.txt$` / `^llms-full\.txt$` /
+  `^(.+)\.md$` (init rewrite when published, query_vars, redirect_canonical
+  guard, template_redirect server), page-builder-aware HTML→Markdown
+  (Elementor/Divi/Brizy), `post_to_markdown`, llms.txt index + full builders
+  (llmstxt.org spec: H1 → blockquote → Pages/CPTs/## Optional/## Resources),
+  per-post status (md5 ready/stale/none), Stripe-style `.md` URLs. Options
+  `pcm_seo_air_*`, meta `_pcm_md_*`. Required from service.php so hooks run
+  every request. REST (admin): `GET /seo/ai-readiness`, `/build`, `/publish`,
+  `/settings`, `/generate`.
+- **Built (frontend):** SEO module now tabbed (Content / AI Readiness);
+  `AIReadinessPanel` — publish toggle, Build/Regenerate, llms.txt links,
+  per-post readiness list. 5 trpc routes.
+- **Verified:** PHPUnit 84 tests / 285 assertions green (new: html→md
+  headings/bold/links, lists, Gutenberg-comment strip); tsc 0 errors in SEO
+  files (56 baseline unchanged); build clean. Live wp-cli (deleted): post→md
+  (H1+heading+bold), build_index → llms.txt (H1, ## Optional, Resources/
+  sitemap, .md links) + llms-full (Source: lines), generate_md stores md,
+  status ready→stale on edit, publish registers the rewrite rules, .md URL
+  shape. (HTTP serving via template_redirect runs on the live site.) Zip
+  rebuilt (18:22).
+- **Remaining:** Phase 4 (schema/sameAs), 6 (site settings), 7 (GBP — needs
+  N8N-vs-direct-API decision), 8 (hub connectors — heavy/security-sensitive),
+  9 (export-import). Per `.claude/SEO_PORT_PLAN.md`.
+- **Uncommitted.**
+
+## 2026-06-13 — SEO port Phase 3: AI field generation + verbatim prompts
+- **Task (/build "build the next phase"):** Phase 3 of the SEO port.
+- **Built (backend):** `includes/modules/seo/prompts.php` — verbatim port of
+  the source's field prompts (page_title / meta_title / meta_description ×
+  generate+optimize, meta_keywords; `{{primary_kw}}` bug corrected),
+  filterable via `pcm_seo_field_prompts`. `PCM_SEO_Service`: `field_use_map`
+  (title/metaTitle/metaDescription/metaKeywords → use), `substitute_vars`
+  (faithful `{{var}}` engine), `build_field_vars` (post + brand/site business
+  context), `sanitize_ai_output` (strip one surrounding quote pair),
+  `generate_field` → reuses PC's `PCM_LLM::invoke` provider routing (optimize
+  when a value exists, else generate; NOT saved — staged client-side). Route
+  `POST /seo/content/{id}/generate` (edit_posts + per-post edit_post).
+- **Built (frontend):** per-field AI sparkle in the SEO table → generate →
+  STAGED suggestion (accept = save via existing cell-save / reject), in-flight
+  spinner. Hook `generateField`; trpc `seo.generateField`.
+- **Verified:** PHPUnit 81 tests / 273 assertions green (new: substitution,
+  output-sanitize, field map, prompt completeness); tsc 0 errors in touched
+  files (56 baseline unchanged); build clean. Live wp-cli (deleted): generate
+  route registered; prompts + map load; real-post prompt assembly substitutes
+  title/keyword/current_value with NO leftover `{{}}`; quote-strip; non-
+  generatable field → `pcm_seo_not_generatable`. (Paid LLM call exercised on
+  the deployed site — spend guard locally.) Deploy zip rebuilt (18:07).
+- **Remaining:** Phases 3b (Optimize-Content body modal + SEO scorecard) and
+  4–9 per `.claude/SEO_PORT_PLAN.md`.
+- **Uncommitted.**
+
 ## 2026-06-13 — SEO port Phase 2: Content-SEO React module (wired + shipped)
 - **Task (/build "phase 2 and all other"):** make the Phase 1 backend usable;
   begin the remaining phases.

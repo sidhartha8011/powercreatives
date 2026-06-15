@@ -602,6 +602,44 @@ class PCM_REST_Prompts extends PCM_REST_Base
                 'label' => 'User Prompt',
                 'description' => 'Task instructions and output format sent as role:user. Supports {{instructionContext}}, {{keyword}}, {{supporting}}, {{mediaInstruction}}.',
             ),
+
+            // SEO module — content-SEO field generators (ported verbatim from
+            // "Optimizer Simple"). "Generate" creates a fresh value; "Optimize"
+            // improves the existing one ({{current_value}}). All support
+            // {{title}}, {{primary_keyword}}, {{supporting_keyword}},
+            // {{business.name}}, {{current_value}}, {{site.lang}}.
+            'seo.page_title_generate' => array(
+                'label' => 'Page Title — Generate',
+                'description' => 'Creates an SEO page title (H1) from scratch. Supports {{title}}, {{primary_keyword}}, {{supporting_keyword}}, {{business.name}}.',
+            ),
+            'seo.page_title_optimize' => array(
+                'label' => 'Page Title — Optimize',
+                'description' => 'Improves the existing page title. Supports {{current_value}}, {{primary_keyword}}, {{supporting_keyword}}, {{business.name}}.',
+            ),
+            'seo.meta_title_generate' => array(
+                'label' => 'Meta Title — Generate',
+                'description' => 'Creates an SEO meta title from scratch. Supports {{title}}, {{primary_keyword}}, {{supporting_keyword}}, {{business.name}}.',
+            ),
+            'seo.meta_title_optimize' => array(
+                'label' => 'Meta Title — Optimize',
+                'description' => 'Improves the existing meta title. Supports {{current_value}}, {{title}}, {{primary_keyword}}, {{supporting_keyword}}, {{business.name}}.',
+            ),
+            'seo.meta_description_generate' => array(
+                'label' => 'Meta Description — Generate',
+                'description' => 'Creates an SEO meta description from scratch. Supports {{title}}, {{primary_keyword}}, {{supporting_keyword}}, {{business.name}}.',
+            ),
+            'seo.meta_description_optimize' => array(
+                'label' => 'Meta Description — Optimize',
+                'description' => 'Improves the existing meta description. Supports {{current_value}}, {{title}}, {{primary_keyword}}, {{supporting_keyword}}, {{business.name}}, {{site.lang}}.',
+            ),
+            'seo.meta_keywords_generate' => array(
+                'label' => 'Meta Keywords — Generate',
+                'description' => 'Generates a comma-separated keyword list. Supports {{title}}, {{primary_keyword}}, {{supporting_keyword}}, {{site.lang}}.',
+            ),
+            'seo.content_optimize' => array(
+                'label' => 'Content — Optimize (Full Body)',
+                'description' => 'Rewrites the full page body for SEO + Answer-Engine Optimization (the "Optimize Content" modal). Supports {{current_value}}, {{primary_keyword}}, {{supporting_keyword}}, {{business.name}}, {{site.lang}}.',
+            ),
         );
     }
 
@@ -626,6 +664,15 @@ class PCM_REST_Prompts extends PCM_REST_Base
             'image' => array('prompt_suggestions_system', 'prompt_suggestions', 'context_suggestions_system', 'context_suggestions', 'concept_suggestions', 'concept_suggestions_user', 'brief_optimization', 'brief_optimization_user', 'final_prompt'),
             'video' => array('concept_suggestions', 'compose', 'enhance'),
             'writer' => array('writer_system', 'writer_user'),
+            // SEO: one section per field × mode (generate/optimize). Content
+            // comes from includes/modules/seo/prompts.php (verbatim source port).
+            'seo' => array(
+                'page_title_generate', 'page_title_optimize',
+                'meta_title_generate', 'meta_title_optimize',
+                'meta_description_generate', 'meta_description_optimize',
+                'meta_keywords_generate',
+                'content_optimize',
+            ),
         );
 
         return $registry[$module] ?? array();
@@ -677,6 +724,12 @@ class PCM_REST_Prompts extends PCM_REST_Base
         // Writer module: delegate to the service's default templates.
         if ($module === 'writer') {
             $defaults = PCM_Writer_Service::get_default_prompts();
+            return $defaults[$section] ?? '';
+        }
+
+        // SEO module: verbatim field prompts flattened to {use}_{mode} sections.
+        if ($module === 'seo' && class_exists('PCM_SEO_Service')) {
+            $defaults = PCM_SEO_Service::get_default_prompts();
             return $defaults[$section] ?? '';
         }
 

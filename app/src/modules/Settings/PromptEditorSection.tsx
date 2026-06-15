@@ -83,6 +83,7 @@ const MODULES = [
   { id: "ads" as const, label: "Ads", icon: Megaphone },
   { id: "image" as const, label: "Image", icon: Image },
   { id: "video" as const, label: "Video", icon: Video },
+  { id: "seo" as const, label: "SEO", icon: Search },
 ];
 
 /**
@@ -236,9 +237,40 @@ const PLACEHOLDERS: Record<string, PlaceholderGroup[]> = {
     },
   ],
   video: [],
+  seo: [
+    {
+      group: 'Page',
+      icon: Briefcase,
+      items: [
+        { key: '{{title}}', description: 'The current page/post title' },
+        { key: '{{primary_keyword}}', description: 'Primary focus keyword for the page (Primary KW cell)' },
+        { key: '{{supporting_keyword}}', description: 'Secondary/supporting keyword for the page' },
+        { key: '{{current_value}}', description: 'The existing value being improved — only present in "Optimize" prompts' },
+      ],
+    },
+    {
+      group: 'Business (from the brand’s Google Business Profile)',
+      icon: Briefcase,
+      items: [
+        { key: '{{business.name}}', description: 'Business/brand name' },
+        { key: '{{business.category}}', description: 'Primary business category (e.g. "Roofing contractor")' },
+        { key: '{{business.address}}', description: 'Formatted business address — useful for local-SEO prompts' },
+        { key: '{{business.phone}}', description: 'Business phone number' },
+        { key: '{{business.website}}', description: 'Business website URL' },
+      ],
+    },
+    {
+      group: 'Site',
+      icon: Target,
+      items: [
+        { key: '{{site.lang}}', description: 'Site language (e.g. "en-US") — used to write output in the right language' },
+        { key: '{{website.url}}', description: 'This site’s home URL' },
+      ],
+    },
+  ],
 };
 
-type PromptModuleId = "copy" | "ads" | "image" | "video";
+type PromptModuleId = "copy" | "ads" | "image" | "video" | "seo";
 
 /**
  * Variant editor — shows all variants as tabs with the active variant's textarea.
@@ -777,6 +809,7 @@ export function PromptEditorSection() {
   const adsList = trpc.promptOverrides.list.useQuery({ module: "ads" });
   const imageList = trpc.promptOverrides.list.useQuery({ module: "image" });
   const videoList = trpc.promptOverrides.list.useQuery({ module: "video" });
+  const seoList = trpc.promptOverrides.list.useQuery({ module: "seo" });
 
   /** Helper to map section response to UI-friendly shape */
   const mapSections = (data: typeof copyList.data) =>
@@ -791,6 +824,7 @@ export function PromptEditorSection() {
     ads: mapSections(adsList.data),
     image: mapSections(imageList.data),
     video: mapSections(videoList.data),
+    seo: mapSections(seoList.data),
   };
 
   /** Export state to prevent double-click */

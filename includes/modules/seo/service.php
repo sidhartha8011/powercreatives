@@ -18,6 +18,15 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// Loaded here (service.php runs every request via the module-loader) so each
+// file's frontend hooks register: AI-Readiness virtual routes, the Schema.org
+// JSON-LD renderer (wp_head), and the site-wide robots/schema/meta hooks.
+require_once __DIR__ . '/ai-readiness.php';
+require_once __DIR__ . '/schema.php';
+require_once __DIR__ . '/site.php';
+require_once __DIR__ . '/gbp.php';
+require_once __DIR__ . '/export.php';
+
 class PCM_SEO_Service
 {
     /** Content types this module operates on. */
@@ -199,6 +208,7 @@ class PCM_SEO_Service
             'metaKeywords'       => self::seo_get($id, 'meta_keywords'),
             'supportingKeyword'  => (string) get_post_meta($id, 'pcm_seo_supporting_keyword', true),
             'clusterLabel'       => (string) get_post_meta($id, 'pcm_seo_cluster_label', true),
+            'schemaTypes'        => class_exists('PCM_SEO_Schema') ? PCM_SEO_Schema::types_for($id) : array(),
         );
     }
 
@@ -313,5 +323,287 @@ class PCM_SEO_Service
             'types'      => self::VALID_TYPES,
             'seoPlugin'  => self::detect_seo_plugin(),
         );
+    }
+
+    // =====================================================================
+    // AI field generation (Phase 3) — reuses PC's PCM_LLM provider routing
+    // =====================================================================
+
+    /** Cell field → prompt `use` key. Only these fields are AI-generatable. */
+    public static function field_use_map(): array
+    {
+        return array(
+            'title'           => 'page_title',
+            'metaTitle'       => 'meta_title',
+            'metaDescription' => 'meta_description',
+            'metaKeywords'    => 'meta_keywords',
+        );
+    }
+
+    /**
+     * Default field prompts (verbatim port), filterable for site overrides.
+     *
+     * @return array<string, array{max:int, generate:string, optimize?:string}>
+     */
+    public static function field_prompts(): array
+    {
+        static $prompts = null;
+        if ($prompts === null) {
+            $prompts = require __DIR__ . '/prompts.php';
+        }
+        $filtered = apply_filters('pcm_seo_field_prompts', $prompts);
+        return is_array($filtered) ? $filtered : $prompts;
+    }
+
+    /**
+     * Flatten the field prompts into the shared Prompt-Editor registry shape
+     * ({module:'seo'} → section → content string). Sections are keyed
+     * `{use}_{mode}` (e.g. `page_title_generate`, `content_optimize`). These
+     * are the verbatim shipped defaults — surfaced as the "Built-in" variant
+     * in Settings → Prompts → SEO and used whenever the user has no active
+     * override. Consumed by PCM_REST_Prompts::get_default_prompt().
+     *
+     * @return array<string, string>
+     */
+    public static function get_default_prompts(): array
+    {
+        $out = array();
+        foreach (self::field_prompts() as $use => $cfg) {
+            if (!empty($cfg['generate'])) {
+                $out[$use . '_generate'] = (string) $cfg['generate'];
+            }
+            if (!empty($cfg['optimize'])) {
+                $out[$use . '_optimize'] = (string) $cfg['optimize'];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Resolve the prompt template for a Prompt-Editor section: the user's
+     * ACTIVE override (Settings → Prompts → SEO) when present, else the shipped
+     * default. Mirrors PCM_Writer_Service::get_system_prompt.
+     *
+     * @param string   $section Section key, e.g. `meta_title_optimize`.
+     * @param string   $default Shipped default template (fallback).
+     * @param int|null $user_id PCM user id (wp_pcm_users.id), NOT the WP user id.
+     * @return string
+     */
+    public static function resolve_prompt(string $section, string $default, ?int $user_id = null): string
+    {
+        if ($user_id && $user_id > 0) {
+            global $wpdb;
+            $table    = PCM_Schema::table('prompt_overrides');
+            $override = $wpdb->get_var($wpdb->prepare(
+                "SELECT content FROM {$table} WHERE userId = %d AND module = 'seo' AND section = %s AND isActive = 1 ORDER BY updatedAt DESC LIMIT 1",
+                $user_id,
+                $section
+            ));
+            if (!empty($override)) {
+                return (string) $override;
+            }
+        }
+        return $default;
+    }
+
+    /**
+     * Substitute {{key}} placeholders. Keys are matched literally (the map
+     * carries the exact key strings, incl. dotted/piped ones), mirroring the
+     * source's replacePromptVariables.
+     *
+     * @param string               $template Prompt template.
+     * @param array<string, string> $vars    key => value.
+     * @return string
+     */
+    public static function substitute_vars(string $template, array $vars): string
+    {
+        foreach ($vars as $key => $value) {
+            $template = str_replace('{{' . $key . '}}', (string) $value, $template);
+        }
+        return $template;
+    }
+
+    /**
+     * Trim AI output and strip a single matching pair of surrounding quotes
+     * (faithful to opt_simple_sanitize_ai_output).
+     *
+     * @param string $content Raw model output.
+     * @return string
+     */
+    public static function sanitize_ai_output(string $content): string
+    {
+        $content = trim($content);
+        $len = strlen($content);
+        if ($len >= 2) {
+            $first = $content[0];
+            $last  = $content[$len - 1];
+            if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
+                $content = trim(substr($content, 1, $len - 2));
+            }
+        }
+        return $content;
+    }
+
+    /**
+     * Build the substitution variable map for a post (+ optional brand for
+     * business context; falls back to site info).
+     *
+     * @param int      $post_id  Post id.
+     * @param int|null $brand_id Optional PC brand for {{business.*}}.
+     * @return array<string, string>
+     */
+    public function build_field_vars(int $post_id, ?int $brand_id = null): array
+    {
+        $post = get_post($post_id);
+        $home = home_url('/');
+        $host = (string) wp_parse_url($home, PHP_URL_HOST);
+
+        $business_name = (string) get_bloginfo('name');
+        $business_tag  = (string) get_bloginfo('description');
+        // GBP business context for the brand (resolved = snapshot + overrides).
+        $gbp = array();
+        if ($brand_id && $brand_id > 0) {
+            global $wpdb;
+            $brands = PCM_Schema::table('brands');
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $brand = $wpdb->get_row($wpdb->prepare("SELECT name FROM {$brands} WHERE id = %d", $brand_id));
+            if ($brand && !empty($brand->name)) {
+                $business_name = (string) $brand->name;
+            }
+            if (class_exists('PCM_SEO_GBP')) {
+                $gbp = PCM_SEO_GBP::get_for_brand($brand_id)['resolved'];
+                if (!empty($gbp['name'])) {
+                    $business_name = (string) $gbp['name'];
+                }
+            }
+        }
+
+        $locale = get_locale();
+        return array(
+            'title'                     => $post ? $post->post_title : '',
+            'primary_keyword'           => self::seo_get($post_id, 'keyword'),
+            'supporting_keyword'        => (string) get_post_meta($post_id, 'pcm_seo_supporting_keyword', true),
+            'meta_title'                => self::seo_get($post_id, 'title'),
+            'meta_description'          => self::seo_get($post_id, 'description'),
+            'post_type'                 => $post ? $post->post_type : '',
+            'site.lang'                 => $locale ? substr($locale, 0, 2) : 'en',
+            'website.url'               => $home,
+            'today'                     => gmdate('Y-m-d'),
+            'business.name'             => $business_name,
+            'business.tagline'          => $business_tag,
+            'business.website'          => !empty($gbp['website']) ? (string) $gbp['website'] : $home,
+            'business.website|hostname' => $host,
+            'business.address'          => (string) ($gbp['address'] ?? ''),
+            'business.phone'            => (string) ($gbp['phone'] ?? ''),
+            'business.category'         => (string) ($gbp['category'] ?? ''),
+            'business.hours'            => (string) ($gbp['hours'] ?? ''),
+            'business.rating'           => isset($gbp['rating']) ? (string) $gbp['rating'] : '',
+            'business.lat'              => isset($gbp['lat']) ? (string) $gbp['lat'] : '',
+            'business.lng'              => isset($gbp['lng']) ? (string) $gbp['lng'] : '',
+            'business.types'            => !empty($gbp['types']) ? implode(', ', (array) $gbp['types']) : '',
+        );
+    }
+
+    /**
+     * Generate (or optimize) an SEO field value with AI. Returns the suggested
+     * value WITHOUT saving — the caller stages it for accept/reject. Reuses
+     * PC's PCM_LLM provider routing.
+     *
+     * @param int      $post_id  Post id.
+     * @param string   $field    Cell field (must be in field_use_map()).
+     * @param int|null $brand_id Optional brand for business context.
+     * @param string|null $model Optional model override.
+     * @return array|WP_Error { field, value }.
+     */
+    public function generate_field(int $post_id, string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null)
+    {
+        $use_map = self::field_use_map();
+        if (!isset($use_map[$field])) {
+            return new WP_Error('pcm_seo_not_generatable', __('This field cannot be AI-generated.', 'power-creatives'), array('status' => 400));
+        }
+        $use     = $use_map[$field];
+        $prompts = self::field_prompts();
+        if (!isset($prompts[$use])) {
+            return new WP_Error('pcm_seo_no_prompt', __('No prompt configured for this field.', 'power-creatives'), array('status' => 500));
+        }
+
+        $vars    = $this->build_field_vars($post_id, $brand_id);
+        $current = self::seo_get($post_id, $field === 'title' ? 'title' : ($field === 'metaTitle' ? 'title' : ($field === 'metaDescription' ? 'description' : 'meta_keywords')));
+        // 'title' cell is the post title, not an SEO key — read it directly.
+        if ($field === 'title') {
+            $p = get_post($post_id);
+            $current = $p ? $p->post_title : '';
+        }
+        $vars['current_value'] = $current;
+
+        // Optimize an existing value when present and an optimize prompt exists.
+        $mode    = (!empty($current) && !empty($prompts[$use]['optimize'])) ? 'optimize' : 'generate';
+        $default = $prompts[$use][$mode];
+        // Honor the user's Settings → Prompts → SEO override (falls back to default).
+        $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id);
+        $prompt  = self::substitute_vars($tpl, $vars);
+        $max     = (int) ($prompts[$use]['max'] ?? 200);
+
+        if (!class_exists('PCM_LLM')) {
+            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
+        }
+
+        try {
+            $opts = array('max_tokens' => $max);
+            if (!empty($model)) {
+                $opts['model'] = $model;
+            }
+            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $value  = self::sanitize_ai_output((string) ($result['content'] ?? ''));
+            if ($value === '') {
+                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
+            }
+            return array('field' => $field, 'value' => $value);
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
+    }
+
+    /**
+     * AI-optimize a post's full body (SEO + AEO). Returns the suggested HTML
+     * WITHOUT saving (caller previews + accepts). Reuses PCM_LLM.
+     *
+     * @return array|WP_Error { body }.
+     */
+    public function optimize_body(int $post_id, ?int $brand_id = null, ?string $model = null, ?int $user_id = null)
+    {
+        $post = get_post($post_id);
+        if (!$post) {
+            return new WP_Error('pcm_seo_no_post', __('Content not found.', 'power-creatives'), array('status' => 404));
+        }
+        $prompts = self::field_prompts();
+        if (empty($prompts['content']['optimize'])) {
+            return new WP_Error('pcm_seo_no_prompt', __('No content prompt configured.', 'power-creatives'), array('status' => 500));
+        }
+        $vars = $this->build_field_vars($post_id, $brand_id);
+        $vars['current_value'] = $post->post_content;
+        // Honor the user's Settings → Prompts → SEO override (falls back to default).
+        $tpl    = self::resolve_prompt('content_optimize', $prompts['content']['optimize'], $user_id);
+        $prompt = self::substitute_vars($tpl, $vars);
+
+        if (!class_exists('PCM_LLM')) {
+            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
+        }
+        try {
+            $opts = array('max_tokens' => (int) ($prompts['content']['max'] ?? 4096));
+            if (!empty($model)) {
+                $opts['model'] = $model;
+            }
+            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $body   = trim((string) ($result['content'] ?? ''));
+            // Strip accidental code fences.
+            $body   = preg_replace('/^```[a-z]*\n?|\n?```$/i', '', $body);
+            if ($body === '') {
+                return new WP_Error('pcm_seo_empty', __('The model returned no content — try again.', 'power-creatives'), array('status' => 502));
+            }
+            return array('body' => $body);
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_optimize_failed', $e->getMessage(), array('status' => 502));
+        }
     }
 }

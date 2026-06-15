@@ -20,7 +20,11 @@ export interface SeoRow {
   metaKeywords: string;
   supportingKeyword: string;
   clusterLabel: string;
+  schemaTypes: string[];
 }
+
+/** Schema.org types a post can advertise (matches PCM_SEO_Schema::TYPES). */
+export const SCHEMA_TYPES = ['Article', 'WebPage', 'BreadcrumbList', 'FAQPage', 'HowTo', 'Product'] as const;
 
 export interface SeoOptions {
   authors: { id: number; name: string }[];
@@ -32,10 +36,10 @@ export interface SeoOptions {
 
 /** Editable text fields → their save-cell key. */
 export const SEO_TEXT_FIELDS: { key: keyof SeoRow; label: string; width: string }[] = [
-  { key: 'metaTitle', label: 'Meta Title', width: '15%' },
-  { key: 'metaDescription', label: 'Meta Description', width: '20%' },
-  { key: 'primaryKeyword', label: 'Primary KW', width: '11%' },
-  { key: 'metaKeywords', label: 'Meta Keywords', width: '13%' },
+  { key: 'metaTitle', label: 'Meta Title', width: '13%' },
+  { key: 'metaDescription', label: 'Meta Description', width: '16%' },
+  { key: 'primaryKeyword', label: 'Primary KW', width: '10%' },
+  { key: 'metaKeywords', label: 'Meta Keywords', width: '12%' },
 ];
 
 export const SEO_PLUGIN_LABELS: Record<string, string> = {

@@ -26,6 +26,8 @@ export interface UseSeoContentResult {
   quickCreate: (type: 'post' | 'page') => Promise<void>;
   /** Trash selected ids and refresh. */
   bulkDelete: (ids: number[]) => Promise<void>;
+  /** AI-suggest a field value (NOT saved — caller stages it). Resolves to the text. */
+  generateField: (id: number, field: string) => Promise<string>;
 }
 
 export function useSeoContent(): UseSeoContentResult {
@@ -51,6 +53,7 @@ export function useSeoContent(): UseSeoContentResult {
   const saveCellMutation = trpc.seo.saveCell.useMutation();
   const quickCreateMutation = trpc.seo.quickCreate.useMutation();
   const bulkDeleteMutation = trpc.seo.bulkDelete.useMutation();
+  const generateMutation = trpc.seo.generateField.useMutation();
 
   const invalidate = useCallback(
     () => queryClient.invalidateQueries({ queryKey: LIST_PREFIX }),
@@ -109,6 +112,18 @@ export function useSeoContent(): UseSeoContentResult {
     [bulkDeleteMutation, invalidate],
   );
 
+  const generateField = useCallback(
+    (id: number, field: string): Promise<string> =>
+      generateMutation
+        .mutateAsync({ id, field })
+        .then((res: any) => String(res?.value ?? ''))
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'AI generation failed');
+          throw err;
+        }),
+    [generateMutation],
+  );
+
   return {
     rows,
     options,
@@ -117,5 +132,6 @@ export function useSeoContent(): UseSeoContentResult {
     saveCell,
     quickCreate,
     bulkDelete,
+    generateField,
   };
 }

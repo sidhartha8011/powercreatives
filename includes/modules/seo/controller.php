@@ -44,6 +44,31 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/content',                    'list_content'),
             array('POST', '/seo/content',                    'quick_create'),
             array('POST', '/seo/content/(?P<id>\d+)/cell',   'save_cell'),
+            array('POST', '/seo/content/(?P<id>\d+)/generate', 'generate_field'),
+            array('GET',  '/seo/content/(?P<id>\d+)/body',     'get_body'),
+            array('POST', '/seo/content/(?P<id>\d+)/body',     'save_body'),
+            array('POST', '/seo/content/(?P<id>\d+)/optimize', 'optimize_body'),
+            // AI Readiness (site-wide → admin only).
+            array('GET',  '/seo/ai-readiness',           'air_status',   array(), 'manage_options'),
+            array('POST', '/seo/ai-readiness/build',      'air_build',    array(), 'manage_options'),
+            array('POST', '/seo/ai-readiness/publish',    'air_publish',  array(), 'manage_options'),
+            array('POST', '/seo/ai-readiness/settings',   'air_settings', array(), 'manage_options'),
+            array('POST', '/seo/ai-readiness/generate',   'air_generate', array(), 'manage_options'),
+            // Schema (per-post → edit_post checked in handler).
+            array('GET',  '/seo/content/(?P<id>\d+)/schema', 'get_schema'),
+            array('POST', '/seo/content/(?P<id>\d+)/schema', 'set_schema'),
+            // Site-wide settings (admin only).
+            array('GET',  '/seo/site',         'site_get',     array(), 'manage_options'),
+            array('POST', '/seo/site',         'site_save',    array(), 'manage_options'),
+            array('POST', '/seo/site/restore', 'site_restore', array(), 'manage_options'),
+            // GBP (business identity → admin only).
+            array('POST', '/seo/gbp/search',                   'gbp_search',    array(), 'manage_options'),
+            array('POST', '/seo/gbp/brand/(?P<brand>\d+)/save', 'gbp_save',     array(), 'manage_options'),
+            array('GET',  '/seo/gbp/brand/(?P<brand>\d+)',      'gbp_get',      array(), 'manage_options'),
+            array('POST', '/seo/gbp/brand/(?P<brand>\d+)/overrides', 'gbp_overrides', array(), 'manage_options'),
+            // Export / Import (admin only).
+            array('GET',  '/seo/export', 'config_export', array(), 'manage_options'),
+            array('POST', '/seo/import', 'config_import', array(), 'manage_options'),
         );
     }
 
@@ -103,7 +128,9 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
 
         $params = $request->get_json_params() ?: array();
-        $field  = sanitize_key($params['field'] ?? '');
+        // sanitize_text_field (NOT sanitize_key) — field keys are camelCase
+        // (metaTitle, primaryKeyword…) and are whitelist-validated downstream.
+        $field  = sanitize_text_field($params['field'] ?? '');
         if ($field === '') {
             return $this->error('Field is required.', 400, 'pcm_seo_missing_field');
         }
@@ -113,6 +140,308 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success(array_merge(array('id' => $id), $result));
+    }
+
+    /** POST /seo/content/{id}/generate — AI-suggest a field value (not saved). */
+    public function generate_field(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+
+        $params = $request->get_json_params() ?: array();
+        // sanitize_text_field (NOT sanitize_key) — field keys are camelCase
+        // (metaTitle, primaryKeyword…) and are whitelist-validated downstream.
+        $field  = sanitize_text_field($params['field'] ?? '');
+        if ($field === '') {
+            return $this->error('Field is required.', 400, 'pcm_seo_missing_field');
+        }
+        $brand_id = isset($params['brandId']) && $params['brandId'] ? absint($params['brandId']) : null;
+        $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+
+        $user   = $this->get_current_pcm_user();
+        $result = $this->service->generate_field($id, $field, $brand_id, $model, $user ? (int) $user->id : null);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array_merge(array('id' => $id), $result));
+    }
+
+    // =====================================================================
+    // Body (Optimize Content modal)
+    // =====================================================================
+
+    /** GET /seo/content/{id}/body — the post's raw HTML body. */
+    public function get_body(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        $post = $id ? get_post($id) : null;
+        if (!$post) {
+            return $this->not_found('Content');
+        }
+        return $this->success(array('id' => $id, 'body' => $post->post_content));
+    }
+
+    /** POST /seo/content/{id}/body — save an edited/accepted body. */
+    public function save_body(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $params = $request->get_json_params() ?: array();
+        $body   = wp_kses_post((string) ($params['body'] ?? ''));
+        wp_update_post(array('ID' => $id, 'post_content' => $body));
+        return $this->success(array('id' => $id, 'body' => $body));
+    }
+
+    /** POST /seo/content/{id}/optimize — AI-optimize the body (NOT saved). */
+    public function optimize_body(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $params   = $request->get_json_params() ?: array();
+        $brand_id = isset($params['brandId']) && $params['brandId'] ? absint($params['brandId']) : null;
+        $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $user     = $this->get_current_pcm_user();
+        $result   = $this->service->optimize_body($id, $brand_id, $model, $user ? (int) $user->id : null);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array_merge(array('id' => $id), $result));
+    }
+
+    // =====================================================================
+    // Schema (per-post)
+    // =====================================================================
+
+    /** GET /seo/content/{id}/schema — active types + available type list. */
+    public function get_schema(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        return $this->success(array(
+            'id'        => $id,
+            'types'     => PCM_SEO_Schema::types_for($id),
+            'available' => PCM_SEO_Schema::TYPES,
+        ));
+    }
+
+    /** POST /seo/content/{id}/schema — set the active schema types (whitelist). */
+    public function set_schema(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $params = $request->get_json_params() ?: array();
+        $types  = is_array($params['types'] ?? null) ? array_map('sanitize_text_field', $params['types']) : array();
+        return $this->success(array('id' => $id, 'types' => PCM_SEO_Schema::set_types($id, $types)));
+    }
+
+    // =====================================================================
+    // Site-wide settings
+    // =====================================================================
+
+    /** GET /seo/site — current site SEO settings. */
+    public function site_get(WP_REST_Request $request): WP_REST_Response
+    {
+        return $this->success(PCM_SEO_Site::get_settings());
+    }
+
+    /** POST /seo/site — save site SEO settings (robots / schema / lang / tz). */
+    public function site_save(WP_REST_Request $request): WP_REST_Response
+    {
+        $params = $request->get_json_params() ?: array();
+        return $this->success(PCM_SEO_Site::save($params));
+    }
+
+    /** POST /seo/site/restore — restore language/timezone from backup. */
+    public function site_restore(WP_REST_Request $request): WP_REST_Response
+    {
+        $params = $request->get_json_params() ?: array();
+        $what   = sanitize_key($params['what'] ?? 'all');
+        return $this->success(PCM_SEO_Site::restore(in_array($what, array('language', 'timezone', 'all'), true) ? $what : 'all'));
+    }
+
+    // =====================================================================
+    // Export / Import
+    // =====================================================================
+
+    /** GET /seo/export — the SEO config bundle (JSON). */
+    public function config_export(WP_REST_Request $request): WP_REST_Response
+    {
+        return $this->success(PCM_SEO_Export::export());
+    }
+
+    /** POST /seo/import — apply a config bundle. */
+    public function config_import(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $params = $request->get_json_params() ?: array();
+        $config = is_array($params['config'] ?? null) ? $params['config'] : array();
+        if (empty($config)) {
+            return $this->error('No config provided.', 400, 'pcm_seo_no_config');
+        }
+        $result = PCM_SEO_Export::import($config);
+        if (isset($result['error'])) {
+            return $this->error((string) $result['error'], 400, 'pcm_seo_bad_config');
+        }
+        return $this->success($result);
+    }
+
+    // =====================================================================
+    // GBP (Google Business Profile)
+    // =====================================================================
+
+    /** POST /seo/gbp/search — search places (via the configured provider). */
+    public function gbp_search(WP_REST_Request $request): WP_REST_Response
+    {
+        $params = $request->get_json_params() ?: array();
+        $query  = sanitize_text_field((string) ($params['query'] ?? ''));
+        if ($query === '') {
+            return $this->error('Search query is required.', 400, 'pcm_seo_gbp_no_query');
+        }
+        $lang   = sanitize_text_field((string) ($params['language'] ?? PCM_SEO_GBP::default_lang()));
+        $raw    = PCM_SEO_GBP::provider()->search($query, $lang);
+        if (isset($raw['error'])) {
+            return $this->error((string) $raw['error'], 502, 'pcm_seo_gbp_error');
+        }
+        $results = array_map(array('PCM_SEO_GBP', 'normalize'), $raw);
+        return $this->success(array('results' => $results));
+    }
+
+    /** POST /seo/gbp/brand/{brand}/save — fetch details + store snapshot on the brand. */
+    public function gbp_save(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $brand_id = absint($request->get_param('brand'));
+        $params   = $request->get_json_params() ?: array();
+        $place_id = sanitize_text_field((string) ($params['placeId'] ?? ''));
+        if (!$brand_id || $place_id === '') {
+            return $this->error('brand and placeId are required.', 400, 'pcm_seo_gbp_bad_input');
+        }
+        $lang = sanitize_text_field((string) ($params['language'] ?? PCM_SEO_GBP::default_lang()));
+        $raw  = PCM_SEO_GBP::provider()->details($place_id, $lang);
+        if (isset($raw['error'])) {
+            return $this->error((string) $raw['error'], 502, 'pcm_seo_gbp_error');
+        }
+        if (empty($raw)) {
+            return $this->error('No details returned for that place.', 502, 'pcm_seo_gbp_empty');
+        }
+        $normalized = PCM_SEO_GBP::normalize($raw);
+        return $this->success(PCM_SEO_GBP::save_snapshot($brand_id, $normalized));
+    }
+
+    /** GET /seo/gbp/brand/{brand} — stored business record for a brand. */
+    public function gbp_get(WP_REST_Request $request): WP_REST_Response
+    {
+        return $this->success(PCM_SEO_GBP::get_for_brand(absint($request->get_param('brand'))));
+    }
+
+    /** POST /seo/gbp/brand/{brand}/overrides — manual field overrides (survive refresh). */
+    public function gbp_overrides(WP_REST_Request $request): WP_REST_Response
+    {
+        $brand_id  = absint($request->get_param('brand'));
+        $params    = $request->get_json_params() ?: array();
+        $overrides = is_array($params['overrides'] ?? null) ? $params['overrides'] : array();
+        return $this->success(PCM_SEO_GBP::save_overrides($brand_id, $overrides));
+    }
+
+    // =====================================================================
+    // AI Readiness
+    // =====================================================================
+
+    /** GET /seo/ai-readiness — published state, settings, urls, per-post status. */
+    public function air_status(WP_REST_Request $request): WP_REST_Response
+    {
+        $posts = array();
+        foreach (PCM_SEO_AIReadiness::query_posts() as $p) {
+            $posts[] = array(
+                'id'     => (int) $p->ID,
+                'title'  => $p->post_title,
+                'type'   => $p->post_type,
+                'status' => PCM_SEO_AIReadiness::status_for((int) $p->ID),
+                'mdUrl'  => PCM_SEO_AIReadiness::md_url((int) $p->ID),
+            );
+        }
+        return $this->success(array(
+            'published'  => PCM_SEO_AIReadiness::is_published(),
+            'settings'   => PCM_SEO_AIReadiness::settings(),
+            'llmsUrl'    => home_url('/llms.txt'),
+            'llmsFullUrl' => home_url('/llms-full.txt'),
+            'posts'      => $posts,
+        ));
+    }
+
+    /** POST /seo/ai-readiness/build — (re)generate per-post .md + both llms files. */
+    public function air_build(WP_REST_Request $request): WP_REST_Response
+    {
+        foreach (PCM_SEO_AIReadiness::query_posts() as $p) {
+            PCM_SEO_AIReadiness::generate_md((int) $p->ID);
+        }
+        return $this->success(PCM_SEO_AIReadiness::build_index());
+    }
+
+    /** POST /seo/ai-readiness/publish — toggle virtual routes on/off. */
+    public function air_publish(WP_REST_Request $request): WP_REST_Response
+    {
+        $params    = $request->get_json_params() ?: array();
+        $published = !empty($params['published']);
+        update_option(PCM_SEO_AIReadiness::OPT_PUBLISHED, $published);
+        if ($published) {
+            PCM_SEO_AIReadiness::flush();
+        } else {
+            PCM_SEO_AIReadiness::flush_remove();
+        }
+        return $this->success(array('published' => $published));
+    }
+
+    /** POST /seo/ai-readiness/settings — save settings (max_posts clamped 1–200). */
+    public function air_settings(WP_REST_Request $request): WP_REST_Response
+    {
+        $params = $request->get_json_params() ?: array();
+        $clean  = array(
+            'post_types'       => isset($params['post_types']) && is_array($params['post_types'])
+                ? array_values(array_intersect(array_map('sanitize_key', $params['post_types']), get_post_types(array('public' => true))))
+                : array('page', 'post'),
+            'excluded_ids'     => isset($params['excluded_ids']) && is_array($params['excluded_ids'])
+                ? array_map('absint', $params['excluded_ids']) : array(),
+            'max_posts'        => max(1, min(200, (int) ($params['max_posts'] ?? 50))),
+            'site_description'  => sanitize_text_field((string) ($params['site_description'] ?? '')),
+        );
+        if (empty($clean['post_types'])) {
+            $clean['post_types'] = array('page', 'post');
+        }
+        update_option(PCM_SEO_AIReadiness::OPT_SETTINGS, $clean, false);
+        return $this->success(array('settings' => $clean));
+    }
+
+    /** POST /seo/ai-readiness/generate — (re)generate one post's markdown. */
+    public function air_generate(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $params = $request->get_json_params() ?: array();
+        $id     = absint($params['id'] ?? 0);
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        $md = PCM_SEO_AIReadiness::generate_md($id);
+        return $this->success(array('id' => $id, 'bytes' => strlen($md), 'status' => PCM_SEO_AIReadiness::status_for($id)));
     }
 
     /** POST /seo/content/bulk-delete — trash selected posts. */

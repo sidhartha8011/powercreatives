@@ -593,6 +593,43 @@ class PCM_Schema
             KEY idx_dedupeKey (dedupeKey)
         ) $charset_collate;";
         dbDelta($sql);
+
+        // ── SEO Hub: managed remote sites (tenants) + HMAC replay nonces (v1.23.0) ──
+        // Each remote WP site installs a generated connector plugin that
+        // registers with this hub via an HMAC-signed handshake; we then proxy
+        // to it using a captured Application Password.
+        $sql = "CREATE TABLE {$prefix}seo_tenants (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            clientId varchar(64) NOT NULL,
+            clientSecret varchar(128) NOT NULL,
+            name varchar(255) DEFAULT NULL,
+            domain varchar(255) DEFAULT NULL,
+            siteUrl varchar(500) DEFAULT NULL,
+            status varchar(16) DEFAULT 'pending' NOT NULL,
+            appUser varchar(255) DEFAULT NULL,
+            appPassword varchar(255) DEFAULT NULL,
+            wpVersion varchar(20) DEFAULT NULL,
+            phpVersion varchar(20) DEFAULT NULL,
+            adminEmail varchar(320) DEFAULT NULL,
+            lastPingAt datetime DEFAULT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY uq_clientId (clientId),
+            KEY idx_status (status),
+            KEY idx_domain (domain)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        $sql = "CREATE TABLE {$prefix}seo_hmac_nonces (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            nonce varchar(64) NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY uq_nonce (nonce),
+            KEY idx_createdAt (createdAt)
+        ) $charset_collate;";
+        dbDelta($sql);
     }
 
     /**
@@ -981,6 +1018,8 @@ class PCM_Schema
             'automations',
             'approval_sets',
             'notifications',
+            'seo_tenants',
+            'seo_hmac_nonces',
             'delivery_assignments',
             'deliveries',
             'sites',

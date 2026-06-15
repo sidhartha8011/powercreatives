@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-09_
+_Last updated: 2026-06-14_
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -11,7 +11,7 @@ _Last updated: 2026-06-09_
 | Name / slug / text-domain | Power Creatives / `power-creatives` |
 | Main file | `power-creatives.php` |
 | Version (`PCM_VERSION`) | **1.7.0** |
-| DB version (`PCM_DB_VERSION`) | **1.17.0** (separate from plugin version) |
+| DB version (`PCM_DB_VERSION`) | **1.23.0** (separate from plugin version) |
 | Requires WP / PHP | 6.4+ / 8.1+ |
 | Const prefix | `PCM_` |
 | Composer package | `antigravity/power-creatives` (type `wordpress-plugin`) |
@@ -94,7 +94,7 @@ tests/                     PHPUnit tests
 > **Note:** there is **no `load_plugin_textdomain()` call** — relies on WP auto-loading
 > translations from `/languages`.
 
-## Module registry (18 modules)
+## Module registry (22 modules)
 All route under the shared `pcm/v1` namespace + a path segment. The `rest_namespace`
 in each `config.php` is **declarative metadata only** — the base `register()` loop
 uses `pcm/v1` + the path in `routes()`.
@@ -111,12 +111,16 @@ uses `pcm/v1` + the path in `routes()`.
 | integrations | pcm/v1/integrations | Provider API key management |
 | keywords | pcm/v1/keywords | SEO keyword lists (user meta `pcm_keyword_lists`) |
 | models | pcm/v1/models | AI model CRUD + sync from providers |
+| notifications | pcm/v1/notifications | In-app notifications (`GET /notifications` → items+unseen; `POST /notifications/seen`). `edit_posts`. See *Notifications (v1.19.0)*. |
 | prompts | pcm/v1/prompts | User system-prompt overrides |
 | scraper | pcm/v1/scraper | URL scrape + AI vision |
+| seo | pcm/v1/seo | Content SEO suite (cross-plugin meta, AI field/body generate, schema, AI-readiness, site, GBP, export). `edit_posts` + per-post checks. See *SEO suite*. |
+| seohub | pcm/v1/seohub | Multi-site connectors (HMAC handshake, tenant CRUD, connector-ZIP, remote proxy). Tenant CRUD `manage_options:strict`; public `/seohub/connector/hello`. See *SEO Hub*. |
 | settings | pcm/v1 | Global settings + prompt editor |
 | sites | pcm/v1/sites | Connected WP site metadata |
 | strategy | pcm/v1/strategies | Strategic planning |
 | templates | pcm/v1/templates | Reusable form templates / frameworks |
+| users | pcm/v1/users | WP-user mirror + delivery assignment (`manage_options`). See *Team access model*. |
 | video | pcm/v1/video | Async AI video generation |
 | writer | pcm/v1/articles | Multi-article content editor (`wp_pcm_articles`) |
 
@@ -445,9 +449,67 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   checks): `GET /seo/content`, `GET /seo/content/options`,
   `POST /seo/content` (quick-create), `POST /seo/content/{id}/cell`,
   `POST /seo/content/bulk-delete`.
-- Backend-only so far (no React UI / nav yet → Phase 2). Tests:
-  `SeoIntegrationTest` (key-map faithfulness, detection, read-chain,
-  dual-write routing, whitelist).
+- **Phase 2 (frontend)**: `app/src/modules/SEO` content table (inline edit,
+  status dropdown, sortable, type filter, plugin badge, bulk trash,
+  quick-create) wired via ModuleId/trpc-routes/Sidebar/Shell.
+- **Phase 3 (AI generate)**: `prompts.php` (verbatim field prompts, filter
+  `pcm_seo_field_prompts`) + `generate_field` (substitute_vars + build_field_vars
+  + sanitize_ai_output → `PCM_LLM::invoke`); `POST /seo/content/{id}/generate`;
+  frontend per-field sparkle → STAGED suggestion (accept/reject). Tests:
+  `SeoIntegrationTest` (key-map, detection, read-chain, dual-write, whitelist,
+  substitution, output-sanitize, field map, prompt completeness).
+  **Prompts are user-editable in Settings → Prompts → SEO tab** (post-1.23):
+  the `prompts` module registers an `seo` module with 8 sections (`{use}_{mode}`:
+  page_title/meta_title/meta_description generate+optimize, meta_keywords
+  generate, content_optimize). `PCM_SEO_Service::get_default_prompts()` flattens
+  `prompts.php` into that section registry (the editor's "Built-in" default);
+  `resolve_prompt($section,$default,$userId)` returns the user's active
+  `prompt_overrides` row (module='seo') or the default. `generate_field` /
+  `optimize_body` take the PCM `$user_id` (threaded from the controller) and
+  call the resolver, so DB override > `pcm_seo_field_prompts` filter > file. No
+  new table/migration — the editor serves a virtual default + creates rows on
+  save (mirrors copy/image/video/writer).
+- **Phase 5 (AI-Readiness)**: `ai-readiness.php` (`PCM_SEO_AIReadiness`) —
+  virtual routes `/llms.txt`, `/llms-full.txt`, `/{slug}.md` (rewrite when
+  `pcm_seo_air_published`; template_redirect server), page-builder-aware
+  HTML→Markdown, llms.txt index+full builders, per-post status (md5
+  ready/stale/none via `_pcm_md_*`). Required from service.php (hooks every
+  request). REST (admin): `GET /seo/ai-readiness` + `/build`,`/publish`,
+  `/settings`,`/generate`. Frontend: SEO module tabbed (Content / AI
+  Readiness), `AIReadinessPanel`.
+- **Phase 4 (Schema)**: `schema.php` (`PCM_SEO_Schema`) — JSON-LD on wp_head
+  (Article/WebPage/BreadcrumbList/FAQPage/HowTo/Product, publisher+logo chain,
+  about/mentions+sameAs, speakable). Meta `pcm_seo_schema[_faq/_howto/
+  _sameas]`. REST `GET/POST /seo/content/{id}/schema`. Frontend `SchemaCell`.
+- **Phase 6 (Site)**: `site.php` (`PCM_SEO_Site`) — robots_txt filter,
+  site-wide LocalBusiness JSON-LD + meta-keywords head, language/timezone
+  with restorable backups. REST `GET/POST /seo/site` + `/restore`. Frontend
+  third tab `SiteSettingsPanel`.
+- **Phase 7 (GBP)**: `gbp.php` — `PCM_SEO_GBP_Provider` interface +
+  `PCM_SEO_GBP_N8N_Provider` (n8n webhook, swappable for direct-Google via
+  the `providers()` map + `seo_gbp_provider` setting) + shared `normalize()`
+  (Places New v1) + per-brand option storage (snapshot + overrides). Enriches
+  the `{{business.*}}` prompt vars. REST `/seo/gbp/*`; frontend Business tab.
+- **Phase 9 (export/import)**: `export.php` (`PCM_SEO_Export`) — portable
+  SEO-config JSON (plugin-key-checked, whitelist-applied). REST
+  `/seo/export`,`/seo/import`; Export/Import buttons in the Site tab.
+- **Phase 3b (Optimize)**: `optimize_body` (PCM_LLM full-body rewrite) + REST
+  `/seo/content/{id}/body`,`/optimize`; frontend `OptimizeModal` + client
+  `scorecard.ts` (word/density/KW-placement/headings/FAQ/lists/sentence-len).
+- **SEO SUITE COMPLETE (Phases 1–9 + 3b).** All 9 source modules ported native.
+
+## SEO Hub (multi-site connectors, v1.23.0, DB 1.23.0)
+Separate `seohub` module (`pcm/v1/seohub`). Tables `seo_tenants` +
+`seo_hmac_nonces` (PCM_Schema dbDelta; `maybe_upgrade` auto-creates).
+`PCM_SEOHub_Service`: HMAC sign/verify (sha256 `ts.nonce.body`, ±300s window,
+nonce replay guard), tenant CRUD (uuid clientId + 32-byte secret),
+`register_ping` (connector handshake → active + captured WP Application
+Password), Basic-auth remote proxy, and a single-file connector-plugin **ZIP
+generator** (bakes client_id/secret/hub-url; registers Yoast/RankMath/SEOPress/
+pcm_seo_* meta in REST; HMAC-signed hello on activation). `PCM_REST_SEOHub`:
+tenant CRUD `manage_options:strict` (rows hold secrets), **streamed** connector
+download (not public uploads), public HMAC-verified `/seohub/connector/hello`.
+Frontend: SEO "Hub" tab (`HubPanel`).
 
 ## Where to add a <thing>
 - **New REST module** (the standard way to add a feature):

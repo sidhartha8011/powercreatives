@@ -275,6 +275,80 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `seo/content/${input.id}/cell`, body: { field: input.field, value: input.value } }),
     },
     "seo.bulkDelete": { endpoint: "seo/content/bulk-delete", method: "POST" },
+    "seo.getBody": {
+        endpoint: "seo/content",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/body` }),
+    },
+    "seo.optimizeBody": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/optimize`, body: { brandId: input.brandId, model: input.model } }),
+    },
+    "seo.saveBody": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/body`, body: { body: input.body } }),
+    },
+    "seo.generateField": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/generate`, body: { field: input.field, brandId: input.brandId, model: input.model } }),
+    },
+    // AI Readiness (llms.txt / virtual routes)
+    "seo.airStatus": { endpoint: "seo/ai-readiness", method: "GET" },
+    "seo.airBuild": { endpoint: "seo/ai-readiness/build", method: "POST" },
+    "seo.airPublish": { endpoint: "seo/ai-readiness/publish", method: "POST" },
+    "seo.airSettings": { endpoint: "seo/ai-readiness/settings", method: "POST" },
+    "seo.airGenerate": { endpoint: "seo/ai-readiness/generate", method: "POST" },
+    // Schema (per-post)
+    "seo.getSchema": {
+        endpoint: "seo/content",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/schema` }),
+    },
+    "seo.setSchema": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/schema`, body: { types: input.types } }),
+    },
+    // Site-wide settings
+    "seo.siteGet": { endpoint: "seo/site", method: "GET" },
+    "seo.siteSave": { endpoint: "seo/site", method: "POST" },
+    "seo.siteRestore": { endpoint: "seo/site/restore", method: "POST" },
+    // GBP (Google Business Profile) — n8n-backed, provider-swappable
+    "seo.gbpSearch": { endpoint: "seo/gbp/search", method: "POST" },
+    "seo.gbpGet": {
+        endpoint: "seo/gbp/brand",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/gbp/brand/${input.brand}` }),
+    },
+    "seo.gbpSave": {
+        endpoint: "seo/gbp/brand",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/gbp/brand/${input.brand}/save`, body: { placeId: input.placeId } }),
+    },
+    "seo.gbpOverrides": {
+        endpoint: "seo/gbp/brand",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/gbp/brand/${input.brand}/overrides`, body: { overrides: input.overrides } }),
+    },
+    // Export / Import SEO config
+    "seo.exportConfig": { endpoint: "seo/export", method: "GET" },
+    "seo.importConfig": { endpoint: "seo/import", method: "POST" },
+    // SEO Hub — managed remote sites
+    "seohub.listSites": { endpoint: "seohub/sites", method: "GET" },
+    "seohub.createSite": { endpoint: "seohub/sites", method: "POST" },
+    "seohub.revokeSite": {
+        endpoint: "seohub/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seohub/sites/${input.id}/revoke` }),
+    },
+    "seohub.deleteSite": {
+        endpoint: "seohub/sites",
+        method: "DELETE",
+        transform: (input: any) => ({ url: `seohub/sites/${input.id}` }),
+    },
 
     "templates.list": { endpoint: "templates", method: "GET" },
     "templates.getById": {
