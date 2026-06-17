@@ -6,7 +6,6 @@
  */
 
 import { ArrowUp, ArrowDown, ArrowUpDown, Filter, X, type LucideIcon } from 'lucide-react';
-import { TableHead } from '@/components/ui/table';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -47,7 +46,7 @@ export function ColumnHead({ label, icon: Icon, width, className, sort, filter }
     : ArrowUpDown;
 
   return (
-    <TableHead style={width ? { width } : undefined} className={className}>
+    <th style={width ? { width } : undefined} className={className}>
       <div className="flex items-center gap-1 group">
         {Icon && <Icon className="w-3.5 h-3.5 shrink-0 text-muted-foreground/70" />}
         {sort ? (
@@ -112,6 +111,6 @@ export function ColumnHead({ label, icon: Icon, width, className, sort, filter }
           </DropdownMenu>
         )}
       </div>
-    </TableHead>
+    </th>
   );
 }

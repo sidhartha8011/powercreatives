@@ -8,7 +8,10 @@
  * `pcm/v1/seo` REST module.
  */
 
-import { useMemo, useState, useCallback, type KeyboardEvent } from 'react';
+import {
+  useMemo, useState, useCallback,
+  type KeyboardEvent, type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes, type TableHTMLAttributes,
+} from 'react';
 import {
   Plus, Trash2, ExternalLink, Loader2, Search, Sparkles, Check, X, Globe,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
@@ -20,7 +23,6 @@ import { ModuleHeader } from '@/components/shared/ModuleHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useSortableTable } from '@/hooks/useSortableTable';
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
@@ -39,6 +41,17 @@ import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { SEO_TEXT_FIELDS, SEO_PLUGIN_LABELS, type SeoRow } from './types';
 
+// ── Plain spreadsheet primitives ──
+// Bare <table> elements (NOT shadcn's Table, which forces h-12/p-4/border-b-only/
+// row-hover + an extra overflow wrapper). All grid styling comes from the table's
+// own className below, so this renders a true, fully-controlled spreadsheet grid.
+const Table = (p: TableHTMLAttributes<HTMLTableElement>) => <table {...p} />;
+const TableHeader = (p: HTMLAttributes<HTMLTableSectionElement>) => <thead {...p} />;
+const TableBody = (p: HTMLAttributes<HTMLTableSectionElement>) => <tbody {...p} />;
+const TableRow = (p: HTMLAttributes<HTMLTableRowElement>) => <tr {...p} />;
+const TableHead = (p: ThHTMLAttributes<HTMLTableCellElement>) => <th {...p} />;
+const TableCell = (p: TdHTMLAttributes<HTMLTableCellElement>) => <td {...p} />;
+
 /**
  * Inline-editable text cell: click to edit (Enter/blur saves, Esc cancels).
  * When `onGenerate` is supplied, shows an AI sparkle; a returned suggestion
@@ -53,6 +66,7 @@ function EditableCell({
   suggestion,
   onAccept,
   onReject,
+  emphasis,
 }: {
   value: string;
   placeholder?: string;
@@ -62,6 +76,8 @@ function EditableCell({
   suggestion?: string | null;
   onAccept?: () => void;
   onReject?: () => void;
+  /** Render as the primary field (Airtable-style: medium weight, darker). */
+  emphasis?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -109,7 +125,7 @@ function EditableCell({
       <button
         type="button"
         onClick={() => { setDraft(value); setEditing(true); }}
-        className="flex-1 min-w-0 text-left truncate text-xs leading-snug hover:underline decoration-dotted"
+        className={`flex-1 min-w-0 text-left truncate text-xs leading-snug hover:underline decoration-dotted ${emphasis ? 'font-medium text-foreground' : ''}`}
         title={value || placeholder}
       >
         {value || <span className="text-muted-foreground/60">{placeholder ?? '—'}</span>}
@@ -457,6 +473,7 @@ export function SEOModule() {
       <div className="flex items-center justify-between gap-4 mb-4">
         <div className="flex items-center gap-3">
           <ViewsToolbar
+            show="views"
             columns={TOGGLE_COLUMNS}
             visible={cols}
             onToggleColumn={toggleCol}
@@ -480,11 +497,25 @@ export function SEOModule() {
             )}
           </div>
         </div>
-        {pluginLabel && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Search className="w-3.5 h-3.5" /> SEO source: <span className="font-medium text-foreground">{pluginLabel}</span>
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {pluginLabel && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Search className="w-3.5 h-3.5" /> SEO source: <span className="font-medium text-foreground">{pluginLabel}</span>
+            </span>
+          )}
+          <ViewsToolbar
+            show="columns"
+            columns={TOGGLE_COLUMNS}
+            visible={cols}
+            onToggleColumn={toggleCol}
+            views={views}
+            appliedViewId={appliedViewId}
+            onApplyView={applyView}
+            onResetView={resetView}
+            onSaveView={handleSaveView}
+            onDeleteView={handleDeleteView}
+          />
+        </div>
       </div>
 
       {/* Bulk actions bar — generate any/all fields across the selected rows. */}
@@ -541,7 +572,7 @@ export function SEOModule() {
           No content yet — create a post or page to get started.
         </div>
       ) : (
-        <div className="rounded-lg border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)]">
+        <div className="rounded-md border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)]">
           {/* Spreadsheet-style grid: gridlines on every cell, a sticky header
               row, and compact single-line cells. Long values truncate with an
               ellipsis — click a cell to edit (and see) the full value. */}
@@ -606,6 +637,7 @@ export function SEOModule() {
                     <EditableCell
                       value={row.title}
                       placeholder="Untitled"
+                      emphasis
                       onSave={(v) => saveCell(row.id, 'title', v)}
                       onGenerate={() => handleGenerate(row.id, 'title')}
                       generating={genKey === `${row.id}:title`}

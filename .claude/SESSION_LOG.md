@@ -1,5 +1,58 @@
 # Session Log
 
+## 2026-06-18 — SEO toolbar: move Columns control to the right
+- **Task:** move the columns filter to the right.
+- **Changed (UI only):** `ViewsToolbar` got a `show?: 'all' | 'views' | 'columns'` prop
+  so the View selector and the Columns (show/hide + Save-as-view) dropdown can render
+  separately. `index.tsx` now renders `<ViewsToolbar show="views" />` on the left
+  (with the item-count) and `<ViewsToolbar show="columns" />` on the right next to the
+  SEO-source badge; the Columns menu aligns to its right edge (`align="end"`) so it
+  doesn't overflow. Same props/handlers — no functional change.
+- **Verified:** `npm run check` → 0 SEO errors (56 baseline); `npm run build` clean,
+  `dist` rebuilt. **Not committed.**
+
+## 2026-06-17 — SEO table: dropped shadcn Table → plain spreadsheet grid
+- **Task:** user (frustrated) — the SEO table should be a real spreadsheet view, not a
+  restyled shadcn Table. Correct: shadcn `Table/TableRow/TableCell` impose
+  `h-12`/`p-4`/`border-b`-only/baked-in row-hover + an extra overflow wrapper that fight
+  a grid no matter the classes.
+- **Changed (UI only, 2 files):** removed `@/components/ui/table` from the SEO module
+  entirely. `index.tsx` now defines bare `<table>/<thead>/<tbody>/<tr>/<th>/<td>`
+  primitives (typed pass-through components keeping the existing JSX intact) so ALL grid
+  styling comes from the table's own className — true `border-collapse` hairline grid,
+  sticky gray header, compact `h-9` rows (reverted from h-10). `ColumnHead.tsx` now
+  renders a plain `<th>` instead of shadcn `TableHead`. All functionality (filters,
+  sort, Views, generate, inline edit, selection, status pills, row numbers) unchanged.
+- **Verified:** grep — 0 `components/ui/table` refs left in SEO; `npm run check` 0 SEO
+  errors (56 baseline); `npm run build` clean, `dist` rebuilt. **Not committed.**
+
+## 2026-06-17 — SEO grid: Airtable-fidelity refinement (grid only)
+- **Task:** make the SEO table more like the Airtable layout. Asked scope → user chose
+  **"refine the grid only"** (no left sidebar / no toolbar chrome).
+- **Changed (`index.tsx`, UI only):** roomier rows (`[&_td]:h-9` → `h-10`, ~40px,
+  Airtable-comfortable; header kept compact at `h-9`); primary field emphasis — added an
+  `emphasis` prop to `EditableCell` (medium weight + darker) and applied it to the
+  **Title** cell so the primary field stands out like Airtable's Name column; flatter
+  container (`rounded-lg` → `rounded-md`, kept border + `shadow-sm`). Header gray band,
+  field icons, hairline gridlines, row numbers, status pills all retained.
+- **Verified:** `npm run check` → 0 SEO errors (56 baseline); `npm run build` clean,
+  `dist` rebuilt. **Not committed. No new deps.**
+
+## 2026-06-17 — Pushed snapshot to a personal repo for cross-session handoff
+- **Task:** push the repo (incl. onboarding files) to a personal GitHub so the session
+  can continue from another Claude Code.
+- **Remotes:** kept `origin` → `github.com/profitmediaab/powerplatform` (team upstream,
+  untouched); added **`mine`** → `github.com/sidhartha8011/powercreatives` and pushed
+  branch **`feat/seo-suite-port`** there (`-u`, now tracks `mine/feat/seo-suite-port`).
+- **Commit `ed6de2c`** = full working-tree snapshot (25 files, +1946/-433): all the
+  SEO Views/filters/Airtable-UI work + other pending changes + `.claude/` docs.
+- **Verified:** `git ls-remote mine` HEAD == local `ed6de2c`; `.claude/CODEBASE_MAP.md`,
+  `SESSION_LOG.md`, `SEO_PORT_PLAN.md` all present in the pushed tree. Stored GitHub
+  creds authorized the push.
+- **To continue elsewhere:** `git clone -b feat/seo-suite-port https://github.com/sidhartha8011/powercreatives.git`,
+  then `cd app && npm install` (node_modules/vendor/dist are gitignored — rebuild;
+  `npm run build`). Run `/onboard` or read `.claude/CODEBASE_MAP.md`.
+
 ## 2026-06-17 — SEO table: add contrast (table vs white page)
 - **Task:** table and page bg were both white — add a little contrast.
 - **Changed (`index.tsx`, UI only):** header band → light gray `bg-muted/50` (was white

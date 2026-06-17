@@ -35,6 +35,8 @@ interface ViewsToolbarProps {
   onResetView: () => void;
   onSaveView: (name: string) => void;
   onDeleteView: (id: number) => void;
+  /** Which control(s) to render — lets the View selector and Columns menu sit apart. */
+  show?: 'all' | 'views' | 'columns';
 }
 
 export function ViewsToolbar({
@@ -47,6 +49,7 @@ export function ViewsToolbar({
   onResetView,
   onSaveView,
   onDeleteView,
+  show = 'all',
 }: ViewsToolbarProps) {
   const [viewOpen, setViewOpen] = useState(false);
   const [colsOpen, setColsOpen] = useState(false);
@@ -66,6 +69,7 @@ export function ViewsToolbar({
   return (
     <div className="flex items-center gap-2">
       {/* View selector — saved views collection */}
+      {show !== 'columns' && (
       <DropdownMenu open={viewOpen} onOpenChange={setViewOpen}>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size="sm" className={`h-8 gap-1.5 text-xs ${appliedName ? 'border-primary text-primary' : ''}`}>
@@ -111,15 +115,17 @@ export function ViewsToolbar({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
 
       {/* Columns show/hide + Save as view */}
+      {show !== 'views' && (
       <DropdownMenu open={colsOpen} onOpenChange={setColsOpen}>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size="sm" className={`h-8 gap-1.5 text-xs ${anyHidden ? 'border-primary text-primary' : ''}`}>
             <Columns3 className="h-3.5 w-3.5" /> Columns <ChevronDown className="h-3 w-3 opacity-60" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuContent align={show === 'columns' ? 'end' : 'start'} className="w-56">
           <DropdownMenuLabel>Toggle columns</DropdownMenuLabel>
           <DropdownMenuSeparator />
           {columns.map((c) => (
@@ -148,6 +154,7 @@ export function ViewsToolbar({
           <p className="px-2 pb-1.5 text-[10px] text-muted-foreground/70">Saves current columns + filters as a view.</p>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
