@@ -49,7 +49,10 @@ class PCM_REST_SEOHub extends PCM_REST_Base
         if ($name === '') {
             return $this->error('Site name is required.', 400, 'pcm_seohub_no_name');
         }
-        return $this->success(PCM_SEOHub_Service::create_tenant($name), 201);
+        // Record the creating admin so register_ping can mirror the connected
+        // site into that owner's wp_pcm_sites (publishable like a manual site).
+        $user = $this->get_current_pcm_user();
+        return $this->success(PCM_SEOHub_Service::create_tenant($name, $user ? (int) $user->id : 0), 201);
     }
 
     /** POST /seohub/sites/{id}/revoke — revoke a tenant. */

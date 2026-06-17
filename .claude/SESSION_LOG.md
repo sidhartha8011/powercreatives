@@ -1,5 +1,381 @@
 # Session Log
 
+## 2026-06-17 — SEO table: add contrast (table vs white page)
+- **Task:** table and page bg were both white — add a little contrast.
+- **Changed (`index.tsx`, UI only):** header band → light gray `bg-muted/50` (was white
+  `bg-background`) so the header reads distinctly against the white cells; table
+  container border bumped to full `border-border` (from `/70`) for a crisper edge
+  against the white page (kept `shadow-sm`).
+- **Verified:** `npm run check` → 0 SEO errors (56 baseline); `npm run build` clean,
+  `dist` rebuilt. **Not committed. No new deps.**
+
+## 2026-06-17 — SEO table: UI polish pass (status pills, type badge, container)
+- **Task:** "refine the UI more, make it better" (continuation of the Airtable restyle).
+- **Changed (`index.tsx`, UI only):** Status cell now renders a colored **single-select
+  chip** (publish=green, pending=amber, private=purple, future=blue, draft=gray) via a
+  `statusBadgeClass()` helper — the Select dropdown still drives it. Type cell → a subtle
+  muted **badge**. Table container → `shadow-sm` + lighter `border-border/70`. Removed
+  the now-unused `SelectValue` import.
+- **Verified:** `npm run check` → 0 SEO errors (56 baseline); `npm run build` clean,
+  `dist` rebuilt. Functionality unchanged. **Not committed. No new deps.**
+
+## 2026-06-17 — SEO table: Airtable Grid-view restyle (UI only)
+- **Task (/build):** make the SEO table look like the Airtable Grid-view screenshot —
+  no new buttons, no functional change.
+- **Changed (UI only, 2 files):**
+  - `ColumnHead.tsx` — optional leading `icon` (LucideIcon), rendered muted before the
+    column label (Airtable field-type icon).
+  - `index.tsx` — header restyle: white header (`bg-background`, was `bg-muted`),
+    normal weight + `text-foreground/80` (was bold), hairline gridlines
+    (`border-border/60`). Field-type icons per column (Type→FileText, Title→Type,
+    Status→CircleDot, Meta Title→Type, Meta Desc→AlignLeft, Primary KW→KeyRound,
+    Meta Keywords→Tags, Schema→Braces, Author→User). First column now shows the
+    **row number** by default and the selection **checkbox on hover / when selected**
+    (Airtable pattern) — selection functionality unchanged; added `group` to the row.
+- **Untouched:** all controls/buttons (site tabs, View/Columns dropdowns, funnel
+  filters, sort, bulk bar, generate), data flow, and the saved-Views feature.
+- **Verified:** `npm run check` → 0 SEO errors (56 baseline); `npm run build` clean,
+  `dist` rebuilt. Pure styling; SPA is login-gated so no live click-through.
+  **Not committed. No new deps. Worked inline (no subagents).**
+
+## 2026-06-17 — SEO: saved table Views (per-user, backend-persisted)
+- **Task (/build):** a "View" control that bundles column show/hide + active filters,
+  save as a named view, pick from a dropdown to re-apply. Asked once up front →
+  user chose **backend (per WP user)** storage.
+- **Backend (delegated to a php-pro subagent):** new table `wp_pcm_seo_views`
+  (id/userId/name/config-JSON/timestamps) in `PCM_Schema` + `drop_tables`;
+  `PCM_DB_VERSION` 1.25.0 → **1.26.0** (additive — `maybe_upgrade` auto-creates;
+  `PCM_VERSION`/header untouched); `PCM_SEO_Service::list_views/create_view/delete_view`;
+  routes `GET/POST /seo/views`, `DELETE /seo/views/{id}` (edit_posts, per-current-user)
+  in `PCM_REST_SEO`; +4 PHPUnit tests. **104 tests / 343 assertions pass.**
+- **Frontend (inline by me):** re-introduced column visibility (Columns menu) +
+  `useViews` (tRPC CRUD) + `ViewsToolbar` (a **View** dropdown listing saved views with
+  apply/delete/“Default”, and a **Columns** dropdown with show/hide + a “Save as view”
+  footer that captures current columns+filters). `useColumnFilters` gained `setAll` so
+  applying a view replaces filters; `index.tsx` wires apply/reset/save/delete and
+  renders columns conditionally by visibility. New tRPC routes seo.listViews/createView/
+  deleteView.
+- **Verified end-to-end (real DB via a local rest_do_request harness, since the SPA is
+  login-gated):** DB auto-migrated to 1.26.0, table created; POST→201 (config
+  columns+filters round-trips), GET→200 (count 1), DELETE→200 {deleted:true},
+  GET→0. Harness removed, DB clean. Frontend: `npm run check` 0 SEO errors (56
+  baseline), `npm run build` clean.
+- **Who did what:** php-pro subagent = backend table/REST/service/tests; me = contract
+  definition, all frontend, integration + end-to-end verification. **Not committed.**
+  Map updated (DB 1.26.0 + seo_views).
+
+## 2026-06-17 — SEO: make column sort/filter icons visible by default
+- **Task:** the header icons should be visible initially (not only on hover).
+- **Changed (`ColumnHead.tsx`, CSS only):** the funnel filter icon — dropped
+  `opacity-0 group-hover:opacity-100`, now always shown at `text-muted-foreground/60`
+  (darkens on hover; stays `text-primary` when a filter is active). The sort arrow —
+  `opacity-0 group-hover:opacity-40` → `opacity-40 group-hover:opacity-70` when
+  inactive (full opacity when active).
+- **Verified:** `npm run check` → 0 SEO errors (56 baseline); `npm run build` clean,
+  `dist` rebuilt. Pure styling change. **Not committed.**
+
+## 2026-06-17 — SEO: per-column header filters (funnel icon), SEO-aware
+- **Task (/build):** "create filters for each column to manage SEO — think of the
+  possible filters per column, then apply them." Asked once up front re: placement →
+  user chose **funnel icon in each column header** (popover).
+- **Design — column-appropriate filters** (not generic text boxes):
+  - Type / Status / Author → exact-match choice (from server `options`)
+  - Title → text "contains"
+  - Meta Title → Missing / Present / **Too long (>60)**
+  - Meta Description → Missing / Present / **Too long (>160)**
+  - Primary Keyword, Meta Keywords → Missing / Present
+  - Schema → Has schema / No schema
+- **Built (frontend only, no new deps):**
+  - `seoFilters.ts` — `buildFilterDefs(options)`: per-column `FilterDef` with its own
+    `match(row, value)` predicate (presence/length/exact/contains). Length limits
+    exported (`META_TITLE_MAX=60`, `META_DESCRIPTION_MAX=160`).
+  - `hooks/useColumnFilters.ts` — `{ key → value }` state + `apply(rows, defs)` +
+    `activeCount` + `clearAll`.
+  - `ColumnHead.tsx` — header cell with optional sort toggle + a funnel→DropdownMenu
+    filter (text input or choice list, active-column highlight, per-column Clear).
+    Replaces SortableTableHead in the SEO table (sort + filter must share one `<th>`).
+  - `index.tsx` — header row uses `ColumnHead` for all data columns; `filtered =
+    apply(rows, filterDefs)`; toolbar shows "{shown} of {total} · Clear filters (n)"
+    when active. Removed the now-unused SortableTableHead import.
+- **Verified:** `npm run check` → 0 SEO errors (56 pre-existing baseline);
+  `npm run build` clean, `dist` rebuilt; built bundle contains the filter UI
+  ("Too long", "Has schema", "Clear filters", "Contains"). No frontend test runner in
+  this project and the SPA is WP-login-gated, so no live click-through; filter
+  predicates are pure and reviewed. **Not committed. Worked inline (no subagents).**
+
+## 2026-06-17 — SEO: removed per-column filter row + reverted show/hide-columns menu
+- **Tasks:** "revert: add a filter for what columns to show and hide" (the Columns
+  visibility menu) and "remove the filters below the column titles" (the per-column
+  filter row). Both features backed out — they were never committed.
+- **Removed:** deleted `ColumnVisibilityMenu.tsx`, `ColumnFilter.tsx`, and
+  `hooks/useColumnFilters.ts`; dropped the filter row (2nd header row) and the Columns
+  dropdown; the toolbar "{n} of {N} shown · Clear filters" is now a plain "{n} items".
+  Reverted the sticky-header CSS back to a single header row and the header/body cells
+  to unconditional rendering. `filtered` is now just `rows`.
+- **Kept:** site tabs, spreadsheet-grid styling, the sortable single header row, and the
+  AI-generate sparkle on every text column incl Primary Keyword (the generate half of
+  the earlier task — backend `primary_keyword` prompt / use-map / editor section
+  untouched).
+- **Verified:** `npm run check` → 0 SEO errors (56 pre-existing baseline);
+  `npm run build` clean, `dist` rebuilt. Visual click-through not done (SPA needs WP
+  login). **Not committed. No new deps.**
+
+## 2026-06-17 — SEO: all text columns generatable + per-column filters
+- **NOTE (later same day):** the per-column **filter** half described below was
+  REMOVED (see the top entry). Only the **generate** changes remain in the code.
+- **Task:** "all columns can generate and also filter just like in the optimizer."
+- **Decisions (asked):** filter = **per-column header filter**; generate = **per-row
+  sparkle on every text column** (no per-column bulk header buttons).
+- **Generate — Primary Keyword now AI-generatable** (was the only text column that
+  wasn't; there was an explicit "primaryKeyword is an input, not generated" decision
+  I intentionally reversed):
+  - `prompts.php`: new `primary_keyword` use (generate + optimize, max 30).
+  - `service.php`: `field_use_map()` adds `primaryKeyword => primary_keyword`;
+    `generate_field()` current-value lookup fixed (reads `keyword`, not `meta_keywords`).
+  - `prompts/controller.php`: added `seo.primary_keyword_generate/optimize` section
+    metadata + entries in `get_default_sections('seo')` (kept editor in sync).
+  - Frontend: `GENERATABLE` + bulk `GEN_FIELDS` include `primaryKeyword`.
+- **Filter — per-column filter row** under the headers (spreadsheet-style): new
+  `ColumnFilter.tsx` (text contains / select exact) + `hooks/useColumnFilters.ts`
+  (state + client-side predicate). Text filters on Title/Meta Title/Meta Desc/Primary
+  KW/Keywords/Author; select filters on Type/Status. Replaced the old toolbar Type
+  select with a "{n} of {N} shown · Clear filters" control. Second header row is
+  sticky just below the title row.
+- **Verified:** `npm run check` 0 SEO errors (56 baseline); `npm run build` clean;
+  **PHPUnit 100/100** (updated 2 SEO tests for the intentional primaryKeyword change).
+  Live AI generation needs a provider key (not click-tested); path is identical to the
+  already-working meta-field generation. **Not committed. No new deps** (filters use the
+  existing stack). Map updated (8 → 10 SEO prompt sections).
+
+## 2026-06-17 — SEO content table → spreadsheet-style grid
+- **Task:** make the SEO page look more like a spreadsheet table ("use any library").
+- **Decision — no new dependency.** The spreadsheet look was achievable with the
+  existing shadcn `Table` + Tailwind (project also already ships `@tanstack/react-table`).
+  A heavyweight data-grid (AG Grid / react-data-grid) would have meant rewriting the
+  inline-edit / AI-staging / SchemaCell / Optimize logic inside grid cell renderers —
+  large, risky, against the minimal-diff + ≤500-line conventions. Restyled in place.
+- **Changed (one file):** `app/src/modules/SEO/index.tsx` — the Content table now has
+  gridlines on every cell (`[&_th]/[&_td]:border`), a **sticky header**
+  (`[&_thead_th]:sticky top-0`), compact `p-1.5` middle-aligned rows, a vertical-scroll
+  container (`max-h-[calc(100vh-300px)]`), row hover + selected-row highlight, and
+  **single-line cells that truncate with ellipsis** (click a cell to edit/see the full
+  value; staged AI suggestions keep `whitespace-normal`). All existing behaviour
+  (inline edit, AI generate/stage, status select, SchemaCell, Optimize, bulk, sort,
+  select-all) preserved.
+- **Refinement (round 2, "make it boxier"):** uniform **36px row height** (`[&_td]:h-9`),
+  tighter vertical padding, bold header cells, and **flattened the status `Select`**
+  (borderless, fills the cell) so nested control boxes no longer break the grid.
+- **Verified:** `npm run check` → 0 SEO errors (56 pre-existing baseline);
+  `npm run build` clean, `dist` rebuilt. Visual click-through not done (SPA needs WP
+  login — user to reload/screenshot). **Not committed.** No new deps.
+
+## 2026-06-17 — Dry-run verification of SEO site-tabs (with sample data)
+- **Task:** dry run + test the SEO site-tabs with sample data; report working or not.
+- **Method:** inserted 2 sample rows into `wp_pcm_sites` (user 1, status=active) via the
+  Local MySQL (port 10005). Dispatched the REAL `GET /pcm/v1/sites` route the SPA calls
+  through a temporary local-only web harness (`_pcm_dryrun.php` in the WP root:
+  `wp_set_current_user(1)` → `PCM_DB::invalidate('sites',1)` → `wp_create_nonce('wp_rest')`
+  → `rest_do_request`).
+- **Result: WORKING.** Route returned **HTTP 200** with both sites, `appPassword` masked
+  to `••••••••` — exactly the payload the SEO tabs map over (`sites.map(...)`, already
+  tsc-clean + in the built bundle). So with ≥1 connected site, the SEO module renders
+  "This Site" + one tab per site; remote tabs show the placeholder (as scoped).
+- **Caveat:** verified the data/route contract, not a live click-through (SPA needs WP
+  admin login — no creds). Frontend render proven via the typechecked/built `sites.map`.
+- **Cleanup (true dry run):** deleted the 2 sample rows, cleared the `sites_u1`
+  transient from `wp_options`, removed the harness file. DB back to original (the
+  pending `demo site` connector tenant in `seo_tenants` untouched). **No repo code
+  changed; nothing committed.**
+
+## 2026-06-17 — SEO module: per-site selector tabs (local works, remote = placeholder)
+- **Task:** add a tab row in the SEO module listing all sites; the active site tab
+  shows that site's Content / AI Readiness / Site / Business.
+- **Scope decision (user):** backend `pcm/v1/seo/*` only operates on the LOCAL WP
+  (no `siteId`, no remote proxy — `seohub` has a `remote_request` primitive but it's
+  not wired to SEO). Chose **scaffold only**: a "This Site" tab (full functionality)
+  + one pill-tab per connected site (`trpc.sites.list`); remote tabs render a
+  `RemoteSitePlaceholder` ("…coming soon"). Full remote SEO proxying deferred.
+- **Changed (frontend only, one file):** `app/src/modules/SEO/index.tsx` — added an
+  underline-style site-tabs row at the **top of the module, ABOVE the "SEO" title**
+  ("This Site" + one tab per connected site, each with a Globe icon); the title,
+  section tabs (Content/AIR/Site/Business) and content below all reflect the selected
+  site. `siteId` state ('local' | number); body renders the placeholder when a remote
+  site is active; create-Post/Page buttons gated to `isLocal`. Added `SECTION_LABEL` +
+  `RemoteSitePlaceholder`; imported `trpc` + `Globe`. (Iterated from an earlier
+  below-title pill row to top-of-module tabs per the user.)
+- **Verified:** `npm run check` → **56 errors, all pre-existing baseline, 0 in SEO**.
+  `npm run build` clean (after fixing the node_modules copy issue, below). Confirmed
+  the built `dist/index-writer.js` contains the new strings ("This Site",
+  "is coming soon"). Did not click through the live admin UI (needs WP login).
+- **Env fix:** `app/node_modules` was a COPY missing `.bin` shims + the win32 rollup
+  native binary → build failed. Ran `cd app && npm install` once (declared deps only,
+  no new deps); build works now. Map updated with this gotcha.
+- **Not committed.** Remote multi-site SEO (proxy the whole SEO stack through the
+  connector) remains a separate, larger task if wanted.
+
+## 2026-06-17 — Ran the project locally (Local by Flywheel)
+- **Task:** "run this project in my machine."
+- **Reality vs map:** this Windows box has **no `~/Desktop/wordpress-local`** (that
+  was a prior Mac session's setup). The real local host is **Local by Flywheel** site
+  `powercreatives` → `http://powercreatives.local` (PHP 8.2.29 / nginx / MySQL 8.4).
+  `composer` and `wp-cli` are NOT on PATH here; `vendor/`, `app/node_modules/`,
+  `app/dist/` already present, so no build/install was needed.
+- **Fix:** the plugin link `…/wp-content/plugins/power-creatives` pointed at the stale
+  Jun-5 copy (`…\Downloads\powerplatform`), not this working copy. Repointed it to
+  `…\Downloads\powerplatform-new\powerplatform`. Symlink creation needs admin (Dev Mode
+  off), so used a **directory junction** (`mklink /J`) — functionally identical for WP.
+- **Run:** launched the Local app; user clicked *Start site*.
+- **Verified:** `http://powercreatives.local/wp-login.php` → 200; `GET /wp-json/`
+  `namespaces` contains `pcm/v1`; `GET /wp-json/pcm/v1` lists **165 routes** ⇒ plugin
+  booted from the junction = serving this working copy (PCM_VERSION 1.7.0, DB 1.25.0).
+- **Map updated:** rewrote the *Local WordPress* section to the verified Local-by-Flywheel
+  facts; fixed the stale "no cron" gotcha; answered open-question #2 (local env).
+- **No repo code changed** (env/symlink + `.claude/` docs only). Nothing committed.
+
+## 2026-06-14 — Notifications: "Clear all" button (per-user, non-destructive)
+- **Task:** add a "Clear all" to the notifications panel to clear past items.
+- **Design:** notifications are ONE shared row per event (visibility computed at
+  read time), so deleting rows would wipe them for other recipients. Instead
+  added a per-user anchor **`users.notificationsClearedAt`** mirroring the
+  existing `notificationsSeenAt` — "Clear all" hides everything at/older than
+  now for that user only; shared rows stay for everyone else.
+- **Built:** DB `1.24.0 → 1.25.0` (additive `notificationsClearedAt` via dbDelta);
+  `PCM_Notifications_Service::clear_all()` + `list_for_user` now filters
+  `createdAt > clearedAt`; `POST /notifications/clear` route/handler;
+  `trpc.notifications.clear`; a **"Clear all"** button in `NotificationsPanel.tsx`
+  (shown when items exist) → refetch empties the list.
+- **Verified:** PHP lint clean; `composer test` 100/100; `npm run check` 0 errors
+  in changed files (56 baseline); `npm run build` clean. **LIVE end-to-end**
+  (`wp eval-file` against `~/Desktop/wordpress-local`): migration auto-applied
+  (`pcm_db_version=1.25.0`, column present); seeded a notification → visible
+  (8 items) → `clear_all` → list **0 items, unseen 0**; cleaned up. Uncommitted.
+
+## 2026-06-14 — LIVE-verified the WordPress site connection (env was up all along)
+- **Task:** "did you check the connect to the WordPress site is it working?" —
+  I'd kept deferring with "DB down". Actually checked this time.
+- **Reality (corrected the map):** local WP is UP — `~/Desktop/wordpress-local`
+  served at `http://localhost:8080` (PHP built-in server on `[::1]:8080`), MySQL
+  on 3306, plugin **active**, `pcm_db_version=1.24.0` (my migration applied),
+  `wp_pcm_sites.connectMethod` + `wp_pcm_seo_tenants.createdBy` columns present.
+  wp-cli works via `php wp-cli.phar` (not on PATH — that's why earlier `wp` 127'd).
+- **Connection code is correct** (verified live via `wp eval-file`): encrypt↔
+  decrypt round-trips; `PCM_Sites_Service::test_connection` hits
+  `/wp-json/wp/v2/users/me`, and returns the **accurate** "Authentication failed
+  (HTTP 401)" on bad/no auth; REST index + public endpoints return proper JSON.
+- **Why a full authenticated self-test can't complete here — both ENV, not bugs:**
+  1. mu-plugin `prevent-loopback-deadlock.php` mocks every localhost/127.0.0.1
+     `wp_remote_*` → `{"success":true}` (hid the real result; bypass via
+     `http://[::1]:8080`).
+  2. **App Passwords disabled**: `wp_is_application_passwords_available()===false`
+     (install is `environment=production`, `is_ssl=no`) → app-password Basic
+     auth 401s even via `curl -u`. Fix for local testing:
+     `define('WP_ENVIRONMENT_TYPE','local')` + target a non-loopback host. Real
+     remote sites are HTTPS, so this only blocks the local self-test.
+- **Changed:** no plugin code (no bug found). Added a "Local WordPress (LIVE
+  verification IS available)" section to CODEBASE_MAP so future sessions stop
+  assuming the env is down. Uncommitted.
+
+## 2026-06-14 — SEO content toolbar: "Generate all" + progress + clear
+- **Task:** check the SEO content toolbar (bulk generations + other useful options).
+- **Reviewed:** three bars in `app/src/modules/SEO/index.tsx` content tab —
+  (1) filter (type + detected SEO-plugin badge), (2) bulk-actions bar (per-field
+  AI generate buttons + Trash, shown when rows selected), (3) pending-suggestions
+  bar (Accept all / Discard all of staged results). Flow is correct: bulk →
+  stage → review → accept-all saves. Gaps: no single "generate everything"
+  action (4 separate clicks), no aggregate progress for what can be many calls,
+  no quick deselect.
+- **Built (minimal, frontend-only):** generalized `bulkGenerate(field)` →
+  `runBulk(fields[])` with a `{done,total}` progress counter; added a **"Generate
+  all"** button (runs all 4 generatable fields across selected rows), an inline
+  **"Generating X/Y…"** progress indicator, and a **"Clear"** (deselect) button.
+  Per-field buttons now call `runBulk([key])`. Results still stage for review.
+- **Verified:** `npm run check` 0 errors in SEO (56 baseline unchanged); `npm run
+  build` clean; no lingering `bulkGenerate` refs. No live preview (WP-backed SPA).
+  Uncommitted.
+
+## 2026-06-14 — Unified site connections: password OR connector plugin, both publishable
+- **Task:** make connector-connected sites usable for publishing + merge both
+  methods into one "Add Site" flow with a popup chooser (for users who don't
+  want to hand over passwords). Plan-gated + approved (DB-migration-bearing).
+- **Backend — `wp_pcm_sites` is now the single source of truth:**
+  - Migration DB `1.23.0 → 1.24.0` (additive dbDelta — no bespoke method):
+    `sites.connectMethod` ('password'|'connector') + `seo_tenants.createdBy`
+    (owner). Bumped `PCM_DB_VERSION`; doc comment in `maybe_upgrade`.
+  - `seohub` `create_tenant($name,$createdBy)` records the creating admin
+    (threaded from the controller via `get_current_pcm_user()->id`).
+  - `register_ping` now **mirrors** the connector into `wp_pcm_sites`
+    (`mirror_to_sites`): url=siteUrl, username=appUser, password **encrypted**
+    via `PCM_Sites_Service::encrypt_password`, `connectMethod='connector'`,
+    `userId`=createdBy. Idempotent (dedup by owner+url). Pure decision split
+    into `mirror_row()` (unit-tested). Revoke/delete cascade to the mirror.
+  - Publishing/Writer unchanged — they read `sites`, so connector sites "just
+    work" (no consumer code touched).
+- **Frontend — one unified Sites page** (`Sites/index.tsx`; `HubPanel.tsx`
+  folded in + deleted): single list badged Password/Plugin; **"Add Site"
+  popup chooser** → manual app-password form OR connector (create tenant +
+  download plugin, admin-only via `getIsAdmin()`); "Pending connections"
+  section for connectors awaiting install. Tabs removed.
+- **Verified:** PHP lint clean; **`composer test` 100/100** (329 assertions;
+  +3 `mirror_row` tests in `SeoHubTest` — builds row, url-trim/name-fallback,
+  null when not publishable); `npm run check` 0 errors in Sites (56 baseline);
+  `npm run build` clean; no lingering `HubPanel` refs; Shell still mounts
+  `SitesModule`. No live DB round-trip (local DB down) — the upsert/encryption
+  path is DB-bound + verified live per the seohub test convention.
+- **Map:** DB 1.24.0; rewrote the SEO Hub frontend/status section (connector
+  now mirrored + publishable). Uncommitted.
+
+## 2026-06-14 — Sites: clarify the two connection options (honest in-UI guidance)
+- **Task:** "give both options to do that and if better option is there do that"
+  — present both site-connection methods and surface/do the better one.
+- **Investigation finding (the deciding fact):** the **Connectors** (seohub)
+  flow completes a handshake + captures an app password, but its remote proxy
+  (`remote_get`/`remote_post`) has **no consumer** anywhere — connecting works
+  yet nothing uses the connection. Writer publishing uses the manual **`sites`**
+  store (`ContextGenerationPanel.tsx` → `trpc.sites.list` →
+  `PCM_Sites_Service::publish_to_site`). So "better" isn't about ease: **manual
+  Connected Sites is the only flow wired to a real capability today**; Connectors
+  is groundwork. (Two SEPARATE stores: `wp_pcm_sites` vs `seo_tenants`.)
+- **Built (frontend-only, minimal):** honest per-tab guidance in
+  `Sites/index.tsx` — Connected Sites marked **Recommended** with "publish from
+  Writer; works end-to-end today"; Connectors explained as auto-handshake setup
+  that "no feature consumes yet — groundwork." No misleading badge on Connectors.
+- **Verified:** `npm run check` 0 errors in Sites (56 baseline unchanged);
+  `npm run build` clean. No live preview — WP-backed SPA needs pcmConfig+nonce
+  the standalone Vite server lacks.
+- **Map:** added a status note to the SEO Hub section (connector has no consumer
+  yet; flows use separate stores).
+- **Bigger option NOT done (needs your OK — beyond minimal diff):** make the
+  connector actually useful — either (a) wire a remote-SEO sync feature onto the
+  proxy, or (b) unify so connector-connected sites also appear in the publishing
+  list. Uncommitted.
+
+## 2026-06-14 — Move site-connection (Hub) into the global Sites module
+- **Task:** the SEO Hub connector ("site connection") lived as a tab inside the
+  SEO module; surface it through the existing **Sites** left-nav module instead
+  and remove it from SEO, so Sites is the global home for site connections.
+- **Decision:** keep the `seohub` BACKEND as a standalone REST module
+  (`pcm/v1/seohub/*`) untouched — deployed connector ZIPs bake in
+  `/seohub/connector/hello`, so moving endpoints would break them. Only the
+  frontend moves. Sites page becomes tabbed rather than merging the two
+  different connect mechanisms (manual app-password vs connector handshake).
+- **Built (frontend-only, no DB/backend change):**
+  - `git mv app/src/modules/SEO/HubPanel.tsx → app/src/modules/Sites/HubPanel.tsx`
+    (imports are all absolute — clean move).
+  - `Sites/index.tsx`: existing single page → tabbed. Old body extracted to
+    inner `ConnectedSitesPanel` (manual Application-Password CRUD, used by
+    Writer publishing); new `SitesModule` wrapper renders **Connected Sites**
+    + **Connectors** (`<HubPanel/>`) tabs under one "Sites" title (removed the
+    now-duplicate inner title; kept the count badge + Add Site).
+  - `SEO/index.tsx`: dropped the Hub tab — import, `'hub'` from the tab-state
+    union, the `['hub','Hub']` tab entry, and the `tab === 'hub'` render branch.
+- **Verified:** `npm run check` 0 errors in Sites/SEO (56-error baseline
+  unchanged, no HubPanel/seohub type errors); `npm run build` clean. Structural:
+  SEO has zero Hub refs; Sites renders both panels; `git status` shows only 3
+  frontend files changed (`includes/modules/seohub/` untouched); `trpc.seohub.*`
+  routes still registered. No live click-through — WP-backed SPA + local DB down.
+- **Note:** two connect methods now coexist under Sites (manual + connector);
+  unifying them into one list is possible future work. Uncommitted.
+
 ## 2026-06-14 — SEO prompts editable in Settings → Prompts (new "SEO" tab)
 - **Task:** "where are the prompts written for all the generations? it should be
   same from the zip and in this it should be in the template section with new

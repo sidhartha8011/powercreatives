@@ -48,6 +48,12 @@ export function NotificationsPanel({
     onSuccess: () => refetch(),
   });
 
+  // "Clear all" — per-user, non-destructive (sets a server anchor; the shared
+  // rows stay for other recipients). Refetch empties the list.
+  const clearAll = trpc.notifications.clear.useMutation({
+    onSuccess: () => refetch(),
+  });
+
   // Opening the panel marks everything seen → badge clears.
   useEffect(() => {
     if (open) {
@@ -70,6 +76,20 @@ export function NotificationsPanel({
             Comments and approvals on the approval sets you have access to.
           </SheetDescription>
         </SheetHeader>
+
+        {items.length > 0 && (
+          <div className="shrink-0 flex justify-end px-4 pb-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => clearAll.mutate({})}
+              disabled={clearAll.isPending}
+            >
+              <BellOff className="h-3.5 w-3.5" /> Clear all
+            </Button>
+          </div>
+        )}
 
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-2">
           {items.length === 0 && (

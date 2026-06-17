@@ -243,6 +243,15 @@ class PCM_Activator
                 }
             }
 
+            // v1.24.0: Unified site connections. Adds sites.connectMethod
+            // ('password'|'connector') and seo_tenants.createdBy (owner of the
+            // mirrored site). Both additive, so the create_tables() call above
+            // applies them via dbDelta — no bespoke migration method needed.
+
+            // v1.25.0: "Clear all" notifications. Adds users.notificationsClearedAt
+            // (per-user anchor; the feed hides events at/older than it). Additive
+            // via dbDelta above — no bespoke migration method needed.
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

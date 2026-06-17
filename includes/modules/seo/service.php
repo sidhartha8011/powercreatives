@@ -326,6 +326,88 @@ class PCM_SEO_Service
     }
 
     // =====================================================================
+    // Saved Views — per-user column/filter configurations
+    // =====================================================================
+
+    /**
+     * List a user's saved views, newest first.
+     *
+     * @param int $userId PCM user id (wp_pcm_users.id).
+     * @return array[] [{ id:int, name:string, config:array }, ...].
+     */
+    public function list_views(int $userId): array
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_views');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, name, config FROM {$table} WHERE userId = %d ORDER BY id DESC",
+            $userId
+        ));
+
+        $views = array();
+        foreach ($rows as $row) {
+            $config = json_decode((string) $row->config, true);
+            $views[] = array(
+                'id'     => (int) $row->id,
+                'name'   => (string) $row->name,
+                'config' => is_array($config) ? $config : array(),
+            );
+        }
+        return $views;
+    }
+
+    /**
+     * Create a saved view for a user.
+     *
+     * @param int    $userId PCM user id.
+     * @param string $name   Sanitized, non-empty view name.
+     * @param array  $config { columns: {colKey:bool}, filters: {colKey:string} }.
+     * @return array { id:int, name:string, config:array }.
+     */
+    public function create_view(int $userId, string $name, array $config): array
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_views');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->insert(
+            $table,
+            array(
+                'userId' => $userId,
+                'name'   => $name,
+                'config' => wp_json_encode($config),
+            ),
+            array('%d', '%s', '%s')
+        );
+
+        return array(
+            'id'     => (int) $wpdb->insert_id,
+            'name'   => $name,
+            'config' => $config,
+        );
+    }
+
+    /**
+     * Delete a saved view, but only if it belongs to the given user.
+     *
+     * @param int $id     View id.
+     * @param int $userId PCM user id.
+     * @return bool True if a row was deleted, false if none matched.
+     */
+    public function delete_view(int $id, int $userId): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_views');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $deleted = $wpdb->delete(
+            $table,
+            array('id' => $id, 'userId' => $userId),
+            array('%d', '%d')
+        );
+        return (int) $deleted > 0;
+    }
+
+    // =====================================================================
     // AI field generation (Phase 3) — reuses PC's PCM_LLM provider routing
     // =====================================================================
 
@@ -337,6 +419,7 @@ class PCM_SEO_Service
             'metaTitle'       => 'meta_title',
             'metaDescription' => 'meta_description',
             'metaKeywords'    => 'meta_keywords',
+            'primaryKeyword'  => 'primary_keyword',
         );
     }
 
@@ -528,7 +611,14 @@ class PCM_SEO_Service
         }
 
         $vars    = $this->build_field_vars($post_id, $brand_id);
-        $current = self::seo_get($post_id, $field === 'title' ? 'title' : ($field === 'metaTitle' ? 'title' : ($field === 'metaDescription' ? 'description' : 'meta_keywords')));
+        // Read the current value (for optimize mode) from the right storage key.
+        $get_key_map = array(
+            'metaTitle'       => 'title',
+            'metaDescription' => 'description',
+            'metaKeywords'    => 'meta_keywords',
+            'primaryKeyword'  => 'keyword',
+        );
+        $current = ($field === 'title') ? '' : self::seo_get($post_id, $get_key_map[$field] ?? 'meta_keywords');
         // 'title' cell is the post title, not an SEO key — read it directly.
         if ($field === 'title') {
             $p = get_post($post_id);

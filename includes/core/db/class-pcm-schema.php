@@ -19,6 +19,7 @@
  *   - brands          → Business profile data
  *   - brand_assets    → Brand logo/images
  *   - prompt_overrides → User-edited system prompts
+ *   - seo_views       → Per-user saved SEO content table views
  *
  * @package PowerCreatives
  */
@@ -78,6 +79,7 @@ class PCM_Schema
             role varchar(50) DEFAULT 'user' NOT NULL,
             avatarUrl text DEFAULT NULL,
             notificationsSeenAt datetime DEFAULT NULL,
+            notificationsClearedAt datetime DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             lastSignedIn datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -437,6 +439,7 @@ class PCM_Schema
             username varchar(256) NOT NULL,
             appPassword text NOT NULL,
             status varchar(50) DEFAULT 'active' NOT NULL,
+            connectMethod varchar(20) DEFAULT 'password' NOT NULL,
             lastSyncAt datetime DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -600,6 +603,7 @@ class PCM_Schema
         // to it using a captured Application Password.
         $sql = "CREATE TABLE {$prefix}seo_tenants (
             id int(11) NOT NULL AUTO_INCREMENT,
+            createdBy int(11) DEFAULT 0 NOT NULL,
             clientId varchar(64) NOT NULL,
             clientSecret varchar(128) NOT NULL,
             name varchar(255) DEFAULT NULL,
@@ -628,6 +632,23 @@ class PCM_Schema
             PRIMARY KEY  (id),
             UNIQUE KEY uq_nonce (nonce),
             KEY idx_createdAt (createdAt)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // ── SEO Views (v1.26.0) ──
+        // Per-PCM-user saved configurations of the SEO content table: which
+        // columns are visible + the active per-column filters. `config` stores
+        // an arbitrary JSON object ({columns, filters}) via wp_json_encode and
+        // is decoded on read.
+        $sql = "CREATE TABLE {$prefix}seo_views (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            name varchar(191) NOT NULL,
+            config longtext NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY userId (userId)
         ) $charset_collate;";
         dbDelta($sql);
     }
@@ -1018,6 +1039,7 @@ class PCM_Schema
             'automations',
             'approval_sets',
             'notifications',
+            'seo_views',
             'seo_tenants',
             'seo_hmac_nonces',
             'delivery_assignments',

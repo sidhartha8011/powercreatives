@@ -56,12 +56,22 @@ class PCM_Notifications_Service
         $table    = PCM_Schema::table('notifications');
         $is_admin = ($user->role ?? '') === 'admin';
         $scope    = self::visibility_clause($is_admin, (int) $user->id, PCM_Access::granted_brand_ids((int) $user->id));
+        $clause   = $scope['sql'];
+        $params   = $scope['params'];
 
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL -- clause built from %d placeholders only.
-        $sql  = "SELECT * FROM {$table} WHERE {$scope['sql']} ORDER BY createdAt DESC, id DESC LIMIT 50";
-        $rows = empty($scope['params'])
-            ? $wpdb->get_results($sql) // admin: no placeholders to prepare.
-            : $wpdb->get_results($wpdb->prepare($sql, ...$scope['params']));
+        // Per-user "Clear all" anchor — hide events at/older than it. Leaves the
+        // shared notification rows intact for other recipients.
+        $cleared = (string) ($user->notificationsClearedAt ?? '');
+        if ($cleared !== '') {
+            $clause  .= ' AND createdAt > %s';
+            $params[] = $cleared;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL -- clause built from %d/%s placeholders only.
+        $sql  = "SELECT * FROM {$table} WHERE {$clause} ORDER BY createdAt DESC, id DESC LIMIT 50";
+        $rows = empty($params)
+            ? $wpdb->get_results($sql) // admin with nothing cleared: no placeholders to prepare.
+            : $wpdb->get_results($wpdb->prepare($sql, ...$params));
 
         $seen_at = (string) ($user->notificationsSeenAt ?? '');
         $unseen  = 0;
@@ -100,6 +110,28 @@ class PCM_Notifications_Service
         $ok = $wpdb->update(
             PCM_Schema::table('users'),
             array('notificationsSeenAt' => current_time('mysql')),
+            array('id' => $user_id),
+            array('%s'),
+            array('%d')
+        );
+        return $ok !== false;
+    }
+
+    /**
+     * Clear the feed for the user — sets the per-user cleared anchor so the
+     * list hides everything at/older than now. Non-destructive: the shared
+     * notification rows remain visible to other recipients.
+     *
+     * @param int $user_id PCM user id.
+     * @return bool
+     */
+    public function clear_all(int $user_id): bool
+    {
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $ok = $wpdb->update(
+            PCM_Schema::table('users'),
+            array('notificationsClearedAt' => current_time('mysql')),
             array('id' => $user_id),
             array('%s'),
             array('%d')

@@ -336,6 +336,14 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     // Export / Import SEO config
     "seo.exportConfig": { endpoint: "seo/export", method: "GET" },
     "seo.importConfig": { endpoint: "seo/import", method: "POST" },
+    // Saved table Views (per-user: column visibility + active filters)
+    "seo.listViews": { endpoint: "seo/views", method: "GET" },
+    "seo.createView": { endpoint: "seo/views", method: "POST" },
+    "seo.deleteView": {
+        endpoint: "seo/views",
+        method: "DELETE",
+        transform: (input: any) => ({ url: `seo/views/${input.id}` }),
+    },
     // SEO Hub — managed remote sites
     "seohub.listSites": { endpoint: "seohub/sites", method: "GET" },
     "seohub.createSite": { endpoint: "seohub/sites", method: "POST" },
@@ -611,6 +619,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     // ── Notifications (approval-flow activity feed) ──
     "notifications.list": { endpoint: "notifications", method: "GET" },
     "notifications.markSeen": { endpoint: "notifications/seen", method: "POST" },
+    "notifications.clear": { endpoint: "notifications/clear", method: "POST" },
 
     // ── Users (admin-only user management) ──
     "users.list": { endpoint: "users", method: "GET" },

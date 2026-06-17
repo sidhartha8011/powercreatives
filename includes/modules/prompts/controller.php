@@ -636,6 +636,14 @@ class PCM_REST_Prompts extends PCM_REST_Base
                 'label' => 'Meta Keywords — Generate',
                 'description' => 'Generates a comma-separated keyword list. Supports {{title}}, {{primary_keyword}}, {{supporting_keyword}}, {{site.lang}}.',
             ),
+            'seo.primary_keyword_generate' => array(
+                'label' => 'Primary Keyword — Generate',
+                'description' => 'Suggests the single primary target keyword for the page. Supports {{title}}, {{meta_description}}, {{business.name}}, {{site.lang}}.',
+            ),
+            'seo.primary_keyword_optimize' => array(
+                'label' => 'Primary Keyword — Optimize',
+                'description' => 'Improves the existing primary keyword. Supports {{current_value}}, {{title}}, {{meta_description}}, {{business.name}}, {{site.lang}}.',
+            ),
             'seo.content_optimize' => array(
                 'label' => 'Content — Optimize (Full Body)',
                 'description' => 'Rewrites the full page body for SEO + Answer-Engine Optimization (the "Optimize Content" modal). Supports {{current_value}}, {{primary_keyword}}, {{supporting_keyword}}, {{business.name}}, {{site.lang}}.',
@@ -671,6 +679,7 @@ class PCM_REST_Prompts extends PCM_REST_Base
                 'meta_title_generate', 'meta_title_optimize',
                 'meta_description_generate', 'meta_description_optimize',
                 'meta_keywords_generate',
+                'primary_keyword_generate', 'primary_keyword_optimize',
                 'content_optimize',
             ),
         );

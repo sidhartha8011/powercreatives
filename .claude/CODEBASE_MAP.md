@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-14_
+_Last updated: 2026-06-14 · verified current 2026-06-17_
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -11,7 +11,7 @@ _Last updated: 2026-06-14_
 | Name / slug / text-domain | Power Creatives / `power-creatives` |
 | Main file | `power-creatives.php` |
 | Version (`PCM_VERSION`) | **1.7.0** |
-| DB version (`PCM_DB_VERSION`) | **1.23.0** (separate from plugin version) |
+| DB version (`PCM_DB_VERSION`) | **1.26.0** (separate from plugin version) |
 | Requires WP / PHP | 6.4+ / 8.1+ |
 | Const prefix | `PCM_` |
 | Composer package | `antigravity/power-creatives` (type `wordpress-plugin`) |
@@ -42,6 +42,37 @@ npm run dev
 npm run check                 # tsc --noEmit  ← run this after every TS change (tech-debt #15)
 ```
 There is **no PHP linter configured** (no `phpcs.xml`); follow WPCS conventions by hand.
+
+## Local WordPress (LIVE verification IS available)
+> **Env is machine-specific.** On the current Windows dev box (`sanky`) the local
+> WP host is **Local by Flywheel** — NOT the `~/Desktop/wordpress-local` PHP
+> built-in-server setup an earlier (Mac) session documented (that path/port do not
+> exist here). Verified running 2026-06-17.
+- **Host:** Local by Flywheel site **`powercreatives`** → `http://powercreatives.local`
+  (hosts entries for `powercreatives.local` + `www.` already present). Stack:
+  PHP 8.2.29, nginx 1.26.1, MySQL 8.4.0, Mailpit — all Local "lightning services".
+- **WP root:** `~/Local Sites/powercreatives/app/public`. **DB:** `local` / user
+  `root` / pass `root` (MySQL on port 10005 only while the site is running).
+- **Plugin link:** `…/wp-content/plugins/power-creatives` is a **directory junction**
+  (`mklink /J`, not a symlink — Developer Mode is off, so admin-free symlinks aren't
+  available) → repointed to this working copy `C:\Users\sanky\Downloads\powerplatform-new\powerplatform`.
+  (An older Jun-5 copy lives at `…\Downloads\powerplatform\powerplatform`; the junction
+  used to point there.)
+- **Starting it:** Local sites start from the **Local desktop app** (select site →
+  *Start site*). No reliable headless start — launching the bundled mysqld/php-fpm/nginx
+  by hand bypasses Local's router/orchestration and tends to half-start.
+- **Quick liveness check (auth-free):** `GET http://powercreatives.local/wp-json/`
+  → `namespaces` contains `pcm/v1`; `GET /wp-json/pcm/v1` lists ~165 routes ⇒ plugin
+  booted from the junction. Most routes need `X-WP-Nonce` + capability, so use the
+  REST index (not individual routes) for a no-auth smoke test.
+- **Toolchain present:** PHP 8.1.25 on PATH (XAMPP), Node 22 / npm 11, Docker 28.
+  **`composer` and `wp` (wp-cli) are NOT on PATH** here.
+- **Build gotcha (this copied checkout):** `app/node_modules/` was **copied**, not
+  installed — its `.bin` shims and the platform-specific `@rollup/rollup-win32-x64-msvc`
+  native binary were missing, so `npm run build` failed (`vite not recognized` →
+  rollup `MODULE_NOT_FOUND`). Fix once with **`cd app && npm install`** (materializes
+  the win32 binaries + `.bin`); after that `npm run build`/`npm run check` work. `vendor/`
+  + `app/dist/` are present and built.
 
 ## Directory layout
 ```
@@ -144,7 +175,9 @@ uses `pcm/v1` + the path in `routes()`.
 - Prefix `wp_pcm_`. `PCM_Schema::create_tables()` runs `dbDelta` on ~21 tables:
   `users, integrations, projects, assets, scraped_collections, scraped_images, models,
   copy_jobs, copy_results, templates, brands, brand_assets, prompt_overrides, strategies,
-  strategy_items, articles, sites, deliveries, approval_sets, automations, automation_logs`.
+  strategy_items, articles, sites, deliveries, approval_sets, automations, automation_logs`
+  (+ `seo_tenants`, `seo_hmac_nonces`, `notifications`, `delivery_assignments`, and
+  **`seo_views`** — per-user saved SEO table Views {columns,filters} JSON, DB **1.26.0**).
 - Because `dbDelta` can't rename/alter-null/drop, explicit one-off `ALTER`/backfill
   migrations live in `PCM_Schema` (`migrate_assets_columns`, `migrate_brands_columns`,
   `migrate_brands_domain`, `migrate_brand_assets_role`, `migrate_brand_svg_to_png`,
@@ -302,7 +335,13 @@ A small rules engine: a **trigger** (something happens in module A) + **conditio
   `GET /notifications` → `{items(≤50), unseen}` with server-side visibility
   (admin → all; user → owned OR brandId ∈ granted brands;
   `PCM_Notifications_Service::visibility_clause` is unit-tested);
-  `POST /notifications/seen` sets the anchor.
+  `POST /notifications/seen` sets the seen anchor.
+  **`POST /notifications/clear`** (v1.25.0) sets a SECOND per-user anchor
+  `users.notificationsClearedAt`; `list_for_user` filters to `createdAt >
+  clearedAt`, so "Clear all" empties the feed **per-user without deleting the
+  shared rows** (other recipients keep seeing the events). Frontend: a "Clear
+  all" button in `NotificationsPanel.tsx` (shown when items exist) →
+  `trpc.notifications.clear` → refetch. Additive column via dbDelta (DB 1.25.0).
 - **Webhook default payload** (`class-pcm-webhook-action-handler.php`): when a
   rule has no inputMapping, whitelisted enrichment keys are merged in
   (brandName/deliveryName/projectName/projectAssignee/commentUrl/dashboardUrl/
@@ -459,9 +498,12 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   `SeoIntegrationTest` (key-map, detection, read-chain, dual-write, whitelist,
   substitution, output-sanitize, field map, prompt completeness).
   **Prompts are user-editable in Settings → Prompts → SEO tab** (post-1.23):
-  the `prompts` module registers an `seo` module with 8 sections (`{use}_{mode}`:
-  page_title/meta_title/meta_description generate+optimize, meta_keywords
-  generate, content_optimize). `PCM_SEO_Service::get_default_prompts()` flattens
+  the `prompts` module registers an `seo` module with 10 sections (`{use}_{mode}`:
+  page_title/meta_title/meta_description/primary_keyword generate+optimize,
+  meta_keywords generate, content_optimize). The editor section list in
+  `PCM_REST_Prompts::get_default_sections('seo')` MUST mirror
+  `PCM_SEO_Service::get_default_prompts()` (a unit test enforces it).
+  `PCM_SEO_Service::get_default_prompts()` flattens
   `prompts.php` into that section registry (the editor's "Built-in" default);
   `resolve_prompt($section,$default,$userId)` returns the user's active
   `prompt_overrides` row (module='seo') or the default. `generate_field` /
@@ -509,7 +551,21 @@ generator** (bakes client_id/secret/hub-url; registers Yoast/RankMath/SEOPress/
 pcm_seo_* meta in REST; HMAC-signed hello on activation). `PCM_REST_SEOHub`:
 tenant CRUD `manage_options:strict` (rows hold secrets), **streamed** connector
 download (not public uploads), public HMAC-verified `/seohub/connector/hello`.
-Frontend: SEO "Hub" tab (`HubPanel`).
+Frontend: the **Sites module** is the single unified connection home
+(`app/src/modules/Sites/index.tsx`; `HubPanel.tsx` was folded in and removed).
+The `seohub` backend stays a standalone REST module (`pcm/v1/seohub/*`) — kept
+separate because the connector ZIP bakes in `/seohub/connector/hello`.
+**Unified connections (v1.24.0):** one Sites list + an **"Add Site" popup that
+chooses between two methods** — *Application Password* (manual `sites.create`)
+or *Connector plugin* (admin-only `seohub.createSite` + download). Both end up
+in `wp_pcm_sites` and are **publishable**: on `register_ping` the connector is
+**mirrored into `wp_pcm_sites`** (encrypted password, `connectMethod='connector'`,
+owned by `seo_tenants.createdBy`) via `PCM_SEOHub_Service::mirror_to_sites()`
+(pure decision in `mirror_row()`, unit-tested). Idempotent on re-ping (dedup by
+owner+url); revoke/delete cascade to the mirrored row. Schema additions (DB
+1.24.0, additive dbDelta): `sites.connectMethod`, `seo_tenants.createdBy`.
+Pending (not-yet-registered) connector tenants show in a "Pending connections"
+section. `seo_tenants` still keeps the handshake secret + its own proxy creds.
 
 ## Where to add a <thing>
 - **New REST module** (the standard way to add a feature):
@@ -567,15 +623,20 @@ Frontend: SEO "Hub" tab (`HubPanel`).
 - **`wp_pcm_assets` table is OFF-LIMITS** for the Approvals domain — per-item metadata
   goes in the approval-set snapshot JSON, not new columns (PO hard boundary).
 - **`maybe_upgrade()` runs on every page load** — keep migrations idempotent and cheap.
-- **No PHP linter / no textdomain load call / no cron / no custom caps** — by design today.
+- **No PHP linter / no textdomain load call / no custom caps** — by design today.
+  (There IS cron: a daily `pcm_automation_check_pending_approvals` event + a dormant
+  `pcm_automation_run_action` async seam — see *Other hook surfaces → Cron*.)
 - PHP↔TS enum drift (statuses duplicated by hand), order-fragile `LEGACY_STATUS_MAP`,
   `useApprovalSets` god-hook — see `docs/tech-debt/deliveries-approvals-debt.md`.
 - Default branch is **`image-features`**, not `main`.
 
 ## Open questions for the user
 1. Is **`image-features`** the branch to build on, or should new work branch off something else?
-2. Is there a local WP env (Local/wp-env/DDEV) for running & verifying? (docs reference
-   `http://powercreatives.local`). Where are provider API keys configured for testing?
+2. ~~Is there a local WP env for running & verifying?~~ **Answered:** Local by Flywheel
+   site `powercreatives` → `http://powercreatives.local` (see *Local WordPress* above).
+   Still open: **where are provider API keys configured for testing** (per-user
+   `wp_pcm_integrations.apiKey` rows — which provider keys, if any, are seeded in the
+   local DB)?
 3. Git/commit ritual in `AGENTS.md` (BEFORE/AFTER/VERIFIED empty commits, dated CHANGELOG
    per change) — should I follow it for every change, and do you want commits at all
    (the workspace rule says don't commit unless asked)?

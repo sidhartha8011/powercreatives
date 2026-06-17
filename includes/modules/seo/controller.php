@@ -48,6 +48,10 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/content/(?P<id>\d+)/body',     'get_body'),
             array('POST', '/seo/content/(?P<id>\d+)/body',     'save_body'),
             array('POST', '/seo/content/(?P<id>\d+)/optimize', 'optimize_body'),
+            // Saved views (per-user column/filter configs).
+            array('GET',    '/seo/views',                'views_list'),
+            array('POST',   '/seo/views',                'views_create'),
+            array('DELETE', '/seo/views/(?P<id>\d+)',     'views_delete'),
             // AI Readiness (site-wide → admin only).
             array('GET',  '/seo/ai-readiness',           'air_status',   array(), 'manage_options'),
             array('POST', '/seo/ai-readiness/build',      'air_build',    array(), 'manage_options'),
@@ -221,6 +225,47 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success(array_merge(array('id' => $id), $result));
+    }
+
+    // =====================================================================
+    // Saved Views (per-user column/filter configurations)
+    // =====================================================================
+
+    /** GET /seo/views — the current user's saved views, newest first. */
+    public function views_list(WP_REST_Request $request): WP_REST_Response
+    {
+        $user = $this->get_current_pcm_user();
+        return $this->success($this->service->list_views((int) $user->id));
+    }
+
+    /** POST /seo/views — create a saved view for the current user. */
+    public function views_create(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $params = $request->get_json_params() ?: array();
+        $name   = sanitize_text_field((string) ($params['name'] ?? ''));
+        if ($name === '') {
+            return $this->error('Name is required.', 400, 'pcm_seo_view_no_name');
+        }
+        $name = mb_substr($name, 0, 191);
+
+        $config = $params['config'] ?? null;
+        if (!is_array($config)) {
+            return $this->error('Config must be an object.', 400, 'pcm_seo_view_bad_config');
+        }
+
+        $user = $this->get_current_pcm_user();
+        return $this->success($this->service->create_view((int) $user->id, $name, $config), 201);
+    }
+
+    /** DELETE /seo/views/{id} — delete a view owned by the current user. */
+    public function views_delete(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        $user = $this->get_current_pcm_user();
+        if (!$this->service->delete_view($id, (int) $user->id)) {
+            return $this->not_found('View');
+        }
+        return $this->success(array('deleted' => true));
     }
 
     // =====================================================================

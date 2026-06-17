@@ -124,10 +124,11 @@ class PCM_SEOHub_Service
         return $wpdb->get_row($wpdb->prepare("SELECT * FROM {$t} WHERE id = %d", $id)) ?: null;
     }
 
-    public static function create_tenant(string $name): array
+    public static function create_tenant(string $name, int $created_by = 0): array
     {
         global $wpdb;
         $wpdb->insert(PCM_Schema::table('seo_tenants'), array(
+            'createdBy'    => $created_by,
             'clientId'     => wp_generate_uuid4(),
             'clientSecret' => bin2hex(random_bytes(32)),
             'name'         => sanitize_text_field($name),
@@ -143,11 +144,18 @@ class PCM_SEOHub_Service
         }
         global $wpdb;
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        return (bool) $wpdb->update(PCM_Schema::table('seo_tenants'), array('status' => $status, 'updatedAt' => current_time('mysql')), array('id' => $id));
+        $ok = (bool) $wpdb->update(PCM_Schema::table('seo_tenants'), array('status' => $status, 'updatedAt' => current_time('mysql')), array('id' => $id));
+        // Keep the mirrored publishing site in lockstep (revoke disables it).
+        if ($ok && $status === 'revoked') {
+            self::cascade_mirrored_site($id, 'revoked');
+        }
+        return $ok;
     }
 
     public static function delete_tenant(int $id): bool
     {
+        // Remove the mirrored site BEFORE the tenant row (cascade needs its data).
+        self::cascade_mirrored_site($id, 'delete');
         global $wpdb;
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         return (bool) $wpdb->delete(PCM_Schema::table('seo_tenants'), array('id' => $id));
@@ -157,21 +165,116 @@ class PCM_SEOHub_Service
     public static function register_ping(object $tenant, array $meta): void
     {
         $site_url = esc_url_raw((string) ($meta['site_url'] ?? ''));
+        $app_user = sanitize_text_field((string) ($meta['app_user'] ?? ''));
+        $app_pass = sanitize_text_field((string) ($meta['app_password'] ?? ''));
+        $name     = $tenant->name ?: sanitize_text_field((string) ($meta['site_name'] ?? ''));
         global $wpdb;
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $wpdb->update(PCM_Schema::table('seo_tenants'), array(
             'status'      => 'active',
             'siteUrl'     => $site_url,
             'domain'      => (string) wp_parse_url($site_url, PHP_URL_HOST),
-            'name'        => $tenant->name ?: sanitize_text_field((string) ($meta['site_name'] ?? '')),
+            'name'        => $name,
             'adminEmail'  => sanitize_email((string) ($meta['admin_email'] ?? '')),
             'wpVersion'   => sanitize_text_field((string) ($meta['wp_version'] ?? '')),
             'phpVersion'  => sanitize_text_field((string) ($meta['php_version'] ?? '')),
-            'appUser'     => sanitize_text_field((string) ($meta['app_user'] ?? '')),
-            'appPassword' => sanitize_text_field((string) ($meta['app_password'] ?? '')),
+            'appUser'     => $app_user,
+            'appPassword' => $app_pass,
             'lastPingAt'  => current_time('mysql'),
             'updatedAt'   => current_time('mysql'),
         ), array('id' => (int) $tenant->id));
+
+        // Mirror the connection into wp_pcm_sites so it's a first-class,
+        // publishable site (single source of truth = sites). The connector
+        // hands over a WP Application Password; store it ENCRYPTED like a
+        // manually-added site (publishing decrypts it).
+        self::mirror_to_sites((int) ($tenant->createdBy ?? 0), $name, $site_url, $app_user, $app_pass);
+    }
+
+    /**
+     * Upsert a connector tenant into wp_pcm_sites (owner-scoped, encrypted).
+     * Idempotent: keyed on (owner, url) so a re-ping updates the same row.
+     * Skips when we can't form a usable site (no owner / url / credentials).
+     */
+    private static function mirror_to_sites(int $owner, string $name, string $site_url, string $app_user, string $app_pass): void
+    {
+        if ($owner <= 0 || $site_url === '' || $app_user === '' || $app_pass === '') {
+            return;
+        }
+        if (!class_exists('PCM_Sites_Service')) {
+            require_once dirname(__DIR__) . '/sites/service.php';
+        }
+        $row = self::mirror_row($owner, $name, $site_url, $app_user, PCM_Sites_Service::encrypt_password($app_pass));
+        if ($row === null) {
+            return;
+        }
+        $existing = self::find_mirrored_site($owner, $row['url']);
+        if ($existing) {
+            $update = $row;
+            unset($update['userId']); // userId is the WHERE clause, not a column to set
+            PCM_DB::update_site((int) $existing->id, $owner, $update);
+        } else {
+            PCM_DB::create_site($row);
+        }
+    }
+
+    /**
+     * Pure: the wp_pcm_sites row a connector tenant maps to, or null when it
+     * can't be a publishable site (no owner / url / username / password).
+     * The actual upsert is DB-bound (see mirror_to_sites) and verified live.
+     *
+     * @return array<string,mixed>|null
+     */
+    public static function mirror_row(int $owner, string $name, string $site_url, string $app_user, string $encrypted_pass): ?array
+    {
+        if ($owner <= 0 || $site_url === '' || $app_user === '' || $encrypted_pass === '') {
+            return null;
+        }
+        $url = rtrim($site_url, '/');
+        return array(
+            'userId'        => $owner,
+            'name'          => $name !== '' ? $name : $url,
+            'url'           => $url,
+            'username'      => $app_user,
+            'appPassword'   => $encrypted_pass,
+            'status'        => 'active',
+            'connectMethod' => 'connector',
+        );
+    }
+
+    /** The mirrored sites row for a connector (owner + url), or null. */
+    private static function find_mirrored_site(int $owner, string $url): ?object
+    {
+        if ($owner <= 0 || $url === '') {
+            return null;
+        }
+        global $wpdb;
+        $t = PCM_Schema::table('sites');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        return $wpdb->get_row($wpdb->prepare(
+            "SELECT id FROM {$t} WHERE userId = %d AND url = %s AND connectMethod = 'connector' LIMIT 1",
+            $owner,
+            $url
+        )) ?: null;
+    }
+
+    /** Revoke ('revoked') or delete ('delete') the site mirrored from a tenant. */
+    private static function cascade_mirrored_site(int $tenant_id, string $op): void
+    {
+        $tenant = self::get_by_id($tenant_id);
+        if (!$tenant) {
+            return;
+        }
+        $owner = (int) ($tenant->createdBy ?? 0);
+        $site  = self::find_mirrored_site($owner, rtrim((string) $tenant->siteUrl, '/'));
+        if (!$site) {
+            return;
+        }
+        if ($op === 'delete') {
+            PCM_DB::delete_site((int) $site->id, $owner);
+        } else {
+            PCM_DB::update_site((int) $site->id, $owner, array('status' => $op));
+        }
     }
 
     // ── Remote proxy (Basic auth via Application Password) ──

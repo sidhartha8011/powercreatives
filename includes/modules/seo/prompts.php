@@ -66,6 +66,17 @@ return array(
             . "CURRENT CONTENT:\n{{current_value}}",
     ),
 
+    // ── Primary keyword (the single target keyword for the page) ──
+    'primary_keyword' => array(
+        'max'      => 30,
+        'generate' => "Suggest the single best primary target keyword for this page for SEO.\n\n"
+            . "Page Title: {{title}}\nMeta Description: {{meta_description}}\nBusiness: {{business.name}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- 1-4 words; the main search term this page should rank for\n- Realistic search intent (not the brand name unless that is the intent)\n- Output ONLY the keyword phrase in lowercase — no quotation marks, no commentary",
+        'optimize' => "Improve the primary target keyword for this page for SEO.\n\n"
+            . "Current Primary Keyword: {{current_value}}\nPage Title: {{title}}\nMeta Description: {{meta_description}}\nBusiness: {{business.name}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- 1-4 words; the main search term this page should rank for\n- Better search intent / volume alignment than the current keyword\n- Output ONLY the keyword phrase in lowercase — no quotation marks, no commentary",
+    ),
+
     // ── Meta keywords (corrected {{primary_kw}} → {{primary_keyword}}) ──
     'meta_keywords' => array(
         'max'      => 300,

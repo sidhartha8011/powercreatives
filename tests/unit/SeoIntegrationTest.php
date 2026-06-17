@@ -148,8 +148,8 @@ class SeoIntegrationTest extends TestCase
         $this->assertSame('meta_title', $map['metaTitle']);
         $this->assertSame('meta_description', $map['metaDescription']);
         $this->assertSame('meta_keywords', $map['metaKeywords']);
-        // primaryKeyword is an input, not AI-generated.
-        $this->assertArrayNotHasKey('primaryKeyword', $map);
+        // primaryKeyword is now AI-generatable too (all text columns generate).
+        $this->assertSame('primary_keyword', $map['primaryKeyword']);
     }
 
     public function test_field_prompts_provide_generate_for_every_use(): void
@@ -177,6 +177,7 @@ class SeoIntegrationTest extends TestCase
             'meta_title_generate', 'meta_title_optimize',
             'meta_description_generate', 'meta_description_optimize',
             'meta_keywords_generate',
+            'primary_keyword_generate', 'primary_keyword_optimize',
             'content_optimize',
         );
         $actual = array_keys($defaults);
@@ -325,6 +326,80 @@ class SeoIntegrationTest extends TestCase
         $this->assertSame('Legacy', $n['name']);
         $this->assertSame(1.0, $n['lat']);
         $this->assertSame(2.0, $n['lng']);
+    }
+
+    // ── Saved Views (per-user column/filter configs) ──
+
+    public function test_create_view_json_encodes_config_and_returns_shape(): void
+    {
+        WP_Mock::userFunction('wp_json_encode')->andReturnUsing(static fn($v) => json_encode($v));
+
+        global $wpdb;
+        $wpdb = \Mockery::mock();
+        $wpdb->prefix = 'wp_';
+        $config = array(
+            'columns' => array('title' => true, 'metaTitle' => false),
+            'filters' => array('status' => 'publish'),
+        );
+        $wpdb->shouldReceive('insert')
+            ->once()
+            ->with(
+                'wp_pcm_seo_views',
+                array('userId' => 7, 'name' => 'My View', 'config' => json_encode($config)),
+                array('%d', '%s', '%s')
+            );
+        $wpdb->insert_id = 42;
+
+        $svc = new PCM_SEO_Service();
+        $res = $svc->create_view(7, 'My View', $config);
+
+        $this->assertSame(42, $res['id']);
+        $this->assertSame('My View', $res['name']);
+        $this->assertSame($config, $res['config']);
+    }
+
+    public function test_list_views_decodes_config_to_array(): void
+    {
+        global $wpdb;
+        $wpdb = \Mockery::mock();
+        $wpdb->prefix = 'wp_';
+        $wpdb->shouldReceive('prepare')->once()->andReturn('SQL');
+        $wpdb->shouldReceive('get_results')->once()->with('SQL')->andReturn(array(
+            (object) array('id' => '3', 'name' => 'Newest', 'config' => '{"columns":{"title":true}}'),
+        ));
+
+        $svc   = new PCM_SEO_Service();
+        $views = $svc->list_views(7);
+
+        $this->assertCount(1, $views);
+        $this->assertSame(3, $views[0]['id']);
+        $this->assertSame('Newest', $views[0]['name']);
+        $this->assertSame(array('columns' => array('title' => true)), $views[0]['config']);
+    }
+
+    public function test_delete_view_is_user_scoped(): void
+    {
+        global $wpdb;
+        $wpdb = \Mockery::mock();
+        $wpdb->prefix = 'wp_';
+        $wpdb->shouldReceive('delete')
+            ->once()
+            ->with('wp_pcm_seo_views', array('id' => 5, 'userId' => 7), array('%d', '%d'))
+            ->andReturn(1);
+
+        $svc = new PCM_SEO_Service();
+        $this->assertTrue($svc->delete_view(5, 7));
+    }
+
+    public function test_delete_view_returns_false_when_no_row(): void
+    {
+        global $wpdb;
+        $wpdb = \Mockery::mock();
+        $wpdb->prefix = 'wp_';
+        $wpdb->shouldReceive('delete')->once()->andReturn(0);
+
+        $svc = new PCM_SEO_Service();
+        $this->assertFalse($svc->delete_view(5, 7));
     }
 
     public function test_gbp_provider_factory_defaults_to_n8n(): void
