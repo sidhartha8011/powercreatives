@@ -1,5 +1,191 @@
 # Session Log
 
+## 2026-06-18 — Regenerated deploy zip under the standard name `power-creatives.zip`
+- **Asked:** reuse the previously-used zip name. The prior artifact was
+  `…/Landing page -demo/power-creatives.zip` (Jun-17, 2.2 MB) wrapping the plugin
+  in a top-level **`powerplatform/`** folder (full plugin, no vendor/node_modules).
+- **Rebuilt** it at the same path/name with the same `powerplatform/` wrapper +
+  current files (fresh `app/dist` bundle + cache-bust shortcode), excluding
+  `vendor`, `node_modules`, `app/node_modules`, `.git`, `.claude`, `.agent(s)`.
+  2.9 MB, integrity OK, header at `powerplatform/power-creatives.php`. Replaced the
+  Jun-17 zip. ⚠️ Like the old artifact this is a FULL-plugin payload (whole
+  `feat/seo-suite-port` working copy) — a full replace, not just the approvals fix.
+- The earlier `~/Desktop/power-creatives-1.7.0.zip` (a `power-creatives/`-wrapped
+  variant) is now redundant and should NOT be uploaded (different folder name →
+  would create a duplicate plugin dir). `~/Desktop/pcm-approvals-deploy.zip`
+  (surgical) still stands as the safer frontend-only option.
+- No repo code changed.
+
+## 2026-06-18 — Built full-plugin replace ZIP (WP-admin upload)
+- **Asked:** "create the new zip file" → built the full-plugin ZIP for the
+  WP-admin *Upload Plugin → Replace current* flow:
+  `~/Desktop/power-creatives-1.7.0.zip` (1.2 MB).
+- **Contents:** runtime only, top-level folder `power-creatives/` with
+  `power-creatives.php` (header) + `uninstall.php` + `README.md` + `includes/`
+  (119 PHP) + `app/dist/`. **Excluded** `vendor/` (confirmed dev-only — every
+  composer dep is `require-dev`, runtime `require` is just `php>=8.1`, nothing
+  loads `vendor/autoload.php`), `node_modules`, `app/src`, `.git`, `.claude`,
+  `tests`, `docs`. Zip integrity OK; header at folder root (WP-recognizable).
+- ⚠️ **Blast radius differs from the surgical zip.** This FULL replace swaps the
+  ENTIRE live plugin for the current `feat/seo-suite-port` working copy — i.e. the
+  whole SEO-suite/SEO-Hub branch backend + DB 1.26.0 migrations run on next load,
+  not just the approvals fixes. Use the surgical `pcm-approvals-deploy.zip`
+  (frontend bundle + shortcode only, backend untouched) if the intent is ONLY the
+  approvals fixes. No version bump (still 1.7.0). Back up (JetBackup) before
+  replacing.
+- No repo code changed.
+
+## 2026-06-18 — Deploy package confirmed (SEO table change is APPROVED — keep)
+- **User decision:** the SEO module UI change (white-card / plain-table
+  "spreadsheet" grid in `app/src/modules/SEO/index.tsx`) is an **approved** change
+  — keep it. So the earlier "⚠️ bundle carries SEO UI changes" caveat is resolved:
+  it ships intentionally. "other all is good" = approvals fixes + connector
+  diagnosis all confirmed fine.
+- **Action:** no rebuild needed. `~/Desktop/pcm-approvals-deploy.zip` (901 KB) is
+  good to go AS-IS — zip integrity OK; bundle was built after the SEO edit, so the
+  approved SEO change is compiled in alongside the approvals fixes.
+- **Still pending (user-run / on request):** upload the package to the live host
+  (their action; steps given), live browser e2e, and committing (not yet asked).
+- No code changed.
+
+## 2026-06-18 — Approvals task status check (what's left)
+- **Asked:** what remains in the previous approvals-set task.
+- **Confirmed on disk** (matches the earlier log entry): all 4 changes present —
+  clipboard body-only (`CreativeAssetCard.tsx:264`), launch-lane edit unlock
+  (`:303`), emoji `decodeHtmlEntities` (`TiptapBodyEditor.tsx:76`), shortcode
+  cache-bust `filemtime()` (`class-pcm-shortcode.php:415/423`). Built bundle
+  `app/dist/index-writer.js` (4,366,501 B, 03:10:30) is newer than both edited
+  sources → fixes are compiled + served locally.
+- **Left / open:** (1) **live browser e2e** of the 3 behaviors in a logged-in
+  team review session (emoji-survives-save, edit-in-launch-lane, clipboard
+  body-only) — never click-tested; needs a set with emoji copy. (2) **Live-host
+  confirmation** the emoji loss is gone after deploy (couldn't repro locally —
+  current code is emoji-safe; if it persists on the host it's a `utf8` DB
+  connection, a server fix). (3) **Deploy** the updated plugin + bundle to the
+  shared host. (4) **Commit** (intentionally not done — workspace rule).
+- No code changed in this status check.
+- **Deploy package prepared** (user chose "help deploy to live host"): surgical
+  artifact `~/Desktop/pcm-approvals-deploy.zip` (901 KB) = only the changed
+  RUNTIME surfaces — `app/dist/` (rebuilt bundle, current vs all sources) +
+  `includes/class-pcm-shortcode.php` (cache-bust). `vendor/` confirmed NOT needed
+  at runtime (bootstrap `require_once`s classes explicitly; nothing loads
+  `vendor/autoload.php`). Backend untouched → low risk. Extract into
+  `wp-content/plugins/power-creatives/`. ⚠️ The monolithic bundle ALSO carries the
+  in-progress SEO module UI changes (uncommitted `SEO/index.tsx`). No version bump
+  (per CLAUDE.md) — WP still shows 1.7.0; `filemtime()` busts the JS/CSS cache.
+
+## 2026-06-18 — SEO Hub connector not connecting (diagnosis — localhost hub URL)
+- **Task:** connector plugin installed + activated on shared host
+  `https://create.widgetify.co/` ("Heart To Heart") but the LOCAL hub never shows
+  it connected.
+- **Diagnosis (root cause, not a code bug):** the local hub runs on
+  `http://localhost:8080`, so the connector ZIP it generated baked
+  `PCM_CONN_HUB_URL = http://localhost:8080/wp-json/pcm/v1/seohub/connector/hello`
+  (`service.php:330` → `rest_url(...)` = hub `home_url` at gen time). The connector
+  pings the hub **only on activation** (one-shot `register_activation_hook`) and
+  **ignores the `wp_remote_post` result** (`service.php:384–395`), so the failed
+  POST to an unreachable localhost is silent. From the public shared host,
+  `localhost:8080` is its own loopback / not routable to the Mac → handshake never
+  arrives → `register_ping` never runs.
+- **Evidence:** local `wp_pcm_seo_tenants` has tenant id=4 for the site,
+  `status='pending'`, `lastPingAt=NULL`, all handshake fields NULL; no
+  `connectMethod='connector'` row in `wp_pcm_sites`. Hub endpoint itself is
+  healthy — unsigned `POST /seohub/connector/hello` → `403 pcm_invalid_nonce`.
+- **Remedy (no repo change):** generate/download the connector from a
+  publicly-reachable hub (prod domain, OR tunnel localhost via ngrok/cloudflared +
+  set `home_url` to the tunnel URL), then on the remote
+  **deactivate → delete → reinstall → re-activate** (only activation re-fires the
+  handshake). Keep hub/remote clock skew < 5 min (HMAC ±300s window).
+- **Optional follow-up (offered, not done):** harden the connector to check
+  `is_wp_error`/HTTP status + retry on later admin loads/cron so failures surface
+  and self-heal once the hub is reachable.
+- **Map:** added the "connector needs a publicly-reachable hub" gotcha to the
+  SEO Hub section. No code changed.
+
+## 2026-06-18 — Approvals review: emoji/format, launch-lane edit, clipboard, cache-bust
+- **Task (3 bugs in the client-approval review):** (1) emojis stripped when a
+  team member edits & saves an ad's copy; (2) editing gets "locked" once the set
+  reaches the Launch lane (or further); (3) "Copy to clipboard" prepends the
+  headline/title — should copy ONLY the ad-copy body.
+- **Root-cause findings:**
+  - *Emoji:* backend is already emoji-safe — `update_snapshot_asset` uses
+    `sanitize_textarea_field`/`sanitize_text_field` (verified they keep emojis),
+    the snapshot is stored as `wp_json_encode` (unicode-escaped → ASCII →
+    charset-independent), `get_public_set` reads ONLY the snapshot (never rebuilds
+    from `copy_results`), and all `wp_pcm_*` columns are utf8mb4. Proven with a
+    real round-trip on a local set: body/headline/description emojis all survive
+    save→read. So the live loss is an OLDER deployed bundle / a `utf8` DB
+    connection on the shared host — not current code. Hardened the one remaining
+    frontend gap: `TiptapBodyEditor.htmlToPlainText` only decoded 5 named
+    entities, so emoji **numeric refs** (`&#128640;`/`&#x1F680;`) would mangle —
+    now fully decoded via `decodeHtmlEntities` (`String.fromCodePoint`, DOM-free).
+  - *Launch lock:* purely frontend — `isReadOnly`(post-submit)→`isLocked`→card
+    `isSubmitted` blocked the edit-entry. Backend `update_snapshot_asset` has NO
+    lane lock, and the board still renders in locked lanes. Removed `!isSubmitted`
+    from `CreativeAssetCard.handleCardClick` so team members keep editing in
+    launch/live/archived; the Approve button stays disabled (sign-off intact).
+  - *Clipboard:* `handleCopyToClipboard` prepended `headline\n\n`. Now copies
+    `asset.body` only.
+- **Also (deploy-relevant):** the frontend **shortcode** (public review page)
+  enqueued JS/CSS with static `?ver=PCM_VERSION`, so a same-filename redeploy
+  would serve stale cached bundles to returning reviewers on the live host —
+  none of these fixes would appear. Switched both to `filemtime()` (mirrors
+  PCM_Admin's CSS bust) so each build busts the cache.
+- **Files:** `app/src/modules/Approvals/components/CreativeAssetCard.tsx`,
+  `app/src/components/shared/TiptapBodyEditor.tsx`,
+  `includes/class-pcm-shortcode.php`. (Left the unrelated pre-existing
+  `app/src/modules/SEO/index.tsx` dirty file untouched.)
+- **Verified:** node unit-tests of new `htmlToPlainText` (emoji + numeric/hex
+  entities + line breaks → ALL PASS); real backend emoji round-trip (YES/YES/YES,
+  then restored); `tsc --noEmit` → 56 baseline errors, **0** in touched files /
+  Approvals module; `vite build` clean (needed a one-time `cd app && npm install`
+  to materialize `@rollup/rollup-darwin-arm64` — the copied-node_modules gotcha);
+  live host serves the fresh bundle (200, 4366501B); `php -l` clean + WP bootstrap
+  loads `PCM_Shortcode` and `filemtime` resolves. **Not browser-clicked** end to
+  end (needs a logged-in team review session) — logic/back-end/build verified.
+- **Not committed. No new deps** (npm install only restored the platform binary).
+
+## 2026-06-18 — Install plugin into Mac local WP (localhost:8080) — symlink repair
+- **Task:** install the plugin into the WordPress running at
+  `http://localhost:8080/wp-admin`.
+- **Env discovered:** PHP built-in server `php -S localhost:8080 router.php`,
+  docroot `~/Desktop/wordpress-local` (WP 7.0, PHP 8.5.7, no wp-cli). This is the
+  Mac local-WP the CODEBASE_MAP only knew about second-hand — now confirmed live.
+- **Root cause (not a fresh install):** plugin was already in `active_plugins` +
+  all 26 `wp_pcm_*` tables present + `pcm_db_version=1.26.0`, but `pcm/v1` was
+  absent from REST because the symlink `wp-content/plugins/power-creatives` pointed
+  at the **wrapper** dir `…/powerplatform` (whose only child is `powerplatform/`).
+  WP scans one level deep → never saw `power-creatives.php` → loaded nothing.
+- **Fix (1 change, no code):** `ln -sfn` repointed the symlink to the INNER dir
+  `…/powerplatform/powerplatform` (the one holding `power-creatives.php`). No
+  rebuild needed — `vendor/` + `app/dist/` were already built (dist 06-18 02:12).
+- **Verified (live):** `GET /wp-json/` namespaces now include `pcm/v1`;
+  `GET /wp-json/pcm/v1` = 167 routes; `/pcm/v1/brands` + `/automations/catalog`
+  → **403** (loaded + nonce/cap-guarded, not 404); SPA assets
+  `app/dist/index-writer.js` (4.3MB) + `index.css` (280KB) + `index.html` serve
+  **200** over HTTP through the symlink. CLI `wp-load.php` bootstrap loaded all
+  active plugins with **no fatal under PHP 8.5**; `get_plugins()` shows
+  "Power Creatives v1.7.0", `is_plugin_active` YES.
+- **Map updated:** added the Mac local-WP block (docroot, symlink-must-target-inner-dir
+  gotcha, CLI-bootstrap activation, smoke test) + corrected the header machine note.
+- **Not committed.** No deps added.
+
+## 2026-06-18 — SEO table: white card on grey app bg (not shadcn — confirmed)
+- **Task:** table looked grey like the app (no contrast) and "feels shadcn"; want a
+  white Airtable-style table on the grey app background, grey row hover, no shadcn.
+- **Finding:** the SEO table is already a plain `<table>` (shadcn `Table` was removed
+  earlier — `grep` confirms 0 `components/ui/table` refs). Only the Checkbox/Select/
+  Input/Button *controls* are shadcn. Root cause of "both grey": cells used
+  `bg-background` = `--background` `oklch(0.98)` (the app's light-grey page); header
+  used `bg-muted/50`. So table == app color.
+- **Changed (`index.tsx`, UI only):** table + container + sticky header now `bg-card`
+  (`--card` = pure white) → white table card on the grey app page (border + `shadow-sm`
+  reinforce separation). Row hover `hover:bg-muted/30` → `hover:bg-muted/60` (clearer
+  grey); selected row `bg-primary/5` → `bg-accent/60` (light blue, Airtable-style).
+- **Verified:** `npm run check` 0 SEO errors (56 baseline); `npm run build` clean,
+  `dist` rebuilt. **Not committed. No new deps** (kept the custom table; a data-grid
+  library remains an option for a future bigger rewrite).
+
 ## 2026-06-18 — Push latest to mine/feat/seo-suite-port (handoff)
 - **Task:** push the code to `feat/seo-suite-port`; verify add/commit was done.
 - **Commit state:** working tree was already clean — latest commit `093b162`

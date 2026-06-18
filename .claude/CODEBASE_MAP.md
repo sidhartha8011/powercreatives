@@ -1,9 +1,19 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-14 · verified current 2026-06-17_
+_Last updated: 2026-06-14 · verified current 2026-06-18_
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
-> boards. Vertical-slice modular monolith. Repo default branch: **`image-features`**.
+> boards. Vertical-slice modular monolith. Repo default branch: **`image-features`**
+> (remote `origin/HEAD`); **active development branch is `feat/seo-suite-port`**
+> (SEO suite work — branch off this for SEO changes). Other branch:
+> `feat/approvals-automations`.
+>
+> **Machine note:** the *Local WordPress* section below has TWO machine-specific
+> setups — a Windows dev box (`sanky`, Local by Flywheel) and a **Mac** (this
+> session, `/Users/sidharthaparasramka/Desktop/wordpress-local`, PHP built-in
+> server on **`localhost:8080`**). Live in-browser verification IS available on
+> the Mac (confirmed 2026-06-18). Either way, also run `composer test` +
+> `cd app && npm run check && npm run build`.
 
 ## Plugin header
 | Field | Value |
@@ -44,7 +54,25 @@ npm run check                 # tsc --noEmit  ← run this after every TS change
 There is **no PHP linter configured** (no `phpcs.xml`); follow WPCS conventions by hand.
 
 ## Local WordPress (LIVE verification IS available)
-> **Env is machine-specific.** On the current Windows dev box (`sanky`) the local
+> **Mac dev box (this machine — confirmed live 2026-06-18).** WP **7.0** / PHP
+> **8.5.7** served by the **PHP built-in server**: `php -S localhost:8080 router.php`
+> (process cwd = docroot). **Docroot:** `~/Desktop/wordpress-local`. **Plugins dir:**
+> `~/Desktop/wordpress-local/wp-content/plugins/`. The plugin is installed as a
+> **symlink** `…/plugins/power-creatives` → this working copy's INNER dir
+> (`…/Landing page -demo/powerplatform/powerplatform`, the one that holds
+> `power-creatives.php`). ⚠️ The symlink MUST target the inner dir, not the
+> `powerplatform/` wrapper — WP scans only one level deep, so a wrapper-aimed link
+> makes the plugin invisible (no `pcm/v1`). `router.php` serves `app/dist/*` static
+> assets directly (follows the symlink), so the SPA bundle loads fine. No `wp-cli`
+> here; activate/inspect via a CLI bootstrap (`php -r`/script that `require`s
+> `wp-load.php` then `activate_plugin('power-creatives/power-creatives.php')`).
+> A mu-plugin `wp-content/mu-plugins/prevent-loopback-deadlock.php` guards against
+> the single-threaded server deadlocking on self-HTTP (cron/REST loopbacks).
+> **Auth-free smoke test:** `GET http://localhost:8080/wp-json/` → `namespaces`
+> contains `pcm/v1`; `GET /wp-json/pcm/v1` lists ~167 routes; a protected route
+> (e.g. `/wp-json/pcm/v1/brands`) returns **403** (loaded + nonce/cap-guarded), not 404.
+>
+> **Env is machine-specific.** On the (other) Windows dev box (`sanky`) the local
 > WP host is **Local by Flywheel** — NOT the `~/Desktop/wordpress-local` PHP
 > built-in-server setup an earlier (Mac) session documented (that path/port do not
 > exist here). Verified running 2026-06-17.
@@ -566,6 +594,20 @@ owner+url); revoke/delete cascade to the mirrored row. Schema additions (DB
 1.24.0, additive dbDelta): `sites.connectMethod`, `seo_tenants.createdBy`.
 Pending (not-yet-registered) connector tenants show in a "Pending connections"
 section. `seo_tenants` still keeps the handshake secret + its own proxy creds.
+- ⚠️ **Connector handshake requires the hub to be PUBLICLY reachable.** The
+  connector ZIP bakes `PCM_CONN_HUB_URL = rest_url('pcm/v1/seohub/connector/hello')`
+  **at generation time** = the hub's `home_url` then. A hub on `localhost` (the
+  Mac dev env, `http://localhost:8080`) bakes a localhost URL the remote site can
+  never reach, so the tenant stays `status='pending'` with `lastPingAt=NULL`
+  forever. The connector pings **only on activation** (`register_activation_hook`,
+  one-shot) and **ignores the `wp_remote_post` result** (always sets its local
+  `pcm_conn_status='registered'`), so a failed handshake is silent. To connect a
+  remote site: generate/download the connector from a publicly-reachable hub (prod
+  domain, or tunnel localhost via ngrok/cloudflared + set `home_url` to the tunnel),
+  then on the remote **deactivate → delete → reinstall → re-activate** to re-fire
+  the handshake. HMAC has a ±300s timestamp window, so hub/remote clock skew must
+  be < 5 min. Hub side is healthy when an unsigned `POST /seohub/connector/hello`
+  returns `403 pcm_invalid_nonce` (not 404).
 
 ## Where to add a <thing>
 - **New REST module** (the standard way to add a feature):
