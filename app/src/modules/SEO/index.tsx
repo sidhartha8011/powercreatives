@@ -572,16 +572,16 @@ export function SEOModule() {
           No content yet — create a post or page to get started.
         </div>
       ) : (
-        <div className="rounded-md border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)]">
+        <div className="rounded-md border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)] bg-card">
           {/* Spreadsheet-style grid: gridlines on every cell, a sticky header
               row, and compact single-line cells. Long values truncate with an
               ellipsis — click a cell to edit (and see) the full value. */}
-          <Table className="table-fixed w-full border-collapse text-xs bg-background
+          <Table className="table-fixed w-full border-collapse text-xs bg-card
             [&_th]:border [&_th]:border-border/60 [&_td]:border [&_td]:border-border/60
             [&_th]:px-2 [&_th]:h-9 [&_th]:font-normal [&_th]:text-foreground/80
             [&_td]:px-2 [&_td]:h-9 [&_td]:py-0 [&_td]:align-middle
             [&_td]:whitespace-nowrap [&_td]:overflow-hidden
-            [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-muted/50">
+            [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-card">
 
             <TableHeader>
               <TableRow>
@@ -615,7 +615,7 @@ export function SEOModule() {
             </TableHeader>
             <TableBody>
               {sortedData.map((row, idx) => (
-                <TableRow key={row.id} className={`group ${selected.has(row.id) ? 'bg-primary/5' : 'hover:bg-muted/30'}`}>
+                <TableRow key={row.id} className={`group ${selected.has(row.id) ? 'bg-accent/60' : 'hover:bg-muted/60'}`}>
                   <TableCell className="px-2 text-center">
                     {/* Airtable-style: row number by default; checkbox on hover or when selected. */}
                     <span className={`text-[11px] tabular-nums text-muted-foreground ${selected.has(row.id) ? 'hidden' : 'group-hover:hidden'}`}>{idx + 1}</span>
