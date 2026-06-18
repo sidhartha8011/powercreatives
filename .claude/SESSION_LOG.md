@@ -1,5 +1,19 @@
 # Session Log
 
+## 2026-06-18 — Ran the plugin on local WP (localhost:8080) — verified live
+- **Asked:** run it on local WordPress.
+- **State:** PHP built-in server already up (PID 13373); plugin active —
+  `pcm/v1` = 167 routes, served bundle = local build (4,366,501 B), no rebuild
+  needed (dist current vs source). DB 1.26.0, 26 tables.
+- **Live render proof:** public review page `GET /5-2/?pcm_public_token=…` → 200,
+  mounts `#pcm-root`, enqueues `index-writer.js?ver=1781732430` (the filemtime
+  cache-bust working), 0 PHP errors. `wp-login.php`→200, admin page→302 (logged out).
+- **Access:** admin SPA `…/wp-admin/admin.php?page=power-creatives` (user `admin`);
+  public review `…/5-2/?pcm_public_token=set_28bd36dbd3dc96cc2d5fcc79a0023a7e`
+  (a launch-lane set). To test the launch-lane EDIT fix, open the review in the
+  SAME browser where you're logged into wp-admin (isTeamMember = logged in).
+- No code changed.
+
 ## 2026-06-18 — Verified tables + fixes are on the pushed remote
 - **Asked:** confirm the new tables and the fixes are in the pushed repo.
 - **Tables:** `class-pcm-schema.php` on `mine/feat/seo-suite-port` has all 26
