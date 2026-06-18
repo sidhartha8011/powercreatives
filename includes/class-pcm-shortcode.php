@@ -412,7 +412,7 @@ class PCM_Shortcode
                 'pcm-app',
                 $app_url . 'index.css',
                 array('pcm-google-fonts'),
-                PCM_VERSION
+                filemtime($app_dir . 'index.css') // Cache-bust on every build (mirror PCM_Admin)
             );
         }
 
@@ -420,7 +420,7 @@ class PCM_Shortcode
             'pcm-app',
             $app_url . $entry_file,
             array(),
-            PCM_VERSION,
+            filemtime($app_dir . $entry_file), // Cache-bust on every build so live reviewers get the new bundle
             true
         );
 

@@ -259,7 +259,9 @@ export function CreativeAssetCard({
   // Cross-browser clipboard copier with fallback
   const handleCopyToClipboard = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    const textToCopy = asset.headline ? `${asset.headline}\n\n` + asset.body : (asset.body || '');
+    // Copy ONLY the ad-copy body — never prepend the headline/title. The body is
+    // what gets pasted straight into the ad platform; the headline is a separate field.
+    const textToCopy = asset.body || '';
     
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(textToCopy)
@@ -292,12 +294,16 @@ export function CreativeAssetCard({
   }, [asset]);
 
   /* Single-click enters edit mode for team members.
-     No expand/collapse step — copy cards are always fully visible. */
+     No expand/collapse step — copy cards are always fully visible.
+     Editing is NOT gated by isSubmitted: team members can keep refining copy in
+     any lane, including post-submit lanes (launch/live/archived). Only client
+     approval stays locked after sign-off (the Approve button is disabled via
+     isSubmitted); the snapshot-update endpoint allows edits in every lane. */
   const handleCardClick = useCallback(() => {
-    if (isTeamMember && !isEditingText && !isSubmitted) {
+    if (isTeamMember && !isEditingText) {
       setIsEditingText(true);
     }
-  }, [isTeamMember, isEditingText, isSubmitted]);
+  }, [isTeamMember, isEditingText]);
 
   // Save inline text edits to snapshot and DB
   const handleSaveTextEdits = useCallback(async () => {

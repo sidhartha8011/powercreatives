@@ -67,6 +67,32 @@ function plainTextToHtml(text: string): string {
 }
 
 /**
+ * Decode HTML entities (named + numeric) back to their characters.
+ * Handles decimal (&#128640;) and hex (&#x1F680;) references so emojis and
+ * other astral-plane characters survive the HTML→text round-trip instead of
+ * being left as literal entity strings or dropped. DOM-free and deterministic
+ * (no stray-"<" reparsing issues from the textarea decode trick).
+ */
+function decodeHtmlEntities(text: string): string {
+  if (!text || text.indexOf('&') === -1) return text;
+  // Numeric references first (covers emoji code points).
+  let out = text.replace(/&#(\d+);/g, (_m, d: string) => {
+    const cp = parseInt(d, 10);
+    return Number.isFinite(cp) ? String.fromCodePoint(cp) : _m;
+  });
+  out = out.replace(/&#x([0-9a-f]+);/gi, (_m, h: string) => {
+    const cp = parseInt(h, 16);
+    return Number.isFinite(cp) ? String.fromCodePoint(cp) : _m;
+  });
+  // Common named entities.
+  const named: Record<string, string> = {
+    '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"',
+    '&apos;': "'", '&nbsp;': ' ',
+  };
+  return out.replace(/&(amp|lt|gt|quot|apos|nbsp);/g, (m) => named[m] ?? m);
+}
+
+/**
  * Convert Tiptap HTML back to plain text, preserving paragraph breaks.
  */
 function htmlToPlainText(html: string): string {
@@ -77,8 +103,8 @@ function htmlToPlainText(html: string): string {
   text = text.replace(/<br\s*\/?>/gi, '\n');
   // Strip remaining HTML tags
   text = text.replace(/<[^>]*>/g, '');
-  // Decode HTML entities
-  text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  // Decode HTML entities (incl. numeric refs) so emojis & special chars survive.
+  text = decodeHtmlEntities(text);
   return text.trim();
 }
 
