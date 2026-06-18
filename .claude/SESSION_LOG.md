@@ -1,5 +1,17 @@
 # Session Log
 
+## 2026-06-18 — Verified tables + fixes are on the pushed remote
+- **Asked:** confirm the new tables and the fixes are in the pushed repo.
+- **Tables:** `class-pcm-schema.php` on `mine/feat/seo-suite-port` has all 26
+  `wp_pcm_*` CREATE TABLE defs incl. `seo_views`, `seo_tenants`, `seo_hmac_nonces`,
+  `notifications`, `delivery_assignments`; `PCM_DB_VERSION=1.26.0`. (Tables
+  materialize in the live DB via `maybe_upgrade()`+dbDelta when the deployed
+  plugin loads — code is pushed, DB applies on deploy.)
+- **Fixes:** all 5 present on the remote (clipboard body-only, launch-lane edit,
+  emoji decodeHtmlEntities, shortcode filemtime bust, SEO bg-card). `git diff HEAD
+  mine/feat/seo-suite-port` over those paths = empty (HEAD == remote).
+- Committed + pushed this note to keep the tree clean.
+
 ## 2026-06-18 — Verified nothing left to push (full git audit)
 - **Asked:** confirm all updated code is pushed, nothing left.
 - **Audit:** working tree clean except this SESSION_LOG note; HEAD ==
