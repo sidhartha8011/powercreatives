@@ -369,11 +369,18 @@ define('PCM_CONN_HUB_URL', '__HUB_URL__');
 define('PCM_CONN_CLIENT_ID', '__CLIENT_ID__');
 define('PCM_CONN_CLIENT_SECRET', '__CLIENT_SECRET__');
 
-// On activation: create an Application Password for the current admin and
-// register with the hub via an HMAC-signed handshake.
-register_activation_hook(__FILE__, function () {
+// Register with the hub via an HMAC-signed handshake (creates an Application Password for
+// the current admin + pings the hub). Runs on activation AND, as a self-heal, on each admin
+// load until registered — so a plugin UPDATE/replace (which does NOT fire the activation
+// hook) or a transient network blip still completes the handshake. Capped to avoid creating
+// endless app passwords if the hub is permanently unreachable; outcome -> pcm_conn_status.
+function pcm_conn_register() {
+    if (get_option('pcm_conn_status') === 'registered') { return; }
     $user = wp_get_current_user();
-    if (!$user || !$user->ID) { return; }
+    if (!$user || !$user->ID || !current_user_can('manage_options')) { return; }
+    $attempts = (int) get_option('pcm_conn_attempts', 0);
+    if ($attempts >= 6) { return; }
+    update_option('pcm_conn_attempts', $attempts + 1);
     $app = null;
     if (class_exists('WP_Application_Passwords')) {
         $created = WP_Application_Passwords::create_new_application_password($user->ID, array('name' => 'Power Creatives Hub'));
@@ -421,7 +428,9 @@ register_activation_hook(__FILE__, function () {
         $status = 'failed:' . $code;
     }
     update_option('pcm_conn_status', $status);
-});
+}
+register_activation_hook(__FILE__, 'pcm_conn_register');
+add_action('admin_init', 'pcm_conn_register');
 
 // Expose SEO meta over the standard REST API so the hub can read/write it.
 add_action('init', function () {

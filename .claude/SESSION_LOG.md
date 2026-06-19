@@ -1,5 +1,19 @@
 # Session Log
 
+## 2026-06-19 — Connector self-heal (root: ping only fired on activation)
+- **Verified via Chrome:** the connector the hub now serves bakes the correct
+  ?rest_route= URL and has the multi-URL retry (deploy DID take). Yet tenant #4 stayed
+  pending/lastPingAt=null → the ping isn't firing from bestclient. Root cause: it only
+  pinged on register_activation_hook, so a plugin UPDATE/replace (no activation hook)
+  never handshakes.
+- **Fix (connector_php):** extracted pcm_conn_register(); hooked on register_activation_hook
+  AND admin_init — self-heals on the next admin load until pcm_conn_status==='registered',
+  capped at 6 attempts (no endless app passwords), records outcome, tries all URL forms.
+- **Verified:** hub php -l OK; generated connector php -l OK, contains the function +
+  admin_init hook + attempt cap + retry.
+- Needs deploy + RE-DOWNLOAD the connector. Reliable alternative remains App Password
+  (works now; connector plugin already exposes the meta).
+
 ## 2026-06-19 — Connector handshake STILL pending → resilient ping (root: deploy order)
 - **State (Chrome on hub):** App-Password "test" site was DELETED (sites=[]); new connector
   tenant id=3 pending, lastPingAt=null. hub /wp-json/=404, ?rest_route= hello=403 (reachable).
