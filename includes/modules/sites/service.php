@@ -82,7 +82,10 @@ class PCM_Sites_Service
     public static function test_connection(object $site): array
     {
         $password = self::decrypt_password($site->appPassword);
-        $url = rtrim($site->url, '/') . '/wp-json/wp/v2/users/me';
+        // Use the `?rest_route=` form, NOT pretty `/wp-json/...`: the latter 404s
+        // on remotes with plain permalinks (common on LiteSpeed / shared hosting).
+        // The query-var form always resolves regardless of permalink settings.
+        $url = rtrim($site->url, '/') . '/?rest_route=/wp/v2/users/me';
 
         $response = wp_remote_get($url, array(
             'headers' => array(
@@ -127,7 +130,9 @@ class PCM_Sites_Service
     public static function publish_to_site(object $site, object $article, int $user_id): array
     {
         $password = self::decrypt_password($site->appPassword);
-        $url = rtrim($site->url, '/') . '/wp-json/wp/v2/posts';
+        // `?rest_route=` form — works regardless of the remote's permalink settings
+        // (pretty `/wp-json/...` 404s on plain-permalink hosts). See test_connection().
+        $url = rtrim($site->url, '/') . '/?rest_route=/wp/v2/posts';
 
         // Build the WP REST API post payload
         $post_data = array(

@@ -1,5 +1,377 @@
 # Session Log
 
+## 2026-06-19 — Deploy ZIP rebuilt (carries the rest_route connection fix)
+- Fresh `npm`/vite build (dist current), then repackaged `power-creatives.zip` at the
+  project root (same name/structure: top-level `powerplatform/`). 4.7 MB, 2658 files.
+  Excludes node_modules + .claude (internal logs) + .git; keeps vendor + app/dist.
+  Verified the fixed sites/service.php (rest_route x2) and current index-writer.js are
+  inside. Upload to the live hub (Plugins → Add New → Upload → "Replace current") to
+  apply the connection fix, then re-run Test.
+
+## 2026-06-19 — FIX: site connection (App Password) — REST URL 404 on plain permalinks
+- **Checked live via Chrome connector** (create.widgetify.co hub, logged in): Sites shows
+  2 App-Password sites → bestclient.widgetify.co. Clicking **Test** → POST /pcm/v1/sites/1/test
+  → HTTP 400, toast: "Connection test failed: Authentication failed (HTTP 404)."
+- **Root cause (real code bug):** sites/service.php built remote REST URLs as
+  `{site}/wp-json/wp/v2/...`. The remote (LiteSpeed, plain permalinks) 404s that path.
+  Confirmed: `bestclient/wp-json/wp/v2/types` → 404, but `bestclient/?rest_route=/wp/v2/types`
+  → 200 (WP's own _links even advertise the rest_route form). The misleading "Authentication
+  failed" label hid that it was a 404, not a 401.
+- **Fix:** use the permalink-agnostic `?rest_route=` form in both outbound calls —
+  test_connection (`/?rest_route=/wp/v2/users/me`) and publish_to_site (`/?rest_route=/wp/v2/posts`).
+- **Verified (real remote, no auth):** OLD `/wp-json/.../users/me` → 404; NEW
+  `/?rest_route=/wp/v2/users/me` → 401 (reachable → 200 with the stored app password).
+  php -l OK. Backend-only (no rebuild).
+- ⚠️ Fix is in LOCAL code — the live hub (create.widgetify.co) needs the updated plugin
+  DEPLOYED before its Test passes. Not committed.
+
+## 2026-06-19 — Site connection diagnosis (connector) + hub-URL override
+- **Checked via Chrome connector:** local Chrome IS connected (isLocal) but sits at
+  wp-login (not authenticated) — can't enter credentials, so drove the diagnosis from
+  the live DB instead (more conclusive).
+- **Root cause (confirmed, not a code bug):** the connector ZIP bakes
+  `PCM_CONN_HUB_URL = rest_url('pcm/v1/seohub/connector/hello')` at download time =
+  `http://localhost:8080/...`. The remote site (`https://create.widgetify.co/`) can't
+  reach the user's localhost, so its activation ping never arrives. DB: seo_tenant #4
+  `pending`, `lastPing=NEVER`, wp_pcm_sites empty. This is the documented hub-must-be-
+  public limitation.
+- **Immediate fix (no code):** use Sites → Add Site → **Application Password** — the hub
+  pulls outbound (GET /wp-json/wp/v2/users/me, POST /posts) and works from localhost.
+  Or download the connector from the deployed PUBLIC hub.
+- **Code improvement shipped (seohub/service.php):** the baked hub URL is now overridable
+  for tunnel/reverse-proxy setups — honors a `PCM_SEOHUB_HUB_URL` constant and the
+  `pcm_seohub_connector_hub_url` filter (falls back to rest_url(), so no behavior change
+  in production). Verified: constant → https://hub.example.com/..., filter →
+  https://tunnel.ngrok.io/..., php -l OK. Backend-only, no rebuild. Not committed.
+
+## 2026-06-19 — SEO header/toolbar layout restructure
+- Reordered the top of the SEO module: ModuleHeader (title + description) is now FIRST,
+  the site tabs (This Site / connected sites) sit BELOW it (were above).
+- Removed the ModuleHeader `action` (Model/Post/Page) and built a dedicated content-tab
+  toolbar that sits ABOVE the nav+table: Views (left) + item count; Post, Page, Model
+  select, then the Columns dropdown (right). Because the toolbar is now above the
+  `[nav | content]` flex, the section nav (Content/AI Readiness/Site/Business) and the
+  table start at the same height.
+- Removed the "SEO source: <plugin>" indicator (pluginLabel) — and its now-unused
+  `pluginLabel` const, `SEO_PLUGIN_LABELS` import, and lucide `Search` import.
+- Model select trigger given `bg-card` to match the white View/Columns.
+- Verified: tsc 0 SEO errors (56 baseline); build clean; served live. Not committed.
+
+## 2026-06-19 — Size consistency: table filters + View/Columns + save-view
+- Unified the table-control heights to h-8 (the View/Columns "tabs" were already h-8):
+  - Column-header filter text input (ColumnHead.tsx): was raw with no fixed height → added `h-8`.
+  - Save-as-view input inside the Columns dropdown (ViewsToolbar.tsx): `h-7 text-xs` → `h-8 text-sm`.
+  - Save button (ViewsToolbar.tsx): `h-7 ... text-xs` → `h-8` (size=sm default text-sm).
+  Choice filters + column toggles already use shared DropdownMenuCheckboxItem (text-sm),
+  so the whole filter/view control set is now one size (h-8) with text-sm dropdown content.
+- Verified: tsc 0 SEO errors; build clean; served live. Not committed.
+
+## 2026-06-19 — View/Columns buttons → white (stand out from bg)
+- The View & Columns dropdown triggers are `variant="outline"` = `bg-transparent`, so they
+  showed the page background (--main-bg) through them and blended in. User wanted them white
+  to differ from the background. Added `bg-card` (pure white, oklch 1 0 0) to both triggers
+  in ViewsToolbar.tsx — they now read as white buttons with the outline border, distinct from
+  the off-white module background. Kept variant/size and the brand-blue active state.
+- Verified: tsc 0 SEO errors; build clean; served live. Not committed.
+
+## 2026-06-19 — Move section nav back to the LEFT (carded surface)
+- User wanted Content/AI Readiness/Site/Business back on the LEFT of the table (I'd moved
+  it to top horizontal Tabs in the standardization pass). Reverted to the left vertical nav
+  layout (`flex gap-6`, w-44 left rail + flex-1 content), but kept it as a real surface
+  (the "things"): the nav now lives in a `rounded-lg border bg-card p-2` panel so it no
+  longer floats, active item uses `bg-accent text-accent-foreground` (brand tokens).
+  Removed the now-unused Tabs import.
+- The other standardization (header sizes, tokenized colours, Post/Page primary, panel
+  bg-card) is unchanged.
+- Verified: 0 stray Tabs refs; tsc 0 SEO errors (56 baseline); build clean; served live.
+  Not committed.
+
+## 2026-06-19 — SEO Post/Page buttons → primary (match app create-CTA)
+- The header Post/Page create buttons were `variant="outline"` (transparent/grey) after the
+  sizing pass — off-brand vs every other module's create CTA, which is the default (filled
+  primary/brand-blue) Button (Templates/Automations/Sites/Brands/Deliveries:
+  `<Button className="gap-2"><Plus/> New X</Button>`). Dropped `variant="outline"` so both are
+  the default primary variant; kept the compact size=sm / h-8 / text-xs / Plus-3.5 from the
+  earlier sizing fix. They now read as proper brand-blue create buttons at the small size.
+- Verified: tsc 0 SEO errors; build clean; served live. Not committed.
+
+## 2026-06-19 — SEO button/element colours → brand tokens
+- **Root finding:** the theme's --primary IS blue (oklch 0.55 0.2 255). The SEO AI-staging
+  bars used raw Tailwind `blue-50/100/200/900` — an off-brand blue that didn't match the
+  brand-blue buttons. Tokenized them so all blues are the SAME brand blue:
+  - EditableCell suggestion bar, the "AI suggestions pending" bar, and OptimizeModal's
+    After-preview: `bg-blue-50/* border-blue-200 text-blue-900` → `bg-accent/* border-primary/20 text-foreground`.
+  - Broken-links count: `text-red-600` → `text-destructive` (red has a token).
+- **Deliberately kept (app-wide / semantic, not drift):** categorical status pills
+  (publish=green, pending=amber, private=purple, future=blue, draft=muted — Airtable-style),
+  green-for-Accept success buttons (no success token; same pattern as Copy/Approvals/etc.),
+  and amber/green score/readiness badges.
+- **Verified:** tsc 0 SEO errors (56 baseline); build clean; served live. Not browser-clicked
+  (WP-admin login needed). Not committed.
+
+## 2026-06-19 — SEO design-system standardization (root-cause pass)
+- **Root cause:** the SEO chrome had no single source of truth, so each feature
+  re-derived styling → size drift (h-9 vs h-8 vs h-7) + surface drift (raw transparent
+  elements where the design system gives a sized control + a real background).
+- **Header controls unified to h-8 / size="sm":** model Select (h-9→h-8), Post & Page
+  buttons (default h-9 → size="sm" h-8, text-xs, Plus 3.5) — the whole header row now
+  matches the View/Columns buttons. (index.tsx)
+- **Section nav → shared Tabs:** replaced the bare floating `<nav>` (Content/AI Readiness/
+  Site/Business) with `Tabs`/`TabsList`/`TabsTrigger` (like Settings). TabsList carries
+  bg-muted, so the bar is a real surface, not floating. Body still renders conditionally
+  on `tab`. (index.tsx)
+- **Dropdown contents unified (platform default text-sm):** ViewsToolbar's raw `<button>`
+  view items (Default, each saved view's apply, Reset layout) → shared `DropdownMenuItem`,
+  matching the Columns menu exactly. Star/trash stay as trailing icon buttons. (ViewsToolbar.tsx)
+- **Panel surfaces:** AIReadiness/Site/Business section boxes were `border` with no fill →
+  added `bg-card` so they read as boxes (table already used bg-card).
+- Going forward, all SEO toolbar controls should use Button size="sm" + DropdownMenuItem
+  (design system = the single source of truth) so this stops recurring.
+- **Decisions (asked up front):** shared Tabs · full standardization pass · platform-default
+  (text-sm) unified dropdowns.
+- **Verified:** tsc 0 SEO errors (56 baseline); build clean; served live. Not browser-clicked
+  (WP-admin login needed). Not committed.
+
+## 2026-06-19 — Left-align the header Generate (✦) button
+- The header title used `flex-1`, filling the row and pushing the Generate ✦ to the
+  far-right edge. Removed `flex-1` from both the sortable title button and the
+  non-sortable title span in ColumnHead.tsx, so each header is left-grouped:
+  filter dot → title → sort → ✦, with the ✦ beside the title (trailing space on the
+  right). Long titles still truncate (min-w-0 + truncate; flex items shrink on overflow).
+- Verified: tsc 0 SEO errors; build clean; served live. Not committed.
+
+## 2026-06-19 — Sorting + filters for the new SEO columns
+- **Sorting:** added a SeoSortKey union + expanded SORTABLE_KEYS and the
+  useSortableTable accessors to cover slug, supportingKeyword, featuredImage
+  (has/no image), internalLinks/externalLinks/brokenLinks (null = unscanned → -1),
+  and date (was the default sort but had no clickable header). toggleSort cast → SeoSortKey.
+- **Filters (seoFilters.ts):** slug → text contains; supportingKeyword → Missing/Present;
+  featuredImage → Has image / No image; date → text contains (matches post_date string,
+  e.g. "2024-06"); internal/external links → Not scanned / None / Has links;
+  brokenLinks → Not scanned / None / Has broken (new linkOptions/linkMatch helpers).
+  Filter dot + sort UI auto-render since renderHeader keys off filterDefs[key] + SORTABLE_KEYS.
+- traffic (placeholder) and preview (action) intentionally left non-sortable/non-filterable.
+- Verified: tsc 0 SEO errors (56 baseline); build clean; served live. Not committed.
+
+## 2026-06-19 — Left-align SEO table headers
+- Non-sortable column headers inherited the native <th> centered text-align (sortable
+  ones already used a text-left button), so most labels (slug, meta*, link counts,
+  traffic, preview…) looked centered. Added `text-left` to the non-sortable label span
+  in ColumnHead.tsx. Header layout is now uniformly left-anchored.
+- Verified: tsc 0 SEO errors; build clean; served live. Not committed.
+
+## 2026-06-19 — Fix: slug missing from bulk-gen toolbar + clearer link re-scan
+- **Slug generation "not there":** slug was already wired in the per-cell ✦ and the
+  header ✦ (GENERATABLE/SEO_USE_BY_COL/templatesForCol/renderCell), and the backend
+  is fully wired (field_prompts['slug'], field_use_map 'slug'→'slug', generate_field
+  reads post_name, save_cell_fields 'slug'→'post_name'). The gap was the
+  **bulk-generate toolbar** (`GEN_FIELDS`) — it listed every generatable field EXCEPT
+  slug, so selecting rows showed no Slug generate button / "Generate all" skipped it.
+  Added `{ key:'slug', label:'Slug' }` to GEN_FIELDS (column order: after Title).
+- **Link re-scan not discoverable:** scanning a row computes all three counts at once
+  (internal/external/broken — one pass over the post), which is correct; re-scan worked
+  only by clicking the count (invisible affordance). Replaced the clickable-count with
+  **count + a visible ↻ re-scan icon button** in each link cell; clarified tooltips to
+  "Scan/Re-scan all links (internal, external & broken)" so the one-pass behavior is clear.
+- **Verified:** backend slug round-trip — generate_field('slug')→slug (prior) AND
+  save_cell('slug','My Test Slug 123')→post_name 'my-test-slug-123' (then restored);
+  scanLinks already patches counts on every call (re-scan updates). tsc 0 SEO errors
+  (56 baseline); build clean; served live. Not browser-clicked (WP-admin login needed).
+- Not committed.
+
+## 2026-06-19 — SEO header polish + generate = bulk-generate the column
+- **ColumnHead.tsx:** (1) removed the leading field-type icon (T/document/etc.) —
+  `icon` prop kept for API compat but no longer rendered; (2) filter trigger is now
+  a small DOT (Optimizer style) — primary when a filter is active, muted otherwise
+  (replaced the funnel icon; dropped the `Filter` import); order is now
+  Filter • → Title → Sort → Generate ✦.
+- **Generate = generate the whole column (Optimizer behavior).** The ✦ dropdown lists
+  the column's templates; clicking one runs `handleColumnGenerate(field, templateId)`
+  which generates EVERY visible row (sortedData) with that template, staged for
+  review, with a busy spinner on the ✦ + the existing progress bar. Removed the old
+  per-column "select active template" state (`colTemplate`); the per-cell ✦ now uses
+  the section default. (`handleColumnGenerate` placed after `sortedData` to avoid a
+  TDZ/use-before-declaration error.)
+- **Verified:** tsc 0 SEO errors (56 baseline); build clean (4,394,395 B) served
+  live; bundle has the new "Generate column with…" dropdown, old "Generate with
+  template" gone. templateId→prompt resolution already verified prior task. Not
+  browser-clicked (visual).
+- Not committed.
+
+## 2026-06-19 — Per-column prompt coverage verified + SLUG generation added
+- **Verified every generatable column has its prompt** (field_use_map → field_prompts):
+  title→page_title, metaTitle→meta_title, metaDescription→meta_description,
+  primaryKeyword→primary_keyword, metaKeywords→meta_keywords, content→content(optimize).
+- **Closed the one gap — slug.** The original Optimizer AI-generated slugs; PC didn't.
+  Added: verbatim `slug` prompt (generate+optimize) to seo/prompts.php; field_use_map
+  'slug'=>'slug'; generate_field reads post_name as the current value for slug;
+  frontend GENERATABLE+SEO_USE_BY_COL add 'slug'; slug cell now has the AI
+  sparkle/stage/accept + header template picker. SEO_PROMPT_SECTIONS + TYPE_LABELS
+  gained slug_generate/slug_optimize so the Templates dialog lists them.
+- **Verified (live):** system seed now 12 (added slug gen+opt); resolve(slug_generate)
+  returns the slug prompt; all 6 generatable cols map to a present prompt; real
+  generate_field('slug') returned a slug; tsc 0 SEO errors; build 4,394,380 B served live.
+- Not committed.
+
+## 2026-06-19 — Verify: are ALL Optimizer prompt templates present + in use?
+- **Answer: the in-use (content-table) ones YES; the full original set NO.**
+- PC SEO generation has exactly TWO prompt paths — `generate_field` + `optimize_body`
+  — both resolve from the templates. The 6 content `use`s they need are all present
+  as system templates (10 incl. gen/opt) AND verbatim from the original (checked:
+  `page_title.generate` is byte-identical to Optimizer's): page_title, meta_title,
+  meta_description, meta_keywords, content(optimize). PC also ADDED `primary_keyword`
+  (not in the original). All wired to the SEO table generate + Optimize modal.
+- **Original had 5 more prompt `use`s NOT migrated:** `title` (site title),
+  `tagline` (site), `slug` (×2), `robots`, `llms`, `schema`. These have NO
+  prompt-driven consumer in PC's SEO module today (slug isn't AI-generatable in the
+  table; site-title/tagline/robots/llms/schema belong to other SEO surfaces that
+  aren't prompt-template-driven). So they're absent by design, not broken — adding
+  them as templates would be inert until their generation is also built.
+- No code changed (verification only). Open question for the user: port those 6
+  remaining prompt types + wire their generation (slug-gen in the table, site/
+  robots/llms/schema generators), or leave as-is.
+
+## 2026-06-19 — SEO prompt templates → SYSTEM seeder (userId=0, shared)
+- Switched SEO prompt-template seeding from per-user to a single SYSTEM set
+  (`userId=0`) shared with every user. `seed_seo_templates()` is now no-arg +
+  idempotent on the userId=0 set; called from `resolve_prompt` AND from the
+  templates `list_items` when `module=seo` (so the 10 templates appear in the
+  Templates UI + SEO header picker without needing a prior generate).
+- `seo_template_prompt` precedence: chosen templateId → the USER's own default →
+  the SYSTEM default → any. So a user can still create their own override; others
+  fall back to the shared system default (no leakage).
+- **Verified (live):** seed → 10 templates at userId=0; re-seed idempotent (still
+  10); 0 per-user rows; resolve works for arbitrary users (1 and 999) from the
+  shared set; user-1's own default wins for user 1 but user 999 still gets the
+  system default (no leak). php -l clean; build clean (4,393,850 B) served live;
+  system set seeded into the local DB. Not committed.
+
+## 2026-06-19 — SEO prompts → Templates migration COMPLETED (Phase 3b)
+- **Q: migrated all templates / removed SEO from the prompt editor / working from
+  Templates?** Migration data was done (10 seeded) but the prompt-editor removal +
+  Templates-UI management were NOT — now completed.
+- **Model switch:** SEO prompt templates now use the SAME shape the Templates UI
+  edits — `module=seo`, `formData.type=<section>`, one entry {category:'prompt',
+  value:<prompt>}, default-per-section via the `isDefault` column (Templates'
+  `clear_other_defaults` already enforces one default per module+type). Reworked
+  `seed_seo_templates` + `seo_template_prompt` (+ `seo_entry_prompt`) accordingly;
+  header picker reads `type`/`isDefault`.
+- **Removed SEO from the prompt editor:** deregistered 'seo' in
+  `prompts/controller.php get_default_sections` (tab gone; legacy overrides ignored)
+  + removed it from `PromptEditorSection` MODULES (+ dropped now-unused Search icon).
+- **Templates UI now manages SEO:** added 'seo' to shared `templateTypes`
+  (TEMPLATE_MODULES/TYPES[10 sections]/MODULE_LABELS/TYPE_LABELS), TemplateDialog
+  (module dropdown + badge + category auto='prompt'), Templates filter tabs, and the
+  create whitelist. SEO templates appear under an "SEO" tab; create/edit via the
+  dialog (Type = section, value = prompt).
+- **Verified (live):** prompt-editor seo sections=0; seed=10 (entries/type);
+  format_template exposes type/isDefault/entries; resolve reads from templates; REST
+  create module=seo → 201; after marking a new template default, resolve returns it
+  (CUSTOM_MT_999). tsc 0 new errors (56 baseline — the 7 Templates/index errors are
+  pre-existing); php -l clean (seo/templates/prompts); build 4,393,850 B served live.
+  Not browser-clicked.
+- Not committed.
+
+## 2026-06-19 — SEO header redesign (Optimizer-style) + template generate picker
+- **ColumnHead.tsx rewrite:** layout is now [Filter ▾ (furthest LEFT, small funnel +
+  primary active-dot)] · [type icon] · [Title + Sort] · … · [Generate ✦ (RIGHT)].
+  Generate button shows only on generatable columns; opens a dropdown of that
+  column's prompt Templates (radio, default marked "· default") — picks which
+  template the column generates with.
+- **Template selection wired end-to-end (Phase 3b selection):** index.tsx fetches
+  `templates.list({module:'seo'})`, groups by `section` startsWith `{use}_`
+  (SEO_USE_BY_COL), tracks `colTemplate[col]` and passes it as `templateId` to
+  generate. Threaded: `generateField(...,templateId)` → trpc seo.generateField body
+  → controller → `service.generate_field(...,$template_id)` → `resolve_prompt(...,$template_id)`.
+  `templates` controller `format_template` now also exposes `section`/`prompt`/
+  `sectionIsDefault` (additive; other modules get null).
+- **Interpretation chosen:** the header Generate dropdown SELECTS the template the
+  column uses; the existing per-cell ✦ (and bulk) then generate with it. (Not
+  click-to-generate-all — safer, no surprise LLM cost. Easy to switch if you wanted
+  generate-on-click.)
+- **Styling:** header background reverted to WHITE (`[&_thead_th]:bg-muted/50` →
+  `bg-card`); status pills ~20% smaller (`px-2 py-0.5 text-[11px]` → `px-1.5 py-0
+  text-[9px]`). Kept the leading field-type icon (not in spec but harmless; removing
+  it wasn't requested).
+- **Verified:** php -l (seo service+controller, templates controller) clean; tsc 0
+  errors in touched files (56 baseline); build clean (4,392,762 B) served live;
+  backend resolve(templateId=custom)→custom prompt, resolve(default)≠custom,
+  format_template exposes section. Not browser-clicked (needs logged-in SEO admin).
+- Not committed.
+
+## 2026-06-19 — SEO build Phase 3a DONE: prompts → Templates (backend, additive)
+- SEO prompts now live as Templates. `seo/service.php`: `seed_seo_templates($uid)`
+  seeds one default prompt template per section into `wp_pcm_templates`
+  (module=seo, formData={type:'prompt',section,prompt,isDefault:true}; idempotent,
+  PCM user id which matches the templates store). `resolve_prompt` rewritten to read
+  the section's chosen/default template first → legacy prompt_overrides fallback →
+  built-in default (safe, additive — nothing breaks; optional 4th arg templateId).
+  Helpers `seo_template_prompt` + `seo_section_label`.
+- **Verified (live bootstrap):** seeds 10 templates with labels (Meta Title —
+  Generate, …); resolve_prompt returns the template prompt (not fallback); editing
+  a template's prompt changes the resolved prompt (templates ARE the source). php -l
+  clean. No frontend change this step → Phase 2 bundle still current/served.
+- **Phase 3b REMAINING (frontend):** (1) manage SEO prompt templates — the GLOBAL
+  Templates UI is form-PRESET oriented (entries/types per module), NOT prompts, so
+  it needs SEO support (section + prompt + default-per-section) or a dedicated SEO
+  prompt-template editor [architecture nuance to confirm]; (2) per-section template
+  PICKER in SEO generate (pass templateId — backend already accepts it); (3) remove
+  Settings→Prompts→SEO tab ONLY after the management UI lands (else prompt editing
+  regresses). Templates create-whitelist needs 'seo' added when the UI is ready.
+- **Phase 3b decisions (locked):** EXTEND the global Templates module UI for SEO
+  prompt templates (a section + prompt editor mode when module=seo; add 'seo' to the
+  templates create whitelist + the frontend module tabs/types). Per-section template
+  PICKER in SEO generate (pass templateId — backend ready). REMOVE Settings→Prompts→SEO
+  tab in the SAME pass, only once the new editor is verified (no edit-gap). Keep
+  Copy/Image/Video preset flows intact.
+- Not committed (per build rule).
+
+## 2026-06-19 — SEO build Phase 2 DONE: link scanner (internal/external/broken)
+- Ported Optimizer's link-analyzer into `seo/service.php`: `scan_links($id)` +
+  `count_links` (internal vs external by host, relative=internal) +
+  `check_broken_links` (wp_remote_head, 405→GET, 4s timeout, cap 20). Counts cached
+  in `pcm_seo_{internal,external,broken}_links` meta + `pcm_seo_links_scanned_at`;
+  `build_row` returns them (null until scanned).
+- REST `POST /seo/content/{id}/scan-links` (controller, edit_post cap) +
+  `trpc seo.scanLinks`; `useSeoContent.scanLinks` patches the row counts into cache.
+  Frontend: 3 columns (Internal/External/Broken Links) — per-row "Scan" button →
+  count (broken in red), re-scan on click, spinner while scanning. Also restored
+  `provider` in the `seo.generateField` transform (was dropped).
+- **Verified:** php -l clean; tsc 0 errors in touched files (56 baseline); build
+  clean (4,389,329 B) served live; scan route registered; live scan on post=1
+  (0 links) + reflection test: count_links internal=2/external=2, broken=1 (the
+  .invalid) in 0.8s.
+- **Phase 3 (prompts → Templates) — NOT started yet.** Plan: seed verbatim SEO
+  prompts as templates (module=seo, formData={use,prompt}, isDefault per section);
+  `generate_field` resolves prompt from the section's default template (or a passed
+  templateId) → falls back to field_prompts default; manage in the global Templates
+  module; remove Settings→Prompts→SEO tab. Needs Templates-module UI support for
+  prompt templates + per-section selection in SEO generate — a focused pass (don't
+  remove the Prompts tab until the templates UI lands).
+- Not committed (per build rule).
+
+## 2026-06-19 — SEO build (Optimizer port): Phase 1 columns + templates plan
+- **Requirement:** add missing SEO columns from the original Optimizer Simple +
+  move SEO prompts to the Templates module. Decisions: specific columns (below);
+  prompts→templates REPLACE the Prompts→SEO tab, managed in the global Templates
+  module (module=seo). Original source confirmed at ~/Downloads/optimizer-simple.
+- **Phase 1 DONE (this turn) — 6 non-scanner columns, done inline (no subagents):**
+  - Backend `seo/service.php build_row`: added `featuredImage`
+    (get_the_post_thumbnail_url). slug/date/supportingKeyword already present +
+    slug/supportingKeyword already editable via save_cell.
+  - Frontend `SEO/index.tsx` + `types.ts`: new columns slug, featuredImage
+    (thumbnail), supportingKeyword (editable), date, traffic (placeholder — GSC
+    later), preview (popup MODAL with iframe, not a new tab). Added to
+    TOGGLE_COLUMNS/widths/icons/renderCell + previewRow modal.
+  - **Verified:** tsc 0 SEO errors (56 baseline); php -l clean; vite build clean
+    (4,386,367 B); build_row returns featuredImage; local WP serves the fresh
+    bundle (served==built). Not yet browser-clicked (needs logged-in SEO admin).
+- **Remaining:** Phase 2 = link scanner columns (internal/external/broken links —
+  port the original's content scanner + per-row scan UI). Phase 3 = prompts →
+  Templates (module=seo: name+use+prompt+isDefault per section; generate picks a
+  template; remove Settings→Prompts→SEO tab).
+- Not committed (per build rule).
+
 ## 2026-06-19 — Emoji edit: server-side safeguard (recover from raw request body)
 - **Context:** user confirms deployed-but-still-broken on live. Proven: the snapshot
   storage path is already emoji-safe on any host (wp_json_encode → ASCII), so the

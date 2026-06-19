@@ -1,16 +1,17 @@
 /**
- * ColumnHead — a SEO-table header cell with an optional sort toggle and an
- * optional per-column filter (funnel icon → dropdown). Used instead of the
- * shared SortableTableHead so sort and filter can sit side-by-side in one
- * <th> (a filter button can't be nested inside the sort <button>).
+ * ColumnHead — a SEO-table header cell laid out like the original Optimizer:
+ *   [Filter • (far left, small dot)] [Title + Sort] … [Generate ✦]
+ * No leading type icon. The Generate button (generatable columns) opens a
+ * template dropdown; picking a template generates the ENTIRE column with it.
  */
 
 import type { DragEvent, PointerEvent } from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown, Filter, X, type LucideIcon } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, X, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -30,14 +31,24 @@ interface FilterState {
   onChange: (value: string) => void;
 }
 
+/** Generate-with-template for a column: picking a template generates the whole column. */
+interface GenerateState {
+  templates: { id: number; name: string; sectionIsDefault?: boolean }[];
+  /** Generate the entire column using this template (undefined ⇒ section default). */
+  onGenerate: (templateId?: number) => void;
+  /** True while the column is generating. */
+  busy?: boolean;
+}
+
 interface ColumnHeadProps {
   label: string;
-  /** Leading field-type icon (Airtable-style), shown muted before the label. */
+  /** Accepted for API compatibility; the type icon is intentionally not rendered. */
   icon?: LucideIcon;
   width?: string;
   className?: string;
   sort?: SortState;
   filter?: FilterState;
+  generate?: GenerateState;
   // Drag-to-reorder (native HTML5 DnD) — wired by the table.
   draggable?: boolean;
   onDragStart?: (e: DragEvent<HTMLTableCellElement>) => void;
@@ -52,7 +63,7 @@ interface ColumnHeadProps {
 }
 
 export function ColumnHead({
-  label, icon: Icon, width, className, sort, filter,
+  label, width, className, sort, filter, generate,
   draggable, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, isDropTarget,
   onResizeStart,
 }: ColumnHeadProps) {
@@ -74,25 +85,16 @@ export function ColumnHead({
     >
       {isDropTarget && <span className="pointer-events-none absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />}
       <div className="flex items-center gap-1 group">
-        {Icon && <Icon className="w-3.5 h-3.5 shrink-0 text-muted-foreground/70" />}
-        {sort ? (
-          <button type="button" onClick={sort.onToggle} className="flex flex-1 min-w-0 items-center gap-1 text-left hover:text-foreground">
-            <span className="truncate">{label}</span>
-            <SortIcon className={`w-3.5 h-3.5 shrink-0 transition-opacity ${sort.active ? 'opacity-100' : 'opacity-40 group-hover:opacity-70'}`} />
-          </button>
-        ) : (
-          <span className="flex-1 min-w-0 truncate">{label}</span>
-        )}
-
+        {/* Filter — furthest left, a small dot (Optimizer style); primary when active. */}
         {filter && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 title={`Filter ${label}`}
-                className={`shrink-0 rounded p-0.5 transition-colors ${isFiltered ? 'text-primary' : 'text-muted-foreground/60 hover:text-foreground'}`}
+                className="shrink-0 rounded p-1 transition-colors hover:bg-muted"
               >
-                <Filter className="w-3 h-3" />
+                <span className={`block h-1.5 w-1.5 rounded-full transition-colors ${isFiltered ? 'bg-primary' : 'bg-muted-foreground/40 group-hover:bg-muted-foreground/70'}`} />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-48">
@@ -117,7 +119,7 @@ export function ColumnHead({
                     value={filter.value}
                     onChange={(e) => filter.onChange(e.target.value)}
                     placeholder="Contains…"
-                    className="w-full rounded-sm border-0 bg-muted/50 px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
+                    className="h-8 w-full rounded-sm border-0 bg-muted/50 px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
                   />
                 </div>
               ) : (
@@ -131,6 +133,48 @@ export function ColumnHead({
                   >
                     {o.label}
                   </DropdownMenuCheckboxItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
+        {/* Title (click to sort). Left-grouped so the Generate ✦ sits beside it,
+            not pushed to the far-right edge. */}
+        {sort ? (
+          <button type="button" onClick={sort.onToggle} className="flex min-w-0 items-center gap-1 text-left hover:text-foreground">
+            <span className="truncate">{label}</span>
+            <SortIcon className={`w-3.5 h-3.5 shrink-0 transition-opacity ${sort.active ? 'opacity-100' : 'opacity-40 group-hover:opacity-70'}`} />
+          </button>
+        ) : (
+          <span className="min-w-0 truncate text-left">{label}</span>
+        )}
+
+        {/* Generate — right edge; pick a template → generate the whole column. */}
+        {generate && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                disabled={generate.busy}
+                title={`Generate ${label} — pick a template`}
+                className="shrink-0 rounded p-0.5 text-muted-foreground/60 transition-colors hover:text-primary disabled:opacity-60"
+              >
+                {generate.busy
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                  : <Sparkles className="w-3.5 h-3.5" />}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Generate column with…</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {generate.templates.length === 0 ? (
+                <div className="px-2 py-1.5 text-xs text-muted-foreground">No templates yet</div>
+              ) : (
+                generate.templates.map((t) => (
+                  <DropdownMenuItem key={t.id} onSelect={() => generate.onGenerate(t.id)}>
+                    {t.name}{t.sectionIsDefault ? ' · default' : ''}
+                  </DropdownMenuItem>
                 ))
               )}
             </DropdownMenuContent>

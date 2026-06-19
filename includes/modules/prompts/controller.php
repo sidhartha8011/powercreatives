@@ -672,16 +672,9 @@ class PCM_REST_Prompts extends PCM_REST_Base
             'image' => array('prompt_suggestions_system', 'prompt_suggestions', 'context_suggestions_system', 'context_suggestions', 'concept_suggestions', 'concept_suggestions_user', 'brief_optimization', 'brief_optimization_user', 'final_prompt'),
             'video' => array('concept_suggestions', 'compose', 'enhance'),
             'writer' => array('writer_system', 'writer_user'),
-            // SEO: one section per field × mode (generate/optimize). Content
-            // comes from includes/modules/seo/prompts.php (verbatim source port).
-            'seo' => array(
-                'page_title_generate', 'page_title_optimize',
-                'meta_title_generate', 'meta_title_optimize',
-                'meta_description_generate', 'meta_description_optimize',
-                'meta_keywords_generate',
-                'primary_keyword_generate', 'primary_keyword_optimize',
-                'content_optimize',
-            ),
+            // SEO prompts moved to the Templates module (module=seo) — deregistered
+            // here so the Prompt Editor no longer shows an SEO tab. Any legacy
+            // prompt_overrides rows for 'seo' are ignored.
         );
 
         return $registry[$module] ?? array();

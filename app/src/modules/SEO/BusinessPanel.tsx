@@ -110,7 +110,7 @@ export function BusinessPanel() {
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Webhook config */}
-      <section className="rounded-xl border border-border p-4 space-y-2">
+      <section className="rounded-xl border border-border bg-card p-4 space-y-2">
         <Label className="text-sm font-medium">GBP fetch webhook (n8n)</Label>
         <p className="text-xs text-muted-foreground">The provider is swappable — a direct Google Places client can replace this later without changing anything else.</p>
         <div className="flex gap-2">
@@ -120,7 +120,7 @@ export function BusinessPanel() {
       </section>
 
       {/* Brand + search */}
-      <section className="rounded-xl border border-border p-4 space-y-3">
+      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div className="grid grid-cols-[200px_1fr] gap-3">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Brand (client)</Label>
@@ -159,7 +159,7 @@ export function BusinessPanel() {
 
       {/* Stored record + overrides */}
       {brandId && hasRecord && (
-        <section className="rounded-xl border border-border p-4 space-y-3">
+        <section className="rounded-xl border border-border bg-card p-4 space-y-3">
           <Label className="text-sm font-medium flex items-center gap-1.5"><Building2 className="w-4 h-4" /> Business details (editable)</Label>
           <p className="text-xs text-muted-foreground">Edits override the fetched data and survive a refresh.</p>
           <div className="grid grid-cols-2 gap-3">

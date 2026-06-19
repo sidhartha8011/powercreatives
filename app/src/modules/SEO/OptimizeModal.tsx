@@ -108,7 +108,7 @@ export function OptimizeModal({
             {optimized ? (
               <>
                 <ScoreList html={optimized} keyword={keyword} />
-                <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-2 text-xs max-h-64 overflow-y-auto prose prose-sm" dangerouslySetInnerHTML={{ __html: optimized }} />
+                <div className="rounded-lg border border-primary/20 bg-accent/40 p-2 text-xs max-h-64 overflow-y-auto prose prose-sm" dangerouslySetInnerHTML={{ __html: optimized }} />
               </>
             ) : (
               <div className="flex items-center justify-center h-40 rounded-lg border border-dashed border-border text-xs text-muted-foreground">

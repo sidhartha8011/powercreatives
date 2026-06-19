@@ -129,6 +129,7 @@ const MODULE_BADGE_COLORS: Record<TemplateModule, string> = {
   image: "bg-purple-50 text-purple-700 border-purple-200",
   video: "bg-amber-50 text-amber-700 border-amber-200",
   writer: "bg-teal-50 text-teal-700 border-teal-200",
+  seo: "bg-sky-50 text-sky-700 border-sky-200",
 };
 
 // ============================================
@@ -432,7 +433,7 @@ export function TemplateDialog({
     if (types && types.length > 0 && !types.find((t) => t.value === type)) {
       setType(types[0].value);
     }
-    if (module === "video") {
+    if (module === "video" || module === "seo") {
       setSelectedCategory("prompt");
     }
   }, [module]);
@@ -597,7 +598,7 @@ export function TemplateDialog({
             </p>
 
             {/* Module + Type dropdowns (+ Category for non-video modules) */}
-            <div className={`grid ${module === "video" ? "grid-cols-2" : "grid-cols-3"} gap-2`}>
+            <div className={`grid ${module === "video" || module === "seo" ? "grid-cols-2" : "grid-cols-3"} gap-2`}>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Module</Label>
                 <Select
@@ -613,6 +614,7 @@ export function TemplateDialog({
                     <SelectItem value="image">Image</SelectItem>
                     <SelectItem value="video">Video</SelectItem>
                     <SelectItem value="writer">Writer</SelectItem>
+                    <SelectItem value="seo">SEO</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -637,8 +639,8 @@ export function TemplateDialog({
                 </Select>
               </div>
 
-              {/* Category dropdown — only for Copy/Image (Video auto-defaults to 'prompt') */}
-              {module !== "video" && (
+              {/* Category dropdown — only for Copy/Image (Video & SEO auto-default to 'prompt') */}
+              {module !== "video" && module !== "seo" && (
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">
                     Category

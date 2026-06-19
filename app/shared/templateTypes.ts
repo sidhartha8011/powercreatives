@@ -87,14 +87,26 @@ export interface TemplateEntry {
 //   both derive their options from these constants automatically.
 // ============================================
 
-export const TEMPLATE_MODULES = ["copy", "image", "video", "writer"] as const;
+export const TEMPLATE_MODULES = ["copy", "image", "video", "writer", "seo"] as const;
 export type TemplateModule = (typeof TEMPLATE_MODULES)[number];
+
+/** SEO prompt-template sections (each = one generatable field × mode). */
+export const SEO_PROMPT_SECTIONS = [
+  "page_title_generate", "page_title_optimize",
+  "slug_generate", "slug_optimize",
+  "meta_title_generate", "meta_title_optimize",
+  "meta_description_generate", "meta_description_optimize",
+  "meta_keywords_generate",
+  "primary_keyword_generate", "primary_keyword_optimize",
+  "content_optimize",
+] as const;
 
 export const TEMPLATE_TYPES: Record<TemplateModule, string[]> = {
   copy: ["social_ads", "social_organic"],
   image: ["generation", "editing"],
   video: ["scene", "recipe", "enhance"],
   writer: ["generation", "research", "outline"],
+  seo: [...SEO_PROMPT_SECTIONS],
 };
 
 export const MODULE_LABELS: Record<TemplateModule, string> = {
@@ -102,6 +114,7 @@ export const MODULE_LABELS: Record<TemplateModule, string> = {
   image: "Image",
   video: "Video",
   writer: "Writer",
+  seo: "SEO",
 };
 
 export const TYPE_LABELS: Record<string, string> = {
@@ -114,6 +127,18 @@ export const TYPE_LABELS: Record<string, string> = {
   enhance: "Enhancement",
   research: "Research Pattern",
   outline: "Outline Structure",
+  page_title_generate: "Page Title — Generate",
+  page_title_optimize: "Page Title — Optimize",
+  slug_generate: "Slug — Generate",
+  slug_optimize: "Slug — Optimize",
+  meta_title_generate: "Meta Title — Generate",
+  meta_title_optimize: "Meta Title — Optimize",
+  meta_description_generate: "Meta Description — Generate",
+  meta_description_optimize: "Meta Description — Optimize",
+  meta_keywords_generate: "Meta Keywords — Generate",
+  primary_keyword_generate: "Primary Keyword — Generate",
+  primary_keyword_optimize: "Primary Keyword — Optimize",
+  content_optimize: "Content — Optimize",
 };
 
 // ============================================

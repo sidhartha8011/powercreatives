@@ -13,6 +13,7 @@ export interface SeoRow {
   author: string;
   permalink: string;
   editUrl: string;
+  featuredImage: string;
   excerpt: string;
   metaTitle: string;
   metaDescription: string;
@@ -21,6 +22,11 @@ export interface SeoRow {
   supportingKeyword: string;
   clusterLabel: string;
   schemaTypes: string[];
+  /** Link-scan counts — null until the row has been scanned. */
+  internalLinks: number | null;
+  externalLinks: number | null;
+  brokenLinks: number | null;
+  linksScannedAt: string;
 }
 
 /** Schema.org types a post can advertise (matches PCM_SEO_Schema::TYPES). */

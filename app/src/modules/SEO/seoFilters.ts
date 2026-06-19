@@ -55,6 +55,26 @@ function presenceMatch(field: keyof SeoRow, limit?: number) {
   };
 }
 
+/** Not-scanned / none / some choices for a scanned link-count column (number|null). */
+function linkOptions(someLabel: string): FilterOption[] {
+  return [
+    { value: 'unscanned', label: 'Not scanned' },
+    { value: 'none', label: 'None' },
+    { value: 'some', label: someLabel },
+  ];
+}
+
+/** Match a link-count value (null = not scanned) against a not-scanned/none/some choice. */
+function linkMatch(field: keyof SeoRow) {
+  return (row: SeoRow, value: string): boolean => {
+    const v = row[field];
+    if (value === 'unscanned') return v == null;
+    if (value === 'none') return v === 0;
+    if (value === 'some') return typeof v === 'number' && v > 0;
+    return true;
+  };
+}
+
 /**
  * Build the { columnKey → FilterDef } map. Choice lists for type/status/author
  * come from the server `options` payload (fall back to sensible defaults).
@@ -79,5 +99,18 @@ export function buildFilterDefs(options: SeoOptions | null): Record<string, Filt
       match: (r, v) => (v === 'has' ? (r.schemaTypes?.length ?? 0) > 0 : (r.schemaTypes?.length ?? 0) === 0),
     },
     author: { key: 'author', kind: 'choice', options: authorOpts, match: (r, v) => String(r.authorId) === v },
+    // New columns.
+    slug: { key: 'slug', kind: 'text', match: (r, v) => String(r.slug ?? '').toLowerCase().includes(v.toLowerCase()) },
+    supportingKeyword: { key: 'supportingKeyword', kind: 'choice', options: presenceOptions(), match: presenceMatch('supportingKeyword') },
+    featuredImage: {
+      key: 'featuredImage',
+      kind: 'choice',
+      options: [{ value: 'has', label: 'Has image' }, { value: 'none', label: 'No image' }],
+      match: (r, v) => (v === 'has' ? String(r.featuredImage ?? '') !== '' : String(r.featuredImage ?? '') === ''),
+    },
+    date: { key: 'date', kind: 'text', match: (r, v) => String(r.date ?? '').toLowerCase().includes(v.toLowerCase()) },
+    internalLinks: { key: 'internalLinks', kind: 'choice', options: linkOptions('Has links'), match: linkMatch('internalLinks') },
+    externalLinks: { key: 'externalLinks', kind: 'choice', options: linkOptions('Has links'), match: linkMatch('externalLinks') },
+    brokenLinks: { key: 'brokenLinks', kind: 'choice', options: linkOptions('Has broken'), match: linkMatch('brokenLinks') },
   };
 }

@@ -28,7 +28,9 @@ export interface UseSeoContentResult {
   bulkDelete: (ids: number[]) => Promise<void>;
   /** AI-suggest a field value (NOT saved — caller stages it). Resolves to the text.
    *  Optional model/provider override routes generation to a specific model. */
-  generateField: (id: number, field: string, model?: string, provider?: string) => Promise<string>;
+  generateField: (id: number, field: string, model?: string, provider?: string, templateId?: number) => Promise<string>;
+  /** Scan a row's links (internal/external/broken) and patch the counts into the cache. */
+  scanLinks: (id: number) => Promise<void>;
 }
 
 export function useSeoContent(): UseSeoContentResult {
@@ -55,6 +57,7 @@ export function useSeoContent(): UseSeoContentResult {
   const quickCreateMutation = trpc.seo.quickCreate.useMutation();
   const bulkDeleteMutation = trpc.seo.bulkDelete.useMutation();
   const generateMutation = trpc.seo.generateField.useMutation();
+  const scanMutation = trpc.seo.scanLinks.useMutation();
 
   const invalidate = useCallback(
     () => queryClient.invalidateQueries({ queryKey: LIST_PREFIX }),
@@ -114,15 +117,43 @@ export function useSeoContent(): UseSeoContentResult {
   );
 
   const generateField = useCallback(
-    (id: number, field: string, model?: string, provider?: string): Promise<string> =>
+    (id: number, field: string, model?: string, provider?: string, templateId?: number): Promise<string> =>
       generateMutation
-        .mutateAsync({ id, field, ...(model ? { model, provider } : {}) })
+        .mutateAsync({ id, field, ...(model ? { model, provider } : {}), ...(templateId ? { templateId } : {}) })
         .then((res: any) => String(res?.value ?? ''))
         .catch((err: unknown) => {
           toast.error(err instanceof Error ? err.message : 'AI generation failed');
           throw err;
         }),
     [generateMutation],
+  );
+
+  const scanLinks = useCallback(
+    (id: number): Promise<void> =>
+      scanMutation
+        .mutateAsync({ id })
+        .then((res: any) => {
+          queryClient.setQueriesData<SeoRow[]>({ queryKey: LIST_PREFIX }, (prev) =>
+            Array.isArray(prev)
+              ? prev.map((r) =>
+                  Number(r.id) === id
+                    ? {
+                        ...r,
+                        internalLinks: Number(res?.internal ?? 0),
+                        externalLinks: Number(res?.external ?? 0),
+                        brokenLinks: Number(res?.broken ?? 0),
+                        linksScannedAt: String(res?.scannedAt ?? ''),
+                      }
+                    : r,
+                )
+              : prev,
+          );
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'Link scan failed');
+          throw err;
+        }),
+    [scanMutation, queryClient],
   );
 
   return {
@@ -134,5 +165,6 @@ export function useSeoContent(): UseSeoContentResult {
     quickCreate,
     bulkDelete,
     generateField,
+    scanLinks,
   };
 }

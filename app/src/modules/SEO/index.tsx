@@ -14,8 +14,9 @@ import {
   type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes, type TableHTMLAttributes,
 } from 'react';
 import {
-  Plus, Trash2, ExternalLink, Loader2, Search, Sparkles, Check, X, Globe, RefreshCw,
+  Plus, Trash2, ExternalLink, Loader2, Sparkles, Check, X, Globe, RefreshCw,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
+  Image as ImageIcon, Link2, Calendar, TrendingUp, Eye, Unlink,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -42,7 +43,7 @@ import { SiteSettingsPanel } from './SiteSettingsPanel';
 import { BusinessPanel } from './BusinessPanel';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
-import { SEO_TEXT_FIELDS, SEO_PLUGIN_LABELS, type SeoRow } from './types';
+import { SEO_TEXT_FIELDS, type SeoRow } from './types';
 
 // ── Plain spreadsheet primitives ──
 // Bare <table> elements (NOT shadcn's Table, which forces h-12/p-4/border-b-only/
@@ -97,8 +98,8 @@ function EditableCell({
   // Staged AI suggestion → show new value with accept / reject.
   if (suggestion != null) {
     return (
-      <div className="space-y-1 rounded-md bg-blue-50/70 border border-blue-200 p-1.5">
-        <div className="text-xs text-blue-900 break-words whitespace-normal" title={suggestion}>{suggestion}</div>
+      <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
+        <div className="text-xs text-foreground break-words whitespace-normal" title={suggestion}>{suggestion}</div>
         <div className="flex items-center gap-1">
           <button type="button" onClick={onAccept} disabled={generating} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
             <Check className="w-3 h-3" /> Accept
@@ -188,10 +189,16 @@ function RemoteSitePlaceholder({ siteName, siteUrl, section }: { siteName: strin
 }
 
 /** Cell fields that support AI generation (every editable text column). */
-const GENERATABLE = new Set(['title', 'metaTitle', 'metaDescription', 'primaryKeyword', 'metaKeywords']);
+const GENERATABLE = new Set(['title', 'slug', 'metaTitle', 'metaDescription', 'primaryKeyword', 'metaKeywords']);
+/** Column key → the prompt `use` base (templates are keyed `{use}_{generate|optimize}`). */
+const SEO_USE_BY_COL: Record<string, string> = {
+  title: 'page_title', slug: 'slug', metaTitle: 'meta_title', metaDescription: 'meta_description',
+  primaryKeyword: 'primary_keyword', metaKeywords: 'meta_keywords',
+};
 /** Generatable fields for the bulk toolbar (key → short label). */
 const GEN_FIELDS: { key: string; label: string }[] = [
   { key: 'title', label: 'Title' },
+  { key: 'slug', label: 'Slug' },
   { key: 'metaTitle', label: 'Meta Title' },
   { key: 'metaDescription', label: 'Meta Desc' },
   { key: 'primaryKeyword', label: 'Primary KW' },
@@ -222,10 +229,19 @@ function statusBadgeClass(status: string): string {
 const TOGGLE_COLUMNS: { key: string; label: string }[] = [
   { key: 'type', label: 'Type' },
   { key: 'title', label: 'Title' },
+  { key: 'slug', label: 'Slug' },
+  { key: 'featuredImage', label: 'Image' },
   { key: 'status', label: 'Status' },
   ...SEO_TEXT_FIELDS.map((f) => ({ key: f.key as string, label: f.label })),
+  { key: 'supportingKeyword', label: 'Supporting KW' },
   { key: 'schema', label: 'Schema' },
+  { key: 'internalLinks', label: 'Internal Links' },
+  { key: 'externalLinks', label: 'External Links' },
+  { key: 'brokenLinks', label: 'Broken Links' },
+  { key: 'date', label: 'Date' },
+  { key: 'traffic', label: 'Traffic' },
   { key: 'author', label: 'Author' },
+  { key: 'preview', label: 'Preview' },
   { key: 'open', label: 'Open' },
 ];
 
@@ -236,23 +252,37 @@ const COLUMN_KEYS = TOGGLE_COLUMNS.map((c) => c.key);
 const COLUMN_LABELS: Record<string, string> = Object.fromEntries(TOGGLE_COLUMNS.map((c) => [c.key, c.label]));
 /** key → text-field descriptor (the AI-editable meta columns). */
 const TEXT_FIELD_BY_KEY = Object.fromEntries(SEO_TEXT_FIELDS.map((f) => [f.key as string, f]));
+/** Columns the table can sort by — each must have an accessor in useSortableTable. */
+type SeoSortKey =
+  | 'title' | 'type' | 'status' | 'date'
+  | 'slug' | 'supportingKeyword' | 'featuredImage'
+  | 'internalLinks' | 'externalLinks' | 'brokenLinks';
 /** Columns that support click-to-sort. */
-const SORTABLE_KEYS = new Set(['type', 'title', 'status']);
+const SORTABLE_KEYS = new Set<string>([
+  'type', 'title', 'status', 'date',
+  'slug', 'supportingKeyword', 'featuredImage',
+  'internalLinks', 'externalLinks', 'brokenLinks',
+]);
 /** Leading header icon per column. */
 const HEAD_ICONS: Record<string, LucideIcon> = {
-  type: FileText, title: Type, status: CircleDot, schema: Braces, author: User, ...FIELD_ICONS,
+  type: FileText, title: Type, status: CircleDot, schema: Braces, author: User,
+  slug: Link2, featuredImage: ImageIcon, supportingKeyword: KeyRound,
+  date: Calendar, traffic: TrendingUp, preview: Eye,
+  internalLinks: Link2, externalLinks: ExternalLink, brokenLinks: Unlink, ...FIELD_ICONS,
 };
 /** Default px width per column (seeds the spreadsheet layout on first use). */
 const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
-  type: 90, title: 240, status: 120,
+  type: 90, title: 240, slug: 160, featuredImage: 72, status: 120,
   metaTitle: 200, metaDescription: 260, primaryKeyword: 150, metaKeywords: 180,
-  schema: 150, author: 120, open: 80,
+  supportingKeyword: 150, schema: 150, date: 120, traffic: 90, author: 120,
+  internalLinks: 110, externalLinks: 110, brokenLinks: 110,
+  preview: 72, open: 80,
 };
 /** Fixed leading selection/row-number column (not reorderable/resizable). */
 const SELECT_COL_WIDTH = 44;
 
 export function SEOModule() {
-  const { rows, options, isLoading, saveCell, quickCreate, bulkDelete, generateField } = useSeoContent();
+  const { rows, options, isLoading, saveCell, quickCreate, bulkDelete, generateField, scanLinks } = useSeoContent();
 
   // Text models available for AI generation (registry). The user picks one in the
   // header dropdown; its id+provider is sent with every generate call so that
@@ -277,6 +307,19 @@ export function SEOModule() {
     try { localStorage.setItem('pcm:seo:gen-model', id); } catch { /* ignore */ }
   }, []);
   const genProvider = textModels.find((m) => m.id === genModelId)?.provider;
+
+  // SEO prompt templates (module=seo) → the per-column "generate with template" picker.
+  const { data: seoTemplatesRaw } = trpc.templates.list.useQuery({ module: 'seo' }, { staleTime: 30_000 }) as { data?: any[] };
+  const seoTemplates = useMemo(() => (Array.isArray(seoTemplatesRaw) ? seoTemplatesRaw : []), [seoTemplatesRaw]);
+  /** Which column is currently bulk-generating (header ✦ → pick template → whole column). */
+  const [columnGenerating, setColumnGenerating] = useState<string | null>(null);
+  const templatesForCol = useCallback((col: string) => {
+    const use = SEO_USE_BY_COL[col];
+    if (!use) return [] as { id: number; name: string; sectionIsDefault?: boolean }[];
+    return seoTemplates
+      .filter((t: any) => typeof t.type === 'string' && t.type.startsWith(use + '_'))
+      .map((t: any) => ({ id: Number(t.id), name: String(t.name), sectionIsDefault: !!t.isDefault }));
+  }, [seoTemplates]);
 
   // Default generation model comes from Settings → Module Defaults → "SEO Module"
   // (mirrors Writer/Copy). A configured default is applied on load; the header
@@ -359,6 +402,14 @@ export function SEOModule() {
   // Optimistic per-row schema-type overrides (SchemaCell persists via REST).
   const [schemaOverrides, setSchemaOverrides] = useState<Record<number, string[]>>({});
   const [optimizeRow, setOptimizeRow] = useState<SeoRow | null>(null);
+  const [previewRow, setPreviewRow] = useState<SeoRow | null>(null);
+  const [scanningRows, setScanningRows] = useState<Set<number>>(() => new Set());
+  const handleScan = useCallback((id: number) => {
+    setScanningRows((s) => { if (s.has(id)) return s; const n = new Set(s); n.add(id); return n; });
+    scanLinks(id).finally(() =>
+      setScanningRows((s) => { const n = new Set(s); n.delete(id); return n; }),
+    );
+  }, [scanLinks]);
   // AI staging: suggestions keyed `${id}:${field}`, plus the in-flight key.
   const [staged, setStaged] = useState<Record<string, string>>({});
   const [genKey, setGenKey] = useState<string | null>(null);
@@ -435,7 +486,7 @@ export function SEOModule() {
 
   const filtered = useMemo(() => apply(rows, filterDefs), [rows, apply, filterDefs]);
 
-  const { sortKey, sortDir, toggleSort, sortedData } = useSortableTable<SeoRow, 'title' | 'type' | 'status' | 'date'>(
+  const { sortKey, sortDir, toggleSort, sortedData } = useSortableTable<SeoRow, SeoSortKey>(
     filtered,
     {
       defaultKey: 'date',
@@ -445,6 +496,13 @@ export function SEOModule() {
         type: (r) => r.type,
         status: (r) => r.status,
         date: (r) => new Date(r.date).getTime(),
+        slug: (r) => r.slug.toLowerCase(),
+        supportingKeyword: (r) => r.supportingKeyword.toLowerCase(),
+        featuredImage: (r) => (r.featuredImage ? 1 : 0),
+        // Unscanned (null) sorts below 0 so scanned rows group together.
+        internalLinks: (r) => r.internalLinks ?? -1,
+        externalLinks: (r) => r.externalLinks ?? -1,
+        brokenLinks: (r) => r.brokenLinks ?? -1,
       },
     },
   );
@@ -452,6 +510,31 @@ export function SEOModule() {
   const visibleIds = sortedData.map((r) => r.id);
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someSelected = selected.size > 0 && !allSelected;
+
+  // Header ✦ → pick a template → generate the ENTIRE column (every visible row)
+  // with that template, staging each result for review (Optimizer behavior).
+  const handleColumnGenerate = useCallback(async (field: string, templateId?: number) => {
+    if (columnGenerating) return;
+    const ids = sortedData.map((r) => r.id);
+    if (ids.length === 0) return;
+    setColumnGenerating(field);
+    const total = ids.length;
+    let done = 0;
+    setProgress({ done, total });
+    for (const id of ids) {
+      const key = `${id}:${field}`;
+      setGenKey(key);
+      try {
+        const value = await generateField(id, field, genModelId || undefined, genProvider, templateId);
+        setStaged((s) => ({ ...s, [key]: value }));
+      } catch { /* toast in hook */ }
+      done += 1;
+      setProgress({ done, total });
+    }
+    setGenKey(null);
+    setProgress(null);
+    setColumnGenerating(null);
+  }, [columnGenerating, sortedData, generateField, genModelId, genProvider]);
 
   const toggleAll = () =>
     setSelected((prev) => {
@@ -481,8 +564,6 @@ export function SEOModule() {
     setBusy(true);
     try { await quickCreate(type); } catch { /* surfaced */ } finally { setBusy(false); }
   }, [quickCreate]);
-
-  const pluginLabel = options ? (SEO_PLUGIN_LABELS[options.seoPlugin] ?? options.seoPlugin) : '';
 
   // Columns in saved order, minus any hidden via the Columns menu.
   const orderedCols = colOrder.filter((k) => vis(k));
@@ -516,10 +597,17 @@ export function SEOModule() {
         icon={HEAD_ICONS[key]}
         className={key === 'open' ? 'text-center' : undefined}
         sort={sortable
-          ? { active: sortKey === key, dir: sortDir, onToggle: () => toggleSort(key as 'type' | 'title' | 'status') }
+          ? { active: sortKey === key, dir: sortDir, onToggle: () => toggleSort(key as SeoSortKey) }
           : undefined}
         filter={key !== 'open' && def
           ? { def, value: filterValues[key] ?? '', onChange: (v) => setFilter(key, v) }
+          : undefined}
+        generate={GENERATABLE.has(key)
+          ? {
+              templates: templatesForCol(key),
+              busy: columnGenerating === key,
+              onGenerate: (tid?: number) => handleColumnGenerate(key, tid),
+            }
           : undefined}
         draggable
         onDragStart={(e) => { setDragKey(key); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', key); } catch { /* IE */ } }}
@@ -563,7 +651,7 @@ export function SEOModule() {
           <TableCell key={key}>
             <Select value={row.status} onValueChange={(v) => saveCell(row.id, 'status', v)}>
               <SelectTrigger className="h-full w-full border-0 rounded-none bg-transparent px-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
-                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${statusBadgeClass(row.status)}`}>{row.status}</span>
+                <span className={`inline-flex items-center rounded-full px-1.5 py-0 text-[9px] font-medium capitalize ${statusBadgeClass(row.status)}`}>{row.status}</span>
               </SelectTrigger>
               <SelectContent>
                 {(options?.statuses ?? ['publish', 'draft', 'pending', 'private', 'future']).map((s) => (
@@ -585,6 +673,91 @@ export function SEOModule() {
         );
       case 'author':
         return <TableCell key={key} className="text-xs text-muted-foreground">{row.author}</TableCell>;
+      case 'slug': {
+        const ckey = `${row.id}:slug`;
+        return (
+          <TableCell key={key}>
+            <EditableCell
+              value={row.slug}
+              placeholder="slug"
+              onSave={(v) => saveCell(row.id, 'slug', v)}
+              onGenerate={() => handleGenerate(row.id, 'slug')}
+              generating={genKey === ckey}
+              suggestion={staged[ckey] ?? null}
+              onAccept={() => acceptStaged(row.id, 'slug')}
+              onReject={() => rejectStaged(row.id, 'slug')}
+            />
+          </TableCell>
+        );
+      }
+      case 'supportingKeyword':
+        return (
+          <TableCell key={key}>
+            <EditableCell value={row.supportingKeyword} placeholder="Supporting KW" onSave={(v) => saveCell(row.id, 'supportingKeyword', v)} />
+          </TableCell>
+        );
+      case 'featuredImage':
+        return (
+          <TableCell key={key} className="text-center">
+            {row.featuredImage
+              ? <img src={row.featuredImage} alt="" loading="lazy" className="inline-block h-8 w-8 rounded object-cover align-middle" />
+              : <span className="text-xs text-muted-foreground">—</span>}
+          </TableCell>
+        );
+      case 'date':
+        return (
+          <TableCell key={key} className="whitespace-nowrap text-xs text-muted-foreground">
+            {row.date ? new Date(row.date.replace(' ', 'T')).toLocaleDateString() : '—'}
+          </TableCell>
+        );
+      case 'traffic':
+        // Placeholder — real data arrives with the Google Search Console connector.
+        return (
+          <TableCell key={key} className="text-center text-xs text-muted-foreground" title="Search traffic — connect Google Search Console (coming soon)">—</TableCell>
+        );
+      case 'internalLinks':
+      case 'externalLinks':
+      case 'brokenLinks': {
+        const scanning = scanningRows.has(row.id);
+        const scanned = !!row.linksScannedAt;
+        const value = key === 'internalLinks' ? row.internalLinks : key === 'externalLinks' ? row.externalLinks : row.brokenLinks;
+        const isBroken = key === 'brokenLinks';
+        return (
+          <TableCell key={key} className="text-center text-xs">
+            {scanning ? (
+              <Loader2 className="inline-block w-3.5 h-3.5 animate-spin text-primary" />
+            ) : scanned ? (
+              <span className="inline-flex items-center justify-center gap-1">
+                <span className={isBroken && (value ?? 0) > 0 ? 'font-semibold text-destructive' : 'text-muted-foreground'}>{value ?? 0}</span>
+                <button
+                  type="button"
+                  onClick={() => handleScan(row.id)}
+                  title="Re-scan links (internal, external & broken)"
+                  className="shrink-0 text-muted-foreground/40 transition-colors hover:text-primary"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              </span>
+            ) : (
+              <button type="button" onClick={() => handleScan(row.id)} className="text-[11px] text-primary hover:underline" title="Scan all links (internal, external & broken)">Scan</button>
+            )}
+          </TableCell>
+        );
+      }
+      case 'preview':
+        return (
+          <TableCell key={key} className="text-center">
+            <button
+              type="button"
+              onClick={() => setPreviewRow(row)}
+              disabled={!row.permalink}
+              className="text-muted-foreground hover:text-primary disabled:opacity-40"
+              title="Preview page"
+            >
+              <Eye className="w-3.5 h-3.5" />
+            </button>
+          </TableCell>
+        );
       case 'open':
         return (
           <TableCell key={key} className="text-center">
@@ -631,9 +804,14 @@ export function SEOModule() {
 
   return (
     <div className="module-container animate-fade-in">
-      {/* Site tabs — the local install + every connected site, sitting ABOVE the
-          title. Each tab is its own SEO workbench: the title, section tabs, and
-          content below all reflect the selected site. */}
+      {/* Title + description at the top. */}
+      <ModuleHeader
+        title="SEO"
+        description="Optimize the SEO meta of your site's posts and pages — inline, across Yoast / Rank Math / SEOPress."
+      />
+
+      {/* Site tabs — the local install + every connected site (below the title).
+          Each tab is its own SEO workbench. */}
       <div className="flex gap-1 mb-4 border-b border-border overflow-x-auto">
         <button
           type="button"
@@ -656,55 +834,95 @@ export function SEOModule() {
         ))}
       </div>
 
-      <ModuleHeader
-        title="SEO"
-        description="Optimize the SEO meta of your site's posts and pages — inline, across Yoast / Rank Math / SEOPress."
-        action={
-          tab === 'content' && isLocal ? (
-            <div className="flex items-center gap-2">
-              <Select
-                value={genModelId || '__default__'}
-                onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
-              >
-                <SelectTrigger className="h-9 w-[190px] text-xs" title="Model used for AI generation">
-                  <Sparkles className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-                  <SelectValue placeholder="Model" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__default__" className="text-xs">Default model</SelectItem>
-                  {textModels.map((m) => (
-                    <SelectItem key={m.id} value={m.id} className="text-xs">
-                      {m.name} <span className="text-muted-foreground">({m.provider})</span>
-                    </SelectItem>
-                  ))}
-                  {textModels.length === 0 && (
-                    <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
-                      No text models yet — add one in the Models tab.
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
-              <Button variant="outline" onClick={() => handleCreate('post')} disabled={busy} className="gap-1.5">
-                <Plus className="w-4 h-4" /> Post
-              </Button>
-              <Button variant="outline" onClick={() => handleCreate('page')} disabled={busy} className="gap-1.5">
-                <Plus className="w-4 h-4" /> Page
-              </Button>
+      {/* Content toolbar (content tab only): Views (left) · Post / Page / Model +
+          Columns (right). Sits above the nav+table so the section nav and table
+          start at the same height. */}
+      {tab === 'content' && isLocal && (
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <div className="flex items-center gap-3">
+            <ViewsToolbar
+              show="views"
+              columns={TOGGLE_COLUMNS}
+              visible={cols}
+              onToggleColumn={toggleCol}
+              views={views}
+              appliedViewId={appliedViewId}
+              onApplyView={applyView}
+              onResetView={resetView}
+              onSaveView={handleSaveView}
+              onDeleteView={handleDeleteView}
+              onSetDefaultView={handleSetDefaultView}
+            />
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {activeCount > 0 ? (
+                <>
+                  <span>{sortedData.length} of {rows.length} shown</span>
+                  <button type="button" onClick={clearAll} className="inline-flex items-center gap-1 text-primary hover:underline">
+                    <X className="w-3.5 h-3.5" /> Clear filters ({activeCount})
+                  </button>
+                </>
+              ) : (
+                <span>{rows.length} item{rows.length === 1 ? '' : 's'}</span>
+              )}
             </div>
-          ) : undefined
-        }
-      />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => handleCreate('post')} disabled={busy} className="h-8 gap-1.5 text-xs">
+              <Plus className="w-3.5 h-3.5" /> Post
+            </Button>
+            <Button size="sm" onClick={() => handleCreate('page')} disabled={busy} className="h-8 gap-1.5 text-xs">
+              <Plus className="w-3.5 h-3.5" /> Page
+            </Button>
+            <Select
+              value={genModelId || '__default__'}
+              onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
+            >
+              <SelectTrigger className="h-8 w-[190px] bg-card text-xs" title="Model used for AI generation">
+                <Sparkles className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                <SelectValue placeholder="Model" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__default__" className="text-xs">Default model</SelectItem>
+                {textModels.map((m) => (
+                  <SelectItem key={m.id} value={m.id} className="text-xs">
+                    {m.name} <span className="text-muted-foreground">({m.provider})</span>
+                  </SelectItem>
+                ))}
+                {textModels.length === 0 && (
+                  <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                    No text models yet — add one in the Models tab.
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
+            <ViewsToolbar
+              show="columns"
+              columns={TOGGLE_COLUMNS}
+              visible={cols}
+              onToggleColumn={toggleCol}
+              views={views}
+              appliedViewId={appliedViewId}
+              onApplyView={applyView}
+              onResetView={resetView}
+              onSaveView={handleSaveView}
+              onDeleteView={handleDeleteView}
+              onSetDefaultView={handleSetDefaultView}
+              onResetLayout={resetColumnLayout}
+            />
+          </div>
+        </div>
+      )}
 
-      {/* Section nav (left sidebar) + section content, side by side. */}
+      {/* Section nav (left) + section content, side by side. The nav lives in a
+          card surface so it reads as a panel instead of floating. */}
       <div className="flex gap-6 items-start">
-        {/* Left sidebar: Content / AI Readiness / Site / Business */}
-        <nav className="flex flex-col gap-1 w-44 shrink-0">
+        <nav className="flex w-44 shrink-0 flex-col gap-1 rounded-lg border border-border bg-card p-2">
           {([['content', 'Content'], ['air', 'AI Readiness'], ['site', 'Site'], ['business', 'Business']] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"
               onClick={() => setTab(id)}
-              className={`px-3 py-2 text-sm text-left rounded-md transition-colors ${tab === id ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+              className={`rounded-md px-3 py-2 text-left text-sm transition-colors ${tab === id ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
             >
               {label}
             </button>
@@ -712,7 +930,7 @@ export function SEOModule() {
         </nav>
 
         {/* Section content */}
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
       {!isLocal ? (
         <RemoteSitePlaceholder
           siteName={activeSite?.name || activeSite?.url || 'this site'}
@@ -727,58 +945,6 @@ export function SEOModule() {
         <BusinessPanel />
       ) : (
       <>
-      {/* Toolbar: Views/Columns controls + item count (+ active-filter clear) + SEO plugin */}
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <div className="flex items-center gap-3">
-          <ViewsToolbar
-            show="views"
-            columns={TOGGLE_COLUMNS}
-            visible={cols}
-            onToggleColumn={toggleCol}
-            views={views}
-            appliedViewId={appliedViewId}
-            onApplyView={applyView}
-            onResetView={resetView}
-            onSaveView={handleSaveView}
-            onDeleteView={handleDeleteView}
-            onSetDefaultView={handleSetDefaultView}
-          />
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {activeCount > 0 ? (
-              <>
-                <span>{sortedData.length} of {rows.length} shown</span>
-                <button type="button" onClick={clearAll} className="inline-flex items-center gap-1 text-primary hover:underline">
-                  <X className="w-3.5 h-3.5" /> Clear filters ({activeCount})
-                </button>
-              </>
-            ) : (
-              <span>{rows.length} item{rows.length === 1 ? '' : 's'}</span>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {pluginLabel && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Search className="w-3.5 h-3.5" /> SEO source: <span className="font-medium text-foreground">{pluginLabel}</span>
-            </span>
-          )}
-          <ViewsToolbar
-            show="columns"
-            columns={TOGGLE_COLUMNS}
-            visible={cols}
-            onToggleColumn={toggleCol}
-            views={views}
-            appliedViewId={appliedViewId}
-            onApplyView={applyView}
-            onResetView={resetView}
-            onSaveView={handleSaveView}
-            onDeleteView={handleDeleteView}
-            onSetDefaultView={handleSetDefaultView}
-            onResetLayout={resetColumnLayout}
-          />
-        </div>
-      </div>
-
       {/* Bulk actions bar — generate any/all fields across the selected rows. */}
       {selected.size > 0 && (
         <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg border border-border bg-muted/40 px-4 py-2">
@@ -809,8 +975,8 @@ export function SEOModule() {
 
       {/* Pending AI suggestions — accept/discard everything at once. */}
       {pendingCount > 0 && (
-        <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg border border-blue-200 bg-blue-50/60 px-4 py-2">
-          <span className="text-sm font-medium text-blue-900 inline-flex items-center gap-1.5">
+        <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg border border-primary/20 bg-accent/60 px-4 py-2">
+          <span className="text-sm font-medium text-foreground inline-flex items-center gap-1.5">
             {busy && genKey ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
             {pendingCount} AI suggestion{pendingCount > 1 ? 's' : ''} pending
           </span>
@@ -844,7 +1010,7 @@ export function SEOModule() {
             [&_th]:px-2 [&_th]:h-9 [&_th]:font-normal [&_th]:text-foreground/80
             [&_td]:px-2 [&_td]:h-9 [&_td]:py-0 [&_td]:align-middle
             [&_td]:whitespace-nowrap [&_td]:overflow-hidden
-            [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-muted/50">
+            [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-card">
 
             <colgroup>
               <col style={{ width: SELECT_COL_WIDTH }} />
@@ -903,6 +1069,35 @@ export function SEOModule() {
           open={!!optimizeRow}
           onClose={() => setOptimizeRow(null)}
         />
+      )}
+
+      {/* Inline page preview — popup (not a new tab). */}
+      {previewRow && previewRow.permalink && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+          onClick={() => setPreviewRow(null)}
+        >
+          <div
+            className="flex h-[85vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-foreground">{previewRow.title || 'Preview'}</div>
+                <a href={previewRow.permalink} target="_blank" rel="noopener noreferrer" className="truncate text-xs text-muted-foreground hover:text-primary">{previewRow.permalink}</a>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <a href={previewRow.permalink} target="_blank" rel="noopener noreferrer" className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Open in new tab">
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+                <button type="button" onClick={() => setPreviewRow(null)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Close">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <iframe src={previewRow.permalink} title="Page preview" className="h-full w-full flex-1 bg-white" />
+          </div>
+        </div>
       )}
       </>
       )}

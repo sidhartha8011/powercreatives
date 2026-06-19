@@ -81,6 +81,12 @@ class PCM_REST_Templates extends PCM_REST_Base
         $module = $request->get_param('module');
         $type_filter = $request->get_param('type');
 
+        // Ensure the shared (system) SEO prompt templates exist before listing them,
+        // so they appear in the Templates UI + SEO header picker without a prior generate.
+        if ($module === 'seo' && class_exists('PCM_SEO_Service')) {
+            PCM_SEO_Service::seed_seo_templates();
+        }
+
         // Build query with optional module filter
         // Include system-level templates (userId=0) alongside user-owned templates
         if ($module) {
@@ -169,7 +175,7 @@ class PCM_REST_Templates extends PCM_REST_Base
         if (empty($params['name'])) {
             return $this->error('Template name is required.');
         }
-        if (empty($params['module']) || !in_array($params['module'], array('copy', 'image', 'video', 'writer'), true)) {
+        if (empty($params['module']) || !in_array($params['module'], array('copy', 'image', 'video', 'writer', 'seo'), true)) {
             return $this->error('Module must be one of: copy, image, video, writer.');
         }
         if (empty($params['entries']) || !is_array($params['entries'])) {
@@ -531,6 +537,10 @@ class PCM_REST_Templates extends PCM_REST_Base
             'type' => $form_data['type'] ?? null,
             'entries' => $form_data['entries'] ?? array(),
             'niche' => $form_data['niche'] ?? null,
+            // SEO prompt templates carry section + prompt in formData.
+            'section' => $form_data['section'] ?? null,
+            'prompt' => $form_data['prompt'] ?? null,
+            'sectionIsDefault' => !empty($form_data['isDefault']),
             'groupName' => $form_data['groupName'] ?? null,
             'sortOrder' => $form_data['sortOrder'] ?? 0,
             'isDefault' => (bool)$row->isDefault,

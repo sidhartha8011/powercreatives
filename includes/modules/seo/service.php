@@ -201,6 +201,7 @@ class PCM_SEO_Service
             'author'             => get_the_author_meta('display_name', (int) $post->post_author),
             'permalink'          => get_permalink($id),
             'editUrl'            => get_edit_post_link($id, 'raw'),
+            'featuredImage'      => (string) get_the_post_thumbnail_url($id, 'thumbnail'),
             'excerpt'            => wp_trim_words(wp_strip_all_tags($post->post_content), 20, '…'),
             'metaTitle'          => self::seo_get($id, 'title'),
             'metaDescription'    => self::seo_get($id, 'description'),
@@ -209,7 +210,115 @@ class PCM_SEO_Service
             'supportingKeyword'  => (string) get_post_meta($id, 'pcm_seo_supporting_keyword', true),
             'clusterLabel'       => (string) get_post_meta($id, 'pcm_seo_cluster_label', true),
             'schemaTypes'        => class_exists('PCM_SEO_Schema') ? PCM_SEO_Schema::types_for($id) : array(),
+            'internalLinks'      => self::link_count_meta($id, 'internal'),
+            'externalLinks'      => self::link_count_meta($id, 'external'),
+            'brokenLinks'        => self::link_count_meta($id, 'broken'),
+            'linksScannedAt'     => (string) get_post_meta($id, 'pcm_seo_links_scanned_at', true),
         );
+    }
+
+    /** Stored link-scan count for a post, or null when it was never scanned. */
+    private static function link_count_meta(int $id, string $which): ?int
+    {
+        if (get_post_meta($id, 'pcm_seo_links_scanned_at', true) === '') {
+            return null;
+        }
+        return (int) get_post_meta($id, "pcm_seo_{$which}_links", true);
+    }
+
+    /**
+     * Scan a post's links: count internal/external + detect broken (HTTP).
+     * Caches counts in post meta (read back by build_row). Ported from
+     * Optimizer Simple's link-analyzer (max 20 broken-checks, 4s timeout each).
+     *
+     * @return array{internal:int,external:int,broken:int,scannedAt:string}
+     */
+    public function scan_links(int $post_id): array
+    {
+        $post    = get_post($post_id);
+        $content = $post ? (string) $post->post_content : '';
+        $counts  = self::count_links($content, home_url());
+        $broken  = self::check_broken_links($content);
+        $now     = current_time('mysql');
+        update_post_meta($post_id, 'pcm_seo_internal_links', $counts['internal']);
+        update_post_meta($post_id, 'pcm_seo_external_links', $counts['external']);
+        update_post_meta($post_id, 'pcm_seo_broken_links', $broken);
+        update_post_meta($post_id, 'pcm_seo_links_scanned_at', $now);
+        return array('internal' => $counts['internal'], 'external' => $counts['external'], 'broken' => $broken, 'scannedAt' => $now);
+    }
+
+    /** Count internal vs external <a href> links in content. */
+    private static function count_links(string $content, string $site_url): array
+    {
+        if ($content === '') {
+            return array('internal' => 0, 'external' => 0);
+        }
+        $site_host = wp_parse_url($site_url, PHP_URL_HOST);
+        preg_match_all('/<a\s[^>]*href=[\'"]([^\'"]+)[\'"][^>]*>/i', $content, $matches);
+        $internal = 0;
+        $external = 0;
+        foreach (($matches[1] ?? array()) as $url) {
+            $url = trim($url);
+            if ($url === '' || str_starts_with($url, '#') || str_starts_with($url, 'tel:') || str_starts_with($url, 'mailto:')) {
+                continue;
+            }
+            $host = wp_parse_url($url, PHP_URL_HOST);
+            if ($host) {
+                if ($host === $site_host || ($site_host && str_ends_with($host, '.' . $site_host))) {
+                    $internal++;
+                } else {
+                    $external++;
+                }
+            } elseif (!str_starts_with($url, 'javascript:') && !str_starts_with($url, 'data:')) {
+                $internal++;
+            }
+        }
+        return array('internal' => $internal, 'external' => $external);
+    }
+
+    /** Count broken links (HTTP 4xx/5xx/error). Caps at 20 checks, 4s each. */
+    private static function check_broken_links(string $content): int
+    {
+        if ($content === '') {
+            return 0;
+        }
+        preg_match_all('/<a\s[^>]*href=[\'"]([^\'"]+)[\'"][^>]*>/i', $content, $matches);
+        $broken  = 0;
+        $checked = 0;
+        $args    = array(
+            'timeout'     => 4,
+            'redirection' => 5,
+            'user-agent'  => 'WordPress/PowerCreatives; ' . home_url(),
+            'sslverify'   => false,
+        );
+        foreach (array_unique($matches[1] ?? array()) as $url) {
+            if ($checked >= 20) {
+                break;
+            }
+            $url = trim($url);
+            if ($url === '' || str_starts_with($url, '#') || str_starts_with($url, 'tel:')
+                || str_starts_with($url, 'mailto:') || str_starts_with($url, 'javascript:') || str_starts_with($url, 'data:')) {
+                continue;
+            }
+            if (str_starts_with($url, '/')) {
+                $url = home_url($url);
+            }
+            $response = wp_remote_head($url, $args);
+            if (is_wp_error($response)) {
+                $broken++;
+            } else {
+                $code = (int) wp_remote_retrieve_response_code($response);
+                if ($code === 405) {
+                    $response = wp_remote_get($url, $args);
+                    $code     = is_wp_error($response) ? 400 : (int) wp_remote_retrieve_response_code($response);
+                }
+                if ($code >= 400) {
+                    $broken++;
+                }
+            }
+            $checked++;
+        }
+        return $broken;
     }
 
     /**
@@ -464,6 +573,7 @@ class PCM_SEO_Service
             'metaDescription' => 'meta_description',
             'metaKeywords'    => 'meta_keywords',
             'primaryKeyword'  => 'primary_keyword',
+            'slug'            => 'slug',
         );
     }
 
@@ -516,9 +626,17 @@ class PCM_SEO_Service
      * @param int|null $user_id PCM user id (wp_pcm_users.id), NOT the WP user id.
      * @return string
      */
-    public static function resolve_prompt(string $section, string $default, ?int $user_id = null): string
+    public static function resolve_prompt(string $section, string $default, ?int $user_id = null, ?int $template_id = null): string
     {
         if ($user_id && $user_id > 0) {
+            // Prompts now live as Templates (module=seo). Seed defaults once, then
+            // resolve the chosen/default template for this section.
+            self::seed_seo_templates();
+            $tpl = self::seo_template_prompt($user_id, $section, $template_id);
+            if ($tpl !== null && $tpl !== '') {
+                return $tpl;
+            }
+            // Legacy fallback: a pre-migration Settings→Prompts→SEO override.
             global $wpdb;
             $table    = PCM_Schema::table('prompt_overrides');
             $override = $wpdb->get_var($wpdb->prepare(
@@ -531,6 +649,119 @@ class PCM_SEO_Service
             }
         }
         return $default;
+    }
+
+    /**
+     * Seed one default prompt Template per SEO section for a user (idempotent).
+     * Stored in wp_pcm_templates (module=seo, formData={type,section,prompt,isDefault})
+     * so prompts are managed as Templates rather than Prompt-Editor overrides.
+     */
+    public static function seed_seo_templates(): void
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('templates');
+        // SYSTEM set (userId=0) — one shared default per section, visible to every
+        // user (the Templates list + resolver both read `userId = me OR 0`). Idempotent.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows  = $wpdb->get_col("SELECT formData FROM {$table} WHERE userId = 0 AND module = 'seo'");
+        $have  = array();
+        foreach ($rows as $json) {
+            $fd = json_decode((string) $json, true);
+            if (!empty($fd['type'])) {
+                $have[$fd['type']] = true;
+            }
+        }
+        // Stored in the SAME shape the Templates module edits: module=seo,
+        // formData.type=<section>, one entry {category:'prompt', value:<prompt>}.
+        foreach (self::get_default_prompts() as $section => $prompt) {
+            if (isset($have[$section])) {
+                continue;
+            }
+            $name = self::seo_section_label($section);
+            $form = array(
+                'type'      => $section,
+                'entries'   => array(array(
+                    'key'      => 'prompt_' . $section,
+                    'category' => 'prompt',
+                    'label'    => $name,
+                    'value'    => $prompt,
+                )),
+                'sortOrder' => 0,
+            );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->insert($table, array(
+                'userId'    => 0,
+                'name'      => $name,
+                'module'    => 'seo',
+                'formData'  => wp_json_encode($form),
+                'isDefault' => 1,
+            ), array('%d', '%s', '%s', '%s', '%d'));
+        }
+    }
+
+    /** Resolve a section's prompt from Templates (module=seo): the chosen template,
+     *  else the user's own default, else the SYSTEM default, else any. */
+    private static function seo_template_prompt(int $user_id, string $section, ?int $template_id): ?string
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('templates');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows  = $wpdb->get_results($wpdb->prepare("SELECT id, userId, formData, isDefault FROM {$table} WHERE (userId = %d OR userId = 0) AND module = 'seo'", $user_id), ARRAY_A);
+        $chosen = null;
+        $user_default = null;
+        $system_default = null;
+        $any = null;
+        foreach ($rows as $r) {
+            $fd = json_decode((string) ($r['formData'] ?? ''), true);
+            if (!is_array($fd) || ($fd['type'] ?? '') !== $section) {
+                continue;
+            }
+            $prompt = self::seo_entry_prompt($fd);
+            if ($prompt === null) {
+                continue;
+            }
+            if ($template_id && (int) $r['id'] === $template_id) {
+                $chosen = $prompt;
+            }
+            if (!empty($r['isDefault'])) {
+                if ((int) $r['userId'] === $user_id && $user_default === null) {
+                    $user_default = $prompt;
+                } elseif ((int) $r['userId'] === 0 && $system_default === null) {
+                    $system_default = $prompt;
+                }
+            }
+            if ($any === null) {
+                $any = $prompt;
+            }
+        }
+        return $chosen ?? $user_default ?? $system_default ?? $any;
+    }
+
+    /** Extract the prompt string from a SEO template's formData (entries[].value). */
+    private static function seo_entry_prompt(array $fd): ?string
+    {
+        $entries = (isset($fd['entries']) && is_array($fd['entries'])) ? $fd['entries'] : array();
+        foreach ($entries as $e) {
+            if (($e['category'] ?? '') === 'prompt' && isset($e['value'])) {
+                return (string) $e['value'];
+            }
+        }
+        return isset($entries[0]['value']) ? (string) $entries[0]['value'] : null;
+    }
+
+    /** Human label for a section key, e.g. `meta_title_optimize` → "Meta Title — Optimize". */
+    private static function seo_section_label(string $section): string
+    {
+        $mode = '';
+        if (str_ends_with($section, '_generate')) {
+            $mode = 'Generate';
+            $section = substr($section, 0, -9);
+        } elseif (str_ends_with($section, '_optimize')) {
+            $mode = 'Optimize';
+            $section = substr($section, 0, -9);
+        }
+        $field = ucwords(str_replace('_', ' ', $section));
+        return $mode !== '' ? "{$field} — {$mode}" : $field;
     }
 
     /**
@@ -644,7 +875,7 @@ class PCM_SEO_Service
      * @param string|null $provider Optional provider override (paired with $model).
      * @return array|WP_Error { field, value }.
      */
-    public function generate_field(int $post_id, string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    public function generate_field(int $post_id, string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
     {
         $use_map = self::field_use_map();
         if (!isset($use_map[$field])) {
@@ -664,11 +895,11 @@ class PCM_SEO_Service
             'metaKeywords'    => 'meta_keywords',
             'primaryKeyword'  => 'keyword',
         );
-        $current = ($field === 'title') ? '' : self::seo_get($post_id, $get_key_map[$field] ?? 'meta_keywords');
-        // 'title' cell is the post title, not an SEO key — read it directly.
-        if ($field === 'title') {
+        $current = in_array($field, array('title', 'slug'), true) ? '' : self::seo_get($post_id, $get_key_map[$field] ?? 'meta_keywords');
+        // 'title' and 'slug' are native post fields, not SEO meta — read them directly.
+        if ($field === 'title' || $field === 'slug') {
             $p = get_post($post_id);
-            $current = $p ? $p->post_title : '';
+            $current = $p ? ($field === 'title' ? $p->post_title : $p->post_name) : '';
         }
         $vars['current_value'] = $current;
 
@@ -676,7 +907,7 @@ class PCM_SEO_Service
         $mode    = (!empty($current) && !empty($prompts[$use]['optimize'])) ? 'optimize' : 'generate';
         $default = $prompts[$use][$mode];
         // Honor the user's Settings → Prompts → SEO override (falls back to default).
-        $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id);
+        $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
         $prompt  = self::substitute_vars($tpl, $vars);
         $max     = (int) ($prompts[$use]['max'] ?? 200);
 

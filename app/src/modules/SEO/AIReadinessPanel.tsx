@@ -85,7 +85,7 @@ export function AIReadinessPanel() {
   return (
     <div className="space-y-6 max-w-3xl">
       {/* Publish + build controls */}
-      <div className="rounded-xl border border-border p-4 space-y-4">
+      <div className="rounded-xl border border-border bg-card p-4 space-y-4">
         <div className="flex items-center justify-between gap-4">
           <div>
             <Label className="text-sm font-medium">Publish virtual routes</Label>
@@ -119,7 +119,7 @@ export function AIReadinessPanel() {
       </div>
 
       {/* Per-post status */}
-      <div className="rounded-xl border border-border overflow-hidden">
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="grid grid-cols-[1fr_5rem_6rem_3rem] gap-2 bg-muted/60 px-4 py-2 text-xs font-medium text-muted-foreground">
           <span>Page</span><span>Type</span><span>Status</span><span className="text-center">.md</span>
         </div>

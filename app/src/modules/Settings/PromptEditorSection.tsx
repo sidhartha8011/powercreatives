@@ -71,7 +71,6 @@ import {
   Paperclip,
   Target,
   Settings2,
-  Search,
   Megaphone,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -83,7 +82,6 @@ const MODULES = [
   { id: "ads" as const, label: "Ads", icon: Megaphone },
   { id: "image" as const, label: "Image", icon: Image },
   { id: "video" as const, label: "Video", icon: Video },
-  { id: "seo" as const, label: "SEO", icon: Search },
 ];
 
 /**

@@ -115,7 +115,7 @@ export function SiteSettingsPanel() {
   return (
     <div className="space-y-6 max-w-2xl">
       {/* robots.txt */}
-      <section className="rounded-xl border border-border p-4 space-y-3">
+      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <Label className="text-sm font-medium">Custom robots.txt</Label>
@@ -133,7 +133,7 @@ export function SiteSettingsPanel() {
       </section>
 
       {/* Site-wide schema */}
-      <section className="rounded-xl border border-border p-4 space-y-3">
+      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <Label className="text-sm font-medium">Site-wide JSON-LD (LocalBusiness)</Label>
@@ -152,7 +152,7 @@ export function SiteSettingsPanel() {
       </section>
 
       {/* Language + timezone */}
-      <section className="rounded-xl border border-border p-4 space-y-3">
+      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
         <Label className="text-sm font-medium">Locale</Label>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
@@ -186,7 +186,7 @@ export function SiteSettingsPanel() {
       </Button>
 
       {/* Export / Import (agency-reusable config) */}
-      <section className="rounded-xl border border-border p-4 space-y-2">
+      <section className="rounded-xl border border-border bg-card p-4 space-y-2">
         <Label className="text-sm font-medium">Export / Import config</Label>
         <p className="text-xs text-muted-foreground">Portable JSON of the SEO config (schema, robots, AI-readiness, GBP provider) to replicate across client sites.</p>
         <div className="flex gap-2">

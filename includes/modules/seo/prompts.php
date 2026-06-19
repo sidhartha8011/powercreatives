@@ -85,4 +85,15 @@ return array(
             . "then synonyms and long-tail variations. Return ONLY a comma-separated list, no business name. "
             . "Language: {{site.lang}}. Page Title: {{title}} Primary Keyword: {{primary_keyword}} Supporting Keyword: {{supporting_keyword}}",
     ),
+
+    // ── URL slug (ported verbatim from Optimizer Simple) ──
+    'slug' => array(
+        'max'      => 60,
+        'generate' => "Generate an SEO-friendly URL slug for this page.\n\n"
+            . "Page Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nBusiness: {{business.name}}\n\n"
+            . "Requirements:\n- Lowercase, hyphen-separated words\n- Maximum 5 words\n- Use the primary keyword as the base of the slug\n- No stop words (the, a, an, is, etc.)\n- Output ONLY the slug, nothing else",
+        'optimize' => "Optimize the following URL slug for SEO. Build the slug around the primary keyword for maximum search visibility.\n\n"
+            . "Current Slug: {{current_value}}\nPage Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nBusiness: {{business.name}}\n\n"
+            . "Requirements:\n- Lowercase, hyphen-separated\n- Maximum 5 words\n- Primary keyword must be the base of the slug\n- No stop words\n- Output ONLY the slug, nothing else",
+    ),
 );

@@ -293,7 +293,12 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.generateField": {
         endpoint: "seo/content",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/content/${input.id}/generate`, body: { field: input.field, brandId: input.brandId, model: input.model } }),
+        transform: (input: any) => ({ url: `seo/content/${input.id}/generate`, body: { field: input.field, brandId: input.brandId, model: input.model, provider: input.provider, templateId: input.templateId } }),
+    },
+    "seo.scanLinks": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/scan-links` }),
     },
     // AI Readiness (llms.txt / virtual routes)
     "seo.airStatus": { endpoint: "seo/ai-readiness", method: "GET" },

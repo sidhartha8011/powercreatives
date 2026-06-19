@@ -19,6 +19,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -78,21 +79,17 @@ export function ViewsToolbar({
       {show !== 'columns' && (
       <DropdownMenu open={viewOpen} onOpenChange={setViewOpen}>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className={`h-8 gap-1.5 text-xs ${appliedName ? 'border-primary text-primary' : ''}`}>
+          <Button variant="outline" size="sm" className={`h-8 gap-1.5 bg-card text-xs ${appliedName ? 'border-primary text-primary' : ''}`}>
             <Eye className="h-3.5 w-3.5" />
             <span className="max-w-[120px] truncate">{appliedName ?? 'View'}</span>
             <ChevronDown className="h-3 w-3 opacity-60" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
-          <button
-            type="button"
-            onClick={() => { onResetView(); setViewOpen(false); }}
-            className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
-          >
+          <DropdownMenuItem onSelect={() => { onResetView(); setViewOpen(false); }} className="gap-1.5">
             {appliedViewId === null ? <Check className="h-3.5 w-3.5 text-primary shrink-0" /> : <span className="w-3.5 shrink-0" />}
             Default (all columns)
-          </button>
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuLabel className="text-xs text-muted-foreground">Saved views</DropdownMenuLabel>
           {views.length === 0 ? (
@@ -100,15 +97,14 @@ export function ViewsToolbar({
           ) : (
             views.map((v) => (
               <div key={v.id} className="flex items-center gap-1 pr-1">
-                <button
-                  type="button"
-                  onClick={() => { onApplyView(v); setViewOpen(false); }}
-                  className="flex flex-1 items-center gap-1.5 rounded px-2 py-1.5 text-left text-sm hover:bg-accent min-w-0"
+                <DropdownMenuItem
+                  onSelect={() => { onApplyView(v); setViewOpen(false); }}
+                  className="flex-1 gap-1.5 min-w-0"
                 >
                   {appliedViewId === v.id ? <Check className="h-3.5 w-3.5 text-primary shrink-0" /> : <span className="w-3.5 shrink-0" />}
                   <span className="truncate">{v.name}</span>
                   {v.isDefault && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">Default</span>}
-                </button>
+                </DropdownMenuItem>
                 <button
                   type="button"
                   title={v.isDefault ? 'Remove as default view' : 'Make default view'}
@@ -137,7 +133,7 @@ export function ViewsToolbar({
       {show !== 'views' && (
       <DropdownMenu open={colsOpen} onOpenChange={setColsOpen}>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className={`h-8 gap-1.5 text-xs ${anyHidden ? 'border-primary text-primary' : ''}`}>
+          <Button variant="outline" size="sm" className={`h-8 gap-1.5 bg-card text-xs ${anyHidden ? 'border-primary text-primary' : ''}`}>
             <Columns3 className="h-3.5 w-3.5" /> Columns <ChevronDown className="h-3 w-3 opacity-60" />
           </Button>
         </DropdownMenuTrigger>
@@ -161,9 +157,9 @@ export function ViewsToolbar({
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } }}
               placeholder="New view name…"
-              className="h-7 text-xs"
+              className="h-8 text-sm"
             />
-            <Button size="sm" className="h-7 gap-1 text-xs" disabled={!newName.trim()} onClick={save}>
+            <Button size="sm" className="h-8 gap-1" disabled={!newName.trim()} onClick={save}>
               <Plus className="h-3.5 w-3.5" /> Save
             </Button>
           </div>
@@ -171,13 +167,12 @@ export function ViewsToolbar({
           {onResetLayout && (
             <>
               <DropdownMenuSeparator />
-              <button
-                type="button"
-                onClick={() => { onResetLayout(); setColsOpen(false); }}
-                className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              <DropdownMenuItem
+                onSelect={() => { onResetLayout(); setColsOpen(false); }}
+                className="gap-1.5 text-muted-foreground"
               >
                 <RotateCcw className="h-3.5 w-3.5" /> Reset column sizes &amp; order
-              </button>
+              </DropdownMenuItem>
             </>
           )}
         </DropdownMenuContent>

@@ -45,6 +45,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/content',                    'quick_create'),
             array('POST', '/seo/content/(?P<id>\d+)/cell',   'save_cell'),
             array('POST', '/seo/content/(?P<id>\d+)/generate', 'generate_field'),
+            array('POST', '/seo/content/(?P<id>\d+)/scan-links', 'scan_links'),
             array('GET',  '/seo/content/(?P<id>\d+)/body',     'get_body'),
             array('POST', '/seo/content/(?P<id>\d+)/body',     'save_body'),
             array('POST', '/seo/content/(?P<id>\d+)/optimize', 'optimize_body'),
@@ -168,12 +169,27 @@ class PCM_REST_SEO extends PCM_REST_Base
         $brand_id = isset($params['brandId']) && $params['brandId'] ? absint($params['brandId']) : null;
         $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
         $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+        $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
 
         $user   = $this->get_current_pcm_user();
-        $result = $this->service->generate_field($id, $field, $brand_id, $model, $user ? (int) $user->id : null, $provider);
+        $result = $this->service->generate_field($id, $field, $brand_id, $model, $user ? (int) $user->id : null, $provider, $template_id);
         if ($result instanceof WP_Error) {
             return $result;
         }
+        return $this->success(array_merge(array('id' => $id), $result));
+    }
+
+    /** POST /seo/content/{id}/scan-links — count internal/external + broken links. */
+    public function scan_links(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $result = $this->service->scan_links($id);
         return $this->success(array_merge(array('id' => $id), $result));
     }
 
