@@ -95,6 +95,7 @@ const initialSettings: AppSettings = {
   defaultVideoTextModel: null,
   defaultImageTextModel: null,
   defaultWriterModel: null,
+  defaultSeoModel: null,
   autoSave: true,
   notifications: true,
   token_budget_audience: 8192,

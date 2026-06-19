@@ -98,6 +98,8 @@ export interface AppSettings {
   defaultImageTextModel: string | null;
   /** Default text model for Writer module article generation */
   defaultWriterModel: string | null;
+  /** Default text model for SEO module field generation (meta title/description/keywords) */
+  defaultSeoModel: string | null;
   autoSave: boolean;
   notifications: boolean;
   /** Token budget for audience generation (includes thinking tokens) */

@@ -32,6 +32,7 @@ import {
   MessageSquareCode,
   SlidersHorizontal,
   PenLine,
+  Search,
 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -363,6 +364,40 @@ export function SettingsModule() {
                 <Select
                   value={settings.defaultWriterModel || 'none'}
                   onValueChange={(value) => handleSettingChange('defaultWriterModel', value === 'none' ? null : value)}
+                >
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No default (auto-detect)</SelectItem>
+                    {textModels.map(model => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </section>
+
+            {/* ── SEO Module ── */}
+            <section className="card-powerkeys p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center">
+                  <Search className="w-3.5 h-3.5 text-primary" />
+                </div>
+                <h3 className="text-sm font-medium text-foreground">SEO Module</h3>
+              </div>
+
+              {/* Default Model — used for AI meta field generation (title/description/keywords) */}
+              <div className="flex items-center justify-between pl-10">
+                <div>
+                  <Label className="text-sm">Default Model</Label>
+                  <p className="text-xs text-muted-foreground">Pre-selected model for SEO meta field generation</p>
+                </div>
+                <Select
+                  value={settings.defaultSeoModel || 'none'}
+                  onValueChange={(value) => handleSettingChange('defaultSeoModel', value === 'none' ? null : value)}
                 >
                   <SelectTrigger className="w-[200px]">
                     <SelectValue placeholder="Select model" />

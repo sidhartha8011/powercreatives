@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useSortableTable } from '@/hooks/useSortableTable';
+import { useSettings } from '@/contexts/AppContext';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -276,6 +277,14 @@ export function SEOModule() {
     try { localStorage.setItem('pcm:seo:gen-model', id); } catch { /* ignore */ }
   }, []);
   const genProvider = textModels.find((m) => m.id === genModelId)?.provider;
+
+  // Default generation model comes from Settings → Module Defaults → "SEO Module"
+  // (mirrors Writer/Copy). A configured default is applied on load; the header
+  // dropdown still lets the user override it per session.
+  const { settings } = useSettings();
+  useEffect(() => {
+    if (settings.defaultSeoModel) setGenModel(settings.defaultSeoModel);
+  }, [settings.defaultSeoModel, setGenModel]);
 
   // Site scope: the local WP install ('local') or a connected remote site (id).
   // Remote-site SEO isn't wired in the backend yet — those tabs show a placeholder.
