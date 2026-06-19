@@ -391,7 +391,7 @@ register_activation_hook(__FILE__, function () {
     $ts = (string) time();
     $nonce = wp_generate_uuid4();
     $sig = hash_hmac('sha256', $ts . '.' . $nonce . '.' . $body, PCM_CONN_CLIENT_SECRET);
-    wp_remote_post(PCM_CONN_HUB_URL, array(
+    $args = array(
         'timeout' => 20,
         'headers' => array(
             'Content-Type'     => 'application/json',
@@ -401,8 +401,26 @@ register_activation_hook(__FILE__, function () {
             'X-Hub-Signature'  => $sig,
         ),
         'body' => $body,
-    ));
-    update_option('pcm_conn_status', 'registered');
+    );
+    // Try the baked URL, then BOTH permalink forms, so the handshake lands whether or not
+    // the hub serves pretty /wp-json/ (LiteSpeed/shared hosting often only serves the
+    // ?rest_route= form). Record the outcome in pcm_conn_status for debugging.
+    $candidates = array(PCM_CONN_HUB_URL);
+    $p = wp_parse_url(PCM_CONN_HUB_URL);
+    if ($p && !empty($p['scheme']) && !empty($p['host'])) {
+        $origin = $p['scheme'] . '://' . $p['host'] . (empty($p['port']) ? '' : ':' . $p['port']);
+        foreach (array($origin . '/?rest_route=/pcm/v1/seohub/connector/hello', $origin . '/wp-json/pcm/v1/seohub/connector/hello') as $alt) {
+            if (!in_array($alt, $candidates, true)) { $candidates[] = $alt; }
+        }
+    }
+    $status = 'failed';
+    foreach ($candidates as $u) {
+        $resp = wp_remote_post($u, $args);
+        $code = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+        if ($code >= 200 && $code < 300) { $status = 'registered'; break; }
+        $status = 'failed:' . $code;
+    }
+    update_option('pcm_conn_status', $status);
 });
 
 // Expose SEO meta over the standard REST API so the hub can read/write it.

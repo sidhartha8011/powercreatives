@@ -1,5 +1,20 @@
 # Session Log
 
+## 2026-06-19 — Connector handshake STILL pending → resilient ping (root: deploy order)
+- **State (Chrome on hub):** App-Password "test" site was DELETED (sites=[]); new connector
+  tenant id=3 pending, lastPingAt=null. hub /wp-json/=404, ?rest_route= hello=403 (reachable).
+- **Why:** the connector bakes its hub URL from the DEPLOYED code; the re-download happened
+  before the ?rest_route= fix was deployed, so it still pings /wp-json/ (404) → never registers.
+  Deploy must happen BEFORE re-downloading the connector.
+- **Hardening (connector_php):** on activation the connector now tries the baked URL AND both
+  permalink forms (?rest_route= and /wp-json/) until one returns 2xx, and records the result
+  in pcm_conn_status ('registered' / 'failed:CODE'). Combined with the ?rest_route= bake, a
+  fresh connector registers regardless of the hub's permalink config.
+- **Verified:** hub php -l OK; generated connector template php -l OK (nowdoc edit valid),
+  bakes the ?rest_route= URL, contains the multi-candidate retry.
+- **Immediate unblock for the user:** re-add bestclient via App Password (the connector plugin
+  already exposes pcm_seo_* meta, so meta editing works at once via that connection). Not committed.
+
 ## 2026-06-19 — Fix: connector handshake stuck "pending" (/wp-json 404 on the hub)
 - **Diagnosed via Chrome (live hub):** connector plugin IS active on bestclient (exposes
   all pcm_seo_* meta), and meta editing via the existing App-Password "test" site PERSISTS
