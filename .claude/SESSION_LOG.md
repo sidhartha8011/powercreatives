@@ -1,5 +1,111 @@
 # Session Log
 
+## 2026-06-19 — Emoji edit: server-side safeguard (recover from raw request body)
+- **Context:** user confirms deployed-but-still-broken on live. Proven: the snapshot
+  storage path is already emoji-safe on any host (wp_json_encode → ASCII), so the
+  emoji is lost BEFORE the snapshot write → most likely a host security layer
+  (mod_security / input-sanitizing plugin) stripping 4-byte UTF-8 from the parsed
+  REST params. NOTE: `wp_encode_emoji()` is the WRONG fix here — the review renders
+  body as React TEXT (`{asset.body}`), so entities would show literally, not as 🙂.
+- **Changed (`includes/modules/approvals/controller.php`, backend only):**
+  `update_snapshot_asset` now (1) re-reads the RAW request body
+  (`$request->get_body()`) and, for body/headline/description, prefers the raw value
+  when it carries emojis the parsed param lost (`emoji_count(raw) > emoji_count(parsed)`)
+  — recovers emojis a parsed-param sanitizer dropped; (2) adds a WP_DEBUG-gated probe
+  logging emoji counts at raw→parsed→sanitized so the lost-layer is pinpointable.
+  New private `emoji_count()` helper (PCRE-UTF8-safe, no-ops if unsupported).
+- **Verified:** `php -l` clean; emoji_count correct (🚀🔥=2, plain=0); recovery
+  restores a stripped emoji from raw, no-ops when equal; plugin still loads (pcm/v1 200).
+- **DEPLOY NOTE:** this is a BACKEND (PHP) change — NOT in `app/dist`. The earlier
+  surgical zip won't carry it; deploy the updated `controller.php` (or the full
+  `power-creatives.zip`). Then: if a request-layer strips emojis the safeguard now
+  recovers them; enable WP_DEBUG + reproduce → `[PCM emoji probe]` line shows
+  raw=1/parsed=0 (host stripped, now recovered), raw=0 (browser/stale bundle), or
+  all=1 (reaches+stored → look at display/cache). If raw is ALSO stripped, no server
+  code can recover it (host config fix).
+- Uncommitted per request (+ the SEO-default-model task files still pending).
+
+## 2026-06-19 — Emoji-on-edit STILL failing on live: re-investigation (env, not code)
+- **Report:** editing an approval card on live shared hosting still drops emojis
+  after save (my earlier frontend entity-decode fix didn't resolve it on live).
+- **Re-verified every layer — current code is emoji-safe on ANY host/charset:**
+  - `wp_json_encode(['b'=>'🚀'])` → `"\ud83d\ude80"` (pure ASCII) ⇒ the snapshot
+    is charset-independent; a utf8 (non-mb4) live column/connection can't strip it.
+  - git history: `update_snapshot_asset` snapshot write has ALWAYS used
+    `wp_json_encode` (never `JSON_UNESCAPED_UNICODE`) ⇒ backend was never the cause.
+  - `get_public_set` reads ONLY the snapshot (no copy_results join) — confirmed again.
+  - `sanitize_text/textarea_field` preserve emojis (tested); `handleSaveTextEdits`
+    sends `editedBody/headline/description` verbatim; modern-Chrome `getHTML()`
+    serializes emojis as RAW chars ⇒ `htmlToPlainText` keeps them.
+- **Conclusion:** no code defect remains. Live loss is environmental →
+  (a) the fixed bundle isn't actually running on live (stale/old build or browser
+  cache — needs the filemtime cache-bust shortcode deployed too), OR (b) a
+  host-level layer (security plugin / WAF / mod_security) strips 4-byte UTF-8 from
+  the POST before PHP sees it.
+- **Given the user (pinpoint diagnostic):** on live, DevTools → Network, edit+save a
+  card → inspect the POST `…/assets/<id>` Request Payload. Emoji present in payload
+  ⇒ server/host stripping (check the refetch GET's snapshot body); emoji absent ⇒
+  browser/bundle (verify `index-writer.js?ver=` is the new build, hard-refresh).
+- No code changed (nothing to fix in the logic; offered server-side
+  `wp_encode_emoji()` safeguard + deploy verification as options).
+
+## 2026-06-19 — SEO default model selector added to Settings → Module Defaults
+- **Task:** give the SEO module a default-model selector in Settings → Module
+  Defaults, like other modules.
+- **Changed (frontend only, mirrors the Writer-module pattern):**
+  - `types/index.ts`: `AppSettings.defaultSeoModel: string | null`.
+  - `contexts/AppContext.tsx`: default `defaultSeoModel: null`.
+  - `Settings/index.tsx`: new "SEO Module" section in the Module Defaults tab — a
+    single text-model `Default Model` `<Select>` bound to `defaultSeoModel` via
+    `handleSettingChange` (Search icon). Same shape as Writer/Copy.
+  - `SEO/index.tsx`: `useSettings()` + effect syncs the header generation model
+    (`genModelId`) from `settings.defaultSeoModel` (configured default wins on load;
+    header dropdown still overrides per session).
+- **No backend change needed:** `POST /settings` → `PCM_Settings::set_many` saves
+  arbitrary keys (the other model-default keys aren't in `$defaults` either).
+- **Verified:** tsc 0 errors in touched files (56 baseline unchanged); vite build
+  clean (built via `node node_modules/vite/bin/vite.js` — shim gotcha); bundle
+  contains `defaultSeoModel` (×5); local WP serves the fresh build (served==local);
+  backend round-trip set→get_all→reset confirmed persistence. NOT browser-clicked
+  (needs logged-in admin).
+- Uncommitted (per request): 4 source files + this log.
+
+## 2026-06-19 — Verified: SEO per-cell AI regenerate WORKS
+- **Asked:** is the regenerate inside the SEO table cells working (after the
+  `feat: changed seo tab` pull)?
+- **Answer: YES** — live-tested `PCM_SEO_Service::generate_field` (logged-in admin,
+  post id 1): metaTitle + metaDescription both generated real OpenAI output. Full
+  chain intact: cell sparkle → handleGenerate → generateField →
+  `trpc.seo.generateField` → `POST /seo/content/{id}/generate` → service →
+  `PCM_LLM::invoke` → provider → staged accept/reject.
+- **Test gotcha:** a bare CLI call first failed "no active openai key" because
+  `generate_field` doesn't forward `$user_id`, so `PCM_LLM` uses
+  `get_current_user_id()` (=0 in CLI). `wp_set_current_user(1)` (matches the active
+  openai key) → succeeds. So it works in the browser for a logged-in user.
+- **Latent (pre-existing, non-breaking) notes:** (1) the `seo.generateField` trpc
+  transform forwards `{field,brandId,model}` but DROPS `provider` — works via the
+  deprecated `detect_provider(model)` fallback (+ default model = openai), but
+  deviates from the "always send model.provider" rule. (2) `generate_field` ignores
+  its `$user_id` (relies on `get_current_user_id()`). Both are 1-line hardening
+  fixes if wanted. Local has 0 models configured (uses DEFAULT_MODEL) + active keys
+  for openai/anthropic/google/kieai (user 1).
+- No code changed (diagnostic only). Doc notes left uncommitted per request.
+
+## 2026-06-19 — Pulled latest from GitHub (mine/feat/seo-suite-port)
+- **Asked:** pull the latest code. Working tree was clean; fast-forward
+  `633a6cb..70a2ab0` (behind 1, ahead 0) → now in sync (0/0).
+- **Incoming:** `70a2ab0 feat: changed seo tab` — SEO-tab rework (index.tsx +446,
+  new useColumnLayout hook, ColumnHead/ViewsToolbar/useViews/useSeoContent,
+  trpc-routes; seo controller+service set_default_view). Schema: `seo_views.isDefault`
+  tinyint; **PCM_DB_VERSION 1.26.0 → 1.27.0** (additive dbDelta).
+- **Rebuilt + verified live:** `npm run build` failed on the copied node_modules
+  (.bin shims → "bad interpreter: Operation not permitted"; chmod +x didn't fix) →
+  built via `node node_modules/vite/bin/vite.js build --config vite.config.wp.ts`
+  (4.46s; index-writer.js 4,378,725 B). Local WP now serves the fresh bundle
+  (served==local, new `?ver=` filemtime); DB auto-migrated to **1.27.0**
+  (`seo_views.isDefault` tinyint present) on the triggering request.
+- Pull + rebuild only; no commit/push (these doc notes left uncommitted per request).
+
 ## 2026-06-19 — SEO: model picker for AI generation
 - **Asked:** add a dropdown next to Post/Page to switch the model used to
   generate cell content.

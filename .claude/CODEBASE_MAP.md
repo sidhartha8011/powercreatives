@@ -63,7 +63,11 @@ There is **no PHP linter configured** (no `phpcs.xml`); follow WPCS conventions 
 > `power-creatives.php`). ⚠️ The symlink MUST target the inner dir, not the
 > `powerplatform/` wrapper — WP scans only one level deep, so a wrapper-aimed link
 > makes the plugin invisible (no `pcm/v1`). `router.php` serves `app/dist/*` static
-> assets directly (follows the symlink), so the SPA bundle loads fine. No `wp-cli`
+> assets directly (follows the symlink), so the SPA bundle loads fine. ⚠️ **Mac build
+> gotcha:** the copied `app/node_modules/.bin` shims are broken on this volume
+> (`npm run build` → "bad interpreter: Operation not permitted"; `chmod +x` does
+> NOT fix). Build by calling vite through node directly:
+> `cd app && node node_modules/vite/bin/vite.js build --config vite.config.wp.ts`. No `wp-cli`
 > here; activate/inspect via a CLI bootstrap (`php -r`/script that `require`s
 > `wp-load.php` then `activate_plugin('power-creatives/power-creatives.php')`).
 > A mu-plugin `wp-content/mu-plugins/prevent-loopback-deadlock.php` guards against
