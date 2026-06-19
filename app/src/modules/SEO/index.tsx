@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/select';
 
 import { useSeoContent } from './hooks/useSeoContent';
+import { useRemoteSeoContent } from './hooks/useRemoteSeoContent';
 import { useColumnFilters } from './hooks/useColumnFilters';
 import { useViews, type SeoView } from './hooks/useViews';
 import { useColumnLayout } from './hooks/useColumnLayout';
@@ -282,7 +283,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
 const SELECT_COL_WIDTH = 44;
 
 export function SEOModule() {
-  const { rows, options, isLoading, saveCell, quickCreate, bulkDelete, generateField, scanLinks } = useSeoContent();
+  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate, bulkDelete, generateField, scanLinks } = useSeoContent();
 
   // Text models available for AI generation (registry). The user picks one in the
   // header dropdown; its id+provider is sent with every generate call so that
@@ -336,6 +337,12 @@ export function SEOModule() {
   const [siteId, setSiteId] = useState<number | 'local'>('local');
   const isLocal = siteId === 'local';
   const activeSite = isLocal ? null : sites.find((s) => Number(s.id) === siteId) ?? null;
+  // Remote site (Phase 1): read + inline-edit its SEO via the connector proxy.
+  // Generation/scanning/creation stay local-only and are gated on isLocal below.
+  const remote = useRemoteSeoContent(isLocal || typeof siteId !== 'number' ? null : siteId);
+  const rows = isLocal ? localRows : remote.rows;
+  const saveCell = isLocal ? localSaveCell : remote.saveCell;
+  const isLoading = isLocal ? localLoading : remote.isLoading;
   // Per-column filters (funnel icon in each column header).
   const filterDefs = useMemo(() => buildFilterDefs(options), [options]);
   const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters();
@@ -602,7 +609,7 @@ export function SEOModule() {
         filter={key !== 'open' && def
           ? { def, value: filterValues[key] ?? '', onChange: (v) => setFilter(key, v) }
           : undefined}
-        generate={GENERATABLE.has(key)
+        generate={GENERATABLE.has(key) && isLocal
           ? {
               templates: templatesForCol(key),
               busy: columnGenerating === key,
@@ -638,7 +645,7 @@ export function SEOModule() {
               placeholder="Untitled"
               emphasis
               onSave={(v) => saveCell(row.id, 'title', v)}
-              onGenerate={() => handleGenerate(row.id, 'title')}
+              onGenerate={isLocal ? () => handleGenerate(row.id, 'title') : undefined}
               generating={genKey === `${row.id}:title`}
               suggestion={staged[`${row.id}:title`] ?? null}
               onAccept={() => acceptStaged(row.id, 'title')}
@@ -681,7 +688,7 @@ export function SEOModule() {
               value={row.slug}
               placeholder="slug"
               onSave={(v) => saveCell(row.id, 'slug', v)}
-              onGenerate={() => handleGenerate(row.id, 'slug')}
+              onGenerate={isLocal ? () => handleGenerate(row.id, 'slug') : undefined}
               generating={genKey === ckey}
               suggestion={staged[ckey] ?? null}
               onAccept={() => acceptStaged(row.id, 'slug')}
@@ -724,7 +731,9 @@ export function SEOModule() {
         const isBroken = key === 'brokenLinks';
         return (
           <TableCell key={key} className="text-center text-xs">
-            {scanning ? (
+            {!isLocal ? (
+              <span className="text-muted-foreground">—</span>
+            ) : scanning ? (
               <Loader2 className="inline-block w-3.5 h-3.5 animate-spin text-primary" />
             ) : scanned ? (
               <span className="inline-flex items-center justify-center gap-1">
@@ -782,7 +791,7 @@ export function SEOModule() {
         // Editable AI meta field (metaTitle / metaDescription / primaryKeyword / metaKeywords).
         const field = TEXT_FIELD_BY_KEY[key];
         if (!field) return null;
-        const canGen = GENERATABLE.has(key);
+        const canGen = GENERATABLE.has(key) && isLocal;
         const ckey = `${row.id}:${key}`;
         return (
           <TableCell key={key}>
@@ -837,7 +846,7 @@ export function SEOModule() {
       {/* Content toolbar (content tab only): Views (left) · Post / Page / Model +
           Columns (right). Sits above the nav+table so the section nav and table
           start at the same height. */}
-      {tab === 'content' && isLocal && (
+      {tab === 'content' && (
         <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-3">
             <ViewsToolbar
@@ -867,6 +876,8 @@ export function SEOModule() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Create + model picker are local-only (remote = read + edit, Phase 1). */}
+            {isLocal && (<>
             <Button size="sm" onClick={() => handleCreate('post')} disabled={busy} className="h-8 gap-1.5 text-xs">
               <Plus className="w-3.5 h-3.5" /> Post
             </Button>
@@ -895,6 +906,7 @@ export function SEOModule() {
                 )}
               </SelectContent>
             </Select>
+            </>)}
             <ViewsToolbar
               show="columns"
               columns={TOGGLE_COLUMNS}
@@ -931,22 +943,16 @@ export function SEOModule() {
 
         {/* Section content */}
         <div className="min-w-0 flex-1">
-      {!isLocal ? (
-        <RemoteSitePlaceholder
-          siteName={activeSite?.name || activeSite?.url || 'this site'}
-          siteUrl={activeSite?.url}
-          section={SECTION_LABEL[tab]}
-        />
-      ) : tab === 'air' ? (
-        <AIReadinessPanel />
+      {tab === 'air' ? (
+        isLocal ? <AIReadinessPanel /> : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
       ) : tab === 'site' ? (
-        <SiteSettingsPanel />
+        isLocal ? <SiteSettingsPanel /> : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
       ) : tab === 'business' ? (
-        <BusinessPanel />
+        isLocal ? <BusinessPanel /> : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
       ) : (
       <>
-      {/* Bulk actions bar — generate any/all fields across the selected rows. */}
-      {selected.size > 0 && (
+      {/* Bulk actions bar — generate any/all fields across the selected rows (local only). */}
+      {selected.size > 0 && isLocal && (
         <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg border border-border bg-muted/40 px-4 py-2">
           <span className="text-sm font-medium mr-1">{selected.size} selected</span>
           <span className="text-xs text-muted-foreground inline-flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" /> AI generate:</span>

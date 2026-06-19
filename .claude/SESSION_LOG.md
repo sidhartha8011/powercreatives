@@ -1,5 +1,28 @@
 # Session Log
 
+## 2026-06-19 — Remote-site SEO management, Phase 1 (read + inline edit)
+- Wired the previously-dormant connector proxy so a CONNECTED site's posts/pages load
+  in the SEO table and are inline-editable (the "coming soon" stub now only shows for the
+  AI Readiness / Site / Business tabs on remote).
+- **Backend:** PCM_Sites_Service::remote_rest() (generic Basic-auth + ?rest_route= proxy);
+  PCM_SEO_Service::remote_list_content() (GET /wp/v2/posts+pages → SeoRow shape) and
+  remote_save_cell() (title/slug native; meta dual-writes pcm_seo_* + Yoast/RankMath/SEOPress
+  keys). New admin routes GET /seo/sites/{id}/content + POST /seo/sites/{id}/content/{post}/cell
+  (site owner-scoped via PCM_DB::get_site). trpc: seo.remoteContent + seo.remoteSaveCell.
+- **Frontend:** new useRemoteSeoContent(siteId) hook; index.tsx selects remote vs local rows/
+  saveCell/isLoading; content tab renders the table for remote; generate/scan/create/bulk-bar
+  gated to isLocal (Phase 1 = read+edit only). Inline title/slug/meta editing + Views/Columns
+  work for remote.
+- **Constraint (important):** SEO META read/write needs the remote to expose those meta keys in
+  REST — i.e. the CONNECTOR PLUGIN (or a REST-aware SEO plugin). bestclient was connected via
+  App Password (no connector): its meta object only has {footnotes}, so title/slug are
+  editable there but meta columns are empty and meta-save is a no-op. Install the connector on
+  the remote for full meta management.
+- **Verified:** read + row mapping live against bestclient ('Hello world!' mapped); both routes
+  REGISTERED at runtime; php -l OK (3 files); tsc 0 SEO errors (56 baseline); build clean.
+  NOT browser-tested (wp-admin login) and remote WRITE not exercised (needs live creds) — must
+  deploy to the live hub to use. Not committed.
+
 ## 2026-06-19 — Deploy ZIP rebuilt (carries the rest_route connection fix)
 - Fresh `npm`/vite build (dist current), then repackaged `power-creatives.zip` at the
   project root (same name/structure: top-level `powerplatform/`). 4.7 MB, 2658 files.

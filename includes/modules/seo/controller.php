@@ -49,6 +49,10 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/content/(?P<id>\d+)/body',     'get_body'),
             array('POST', '/seo/content/(?P<id>\d+)/body',     'save_body'),
             array('POST', '/seo/content/(?P<id>\d+)/optimize', 'optimize_body'),
+            // Remote-site SEO — read + inline-edit a connected site's posts/pages
+            // via the connector proxy (admin only; site is owner-scoped in the handler).
+            array('GET',  '/seo/sites/(?P<id>\d+)/content', 'remote_content', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/cell', 'remote_save_cell', array(), 'manage_options'),
             // Saved views (per-user column/filter configs).
             array('GET',    '/seo/views',                'views_list'),
             array('POST',   '/seo/views',                'views_create'),
@@ -146,6 +150,39 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success(array_merge(array('id' => $id), $result));
+    }
+
+    /** GET /seo/sites/{id}/content — list a connected site's posts/pages SEO via the proxy. */
+    public function remote_content(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(PCM_SEO_Service::remote_list_content($site));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/cell — inline-save one SEO field to the remote. */
+    public function remote_save_cell(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $field  = sanitize_text_field($params['field'] ?? '');
+        $type   = sanitize_key($params['type'] ?? 'post');
+        $value  = sanitize_text_field((string) ($params['value'] ?? ''));
+        if ($field === '') {
+            return $this->error('Field is required.', 400, 'pcm_seo_missing_field');
+        }
+        $result = PCM_SEO_Service::remote_save_cell($site, absint($request->get_param('post')), $type, $field, $value);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** POST /seo/content/{id}/generate — AI-suggest a field value (not saved). */

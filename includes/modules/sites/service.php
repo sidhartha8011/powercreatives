@@ -72,6 +72,44 @@ class PCM_Sites_Service
     }
 
     /**
+     * Authenticated REST call to a connected remote site. Uses the `?rest_route=`
+     * form (permalink-agnostic) + Basic auth via the stored Application Password.
+     *
+     * @param object     $site   wp_pcm_sites row (url, username, appPassword).
+     * @param string     $method 'GET' | 'POST'.
+     * @param string     $route  REST route, e.g. '/wp/v2/posts'.
+     * @param array      $query  Extra query args (per_page, _fields, …).
+     * @param array|null $body   JSON body for write requests.
+     * @return array{status:int,body:mixed}|\WP_Error
+     */
+    public static function remote_rest(object $site, string $method, string $route, array $query = array(), ?array $body = null)
+    {
+        $password = self::decrypt_password((string) $site->appPassword);
+        $qs  = array_merge(array('rest_route' => $route), $query);
+        $url = rtrim((string) $site->url, '/') . '/?' . http_build_query($qs);
+        $args = array(
+            'method'    => $method,
+            'headers'   => array(
+                'Authorization' => 'Basic ' . base64_encode($site->username . ':' . $password),
+                'Content-Type'  => 'application/json',
+            ),
+            'timeout'   => 30,
+            'sslverify' => true,
+        );
+        if ($body !== null) {
+            $args['body'] = wp_json_encode($body);
+        }
+        $response = wp_remote_request($url, $args);
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        return array(
+            'status' => (int) wp_remote_retrieve_response_code($response),
+            'body'   => json_decode(wp_remote_retrieve_body($response), true),
+        );
+    }
+
+    /**
      * Test connection to a WordPress site.
      *
      * Calls GET /wp-json/wp/v2/users/me to verify credentials.

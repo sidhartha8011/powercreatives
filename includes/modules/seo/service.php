@@ -415,6 +415,138 @@ class PCM_SEO_Service
         return new WP_Error('pcm_seo_bad_field', __('Unhandled field.', 'power-creatives'), array('status' => 400));
     }
 
+    // ── Remote-site SEO (connected sites via the connector proxy; Phase 1: read + edit) ──
+
+    /** Ensure the Sites service (remote proxy + credential decrypt) is loaded. */
+    private static function ensure_sites_service(): void
+    {
+        if (!class_exists('PCM_Sites_Service')) {
+            require_once dirname(__DIR__) . '/sites/service.php';
+        }
+    }
+
+    /** Remote SEO meta-key candidates per editable field (pcm first, then Yoast/RankMath/SEOPress). */
+    private static function remote_meta_keys(string $field): array
+    {
+        $map = array(
+            'metaTitle'       => array('pcm_seo_meta_title', '_yoast_wpseo_title', 'rank_math_title', '_seopress_titles_title'),
+            'metaDescription' => array('pcm_seo_meta_description', '_yoast_wpseo_metadesc', 'rank_math_description', '_seopress_titles_desc'),
+            'primaryKeyword'  => array('pcm_seo_primary_keyword', '_yoast_wpseo_focuskw', 'rank_math_focus_keyword', '_seopress_analysis_target_kw'),
+            'metaKeywords'    => array('pcm_seo_meta_keywords'),
+        );
+        return $map[$field] ?? array();
+    }
+
+    /** Map a remote WP REST post/page item → a SeoRow-shaped array (matches build_row). */
+    private static function remote_row(array $item, string $type): array
+    {
+        $meta = (isset($item['meta']) && is_array($item['meta'])) ? $item['meta'] : array();
+        $pick = static function (array $keys) use ($meta) {
+            foreach ($keys as $k) {
+                if (!empty($meta[$k])) {
+                    return (string) $meta[$k];
+                }
+            }
+            return '';
+        };
+        return array(
+            'id'                => (int) ($item['id'] ?? 0),
+            'type'              => $type,
+            'title'             => (string) ($item['title']['rendered'] ?? ''),
+            'slug'              => (string) ($item['slug'] ?? ''),
+            'status'            => (string) ($item['status'] ?? ''),
+            'date'              => (string) ($item['date'] ?? ''),
+            'authorId'          => (int) ($item['author'] ?? 0),
+            'author'            => '',
+            'permalink'         => (string) ($item['link'] ?? ''),
+            'editUrl'           => '',
+            'featuredImage'     => '',
+            'excerpt'           => '',
+            'metaTitle'         => $pick(self::remote_meta_keys('metaTitle')),
+            'metaDescription'   => $pick(self::remote_meta_keys('metaDescription')),
+            'primaryKeyword'    => $pick(self::remote_meta_keys('primaryKeyword')),
+            'metaKeywords'      => $pick(self::remote_meta_keys('metaKeywords')),
+            'supportingKeyword' => '',
+            'clusterLabel'      => '',
+            'schemaTypes'       => array(),
+            'internalLinks'     => null,
+            'externalLinks'     => null,
+            'brokenLinks'       => null,
+            'linksScannedAt'    => '',
+        );
+    }
+
+    /**
+     * List a connected site's posts + pages as SeoRows, via the connector proxy.
+     * Best-effort: skips a post type on a proxy error rather than failing the whole list.
+     */
+    public static function remote_list_content(object $site): array
+    {
+        self::ensure_sites_service();
+        $rows   = array();
+        $fields = 'id,title,slug,status,date,link,author,meta';
+        foreach (array('post' => '/wp/v2/posts', 'page' => '/wp/v2/pages') as $type => $route) {
+            $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array(
+                'per_page' => 100,
+                'status'   => 'publish,future,draft,pending,private',
+                '_fields'  => $fields,
+                'orderby'  => 'modified',
+            ));
+            if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+                continue;
+            }
+            foreach ($res['body'] as $item) {
+                if (is_array($item)) {
+                    $rows[] = self::remote_row($item, $type);
+                }
+            }
+        }
+        return $rows;
+    }
+
+    /**
+     * Save one SEO field to a connected site's post/page. Native fields (title/slug)
+     * write directly; meta fields dual-write the pcm_* key plus Yoast/RankMath/SEOPress
+     * keys so the value lands regardless of the remote's active SEO plugin.
+     *
+     * @return array{field:string,value:string}|\WP_Error
+     */
+    public static function remote_save_cell(object $site, int $post_id, string $type, string $field, string $value)
+    {
+        self::ensure_sites_service();
+        $route   = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $payload = array();
+        if ($field === 'title') {
+            $payload['title'] = $value;
+        } elseif ($field === 'slug') {
+            $payload['slug'] = sanitize_title($value);
+        } else {
+            $keys = self::remote_meta_keys($field);
+            if (empty($keys)) {
+                return new WP_Error('pcm_seo_bad_field', __('This field is not editable on a remote site.', 'power-creatives'), array('status' => 400));
+            }
+            $payload['meta'] = array();
+            foreach ($keys as $k) {
+                $payload['meta'][$k] = $value;
+            }
+        }
+        $res = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), $payload);
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_save', $res->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($res['status'] ?? 0) >= 300) {
+            $msg = (is_array($res['body'] ?? null) && !empty($res['body']['message']))
+                ? (string) $res['body']['message']
+                : ('HTTP ' . (int) ($res['status'] ?? 0));
+            return new WP_Error('pcm_seo_remote_save', $msg, array('status' => 502));
+        }
+        // Reflect the canonical stored slug (WP may dedupe it server-side).
+        if ($field === 'slug' && is_array($res['body'] ?? null) && !empty($res['body']['slug'])) {
+            $value = (string) $res['body']['slug'];
+        }
+        return array('field' => $field, 'value' => $value);
+    }
+
     /**
      * Dropdown option data for the content table (authors + statuses).
      *

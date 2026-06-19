@@ -300,6 +300,16 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/content/${input.id}/scan-links` }),
     },
+    "seo.remoteContent": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content` }),
+    },
+    "seo.remoteSaveCell": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/cell`, body: { field: input.field, value: input.value, type: input.type } }),
+    },
     // AI Readiness (llms.txt / virtual routes)
     "seo.airStatus": { endpoint: "seo/ai-readiness", method: "GET" },
     "seo.airBuild": { endpoint: "seo/ai-readiness/build", method: "POST" },
