@@ -360,6 +360,37 @@ class PCM_REST_Approvals extends PCM_REST_Base
         $asset_id = sanitize_key($request->get_param('asset_id'));
         $params   = $request->get_json_params();
 
+        // ── Emoji preservation safeguard ──
+        // Some shared hosts run a security layer (mod_security / an input-sanitizing
+        // plugin) that strips 4-byte UTF-8 (emojis) from the PARSED REST params while
+        // leaving the RAW request body intact. For the editable text fields, prefer the
+        // raw-body value when it carries emojis the parsed value lost — so emojis survive
+        // an edit. (Storage itself is already charset-safe: the snapshot is written via
+        // wp_json_encode, i.e. \uXXXX ASCII.)
+        $raw_body = json_decode((string) $request->get_body(), true);
+        if (is_array($raw_body)) {
+            foreach (array('body', 'headline', 'description') as $field) {
+                if (isset($raw_body[$field], $params[$field])
+                    && self::emoji_count($raw_body[$field]) > self::emoji_count($params[$field])
+                ) {
+                    $params[$field] = $raw_body[$field];
+                }
+            }
+        }
+
+        // Opt-in probe: enable WP_DEBUG to log where an emoji is lost on this host
+        // (raw → parsed → after-sanitize). raw=1 parsed=0 ⇒ a request-level layer
+        // stripped it; raw=0 ⇒ the browser never sent it (stale bundle / cache).
+        if (defined('WP_DEBUG') && WP_DEBUG && isset($params['body'])) {
+            error_log(sprintf(
+                '[PCM emoji probe] asset=%s raw=%d parsed=%d sanitized=%d',
+                $asset_id,
+                self::emoji_count(is_array($raw_body) ? ($raw_body['body'] ?? '') : ''),
+                self::emoji_count($params['body']),
+                self::emoji_count(sanitize_textarea_field((string) $params['body']))
+            ));
+        }
+
         require_once __DIR__ . '/service.php';
 
         try {
@@ -371,6 +402,23 @@ class PCM_REST_Approvals extends PCM_REST_Base
         } catch (\Throwable $e) {
             return $this->error('Failed to update snapshot asset: ' . $e->getMessage(), 500);
         }
+    }
+
+    /**
+     * Count emoji / astral-plane symbols in a value — used by the emoji-preservation
+     * safeguard in update_snapshot_asset(). Returns 0 for non-strings or when the
+     * host's PCRE lacks UTF-8 support (the safeguard then simply no-ops).
+     */
+    private static function emoji_count($value): int
+    {
+        if (!is_string($value) || $value === '') {
+            return 0;
+        }
+        $n = @preg_match_all(
+            '/[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2300}-\x{23FF}\x{FE00}-\x{FE0F}\x{1F1E6}-\x{1F1FF}]/u',
+            $value
+        );
+        return is_int($n) ? $n : 0;
     }
 
     /**
