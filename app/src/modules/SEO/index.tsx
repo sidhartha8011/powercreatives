@@ -283,7 +283,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
 const SELECT_COL_WIDTH = 44;
 
 export function SEOModule() {
-  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate, bulkDelete, generateField, scanLinks } = useSeoContent();
+  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate, bulkDelete, generateField: localGenerateField, scanLinks } = useSeoContent();
 
   // Text models available for AI generation (registry). The user picks one in the
   // header dropdown; its id+provider is sent with every generate call so that
@@ -343,6 +343,8 @@ export function SEOModule() {
   const rows = isLocal ? localRows : remote.rows;
   const saveCell = isLocal ? localSaveCell : remote.saveCell;
   const isLoading = isLocal ? localLoading : remote.isLoading;
+  // Generation works for both: the hub runs the LLM, then writes back via saveCell.
+  const generateField = isLocal ? localGenerateField : remote.generateField;
   // Per-column filters (funnel icon in each column header).
   const filterDefs = useMemo(() => buildFilterDefs(options), [options]);
   const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters();
@@ -609,7 +611,7 @@ export function SEOModule() {
         filter={key !== 'open' && def
           ? { def, value: filterValues[key] ?? '', onChange: (v) => setFilter(key, v) }
           : undefined}
-        generate={GENERATABLE.has(key) && isLocal
+        generate={GENERATABLE.has(key)
           ? {
               templates: templatesForCol(key),
               busy: columnGenerating === key,
@@ -645,7 +647,7 @@ export function SEOModule() {
               placeholder="Untitled"
               emphasis
               onSave={(v) => saveCell(row.id, 'title', v)}
-              onGenerate={isLocal ? () => handleGenerate(row.id, 'title') : undefined}
+              onGenerate={() => handleGenerate(row.id, 'title')}
               generating={genKey === `${row.id}:title`}
               suggestion={staged[`${row.id}:title`] ?? null}
               onAccept={() => acceptStaged(row.id, 'title')}
@@ -688,7 +690,7 @@ export function SEOModule() {
               value={row.slug}
               placeholder="slug"
               onSave={(v) => saveCell(row.id, 'slug', v)}
-              onGenerate={isLocal ? () => handleGenerate(row.id, 'slug') : undefined}
+              onGenerate={() => handleGenerate(row.id, 'slug')}
               generating={genKey === ckey}
               suggestion={staged[ckey] ?? null}
               onAccept={() => acceptStaged(row.id, 'slug')}
@@ -791,7 +793,7 @@ export function SEOModule() {
         // Editable AI meta field (metaTitle / metaDescription / primaryKeyword / metaKeywords).
         const field = TEXT_FIELD_BY_KEY[key];
         if (!field) return null;
-        const canGen = GENERATABLE.has(key) && isLocal;
+        const canGen = GENERATABLE.has(key);
         const ckey = `${row.id}:${key}`;
         return (
           <TableCell key={key}>
@@ -952,7 +954,7 @@ export function SEOModule() {
       ) : (
       <>
       {/* Bulk actions bar — generate any/all fields across the selected rows (local only). */}
-      {selected.size > 0 && isLocal && (
+      {selected.size > 0 && (
         <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg border border-border bg-muted/40 px-4 py-2">
           <span className="text-sm font-medium mr-1">{selected.size} selected</span>
           <span className="text-xs text-muted-foreground inline-flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" /> AI generate:</span>
@@ -973,9 +975,11 @@ export function SEOModule() {
           <Button variant="ghost" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setSelected(new Set())}>
             Clear
           </Button>
-          <Button variant="ghost" size="sm" onClick={handleDelete} disabled={busy} className="gap-1.5 text-destructive">
-            <Trash2 className="w-4 h-4" /> Trash
-          </Button>
+          {isLocal && (
+            <Button variant="ghost" size="sm" onClick={handleDelete} disabled={busy} className="gap-1.5 text-destructive">
+              <Trash2 className="w-4 h-4" /> Trash
+            </Button>
+          )}
         </div>
       )}
 

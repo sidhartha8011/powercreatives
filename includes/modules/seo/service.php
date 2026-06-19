@@ -433,6 +433,8 @@ class PCM_SEO_Service
             'metaDescription' => array('pcm_seo_meta_description', '_yoast_wpseo_metadesc', 'rank_math_description', '_seopress_titles_desc'),
             'primaryKeyword'  => array('pcm_seo_primary_keyword', '_yoast_wpseo_focuskw', 'rank_math_focus_keyword', '_seopress_analysis_target_kw'),
             'metaKeywords'    => array('pcm_seo_meta_keywords'),
+            'supportingKeyword' => array('pcm_seo_supporting_keyword'),
+            'clusterLabel'      => array('pcm_seo_cluster_label'),
         );
         return $map[$field] ?? array();
     }
@@ -466,8 +468,8 @@ class PCM_SEO_Service
             'metaDescription'   => $pick(self::remote_meta_keys('metaDescription')),
             'primaryKeyword'    => $pick(self::remote_meta_keys('primaryKeyword')),
             'metaKeywords'      => $pick(self::remote_meta_keys('metaKeywords')),
-            'supportingKeyword' => '',
-            'clusterLabel'      => '',
+            'supportingKeyword' => $pick(self::remote_meta_keys('supportingKeyword')),
+            'clusterLabel'      => $pick(self::remote_meta_keys('clusterLabel')),
             'schemaTypes'       => array(),
             'internalLinks'     => null,
             'externalLinks'     => null,
@@ -545,6 +547,108 @@ class PCM_SEO_Service
             $value = (string) $res['body']['slug'];
         }
         return array('field' => $field, 'value' => $value);
+    }
+
+    /** Prompt vars for a remote post (business context = the connected site). */
+    private static function remote_field_vars(object $site, array $row): array
+    {
+        $url    = (string) $site->url;
+        $host   = (string) wp_parse_url($url, PHP_URL_HOST);
+        $name   = !empty($site->name) ? (string) $site->name : $host;
+        $locale = get_locale();
+        return array(
+            'title'                     => (string) ($row['title'] ?? ''),
+            'primary_keyword'           => (string) ($row['primaryKeyword'] ?? ''),
+            'supporting_keyword'        => (string) ($row['supportingKeyword'] ?? ''),
+            'meta_title'                => (string) ($row['metaTitle'] ?? ''),
+            'meta_description'          => (string) ($row['metaDescription'] ?? ''),
+            'post_type'                 => (string) ($row['type'] ?? ''),
+            'site.lang'                 => $locale ? substr($locale, 0, 2) : 'en',
+            'website.url'               => $url,
+            'today'                     => gmdate('Y-m-d'),
+            'business.name'             => $name,
+            'business.tagline'          => '',
+            'business.website'          => $url,
+            'business.website|hostname' => $host,
+            'business.address'          => '',
+            'business.phone'            => '',
+            'business.category'         => '',
+            'business.hours'            => '',
+            'business.rating'           => '',
+            'business.lat'              => '',
+            'business.lng'              => '',
+            'business.types'            => '',
+        );
+    }
+
+    /**
+     * AI-generate (or optimize) one SEO field for a connected site's post/page.
+     * Fetches the remote post, builds prompt vars from it, runs the SAME prompt +
+     * LLM as the local generator, and returns the suggestion WITHOUT saving (the
+     * caller stages it; remote_save_cell persists on accept).
+     *
+     * @return array{field:string,value:string}|\WP_Error
+     */
+    public static function remote_generate_field(object $site, int $post_id, string $type, string $field, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
+    {
+        $use_map = self::field_use_map();
+        if (!isset($use_map[$field])) {
+            return new WP_Error('pcm_seo_not_generatable', __('This field cannot be AI-generated.', 'power-creatives'), array('status' => 400));
+        }
+        $use     = $use_map[$field];
+        $prompts = self::field_prompts();
+        if (!isset($prompts[$use])) {
+            return new WP_Error('pcm_seo_no_prompt', __('No prompt configured for this field.', 'power-creatives'), array('status' => 500));
+        }
+        self::ensure_sites_service();
+
+        // Fetch the remote post so the prompt has its title + current SEO meta.
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'id,title,slug,link,author,meta'));
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_fetch', $res->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return new WP_Error('pcm_seo_remote_fetch', __('Could not read the remote post.', 'power-creatives'), array('status' => 502));
+        }
+        $row  = self::remote_row($res['body'], $type);
+        $vars = self::remote_field_vars($site, $row);
+
+        // Current value of THIS field (drives optimize vs generate).
+        $current_map = array(
+            'title' => 'title', 'slug' => 'slug', 'metaTitle' => 'metaTitle',
+            'metaDescription' => 'metaDescription', 'primaryKeyword' => 'primaryKeyword',
+            'metaKeywords' => 'metaKeywords',
+        );
+        $current = (string) ($row[$current_map[$field] ?? ''] ?? '');
+        $vars['current_value'] = $current;
+
+        $mode    = (!empty($current) && !empty($prompts[$use]['optimize'])) ? 'optimize' : 'generate';
+        $default = $prompts[$use][$mode];
+        $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
+        $prompt  = self::substitute_vars($tpl, $vars);
+        $max     = (int) ($prompts[$use]['max'] ?? 200);
+
+        if (!class_exists('PCM_LLM')) {
+            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
+        }
+        try {
+            $opts = array('max_tokens' => $max);
+            if (!empty($model)) {
+                $opts['model'] = $model;
+            }
+            if (!empty($provider)) {
+                $opts['provider'] = $provider;
+            }
+            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $value  = self::sanitize_ai_output((string) ($result['content'] ?? ''));
+            if ($value === '') {
+                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
+            }
+            return array('field' => $field, 'value' => $value);
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
     }
 
     /**

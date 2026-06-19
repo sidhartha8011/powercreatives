@@ -310,6 +310,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/cell`, body: { field: input.field, value: input.value, type: input.type } }),
     },
+    "seo.remoteGenerateField": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/generate`, body: { field: input.field, type: input.type, model: input.model, provider: input.provider, templateId: input.templateId } }),
+    },
     // AI Readiness (llms.txt / virtual routes)
     "seo.airStatus": { endpoint: "seo/ai-readiness", method: "GET" },
     "seo.airBuild": { endpoint: "seo/ai-readiness/build", method: "POST" },

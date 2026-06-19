@@ -1,5 +1,24 @@
 # Session Log
 
+## 2026-06-19 — Remote-site SEO, Phase 2 (AI generate + all fields)
+- **Generate on remote:** PCM_SEO_Service::remote_generate_field() — fetches the remote
+  post, builds prompt vars from it (business context = the connected site), runs the SAME
+  prompt + LLM as local, returns the suggestion unsaved (caller stages → remote_save_cell
+  on accept). New route POST /seo/sites/{id}/content/{post}/generate + trpc
+  seo.remoteGenerateField + useRemoteSeoContent.generateField.
+- **Frontend:** generateField is now effective (local vs remote); un-gated the generate
+  affordances for remote (per-cell ✦, header bulk ✦, canGen). Bulk bar enabled for remote
+  (Generate works; Trash stays local-only). Scan links + create + model-picker stay local.
+- **All fields:** added supportingKeyword + clusterLabel to remote read/save mapping and
+  registered pcm_seo_supporting_keyword + pcm_seo_cluster_label in the connector plugin so
+  they're REST-exposed (connector sites must re-download the connector to pick these up).
+- **Verified:** generate route REGISTERED; remote vars build from the live remote
+  (title='Hello world!', business.name='Best Client'); page_title prompt substitutes with
+  NO leftover placeholders; php -l OK (3 files); tsc 0 SEO errors (56); build clean. LLM
+  core is the proven local path; remote WRITE/generate not exercised end-to-end (needs live
+  creds + LLM) — must deploy to use. Remote generation uses the hub's DEFAULT model (the
+  per-session model picker stays local-only). Not committed.
+
 ## 2026-06-19 — Remote-site SEO management, Phase 1 (read + inline edit)
 - Wired the previously-dormant connector proxy so a CONNECTED site's posts/pages load
   in the SEO table and are inline-editable (the "coming soon" stub now only shows for the

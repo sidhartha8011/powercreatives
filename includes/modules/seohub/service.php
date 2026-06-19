@@ -414,6 +414,7 @@ add_action('init', function () {
         'rank_math_title', 'rank_math_description', 'rank_math_focus_keyword',
         '_seopress_titles_title', '_seopress_titles_desc', '_seopress_analysis_target_kw',
         'pcm_seo_meta_title', 'pcm_seo_meta_description', 'pcm_seo_primary_keyword', 'pcm_seo_meta_keywords',
+        'pcm_seo_supporting_keyword', 'pcm_seo_cluster_label',
     );
     foreach (array('post', 'page') as $type) {
         foreach ($keys as $k) {

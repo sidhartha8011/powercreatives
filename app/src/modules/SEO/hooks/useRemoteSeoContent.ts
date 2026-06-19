@@ -21,6 +21,8 @@ export interface UseRemoteSeoContentResult {
   isLoading: boolean;
   /** Persist one cell to the remote; patches the cache to the server's value. */
   saveCell: (id: number, field: string, value: string | number) => Promise<void>;
+  /** AI-suggest a field value on the remote (NOT saved — caller stages it). */
+  generateField: (id: number, field: string, model?: string, provider?: string, templateId?: number) => Promise<string>;
 }
 
 export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentResult {
@@ -57,5 +59,17 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
     [rows, saveMutation, siteId, queryClient],
   );
 
-  return { rows, isLoading: !!listQuery.isLoading, saveCell };
+  const generateMutation = trpc.seo.remoteGenerateField.useMutation();
+
+  const generateField = useCallback(
+    (id: number, field: string, model?: string, provider?: string, templateId?: number): Promise<string> => {
+      const type = rows.find((r) => Number(r.id) === id)?.type === 'page' ? 'page' : 'post';
+      return generateMutation
+        .mutateAsync({ siteId: siteId ?? 0, postId: id, field, type, model, provider, templateId })
+        .then((res: any) => String(res?.value ?? ''));
+    },
+    [rows, generateMutation, siteId],
+  );
+
+  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField };
 }

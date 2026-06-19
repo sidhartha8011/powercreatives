@@ -53,6 +53,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             // via the connector proxy (admin only; site is owner-scoped in the handler).
             array('GET',  '/seo/sites/(?P<id>\d+)/content', 'remote_content', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/cell', 'remote_save_cell', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/generate', 'remote_generate_field', array(), 'manage_options'),
             // Saved views (per-user column/filter configs).
             array('GET',    '/seo/views',                'views_list'),
             array('POST',   '/seo/views',                'views_create'),
@@ -179,6 +180,30 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->error('Field is required.', 400, 'pcm_seo_missing_field');
         }
         $result = PCM_SEO_Service::remote_save_cell($site, absint($request->get_param('post')), $type, $field, $value);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/generate — AI-suggest a remote field value (not saved). */
+    public function remote_generate_field(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $field  = sanitize_text_field($params['field'] ?? '');
+        $type   = sanitize_key($params['type'] ?? 'post');
+        if ($field === '') {
+            return $this->error('Field is required.', 400, 'pcm_seo_missing_field');
+        }
+        $model       = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider    = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+        $template_id = isset($params['templateId']) ? absint($params['templateId']) : null;
+        $result = PCM_SEO_Service::remote_generate_field($site, absint($request->get_param('post')), $type, $field, $model, (int) $user->id, $provider, $template_id ?: null);
         if ($result instanceof WP_Error) {
             return $result;
         }
