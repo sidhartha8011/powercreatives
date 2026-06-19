@@ -21,6 +21,8 @@ export interface SeoView {
   id: number;
   name: string;
   config: ViewConfig;
+  /** Whether this is the user's default view (auto-applied on load). */
+  isDefault: boolean;
 }
 
 const LIST_KEY = ['seo', 'listViews'] as const;
@@ -30,6 +32,7 @@ export interface UseViewsResult {
   isLoading: boolean;
   saveView: (name: string, config: ViewConfig) => Promise<SeoView | null>;
   removeView: (id: number) => Promise<void>;
+  setDefaultView: (id: number, isDefault: boolean) => Promise<void>;
 }
 
 export function useViews(): UseViewsResult {
@@ -38,6 +41,7 @@ export function useViews(): UseViewsResult {
   const listQuery = trpc.seo.listViews.useQuery() as { data?: unknown; isLoading: boolean };
   const createMutation = trpc.seo.createView.useMutation();
   const deleteMutation = trpc.seo.deleteView.useMutation();
+  const setDefaultMutation = trpc.seo.setDefaultView.useMutation();
 
   const views = useMemo<SeoView[]>(() => {
     if (!Array.isArray(listQuery.data)) return [];
@@ -45,6 +49,7 @@ export function useViews(): UseViewsResult {
       id: Number(v.id),
       name: String(v.name ?? ''),
       config: (v.config ?? {}) as ViewConfig,
+      isDefault: Boolean((v as { isDefault?: unknown }).isDefault),
     }));
   }, [listQuery.data]);
 
@@ -83,5 +88,19 @@ export function useViews(): UseViewsResult {
     [deleteMutation, invalidate],
   );
 
-  return { views, isLoading: listQuery.isLoading, saveView, removeView };
+  const setDefaultView = useCallback(
+    (id: number, isDefault: boolean): Promise<void> =>
+      setDefaultMutation
+        .mutateAsync({ id, isDefault })
+        .then(() => {
+          void invalidate();
+          toast.success(isDefault ? 'Default view set' : 'Default view cleared');
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'Failed to update default view');
+        }),
+    [setDefaultMutation, invalidate],
+  );
+
+  return { views, isLoading: listQuery.isLoading, saveView, removeView, setDefaultView };
 }

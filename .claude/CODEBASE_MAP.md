@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-14 · verified current 2026-06-18_
+_Last updated: 2026-06-14 · verified current 2026-06-19_
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -21,7 +21,7 @@ _Last updated: 2026-06-14 · verified current 2026-06-18_
 | Name / slug / text-domain | Power Creatives / `power-creatives` |
 | Main file | `power-creatives.php` |
 | Version (`PCM_VERSION`) | **1.7.0** |
-| DB version (`PCM_DB_VERSION`) | **1.26.0** (separate from plugin version) |
+| DB version (`PCM_DB_VERSION`) | **1.27.0** (separate from plugin version) |
 | Requires WP / PHP | 6.4+ / 8.1+ |
 | Const prefix | `PCM_` |
 | Composer package | `antigravity/power-creatives` (type `wordpress-plugin`) |
@@ -81,11 +81,21 @@ There is **no PHP linter configured** (no `phpcs.xml`); follow WPCS conventions 
   PHP 8.2.29, nginx 1.26.1, MySQL 8.4.0, Mailpit — all Local "lightning services".
 - **WP root:** `~/Local Sites/powercreatives/app/public`. **DB:** `local` / user
   `root` / pass `root` (MySQL on port 10005 only while the site is running).
-- **Plugin link:** `…/wp-content/plugins/power-creatives` is a **directory junction**
-  (`mklink /J`, not a symlink — Developer Mode is off, so admin-free symlinks aren't
-  available) → repointed to this working copy `C:\Users\sanky\Downloads\powerplatform-new\powerplatform`.
-  (An older Jun-5 copy lives at `…\Downloads\powerplatform\powerplatform`; the junction
-  used to point there.)
+- **Plugin link (verified 2026-06-18):** the active plugin dir is
+  `…/wp-content/plugins/`**`powercreatives`** (note the name — no hyphen; the main
+  file inside is still `power-creatives.php`, so the activated entry is
+  `powercreatives/power-creatives.php`). It is a **directory junction** →
+  this working copy **`C:\Users\sanky\Desktop\powercreatives\powercreatives`**
+  (the dir that directly holds `power-creatives.php` — junction MUST target the
+  inner dir; WP scans one level deep). So `npm run build` in the working copy +
+  a browser hard-refresh reflects frontend changes live; PHP changes are picked
+  up immediately. Created via PowerShell `New-Item -ItemType Junction` (not
+  `mklink`, no admin needed).
+  - **History:** the site originally ran a **standalone copy extracted from the
+    deploy zip** (a real dir, not a junction) — edits/builds in the Desktop
+    working copy did NOT reach it. That copy was moved aside to
+    `…/plugins/powercreatives-zip-backup` and replaced with the junction above.
+    (An even older junction once pointed at `C:\Users\sanky\Downloads\powerplatform-new\powerplatform`.)
 - **Starting it:** Local sites start from the **Local desktop app** (select site →
   *Start site*). No reliable headless start — launching the bundled mysqld/php-fpm/nginx
   by hand bypasses Local's router/orchestration and tends to half-start.
@@ -205,7 +215,11 @@ uses `pcm/v1` + the path in `routes()`.
   copy_jobs, copy_results, templates, brands, brand_assets, prompt_overrides, strategies,
   strategy_items, articles, sites, deliveries, approval_sets, automations, automation_logs`
   (+ `seo_tenants`, `seo_hmac_nonces`, `notifications`, `delivery_assignments`, and
-  **`seo_views`** — per-user saved SEO table Views {columns,filters} JSON, DB **1.26.0**).
+  **`seo_views`** — per-user saved SEO table Views {columns,filters} JSON + an
+  **`isDefault`** tinyint flag (DB **1.27.0**): at most one default per user
+  (`PCM_SEO_Service::set_default_view` clears others on set); the SEO module
+  auto-applies the default view once on load. Toggle via star icon in the View
+  dropdown → `PATCH /seo/views/{id}/default`).
 - Because `dbDelta` can't rename/alter-null/drop, explicit one-off `ALTER`/backfill
   migrations live in `PCM_Schema` (`migrate_assets_columns`, `migrate_brands_columns`,
   `migrate_brands_domain`, `migrate_brand_assets_role`, `migrate_brand_svg_to_png`,
@@ -519,10 +533,24 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
 - **Phase 2 (frontend)**: `app/src/modules/SEO` content table (inline edit,
   status dropdown, sortable, type filter, plugin badge, bulk trash,
   quick-create) wired via ModuleId/trpc-routes/Sidebar/Shell.
+  - **Spreadsheet column resize + reorder** (`hooks/useColumnLayout.ts`): the
+    table is rendered data-driven from an ordered column list + a `<colgroup>`
+    of px widths. Drag a header's right edge to resize (pointer events); drag a
+    header to reorder (native HTML5 DnD). Order+widths persist to **localStorage**
+    (`pcm:seo:col-layout:v1`) — per-browser, NOT in the View/server. Reset via
+    Columns menu → "Reset column sizes & order". The leading selection column is
+    fixed. NB: reorder uses native DnD (not `@hello-pangea/dnd`) so no
+    `flushSync` dance; the resize handle cancels its own dragstart so it doesn't
+    trigger a column move.
 - **Phase 3 (AI generate)**: `prompts.php` (verbatim field prompts, filter
   `pcm_seo_field_prompts`) + `generate_field` (substitute_vars + build_field_vars
-  + sanitize_ai_output → `PCM_LLM::invoke`); `POST /seo/content/{id}/generate`;
-  frontend per-field sparkle → STAGED suggestion (accept/reject). Tests:
+  + sanitize_ai_output → `PCM_LLM::invoke`); `POST /seo/content/{id}/generate`
+  accepts optional `model` + `provider` (data-driven routing — no detect_provider).
+  frontend per-field sparkle → STAGED suggestion (accept/**re-generate**/reject);
+  a **model picker** in the content header (next to Post/Page) lets the user pick
+  any text model (`trpc.models.getForGeneration {type:'text'}`); the choice
+  (id+provider) is sent with every generate/bulk call and persisted in
+  localStorage (`pcm:seo:gen-model`). Tests:
   `SeoIntegrationTest` (key-map, detection, read-chain, dual-write, whitelist,
   substitution, output-sanitize, field map, prompt completeness).
   **Prompts are user-editable in Settings → Prompts → SEO tab** (post-1.23):
@@ -662,6 +690,12 @@ section. `seo_tenants` still keeps the handshake secret + its own proxy creds.
   `Number(raw.id)` in every consumer hook AND in React-Query `setQueriesData` predicates.
 - **`flushSync()` required** around optimistic `setQueriesData` for `@hello-pangea/dnd`
   drag-end, or cards snap back (see `docs/HANDOVER-DnD-jump-back-bug.md`).
+- **Tailwind v4 gates `hover:`/`group-hover:` behind `@media (hover: hover)`** — these
+  utilities are NO-OPS on touch-capable / coarse-pointer devices (common on Windows
+  laptops; Brave can report it too). So hover-reveal UI (e.g. show-checkbox-on-row-hover)
+  built purely with `group-hover:` silently fails for those users. Drive such reveals
+  with JS hover state (`onMouseEnter`/`onMouseLeave`) instead. Fixed this way in
+  `SEO/index.tsx` row-number→checkbox swap (2026-06-18).
 - **`wp_pcm_assets` table is OFF-LIMITS** for the Approvals domain — per-item metadata
   goes in the approval-set snapshot JSON, not new columns (PO hard boundary).
 - **`maybe_upgrade()` runs on every page load** — keep migrations idempotent and cheap.

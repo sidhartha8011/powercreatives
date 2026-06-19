@@ -344,6 +344,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "DELETE",
         transform: (input: any) => ({ url: `seo/views/${input.id}` }),
     },
+    "seo.setDefaultView": {
+        endpoint: "seo/views",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `seo/views/${input.id}/default`, body: { isDefault: input.isDefault } }),
+    },
     // SEO Hub — managed remote sites
     "seohub.listSites": { endpoint: "seohub/sites", method: "GET" },
     "seohub.createSite": { endpoint: "seohub/sites", method: "POST" },

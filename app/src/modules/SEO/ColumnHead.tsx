@@ -5,6 +5,7 @@
  * <th> (a filter button can't be nested inside the sort <button>).
  */
 
+import type { DragEvent, PointerEvent } from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, Filter, X, type LucideIcon } from 'lucide-react';
 import {
   DropdownMenu,
@@ -37,16 +38,41 @@ interface ColumnHeadProps {
   className?: string;
   sort?: SortState;
   filter?: FilterState;
+  // Drag-to-reorder (native HTML5 DnD) — wired by the table.
+  draggable?: boolean;
+  onDragStart?: (e: DragEvent<HTMLTableCellElement>) => void;
+  onDragOver?: (e: DragEvent<HTMLTableCellElement>) => void;
+  onDragLeave?: (e: DragEvent<HTMLTableCellElement>) => void;
+  onDrop?: (e: DragEvent<HTMLTableCellElement>) => void;
+  onDragEnd?: (e: DragEvent<HTMLTableCellElement>) => void;
+  /** Highlight this header as the active drop target. */
+  isDropTarget?: boolean;
+  // Drag-to-resize (pointer) — wired by the table; renders a right-edge handle.
+  onResizeStart?: (e: PointerEvent<HTMLSpanElement>) => void;
 }
 
-export function ColumnHead({ label, icon: Icon, width, className, sort, filter }: ColumnHeadProps) {
+export function ColumnHead({
+  label, icon: Icon, width, className, sort, filter,
+  draggable, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, isDropTarget,
+  onResizeStart,
+}: ColumnHeadProps) {
   const isFiltered = !!filter?.value;
   const SortIcon = sort && sort.active && sort.dir === 'asc' ? ArrowUp
     : sort && sort.active && sort.dir === 'desc' ? ArrowDown
     : ArrowUpDown;
 
   return (
-    <th style={width ? { width } : undefined} className={className}>
+    <th
+      style={width ? { width } : undefined}
+      className={`relative ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} ${isDropTarget ? 'bg-primary/10' : ''} ${className ?? ''}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+    >
+      {isDropTarget && <span className="pointer-events-none absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />}
       <div className="flex items-center gap-1 group">
         {Icon && <Icon className="w-3.5 h-3.5 shrink-0 text-muted-foreground/70" />}
         {sort ? (
@@ -111,6 +137,18 @@ export function ColumnHead({ label, icon: Icon, width, className, sort, filter }
           </DropdownMenu>
         )}
       </div>
+      {onResizeStart && (
+        <span
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize"
+          draggable={false}
+          onPointerDown={onResizeStart}
+          onClick={(e) => e.stopPropagation()}
+          onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          className="absolute top-0 right-0 z-20 h-full w-1.5 cursor-col-resize touch-none select-none hover:bg-primary/50"
+        />
+      )}
     </th>
   );
 }

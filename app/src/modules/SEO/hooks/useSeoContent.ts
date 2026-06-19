@@ -26,8 +26,9 @@ export interface UseSeoContentResult {
   quickCreate: (type: 'post' | 'page') => Promise<void>;
   /** Trash selected ids and refresh. */
   bulkDelete: (ids: number[]) => Promise<void>;
-  /** AI-suggest a field value (NOT saved — caller stages it). Resolves to the text. */
-  generateField: (id: number, field: string) => Promise<string>;
+  /** AI-suggest a field value (NOT saved — caller stages it). Resolves to the text.
+   *  Optional model/provider override routes generation to a specific model. */
+  generateField: (id: number, field: string, model?: string, provider?: string) => Promise<string>;
 }
 
 export function useSeoContent(): UseSeoContentResult {
@@ -113,9 +114,9 @@ export function useSeoContent(): UseSeoContentResult {
   );
 
   const generateField = useCallback(
-    (id: number, field: string): Promise<string> =>
+    (id: number, field: string, model?: string, provider?: string): Promise<string> =>
       generateMutation
-        .mutateAsync({ id, field })
+        .mutateAsync({ id, field, ...(model ? { model, provider } : {}) })
         .then((res: any) => String(res?.value ?? ''))
         .catch((err: unknown) => {
           toast.error(err instanceof Error ? err.message : 'AI generation failed');

@@ -1,5 +1,167 @@
 # Session Log
 
+## 2026-06-19 — SEO: model picker for AI generation
+- **Asked:** add a dropdown next to Post/Page to switch the model used to
+  generate cell content.
+- **Backend:** `generate_field` controller now also reads `provider`; service
+  `generate_field($...,$provider=null)` sets `$opts['provider']` so routing is
+  data-driven (no `detect_provider` fallback). `model` was already accepted.
+- **Frontend (`SEO/index.tsx`, `hooks/useSeoContent.ts`):** fetch text models via
+  `trpc.models.getForGeneration {type:'text'}` (same source as Copy); a shadcn
+  `Select` in the content header (gated `tab==='content' && isLocal`) next to
+  Post/Page, with a "Default model" option + each model `name (provider)`.
+  Selection persists in localStorage (`pcm:seo:gen-model`); `generateField(id,
+  field, model?, provider?)` forwards them in the mutation body; `handleGenerate`
+  + `runBulk` pass the picked model+provider. OptimizeModal (body) left as-is.
+- **Verified:** `php -l` clean (controller+service); `npm run check` clean for
+  changed TS; `npm run build` OK; served bundle == build (junction); dropdown
+  markers in bundle; `/models/generation/text` → 403 (registered+guarded). Not
+  visually driven (read-tier browser) — user to hard-refresh + test. No commit.
+- **Map updated:** SEO Phase-3 note. 
+
+## 2026-06-19 — SEO cell AI suggestions: add Re-generate button
+- **Asked:** on a staged AI cell suggestion (Accept/Reject), add a Re-generate
+  button that regenerates the cell content.
+- **Change (`SEO/index.tsx`, EditableCell):** added a third button in the staged
+  block that calls the existing `onGenerate` (→ `handleGenerate`, which restages
+  a fresh value, overwriting the suggestion). While regenerating, Accept/Reject/
+  Re-generate disable and the button shows a `Loader2` spinner (else `RefreshCw`).
+  Gated on `onGenerate` so it only shows for generatable fields. Imported
+  `RefreshCw`.
+- **Verified:** `npm run check` clean for SEO/index.tsx; `npm run build` OK;
+  served bundle == build (junction); "Re-generate" present in bundle. User to
+  hard-refresh + test. No commit.
+
+## 2026-06-19 — SEO table: gray header to distinguish from rows
+- **Asked:** make the SEO table header a slight gray vs the rows.
+- **Change (1 line, `SEO/index.tsx`):** header cells `[&_thead_th]:bg-card` →
+  `[&_thead_th]:bg-muted/50` (rows stay `bg-card`). Applies to the sticky header
+  row incl. the select-all cell.
+- **Verified:** `npm run build` OK; served bundle == build (junction); class
+  present in bundle. User to hard-refresh to see it. No commit.
+
+## 2026-06-19 — SEO table: spreadsheet column resize + reorder (drag)
+- **Asked (/build):** resize column widths by dragging (like a spreadsheet) and
+  rearrange column order by dragging. User chose **localStorage** persistence.
+- **Approach:** refactored the hand-rolled SEO `<table>` from fixed JSX columns
+  to **data-driven** rendering — header + body both map over one ordered column
+  list, widths set via a `<colgroup>` of px `<col>`s; table width = sum, inside
+  the existing `overflow-auto` wrapper → horizontal scroll. No new deps.
+  - **New** `hooks/useColumnLayout.ts` — order[] + widths{} in localStorage
+    (`pcm:seo:col-layout:v1`), reconciled vs canonical keys; min width 56px;
+    `moveColumn`, `setWidth`, `reset`.
+  - `ColumnHead.tsx` — added drag-reorder props (native HTML5 DnD: draggable th +
+    drop-target highlight) and a right-edge **resize handle** (pointer drag; the
+    handle cancels its own dragstart so it doesn't start a column move).
+  - `index.tsx` — column metadata consts (keys/labels/icons/default widths),
+    `renderHeader`/`renderCell` switch, `<colgroup>`, dragKey/dragOverKey state,
+    `startResize` (window pointermove/up). Removed the old per-column JSX blocks.
+  - `ViewsToolbar.tsx` — "Reset column sizes & order" in the Columns menu
+    (footgun guard for a drag feature).
+- **Verified:** `npm run check` clean for all changed TS; `npm run build` OK;
+  served bundle == build (junction); feature markers present in bundle
+  (`cursor-col-resize`, `pcm:seo:col-layout`). **Not** visually driven — Brave is
+  computer-use "read" tier and the Chrome-MCP browser is the remote Mac (can't
+  reach localhost); user to hard-refresh + test the drag UX.
+- **Map updated:** SEO Phase-2 note documents the feature. No commit.
+
+## 2026-06-18 — SEO saved Views: per-user default view (server-side)
+- **Asked:** in the SEO View dropdown, add a button/icon to make any saved view
+  the default. (User chose server-side persistence over localStorage.)
+- **Backend:** `seo_views.isDefault` tinyint (additive — added to CREATE TABLE,
+  applied by dbDelta via `maybe_upgrade()` on version bump; **PCM_DB_VERSION
+  1.26.0 → 1.27.0**). `PCM_SEO_Service::set_default_view($id,$userId,$bool)`
+  enforces one default/user (clears others, ownership-checked); `list_views` +
+  `create_view` now return `isDefault`. New route `PATCH /seo/views/{id}/default`
+  → `views_set_default` (nonce+cap via base, body `{isDefault}`).
+- **Frontend:** trpc `seo.setDefaultView`; `useViews` exposes `setDefaultView` +
+  `isDefault` on `SeoView`; `ViewsToolbar` renders a **star icon** per view
+  (filled = default, "Default" tag) next to the trash, toggling default;
+  `SEO/index.tsx` auto-applies the default view once on first load (`useRef`
+  guard, only when no view applied yet).
+- **Verified:** `php -l` clean on all 4 PHP files; `npm run check` clean for
+  changed TS; `npm run build` OK; served bundle == build (junction). Live:
+  `wp-json` 200 → `maybe_upgrade` ran; **`isDefault` column PRESENT** in
+  `wp_pcm_seo_views` and stored `pcm_db_version`=**1.27.0** (checked over Local
+  MySQL :10005); `PATCH /seo/views/1/default` unauth → **403** (registered +
+  guarded, not 404). Couldn't exercise the authed round-trip (needs nonce).
+- **Map updated:** DB version 1.27.0 + seo_views isDefault note. No commit.
+
+## 2026-06-18 — SEO row hover-checkbox actually broken: Tailwind v4 @media(hover) gate
+- **Asked (again):** hovering the row numbers ('1','2'…) shows NO checkbox.
+- **Real root cause (found this round):** the built CSS wraps the swap rules in
+  `@media (hover: hover)`:
+  `.group-hover\:hidden:is(:where(.group):hover *)` / `…inline-flex…`. Tailwind v4
+  gates ALL `hover:`/`group-hover:` utilities behind that query, so on a
+  touch-capable / coarse-pointer device (user is on Brave/Windows) they're no-ops —
+  number never hides, checkbox never appears. Explains why prior rounds "looked
+  correct" in source but didn't work live. (WP core `.hidden` is NOT the cause —
+  it's `display:none` w/o `!important`, lower specificity than the 0,2,0 group rule.)
+- **Fix (`SEO/index.tsx`, minimal):** drive the row-number→checkbox swap with JS
+  hover state — new `hoveredId` state + `onMouseEnter`/`onMouseLeave` on the row;
+  render `<Checkbox>` when `selected.has(id) || hoveredId===id`, else the number.
+  No dependency on Tailwind hover variants. Same `toggleOne`/select-all semantics.
+- **Verified:** `npm run check` clean for SEO/index.tsx; `npm run build` OK; served
+  bundle through the junction == fresh build (HTTP 200, 4,367,714 B). Couldn't drive
+  hover in-browser (Brave/Chrome are computer-use "read" tier; Chrome-MCP browser is
+  the remote Mac, can't reach localhost) — user to hard-refresh + confirm.
+- **Map updated:** added the `@media (hover: hover)` gotcha to Known risks.
+- No commit (not asked).
+
+## 2026-06-18 — SEO row hover-checkbox: already implemented (no change)
+- **Asked:** make SEO table rows selectable on hover — checkbox appears per row,
+  works like the header select-all.
+- **Finding:** already implemented. `SEO/index.tsx:593` = header select-all
+  (indeterminate-aware); `:622-631` = each row shows a row-number that swaps to a
+  per-row `Checkbox` (`toggleOne(row.id)`) on `group-hover`, selected rows get
+  `bg-accent/60`. Verified JS logic + Tailwind v4 CSS rule
+  `.group-hover\:inline-flex:is(:where(.group):hover *)` are both in the served
+  bundle; JS cache-busts every load (`time()` in class-pcm-admin.php:129). The
+  pre-junction zip copy had it too (old/new `index.css` byte-identical, 281,506 B).
+- **Why it seemed missing:** the table only renders on the **Content** section +
+  **This Site** tab with ≥1 row; the checkbox is Airtable-style (replaces the row
+  number on hover), easy to miss. Surveyed other tables: Brands/Keywords already
+  have per-row hover checkboxes; **Templates** has select-all but no per-row
+  checkbox; Users/Projects have neither (candidates if asked later).
+- **Outcome:** user confirmed current behavior is fine as-is → **no code change.**
+
+## 2026-06-18 — Local site wasn't reflecting changes → junction the plugin
+- **Asked:** why aren't the SEO sidebar changes showing on the Local site (plugin
+  installed from this project's zip)?
+- **Root cause:** the site loaded a **standalone copy extracted from the zip** at
+  `…/Local Sites/powercreatives/app/public/wp-content/plugins/`**`powercreatives`**
+  (real dir, own `.git`, dist dated 21:35, 4,366,519 B, NO sidebar markup). My
+  edit + `npm run build` updated the **Desktop working copy** (dist 21:48,
+  4,367,283 B, has markup) — a different directory. The two never synced.
+- **Fix (user chose auto-sync):** PowerShell — renamed the zip copy to
+  `powercreatives-zip-backup`, then `New-Item -ItemType Junction` to point
+  `…/plugins/powercreatives` → `C:\Users\sanky\Desktop\powercreatives\powercreatives`.
+- **Verified:** junction resolves to `power-creatives.php`; live-served
+  `…/plugins/powercreatives/app/dist/index-writer.js` = HTTP 200, 4,367,283 B,
+  `w-44 shrink-0` present; `/wp-json/` namespaces include `pcm/v1`;
+  `/wp-json/pcm/v1` = HTTP 200 with routes. Plugin boots from the working copy.
+- **Map updated** (Local WordPress → Plugin link) to reflect the junction +
+  folder name `powercreatives` + zip-copy history. User still needs a browser
+  **hard-refresh** to drop the old cached admin page.
+
+## 2026-06-18 — SEO module: section tabs → left sidebar
+- **Asked:** in the SEO tab, turn the four section tabs (Content / AI Readiness /
+  Site / Business) from a horizontal tab bar into a left sidebar.
+- **Change (1 file, `app/src/modules/SEO/index.tsx`):** replaced the horizontal
+  section-tab `<div>` with a vertical `<nav className="flex flex-col gap-1 w-44
+  shrink-0">`, and wrapped `nav` + the existing section-content conditional in a
+  `flex gap-6 items-start` row (content in `flex-1 min-w-0`). Same `tab`/`setTab`
+  state, same panels — pure layout. Active style reuses the codebase's
+  `bg-primary/10 text-primary` pill idiom (matches `PromptEditorSection`). The
+  top **site selector** bar (This Site / connected sites) stays horizontal — only
+  the four section tabs moved.
+- **Verified:** `npm run check` clean for SEO/index.tsx (other modules have
+  pre-existing TS errors, untouched); `npm run build` OK (2101 modules); new
+  `w-44 shrink-0` markup present in built `dist/index-writer.js`. No live
+  in-browser check — the only connected Chrome is a remote Mac that can't reach
+  this box's `powercreatives.local`.
+- No commit (not asked). No map update needed.
+
 ## 2026-06-18 — Ran the plugin on local WP (localhost:8080) — verified live
 - **Asked:** run it on local WordPress.
 - **State:** PHP built-in server already up (PID 13373); plugin active —

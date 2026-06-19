@@ -51,6 +51,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             // Saved views (per-user column/filter configs).
             array('GET',    '/seo/views',                'views_list'),
             array('POST',   '/seo/views',                'views_create'),
+            array('PATCH',  '/seo/views/(?P<id>\d+)/default', 'views_set_default'),
             array('DELETE', '/seo/views/(?P<id>\d+)',     'views_delete'),
             // AI Readiness (site-wide → admin only).
             array('GET',  '/seo/ai-readiness',           'air_status',   array(), 'manage_options'),
@@ -166,9 +167,10 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         $brand_id = isset($params['brandId']) && $params['brandId'] ? absint($params['brandId']) : null;
         $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
 
         $user   = $this->get_current_pcm_user();
-        $result = $this->service->generate_field($id, $field, $brand_id, $model, $user ? (int) $user->id : null);
+        $result = $this->service->generate_field($id, $field, $brand_id, $model, $user ? (int) $user->id : null, $provider);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -255,6 +257,24 @@ class PCM_REST_SEO extends PCM_REST_Base
 
         $user = $this->get_current_pcm_user();
         return $this->success($this->service->create_view((int) $user->id, $name, $config), 201);
+    }
+
+    /**
+     * PATCH /seo/views/{id}/default — set (or clear) this view as the user's
+     * default. Enforces at most one default per user. Body: { isDefault: bool }
+     * (omitted/true makes it the default).
+     */
+    public function views_set_default(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id     = absint($request->get_param('id'));
+        $params = $request->get_json_params() ?: array();
+        $isDefault = array_key_exists('isDefault', $params) ? (bool) $params['isDefault'] : true;
+
+        $user = $this->get_current_pcm_user();
+        if (!$this->service->set_default_view($id, (int) $user->id, $isDefault)) {
+            return $this->not_found('View');
+        }
+        return $this->success(array('id' => $id, 'isDefault' => $isDefault));
     }
 
     /** DELETE /seo/views/{id} — delete a view owned by the current user. */

@@ -12,7 +12,7 @@
  */
 
 import { useState } from 'react';
-import { Eye, Columns3, ChevronDown, Trash2, Check, Plus } from 'lucide-react';
+import { Eye, Columns3, ChevronDown, Trash2, Check, Plus, Star, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -35,6 +35,10 @@ interface ViewsToolbarProps {
   onResetView: () => void;
   onSaveView: (name: string) => void;
   onDeleteView: (id: number) => void;
+  /** Toggle a view as the user's default (auto-applied when the table loads). */
+  onSetDefaultView: (id: number, isDefault: boolean) => void;
+  /** Reset column widths + order back to defaults (spreadsheet layout). */
+  onResetLayout?: () => void;
   /** Which control(s) to render — lets the View selector and Columns menu sit apart. */
   show?: 'all' | 'views' | 'columns';
 }
@@ -49,6 +53,8 @@ export function ViewsToolbar({
   onResetView,
   onSaveView,
   onDeleteView,
+  onSetDefaultView,
+  onResetLayout,
   show = 'all',
 }: ViewsToolbarProps) {
   const [viewOpen, setViewOpen] = useState(false);
@@ -101,6 +107,16 @@ export function ViewsToolbar({
                 >
                   {appliedViewId === v.id ? <Check className="h-3.5 w-3.5 text-primary shrink-0" /> : <span className="w-3.5 shrink-0" />}
                   <span className="truncate">{v.name}</span>
+                  {v.isDefault && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">Default</span>}
+                </button>
+                <button
+                  type="button"
+                  title={v.isDefault ? 'Remove as default view' : 'Make default view'}
+                  aria-pressed={v.isDefault}
+                  onClick={() => onSetDefaultView(v.id, !v.isDefault)}
+                  className={`shrink-0 rounded p-1 hover:bg-accent ${v.isDefault ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <Star className={`h-3.5 w-3.5 ${v.isDefault ? 'fill-current' : ''}`} />
                 </button>
                 <button
                   type="button"
@@ -152,6 +168,18 @@ export function ViewsToolbar({
             </Button>
           </div>
           <p className="px-2 pb-1.5 text-[10px] text-muted-foreground/70">Saves current columns + filters as a view.</p>
+          {onResetLayout && (
+            <>
+              <DropdownMenuSeparator />
+              <button
+                type="button"
+                onClick={() => { onResetLayout(); setColsOpen(false); }}
+                className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Reset column sizes &amp; order
+              </button>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
       )}

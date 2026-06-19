@@ -9,11 +9,12 @@
  */
 
 import {
-  useMemo, useState, useCallback,
-  type KeyboardEvent, type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes, type TableHTMLAttributes,
+  useMemo, useState, useCallback, useEffect, useRef,
+  type KeyboardEvent, type PointerEvent as ReactPointerEvent,
+  type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes, type TableHTMLAttributes,
 } from 'react';
 import {
-  Plus, Trash2, ExternalLink, Loader2, Search, Sparkles, Check, X, Globe,
+  Plus, Trash2, ExternalLink, Loader2, Search, Sparkles, Check, X, Globe, RefreshCw,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -25,12 +26,13 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useSortableTable } from '@/hooks/useSortableTable';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 
 import { useSeoContent } from './hooks/useSeoContent';
 import { useColumnFilters } from './hooks/useColumnFilters';
 import { useViews, type SeoView } from './hooks/useViews';
+import { useColumnLayout } from './hooks/useColumnLayout';
 import { ColumnHead } from './ColumnHead';
 import { ViewsToolbar } from './ViewsToolbar';
 import { buildFilterDefs } from './seoFilters';
@@ -97,12 +99,17 @@ function EditableCell({
       <div className="space-y-1 rounded-md bg-blue-50/70 border border-blue-200 p-1.5">
         <div className="text-xs text-blue-900 break-words whitespace-normal" title={suggestion}>{suggestion}</div>
         <div className="flex items-center gap-1">
-          <button type="button" onClick={onAccept} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700">
+          <button type="button" onClick={onAccept} disabled={generating} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
             <Check className="w-3 h-3" /> Accept
           </button>
-          <button type="button" onClick={onReject} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted">
+          <button type="button" onClick={onReject} disabled={generating} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
             <X className="w-3 h-3" /> Reject
           </button>
+          {onGenerate && (
+            <button type="button" onClick={onGenerate} disabled={generating} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
+              {generating ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
+            </button>
+          )}
         </div>
       </div>
     );
@@ -221,8 +228,55 @@ const TOGGLE_COLUMNS: { key: string; label: string }[] = [
   { key: 'open', label: 'Open' },
 ];
 
+// --- Column layout (resize + reorder) metadata -------------------------------
+/** Reorderable/resizable column keys, in their natural default order. */
+const COLUMN_KEYS = TOGGLE_COLUMNS.map((c) => c.key);
+/** key → label, for header rendering. */
+const COLUMN_LABELS: Record<string, string> = Object.fromEntries(TOGGLE_COLUMNS.map((c) => [c.key, c.label]));
+/** key → text-field descriptor (the AI-editable meta columns). */
+const TEXT_FIELD_BY_KEY = Object.fromEntries(SEO_TEXT_FIELDS.map((f) => [f.key as string, f]));
+/** Columns that support click-to-sort. */
+const SORTABLE_KEYS = new Set(['type', 'title', 'status']);
+/** Leading header icon per column. */
+const HEAD_ICONS: Record<string, LucideIcon> = {
+  type: FileText, title: Type, status: CircleDot, schema: Braces, author: User, ...FIELD_ICONS,
+};
+/** Default px width per column (seeds the spreadsheet layout on first use). */
+const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
+  type: 90, title: 240, status: 120,
+  metaTitle: 200, metaDescription: 260, primaryKeyword: 150, metaKeywords: 180,
+  schema: 150, author: 120, open: 80,
+};
+/** Fixed leading selection/row-number column (not reorderable/resizable). */
+const SELECT_COL_WIDTH = 44;
+
 export function SEOModule() {
   const { rows, options, isLoading, saveCell, quickCreate, bulkDelete, generateField } = useSeoContent();
+
+  // Text models available for AI generation (registry). The user picks one in the
+  // header dropdown; its id+provider is sent with every generate call so that
+  // model produces the content (else the backend default is used).
+  const { data: textModelsRaw = [] } = trpc.models.getForGeneration.useQuery(
+    { type: 'text' },
+    { staleTime: 30_000 },
+  ) as { data?: any[] };
+  const textModels = useMemo(
+    () => (textModelsRaw ?? []).map((m) => ({
+      id: String(m.modelId),
+      name: String(m.customName || m.originalName || m.modelId),
+      provider: String(m.provider),
+    })),
+    [textModelsRaw],
+  );
+  const [genModelId, setGenModelId] = useState<string>(() => {
+    try { return localStorage.getItem('pcm:seo:gen-model') ?? ''; } catch { return ''; }
+  });
+  const setGenModel = useCallback((id: string) => {
+    setGenModelId(id);
+    try { localStorage.setItem('pcm:seo:gen-model', id); } catch { /* ignore */ }
+  }, []);
+  const genProvider = textModels.find((m) => m.id === genModelId)?.provider;
+
   // Site scope: the local WP install ('local') or a connected remote site (id).
   // Remote-site SEO isn't wired in the backend yet — those tabs show a placeholder.
   const { data: sitesRaw } = trpc.sites.list.useQuery() as { data?: any[] };
@@ -239,8 +293,14 @@ export function SEOModule() {
   );
   const toggleCol = useCallback((key: string) => setCols((c) => ({ ...c, [key]: c[key] === false })), []);
   const vis = (key: string) => cols[key] !== false;
+  // Spreadsheet-style column order + widths (drag to reorder / resize; persisted
+  // to localStorage). Selection column stays fixed and is not part of this.
+  const { order: colOrder, width: colWidth, setWidth: setColWidth, moveColumn, reset: resetColumnLayout } =
+    useColumnLayout(COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS);
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   // Saved Views (per-user, persisted via the seo REST API).
-  const { views, saveView, removeView } = useViews();
+  const { views, saveView, removeView, setDefaultView } = useViews();
   const [appliedViewId, setAppliedViewId] = useState<number | null>(null);
 
   const applyView = useCallback((view: SeoView) => {
@@ -265,7 +325,26 @@ export function SEOModule() {
     setAppliedViewId((cur) => (cur === id ? null : cur));
   }, [removeView]);
 
+  const handleSetDefaultView = useCallback((id: number, isDefault: boolean) => {
+    void setDefaultView(id, isDefault);
+  }, [setDefaultView]);
+
+  // Auto-apply the default view once, on first load (before the user picks one).
+  const defaultApplied = useRef(false);
+  useEffect(() => {
+    if (defaultApplied.current || appliedViewId !== null) return;
+    const def = views.find((v) => v.isDefault);
+    if (def) {
+      defaultApplied.current = true;
+      applyView(def);
+    }
+  }, [views, appliedViewId, applyView]);
+
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Drives the row-number → checkbox swap in JS rather than Tailwind's
+  // `group-hover:` (which Tailwind v4 gates behind `@media (hover: hover)`, so
+  // it never fires on touch-capable / coarse-pointer devices).
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<'content' | 'air' | 'site' | 'business'>('content');
   // Optimistic per-row schema-type overrides (SchemaCell persists via REST).
@@ -281,12 +360,12 @@ export function SEOModule() {
     const key = `${id}:${field}`;
     setGenKey(key);
     try {
-      const value = await generateField(id, field);
+      const value = await generateField(id, field, genModelId || undefined, genProvider);
       setStaged((s) => ({ ...s, [key]: value }));
     } catch { /* toast in hook */ } finally {
       setGenKey(null);
     }
-  }, [generateField]);
+  }, [generateField, genModelId, genProvider]);
 
   const acceptStaged = useCallback((id: number, field: string) => {
     const key = `${id}:${field}`;
@@ -318,7 +397,7 @@ export function SEOModule() {
         const key = `${id}:${field}`;
         setGenKey(key);
         try {
-          const value = await generateField(id, field);
+          const value = await generateField(id, field, genModelId || undefined, genProvider);
           setStaged((s) => ({ ...s, [key]: value }));
         } catch { /* toast in hook */ }
         done += 1;
@@ -328,7 +407,7 @@ export function SEOModule() {
     setGenKey(null);
     setProgress(null);
     setBusy(false);
-  }, [selected, generateField]);
+  }, [selected, generateField, genModelId, genProvider]);
 
   // Accept / discard ALL staged AI suggestions (the source's bar).
   const acceptAllStaged = useCallback(() => {
@@ -395,7 +474,151 @@ export function SEOModule() {
   }, [quickCreate]);
 
   const pluginLabel = options ? (SEO_PLUGIN_LABELS[options.seoPlugin] ?? options.seoPlugin) : '';
-  const visibleTextFields = SEO_TEXT_FIELDS.filter((f) => vis(f.key as string));
+
+  // Columns in saved order, minus any hidden via the Columns menu.
+  const orderedCols = colOrder.filter((k) => vis(k));
+  const tableWidth = SELECT_COL_WIDTH + orderedCols.reduce((sum, k) => sum + colWidth(k), 0);
+
+  // Drag the right edge of a header to resize that column (px, persisted).
+  const startResize = (key: string) => (e: ReactPointerEvent<HTMLSpanElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = colWidth(key);
+    const onMove = (ev: PointerEvent) => setColWidth(key, startW + (ev.clientX - startX));
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.cursor = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  // Header cell for a column, with sort/filter + drag-to-reorder + resize wiring.
+  const renderHeader = (key: string) => {
+    const sortable = SORTABLE_KEYS.has(key);
+    const def = filterDefs[key];
+    return (
+      <ColumnHead
+        key={key}
+        label={COLUMN_LABELS[key] ?? key}
+        icon={HEAD_ICONS[key]}
+        className={key === 'open' ? 'text-center' : undefined}
+        sort={sortable
+          ? { active: sortKey === key, dir: sortDir, onToggle: () => toggleSort(key as 'type' | 'title' | 'status') }
+          : undefined}
+        filter={key !== 'open' && def
+          ? { def, value: filterValues[key] ?? '', onChange: (v) => setFilter(key, v) }
+          : undefined}
+        draggable
+        onDragStart={(e) => { setDragKey(key); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', key); } catch { /* IE */ } }}
+        onDragOver={(e) => { e.preventDefault(); if (dragKey && dragKey !== key) setDragOverKey(key); }}
+        onDragLeave={() => setDragOverKey((cur) => (cur === key ? null : cur))}
+        onDrop={(e) => { e.preventDefault(); if (dragKey) moveColumn(dragKey, key); setDragKey(null); setDragOverKey(null); }}
+        onDragEnd={() => { setDragKey(null); setDragOverKey(null); }}
+        isDropTarget={dragOverKey === key && dragKey !== key}
+        onResizeStart={startResize(key)}
+      />
+    );
+  };
+
+  // Body cell for a column (bespoke per column key).
+  const renderCell = (key: string, row: SeoRow) => {
+    switch (key) {
+      case 'type':
+        return (
+          <TableCell key={key}>
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] capitalize bg-muted/60 text-muted-foreground">{row.type}</span>
+          </TableCell>
+        );
+      case 'title':
+        return (
+          <TableCell key={key}>
+            <EditableCell
+              value={row.title}
+              placeholder="Untitled"
+              emphasis
+              onSave={(v) => saveCell(row.id, 'title', v)}
+              onGenerate={() => handleGenerate(row.id, 'title')}
+              generating={genKey === `${row.id}:title`}
+              suggestion={staged[`${row.id}:title`] ?? null}
+              onAccept={() => acceptStaged(row.id, 'title')}
+              onReject={() => rejectStaged(row.id, 'title')}
+            />
+          </TableCell>
+        );
+      case 'status':
+        return (
+          <TableCell key={key}>
+            <Select value={row.status} onValueChange={(v) => saveCell(row.id, 'status', v)}>
+              <SelectTrigger className="h-full w-full border-0 rounded-none bg-transparent px-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${statusBadgeClass(row.status)}`}>{row.status}</span>
+              </SelectTrigger>
+              <SelectContent>
+                {(options?.statuses ?? ['publish', 'draft', 'pending', 'private', 'future']).map((s) => (
+                  <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </TableCell>
+        );
+      case 'schema':
+        return (
+          <TableCell key={key}>
+            <SchemaCell
+              postId={row.id}
+              types={schemaOverrides[row.id] ?? row.schemaTypes ?? []}
+              onChange={(next) => setSchemaOverrides((o) => ({ ...o, [row.id]: next }))}
+            />
+          </TableCell>
+        );
+      case 'author':
+        return <TableCell key={key} className="text-xs text-muted-foreground">{row.author}</TableCell>;
+      case 'open':
+        return (
+          <TableCell key={key} className="text-center">
+            <div className="inline-flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setOptimizeRow(row)}
+                className="text-muted-foreground hover:text-primary"
+                title="Optimize content with AI"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+              </button>
+              {row.permalink && (
+                <a href={row.permalink} target="_blank" rel="noopener noreferrer" className="inline-flex text-muted-foreground hover:text-foreground" title="View page">
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </div>
+          </TableCell>
+        );
+      default: {
+        // Editable AI meta field (metaTitle / metaDescription / primaryKeyword / metaKeywords).
+        const field = TEXT_FIELD_BY_KEY[key];
+        if (!field) return null;
+        const canGen = GENERATABLE.has(key);
+        const ckey = `${row.id}:${key}`;
+        return (
+          <TableCell key={key}>
+            <EditableCell
+              value={String(row[key as keyof SeoRow] ?? '')}
+              placeholder={field.label}
+              onSave={(v) => saveCell(row.id, key, v)}
+              onGenerate={canGen ? () => handleGenerate(row.id, key) : undefined}
+              generating={genKey === ckey}
+              suggestion={canGen ? (staged[ckey] ?? null) : null}
+              onAccept={() => acceptStaged(row.id, key)}
+              onReject={() => rejectStaged(row.id, key)}
+            />
+          </TableCell>
+        );
+      }
+    }
+  };
 
   return (
     <div className="module-container animate-fade-in">
@@ -430,6 +653,28 @@ export function SEOModule() {
         action={
           tab === 'content' && isLocal ? (
             <div className="flex items-center gap-2">
+              <Select
+                value={genModelId || '__default__'}
+                onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
+              >
+                <SelectTrigger className="h-9 w-[190px] text-xs" title="Model used for AI generation">
+                  <Sparkles className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                  <SelectValue placeholder="Model" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default__" className="text-xs">Default model</SelectItem>
+                  {textModels.map((m) => (
+                    <SelectItem key={m.id} value={m.id} className="text-xs">
+                      {m.name} <span className="text-muted-foreground">({m.provider})</span>
+                    </SelectItem>
+                  ))}
+                  {textModels.length === 0 && (
+                    <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                      No text models yet — add one in the Models tab.
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
               <Button variant="outline" onClick={() => handleCreate('post')} disabled={busy} className="gap-1.5">
                 <Plus className="w-4 h-4" /> Post
               </Button>
@@ -441,20 +686,24 @@ export function SEOModule() {
         }
       />
 
-      {/* Tabs: Content / AI Readiness / Site / Business */}
-      <div className="flex gap-1 mb-4 border-b border-border">
-        {([['content', 'Content'], ['air', 'AI Readiness'], ['site', 'Site'], ['business', 'Business']] as const).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={`px-3 py-1.5 text-sm -mb-px border-b-2 ${tab === id ? 'border-primary text-primary font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* Section nav (left sidebar) + section content, side by side. */}
+      <div className="flex gap-6 items-start">
+        {/* Left sidebar: Content / AI Readiness / Site / Business */}
+        <nav className="flex flex-col gap-1 w-44 shrink-0">
+          {([['content', 'Content'], ['air', 'AI Readiness'], ['site', 'Site'], ['business', 'Business']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={`px-3 py-2 text-sm text-left rounded-md transition-colors ${tab === id ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
 
+        {/* Section content */}
+        <div className="flex-1 min-w-0">
       {!isLocal ? (
         <RemoteSitePlaceholder
           siteName={activeSite?.name || activeSite?.url || 'this site'}
@@ -483,6 +732,7 @@ export function SEOModule() {
             onResetView={resetView}
             onSaveView={handleSaveView}
             onDeleteView={handleDeleteView}
+            onSetDefaultView={handleSetDefaultView}
           />
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             {activeCount > 0 ? (
@@ -514,6 +764,8 @@ export function SEOModule() {
             onResetView={resetView}
             onSaveView={handleSaveView}
             onDeleteView={handleDeleteView}
+            onSetDefaultView={handleSetDefaultView}
+            onResetLayout={resetColumnLayout}
           />
         </div>
       </div>
@@ -576,16 +828,23 @@ export function SEOModule() {
           {/* Spreadsheet-style grid: gridlines on every cell, a sticky header
               row, and compact single-line cells. Long values truncate with an
               ellipsis — click a cell to edit (and see) the full value. */}
-          <Table className="table-fixed w-full border-collapse text-xs bg-card
+          <Table
+            style={{ width: tableWidth, minWidth: '100%' }}
+            className="table-fixed border-collapse text-xs bg-card
             [&_th]:border [&_th]:border-border/60 [&_td]:border [&_td]:border-border/60
             [&_th]:px-2 [&_th]:h-9 [&_th]:font-normal [&_th]:text-foreground/80
             [&_td]:px-2 [&_td]:h-9 [&_td]:py-0 [&_td]:align-middle
             [&_td]:whitespace-nowrap [&_td]:overflow-hidden
-            [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-card">
+            [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-muted/50">
+
+            <colgroup>
+              <col style={{ width: SELECT_COL_WIDTH }} />
+              {orderedCols.map((key) => <col key={key} style={{ width: colWidth(key) }} />)}
+            </colgroup>
 
             <TableHeader>
               <TableRow>
-                <TableHead style={{ width: '3%' }} className="px-2">
+                <TableHead className="px-2">
                   <Checkbox
                     checked={allSelected}
                     onCheckedChange={toggleAll}
@@ -593,121 +852,34 @@ export function SEOModule() {
                     {...(someSelected ? { 'data-state': 'indeterminate' as const } : {})}
                   />
                 </TableHead>
-                {vis('type') && <ColumnHead label="Type" width="5%" icon={FileText}
-                  sort={{ active: sortKey === 'type', dir: sortDir, onToggle: () => toggleSort('type') }}
-                  filter={{ def: filterDefs.type, value: filterValues.type ?? '', onChange: (v) => setFilter('type', v) }} />}
-                {vis('title') && <ColumnHead label="Title" width="14%" icon={Type}
-                  sort={{ active: sortKey === 'title', dir: sortDir, onToggle: () => toggleSort('title') }}
-                  filter={{ def: filterDefs.title, value: filterValues.title ?? '', onChange: (v) => setFilter('title', v) }} />}
-                {vis('status') && <ColumnHead label="Status" width="8%" icon={CircleDot}
-                  sort={{ active: sortKey === 'status', dir: sortDir, onToggle: () => toggleSort('status') }}
-                  filter={{ def: filterDefs.status, value: filterValues.status ?? '', onChange: (v) => setFilter('status', v) }} />}
-                {visibleTextFields.map((f) => (
-                  <ColumnHead key={f.key} label={f.label} width={f.width} icon={FIELD_ICONS[f.key as string] ?? Type}
-                    filter={{ def: filterDefs[f.key as string], value: filterValues[f.key as string] ?? '', onChange: (v) => setFilter(f.key as string, v) }} />
-                ))}
-                {vis('schema') && <ColumnHead label="Schema" width="9%" icon={Braces}
-                  filter={{ def: filterDefs.schema, value: filterValues.schema ?? '', onChange: (v) => setFilter('schema', v) }} />}
-                {vis('author') && <ColumnHead label="Author" width="6%" icon={User}
-                  filter={{ def: filterDefs.author, value: filterValues.author ?? '', onChange: (v) => setFilter('author', v) }} />}
-                {vis('open') && <TableHead style={{ width: '4%' }} className="text-center">Open</TableHead>}
+                {orderedCols.map((key) => renderHeader(key))}
               </TableRow>
             </TableHeader>
             <TableBody>
               {sortedData.map((row, idx) => (
-                <TableRow key={row.id} className={`group ${selected.has(row.id) ? 'bg-accent/60' : 'hover:bg-muted/60'}`}>
+                <TableRow
+                  key={row.id}
+                  onMouseEnter={() => setHoveredId(row.id)}
+                  onMouseLeave={() => setHoveredId((cur) => (cur === row.id ? null : cur))}
+                  className={`group ${selected.has(row.id) ? 'bg-accent/60' : 'hover:bg-muted/60'}`}
+                >
                   <TableCell className="px-2 text-center">
-                    {/* Airtable-style: row number by default; checkbox on hover or when selected. */}
-                    <span className={`text-[11px] tabular-nums text-muted-foreground ${selected.has(row.id) ? 'hidden' : 'group-hover:hidden'}`}>{idx + 1}</span>
-                    <span className={`items-center justify-center ${selected.has(row.id) ? 'inline-flex' : 'hidden group-hover:inline-flex'}`}>
-                      <Checkbox
-                        checked={selected.has(row.id)}
-                        onCheckedChange={() => toggleOne(row.id)}
-                        aria-label={`Select ${row.title}`}
-                      />
-                    </span>
-                  </TableCell>
-                  {vis('type') && (
-                  <TableCell>
-                    <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] capitalize bg-muted/60 text-muted-foreground">{row.type}</span>
-                  </TableCell>
-                  )}
-                  {vis('title') && (
-                  <TableCell>
-                    <EditableCell
-                      value={row.title}
-                      placeholder="Untitled"
-                      emphasis
-                      onSave={(v) => saveCell(row.id, 'title', v)}
-                      onGenerate={() => handleGenerate(row.id, 'title')}
-                      generating={genKey === `${row.id}:title`}
-                      suggestion={staged[`${row.id}:title`] ?? null}
-                      onAccept={() => acceptStaged(row.id, 'title')}
-                      onReject={() => rejectStaged(row.id, 'title')}
-                    />
-                  </TableCell>
-                  )}
-                  {vis('status') && (
-                  <TableCell>
-                    <Select value={row.status} onValueChange={(v) => saveCell(row.id, 'status', v)}>
-                      <SelectTrigger className="h-full w-full border-0 rounded-none bg-transparent px-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${statusBadgeClass(row.status)}`}>{row.status}</span>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(options?.statuses ?? ['publish', 'draft', 'pending', 'private', 'future']).map((s) => (
-                          <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  )}
-                  {visibleTextFields.map((f) => {
-                    const canGen = GENERATABLE.has(f.key);
-                    const key = `${row.id}:${f.key}`;
-                    return (
-                      <TableCell key={f.key}>
-                        <EditableCell
-                          value={String(row[f.key] ?? '')}
-                          placeholder={f.label}
-                          onSave={(v) => saveCell(row.id, f.key, v)}
-                          onGenerate={canGen ? () => handleGenerate(row.id, f.key) : undefined}
-                          generating={genKey === key}
-                          suggestion={canGen ? (staged[key] ?? null) : null}
-                          onAccept={() => acceptStaged(row.id, f.key)}
-                          onReject={() => rejectStaged(row.id, f.key)}
+                    {/* Airtable-style: row number by default; checkbox on hover or when
+                        selected. Hover is tracked in JS (see hoveredId) because Tailwind v4
+                        gates `group-hover:` behind `@media (hover: hover)`. */}
+                    {selected.has(row.id) || hoveredId === row.id ? (
+                      <span className="inline-flex items-center justify-center">
+                        <Checkbox
+                          checked={selected.has(row.id)}
+                          onCheckedChange={() => toggleOne(row.id)}
+                          aria-label={`Select ${row.title}`}
                         />
-                      </TableCell>
-                    );
-                  })}
-                  {vis('schema') && (
-                  <TableCell>
-                    <SchemaCell
-                      postId={row.id}
-                      types={schemaOverrides[row.id] ?? row.schemaTypes ?? []}
-                      onChange={(next) => setSchemaOverrides((o) => ({ ...o, [row.id]: next }))}
-                    />
+                      </span>
+                    ) : (
+                      <span className="text-[11px] tabular-nums text-muted-foreground">{idx + 1}</span>
+                    )}
                   </TableCell>
-                  )}
-                  {vis('author') && <TableCell className="text-xs text-muted-foreground">{row.author}</TableCell>}
-                  {vis('open') && (
-                  <TableCell className="text-center">
-                    <div className="inline-flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setOptimizeRow(row)}
-                        className="text-muted-foreground hover:text-primary"
-                        title="Optimize content with AI"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                      </button>
-                      {row.permalink && (
-                        <a href={row.permalink} target="_blank" rel="noopener noreferrer" className="inline-flex text-muted-foreground hover:text-foreground" title="View page">
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      )}
-                    </div>
-                  </TableCell>
-                  )}
+                  {orderedCols.map((key) => renderCell(key, row))}
                 </TableRow>
               ))}
             </TableBody>
@@ -725,6 +897,8 @@ export function SEOModule() {
       )}
       </>
       )}
+        </div>
+      </div>
     </div>
   );
 }

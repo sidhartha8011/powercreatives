@@ -341,7 +341,7 @@ class PCM_SEO_Service
         $table = PCM_Schema::table('seo_views');
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
         $rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT id, name, config FROM {$table} WHERE userId = %d ORDER BY id DESC",
+            "SELECT id, name, config, isDefault FROM {$table} WHERE userId = %d ORDER BY id DESC",
             $userId
         ));
 
@@ -349,9 +349,10 @@ class PCM_SEO_Service
         foreach ($rows as $row) {
             $config = json_decode((string) $row->config, true);
             $views[] = array(
-                'id'     => (int) $row->id,
-                'name'   => (string) $row->name,
-                'config' => is_array($config) ? $config : array(),
+                'id'        => (int) $row->id,
+                'name'      => (string) $row->name,
+                'config'    => is_array($config) ? $config : array(),
+                'isDefault' => (bool) (int) $row->isDefault,
             );
         }
         return $views;
@@ -381,10 +382,53 @@ class PCM_SEO_Service
         );
 
         return array(
-            'id'     => (int) $wpdb->insert_id,
-            'name'   => $name,
-            'config' => $config,
+            'id'        => (int) $wpdb->insert_id,
+            'name'      => $name,
+            'config'    => $config,
+            'isDefault' => false,
         );
+    }
+
+    /**
+     * Mark a view as the user's default (or clear it), enforcing at most one
+     * default per user. Only affects views owned by the given user.
+     *
+     * @param int  $id        View id.
+     * @param int  $userId    PCM user id.
+     * @param bool $isDefault True to make this the default, false to unset it.
+     * @return bool True if the target view exists and belongs to the user.
+     */
+    public function set_default_view(int $id, int $userId, bool $isDefault): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_views');
+
+        // Ownership check — never touch another user's views.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $owned = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table} WHERE id = %d AND userId = %d",
+            $id,
+            $userId
+        ));
+        if ($owned === 0) {
+            return false;
+        }
+
+        // Clear any existing default for this user (single-default invariant).
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update($table, array('isDefault' => 0), array('userId' => $userId), array('%d'), array('%d'));
+
+        if ($isDefault) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->update(
+                $table,
+                array('isDefault' => 1),
+                array('id' => $id, 'userId' => $userId),
+                array('%d'),
+                array('%d', '%d')
+            );
+        }
+        return true;
     }
 
     /**
@@ -596,9 +640,11 @@ class PCM_SEO_Service
      * @param string   $field    Cell field (must be in field_use_map()).
      * @param int|null $brand_id Optional brand for business context.
      * @param string|null $model Optional model override.
+     * @param int|null $user_id  PCM user (for prompt overrides + provider key).
+     * @param string|null $provider Optional provider override (paired with $model).
      * @return array|WP_Error { field, value }.
      */
-    public function generate_field(int $post_id, string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null)
+    public function generate_field(int $post_id, string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null)
     {
         $use_map = self::field_use_map();
         if (!isset($use_map[$field])) {
@@ -642,6 +688,11 @@ class PCM_SEO_Service
             $opts = array('max_tokens' => $max);
             if (!empty($model)) {
                 $opts['model'] = $model;
+            }
+            // Data-driven provider routing — when the caller picks a model it also
+            // sends its provider, so we never fall back to detect_provider().
+            if (!empty($provider)) {
+                $opts['provider'] = $provider;
             }
             $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
             $value  = self::sanitize_ai_output((string) ($result['content'] ?? ''));

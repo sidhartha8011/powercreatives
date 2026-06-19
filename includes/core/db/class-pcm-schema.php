@@ -645,6 +645,7 @@ class PCM_Schema
             userId bigint(20) unsigned NOT NULL,
             name varchar(191) NOT NULL,
             config longtext NOT NULL,
+            isDefault tinyint(1) DEFAULT 0 NOT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
