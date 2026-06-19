@@ -522,6 +522,8 @@ class PCM_SEO_Service
             $payload['title'] = $value;
         } elseif ($field === 'slug') {
             $payload['slug'] = sanitize_title($value);
+        } elseif ($field === 'status') {
+            $payload['status'] = $value; // native post field (publish/draft/…) — core REST validates
         } else {
             $keys = self::remote_meta_keys($field);
             if (empty($keys)) {
@@ -541,6 +543,30 @@ class PCM_SEO_Service
                 ? (string) $res['body']['message']
                 : ('HTTP ' . (int) ($res['status'] ?? 0));
             return new WP_Error('pcm_seo_remote_save', $msg, array('status' => 502));
+        }
+        // Meta only persists if the remote REGISTERS those keys in REST (the connector
+        // plugin, or a REST-aware SEO plugin). WordPress silently DROPS unregistered meta
+        // and still returns 200 — so re-read and confirm the key exists, otherwise report
+        // the phantom save instead of faking success. (title/slug are native — always OK.)
+        if (!in_array($field, array('title', 'slug', 'status'), true)) {
+            $verify = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'meta'));
+            $saved  = (!is_wp_error($verify) && is_array($verify['body'] ?? null) && isset($verify['body']['meta']) && is_array($verify['body']['meta']))
+                ? $verify['body']['meta']
+                : array();
+            $landed = false;
+            foreach ($keys as $k) {
+                if (array_key_exists($k, $saved)) {
+                    $landed = true;
+                    break;
+                }
+            }
+            if (!$landed) {
+                return new WP_Error(
+                    'pcm_seo_remote_meta_unsupported',
+                    __('The remote site didn’t store this SEO field — its REST API doesn’t expose SEO meta. Install the Power Creatives connector plugin on that site to edit its meta (Title & Slug work without it).', 'power-creatives'),
+                    array('status' => 422)
+                );
+            }
         }
         // Reflect the canonical stored slug (WP may dedupe it server-side).
         if ($field === 'slug' && is_array($res['body'] ?? null) && !empty($res['body']['slug'])) {

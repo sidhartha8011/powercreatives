@@ -327,17 +327,15 @@ class PCM_SEOHub_Service
         }
         $zip_path = $dir . '/pcm-connector-' . $tenant->clientId . '.zip';
 
-        // The connector pings this URL FROM the remote site, so it must be
-        // PUBLICLY reachable. rest_url() bakes the hub's own site_url — fine in
-        // production, but a localhost/dev hub bakes a URL the remote can't reach
-        // (the #1 reason a connector tenant stays "pending" forever). Allow an
-        // override so a hub behind a tunnel/reverse-proxy hands out a reachable
-        // URL: define('PCM_SEOHUB_HUB_URL', 'https://your-public-host') in
-        // wp-config, or filter 'pcm_seohub_connector_hub_url'.
-        $hub_url = rest_url('pcm/v1/seohub/connector/hello');
-        if (defined('PCM_SEOHUB_HUB_URL') && PCM_SEOHUB_HUB_URL) {
-            $hub_url = trailingslashit((string) PCM_SEOHUB_HUB_URL) . 'wp-json/pcm/v1/seohub/connector/hello';
-        }
+        // The connector pings this URL FROM the remote site, so it must be PUBLICLY
+        // reachable. Use the permalink-agnostic `?rest_route=` form: rest_url() returns
+        // the pretty `/wp-json/...` path whenever permalinks are "pretty", but that 404s
+        // on hosts where the rewrite isn't honored (LiteSpeed/shared) — so the remote's
+        // ping never lands and the tenant stays "pending" forever (lastPingAt=null). The
+        // query-var form always resolves. Override for a tunnel/reverse-proxy hub via the
+        // PCM_SEOHUB_HUB_URL constant or the 'pcm_seohub_connector_hub_url' filter.
+        $hub_base = rtrim((defined('PCM_SEOHUB_HUB_URL') && PCM_SEOHUB_HUB_URL) ? (string) PCM_SEOHUB_HUB_URL : home_url('/'), '/');
+        $hub_url  = $hub_base . '/?rest_route=/pcm/v1/seohub/connector/hello';
         /** @param string $hub_url Baked connector→hub endpoint. @param object $tenant */
         $hub_url = (string) apply_filters('pcm_seohub_connector_hub_url', $hub_url, $tenant);
         $php = self::connector_php($hub_url, (string) $tenant->clientId, (string) $tenant->clientSecret);

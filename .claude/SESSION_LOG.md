@@ -1,5 +1,69 @@
 # Session Log
 
+## 2026-06-19 — Fix: connector handshake stuck "pending" (/wp-json 404 on the hub)
+- **Diagnosed via Chrome (live hub):** connector plugin IS active on bestclient (exposes
+  all pcm_seo_* meta), and meta editing via the existing App-Password "test" site PERSISTS
+  (set metaTitle → confirmed pcm_seo_meta_title on bestclient directly, then restored).
+  BUT the Sites page shows a "Pending connection" — the connector-method tenant has
+  lastPingAt=null. Probed the hub: create.widgetify.co `/wp-json/` → 404, `?rest_route=` →
+  200, hello via `?rest_route=` → 403 (reachable, needs HMAC). So the connector baked the
+  hub URL as `/wp-json/...`, which 404s on this LiteSpeed host → the activation ping never
+  landed → tenant stuck pending.
+- **Fix (seohub/service.php download_connector):** bake the permalink-agnostic `?rest_route=`
+  hub URL (home_url('/')+'/?rest_route=/pcm/v1/seohub/connector/hello') instead of rest_url()'s
+  pretty `/wp-json/` path; the PCM_SEOHUB_HUB_URL constant override now uses the same form.
+  (Same rest_route class of fix as the sites-connection bug, connector->hub direction.)
+- **Verified:** php -l OK; new form prints `…/?rest_route=/pcm/v1/seohub/connector/hello`
+  (the form that returned 200/403 live). Needs deploy + RE-DOWNLOAD the connector for a
+  fresh connector-method connection. Meta editing already works via the App-Password site.
+  Not committed.
+
+## 2026-06-19 — Audit: remote (connector) parity vs local site + add status edit
+- **Connector plugin = complete for SEO meta:** its register_post_meta list (15 keys)
+  exactly matches the union of remote_meta_keys the hub reads/writes — verified ZERO
+  missing. So meta read/edit/generate is at full parity on a connector-connected site.
+- **Full parity on a connector remote site:** list posts/pages; edit + AI-generate
+  title, slug, metaTitle, metaDescription, primaryKeyword, metaKeywords, supportingKeyword,
+  clusterLabel; preview popup; and now **status** (added — the status Select called
+  saveCell('status') which previously errored 'Unknown field' on remote).
+- **Not yet wired for remote (hub-side gaps, NOT connector limits — these are core-WP
+  REST or hub features):** author edit (hub user-list ≠ remote's), featured image,
+  schema get/set, content-body Optimize (modal), link scan, create post/page, bulk delete.
+  AI Readiness / Site / Business panels are intentionally local-only (site-level).
+- **Change:** remote_save_cell now handles 'status' (native field, excluded from the
+  meta-landed verification). php -l OK. Backend-only. Not committed.
+
+## 2026-06-19 — Fix: remote SEO meta save was a phantom (silent 200, no persist)
+- **Reproduced live (Chrome on the hub):** title/slug save to bestclient persist (200,
+  re-fetch confirmed, then restored). META save (metaTitle) returns 200 but does NOT
+  persist — bestclient's raw meta is only {footnotes} (App-Password connect, no connector
+  plugin) so WP silently DROPS the unregistered pcm_seo_* meta and still returns 200.
+- **Fix (seo/service.php remote_save_cell):** after a meta save, re-read the post meta and
+  confirm the key exists; if not, return WP_Error 'pcm_seo_remote_meta_unsupported' (422)
+  with an "install the connector plugin" message instead of faking success. Title/slug
+  (native) unaffected. The frontend already reverts + toasts on error.
+- **Verified:** detection logic against the real remote — bestclient {footnotes} → not
+  landed → 422; a connector site (pcm_seo_meta_title present) → landed → succeed. php -l OK.
+  Restored my test title on the live site (no stray data).
+- **Cure for the user:** install the connector plugin on bestclient (registers pcm_seo_*
+  meta in REST → meta saves persist). Needs deploy. Not committed.
+
+## 2026-06-19 — Verify: generations DO use primary + supporting keywords
+- Question: are generations not using primary/secondary keywords like the original?
+- **Answer: they do.** prompts.php (page_title/meta_title/meta_description/slug) is
+  byte-identical to the original Optimizer prompt-templates.php — each carries
+  `Primary Keyword: {{primary_keyword}}` + `Supporting Keyword: {{supporting_keyword}}`
+  and "include primary keyword" instructions. build_field_vars() fills them from the
+  post's primaryKeyword (seo:keyword) + supportingKeyword (pcm_seo_supporting_keyword).
+- **Verified:** set primaryKeyword='widget repair service' + supportingKeyword='fix broken
+  widgets' on a post → build_field_vars returns both → the built meta_title prompt contains
+  BOTH keywords. (slug uses only the primary, same as the original — intentional.)
+- PC is actually *better* on meta_keywords: the original had a `{{primary_kw}}` typo that
+  never substituted; PC corrected it to `{{primary_keyword}}` + added the supporting kw.
+- Caveats (not bugs): keywords must be SET on the post (empty placeholder if unset); on a
+  REMOTE App-Password site the keyword meta isn't exposed in REST (needs the connector), so
+  remote generation there has no keyword to use. No code change.
+
 ## 2026-06-19 — Remote-site SEO, Phase 2 (AI generate + all fields)
 - **Generate on remote:** PCM_SEO_Service::remote_generate_field() — fetches the remote
   post, builds prompt vars from it (business context = the connected site), runs the SAME
