@@ -283,7 +283,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
 const SELECT_COL_WIDTH = 44;
 
 export function SEOModule() {
-  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate, bulkDelete, generateField: localGenerateField, scanLinks } = useSeoContent();
+  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete, generateField: localGenerateField, scanLinks } = useSeoContent();
 
   // Text models available for AI generation (registry). The user picks one in the
   // header dropdown; its id+provider is sent with every generate call so that
@@ -345,6 +345,8 @@ export function SEOModule() {
   const isLoading = isLocal ? localLoading : remote.isLoading;
   // Generation works for both: the hub runs the LLM, then writes back via saveCell.
   const generateField = isLocal ? localGenerateField : remote.generateField;
+  // Create a draft post/page — local or on the connected remote site.
+  const quickCreate = isLocal ? localQuickCreate : remote.quickCreate;
   // Per-column filters (funnel icon in each column header).
   const filterDefs = useMemo(() => buildFilterDefs(options), [options]);
   const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters();
@@ -878,8 +880,6 @@ export function SEOModule() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Create + model picker are local-only (remote = read + edit, Phase 1). */}
-            {isLocal && (<>
             <Button size="sm" onClick={() => handleCreate('post')} disabled={busy} className="h-8 gap-1.5 text-xs">
               <Plus className="w-3.5 h-3.5" /> Post
             </Button>
@@ -908,7 +908,6 @@ export function SEOModule() {
                 )}
               </SelectContent>
             </Select>
-            </>)}
             <ViewsToolbar
               show="columns"
               columns={TOGGLE_COLUMNS}

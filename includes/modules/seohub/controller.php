@@ -30,6 +30,7 @@ class PCM_REST_SEOHub extends PCM_REST_Base
             array('POST',   '/seohub/sites/(?P<id>\d+)/revoke',   'revoke_site',      array(), 'manage_options:strict'),
             array('DELETE', '/seohub/sites/(?P<id>\d+)',          'delete_site',      array(), 'manage_options:strict'),
             array('GET',    '/seohub/sites/(?P<id>\d+)/connector', 'download_connector', array(), 'manage_options:strict'),
+            array('GET',    '/seohub/connector-download',          'download_connector_generic', array(), 'manage_options:strict'),
             // Public — HMAC-verified inside the handler.
             array('POST',   '/seohub/connector/hello',            'connector_hello',  array(), 'public'),
         );
@@ -103,6 +104,26 @@ class PCM_REST_SEOHub extends PCM_REST_Base
         header('Content-Length: ' . filesize($path));
         readfile($path);
         @unlink($path); // don't leave the secret-bearing ZIP on disk
+        exit;
+    }
+
+    /** GET /seohub/connector-download — stream the GENERIC (tenant-free) pairing-code connector. */
+    public function download_connector_generic(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $built = PCM_SEOHub_Service::build_connector_zip_generic();
+        if (isset($built['error'])) {
+            return $this->error((string) $built['error'], 500, 'pcm_seohub_zip');
+        }
+        $path = $built['path'];
+        if (!file_exists($path)) {
+            return $this->error('Connector build failed.', 500);
+        }
+        nocache_headers();
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="pcm-connector.zip"');
+        header('Content-Length: ' . filesize($path));
+        readfile($path);
+        @unlink($path);
         exit;
     }
 

@@ -52,6 +52,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             // Remote-site SEO — read + inline-edit a connected site's posts/pages
             // via the connector proxy (admin only; site is owner-scoped in the handler).
             array('GET',  '/seo/sites/(?P<id>\d+)/content', 'remote_content', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content', 'remote_create', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/cell', 'remote_save_cell', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/generate', 'remote_generate_field', array(), 'manage_options'),
             // Saved views (per-user column/filter configs).
@@ -162,6 +163,23 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         return $this->success(PCM_SEO_Service::remote_list_content($site));
+    }
+
+    /** POST /seo/sites/{id}/content — create a draft post/page on a connected site. */
+    public function remote_create(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $result = PCM_SEO_Service::remote_create_content($site, $type);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** POST /seo/sites/{id}/content/{post}/cell — inline-save one SEO field to the remote. */

@@ -575,6 +575,31 @@ class PCM_SEO_Service
         return array('field' => $field, 'value' => $value);
     }
 
+    /**
+     * Create a draft post/page on a connected site (via the proxy). Returns {id,type}.
+     *
+     * @return array{id:int,type:string}|\WP_Error
+     */
+    public static function remote_create_content(object $site, string $type)
+    {
+        self::ensure_sites_service();
+        $route = ($type === 'page') ? '/wp/v2/pages' : '/wp/v2/posts';
+        $res = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array(
+            'title'  => __('Untitled', 'power-creatives'),
+            'status' => 'draft',
+        ));
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_create', $res->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null) || empty($res['body']['id'])) {
+            $msg = (is_array($res['body'] ?? null) && !empty($res['body']['message']))
+                ? (string) $res['body']['message']
+                : ('HTTP ' . (int) ($res['status'] ?? 0));
+            return new WP_Error('pcm_seo_remote_create', $msg, array('status' => 502));
+        }
+        return array('id' => (int) $res['body']['id'], 'type' => $type);
+    }
+
     /** Prompt vars for a remote post (business context = the connected site). */
     private static function remote_field_vars(object $site, array $row): array
     {

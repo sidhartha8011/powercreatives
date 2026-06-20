@@ -43,7 +43,7 @@ interface Site {
 }
 interface Tenant { id: number; name: string; status: string; siteUrl?: string | null; domain?: string | null; }
 
-type AddStep = null | 'choose' | 'password' | 'connector';
+type AddStep = null | 'choose' | 'password' | 'connector' | 'code';
 
 export function SitesModule() {
   const isAdmin = getIsAdmin();
@@ -69,12 +69,13 @@ export function SitesModule() {
 
   const [connName, setConnName] = useState('');
   const [createdTenant, setCreatedTenant] = useState<Tenant | null>(null);
+  const [pasteCode, setPasteCode] = useState('');
 
   // ── Mutations ──
   const closeAll = useCallback(() => {
     setAddStep(null);
     setFormName(''); setFormUrl(''); setFormUsername(''); setFormPassword('');
-    setConnName(''); setCreatedTenant(null);
+    setConnName(''); setCreatedTenant(null); setPasteCode('');
   }, []);
 
   const createMutation = trpc.sites.create.useMutation({
@@ -101,6 +102,21 @@ export function SitesModule() {
     createMutation.mutate({ name: formName, url: formUrl, username: formUsername, appPassword: formPassword });
   }, [formName, formUrl, formUsername, formPassword, createMutation]);
 
+  // Pairing code = base64(JSON{url,user,pass}) shown by the connector plugin. Decode it
+  // and connect via the reliable App-Password path (no handshake).
+  const handlePasteCode = useCallback(() => {
+    try {
+      const j = JSON.parse(atob(pasteCode.trim()));
+      const url = String(j.url || '').replace(/\/+$/, '');
+      const user = String(j.user || '');
+      const pass = String(j.pass || '');
+      if (!url || !user || !pass) throw new Error('incomplete');
+      createMutation.mutate({ name: url.replace(/^https?:\/\//, ''), url, username: user, appPassword: pass });
+    } catch {
+      toast.error('Invalid connection code — copy it again from the connector plugin’s page.');
+    }
+  }, [pasteCode, createMutation]);
+
   const handleCreateConnector = useCallback(async () => {
     if (!connName.trim()) return;
     try {
@@ -118,6 +134,19 @@ export function SitesModule() {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url; a.download = `pcm-connector-${label}.zip`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Download failed'); }
+  }, []);
+
+  // Generic (tenant-free) connector for the one-paste flow.
+  const downloadGenericConnector = useCallback(async () => {
+    try {
+      const cfg = getConfig();
+      const res = await fetch(`${cfg.restUrl}seohub/connector-download`, { headers: { 'X-WP-Nonce': cfg.nonce } });
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'pcm-connector.zip'; a.click();
       URL.revokeObjectURL(url);
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Download failed'); }
   }, []);
@@ -220,24 +249,32 @@ export function SitesModule() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Connect a site</DialogTitle>
-            <DialogDescription>Choose how you want to connect this WordPress site.</DialogDescription>
+            <DialogDescription>Install our connector plugin on the site, then paste the code it shows.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 py-2">
-            <button type="button" onClick={() => setAddStep('password')} className="flex items-start gap-3 rounded-lg border border-border p-4 text-left hover:border-primary transition-colors">
-              <KeyRound className="w-5 h-5 mt-0.5 text-primary shrink-0" />
-              <div>
-                <div className="text-sm font-medium">Application Password</div>
-                <div className="text-xs text-muted-foreground">Enter the site URL + a WordPress Application Password you create on it.</div>
-              </div>
-            </button>
-            <button type="button" onClick={() => setAddStep('connector')} className="flex items-start gap-3 rounded-lg border border-border p-4 text-left hover:border-primary transition-colors">
-              <Puzzle className="w-5 h-5 mt-0.5 text-primary shrink-0" />
-              <div>
-                <div className="text-sm font-medium">Connector plugin <span className="text-muted-foreground">(no password)</span></div>
-                <div className="text-xs text-muted-foreground">Install a small plugin on the site — it connects itself over a secure handshake.</div>
-              </div>
-            </button>
+          <div className="space-y-3 py-2 text-sm">
+            <ol className="list-decimal pl-5 space-y-1.5 text-xs text-muted-foreground">
+              <li>
+                <button type="button" onClick={downloadGenericConnector} className="inline-flex items-center gap-1 text-primary hover:underline">
+                  <Download className="w-3.5 h-3.5" /> Download the connector plugin
+                </button>{' '}— then on the site: Plugins → Add New → Upload → Activate.
+              </li>
+              <li>Open the new <strong className="text-foreground">“Power Creatives”</strong> menu on that site, then <strong className="text-foreground">Copy code</strong>.</li>
+              <li>Paste the code below and click Connect.</li>
+            </ol>
+            <textarea
+              value={pasteCode}
+              onChange={(e) => setPasteCode(e.target.value)}
+              rows={4}
+              placeholder="Paste the connection code here…"
+              className="w-full rounded-md border border-border bg-card p-2 font-mono text-xs outline-none focus:border-primary"
+            />
           </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeAll}>Cancel</Button>
+            <Button onClick={handlePasteCode} disabled={createMutation.isPending || !pasteCode.trim()}>
+              {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Connect
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -258,6 +295,31 @@ export function SitesModule() {
             <Button variant="outline" onClick={closeAll}>Cancel</Button>
             <Button onClick={handleCreate} disabled={createMutation.isPending}>
               {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add Site
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Add Site: paste connection code (reliable App-Password path under the hood) ── */}
+      <Dialog open={addStep === 'code'} onOpenChange={(o) => !o && closeAll()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Paste connection code</DialogTitle>
+            <DialogDescription>Install the Power Creatives Connector on the site, open its “Power Creatives” admin page, and paste the connection code it shows.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <textarea
+              value={pasteCode}
+              onChange={(e) => setPasteCode(e.target.value)}
+              rows={4}
+              placeholder="Paste the connection code here…"
+              className="w-full rounded-md border border-border bg-card p-2 font-mono text-xs outline-none focus:border-primary"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeAll}>Cancel</Button>
+            <Button onClick={handlePasteCode} disabled={createMutation.isPending || !pasteCode.trim()}>
+              {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Connect
             </Button>
           </DialogFooter>
         </DialogContent>

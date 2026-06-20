@@ -353,6 +353,99 @@ class PCM_SEOHub_Service
         );
     }
 
+    /**
+     * Build a GENERIC (tenant-free) connector ZIP for the pairing-code flow: it only
+     * exposes SEO meta + shows a connection code (no remote->hub handshake at all), so
+     * it works on any host and never leaves a "pending" tenant behind.
+     */
+    public static function build_connector_zip_generic(): array
+    {
+        if (!class_exists('ZipArchive')) {
+            return array('error' => 'ZipArchive PHP extension is required to build connectors.');
+        }
+        $uploads = wp_upload_dir();
+        $dir = trailingslashit($uploads['basedir']) . 'pcm-connectors';
+        if (!file_exists($dir)) {
+            wp_mkdir_p($dir);
+        }
+        $zip_path = $dir . '/pcm-connector.zip';
+        $zip = new ZipArchive();
+        if ($zip->open($zip_path, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            return array('error' => 'Could not create connector archive.');
+        }
+        $zip->addFromString('pcm-connector/pcm-connector.php', self::connector_php_simple());
+        $zip->close();
+        return array('path' => $zip_path);
+    }
+
+    /** The generic connector plugin source (pairing-code only; no handshake). */
+    private static function connector_php_simple(): string
+    {
+        return <<<'PHP'
+<?php
+/**
+ * Plugin Name: Power Creatives Connector
+ * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST and shows a one-paste connection code.
+ * Version: 1.1.0
+ */
+if (!defined('ABSPATH')) { exit; }
+
+// Expose SEO meta over the standard REST API so the hub can read/write it.
+add_action('init', function () {
+    $keys = array(
+        '_yoast_wpseo_title', '_yoast_wpseo_metadesc', '_yoast_wpseo_focuskw',
+        'rank_math_title', 'rank_math_description', 'rank_math_focus_keyword',
+        '_seopress_titles_title', '_seopress_titles_desc', '_seopress_analysis_target_kw',
+        'pcm_seo_meta_title', 'pcm_seo_meta_description', 'pcm_seo_primary_keyword', 'pcm_seo_meta_keywords',
+        'pcm_seo_supporting_keyword', 'pcm_seo_cluster_label',
+    );
+    foreach (array('post', 'page') as $type) {
+        foreach ($keys as $k) {
+            register_post_meta($type, $k, array('show_in_rest' => true, 'single' => true, 'type' => 'string', 'auth_callback' => function () { return current_user_can('edit_posts'); }));
+        }
+    }
+});
+
+// Ensure one Application Password exists for the hub + store it for the connection code.
+function pcm_conn_ensure() {
+    if (get_option('pcm_conn_app_password')) { return; }
+    $u = wp_get_current_user();
+    if (!$u || !$u->ID || !current_user_can('manage_options') || !class_exists('WP_Application_Passwords')) { return; }
+    $c = WP_Application_Passwords::create_new_application_password($u->ID, array('name' => 'Power Creatives Hub'));
+    if (!is_wp_error($c)) {
+        update_option('pcm_conn_app_password', str_replace(' ', '', $c[0]));
+        update_option('pcm_conn_app_user', $u->user_login);
+    }
+}
+register_activation_hook(__FILE__, 'pcm_conn_ensure');
+add_action('admin_init', 'pcm_conn_ensure');
+
+// Admin page: shows the single connection code to paste into the hub.
+add_action('admin_menu', function () {
+    add_menu_page('Power Creatives', 'Power Creatives', 'manage_options', 'pcm-connector', 'pcm_conn_page', 'dashicons-rest-api', 80);
+});
+function pcm_conn_page() {
+    if (!current_user_can('manage_options')) { return; }
+    if (isset($_POST['pcm_conn_gen']) && check_admin_referer('pcm_conn_gen')) { delete_option('pcm_conn_app_password'); pcm_conn_ensure(); }
+    $pass = (string) get_option('pcm_conn_app_password', '');
+    $user = (string) get_option('pcm_conn_app_user', '');
+    $code = ($pass && $user) ? base64_encode(wp_json_encode(array('url' => home_url('/'), 'user' => $user, 'pass' => $pass))) : '';
+    echo '<div class="wrap"><h1>Power Creatives &mdash; Connection</h1>';
+    echo '<p>Copy this code and paste it into your Power Creatives hub at <strong>Sites &rarr; Add Site</strong>.</p>';
+    if ($code !== '') {
+        echo '<textarea id="pcmcode" readonly rows="4" style="width:100%;max-width:640px;font-family:monospace" onclick="this.select()">' . esc_textarea($code) . '</textarea>';
+        echo '<p><button class="button" type="button" onclick="var t=document.getElementById(\'pcmcode\');t.select();document.execCommand(\'copy\');this.textContent=\'Copied!\'">Copy code</button></p>';
+    } else {
+        echo '<p><em>No code yet &mdash; click below to generate one.</em></p>';
+    }
+    echo '<form method="post" style="margin-top:1em">';
+    wp_nonce_field('pcm_conn_gen');
+    echo '<button class="button button-primary" type="submit" name="pcm_conn_gen" value="1">' . ($code !== '' ? 'Regenerate code' : 'Generate code') . '</button>';
+    echo '</form></div>';
+}
+PHP;
+    }
+
     /** The single-file connector plugin source (placeholders baked at build). */
     private static function connector_php(string $hub_url, string $client_id, string $secret): string
     {
@@ -385,6 +478,10 @@ function pcm_conn_register() {
     if (class_exists('WP_Application_Passwords')) {
         $created = WP_Application_Passwords::create_new_application_password($user->ID, array('name' => 'Power Creatives Hub'));
         if (!is_wp_error($created)) { $app = $created[0]; }
+    }
+    if ($app) {
+        update_option('pcm_conn_app_password', str_replace(' ', '', $app));
+        update_option('pcm_conn_app_user', $user->user_login);
     }
     $body = wp_json_encode(array(
         'site_url'    => home_url('/'),
@@ -447,6 +544,41 @@ add_action('init', function () {
         }
     }
 });
+
+// Admin page: shows a single "connection code" (this site URL + a WP username + an
+// Application Password). Paste it into the Power Creatives hub and it connects OUTBOUND
+// with those credentials — reliable on any host, no remote->hub handshake required.
+add_action('admin_menu', function () {
+    add_menu_page('Power Creatives', 'Power Creatives', 'manage_options', 'pcm-connector', 'pcm_conn_page', 'dashicons-rest-api', 80);
+});
+function pcm_conn_page() {
+    if (!current_user_can('manage_options')) { return; }
+    if (isset($_POST['pcm_conn_gen']) && check_admin_referer('pcm_conn_gen')) {
+        $u = wp_get_current_user();
+        if (class_exists('WP_Application_Passwords')) {
+            $c = WP_Application_Passwords::create_new_application_password($u->ID, array('name' => 'Power Creatives Hub'));
+            if (!is_wp_error($c)) {
+                update_option('pcm_conn_app_password', str_replace(' ', '', $c[0]));
+                update_option('pcm_conn_app_user', $u->user_login);
+            }
+        }
+    }
+    $pass = (string) get_option('pcm_conn_app_password', '');
+    $user = (string) get_option('pcm_conn_app_user', '');
+    $code = ($pass && $user) ? base64_encode(wp_json_encode(array('url' => home_url('/'), 'user' => $user, 'pass' => $pass))) : '';
+    echo '<div class="wrap"><h1>Power Creatives &mdash; Connection</h1>';
+    echo '<p>Copy this code and paste it into your Power Creatives hub at <strong>Sites &rarr; Add Site &rarr; Paste connection code</strong>.</p>';
+    if ($code !== '') {
+        echo '<textarea id="pcmcode" readonly rows="4" style="width:100%;max-width:640px;font-family:monospace" onclick="this.select()">' . esc_textarea($code) . '</textarea>';
+        echo '<p><button class="button" type="button" onclick="var t=document.getElementById(\'pcmcode\');t.select();document.execCommand(\'copy\');this.textContent=\'Copied!\'">Copy code</button></p>';
+    } else {
+        echo '<p><em>No code yet &mdash; click below to generate one.</em></p>';
+    }
+    echo '<form method="post" style="margin-top:1em">';
+    wp_nonce_field('pcm_conn_gen');
+    echo '<button class="button button-primary" type="submit" name="pcm_conn_gen" value="1">' . ($code !== '' ? 'Regenerate code' : 'Generate code') . '</button>';
+    echo '</form></div>';
+}
 PHP;
         return str_replace(
             array('__HUB_URL__', '__CLIENT_ID__', '__CLIENT_SECRET__'),

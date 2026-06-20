@@ -23,6 +23,8 @@ export interface UseRemoteSeoContentResult {
   saveCell: (id: number, field: string, value: string | number) => Promise<void>;
   /** AI-suggest a field value on the remote (NOT saved — caller stages it). */
   generateField: (id: number, field: string, model?: string, provider?: string, templateId?: number) => Promise<string>;
+  /** Create a draft post/page on the remote and refresh. */
+  quickCreate: (type: 'post' | 'page') => Promise<void>;
 }
 
 export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentResult {
@@ -71,5 +73,21 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
     [rows, generateMutation, siteId],
   );
 
-  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField };
+  const createMutation = trpc.seo.remoteCreate.useMutation();
+  const quickCreate = useCallback(
+    (type: 'post' | 'page'): Promise<void> =>
+      createMutation
+        .mutateAsync({ siteId: siteId ?? 0, type })
+        .then(() => {
+          queryClient.invalidateQueries({ queryKey: REMOTE_PREFIX });
+          toast.success(`New ${type} created`);
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'Failed to create');
+          throw err;
+        }),
+    [createMutation, siteId, queryClient],
+  );
+
+  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate };
 }

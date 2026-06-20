@@ -1,5 +1,41 @@
 # Session Log
 
+## 2026-06-19 — Simplify Add-Site to one flow + complete remote features [/build]
+- **Add Site = single flow** (was: choose → connector → paste = double-click). The dialog
+  now is: Download the connector plugin → install → paste the code → Connect. Backend:
+  generic tenant-free connector `connector_php_simple()` + `build_connector_zip_generic()`
+  + route GET /seohub/connector-download (no handshake, no pending tenant). Frontend
+  (Sites): downloadGenericConnector + the choose dialog repurposed to download+paste.
+- **Remote feature completion:** create post/page on a connected site
+  (PCM_SEO_Service::remote_create_content + POST /seo/sites/{id}/content + trpc
+  seo.remoteCreate + useRemoteSeoContent.quickCreate). Un-gated the model picker + Post/Page
+  for remote (effective quickCreate; remote generation already honors the picked model).
+  So a connected site now supports: list, edit, AI-generate, status, create — full parity
+  for the SEO workbench's core.
+- **Verified:** php -l OK (4 files); generic connector template php -l OK; routes
+  REGISTERED (connector-download, POST .../content); remote_create_content callable;
+  tsc 0 SEO/Sites errors (56 baseline); build clean; zip rebuilt.
+- **Deferred (noted):** the old App-Password/handshake dialogs are now unreachable dead
+  code, and the "Pending connections" list still renders (old entries can be deleted; the
+  generic connector creates none). Author/featured-image/schema/scan/optimize remain
+  local-only. Not committed.
+
+## 2026-06-19 — Better connect method: pairing code (one-paste, no handshake) [/build]
+- Root frustration: the connector's remote->hub PUSH handshake is fragile (URL form,
+  activation hook, outbound block, tenant matching). Replaced it with a PULL "pairing code":
+  - **Connector (connector_php):** stores its Application Password on register and adds a
+    "Power Creatives" admin page that shows a single connection code =
+    base64(json{url,user,pass}) (+ Copy / Regenerate). No network call needed.
+  - **Hub (Sites):** new "Paste connection code" Add-Site option — decodes the code and
+    connects via the existing, reliable App-Password path (sites.create → hub OUTBOUND).
+    Works on any host; no /wp-json, no tenant, no firewall dependency.
+- The connector still exposes pcm_seo_* meta, so full read/edit/generate works once connected.
+- **Verified:** hub php -l OK; generated connector php -l OK with the admin page + code
+  builder + app-pw storage; code round-trips (base64(json) ↔ atob+JSON.parse, recovers
+  url/user/pass); Sites tsc 0 errors (56 baseline); build clean. Zip rebuilt with the page.
+- Usage: deploy → (final) re-install the connector on the remote → its "Power Creatives"
+  page shows the code → hub Sites → Add Site → Paste connection code → Connect. Not committed.
+
 ## 2026-06-19 — Connector self-heal (root: ping only fired on activation)
 - **Verified via Chrome:** the connector the hub now serves bakes the correct
   ?rest_route= URL and has the multi-URL retry (deploy DID take). Yet tenant #4 stayed
