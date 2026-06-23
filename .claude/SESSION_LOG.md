@@ -814,6 +814,174 @@
   (`seo_views.isDefault` tinyint present) on the triggering request.
 - Pull + rebuild only; no commit/push (these doc notes left uncommitted per request).
 
+## 2026-06-23 — Unify PillButton → solid Post/Page Button style (app-wide)
+- **Asked:** the pill/ghost buttons in the image (Writer toolbar: Copy Link, Show/
+  Hide Revisions, Send to Approvals, Generate) should look like the SEO Post/Page
+  buttons. **Decision (asked up front):** convert ALL PillButton instances app-wide.
+- **What:** PillButton was the shared "foundational" pill/ghost primitive
+  (`components/shared/PillButton.tsx`, 9 call sites across Writer + Copy). Target =
+  solid shadcn `Button size="sm" className="h-8 gap-1.5 text-xs"` (icon as child,
+  `w-3.5 h-3.5`; loading → conditional `Loader2`).
+- **Converted (9 sites, 5 files):** `Writer/index.tsx` (Show/Hide Queue, Show/Hide
+  Settings, Copy Link, Show/Hide Revisions, Send to Approvals), `ReviewEditorToolbar`
+  (Generate), `ReviewEditorCanvas` (Generate), `SeoMetadataPanel` (Preview JSON-LD),
+  `Copy/ResultsPanel` (Generate). Removed PillButton from each import; **deleted
+  `PillButton.tsx`** + its barrel export (now fully unused).
+- **Note:** per the user's "all app-wide" choice, panel TOGGLES (Show/Hide *) are
+  now solid primary buttons too — the Writer toolbar is now a row of solid buttons.
+  Offered to dial specific ones to `variant="outline"` if too heavy.
+- **Verified:** `npm run check` — my 5 edited files + barrel are CLEAN (remaining
+  tsc errors are pre-existing, in untouched files: ContextPanel/drizzle,
+  BrandAssetGrid, DynamicSection, WriterBubbleMenu, etc.). `npm run build` OK;
+  served bundle == build (junction); zero `PillButton` references remain. Not
+  visually driven (read-tier browser). No commit.
+
+## 2026-06-23 — SEO: stop sidebar jumping when switching sections
+- **Asked:** clicking Site (or another section) makes the left section-nav jump
+  up because the content toolbar (Views/Columns/Post/Page/Model) disappears.
+- **Cause:** the `{tab === 'content' && (<toolbar>)}` block lived ABOVE the
+  nav+content flex row, so leaving Content removed it and shifted the whole row
+  (nav included) upward.
+- **Fix (`SEO/index.tsx`, pure move):** relocated that toolbar INTO the content
+  column's content-tab branch (the `<>` before the bulk bar). Now only the content
+  column changes per section; `ModuleHeader` + site tabs above the flex row are
+  constant, so the nav's vertical position is fixed. No logic change.
+- **Verified:** `npm run check` clean for SEO/index.tsx; `npm run build` OK;
+  served bundle == build (junction); only index.tsx changed. User to hard-refresh.
+  No commit.
+
+## 2026-06-23 — SEO bulk generation: overwrite vs only-empty-cells option
+- **Asked:** when generating columns, offer "Overwrite existing" vs "only generate
+  empty cells" (for all generations).
+- **Change (`SEO/index.tsx`, frontend only):** new `genMode` state
+  ('empty' | 'overwrite', default **empty** = non-destructive). `runBulk` builds a
+  job list and, in 'empty' mode, skips any selected cell whose row value is
+  already non-empty (`cellIsEmpty` via `rows` lookup, keyed `keyof SeoRow`);
+  progress total now reflects the real job count; no-op toast when nothing to do.
+  Applies to BOTH "Generate all" and "Generate selected". UI: a
+  `DropdownMenuRadioGroup` ("Only empty cells" / "Overwrite existing") at the top
+  of the Generate dropdown (`onSelect` preventDefault so the menu stays open).
+- **Default note:** defaulted to "Only empty cells" (safe); previously bulk gen
+  always overwrote. User can switch to Overwrite per run.
+- **Verified:** `npm run check` clean for SEO/index.tsx (fixed a SeoRow index
+  cast); `npm run build` OK; served bundle == build (junction); both labels in
+  bundle. Not visually driven (read-tier browser). No commit.
+
+## 2026-06-23 — SEO slug generation: build from keywords + always valid slug
+- **Asked:** slug generation doesn't work; it should use the keywords to make the slug.
+- **Findings:** plumbing was complete (field_use_map/prompts/save all have slug),
+  but the slug prompt only used `{{primary_keyword}}` and the AI output was never
+  slugified, and `build_field_vars` didn't expose `{{meta_keywords}}`. (Locally no
+  text-provider API key exists, so generation can't run here — affects all fields,
+  not slug-specific; verified plumbing instead.)
+- **Changes (PHP only, served live via junction — no rebuild):**
+  - `prompts.php` slug generate/optimize → built from `{{primary_keyword}}` +
+    `{{supporting_keyword}}` + `{{meta_keywords}}` (title fallback), clean-slug rules.
+  - `service.php build_field_vars` → added `meta_keywords` var.
+  - `service.php generate_field` (local **and** remote) → slugify the slug field's
+    output via `sanitize_title()` so the staged value is always a valid slug
+    regardless of how chatty the model is.
+- **Verified:** `php -l` clean (service + prompts); 2 new `if($field==='slug')`
+  slugify guards in the generate methods; plugin boots (wp-json 200, generate route
+  403). Couldn't run a live LLM slug gen (no local text key + auth) — sanitize_title
+  guarantees slug shape. Only service.php + prompts.php changed (others are prior
+  uncommitted session work).
+- **Map updated** (slug generation note + flagged the pre-existing editor
+  get_default_sections('seo') missing-slug inconsistency). No commit.
+
+## 2026-06-23 — SEO table: add sort to columns that were missing it
+- **Asked:** some columns have no sort button — add them.
+- **Change (`SEO/index.tsx`):** added sort for the data columns that lacked it —
+  **metaTitle, metaDescription, primaryKeyword, metaKeywords, author, schema**
+  (added to `SeoSortKey`, `SORTABLE_KEYS`, and `useSortableTable` accessors:
+  text fields/author lowercased; schema = `schemaTypes.join(',')` lowercased).
+  `renderHeader` already shows a sort control for any `SORTABLE_KEYS` member, so
+  no header changes. Left non-data columns without sort by design: **traffic**
+  (coming-soon "—" placeholder), **preview**, **open** (action cols), **image**
+  already had sort.
+- **Verified:** `npm run check` clean for SEO/index.tsx; `npm run build` OK;
+  served bundle == build (junction); only index.tsx changed. User to hard-refresh.
+  No commit.
+
+## 2026-06-23 — SEO bulk bar: "Bulk actions" menu (status / duplicate / delete)
+- **Asked:** when rows are selected, add a "Bulk actions" button right of the
+  Generate split button: Change Status (one/many rows), Duplicate, Delete.
+- **Backend (new):** `POST /seo/content/{id}/duplicate` → `controller::duplicate`
+  (create + per-post edit caps) → `PCM_SEO_Service::duplicate()` — clones a post
+  as a DRAFT, copying content + all post meta (SEO plugin keys + pcm_seo_ backups,
+  skipping _edit_lock/_edit_last/_wp_old_slug) + taxonomy terms; returns build_row.
+- **Frontend:** trpc `seo.duplicateContent`; `useSeoContent.bulkDuplicate(ids)`
+  (loops the route, one invalidate + toast). `SEO/index.tsx`: a **"Bulk actions"**
+  `DropdownMenu` (local only) next to the split button — Change status submenu
+  (`options.statuses` → `handleBulkStatus` = sequential `saveCell(id,'status',s)`
+  with progress), Duplicate (`handleBulkDuplicate`), Delete (existing
+  `handleDelete`). Standalone Trash button removed (folded into the menu); Clear
+  kept. Statuses reuse existing options; status/delete need no backend.
+- **Scope note:** Bulk actions gated `isLocal` (Duplicate/Delete have no remote
+  path; matches the old Trash gating). Delete = WP trash (recoverable), no confirm
+  (matches prior behavior).
+- **Verified:** `php -l` clean (controller+service); `npm run check` clean for
+  changed TS; `npm run build` OK; served bundle == build (junction); "Bulk
+  actions" in bundle; `POST /seo/content/1/duplicate` → 403 (registered, not 404).
+  Not visually driven (read-tier browser) — user to hard-refresh + test.
+- **Map updated** (SEO generation-UI note + duplicate route). No commit.
+
+## 2026-06-23 — SEO bulk bar: visual polish + fix "Generate selected" padding
+- **Asked:** improve the floating "Generate all" bar UI; the dropdown's "Generate
+  selected" button text is congested (needs px padding).
+- **Change (`SEO/index.tsx`, bulk bar only):** "Generate selected" button →
+  `px-3 justify-center` (fixes cramped text). Polish: count is now a pill
+  (`rounded-full bg-muted`), consistent `h-8` controls, split button is
+  `rounded-l/r-md` with `shadow-sm`, bar has more breathing room
+  (`gap-3 px-4 py-2` + `ring-1 ring-black/5`), dropdown widened to `w-56`.
+  No behavior/logic change.
+- **Verified:** `npm run check` clean for SEO/index.tsx; `npm run build` OK;
+  served bundle == build (junction); padding marker present in bundle. User to
+  hard-refresh. No commit.
+
+## 2026-06-23 — SEO bulk bar redesign + generation consolidated to one split button
+- **Asked:** (1) on bulk-select the table "pops down" — keep it in place; make the
+  bar smaller/coherent. (2) Remove all individual generation buttons; keep only
+  "Generate all" as a divided (split) button whose dropdown lists all columns to
+  de/select and generate multiple at once. **Decisions (asked up front):** split
+  button lives in the **bulk bar / selected rows**; **remove** the header ✦+template.
+- **Bulk bar (`SEO/index.tsx`):** now a compact **floating** pill (`fixed
+  bottom-6 left-1/2 -translate-x-1/2 z-50`, `rounded-full bg-card/95 shadow`) so it's
+  out of flow — selecting rows no longer reflows the table. (fadeIn is opacity-only,
+  no transform ⇒ `fixed` is viewport-anchored.)
+- **Generation consolidated:** removed per-cell sparkles + re-generate from
+  EditableCell, the per-field bulk buttons, and the header per-column ✦/Template
+  flow (`handleColumnGenerate`, `columnGenerating`, `templatesForCol`,
+  `seoTemplates`, `SEO_USE_BY_COL`, `handleGenerate`, `GENERATABLE` all removed).
+  New: a **"Generate all" split button** — left runs all generatable columns on
+  selected rows; ▾ dropdown = `DropdownMenuCheckboxItem` per column (`genCols`
+  state) + "Generate selected (N)". `runBulk` reused. EditableCell now only shows
+  staged accept/reject.
+- **Known leftover:** `ColumnHead` keeps an unused optional `generate` prop (dead
+  code; left to keep the diff small). Pending-suggestions bar is still in-flow
+  (appears after generation, not on select) — not floated.
+- **Verified:** `npm run check` clean for SEO files; `npm run build` OK; served
+  bundle == build (junction); markers in bundle ("Generate selected", floating-bar
+  classes). Not visually driven (read-tier browser) — user to hard-refresh + test.
+- **Map updated** (SEO Phase-3 generation-UI note). No commit.
+
+## 2026-06-23 — Installed latest code to local WordPress
+- **Asked:** install the latest code to WordPress.
+- **Setup reminder:** the plugin is a directory junction (Local plugins dir →
+  this working copy), so the live site already runs the working copy's PHP. The
+  only "install" step is rebuilding the gitignored frontend bundle from source.
+- **State found:** `app/dist` was stale (built 06-19) vs source (06-23 remote-SEO
+  commits). Working tree in sync with `origin/feat/seo-suite-port` — latest code
+  already in the working copy; no pull/dep change needed (package.json untouched).
+- **Action:** `cd app && npm run build` → fresh bundle 4,424,180 B (was 4,378,743).
+- **Verified live:** served bundle == build (junction); `/wp-json/` namespaces
+  include `pcm/v1` with **133 routes**; NEW remote-SEO routes `/seo/sites/1/content`
+  + `/seo/llm-info` → 403 (registered, not 404) ⇒ latest PHP live; stored
+  `pcm_db_version` == const **1.27.0** (maybe_upgrade satisfied, no pending migration).
+- No source/commit changes (only the rebuilt gitignored dist). Connector plugin
+  for REMOTE sites (v1.3.0) is a separate per-site download from the hub — not
+  part of installing this WP.
+
 ## 2026-06-19 — SEO: model picker for AI generation
 - **Asked:** add a dropdown next to Post/Page to switch the model used to
   generate cell content.

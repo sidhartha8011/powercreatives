@@ -348,6 +348,59 @@ class PCM_SEO_Service
     }
 
     /**
+     * Duplicate a post/page as a DRAFT, copying its content, post meta (incl.
+     * every SEO plugin's meta + our pcm_seo_ backups) and taxonomy terms.
+     * Caller has already checked create + per-post edit capability.
+     *
+     * @param int $post_id Source post id.
+     * @return int|WP_Error New post id, or error.
+     */
+    public function duplicate(int $post_id)
+    {
+        $src = get_post($post_id);
+        if (!$src) {
+            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
+        }
+
+        $new_id = wp_insert_post(array(
+            'post_type'      => $src->post_type,
+            'post_status'    => 'draft',
+            'post_title'     => $src->post_title . ' ' . __('(Copy)', 'power-creatives'),
+            'post_content'   => $src->post_content,
+            'post_excerpt'   => $src->post_excerpt,
+            'post_author'    => get_current_user_id(),
+            'comment_status' => $src->comment_status,
+            'ping_status'    => $src->ping_status,
+            'post_parent'    => $src->post_parent,
+            'menu_order'     => $src->menu_order,
+        ), true);
+        if (is_wp_error($new_id)) {
+            return $new_id;
+        }
+        $new_id = (int) $new_id;
+
+        // Copy post meta (SEO keys + pcm_seo_ backups), skipping WP internals.
+        foreach (get_post_meta($post_id) as $key => $values) {
+            if (in_array($key, array('_edit_lock', '_edit_last', '_wp_old_slug'), true)) {
+                continue;
+            }
+            foreach ($values as $value) {
+                add_post_meta($new_id, $key, maybe_unserialize($value));
+            }
+        }
+
+        // Copy taxonomy terms (categories, tags, custom) for a faithful copy.
+        foreach (get_object_taxonomies($src->post_type) as $tax) {
+            $terms = wp_get_object_terms($post_id, $tax, array('fields' => 'ids'));
+            if (!is_wp_error($terms) && !empty($terms)) {
+                wp_set_object_terms($new_id, $terms, $tax);
+            }
+        }
+
+        return $new_id;
+    }
+
+    /**
      * Save a single content cell. Returns the canonical stored value or a
      * WP_Error on validation failure. Caller has already verified the
      * per-post edit capability.
@@ -1133,6 +1186,11 @@ class PCM_SEO_Service
             }
             $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
             $value  = self::sanitize_ai_output((string) ($result['content'] ?? ''));
+            // The slug field must be a valid URL slug — slugify whatever the model
+            // returned (handles chatty output / spaces / casing reliably).
+            if ($field === 'slug') {
+                $value = sanitize_title($value);
+            }
             if ($value === '') {
                 return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
             }
@@ -1598,6 +1656,7 @@ class PCM_SEO_Service
             'title'                     => $post ? $post->post_title : '',
             'primary_keyword'           => self::seo_get($post_id, 'keyword'),
             'supporting_keyword'        => (string) get_post_meta($post_id, 'pcm_seo_supporting_keyword', true),
+            'meta_keywords'             => self::seo_get($post_id, 'meta_keywords'),
             'meta_title'                => self::seo_get($post_id, 'title'),
             'meta_description'          => self::seo_get($post_id, 'description'),
             'post_type'                 => $post ? $post->post_type : '',
@@ -1684,6 +1743,11 @@ class PCM_SEO_Service
             }
             $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
             $value  = self::sanitize_ai_output((string) ($result['content'] ?? ''));
+            // The slug field must be a valid URL slug — slugify whatever the model
+            // returned (handles chatty output / spaces / casing reliably).
+            if ($field === 'slug') {
+                $value = sanitize_title($value);
+            }
             if ($value === '') {
                 return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
             }

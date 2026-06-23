@@ -275,6 +275,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `seo/content/${input.id}/cell`, body: { field: input.field, value: input.value } }),
     },
     "seo.bulkDelete": { endpoint: "seo/content/bulk-delete", method: "POST" },
+    "seo.duplicateContent": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/duplicate` }),
+    },
     "seo.getBody": {
         endpoint: "seo/content",
         method: "GET",

@@ -86,14 +86,14 @@ return array(
             . "Language: {{site.lang}}. Page Title: {{title}} Primary Keyword: {{primary_keyword}} Supporting Keyword: {{supporting_keyword}}",
     ),
 
-    // ── URL slug (ported verbatim from Optimizer Simple) ──
+    // ── URL slug — built from the page's target keywords ──
     'slug' => array(
         'max'      => 60,
-        'generate' => "Generate an SEO-friendly URL slug for this page.\n\n"
-            . "Page Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nBusiness: {{business.name}}\n\n"
-            . "Requirements:\n- Lowercase, hyphen-separated words\n- Maximum 5 words\n- Use the primary keyword as the base of the slug\n- No stop words (the, a, an, is, etc.)\n- Output ONLY the slug, nothing else",
-        'optimize' => "Optimize the following URL slug for SEO. Build the slug around the primary keyword for maximum search visibility.\n\n"
-            . "Current Slug: {{current_value}}\nPage Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nBusiness: {{business.name}}\n\n"
-            . "Requirements:\n- Lowercase, hyphen-separated\n- Maximum 5 words\n- Primary keyword must be the base of the slug\n- No stop words\n- Output ONLY the slug, nothing else",
+        'generate' => "Generate an SEO-friendly URL slug for this page, built from its target keywords.\n\n"
+            . "Page Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nKeywords: {{meta_keywords}}\nBusiness: {{business.name}}\n\n"
+            . "Requirements:\n- Base the slug on the primary keyword; fold in a supporting keyword only if it stays concise\n- If no keywords are provided, derive the slug from the page title\n- Lowercase, hyphen-separated words\n- Maximum 5 words\n- No stop words (the, a, an, is, of, for, to, etc.)\n- ASCII letters, numbers and hyphens only\n- Output ONLY the slug (e.g. best-seo-tools), nothing else",
+        'optimize' => "Optimize the following URL slug for SEO, building it around the page's target keywords for maximum search visibility.\n\n"
+            . "Current Slug: {{current_value}}\nPage Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nKeywords: {{meta_keywords}}\nBusiness: {{business.name}}\n\n"
+            . "Requirements:\n- Base the slug on the primary keyword; fold in a supporting keyword only if it stays concise\n- If no keywords are provided, derive the slug from the page title\n- Lowercase, hyphen-separated words\n- Maximum 5 words\n- No stop words\n- ASCII letters, numbers and hyphens only\n- Output ONLY the slug (e.g. best-seo-tools), nothing else",
     ),
 );

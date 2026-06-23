@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-14 · verified current 2026-06-19_
+_Last updated: 2026-06-19 (remote-SEO suite + SEO Hub pairing-code landed — ~4k LOC across 38 files) · verified current 2026-06-19_
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -187,8 +187,8 @@ uses `pcm/v1` + the path in `routes()`.
 | notifications | pcm/v1/notifications | In-app notifications (`GET /notifications` → items+unseen; `POST /notifications/seen`). `edit_posts`. See *Notifications (v1.19.0)*. |
 | prompts | pcm/v1/prompts | User system-prompt overrides |
 | scraper | pcm/v1/scraper | URL scrape + AI vision |
-| seo | pcm/v1/seo | Content SEO suite (cross-plugin meta, AI field/body generate, schema, AI-readiness, site, GBP, export). `edit_posts` + per-post checks. See *SEO suite*. |
-| seohub | pcm/v1/seohub | Multi-site connectors (HMAC handshake, tenant CRUD, connector-ZIP, remote proxy). Tenant CRUD `manage_options:strict`; public `/seohub/connector/hello`. See *SEO Hub*. |
+| seo | pcm/v1/seo | Content SEO suite (cross-plugin meta, AI field/body generate, schema, AI-readiness, site, GBP, export, **scan-links**, **llm-info**). `edit_posts` + per-post checks. **Plus a full REMOTE-site suite** under `/seo/sites/{id}/*` (`manage_options`) proxied through the connector — see *SEO suite → Remote-site SEO*. See *SEO suite*. |
+| seohub | pcm/v1/seohub | Multi-site connectors. Two connect paths: HMAC-handshake tenant ZIP **and a tenant-free pairing-code "one-paste" connector** (`/seohub/connector-download`). Tenant CRUD `manage_options:strict`; public `/seohub/connector/hello`. See *SEO Hub*. |
 | settings | pcm/v1 | Global settings + prompt editor |
 | sites | pcm/v1/sites | Connected WP site metadata |
 | strategy | pcm/v1/strategies | Strategic planning |
@@ -550,11 +550,33 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   `pcm_seo_field_prompts`) + `generate_field` (substitute_vars + build_field_vars
   + sanitize_ai_output → `PCM_LLM::invoke`); `POST /seo/content/{id}/generate`
   accepts optional `model` + `provider` (data-driven routing — no detect_provider).
-  frontend per-field sparkle → STAGED suggestion (accept/**re-generate**/reject);
-  a **model picker** in the content header (next to Post/Page) lets the user pick
+  **Generation UI (post-1.27):** generation is **bulk-only** — there are no
+  per-cell sparkles and no header per-column ✦/template button anymore (removed).
+  The sole entry point is a **"Generate all" split button in a FLOATING bulk bar**
+  (`fixed bottom-center`, shown only when rows are selected — `fixed` so the table
+  never reflows on select): left = generate every generatable column for the
+  selected rows; the ▾ dropdown is a column checklist (`genCols` state) → "Generate
+  selected (N)". Cells only DISPLAY a staged suggestion (accept/reject). A
+  **model picker** in the content header (next to Post/Page) lets the user pick
   any text model (`trpc.models.getForGeneration {type:'text'}`); the choice
-  (id+provider) is sent with every generate/bulk call and persisted in
-  localStorage (`pcm:seo:gen-model`). Tests:
+  (id+provider) is sent with every generate call and persisted in
+  localStorage (`pcm:seo:gen-model`). (`ColumnHead` still carries an unused
+  optional `generate` prop — dead since the header ✦ was removed.)
+  Next to the split button is a **"Bulk actions" menu** (local only): **Change
+  status** (submenu of `options.statuses` → bulk `saveCell(id,'status',…)`),
+  **Duplicate** (bulk → new `POST /seo/content/{id}/duplicate`), **Delete**
+  (bulk-delete). The standalone Trash button was folded into this menu.
+  **Duplicate** = `PCM_SEO_Service::duplicate()` clones a post as a DRAFT copying
+  content + all post meta (SEO keys + pcm_seo_ backups) + taxonomy terms;
+  hook `useSeoContent.bulkDuplicate(ids)` loops the route.
+  **Slug generation** (`prompts.php` `slug`): builds the slug from the page's
+  **keywords** (`{{primary_keyword}}`/`{{supporting_keyword}}`/`{{meta_keywords}}`,
+  title fallback); `generate_field` runs the slug output through `sanitize_title()`
+  so the staged value is always a valid slug (local + remote generate). NB:
+  `build_field_vars` now also exposes `{{meta_keywords}}`. (⚠ pre-existing: the
+  editor `get_default_sections('seo')` list does NOT include `slug` even though
+  `prompts.php`/`get_default_prompts` do — slug isn't exposed in the prompt editor.)
+  Tests:
   `SeoIntegrationTest` (key-map, detection, read-chain, dual-write, whitelist,
   substitution, output-sanitize, field map, prompt completeness).
   **Prompts are user-editable in Settings → Prompts → SEO tab** (post-1.23):
@@ -599,8 +621,50 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   `/seo/content/{id}/body`,`/optimize`; frontend `OptimizeModal` + client
   `scorecard.ts` (word/density/KW-placement/headings/FAQ/lists/sentence-len).
 - **SEO SUITE COMPLETE (Phases 1–9 + 3b).** All 9 source modules ported native.
+- **New local features (post-1.27):**
+  - **`scan-links`** `POST /seo/content/{id}/scan-links` (`PCM_SEO_Service::scan_links`)
+    — internal-link scan for a post.
+  - **Body editor** `GET/POST /seo/content/{id}/body` (+ `/optimize`) — read/save the
+    full post body (the OptimizeModal flow now has explicit get/save body routes).
+  - **LLM-info** `GET/POST /seo/llm-info` + `/seo/llm-info/build` (`build_llm_info`,
+    `manage_options`) — generates an LLM-facing site info doc (served at `/llm-info/`,
+    distinct from AI-readiness's `/llms.txt`); takes model+provider like field-gen.
+  - **AI field generation** now also accepts a `template_id` (prompt template) in
+    addition to `model`+`provider`.
+- **Remote-site SEO (via the connector — major addition, was "coming soon"):**
+  Connected remote sites are now managed end-to-end through the hub's
+  `/seo/sites/{id}/*` routes (ALL `manage_options`), which proxy to the remote
+  connector plugin's `/pcm-conn/v1/*` endpoints (connector **v1.2.0+/v1.3.0**
+  required on the remote). Surfaces:
+  - Content: `GET/POST /seo/sites/{id}/content`, `.../content/{post}/cell`,
+    `.../generate`, `.../scan-links`, `.../schema` (`remote_*` methods in
+    `seo/service.php`; frontend `hooks/useRemoteSeoContent.ts`).
+  - Site SEO (robots + JSON-LD): `GET/POST /seo/sites/{id}/site` →
+    `RemoteSiteSettingsPanel.tsx` → connector `/pcm-conn/v1/site`.
+  - AI Readiness (llms.txt build/edit/toggle): `GET/POST /seo/sites/{id}/ai` +
+    `/ai/build` → `RemoteAIReadinessPanel.tsx` → connector `/pcm-conn/v1/ai`.
+  - LLM-info: `GET/POST /seo/sites/{id}/llm-info` + `/build`.
+  - `RemoteSitePlaceholder` still renders as the FALLBACK for site tabs/sections
+    not yet wired for a given remote; content/site/AI/llm-info tabs now show real
+    management panels when the connector supports them.
+- **Model picker (header):** the content tab has a text-model dropdown next to
+  Post/Page (always visible; "Default model" + registered text models via
+  `trpc.models.getForGeneration {type:'text'}`, persisted to localStorage
+  `pcm:seo:gen-model`). NB: only populates when the registry has **text-capable**
+  models (`wp_pcm_models.canGenerateText=1`) — an image-only registry shows just
+  "Default model".
 
-## SEO Hub (multi-site connectors, v1.23.0, DB 1.23.0)
+## SEO Hub (multi-site connectors, v1.23.0+, DB 1.23.0)
+> **Pairing-code "one-paste" connect (newer, preferred path):** alongside the
+> original HMAC-handshake tenant ZIP, there's now a **generic, tenant-free
+> connector** ZIP (`GET /seohub/connector-download`, `manage_options:strict`;
+> built by a `PCM_SEOHub_Service` generic-source builder ~line 357). The remote
+> connector (Power Creatives Connector **v1.3.0**) exposes SEO meta in REST,
+> manages site-wide robots.txt + JSON-LD, serves `/llms.txt` + `/llm-info/`, and
+> shows a **one-paste connection code** in its admin — the user pastes that code
+> into the hub's "Add Site" to pair (no per-tenant ZIP, no activation handshake).
+> This is what powers the remote-SEO suite above (`/pcm-conn/v1/*`).
+
 Separate `seohub` module (`pcm/v1/seohub`). Tables `seo_tenants` +
 `seo_hmac_nonces` (PCM_Schema dbDelta; `maybe_upgrade` auto-creates).
 `PCM_SEOHub_Service`: HMAC sign/verify (sha256 `ts.nonce.body`, ±300s window,

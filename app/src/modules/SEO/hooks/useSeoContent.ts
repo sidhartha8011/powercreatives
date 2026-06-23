@@ -26,6 +26,8 @@ export interface UseSeoContentResult {
   quickCreate: (type: 'post' | 'page') => Promise<void>;
   /** Trash selected ids and refresh. */
   bulkDelete: (ids: number[]) => Promise<void>;
+  /** Duplicate selected ids (each → a draft copy) and refresh. */
+  bulkDuplicate: (ids: number[]) => Promise<void>;
   /** AI-suggest a field value (NOT saved — caller stages it). Resolves to the text.
    *  Optional model/provider override routes generation to a specific model. */
   generateField: (id: number, field: string, model?: string, provider?: string, templateId?: number) => Promise<string>;
@@ -56,6 +58,7 @@ export function useSeoContent(): UseSeoContentResult {
   const saveCellMutation = trpc.seo.saveCell.useMutation();
   const quickCreateMutation = trpc.seo.quickCreate.useMutation();
   const bulkDeleteMutation = trpc.seo.bulkDelete.useMutation();
+  const duplicateMutation = trpc.seo.duplicateContent.useMutation();
   const generateMutation = trpc.seo.generateField.useMutation();
   const scanMutation = trpc.seo.scanLinks.useMutation();
 
@@ -116,6 +119,23 @@ export function useSeoContent(): UseSeoContentResult {
     [bulkDeleteMutation, invalidate],
   );
 
+  const bulkDuplicate = useCallback(
+    async (ids: number[]): Promise<void> => {
+      if (ids.length === 0) return;
+      let ok = 0;
+      for (const id of ids) {
+        try {
+          await duplicateMutation.mutateAsync({ id });
+          ok += 1;
+        } catch { /* continue with the rest */ }
+      }
+      void invalidate();
+      if (ok > 0) toast.success(`Duplicated ${ok} item(s)`);
+      if (ok < ids.length) toast.error(`Failed to duplicate ${ids.length - ok} item(s)`);
+    },
+    [duplicateMutation, invalidate],
+  );
+
   const generateField = useCallback(
     (id: number, field: string, model?: string, provider?: string, templateId?: number): Promise<string> =>
       generateMutation
@@ -164,6 +184,7 @@ export function useSeoContent(): UseSeoContentResult {
     saveCell,
     quickCreate,
     bulkDelete,
+    bulkDuplicate,
     generateField,
     scanLinks,
   };

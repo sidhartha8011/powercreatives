@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { activeDocumentAtom, updateActiveDocumentAtom } from '../store';
 import { Image as ImageIcon, PanelRightClose } from 'lucide-react';
-import { SectionLabel, CharacterCounter, PillButton, colors, typography } from '@/components/shared';
+import { SectionLabel, CharacterCounter, colors, typography } from '@/components/shared';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -145,9 +146,9 @@ export function SeoMetadataPanel({ onCollapse }: SeoMetadataPanelProps) {
 
               {/* Generate Schema */}
               <div className="pt-2">
-                <PillButton variant="default" className="w-full justify-center">
+                <Button size="sm" className="h-8 gap-1.5 text-xs w-full justify-center">
                   Preview JSON-LD
-                </PillButton>
+                </Button>
               </div>
             </div>
         </div>

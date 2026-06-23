@@ -20,7 +20,7 @@ import { DocumentQueuePanel } from './components/DocumentQueuePanel';
 import { ContextGenerationPanel } from './components/ContextGenerationPanel';
 import { ReviewEditorCanvas } from './components/ReviewEditorCanvas';
 import { AiRevisionsPanel } from './components/AiRevisionsPanel';
-import { PillButton, StatusBadge, colors, typography } from '@/components/shared';
+import { StatusBadge, colors, typography } from '@/components/shared';
 import { Link2, Send, PanelRightOpen, PanelLeftOpen, History, Share2, Copy, Check, Loader2 } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { ImperativePanelHandle } from 'react-resizable-panels';
@@ -231,9 +231,9 @@ export function WriterModule() {
         {/* Left: collapsed panel buttons + document info */}
         <div className="flex items-center gap-3">
           {/* Always-visible toggle buttons for Queue and Context panels */}
-          <PillButton
-            variant={isQueueCollapsed ? 'default' : 'subtle'}
-            icon={<PanelLeftOpen />}
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
             onClick={() => {
               if (isQueueCollapsed) {
                 queuePanelRef.current?.expand();
@@ -244,12 +244,13 @@ export function WriterModule() {
               }
             }}
           >
+            <PanelLeftOpen className="w-3.5 h-3.5" />
             {isQueueCollapsed ? 'Show Queue' : 'Hide Queue'}
-          </PillButton>
+          </Button>
 
-          <PillButton
-            variant={isContextCollapsed ? 'default' : 'subtle'}
-            icon={<PanelRightOpen />}
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
             onClick={() => {
               if (isContextCollapsed) {
                 contextPanelRef.current?.expand();
@@ -260,8 +261,9 @@ export function WriterModule() {
               }
             }}
           >
+            <PanelRightOpen className="w-3.5 h-3.5" />
             {isContextCollapsed ? 'Show Settings' : 'Hide Settings'}
-          </PillButton>
+          </Button>
 
           <div
             style={{
@@ -302,21 +304,22 @@ export function WriterModule() {
 
         {/* Right: save status + actions */}
         <div className="ml-auto flex items-center gap-2">
-          <PillButton
-            variant="subtle"
-            icon={<Link2 />}
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
             onClick={() => {
               navigator.clipboard.writeText(window.location.href).then(() => {
                 toast.success('Link copied to clipboard!');
               });
             }}
           >
+            <Link2 className="w-3.5 h-3.5" />
             Copy Link
-          </PillButton>
+          </Button>
 
-          <PillButton
-            variant={isAiCollapsed ? 'default' : 'subtle'}
-            icon={<History />}
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
             onClick={() => {
               if (isAiCollapsed) {
                 aiPanelRef.current?.expand();
@@ -327,21 +330,23 @@ export function WriterModule() {
               }
             }}
           >
+            <History className="w-3.5 h-3.5" />
             {isAiCollapsed ? 'Show Revisions' : 'Hide Revisions'}
-          </PillButton>
+          </Button>
 
-          <PillButton
-            variant="active"
-            icon={<Share2 />}
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
             onClick={handleOpenApprovalDialog}
             disabled={!canSendApprovals}
           >
+            <Share2 className="w-3.5 h-3.5" />
             {selectedIds.length > 1
               ? `Send ${selectedIds.length} Articles to Approvals`
               : selectedIds.length === 1
                 ? 'Send 1 Article to Approvals'
                 : 'Send to Approvals'}
-          </PillButton>
+          </Button>
         </div>
       </header>
 

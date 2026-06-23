@@ -14,7 +14,7 @@ import {
   type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes, type TableHTMLAttributes,
 } from 'react';
 import {
-  Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, RefreshCw,
+  Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, ChevronDown, RefreshCw, Copy,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
   Image as ImageIcon, Link2, Calendar, TrendingUp, Eye, Unlink,
 } from 'lucide-react';
@@ -30,6 +30,12 @@ import { useSettings } from '@/contexts/AppContext';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
+  DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator,
+  DropdownMenuItem, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
+  DropdownMenuRadioGroup, DropdownMenuRadioItem,
+} from '@/components/ui/dropdown-menu';
 
 import { useSeoContent } from './hooks/useSeoContent';
 import { useRemoteSeoContent } from './hooks/useRemoteSeoContent';
@@ -61,15 +67,13 @@ const TableCell = (p: TdHTMLAttributes<HTMLTableCellElement>) => <td {...p} />;
 
 /**
  * Inline-editable text cell: click to edit (Enter/blur saves, Esc cancels).
- * When `onGenerate` is supplied, shows an AI sparkle; a returned suggestion
- * is STAGED — the user accepts (saves) or rejects it.
+ * AI generation is no longer per-cell — it runs from the bulk "Generate all"
+ * split button; this cell only DISPLAYS a staged suggestion (accept / reject).
  */
 function EditableCell({
   value,
   placeholder,
   onSave,
-  onGenerate,
-  generating,
   suggestion,
   onAccept,
   onReject,
@@ -78,8 +82,6 @@ function EditableCell({
   value: string;
   placeholder?: string;
   onSave: (next: string) => void;
-  onGenerate?: () => void;
-  generating?: boolean;
   suggestion?: string | null;
   onAccept?: () => void;
   onReject?: () => void;
@@ -104,17 +106,12 @@ function EditableCell({
       <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
         <div className="text-xs text-foreground break-words whitespace-normal" title={suggestion}>{suggestion}</div>
         <div className="flex items-center gap-1">
-          <button type="button" onClick={onAccept} disabled={generating} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
+          <button type="button" onClick={onAccept} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700">
             <Check className="w-3 h-3" /> Accept
           </button>
-          <button type="button" onClick={onReject} disabled={generating} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
+          <button type="button" onClick={onReject} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted">
             <X className="w-3 h-3" /> Reject
           </button>
-          {onGenerate && (
-            <button type="button" onClick={onGenerate} disabled={generating} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-              {generating ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
-            </button>
-          )}
         </div>
       </div>
     );
@@ -133,27 +130,14 @@ function EditableCell({
     );
   }
   return (
-    <div className="flex items-center gap-1 group">
-      <button
-        type="button"
-        onClick={() => { setDraft(value); setEditing(true); }}
-        className={`flex-1 min-w-0 text-left truncate text-xs leading-snug hover:underline decoration-dotted ${emphasis ? 'font-medium text-foreground' : ''}`}
-        title={value || placeholder}
-      >
-        {value || <span className="text-muted-foreground/60">{placeholder ?? '—'}</span>}
-      </button>
-      {onGenerate && (
-        <button
-          type="button"
-          onClick={onGenerate}
-          disabled={generating}
-          title="Generate with AI"
-          className="shrink-0 text-muted-foreground/50 hover:text-primary opacity-0 group-hover:opacity-100 disabled:opacity-100"
-        >
-          {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" /> : <Sparkles className="w-3.5 h-3.5" />}
-        </button>
-      )}
-    </div>
+    <button
+      type="button"
+      onClick={() => { setDraft(value); setEditing(true); }}
+      className={`block w-full text-left truncate text-xs leading-snug hover:underline decoration-dotted ${emphasis ? 'font-medium text-foreground' : ''}`}
+      title={value || placeholder}
+    >
+      {value || <span className="text-muted-foreground/60">{placeholder ?? '—'}</span>}
+    </button>
   );
 }
 
@@ -191,14 +175,7 @@ function RemoteSitePlaceholder({ siteName, siteUrl, section }: { siteName: strin
   );
 }
 
-/** Cell fields that support AI generation (every editable text column). */
-const GENERATABLE = new Set(['title', 'slug', 'metaTitle', 'metaDescription', 'primaryKeyword', 'metaKeywords']);
-/** Column key → the prompt `use` base (templates are keyed `{use}_{generate|optimize}`). */
-const SEO_USE_BY_COL: Record<string, string> = {
-  title: 'page_title', slug: 'slug', metaTitle: 'meta_title', metaDescription: 'meta_description',
-  primaryKeyword: 'primary_keyword', metaKeywords: 'meta_keywords',
-};
-/** Generatable fields for the bulk toolbar (key → short label). */
+/** Generatable fields for the bulk "Generate all" split button (key → short label). */
 const GEN_FIELDS: { key: string; label: string }[] = [
   { key: 'title', label: 'Title' },
   { key: 'slug', label: 'Slug' },
@@ -259,12 +236,16 @@ const TEXT_FIELD_BY_KEY = Object.fromEntries(SEO_TEXT_FIELDS.map((f) => [f.key a
 type SeoSortKey =
   | 'title' | 'type' | 'status' | 'date'
   | 'slug' | 'supportingKeyword' | 'featuredImage'
-  | 'internalLinks' | 'externalLinks' | 'brokenLinks';
+  | 'internalLinks' | 'externalLinks' | 'brokenLinks'
+  | 'metaTitle' | 'metaDescription' | 'primaryKeyword' | 'metaKeywords'
+  | 'author' | 'schema';
 /** Columns that support click-to-sort. */
 const SORTABLE_KEYS = new Set<string>([
   'type', 'title', 'status', 'date',
   'slug', 'supportingKeyword', 'featuredImage',
   'internalLinks', 'externalLinks', 'brokenLinks',
+  'metaTitle', 'metaDescription', 'primaryKeyword', 'metaKeywords',
+  'author', 'schema',
 ]);
 /** Leading header icon per column. */
 const HEAD_ICONS: Record<string, LucideIcon> = {
@@ -285,7 +266,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
 const SELECT_COL_WIDTH = 44;
 
 export function SEOModule() {
-  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete, generateField: localGenerateField, scanLinks: localScanLinks } = useSeoContent();
+  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete, bulkDuplicate, generateField: localGenerateField, scanLinks: localScanLinks } = useSeoContent();
 
   // Text models available for AI generation (registry). The user picks one in the
   // header dropdown; its id+provider is sent with every generate call so that
@@ -310,19 +291,6 @@ export function SEOModule() {
     try { localStorage.setItem('pcm:seo:gen-model', id); } catch { /* ignore */ }
   }, []);
   const genProvider = textModels.find((m) => m.id === genModelId)?.provider;
-
-  // SEO prompt templates (module=seo) → the per-column "generate with template" picker.
-  const { data: seoTemplatesRaw } = trpc.templates.list.useQuery({ module: 'seo' }, { staleTime: 30_000 }) as { data?: any[] };
-  const seoTemplates = useMemo(() => (Array.isArray(seoTemplatesRaw) ? seoTemplatesRaw : []), [seoTemplatesRaw]);
-  /** Which column is currently bulk-generating (header ✦ → pick template → whole column). */
-  const [columnGenerating, setColumnGenerating] = useState<string | null>(null);
-  const templatesForCol = useCallback((col: string) => {
-    const use = SEO_USE_BY_COL[col];
-    if (!use) return [] as { id: number; name: string; sectionIsDefault?: boolean }[];
-    return seoTemplates
-      .filter((t: any) => typeof t.type === 'string' && t.type.startsWith(use + '_'))
-      .map((t: any) => ({ id: Number(t.id), name: String(t.name), sectionIsDefault: !!t.isDefault }));
-  }, [seoTemplates]);
 
   // Default generation model comes from Settings → Module Defaults → "SEO Module"
   // (mirrors Writer/Copy). A configured default is applied on load; the header
@@ -430,17 +398,17 @@ export function SEOModule() {
   const [genKey, setGenKey] = useState<string | null>(null);
   // Aggregate progress for bulk runs ({done}/{total} cells).
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-
-  const handleGenerate = useCallback(async (id: number, field: string) => {
-    const key = `${id}:${field}`;
-    setGenKey(key);
-    try {
-      const value = await generateField(id, field, genModelId || undefined, genProvider);
-      setStaged((s) => ({ ...s, [key]: value }));
-    } catch { /* toast in hook */ } finally {
-      setGenKey(null);
-    }
-  }, [generateField, genModelId, genProvider]);
+  // Generation fill mode: 'empty' skips cells that already have content (safe
+  // default); 'overwrite' regenerates every selected cell. Applies to ALL bulk
+  // generation (Generate all + Generate selected).
+  const [genMode, setGenMode] = useState<'empty' | 'overwrite'>('empty');
+  // Which columns the "Generate all" split-button dropdown will generate (default: all).
+  const [genCols, setGenCols] = useState<Set<string>>(() => new Set(GEN_FIELDS.map((f) => f.key)));
+  const toggleGenCol = useCallback((key: string) => setGenCols((cur) => {
+    const next = new Set(cur);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  }), []);
 
   const acceptStaged = useCallback((id: number, field: string) => {
     const key = `${id}:${field}`;
@@ -457,32 +425,47 @@ export function SEOModule() {
     setStaged((s) => { const next = { ...s }; delete next[`${id}:${field}`]; return next; });
   }, []);
 
-  // Bulk AI: generate one or more fields across every selected row (sequential
-  // — gentle on the provider), staging each result for review. Drives both the
-  // per-field buttons and "Generate all".
+  // Bulk AI: generate the given fields across every selected row (sequential —
+  // gentle on the provider), staging each result for review. In 'empty' mode,
+  // cells that already have content are skipped; 'overwrite' regenerates all.
   const runBulk = useCallback(async (fields: string[]) => {
     const ids = Array.from(selected);
     if (ids.length === 0 || fields.length === 0) return;
-    setBusy(true);
-    const total = ids.length * fields.length;
-    let done = 0;
-    setProgress({ done, total });
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+    const cellIsEmpty = (id: number, field: string) => {
+      const r = rowById.get(id);
+      return !String(r?.[field as keyof SeoRow] ?? '').trim();
+    };
+    // Build the work list, honoring the fill mode.
+    const jobs: { id: number; field: string }[] = [];
     for (const id of ids) {
       for (const field of fields) {
-        const key = `${id}:${field}`;
-        setGenKey(key);
-        try {
-          const value = await generateField(id, field, genModelId || undefined, genProvider);
-          setStaged((s) => ({ ...s, [key]: value }));
-        } catch { /* toast in hook */ }
-        done += 1;
-        setProgress({ done, total });
+        if (genMode === 'empty' && !cellIsEmpty(id, field)) continue;
+        jobs.push({ id, field });
       }
+    }
+    if (jobs.length === 0) {
+      toast('Nothing to generate — selected cells already have content.');
+      return;
+    }
+    setBusy(true);
+    const total = jobs.length;
+    let done = 0;
+    setProgress({ done, total });
+    for (const { id, field } of jobs) {
+      const key = `${id}:${field}`;
+      setGenKey(key);
+      try {
+        const value = await generateField(id, field, genModelId || undefined, genProvider);
+        setStaged((s) => ({ ...s, [key]: value }));
+      } catch { /* toast in hook */ }
+      done += 1;
+      setProgress({ done, total });
     }
     setGenKey(null);
     setProgress(null);
     setBusy(false);
-  }, [selected, generateField, genModelId, genProvider]);
+  }, [selected, rows, genMode, generateField, genModelId, genProvider]);
 
   // Accept / discard ALL staged AI suggestions (the source's bar).
   const acceptAllStaged = useCallback(() => {
@@ -518,6 +501,12 @@ export function SEOModule() {
         internalLinks: (r) => r.internalLinks ?? -1,
         externalLinks: (r) => r.externalLinks ?? -1,
         brokenLinks: (r) => r.brokenLinks ?? -1,
+        metaTitle: (r) => r.metaTitle.toLowerCase(),
+        metaDescription: (r) => r.metaDescription.toLowerCase(),
+        primaryKeyword: (r) => r.primaryKeyword.toLowerCase(),
+        metaKeywords: (r) => r.metaKeywords.toLowerCase(),
+        author: (r) => r.author.toLowerCase(),
+        schema: (r) => (r.schemaTypes ?? []).join(',').toLowerCase(),
       },
     },
   );
@@ -525,31 +514,6 @@ export function SEOModule() {
   const visibleIds = sortedData.map((r) => r.id);
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someSelected = selected.size > 0 && !allSelected;
-
-  // Header ✦ → pick a template → generate the ENTIRE column (every visible row)
-  // with that template, staging each result for review (Optimizer behavior).
-  const handleColumnGenerate = useCallback(async (field: string, templateId?: number) => {
-    if (columnGenerating) return;
-    const ids = sortedData.map((r) => r.id);
-    if (ids.length === 0) return;
-    setColumnGenerating(field);
-    const total = ids.length;
-    let done = 0;
-    setProgress({ done, total });
-    for (const id of ids) {
-      const key = `${id}:${field}`;
-      setGenKey(key);
-      try {
-        const value = await generateField(id, field, genModelId || undefined, genProvider, templateId);
-        setStaged((s) => ({ ...s, [key]: value }));
-      } catch { /* toast in hook */ }
-      done += 1;
-      setProgress({ done, total });
-    }
-    setGenKey(null);
-    setProgress(null);
-    setColumnGenerating(null);
-  }, [columnGenerating, sortedData, generateField, genModelId, genProvider]);
 
   const toggleAll = () =>
     setSelected((prev) => {
@@ -574,6 +538,36 @@ export function SEOModule() {
       setBusy(false);
     }
   }, [selected, bulkDelete]);
+
+  // Bulk: set status on every selected row (sequential saveCell), then refresh.
+  const handleBulkStatus = useCallback(async (status: string) => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBusy(true);
+    const total = ids.length;
+    let done = 0;
+    setProgress({ done, total });
+    for (const id of ids) {
+      try { await saveCell(id, 'status', status); } catch { /* toast in hook */ }
+      done += 1;
+      setProgress({ done, total });
+    }
+    setProgress(null);
+    setBusy(false);
+  }, [selected, saveCell]);
+
+  // Bulk: duplicate every selected row (local only), then clear selection.
+  const handleBulkDuplicate = useCallback(async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBusy(true);
+    try {
+      await bulkDuplicate(ids);
+      setSelected(new Set());
+    } catch { /* toast in hook */ } finally {
+      setBusy(false);
+    }
+  }, [selected, bulkDuplicate]);
 
   const handleCreate = useCallback(async (type: 'post' | 'page') => {
     setBusy(true);
@@ -617,13 +611,6 @@ export function SEOModule() {
         filter={key !== 'open' && def
           ? { def, value: filterValues[key] ?? '', onChange: (v) => setFilter(key, v) }
           : undefined}
-        generate={GENERATABLE.has(key)
-          ? {
-              templates: templatesForCol(key),
-              busy: columnGenerating === key,
-              onGenerate: (tid?: number) => handleColumnGenerate(key, tid),
-            }
-          : undefined}
         draggable
         onDragStart={(e) => { setDragKey(key); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', key); } catch { /* IE */ } }}
         onDragOver={(e) => { e.preventDefault(); if (dragKey && dragKey !== key) setDragOverKey(key); }}
@@ -655,8 +642,6 @@ export function SEOModule() {
                   placeholder="Untitled"
                   emphasis
                   onSave={(v) => saveCell(row.id, 'title', v)}
-                  onGenerate={() => handleGenerate(row.id, 'title')}
-                  generating={genKey === `${row.id}:title`}
                   suggestion={staged[`${row.id}:title`] ?? null}
                   onAccept={() => acceptStaged(row.id, 'title')}
                   onReject={() => rejectStaged(row.id, 'title')}
@@ -712,8 +697,6 @@ export function SEOModule() {
               value={row.slug}
               placeholder="slug"
               onSave={(v) => saveCell(row.id, 'slug', v)}
-              onGenerate={() => handleGenerate(row.id, 'slug')}
-              generating={genKey === ckey}
               suggestion={staged[ckey] ?? null}
               onAccept={() => acceptStaged(row.id, 'slug')}
               onReject={() => rejectStaged(row.id, 'slug')}
@@ -813,7 +796,6 @@ export function SEOModule() {
         // Editable AI meta field (metaTitle / metaDescription / primaryKeyword / metaKeywords).
         const field = TEXT_FIELD_BY_KEY[key];
         if (!field) return null;
-        const canGen = GENERATABLE.has(key);
         const ckey = `${row.id}:${key}`;
         return (
           <TableCell key={key}>
@@ -821,9 +803,7 @@ export function SEOModule() {
               value={String(row[key as keyof SeoRow] ?? '')}
               placeholder={field.label}
               onSave={(v) => saveCell(row.id, key, v)}
-              onGenerate={canGen ? () => handleGenerate(row.id, key) : undefined}
-              generating={genKey === ckey}
-              suggestion={canGen ? (staged[ckey] ?? null) : null}
+              suggestion={staged[ckey] ?? null}
               onAccept={() => acceptStaged(row.id, key)}
               onReject={() => rejectStaged(row.id, key)}
             />
@@ -865,87 +845,10 @@ export function SEOModule() {
         ))}
       </div>
 
-      {/* Content toolbar (content tab only): Views (left) · Post / Page / Model +
-          Columns (right). Sits above the nav+table so the section nav and table
-          start at the same height. */}
-      {tab === 'content' && (
-        <div className="flex items-center justify-between gap-4 mb-4">
-          <div className="flex items-center gap-3">
-            <ViewsToolbar
-              show="views"
-              columns={TOGGLE_COLUMNS}
-              visible={cols}
-              onToggleColumn={toggleCol}
-              views={views}
-              appliedViewId={appliedViewId}
-              onApplyView={applyView}
-              onResetView={resetView}
-              onSaveView={handleSaveView}
-              onDeleteView={handleDeleteView}
-              onSetDefaultView={handleSetDefaultView}
-            />
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {activeCount > 0 ? (
-                <>
-                  <span>{sortedData.length} of {rows.length} shown</span>
-                  <button type="button" onClick={clearAll} className="inline-flex items-center gap-1 text-primary hover:underline">
-                    <X className="w-3.5 h-3.5" /> Clear filters ({activeCount})
-                  </button>
-                </>
-              ) : (
-                <span>{rows.length} item{rows.length === 1 ? '' : 's'}</span>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => handleCreate('post')} disabled={busy} className="h-8 gap-1.5 text-xs">
-              <Plus className="w-3.5 h-3.5" /> Post
-            </Button>
-            <Button size="sm" onClick={() => handleCreate('page')} disabled={busy} className="h-8 gap-1.5 text-xs">
-              <Plus className="w-3.5 h-3.5" /> Page
-            </Button>
-            <Select
-              value={genModelId || '__default__'}
-              onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
-            >
-              <SelectTrigger className="h-8 w-[190px] bg-card text-xs" title="Model used for AI generation">
-                <Sparkles className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-                <SelectValue placeholder="Model" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__default__" className="text-xs">Default model</SelectItem>
-                {textModels.map((m) => (
-                  <SelectItem key={m.id} value={m.id} className="text-xs">
-                    {m.name} <span className="text-muted-foreground">({m.provider})</span>
-                  </SelectItem>
-                ))}
-                {textModels.length === 0 && (
-                  <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
-                    No text models yet — add one in the Models tab.
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
-            <ViewsToolbar
-              show="columns"
-              columns={TOGGLE_COLUMNS}
-              visible={cols}
-              onToggleColumn={toggleCol}
-              views={views}
-              appliedViewId={appliedViewId}
-              onApplyView={applyView}
-              onResetView={resetView}
-              onSaveView={handleSaveView}
-              onDeleteView={handleDeleteView}
-              onSetDefaultView={handleSetDefaultView}
-              onResetLayout={resetColumnLayout}
-            />
-          </div>
-        </div>
-      )}
-
       {/* Section nav (left) + section content, side by side. The nav lives in a
-          card surface so it reads as a panel instead of floating. */}
+          card surface so it reads as a panel instead of floating. The content
+          toolbar (Views/Columns/Post/Page/Model) lives INSIDE the content column
+          (below) so switching sections never shifts the nav's position. */}
       <div className="flex gap-6 items-start">
         <nav className="flex w-44 shrink-0 flex-col gap-1 rounded-lg border border-border bg-card p-2">
           {([['content', 'Content'], ['air', 'AI Readiness'], ['site', 'Site'], ['business', 'Business']] as const).map(([id, label]) => (
@@ -978,33 +881,183 @@ export function SEOModule() {
         isLocal ? <BusinessPanel /> : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
       ) : (
       <>
-      {/* Bulk actions bar — generate any/all fields across the selected rows (local only). */}
-      {selected.size > 0 && (
-        <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg border border-border bg-muted/40 px-4 py-2">
-          <span className="text-sm font-medium mr-1">{selected.size} selected</span>
-          <span className="text-xs text-muted-foreground inline-flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" /> AI generate:</span>
-          <Button size="sm" className="h-7 text-xs gap-1.5" disabled={busy} onClick={() => runBulk(GEN_FIELDS.map((f) => f.key))}>
-            <Sparkles className="w-3.5 h-3.5" /> Generate all
+      {/* Content toolbar: Views (left) · Post / Page / Model + Columns (right). */}
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <div className="flex items-center gap-3">
+          <ViewsToolbar
+            show="views"
+            columns={TOGGLE_COLUMNS}
+            visible={cols}
+            onToggleColumn={toggleCol}
+            views={views}
+            appliedViewId={appliedViewId}
+            onApplyView={applyView}
+            onResetView={resetView}
+            onSaveView={handleSaveView}
+            onDeleteView={handleDeleteView}
+            onSetDefaultView={handleSetDefaultView}
+          />
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {activeCount > 0 ? (
+              <>
+                <span>{sortedData.length} of {rows.length} shown</span>
+                <button type="button" onClick={clearAll} className="inline-flex items-center gap-1 text-primary hover:underline">
+                  <X className="w-3.5 h-3.5" /> Clear filters ({activeCount})
+                </button>
+              </>
+            ) : (
+              <span>{rows.length} item{rows.length === 1 ? '' : 's'}</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => handleCreate('post')} disabled={busy} className="h-8 gap-1.5 text-xs">
+            <Plus className="w-3.5 h-3.5" /> Post
           </Button>
-          {GEN_FIELDS.map((f) => (
-            <Button key={f.key} variant="outline" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => runBulk([f.key])}>
-              {f.label}
+          <Button size="sm" onClick={() => handleCreate('page')} disabled={busy} className="h-8 gap-1.5 text-xs">
+            <Plus className="w-3.5 h-3.5" /> Page
+          </Button>
+          <Select
+            value={genModelId || '__default__'}
+            onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
+          >
+            <SelectTrigger className="h-8 w-[190px] bg-card text-xs" title="Model used for AI generation">
+              <Sparkles className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+              <SelectValue placeholder="Model" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__default__" className="text-xs">Default model</SelectItem>
+              {textModels.map((m) => (
+                <SelectItem key={m.id} value={m.id} className="text-xs">
+                  {m.name} <span className="text-muted-foreground">({m.provider})</span>
+                </SelectItem>
+              ))}
+              {textModels.length === 0 && (
+                <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                  No text models yet — add one in the Models tab.
+                </div>
+              )}
+            </SelectContent>
+          </Select>
+          <ViewsToolbar
+            show="columns"
+            columns={TOGGLE_COLUMNS}
+            visible={cols}
+            onToggleColumn={toggleCol}
+            views={views}
+            appliedViewId={appliedViewId}
+            onApplyView={applyView}
+            onResetView={resetView}
+            onSaveView={handleSaveView}
+            onDeleteView={handleDeleteView}
+            onSetDefaultView={handleSetDefaultView}
+            onResetLayout={resetColumnLayout}
+          />
+        </div>
+      </div>
+
+      {/* Bulk actions — a compact FLOATING bar (fixed, so the table never reflows /
+          "pops down" on select). The "Generate all" split button generates the
+          chosen columns across the SELECTED rows. */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-card/95 px-4 py-2 shadow-lg ring-1 ring-black/5 backdrop-blur">
+          <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium whitespace-nowrap">
+            {selected.size} selected
+          </span>
+          {/* Split button: left = generate all columns; right ▾ = pick columns. */}
+          <div className="inline-flex items-stretch overflow-hidden rounded-md shadow-sm">
+            <Button
+              size="sm"
+              className="h-8 gap-1.5 rounded-none rounded-l-md px-3 text-xs font-medium"
+              disabled={busy}
+              onClick={() => runBulk(GEN_FIELDS.map((f) => f.key))}
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Generate all
             </Button>
-          ))}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" className="h-8 rounded-none rounded-r-md border-l border-primary-foreground/25 px-2" disabled={busy} title="Choose columns">
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="text-xs">When a cell already has content</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={genMode} onValueChange={(v) => setGenMode(v as 'empty' | 'overwrite')}>
+                  <DropdownMenuRadioItem value="empty" className="text-xs" onSelect={(e) => e.preventDefault()}>
+                    Only empty cells
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="overwrite" className="text-xs" onSelect={(e) => e.preventDefault()}>
+                    Overwrite existing
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs">Columns to generate</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {GEN_FIELDS.map((f) => (
+                  <DropdownMenuCheckboxItem
+                    key={f.key}
+                    checked={genCols.has(f.key)}
+                    onCheckedChange={() => toggleGenCol(f.key)}
+                    onSelect={(e) => e.preventDefault()}
+                    className="text-xs"
+                  >
+                    {f.label}
+                  </DropdownMenuCheckboxItem>
+                ))}
+                <DropdownMenuSeparator />
+                <div className="p-1.5">
+                  <Button
+                    size="sm"
+                    className="h-8 w-full justify-center gap-1.5 px-3 text-xs"
+                    disabled={busy || genCols.size === 0}
+                    onClick={() => runBulk(GEN_FIELDS.filter((f) => genCols.has(f.key)).map((f) => f.key))}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" /> Generate selected ({genCols.size})
+                  </Button>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {/* Bulk actions — grouped batch ops (local only): change status, duplicate, delete. */}
+          {isLocal && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" disabled={busy}>
+                  Bulk actions <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="text-xs">
+                    <CircleDot className="mr-2 h-3.5 w-3.5" /> Change status
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {(options?.statuses ?? ['publish', 'draft', 'pending', 'private', 'future']).map((s) => (
+                      <DropdownMenuItem key={s} className="text-xs capitalize" onClick={() => handleBulkStatus(s)}>
+                        {s}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuItem className="text-xs" onClick={handleBulkDuplicate}>
+                  <Copy className="mr-2 h-3.5 w-3.5" /> Duplicate
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="text-xs text-destructive focus:text-destructive" onClick={handleDelete}>
+                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           {progress && (
-            <span className="text-xs text-muted-foreground inline-flex items-center gap-1.5" aria-live="polite">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating {progress.done}/{progress.total}…
+            <span className="text-xs text-muted-foreground inline-flex items-center gap-1.5 whitespace-nowrap" aria-live="polite">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> {progress.done}/{progress.total}
             </span>
           )}
-          <span className="mx-1 h-4 w-px bg-border" />
-          <Button variant="ghost" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setSelected(new Set())}>
+          <span className="h-5 w-px bg-border" />
+          <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" disabled={busy} onClick={() => setSelected(new Set())}>
             Clear
           </Button>
-          {isLocal && (
-            <Button variant="ghost" size="sm" onClick={handleDelete} disabled={busy} className="gap-1.5 text-destructive">
-              <Trash2 className="w-4 h-4" /> Trash
-            </Button>
-          )}
         </div>
       )}
 

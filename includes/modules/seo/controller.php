@@ -43,6 +43,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/content/bulk-delete',        'bulk_delete'),
             array('GET',  '/seo/content',                    'list_content'),
             array('POST', '/seo/content',                    'quick_create'),
+            array('POST', '/seo/content/(?P<id>\d+)/duplicate', 'duplicate'),
             array('POST', '/seo/content/(?P<id>\d+)/cell',   'save_cell'),
             array('POST', '/seo/content/(?P<id>\d+)/generate', 'generate_field'),
             array('POST', '/seo/content/(?P<id>\d+)/scan-links', 'scan_links'),
@@ -139,6 +140,29 @@ class PCM_REST_SEO extends PCM_REST_Base
 
         $post = get_post((int) $id);
         return $this->success($this->service->build_row($post), 201);
+    }
+
+    /** POST /seo/content/{id}/duplicate — clone a post/page (as draft) with its meta. */
+    public function duplicate(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id  = absint($request->get_param('id'));
+        $src = $id ? get_post($id) : null;
+        if (!$src) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot duplicate this content.', 403, 'pcm_forbidden');
+        }
+        $pto = get_post_type_object($src->post_type);
+        if (!$pto || !current_user_can($pto->cap->create_posts)) {
+            return $this->error('You cannot create this content type.', 403, 'pcm_forbidden');
+        }
+
+        $new_id = $this->service->duplicate($id);
+        if ($new_id instanceof WP_Error) {
+            return $new_id;
+        }
+        return $this->success($this->service->build_row(get_post((int) $new_id)), 201);
     }
 
     /** POST /seo/content/{id}/cell — inline save one cell. */
