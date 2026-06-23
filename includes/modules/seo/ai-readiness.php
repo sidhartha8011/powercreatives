@@ -27,9 +27,30 @@ class PCM_SEO_AIReadiness
     public const OPT_LLMS      = 'pcm_seo_air_llms_txt';
     public const OPT_LLMS_FULL = 'pcm_seo_air_llms_full_txt';
     public const OPT_SETTINGS  = 'pcm_seo_air_settings';
+    public const OPT_LLMINFO   = 'pcm_seo_llminfo';
     public const META_MD       = '_pcm_md_content';
     public const META_HASH     = '_pcm_md_hash';
     public const META_SUMMARY  = '_pcm_md_summary';
+
+    /** /llm-info/ settings (inputs + generated HTML). */
+    public static function llm_info(): array
+    {
+        $defaults = array('enabled' => false, 'keywords' => '', 'years' => '', 'area' => '', 'strengths' => '', 'content' => '');
+        $saved    = get_option(self::OPT_LLMINFO, array());
+        return array_merge($defaults, is_array($saved) ? $saved : array());
+    }
+
+    /** Wrap /llm-info/ HTML body content in a minimal, crawlable HTML document. */
+    public static function wrap_llm_info(string $body): string
+    {
+        $name = get_bloginfo('name');
+        return '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            . '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            . '<title>' . esc_html($name) . ' — Overview</title>'
+            . '<meta name="robots" content="index,follow"></head>'
+            . '<body><main style="max-width:760px;margin:2rem auto;padding:0 1rem;font-family:system-ui,-apple-system,sans-serif;line-height:1.6">'
+            . $body . '</main></body></html>';
+    }
 
     /** Settings with defaults. */
     public static function settings(): array
@@ -69,6 +90,20 @@ class PCM_SEO_AIReadiness
     /** template_redirect handler: serve the virtual files. */
     public static function maybe_serve(): void
     {
+        // /llm-info/ — AI-optimization summary (served verbatim HTML; no rewrite rule, no flush).
+        $req = trim((string) wp_parse_url((string) ($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH), '/');
+        if ($req === 'llm-info') {
+            $s = self::llm_info();
+            if (!empty($s['enabled']) && (string) $s['content'] !== '') {
+                status_header(200);
+                header('Content-Type: text/html; charset=utf-8');
+                header('Cache-Control: no-cache, must-revalidate');
+                echo self::wrap_llm_info((string) $s['content']); // sanitized on save (wp_kses_post)
+                exit;
+            }
+            return; // not enabled / empty — let WordPress 404 normally
+        }
+
         $file = get_query_var('pcm_air_file', '');
         $md   = get_query_var('pcm_air_page_md', '');
         if ($file === '' && $md === '') {

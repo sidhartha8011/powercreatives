@@ -25,6 +25,10 @@ export interface UseRemoteSeoContentResult {
   generateField: (id: number, field: string, model?: string, provider?: string, templateId?: number) => Promise<string>;
   /** Create a draft post/page on the remote and refresh. */
   quickCreate: (type: 'post' | 'page') => Promise<void>;
+  /** Scan a remote post's links (analysis on the hub); patches the counts into the cache. */
+  scanLinks: (id: number) => Promise<void>;
+  /** Set a remote post's Schema.org types; patches the row cache to the server's value. */
+  setSchema: (id: number, types: string[]) => Promise<void>;
 }
 
 export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentResult {
@@ -89,5 +93,52 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
     [createMutation, siteId, queryClient],
   );
 
-  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate };
+  const scanMutation = trpc.seo.remoteScanLinks.useMutation();
+  const scanLinks = useCallback(
+    (id: number): Promise<void> => {
+      const type = rows.find((r) => Number(r.id) === id)?.type === 'page' ? 'page' : 'post';
+      return scanMutation
+        .mutateAsync({ siteId: siteId ?? 0, postId: id, type })
+        .then((res: any) => {
+          queryClient.setQueriesData<SeoRow[]>({ queryKey: REMOTE_PREFIX }, (prev) =>
+            Array.isArray(prev)
+              ? prev.map((r) => (Number(r.id) === id ? {
+                  ...r,
+                  internalLinks: Number(res?.internal ?? 0),
+                  externalLinks: Number(res?.external ?? 0),
+                  brokenLinks: Number(res?.broken ?? 0),
+                  linksScannedAt: String(res?.scannedAt ?? ''),
+                } : r))
+              : prev,
+          );
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'Link scan failed');
+          throw err;
+        });
+    },
+    [rows, scanMutation, siteId, queryClient],
+  );
+
+  const schemaMutation = trpc.seo.remoteSetSchema.useMutation();
+  const setSchema = useCallback(
+    (id: number, types: string[]): Promise<void> => {
+      const type = rows.find((r) => Number(r.id) === id)?.type === 'page' ? 'page' : 'post';
+      return schemaMutation
+        .mutateAsync({ siteId: siteId ?? 0, postId: id, type, types })
+        .then((res: any) => {
+          const saved = Array.isArray(res?.types) ? (res.types as string[]) : types;
+          queryClient.setQueriesData<SeoRow[]>({ queryKey: REMOTE_PREFIX }, (prev) =>
+            Array.isArray(prev) ? prev.map((r) => (Number(r.id) === id ? { ...r, schemaTypes: saved } : r)) : prev,
+          );
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'Failed to save schema');
+          throw err;
+        });
+    },
+    [rows, schemaMutation, siteId, queryClient],
+  );
+
+  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate, scanLinks, setSchema };
 }

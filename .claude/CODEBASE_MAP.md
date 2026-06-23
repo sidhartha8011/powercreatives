@@ -641,6 +641,29 @@ section. `seo_tenants` still keeps the handshake secret + its own proxy creds.
   be < 5 min. Hub side is healthy when an unsigned `POST /seohub/connector/hello`
   returns `403 pcm_invalid_nonce` (not 404).
 
+### ⚑ Current connection flow = pairing code (supersedes the HMAC handshake above)
+The HMAC handshake / `register_ping` / per-tenant connector / "Pending connections" path
+above is **legacy and frontend-orphaned** (kept in the backend, unused by the UI). The live
+flow is a **one-paste pairing code**, which sidesteps the public-hub requirement entirely:
+- **Connector = `PCM_SEOHub_Service::connector_php_simple()`** (generic, no handshake), bumped to
+  **v1.2.0**, downloaded via `GET /seohub/connector-download` (`download_connector_generic`,
+  streamed). On activation it self-creates one WP Application Password and its admin page shows a
+  **`base64(JSON{url,user,pass})`** connection code. It registers Yoast/RankMath/SEOPress/`pcm_seo_*`
+  meta (incl. **`pcm_seo_schema`**) in REST.
+- **Connector REST surface `pcm-conn/v1`** (app-password authed, `permission_callback = manage_options`,
+  no nonce needed under Basic auth): `/site` GET/POST (custom robots.txt via `robots_txt` filter +
+  site-wide JSON-LD via `wp_head`) and `/ai` GET/POST (llms.txt content + enabled; serves a virtual
+  **`/llms.txt`** and per-page **`/{slug}.md`** via `template_redirect`, `pcm_conn_html_to_md`).
+- **Hub Sites UI** (`app/src/modules/Sites/index.tsx`): `Add Site` → admins get the **'choose'** dialog
+  (download connector + paste code → `sites.create`), non-admins get **'password'** (manual App-Password).
+  AddStep is `null|'choose'|'password'`.
+- **Remote SEO management** (manage a connected site's SEO **from the hub**) lives in the **seo module**:
+  `PCM_SEO_Service::remote_*` + routes `/seo/sites/{id}/content[...]`, `.../content/{post}/{cell,generate,scan-links,schema}`,
+  `.../site` (GET/POST), `.../ai` (GET/POST), `.../ai/build`. All proxy via `PCM_Sites_Service::remote_rest`
+  (Basic auth, permalink-agnostic `?rest_route=` form). Frontend: `useRemoteSeoContent` +
+  `RemoteSiteSettingsPanel` + `RemoteAIReadinessPanel`; the SEO module's Content/AI-Readiness/Site tabs
+  branch local vs remote (Business is hub/brand-level). Site/AI tabs need connector **v1.2.0+** (else 422).
+
 ## Where to add a <thing>
 - **New REST module** (the standard way to add a feature):
   1. `includes/modules/{name}/config.php` → return `['id','name','version','controller'=>'PCM_REST_Name','rest_namespace'=>'pcm/v1/name']`

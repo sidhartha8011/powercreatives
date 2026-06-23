@@ -385,8 +385,8 @@ class PCM_SEOHub_Service
 <?php
 /**
  * Plugin Name: Power Creatives Connector
- * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST and shows a one-paste connection code.
- * Version: 1.1.0
+ * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, and shows a one-paste connection code.
+ * Version: 1.3.0
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -397,7 +397,7 @@ add_action('init', function () {
         'rank_math_title', 'rank_math_description', 'rank_math_focus_keyword',
         '_seopress_titles_title', '_seopress_titles_desc', '_seopress_analysis_target_kw',
         'pcm_seo_meta_title', 'pcm_seo_meta_description', 'pcm_seo_primary_keyword', 'pcm_seo_meta_keywords',
-        'pcm_seo_supporting_keyword', 'pcm_seo_cluster_label',
+        'pcm_seo_supporting_keyword', 'pcm_seo_cluster_label', 'pcm_seo_schema',
     );
     foreach (array('post', 'page') as $type) {
         foreach ($keys as $k) {
@@ -443,6 +443,123 @@ function pcm_conn_page() {
     echo '<button class="button button-primary" type="submit" name="pcm_conn_gen" value="1">' . ($code !== '' ? 'Regenerate code' : 'Generate code') . '</button>';
     echo '</form></div>';
 }
+
+// --- Hub-managed Site SEO: custom robots.txt rules + a site-wide JSON-LD block. ---
+add_action('rest_api_init', function () {
+    $perm = function () { return current_user_can('manage_options'); };
+    $read = function () {
+        return array(
+            'robots' => (string) get_option('pcm_conn_robots', ''),
+            'jsonld' => (string) get_option('pcm_conn_jsonld', ''),
+        );
+    };
+    register_rest_route('pcm-conn/v1', '/site', array(
+        array('methods' => 'GET', 'permission_callback' => $perm, 'callback' => $read),
+        array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) use ($read) {
+            $p = $req->get_json_params();
+            if (is_array($p) && array_key_exists('robots', $p)) { update_option('pcm_conn_robots', (string) $p['robots']); }
+            if (is_array($p) && array_key_exists('jsonld', $p)) { update_option('pcm_conn_jsonld', (string) $p['jsonld']); }
+            return call_user_func($read);
+        }),
+    ));
+});
+add_filter('robots_txt', function ($output) {
+    $extra = trim((string) get_option('pcm_conn_robots', ''));
+    return $extra !== '' ? rtrim($output) . "\n" . $extra . "\n" : $output;
+}, 20);
+add_action('wp_head', function () {
+    $jsonld = trim((string) get_option('pcm_conn_jsonld', ''));
+    if ($jsonld === '') { return; }
+    $decoded = json_decode($jsonld, true);
+    if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) { return; }
+    echo "\n" . '<script type="application/ld+json">' . wp_json_encode($decoded) . '</script>' . "\n";
+}, 20);
+
+// --- Hub-managed AI Readiness: store + serve a virtual /llms.txt index. ---
+add_action('rest_api_init', function () {
+    $perm = function () { return current_user_can('manage_options'); };
+    $read = function () {
+        return array(
+            'llms'    => (string) get_option('pcm_conn_llms', ''),
+            'enabled' => get_option('pcm_conn_llms_enabled', '0') === '1',
+            'url'     => home_url('/llms.txt'),
+        );
+    };
+    register_rest_route('pcm-conn/v1', '/ai', array(
+        array('methods' => 'GET', 'permission_callback' => $perm, 'callback' => $read),
+        array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) use ($read) {
+            $p = $req->get_json_params();
+            if (is_array($p) && array_key_exists('llms', $p)) { update_option('pcm_conn_llms', (string) $p['llms']); }
+            if (is_array($p) && array_key_exists('enabled', $p)) { update_option('pcm_conn_llms_enabled', !empty($p['enabled']) ? '1' : '0'); }
+            return call_user_func($read);
+        }),
+    ));
+});
+add_action('template_redirect', function () {
+    $path = trim((string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH), '/');
+    if ($path !== 'llms.txt' || get_option('pcm_conn_llms_enabled', '0') !== '1') { return; }
+    $c = (string) get_option('pcm_conn_llms', '');
+    if ($c === '') { return; }
+    header('Content-Type: text/plain; charset=utf-8');
+    echo $c;
+    exit;
+});
+
+// Serve a per-page Markdown rendition at /{slug}.md when AI Readiness is enabled.
+function pcm_conn_html_to_md($html) {
+    $html = preg_replace('#<(script|style)[^>]*>.*?</\1>#is', '', (string) $html);
+    for ($i = 1; $i <= 6; $i++) {
+        $html = preg_replace('#<h' . $i . '[^>]*>(.*?)</h' . $i . '>#is', "\n" . str_repeat('#', $i) . ' $1' . "\n", $html);
+    }
+    $html = preg_replace('#<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>#is', '[$2]($1)', $html);
+    $html = preg_replace('#<(strong|b)[^>]*>(.*?)</\1>#is', '**$2**', $html);
+    $html = preg_replace('#<(em|i)[^>]*>(.*?)</\1>#is', '*$2*', $html);
+    $html = preg_replace('#<li[^>]*>(.*?)</li>#is', "- $1\n", $html);
+    $html = preg_replace('#</p>#i', "\n\n", $html);
+    $html = preg_replace('#<br\s*/?>#i', "\n", $html);
+    $text = html_entity_decode(wp_strip_all_tags($html), ENT_QUOTES, 'UTF-8');
+    return trim(preg_replace("/\n{3,}/", "\n\n", $text));
+}
+add_action('template_redirect', function () {
+    $path = trim((string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH), '/');
+    if (substr($path, -3) !== '.md' || get_option('pcm_conn_llms_enabled', '0') !== '1') { return; }
+    $page = get_page_by_path(substr($path, 0, -3), OBJECT, array('post', 'page'));
+    if (!$page || $page->post_status !== 'publish') { status_header(404); return; }
+    header('Content-Type: text/markdown; charset=utf-8');
+    echo '# ' . $page->post_title . "\n\n" . pcm_conn_html_to_md(strip_shortcodes($page->post_content));
+    exit;
+});
+
+// --- Hub-managed /llm-info/ — an AI-search-optimized business overview (HTML), generated by the hub. ---
+add_action('rest_api_init', function () {
+    $perm = function () { return current_user_can('manage_options'); };
+    $read = function () {
+        return array(
+            'content' => (string) get_option('pcm_conn_llminfo', ''),
+            'enabled' => get_option('pcm_conn_llminfo_enabled', '0') === '1',
+            'url'     => home_url('/llm-info/'),
+        );
+    };
+    register_rest_route('pcm-conn/v1', '/llm-info', array(
+        array('methods' => 'GET', 'permission_callback' => $perm, 'callback' => $read),
+        array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) use ($read) {
+            $p = $req->get_json_params();
+            if (is_array($p) && array_key_exists('content', $p)) { update_option('pcm_conn_llminfo', wp_kses_post((string) $p['content'])); }
+            if (is_array($p) && array_key_exists('enabled', $p)) { update_option('pcm_conn_llminfo_enabled', !empty($p['enabled']) ? '1' : '0'); }
+            return call_user_func($read);
+        }),
+    ));
+});
+add_action('template_redirect', function () {
+    $path = trim((string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH), '/');
+    if ($path !== 'llm-info' || get_option('pcm_conn_llminfo_enabled', '0') !== '1') { return; }
+    $c = (string) get_option('pcm_conn_llminfo', '');
+    if ($c === '') { return; }
+    $name = get_bloginfo('name');
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . esc_html($name) . ' &mdash; Overview</title><meta name="robots" content="index,follow"></head><body><main style="max-width:760px;margin:2rem auto;padding:0 1rem;font-family:system-ui,-apple-system,sans-serif;line-height:1.6">' . $c . '</main></body></html>';
+    exit;
+});
 PHP;
     }
 
@@ -536,7 +653,7 @@ add_action('init', function () {
         'rank_math_title', 'rank_math_description', 'rank_math_focus_keyword',
         '_seopress_titles_title', '_seopress_titles_desc', '_seopress_analysis_target_kw',
         'pcm_seo_meta_title', 'pcm_seo_meta_description', 'pcm_seo_primary_keyword', 'pcm_seo_meta_keywords',
-        'pcm_seo_supporting_keyword', 'pcm_seo_cluster_label',
+        'pcm_seo_supporting_keyword', 'pcm_seo_cluster_label', 'pcm_seo_schema',
     );
     foreach (array('post', 'page') as $type) {
         foreach ($keys as $k) {

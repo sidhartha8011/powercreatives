@@ -734,6 +734,35 @@ class PCM_Providers
      * @param array|null $body        Response body.
      * @return array Array of model objects.
      */
+    /** Humanize an unrecognized OpenAI chat model id into a display name (snapshots collapsed). */
+    private static function humanize_openai_id(string $id): string
+    {
+        // Drop dated/numeric snapshot + preview/latest suffixes so variants collapse to one.
+        $base = (string) preg_replace('/-(\d{4}-\d{2}-\d{2}|\d{3,8}|preview|latest)$/', '', $id);
+        $base = rtrim($base, '-');
+        if ($base === '') {
+            $base = $id;
+        }
+        if (preg_match('/^o\d/', $base)) {
+            // o-series: "o5-mini" → "o5 Mini"
+            return (string) preg_replace_callback('/-(\w)/', static fn ($m) => ' ' . strtoupper($m[1]), $base);
+        }
+        $words = array();
+        foreach (explode('-', $base) as $w) {
+            if ($w === '') {
+                continue;
+            }
+            if ($w === 'gpt') {
+                $words[] = 'GPT';
+            } elseif ($w === 'chatgpt') {
+                $words[] = 'ChatGPT';
+            } else {
+                $words[] = ucfirst($w);
+            }
+        }
+        return implode(' ', $words);
+    }
+
     private static function extract_models_from_response(string $provider_id, ?array $body): array
     {
         if (!$body) {
@@ -821,6 +850,10 @@ class PCM_Providers
 
             // Text model patterns (order matters — first match wins)
             $text_patterns = array(
+                    array('pattern' => '/^gpt-5-nano/', 'name' => 'GPT-5 Nano', 'costTier' => 'budget'),
+                    array('pattern' => '/^gpt-5-mini/', 'name' => 'GPT-5 Mini', 'costTier' => 'budget'),
+                    array('pattern' => '/^gpt-5/', 'name' => 'GPT-5', 'costTier' => 'premium'),
+                    array('pattern' => '/^gpt-4\.5/', 'name' => 'GPT-4.5', 'costTier' => 'premium'),
                     array('pattern' => '/^gpt-4o-mini/', 'name' => 'GPT-4o Mini', 'costTier' => 'budget'),
                     array('pattern' => '/^gpt-4o(?!-image)/', 'name' => 'GPT-4o', 'costTier' => 'standard'),
                     array('pattern' => '/^gpt-4-turbo/', 'name' => 'GPT-4 Turbo', 'costTier' => 'standard'),
@@ -828,6 +861,7 @@ class PCM_Providers
                     array('pattern' => '/^gpt-4\.1-mini/', 'name' => 'GPT-4.1 Mini', 'costTier' => 'budget'),
                     array('pattern' => '/^gpt-4\.1/', 'name' => 'GPT-4.1', 'costTier' => 'premium'),
                     array('pattern' => '/^o4-mini/', 'name' => 'o4-mini', 'costTier' => 'standard'),
+                    array('pattern' => '/^o4(?!-mini)/', 'name' => 'o4', 'costTier' => 'premium'),
                     array('pattern' => '/^o3-pro/', 'name' => 'o3 Pro', 'costTier' => 'premium'),
                     array('pattern' => '/^o3-mini/', 'name' => 'o3 Mini', 'costTier' => 'budget'),
                     array('pattern' => '/^o3(?!-)/', 'name' => 'o3', 'costTier' => 'premium'),
@@ -850,9 +884,11 @@ class PCM_Providers
                     continue;
                 }
 
-                // Check text model patterns
+                // Check text model patterns (nice names + cost tiers for known families)
+                $matched = false;
                 foreach ($text_patterns as $entry) {
                     if (preg_match($entry['pattern'], $id)) {
+                        $matched = true;
                         if (!isset($seen_names[$entry['name']])) {
                             $seen_names[$entry['name']] = true;
                             $models[] = array(
@@ -863,6 +899,28 @@ class PCM_Providers
                             );
                         }
                         break; // First pattern match wins
+                    }
+                }
+
+                // Future-proof: include any other chat-capable GPT / o-series model that
+                // isn't explicitly listed (new families, snapshots) so the latest models
+                // always surface. Skip non-chat endpoints (embeddings, audio, image, etc.).
+                if (!$matched) {
+                    $id_lower = strtolower($id);
+                    $is_chat  = (bool) preg_match('/^(gpt-|o[0-9]|chatgpt)/', $id_lower);
+                    $excluded = false;
+                    foreach (array('embedding', 'embed', 'whisper', 'tts', 'audio', 'realtime', 'transcribe', 'moderation', 'image', 'dall-e', 'davinci', 'babbage', 'instruct', 'search', 'codex', 'computer-use') as $skip) {
+                        if (str_contains($id_lower, $skip)) {
+                            $excluded = true;
+                            break;
+                        }
+                    }
+                    if ($is_chat && !$excluded) {
+                        $name = self::humanize_openai_id($id);
+                        if ($name !== '' && !isset($seen_names[$name])) {
+                            $seen_names[$name] = true;
+                            $models[] = array('id' => $id, 'name' => $name, 'type' => 'text', 'costTier' => 'standard');
+                        }
                     }
                 }
             }

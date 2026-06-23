@@ -98,10 +98,12 @@ class PCM_LLM
         );
 
         // Token limit handling per provider.
-        // Google Gemini 2.5 "thinking" models generate hidden reasoning tokens
-        // that consume max_tokens budget. Use max_completion_tokens to only limit
-        // visible output tokens, leaving thinking budget uncapped.
-        if ($provider === 'google') {
+        // - OpenAI: newer models (o-series, GPT-5, recent gpt-4.x snapshots) REJECT
+        //   `max_tokens` and require `max_completion_tokens`; it's accepted by every
+        //   current OpenAI chat model, so use it universally for OpenAI.
+        // - Google Gemini 2.5 "thinking" models generate hidden reasoning tokens that
+        //   consume the budget — `max_completion_tokens` caps only visible output.
+        if ($provider === 'google' || $provider === 'openai') {
             $payload['max_completion_tokens'] = $max_tokens;
         }
         else {

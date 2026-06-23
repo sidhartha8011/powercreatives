@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { trpc } from '@/lib/trpc';
+import { LlmInfoSection } from './LlmInfoEditor';
 
 interface AirPost { id: number; title: string; type: string; status: string; mdUrl: string }
 interface AirStatus {
@@ -139,6 +140,12 @@ export function AIReadinessPanel() {
             </div>
           ))
         )}
+      </div>
+
+      <div className="pt-4 mt-2 border-t border-border">
+        <h3 className="text-sm font-semibold">AI Search Optimization</h3>
+        <p className="text-xs text-muted-foreground mb-4">A persuasive, keyword-optimized overview served at <code>/llm-info/</code>.</p>
+        <LlmInfoSection />
       </div>
     </div>
   );

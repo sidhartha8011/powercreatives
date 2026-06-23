@@ -19,10 +19,13 @@ export function SchemaCell({
   postId,
   types,
   onChange,
+  onPersist,
 }: {
   postId: number;
   types: string[];
   onChange: (next: string[]) => void;
+  /** Override persistence (e.g. a connected remote site). Defaults to the local seo.setSchema. */
+  onPersist?: (next: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const setSchema = trpc.seo.setSchema.useMutation();
@@ -30,7 +33,11 @@ export function SchemaCell({
   const toggle = (type: string) => {
     const next = types.includes(type) ? types.filter((t) => t !== type) : [...types, type];
     onChange(next); // optimistic
-    setSchema.mutate({ id: postId, types: next });
+    if (onPersist) {
+      onPersist(next);
+    } else {
+      setSchema.mutate({ id: postId, types: next });
+    }
   };
 
   return (

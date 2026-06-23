@@ -14,7 +14,7 @@ import {
   type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes, type TableHTMLAttributes,
 } from 'react';
 import {
-  Plus, Trash2, ExternalLink, Loader2, Sparkles, Check, X, Globe, RefreshCw,
+  Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, RefreshCw,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
   Image as ImageIcon, Link2, Calendar, TrendingUp, Eye, Unlink,
 } from 'lucide-react';
@@ -40,7 +40,9 @@ import { ColumnHead } from './ColumnHead';
 import { ViewsToolbar } from './ViewsToolbar';
 import { buildFilterDefs } from './seoFilters';
 import { AIReadinessPanel } from './AIReadinessPanel';
+import { RemoteAIReadinessPanel } from './RemoteAIReadinessPanel';
 import { SiteSettingsPanel } from './SiteSettingsPanel';
+import { RemoteSiteSettingsPanel } from './RemoteSiteSettingsPanel';
 import { BusinessPanel } from './BusinessPanel';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
@@ -169,16 +171,16 @@ const SECTION_LABEL: Record<'content' | 'air' | 'site' | 'business', string> = {
  * SEO management (proxying through the site connector) isn't wired up yet.
  */
 function RemoteSitePlaceholder({ siteName, siteUrl, section }: { siteName: string; siteUrl?: string; section: string }) {
+  const note = section === 'Business'
+    ? 'The Business profile (Google Business Profile) is set per Brand and applies to all your content — manage it under SEO → Business on This Site.'
+    : `${section} is served by the site itself (e.g. llms.txt, robots.txt, on-page schema), so it’s managed from ${siteName}’s own WordPress admin. From here you get the full Content workbench — list, edit, AI-generate, status, create, and link-scan.`;
   return (
     <div className="border border-dashed border-border rounded-xl p-12 text-center">
       <Globe className="w-8 h-8 mx-auto mb-3 text-muted-foreground/50" />
       <p className="text-sm font-medium">
-        {section} for <span className="text-foreground">{siteName}</span> is coming soon.
+        {section} for <span className="text-foreground">{siteName}</span>
       </p>
-      <p className="mt-1.5 text-xs text-muted-foreground max-w-md mx-auto">
-        SEO management currently works for <span className="font-medium text-foreground">This Site</span> (the
-        local WordPress install). Managing a connected remote site’s SEO isn’t available yet.
-      </p>
+      <p className="mt-1.5 text-xs text-muted-foreground max-w-md mx-auto">{note}</p>
       {siteUrl && (
         <a href={siteUrl} target="_blank" rel="noopener noreferrer"
            className="mt-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
@@ -283,7 +285,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
 const SELECT_COL_WIDTH = 44;
 
 export function SEOModule() {
-  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete, generateField: localGenerateField, scanLinks } = useSeoContent();
+  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete, generateField: localGenerateField, scanLinks: localScanLinks } = useSeoContent();
 
   // Text models available for AI generation (registry). The user picks one in the
   // header dropdown; its id+provider is sent with every generate call so that
@@ -347,6 +349,8 @@ export function SEOModule() {
   const generateField = isLocal ? localGenerateField : remote.generateField;
   // Create a draft post/page — local or on the connected remote site.
   const quickCreate = isLocal ? localQuickCreate : remote.quickCreate;
+  // Link scanning — local or on the connected remote site (analysis runs on the hub).
+  const scanLinks = isLocal ? localScanLinks : remote.scanLinks;
   // Per-column filters (funnel icon in each column header).
   const filterDefs = useMemo(() => buildFilterDefs(options), [options]);
   const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters();
@@ -644,17 +648,32 @@ export function SEOModule() {
       case 'title':
         return (
           <TableCell key={key}>
-            <EditableCell
-              value={row.title}
-              placeholder="Untitled"
-              emphasis
-              onSave={(v) => saveCell(row.id, 'title', v)}
-              onGenerate={() => handleGenerate(row.id, 'title')}
-              generating={genKey === `${row.id}:title`}
-              suggestion={staged[`${row.id}:title`] ?? null}
-              onAccept={() => acceptStaged(row.id, 'title')}
-              onReject={() => rejectStaged(row.id, 'title')}
-            />
+            <div className="flex items-center gap-1">
+              <div className="min-w-0 flex-1">
+                <EditableCell
+                  value={row.title}
+                  placeholder="Untitled"
+                  emphasis
+                  onSave={(v) => saveCell(row.id, 'title', v)}
+                  onGenerate={() => handleGenerate(row.id, 'title')}
+                  generating={genKey === `${row.id}:title`}
+                  suggestion={staged[`${row.id}:title`] ?? null}
+                  onAccept={() => acceptStaged(row.id, 'title')}
+                  onReject={() => rejectStaged(row.id, 'title')}
+                />
+              </div>
+              {row.editUrl && (
+                <a
+                  href={row.editUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Edit on site"
+                  className="shrink-0 text-muted-foreground/50 hover:text-foreground"
+                >
+                  <SquarePen className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </div>
           </TableCell>
         );
       case 'status':
@@ -679,6 +698,7 @@ export function SEOModule() {
               postId={row.id}
               types={schemaOverrides[row.id] ?? row.schemaTypes ?? []}
               onChange={(next) => setSchemaOverrides((o) => ({ ...o, [row.id]: next }))}
+              onPersist={isLocal ? undefined : (next) => { void remote.setSchema(row.id, next); }}
             />
           </TableCell>
         );
@@ -735,9 +755,7 @@ export function SEOModule() {
         const isBroken = key === 'brokenLinks';
         return (
           <TableCell key={key} className="text-center text-xs">
-            {!isLocal ? (
-              <span className="text-muted-foreground">—</span>
-            ) : scanning ? (
+            {scanning ? (
               <Loader2 className="inline-block w-3.5 h-3.5 animate-spin text-primary" />
             ) : scanned ? (
               <span className="inline-flex items-center justify-center gap-1">
@@ -945,9 +963,17 @@ export function SEOModule() {
         {/* Section content */}
         <div className="min-w-0 flex-1">
       {tab === 'air' ? (
-        isLocal ? <AIReadinessPanel /> : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
+        isLocal
+          ? <AIReadinessPanel />
+          : typeof siteId === 'number'
+            ? <RemoteAIReadinessPanel siteId={siteId} siteName={activeSite?.name || activeSite?.url || 'this site'} />
+            : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
       ) : tab === 'site' ? (
-        isLocal ? <SiteSettingsPanel /> : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
+        isLocal
+          ? <SiteSettingsPanel />
+          : typeof siteId === 'number'
+            ? <RemoteSiteSettingsPanel siteId={siteId} siteName={activeSite?.name || activeSite?.url || 'this site'} />
+            : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
       ) : tab === 'business' ? (
         isLocal ? <BusinessPanel /> : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
       ) : (

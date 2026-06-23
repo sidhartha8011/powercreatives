@@ -35,10 +35,10 @@ return array(
         'max'      => 120,
         'generate' => "Generate an SEO-optimized meta title for this page.\n\n"
             . "Page Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nBusiness: {{business.name}}\n\n"
-            . "Requirements:\n- Maximum 60 characters\n- Include primary keyword naturally\n- Compelling and click-worthy\n- Accurately describe the page content\n- Do NOT use quotation marks in the output",
+            . "Requirements:\n- Maximum 60 characters\n- Include primary keyword naturally\n- Compelling and click-worthy\n- Accurately describe the page content\n- Do NOT use quotation marks in the output\n- Output ONLY the meta title text — no markdown, headings, character counts, labels, or commentary",
         'optimize' => "Optimize the following meta title for SEO. Improve keyword usage, readability, and search intent.\n\n"
             . "Current Meta Title: {{current_value}}\nPage Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nBusiness: {{business.name}}\n\n"
-            . "Requirements:\n- Maximum 60 characters\n- Include primary keyword naturally\n- Better search intent alignment\n- Do NOT use quotation marks in the output",
+            . "Requirements:\n- Maximum 60 characters\n- Include primary keyword naturally\n- Better search intent alignment\n- Do NOT use quotation marks in the output\n- Output ONLY the meta title text — no markdown, headings, character counts, labels, or commentary",
     ),
 
     // ── Meta description ──

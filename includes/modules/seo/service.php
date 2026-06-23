@@ -277,7 +277,7 @@ class PCM_SEO_Service
     }
 
     /** Count broken links (HTTP 4xx/5xx/error). Caps at 20 checks, 4s each. */
-    private static function check_broken_links(string $content): int
+    private static function check_broken_links(string $content, ?string $base = null): int
     {
         if ($content === '') {
             return 0;
@@ -301,7 +301,7 @@ class PCM_SEO_Service
                 continue;
             }
             if (str_starts_with($url, '/')) {
-                $url = home_url($url);
+                $url = rtrim($base ?: home_url('/'), '/') . $url;
             }
             $response = wp_remote_head($url, $args);
             if (is_wp_error($response)) {
@@ -440,7 +440,7 @@ class PCM_SEO_Service
     }
 
     /** Map a remote WP REST post/page item → a SeoRow-shaped array (matches build_row). */
-    private static function remote_row(array $item, string $type): array
+    private static function remote_row(array $item, string $type, object $site): array
     {
         $meta = (isset($item['meta']) && is_array($item['meta'])) ? $item['meta'] : array();
         $pick = static function (array $keys) use ($meta) {
@@ -451,26 +451,40 @@ class PCM_SEO_Service
             }
             return '';
         };
+        $id     = (int) ($item['id'] ?? 0);
+        $schema = array();
+        if (!empty($meta['pcm_seo_schema'])) {
+            $decoded = json_decode((string) $meta['pcm_seo_schema'], true);
+            if (is_array($decoded)) {
+                $schema = array_values(array_filter(array_map('strval', $decoded)));
+            }
+        }
         return array(
-            'id'                => (int) ($item['id'] ?? 0),
+            'id'                => $id,
             'type'              => $type,
             'title'             => (string) ($item['title']['rendered'] ?? ''),
             'slug'              => (string) ($item['slug'] ?? ''),
             'status'            => (string) ($item['status'] ?? ''),
             'date'              => (string) ($item['date'] ?? ''),
             'authorId'          => (int) ($item['author'] ?? 0),
-            'author'            => '',
+            'author'            => (string) ($item['_embedded']['author'][0]['name'] ?? ''),
             'permalink'         => (string) ($item['link'] ?? ''),
-            'editUrl'           => '',
-            'featuredImage'     => '',
-            'excerpt'           => '',
+            'editUrl'           => rtrim((string) $site->url, '/') . '/wp-admin/post.php?post=' . $id . '&action=edit',
+            'featuredImage'     => (string) (
+                $item['_embedded']['wp:featuredmedia'][0]['media_details']['sizes']['thumbnail']['source_url']
+                    ?? $item['_embedded']['wp:featuredmedia'][0]['source_url']
+                    ?? ''
+            ),
+            'excerpt'           => isset($item['excerpt']['rendered'])
+                ? wp_trim_words(wp_strip_all_tags((string) $item['excerpt']['rendered']), 20, '…')
+                : '',
             'metaTitle'         => $pick(self::remote_meta_keys('metaTitle')),
             'metaDescription'   => $pick(self::remote_meta_keys('metaDescription')),
             'primaryKeyword'    => $pick(self::remote_meta_keys('primaryKeyword')),
             'metaKeywords'      => $pick(self::remote_meta_keys('metaKeywords')),
             'supportingKeyword' => $pick(self::remote_meta_keys('supportingKeyword')),
             'clusterLabel'      => $pick(self::remote_meta_keys('clusterLabel')),
-            'schemaTypes'       => array(),
+            'schemaTypes'       => $schema,
             'internalLinks'     => null,
             'externalLinks'     => null,
             'brokenLinks'       => null,
@@ -486,11 +500,12 @@ class PCM_SEO_Service
     {
         self::ensure_sites_service();
         $rows   = array();
-        $fields = 'id,title,slug,status,date,link,author,meta';
+        $fields = 'id,title,slug,status,date,link,author,featured_media,excerpt,meta,_embedded.author,_embedded.wp:featuredmedia';
         foreach (array('post' => '/wp/v2/posts', 'page' => '/wp/v2/pages') as $type => $route) {
             $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array(
                 'per_page' => 100,
                 'status'   => 'publish,future,draft,pending,private',
+                '_embed'   => '1',
                 '_fields'  => $fields,
                 'orderby'  => 'modified',
             ));
@@ -499,7 +514,7 @@ class PCM_SEO_Service
             }
             foreach ($res['body'] as $item) {
                 if (is_array($item)) {
-                    $rows[] = self::remote_row($item, $type);
+                    $rows[] = self::remote_row($item, $type, $site);
                 }
             }
         }
@@ -600,6 +615,431 @@ class PCM_SEO_Service
         return array('id' => (int) $res['body']['id'], 'type' => $type);
     }
 
+    /**
+     * Scan a connected site's post links — analysis runs on the HUB over the remote's
+     * rendered content (internal/external counts + broken-link HEAD checks). Counts are
+     * returned for the table (not persisted on the remote).
+     *
+     * @return array{internal:int,external:int,broken:int,scannedAt:string}|\WP_Error
+     */
+    public static function remote_scan_links(object $site, int $post_id, string $type)
+    {
+        self::ensure_sites_service();
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'content'));
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_scan', $res->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($res['status'] ?? 0) >= 300) {
+            return new WP_Error('pcm_seo_remote_scan', __('Could not read the remote post.', 'power-creatives'), array('status' => 502));
+        }
+        $content = (string) ($res['body']['content']['rendered'] ?? '');
+        $counts  = self::count_links($content, (string) $site->url);
+        return array(
+            'internal'  => $counts['internal'],
+            'external'  => $counts['external'],
+            'broken'    => self::check_broken_links($content, (string) $site->url),
+            'scannedAt' => current_time('mysql'),
+        );
+    }
+
+    /**
+     * Read a connected site's hub-managed Site settings (robots.txt rules + JSON-LD)
+     * via the connector's /pcm-conn/v1/site route.
+     *
+     * @return array{robots:string,jsonld:string}|\WP_Error
+     */
+    public static function remote_site_get(object $site)
+    {
+        self::ensure_sites_service();
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/site');
+        return self::remote_site_result($res);
+    }
+
+    /**
+     * Write a connected site's hub-managed Site settings. Only the provided keys are saved.
+     *
+     * @param array{robots?:string,jsonld?:string} $fields
+     * @return array{robots:string,jsonld:string}|\WP_Error
+     */
+    public static function remote_site_save(object $site, array $fields)
+    {
+        self::ensure_sites_service();
+        $body = array();
+        if (array_key_exists('robots', $fields)) {
+            $body['robots'] = (string) $fields['robots'];
+        }
+        if (array_key_exists('jsonld', $fields)) {
+            $body['jsonld'] = (string) $fields['jsonld'];
+        }
+        $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/site', array(), $body);
+        return self::remote_site_result($res);
+    }
+
+    /** Normalise a /pcm-conn/v1/site proxy response into the Site shape or a WP_Error. */
+    private static function remote_site_result($res)
+    {
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_site', $res->get_error_message(), array('status' => 502));
+        }
+        $status = (int) ($res['status'] ?? 0);
+        if (404 === $status || 401 === $status || 403 === $status) {
+            return new WP_Error(
+                'pcm_seo_connector_outdated',
+                __('This site needs the latest Power Creatives connector (re-download it from Add Site) to manage Site settings.', 'power-creatives'),
+                array('status' => 422)
+            );
+        }
+        if ($status >= 300) {
+            return new WP_Error('pcm_seo_remote_site', __('Could not reach the remote site settings.', 'power-creatives'), array('status' => 502));
+        }
+        $b = is_array($res['body'] ?? null) ? $res['body'] : array();
+        return array('robots' => (string) ($b['robots'] ?? ''), 'jsonld' => (string) ($b['jsonld'] ?? ''));
+    }
+
+    /**
+     * Read a connected site's hub-managed AI Readiness (llms.txt) via the connector's
+     * /pcm-conn/v1/ai route.
+     *
+     * @return array{llms:string,enabled:bool,url:string}|\WP_Error
+     */
+    public static function remote_ai_get(object $site)
+    {
+        self::ensure_sites_service();
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/ai');
+        return self::remote_ai_result($res);
+    }
+
+    /**
+     * Write a connected site's AI Readiness settings. Only the provided keys are saved.
+     *
+     * @param array{llms?:string,enabled?:bool} $fields
+     * @return array{llms:string,enabled:bool,url:string}|\WP_Error
+     */
+    public static function remote_ai_save(object $site, array $fields)
+    {
+        self::ensure_sites_service();
+        $body = array();
+        if (array_key_exists('llms', $fields)) {
+            $body['llms'] = (string) $fields['llms'];
+        }
+        if (array_key_exists('enabled', $fields)) {
+            $body['enabled'] = (bool) $fields['enabled'];
+        }
+        $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/ai', array(), $body);
+        return self::remote_ai_result($res);
+    }
+
+    /** Normalise a /pcm-conn/v1/ai proxy response into the AI shape or a WP_Error. */
+    private static function remote_ai_result($res)
+    {
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_ai', $res->get_error_message(), array('status' => 502));
+        }
+        $status = (int) ($res['status'] ?? 0);
+        if (in_array($status, array(401, 403, 404), true)) {
+            return new WP_Error(
+                'pcm_seo_connector_outdated',
+                __('This site needs the latest Power Creatives connector (re-download it from Add Site) to manage AI Readiness.', 'power-creatives'),
+                array('status' => 422)
+            );
+        }
+        if ($status >= 300) {
+            return new WP_Error('pcm_seo_remote_ai', __('Could not reach the remote AI Readiness settings.', 'power-creatives'), array('status' => 502));
+        }
+        $b = is_array($res['body'] ?? null) ? $res['body'] : array();
+        return array('llms' => (string) ($b['llms'] ?? ''), 'enabled' => !empty($b['enabled']), 'url' => (string) ($b['url'] ?? ''));
+    }
+
+    /**
+     * Build an llms.txt index from a connected site's published posts/pages (over the
+     * proxy). Returns the generated text — the caller stages/saves it; nothing is written
+     * to the remote here.
+     */
+    public static function remote_ai_build(object $site): string
+    {
+        $rows  = self::remote_list_content($site);
+        $title = ($site->name ?? '') !== '' ? $site->name : (string) $site->url;
+        $lines = array('# ' . $title, '');
+        $posts = array();
+        $pages = array();
+        foreach ($rows as $r) {
+            if (($r['status'] ?? '') !== 'publish') {
+                continue;
+            }
+            $t    = ($r['title'] ?? '') !== '' ? (string) $r['title'] : '(untitled)';
+            $u    = (string) ($r['permalink'] ?? '');
+            $e    = (string) ($r['excerpt'] ?? '');
+            $line = '- [' . $t . '](' . $u . ')' . ($e !== '' ? ': ' . $e : '');
+            if (($r['type'] ?? 'post') === 'page') {
+                $pages[] = $line;
+            } else {
+                $posts[] = $line;
+            }
+        }
+        if ($pages) {
+            $lines[] = '## Pages';
+            $lines   = array_merge($lines, $pages, array(''));
+        }
+        if ($posts) {
+            $lines[] = '## Posts';
+            $lines   = array_merge($lines, $posts, array(''));
+        }
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Set a connected post's Schema.org types (stored as the pcm_seo_schema meta, a JSON
+     * array). Validates against the whitelist + verifies the meta landed (needs the
+     * connector to expose pcm_seo_schema).
+     *
+     * @return array{types:string[]}|\WP_Error
+     */
+    public static function remote_set_schema(object $site, int $post_id, string $type, array $types)
+    {
+        self::ensure_sites_service();
+        $allowed = class_exists('PCM_SEO_Schema') ? PCM_SEO_Schema::TYPES : array();
+        $clean   = array_values(array_intersect($allowed, array_map('strval', $types)));
+        $route   = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $payload = array('meta' => array('pcm_seo_schema' => wp_json_encode($clean)));
+        $res     = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), $payload);
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_schema', $res->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($res['status'] ?? 0) >= 300) {
+            return new WP_Error('pcm_seo_remote_schema', __('Could not save schema to the remote site.', 'power-creatives'), array('status' => 502));
+        }
+        // WordPress silently drops unregistered meta and still returns 200 — confirm it landed.
+        $verify = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'meta'));
+        $saved  = (!is_wp_error($verify) && isset($verify['body']['meta']['pcm_seo_schema']))
+            ? json_decode((string) $verify['body']['meta']['pcm_seo_schema'], true)
+            : null;
+        if (!is_array($saved)) {
+            return new WP_Error(
+                'pcm_seo_remote_meta_unsupported',
+                __('The remote site didn’t store schema — install/update the Power Creatives connector on that site.', 'power-creatives'),
+                array('status' => 422)
+            );
+        }
+        return array('types' => array_values(array_intersect($allowed, array_map('strval', $saved))));
+    }
+
+    /**
+     * Build an /llm-info/ page body — an AI-search-optimized, positively-framed business
+     * overview (semantic HTML). Shared by the local + connected-site generators. The prompt
+     * is told to use ONLY the facts provided (no invented reviews/ratings/awards).
+     *
+     * @param array $ctx  { name, url, keywords, years, area, strengths, category, rating, reviews, address }
+     * @return string|\WP_Error  Sanitized HTML body content.
+     */
+    public static function build_llm_info(array $ctx, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    {
+        if (!class_exists('PCM_LLM')) {
+            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
+        }
+        $prompt = self::llm_info_prompt($ctx);
+        try {
+            $opts = array('max_tokens' => 1400);
+            if (!empty($model)) {
+                $opts['model'] = $model;
+            }
+            if (!empty($provider)) {
+                $opts['provider'] = $provider;
+            }
+            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $html   = trim((string) ($result['content'] ?? ''));
+            $html   = trim(preg_replace('#^```[a-z]*\s*|\s*```$#i', '', $html)); // strip stray code fences
+            if ($html === '') {
+                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
+            }
+            return wp_kses_post($html);
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
+    }
+
+    /** The persuasive, truthful /llm-info/ prompt — only emits guidance for facts that are present. */
+    private static function llm_info_prompt(array $ctx): string
+    {
+        $g         = static fn ($k) => trim((string) ($ctx[$k] ?? ''));
+        $name      = $g('name') !== '' ? $g('name') : 'the business';
+        $area      = $g('area');
+        $years     = $g('years');
+        $keywords  = $g('keywords');
+        $strengths = $g('strengths');
+
+        $facts = "Business name: {$name}\n";
+        foreach (array(
+            'url'       => 'Website',
+            'category'  => 'Niche / category',
+            'area'      => 'Primary area served',
+            'years'     => 'Years in business',
+            'keywords'  => 'Target keywords to rank for',
+            'strengths' => 'Key strengths / recommendations',
+            'address'   => 'Address',
+        ) as $k => $label) {
+            if ($g($k) !== '') {
+                $facts .= "{$label}: " . $g($k) . "\n";
+            }
+        }
+        if ($g('rating') !== '') {
+            $facts .= 'Average rating: ' . $g('rating') . ($g('reviews') !== '' ? ' from ' . $g('reviews') . ' reviews' : '') . "\n";
+        }
+
+        // Site content corpus — the actual pages/posts the summary is generated FROM.
+        $corpus = '';
+        $pages  = (isset($ctx['pages']) && is_array($ctx['pages'])) ? $ctx['pages'] : array();
+        if ($pages) {
+            $budget = 14000;
+            $used   = 0;
+            $parts  = array();
+            foreach ($pages as $pg) {
+                $t = trim((string) ($pg['title'] ?? ''));
+                $x = trim((string) ($pg['text'] ?? ''));
+                if ($x === '') {
+                    continue;
+                }
+                $block = ($t !== '' ? "## {$t}\n" : '') . $x;
+                $used += strlen($block);
+                if ($used > $budget) {
+                    break;
+                }
+                $parts[] = $block;
+            }
+            if ($parts) {
+                $corpus = "\nSITE CONTENT (the business's actual pages — base the summary on what they really do, their services, topics and expertise here; do not contradict or invent beyond it):\n"
+                    . implode("\n\n", $parts) . "\n";
+            }
+        }
+
+        return "You are writing the content for an /llm-info/ page — a concise, factual overview of a business, written so AI search engines (ChatGPT, Perplexity, Google AI Overviews) cite it accurately and favourably.\n\n"
+            . "FACTS (use ONLY these — never invent reviews, ratings, awards, numbers, or any claim not given):\n{$facts}\n"
+            . $corpus
+            . "Write the page as clean semantic HTML body content. Rules:\n"
+            . ($corpus !== '' ? "- Base the summary on the SITE CONTENT above — reflect the real services, topics and expertise found across the pages; if the FACTS and the content conflict, prefer the content.\n" : '')
+            . "- Use only <h1>, <h2>, <h3>, <p>, <ul>, <li>, <strong>, <a> tags. No <html>/<head>/<body>, no markdown, no code fences.\n"
+            . "- Open with a one-paragraph positioning summary naming {$name} and its specialist niche/expertise"
+            . ($area !== '' ? ", and that it serves {$area}" : '') . ".\n"
+            . ($keywords !== '' ? "- Naturally weave in the target keywords (no keyword stuffing).\n" : '')
+            . "- Establish authority and specialist expertise within the niche.\n"
+            . ($years !== '' ? "- Frame the years in business as a proven, trusted track record.\n" : '')
+            . ($area !== '' ? "- Emphasise how local and dedicated the business is to {$area}.\n" : '')
+            . ($strengths !== '' ? "- Present the strengths/recommendations positively — but only the facts provided.\n" : '')
+            . "- Sections: an intro, \"What {$name} does\", \"Why choose {$name}\""
+            . ($area !== '' ? ", \"Areas served\"" : '') . ", and a brief FAQ if useful.\n"
+            . "- Be truthful and specific. Omit anything not provided. Output ONLY the HTML body content.";
+    }
+
+    /** Gather the local site's published pages/posts as a trimmed text corpus for /llm-info/. */
+    public static function local_content_corpus(int $max_pages = 50, int $per_chars = 500): array
+    {
+        $posts = get_posts(array(
+            'post_type'   => array('page', 'post'),
+            'post_status' => 'publish',
+            'numberposts' => $max_pages,
+        ));
+        $out = array();
+        foreach ($posts as $p) {
+            $text = trim(preg_replace('/\s+/', ' ', wp_strip_all_tags(strip_shortcodes((string) $p->post_content))));
+            if ($text === '') {
+                continue;
+            }
+            $out[] = array('title' => (string) $p->post_title, 'text' => mb_substr($text, 0, $per_chars));
+        }
+        return $out;
+    }
+
+    /** Gather a connected site's published pages/posts as a trimmed text corpus (via proxy). */
+    public static function remote_content_corpus(object $site, int $max_pages = 50, int $per_chars = 500): array
+    {
+        self::ensure_sites_service();
+        $out = array();
+        foreach (array('/wp/v2/pages', '/wp/v2/posts') as $route) {
+            $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array(
+                'per_page' => min($max_pages, 100),
+                'status'   => 'publish',
+                '_fields'  => 'title,content',
+            ));
+            if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+                continue;
+            }
+            foreach ($res['body'] as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $text = trim(preg_replace('/\s+/', ' ', wp_strip_all_tags((string) ($item['content']['rendered'] ?? ''))));
+                if ($text === '') {
+                    continue;
+                }
+                $out[] = array('title' => (string) ($item['title']['rendered'] ?? ''), 'text' => mb_substr($text, 0, $per_chars));
+                if (count($out) >= $max_pages) {
+                    break 2;
+                }
+            }
+        }
+        return $out;
+    }
+
+    /** Read a connected site's /llm-info/ (content + enabled + url) via the connector. */
+    public static function remote_llminfo_get(object $site)
+    {
+        self::ensure_sites_service();
+        return self::remote_llminfo_result(PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/llm-info'));
+    }
+
+    /** Write a connected site's /llm-info/ content + enabled flag (only provided keys). */
+    public static function remote_llminfo_save(object $site, array $fields)
+    {
+        self::ensure_sites_service();
+        $body = array();
+        if (array_key_exists('content', $fields)) {
+            $body['content'] = (string) $fields['content'];
+        }
+        if (array_key_exists('enabled', $fields)) {
+            $body['enabled'] = (bool) $fields['enabled'];
+        }
+        return self::remote_llminfo_result(PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/llm-info', array(), $body));
+    }
+
+    /** Normalise a /pcm-conn/v1/llm-info proxy response into the shape or a WP_Error. */
+    private static function remote_llminfo_result($res)
+    {
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_llminfo', $res->get_error_message(), array('status' => 502));
+        }
+        $status = (int) ($res['status'] ?? 0);
+        if (in_array($status, array(401, 403, 404), true)) {
+            return new WP_Error(
+                'pcm_seo_connector_outdated',
+                __('This site needs the latest Power Creatives connector (re-download it from Add Site) to manage /llm-info/.', 'power-creatives'),
+                array('status' => 422)
+            );
+        }
+        if ($status >= 300) {
+            return new WP_Error('pcm_seo_remote_llminfo', __('Could not reach the remote /llm-info/ settings.', 'power-creatives'), array('status' => 502));
+        }
+        $b = is_array($res['body'] ?? null) ? $res['body'] : array();
+        return array('content' => (string) ($b['content'] ?? ''), 'enabled' => !empty($b['enabled']), 'url' => (string) ($b['url'] ?? ''));
+    }
+
+    /** Generate /llm-info/ HTML for a connected site (not saved — the caller saves on accept). */
+    public static function remote_llminfo_build(object $site, array $inputs, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    {
+        $html = self::build_llm_info(array(
+            'name'      => ($site->name ?? '') !== '' ? $site->name : (string) $site->url,
+            'url'       => (string) $site->url,
+            'keywords'  => (string) ($inputs['keywords'] ?? ''),
+            'years'     => (string) ($inputs['years'] ?? ''),
+            'area'      => (string) ($inputs['area'] ?? ''),
+            'strengths' => (string) ($inputs['strengths'] ?? ''),
+            'pages'     => self::remote_content_corpus($site),
+        ), $model, $user_id, $provider);
+        if ($html instanceof WP_Error) {
+            return $html;
+        }
+        return array('content' => $html);
+    }
+
     /** Prompt vars for a remote post (business context = the connected site). */
     private static function remote_field_vars(object $site, array $row): array
     {
@@ -662,7 +1102,7 @@ class PCM_SEO_Service
         if ((int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
             return new WP_Error('pcm_seo_remote_fetch', __('Could not read the remote post.', 'power-creatives'), array('status' => 502));
         }
-        $row  = self::remote_row($res['body'], $type);
+        $row  = self::remote_row($res['body'], $type, $site);
         $vars = self::remote_field_vars($site, $row);
 
         // Current value of THIS field (drives optimize vs generate).
@@ -1078,15 +1518,45 @@ class PCM_SEO_Service
     public static function sanitize_ai_output(string $content): string
     {
         $content = trim($content);
-        $len = strlen($content);
+        if ($content === '') {
+            return '';
+        }
+        // Strip a wrapping code fence (```lang ... ```), if any.
+        if (str_starts_with($content, '```')) {
+            $content = trim((string) preg_replace('/^```[a-zA-Z0-9]*\s*|\s*```$/', '', $content));
+        }
+        // These are single-value fields. A chatty model (e.g. Claude Haiku) may wrap the
+        // value in a markdown heading and follow it with commentary (character counts,
+        // checklists) or lead with a "Here is…:" preamble. Pick the first line that looks
+        // like the actual value: strip leading markdown markers + bold, skip empty/marker
+        // lines and label/preamble lines (those ending in a colon).
+        $lines = preg_split('/\r\n|\r|\n/', $content) ?: array($content);
+        $value = $content;
+        foreach ($lines as $line) {
+            $line = trim((string) $line);
+            if ($line === '') {
+                continue;
+            }
+            $line = trim((string) preg_replace('/^\s*(#{1,6}|>|[-*+]|\d+\.)\s+/', '', $line));
+            $line = trim(str_replace(array('**', '__'), '', $line));
+            if ($line === '' || preg_match('/:\s*$/', $line)) {
+                continue; // pure marker line, or a label/preamble line ("Meta title:")
+            }
+            $value = $line;
+            break;
+        }
+        // Strip a leading "Label:" / "Label -" prefix on the value itself.
+        $value = trim((string) preg_replace('/^(meta\s+title|title|meta\s+description|description|slug|keywords?|primary\s+keyword)\s*[:\-\x{2013}]\s+/iu', '', trim($value)));
+        // Strip surrounding matched quotes.
+        $len = strlen($value);
         if ($len >= 2) {
-            $first = $content[0];
-            $last  = $content[$len - 1];
+            $first = $value[0];
+            $last  = $value[$len - 1];
             if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
-                $content = trim(substr($content, 1, $len - 2));
+                $value = trim(substr($value, 1, $len - 2));
             }
         }
-        return $content;
+        return trim($value);
     }
 
     /**

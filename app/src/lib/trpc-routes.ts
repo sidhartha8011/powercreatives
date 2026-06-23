@@ -320,6 +320,69 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content`, body: { type: input.type } }),
     },
+    "seo.remoteScanLinks": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/scan-links`, body: { type: input.type } }),
+    },
+    "seo.remoteSiteGet": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/site` }),
+    },
+    "seo.remoteSiteSave": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/site`, body: { robots: input.robots, jsonld: input.jsonld } }),
+    },
+    "seo.remoteAiGet": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai` }),
+    },
+    "seo.remoteAiSave": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai`, body: { llms: input.llms, enabled: input.enabled } }),
+    },
+    "seo.remoteAiBuild": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai/build` }),
+    },
+    "seo.remoteSetSchema": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/schema`, body: { type: input.type, types: input.types } }),
+    },
+    // /llm-info/ — AI-optimization summary (local)
+    "seo.llmInfoGet": { endpoint: "seo/llm-info", method: "GET" },
+    "seo.llmInfoSave": {
+        endpoint: "seo/llm-info",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/llm-info`, body: input }),
+    },
+    "seo.llmInfoBuild": {
+        endpoint: "seo/llm-info/build",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/llm-info/build`, body: input }),
+    },
+    // /llm-info/ — AI-optimization summary (connected site)
+    "seo.remoteLlmInfoGet": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/llm-info` }),
+    },
+    "seo.remoteLlmInfoSave": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/llm-info`, body: { content: input.content, enabled: input.enabled } }),
+    },
+    "seo.remoteLlmInfoBuild": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/llm-info/build`, body: { keywords: input.keywords, years: input.years, area: input.area, strengths: input.strengths, model: input.model, provider: input.provider } }),
+    },
     // AI Readiness (llms.txt / virtual routes)
     "seo.airStatus": { endpoint: "seo/ai-readiness", method: "GET" },
     "seo.airBuild": { endpoint: "seo/ai-readiness/build", method: "POST" },

@@ -1,5 +1,170 @@
 # Session Log
 
+## 2026-06-19 — Fix: AI generations returning chatty/markdown output [/task]
+- Bug (seen on bestclient.widgetify.co, Claude Haiku 4.5): Meta Title generation returned the model's
+  whole explanation — "# Soccer Guide & Tips | BestClient **Character count: 33** This meta title: -✅…"
+  — instead of just the title. Affects any chatty model; local + remote share the path.
+- Cause: (a) the meta_title prompt (unlike page_title/slug/keyword) lacked an "Output ONLY …" constraint;
+  (b) sanitize_ai_output only stripped surrounding quotes — no markdown/heading/commentary cleanup.
+- Fix (both shared by local + remote generate):
+  - prompts.php: meta_title generate + optimize now end with "Output ONLY the meta title text — no
+    markdown, headings, character counts, labels, or commentary".
+  - service.php sanitize_ai_output hardened: strips code fences; picks the first real value line
+    (skips empty/marker lines + label/preamble lines ending in ":"); strips leading markdown markers
+    (#, >, -, *, n.) + **bold**; strips a leading "Label:" prefix; strips surrounding quotes. Only used
+    by the two short-field generate paths — the HTML content-body path doesn't use it.
+- Verified: php -l OK; runtime sanitize test — verbose(reported)/clean/preamble/quoted/label-prefix/
+  code-fence ALL → "Soccer Guide & Tips | BestClient" (clean output unchanged = no regression).
+  PHP-only; no tsc/build. Not committed.
+- Deferred (user: "then we will do that one"): AI Readiness lost-features vs Optimizer Simple (#3).
+
+## 2026-06-19 — OpenAI: latest models + body for newer models [/task]
+- Reports: generate works only with some OpenAI models; latest models not pulled in.
+- **Body fix (class-pcm-llm.php):** OpenAI always sent `max_tokens`, which the newer models
+  (o-series, GPT-5, recent gpt-4.x) REJECT — they require `max_completion_tokens`. Now OpenAID uses
+  max_completion_tokens (accepted by all current OpenAI chat models), like Google. Other providers
+  unchanged; Anthropic has its own payload path.
+- **Discovery fix (class-pcm-providers.php extract_models_from_response):** OpenAI models were filtered
+  through a hardcoded regex allowlist — anything unmatched (GPT-5, o4, gpt-3.5, future families) was
+  silently dropped. Added GPT-5/GPT-5 Mini/Nano + GPT-4.5 + o4 patterns, AND a generic fallback that
+  includes any other chat-capable gpt-/o#/chatgpt model (humanized name, snapshots collapsed) while
+  excluding non-chat endpoints (embeddings, audio, realtime, whisper, tts, image, moderation, etc.).
+- **Verified:** php -l OK both files; runtime extract test — GPT-5 family + o4 named correctly, dated
+  snapshots deduped, gpt-6-turbo/gpt-3.5-turbo/chatgpt-4o-latest caught by fallback, all junk excluded.
+  No frontend hardcoded list (picker is fed by DB-synced models). PHP-only; no tsc/build.
+- **Action needed:** users must RE-SYNC their OpenAI key (Models tab) to discover the latest models;
+  existing rows were synced with the old filter. Not committed.
+
+## 2026-06-19 — Fix: AI generate fataled on connected sites [/task]
+- Bug: remote_generate_field() called self::remote_row($body, $type) with 2 args, but remote_row
+  gained a required 3rd $site param (added for editUrl in the schema/edit-on-site task). The missed
+  call site threw ArgumentCountError BEFORE the try/catch → every connected-site content-field ✦
+  generate 500'd. (remote_list_content's call was already updated; this one was missed.)
+- Fix: pass $site → self::remote_row($res['body'], $type, $site) (service.php:1105). One line.
+- Not affected: /llm-info/ remote generate (uses remote_content_corpus, not remote_row).
+- Verified: php -l OK; runtime — remote_row(item,'post',$site) returns a row with editUrl; the old
+  2-arg call reproduces ArgumentCountError (confirming the cause). PHP-only; no tsc/build needed.
+  Real text output still needs a keyed model (pick one in the toolbar/llm-info dropdown). Not committed.
+
+## 2026-06-19 — /llm-info/: generate the summary FROM all pages content [follow-up]
+- Feedback: the summary should be built from the site's actual content, not just the manual inputs.
+- build_llm_info/llm_info_prompt now take $ctx['pages'] (array of {title,text}); the prompt adds a
+  SITE CONTENT corpus + a grounding rule ("base the summary on the SITE CONTENT; if FACTS and content
+  conflict, prefer the content"). Budget-capped (~14k chars).
+- New gatherers: PCM_SEO_Service::local_content_corpus() (get_posts, published page+post, stripped +
+  trimmed to 500 chars each, up to 50) and remote_content_corpus($site) (same over the connector proxy,
+  _fields=title,content). Wired: controller llminfo_build → local corpus; service remote_llminfo_build
+  → remote corpus.
+- Verified: php -l OK; live local_content_corpus() gathered the 2 published pages with real content;
+  llm_info_prompt embeds SITE CONTENT + grounding rule (prompt ~2.5k chars). Real generation still
+  needs a provider key (pick a keyed model in the new dropdown). Not committed; zip refreshed.
+
+## 2026-06-19 — /llm-info/ Generate: model/provider picker + made live [follow-up]
+- **Made live + shown:** plugin loads from the project dir, so code is live in local WP
+  (http://localhost:8080). Enabled /llm-info/ with representative content; verified it serves
+  HTTP 200 text/html and renders in Chrome (screenshot). Real AI gen needs a provider key.
+- **Model picker wired into /llm-info/ Generate:** LlmInfoEditor now has a model dropdown;
+  LlmInfoSection reads/writes the SAME localStorage key as the SEO toolbar ('pcm:seo:gen-model')
+  and derives the provider from trpc.models.getForGeneration, passing model+provider into both
+  llmInfoBuild + remoteLlmInfoBuild (backends already accepted them). Fixes generation always
+  defaulting to openai (no key) — now uses whichever model/provider the user has keyed.
+- **Verified:** tsc 0 relevant errors (56 baseline); vite build clean (dist rebuilt = live).
+  Admin UI / real generation not screenshotted — wp-admin requires login (won't enter credentials).
+
+## 2026-06-19 — /llm-info/ AI-search optimization (local + connected) [/build]
+- **What:** new AI-optimization output — an LLM-generated, keyword-optimized, positively-framed
+  business overview served at **/llm-info/** (à la deel.com/llm-info/). Frames authority/niche
+  expertise, elevates years in business, and emphasizes local-to-area — truthfully (prompt uses
+  ONLY provided facts; no invented reviews/awards). Scope: **both** local + connected sites (asked).
+- **Shared generator:** PCM_SEO_Service::build_llm_info($ctx) + llm_info_prompt() — emits semantic
+  HTML body via PCM_LLM::invoke; wp_kses_post sanitized. Inputs: keywords, years, area, strengths
+  (+ name/url; GBP category/rating/reviews/address when present).
+- **Local:** PCM_SEO_AIReadiness — OPT_LLMINFO option + llm_info()/wrap_llm_info(); maybe_serve()
+  serves /llm-info/ as wrapped HTML (REQUEST_URI check — no rewrite rule/flush). Routes GET/POST
+  /seo/llm-info + POST /seo/llm-info/build.
+- **Connected:** connector bumped to **v1.3.0** — stores pcm_conn_llminfo + enabled, serves /llm-info/
+  (wrapped HTML) via template_redirect, REST pcm-conn/v1/llm-info GET/POST. Hub:
+  remote_llminfo_get/save/build + routes /seo/sites/{id}/llm-info[/build]. (Remote stores only the
+  generated HTML; inputs are per-session. Local persists inputs too.)
+- **Frontend:** shared LlmInfoEditor + self-contained LlmInfoSection (local when no siteId, else
+  remote). Wired into AIReadinessPanel + RemoteAIReadinessPanel as an "AI Search Optimization" block.
+  trpc: llmInfoGet/Save/Build + remoteLlmInfoGet/Save/Build.
+- **Verified:** php -l OK (4 sources); connector lints clean + v1.3.0 + /llm-info REST & serve;
+  all 4 routes REGISTERED + methods callable; prompt assembly check (keywords/area/years/truthful
+  guard present) + wrap (doctype + robots) pass; tsc 0 relevant errors (56); vite build clean.
+  Live LLM generation not run (needs API key + deploy). Not committed.
+- **Needs:** deploy rebuilt zip to hub; re-install connector v1.3.0 on connected sites for remote.
+
+## 2026-06-19 — Connected sites: schema, edit-on-site, /{slug}.md, dead-code cleanup [/task]
+- **Schema (get/set) for remote:** connector v1.2.0 now registers `pcm_seo_schema` (JSON array)
+  in REST; remote_row reads it → schemaTypes; new remote_set_schema (validates vs
+  PCM_SEO_Schema::TYPES, writes the meta, verifies it landed → 422 if connector missing). Route
+  POST /seo/sites/{id}/content/{post}/schema + trpc remoteSetSchema + useRemoteSeoContent.setSchema.
+  SchemaCell gained an optional onPersist (was always hitting the LOCAL seo.setSchema — a real bug
+  for remote rows); index passes remote.setSchema for connected sites.
+- **Edit on site:** remote_row now sets editUrl = {site}/wp-admin/post.php?post={id}&action=edit
+  (remote_row takes $site). Title cell shows a SquarePen link to editUrl (local + remote) — was
+  defined in types but never surfaced.
+- **AI Readiness — /{slug}.md:** connector serves per-page Markdown at /{slug}.md (basic HTML→MD via
+  pcm_conn_html_to_md) when AI Readiness is enabled, alongside /llms.txt. Panel copy updated.
+- **Dead Add-Site code:** Sites/index.tsx — removed the unreachable 'connector' + 'code' dialogs, the
+  Pending-connections section, and their now-orphaned state/handlers/mutations (createdTenant,
+  connName, Tenant, pending/tenants query, createConnMutation/deleteConnMutation,
+  handleCreateConnector, downloadConnector, deletePending). AddStep is now null|'choose'|'password';
+  header comment rewritten to the pairing-code reality. Live 'choose' (admin paste-code) + 'password'
+  (non-admin) flows kept.
+- **Note:** backend seohub handshake routes (createSite/deleteSite/listSites, per-tenant
+  connector_php/$tpl + download_connector) are now frontend-orphaned but left in place (harmless;
+  deeper cleanup deferred).
+- **Verified:** php -l OK; generated connector lints clean + has pcm_seo_schema, /{slug}.md serve,
+  html_to_md; schema route REGISTERED + remote_set_schema callable; tsc 0 relevant errors (56);
+  vite build clean. Not committed. Needs connector v1.2.0 re-install + zip deploy for live use.
+
+## 2026-06-19 — Connected sites: Site + AI Readiness into the connector (hub-managed) [/build]
+- **Decision (asked):** AI Readiness + Site for a remote site are site-served; user chose to BUILD them
+  into the connector (hub-managed), shipped in iterations. Connector bumped to v1.2.0.
+- **Connector foundation (seohub/service.php → connector_php_simple):** new app-password-authed REST
+  namespace `pcm-conn/v1` (permission_callback = manage_options; no nonce needed under Basic auth).
+  - `/site` GET/POST → store + serve custom robots.txt rules (robots_txt filter) + a site-wide
+    JSON-LD block (validated JSON re-encoded into wp_head).
+  - `/ai` GET/POST → store llms.txt content + enabled flag; `template_redirect` serves a virtual
+    `/llms.txt` (text/plain) when enabled. No rewrite flush needed.
+- **Hub (seo/service.php):** remote_site_get/save (+remote_site_result), remote_ai_get/save
+  (+remote_ai_result), remote_ai_build (generates an llms.txt index from remote_list_content —
+  published posts/pages, returned for review, not auto-saved). 401/403/404 → 422 "connector outdated".
+- **Routes (seo/controller.php):** GET/POST /seo/sites/{id}/site; GET/POST /seo/sites/{id}/ai;
+  POST /seo/sites/{id}/ai/build. trpc: remoteSiteGet/Save, remoteAiGet/Save/Build.
+- **Frontend:** RemoteSiteSettingsPanel + RemoteAIReadinessPanel (new); index.tsx renders them for the
+  Site / AI Readiness tabs when a connected site is selected (placeholder only as a fallback).
+- **Content leftovers (same build):** remote list now enriches author name + featured-image thumbnail
+  + excerpt via `_embed`. Link scanning for remote (remote_scan_links, hub-side analysis) also shipped.
+  Schema stays out (class-derived PCM_SEO_Schema::types_for, not a portable meta). Business is
+  hub/brand-level (placeholder clarified).
+- **Verified:** php -l OK on all sources; generated connector lints clean + contains /site, /ai,
+  robots filter, llms.txt serve, v1.2.0; all hub routes REGISTERED + methods callable; tsc 0 SEO
+  errors (56 baseline); vite build clean.
+- **Action needed by user:** re-download + reinstall the connector (now v1.2.0) on connected sites,
+  then deploy the rebuilt power-creatives.zip to the hub. Not committed.
+
+## 2026-06-19 — Remote-site: link scanning + honest AI-Readiness/Site/Business [/build]
+- **Link scanning (built):** PCM_SEO_Service::remote_scan_links() fetches the remote post's
+  rendered content over the proxy and runs count_links + check_broken_links ON THE HUB
+  (check_broken_links now base-aware for relative URLs). Route POST
+  /seo/sites/{id}/content/{post}/scan-links + trpc seo.remoteScanLinks +
+  useRemoteSeoContent.scanLinks (patches counts into the cache). Un-gated the scan cell for
+  remote; scanLinks is now effective (local vs remote).
+- **AI Readiness + Site (assessed, not portable as-is):** these SERVE per-site artifacts
+  (llms.txt, /{slug}.md virtual routes, robots.txt, on-page JSON-LD) from the plugin on the
+  site. The remote runs the lightweight CONNECTOR, which doesn't implement them — so doing
+  them remotely = porting a large engine into the connector (out of scope). Made the remote
+  placeholder honest/section-aware instead of "coming soon".
+- **Business:** hub/brand-level (GBP per Brand, feeds {{business.*}}), not per-site — the
+  placeholder now says to manage it under SEO → Business on This Site.
+- Remaining content-level not done: author edit (remote user-list mismatch), featured-image,
+  schema get/set (deferred).
+- **Verified:** php -l OK; scan-links route REGISTERED + callable; tsc 0 SEO errors (56);
+  build clean. Not committed.
+
 ## 2026-06-19 — Simplify Add-Site to one flow + complete remote features [/build]
 - **Add Site = single flow** (was: choose → connector → paste = double-click). The dialog
   now is: Download the connector plugin → install → paste the code → Connect. Backend:

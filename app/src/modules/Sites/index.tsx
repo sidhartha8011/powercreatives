@@ -1,14 +1,12 @@
 /**
- * SITES MODULE — unified connection manager for remote WordPress sites.
+ * SITES MODULE — connection manager for remote WordPress sites.
  *
- * One place to connect sites two ways (the user picks in a popup):
- *   • Application Password — enter URL + WP username + an app password.
- *   • Connector plugin     — install a generated plugin; it connects itself
- *     over a signed handshake (no password to share). Admin-only.
- *
- * Both end up as first-class `wp_pcm_sites` rows (the connector flow mirrors
- * itself into sites on registration — see PCM_SEOHub_Service::register_ping),
- * so every connected site is usable for publishing (Writer).
+ * Every connected site is a first-class `wp_pcm_sites` row authenticated with an
+ * Application Password, so it's usable for publishing (Writer) and remote SEO.
+ * Two ways to add one:
+ *   • Admins: download the connector plugin, activate it on the target site, and
+ *     paste the one-paste connection code it shows (base64 JSON of url/user/pass).
+ *   • Non-admins: enter the site URL + WP username + an Application Password.
  */
 
 import { useState, useCallback } from 'react';
@@ -41,9 +39,8 @@ interface Site {
   lastSyncAt?: string;
   createdAt: string;
 }
-interface Tenant { id: number; name: string; status: string; siteUrl?: string | null; domain?: string | null; }
 
-type AddStep = null | 'choose' | 'password' | 'connector' | 'code';
+type AddStep = null | 'choose' | 'password';
 
 export function SitesModule() {
   const isAdmin = getIsAdmin();
@@ -51,12 +48,6 @@ export function SitesModule() {
   // ── Data ──
   const { data: sitesRaw, isLoading, refetch } = trpc.sites.list.useQuery() as any;
   const sites: Site[] = Array.isArray(sitesRaw) ? sitesRaw : [];
-
-  // Connector tenants (admin-only route). Only PENDING ones show here — active
-  // ones are mirrored into `sites` and already appear in the main list.
-  const { data: tenantsRaw, refetch: refetchTenants } =
-    trpc.seohub.listSites.useQuery(undefined, { enabled: isAdmin }) as any;
-  const pending: Tenant[] = (Array.isArray(tenantsRaw) ? tenantsRaw : []).filter((t: Tenant) => t.status === 'pending');
 
   // ── Dialog + form state ──
   const [addStep, setAddStep] = useState<AddStep>(null);
@@ -66,16 +57,13 @@ export function SitesModule() {
   const [formUrl, setFormUrl] = useState('');
   const [formUsername, setFormUsername] = useState('');
   const [formPassword, setFormPassword] = useState('');
-
-  const [connName, setConnName] = useState('');
-  const [createdTenant, setCreatedTenant] = useState<Tenant | null>(null);
   const [pasteCode, setPasteCode] = useState('');
 
   // ── Mutations ──
   const closeAll = useCallback(() => {
     setAddStep(null);
     setFormName(''); setFormUrl(''); setFormUsername(''); setFormPassword('');
-    setConnName(''); setCreatedTenant(null); setPasteCode('');
+    setPasteCode('');
   }, []);
 
   const createMutation = trpc.sites.create.useMutation({
@@ -91,8 +79,6 @@ export function SitesModule() {
     onError: (e: any) => toast.error(e.message ?? 'Connection test failed'),
     onSettled: () => setTestingId(null),
   }) as any;
-  const createConnMutation = trpc.seohub.createSite.useMutation() as any;
-  const deleteConnMutation = trpc.seohub.deleteSite.useMutation() as any;
 
   // ── Handlers ──
   const openAdd = useCallback(() => setAddStep(isAdmin ? 'choose' : 'password'), [isAdmin]);
@@ -117,27 +103,6 @@ export function SitesModule() {
     }
   }, [pasteCode, createMutation]);
 
-  const handleCreateConnector = useCallback(async () => {
-    if (!connName.trim()) return;
-    try {
-      const t = await createConnMutation.mutateAsync({ name: connName.trim() });
-      setCreatedTenant(t as Tenant);
-      refetchTenants();
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Create failed'); }
-  }, [connName, createConnMutation, refetchTenants]);
-
-  const downloadConnector = useCallback(async (id: number, label: string) => {
-    try {
-      const cfg = getConfig();
-      const res = await fetch(`${cfg.restUrl}seohub/sites/${id}/connector`, { headers: { 'X-WP-Nonce': cfg.nonce } });
-      if (!res.ok) throw new Error('Download failed');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = `pcm-connector-${label}.zip`; a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Download failed'); }
-  }, []);
-
   // Generic (tenant-free) connector for the one-paste flow.
   const downloadGenericConnector = useCallback(async () => {
     try {
@@ -150,11 +115,6 @@ export function SitesModule() {
       URL.revokeObjectURL(url);
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Download failed'); }
   }, []);
-
-  const deletePending = useCallback(async (id: number) => {
-    try { await deleteConnMutation.mutateAsync({ id }); toast.success('Pending connection removed'); refetchTenants(); }
-    catch (e) { toast.error(e instanceof Error ? e.message : 'Delete failed'); }
-  }, [deleteConnMutation, refetchTenants]);
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-full"><Spinner className="w-6 h-6" /></div>;
@@ -173,7 +133,7 @@ export function SitesModule() {
       <p className="text-xs text-muted-foreground mb-4 max-w-3xl">
         Connect your other WordPress sites to publish to them.{' '}
         {isAdmin
-          ? 'Add one with an Application Password, or install our connector plugin (no password to share).'
+          ? 'Install our connector plugin and paste the code it shows, or add one with an Application Password.'
           : 'Add one with its URL and an Application Password.'}
       </p>
 
@@ -222,29 +182,7 @@ export function SitesModule() {
         </div>
       )}
 
-      {/* Pending connector installs (admin only) */}
-      {isAdmin && pending.length > 0 && (
-        <div className="mt-6">
-          <h2 style={{ fontSize: typography.body, fontWeight: typography.semibold, color: colors.text }}>Pending connections</h2>
-          <p className="text-xs text-muted-foreground mb-3">Install the connector on the remote site — it moves to your sites once it connects.</p>
-          <div className="rounded-xl border border-border overflow-hidden">
-            {pending.map((t) => (
-              <div key={t.id} className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border last:border-0">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium flex items-center gap-1.5"><Puzzle className="w-3.5 h-3.5 text-muted-foreground" /> {t.name || '(unnamed)'}</div>
-                  <div className="text-xs text-muted-foreground">Waiting for the connector to register…</div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Button variant="ghost" size="icon" title="Download connector" onClick={() => downloadConnector(t.id, t.name || String(t.id))}><Download className="w-4 h-4" /></Button>
-                  <Button variant="ghost" size="icon" title="Remove" onClick={() => deletePending(t.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Add Site: method chooser ── */}
+      {/* ── Add Site: connector + one-paste code (admin) ── */}
       <Dialog open={addStep === 'choose'} onOpenChange={(o) => !o && closeAll()}>
         <DialogContent>
           <DialogHeader>
@@ -297,71 +235,6 @@ export function SitesModule() {
               {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add Site
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Add Site: paste connection code (reliable App-Password path under the hood) ── */}
-      <Dialog open={addStep === 'code'} onOpenChange={(o) => !o && closeAll()}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Paste connection code</DialogTitle>
-            <DialogDescription>Install the Power Creatives Connector on the site, open its “Power Creatives” admin page, and paste the connection code it shows.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 py-2">
-            <textarea
-              value={pasteCode}
-              onChange={(e) => setPasteCode(e.target.value)}
-              rows={4}
-              placeholder="Paste the connection code here…"
-              className="w-full rounded-md border border-border bg-card p-2 font-mono text-xs outline-none focus:border-primary"
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={closeAll}>Cancel</Button>
-            <Button onClick={handlePasteCode} disabled={createMutation.isPending || !pasteCode.trim()}>
-              {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Connect
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Add Site: connector plugin ── */}
-      <Dialog open={addStep === 'connector'} onOpenChange={(o) => !o && closeAll()}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Connect with our plugin</DialogTitle>
-            <DialogDescription>No password to share — install the connector and it links itself.</DialogDescription>
-          </DialogHeader>
-          {!createdTenant ? (
-            <>
-              <div className="space-y-3 py-2">
-                <LabeledInput label="Site / client name" placeholder="Acme Inc." value={connName} onChange={setConnName} />
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={closeAll}>Cancel</Button>
-                <Button onClick={handleCreateConnector} disabled={createConnMutation.isPending || !connName.trim()}>
-                  {createConnMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create
-                </Button>
-              </DialogFooter>
-            </>
-          ) : (
-            <>
-              <div className="space-y-3 py-2 text-sm">
-                <p>Now finish setup on the remote site:</p>
-                <ol className="list-decimal pl-5 space-y-1 text-muted-foreground text-xs">
-                  <li>Download the connector plugin below.</li>
-                  <li>On the remote WordPress: Plugins → Add New → Upload, then activate it.</li>
-                  <li>It connects automatically and appears in your sites list.</li>
-                </ol>
-                <Button onClick={() => downloadConnector(createdTenant.id, createdTenant.name || String(createdTenant.id))} className="gap-1.5">
-                  <Download className="w-4 h-4" /> Download connector
-                </Button>
-              </div>
-              <DialogFooter>
-                <Button onClick={() => { closeAll(); refetch(); }}>Done</Button>
-              </DialogFooter>
-            </>
-          )}
         </DialogContent>
       </Dialog>
     </div>
