@@ -1,5 +1,33 @@
 # Session Log
 
+## 2026-06-19 — Restore per-cell AI generate (✦) on table cells [/task]
+- A pulled commit ("changed seo tab") refactored generation to bulk-only and removed the per-cell ✦
+  trigger from EditableCell + the single-cell handleGenerate. User wants it back.
+- Restored faithfully from pre-removal commit 3838385 (index.tsx, frontend only):
+  - EditableCell: re-added onGenerate?/generating? props; display state shows a hover-revealed ✦
+    (Sparkles) button (spinner while generating); suggestion state regains a "Re-generate" button.
+  - Re-added single-cell handleGenerate(id, field) — stages one suggestion via the EFFECTIVE
+    generateField (works local + remote) with the selected model/provider.
+  - Wired onGenerate + generating into the title, slug, and generic meta cells (metaTitle/
+    metaDescription/primaryKeyword/metaKeywords; gated by canGen = GEN_FIELDS membership).
+  - Bulk "Generate all" + staging/accept/reject untouched — both paths now coexist.
+- Verified: tsc 0 index.tsx errors (56 baseline); vite build clean. Not committed; zip refreshed.
+
+## 2026-06-19 — Fix: bulk actions on connected (remote) sites [/task]
+- Bug: on a connected site the grouped "Bulk actions" menu (change status / duplicate / delete) was
+  hidden ({isLocal && …}) — only "Generate all" showed. So status/delete couldn't be run on remote.
+- Fix:
+  - Un-gated the bulk-actions menu for remote. Bulk STATUS already worked (handleBulkStatus uses the
+    effective saveCell → remote_save_cell handles native post_status) — just needed to be reachable.
+  - Bulk DELETE for remote: new PCM_SEO_Service::remote_delete_content() (proxy DELETE with
+    force=false → Trash, recoverable) + route POST /seo/sites/{id}/content/{post}/delete + trpc
+    seo.remoteDelete + useRemoteSeoContent.deleteRows (bulk, Promise.allSettled + invalidate +
+    success/failure toast). index.tsx: bulkDelete is now effective (local hook vs remote.deleteRows).
+  - Bulk DUPLICATE stays local-only (no remote create+copy) — that menu item is gated to isLocal.
+  - "Generate all" already worked on remote (effective generateField); unchanged.
+- Verified: php -l OK; delete route REGISTERED + remote_delete_content callable; tsc 0 SEO errors (56);
+  vite build clean. Not committed; zip refreshed.
+
 ## 2026-06-19 — Fix: AI generations returning chatty/markdown output [/task]
 - Bug (seen on bestclient.widgetify.co, Claude Haiku 4.5): Meta Title generation returned the model's
   whole explanation — "# Soccer Guide & Tips | BestClient **Character count: 33** This meta title: -✅…"

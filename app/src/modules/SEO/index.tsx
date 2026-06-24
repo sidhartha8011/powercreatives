@@ -78,6 +78,8 @@ function EditableCell({
   value,
   placeholder,
   onSave,
+  onGenerate,
+  generating,
   suggestion,
   onAccept,
   onReject,
@@ -86,6 +88,9 @@ function EditableCell({
   value: string;
   placeholder?: string;
   onSave: (next: string) => void;
+  /** Per-cell AI generate (✦). Omit to hide the icon (non-generatable cells). */
+  onGenerate?: () => void;
+  generating?: boolean;
   suggestion?: string | null;
   onAccept?: () => void;
   onReject?: () => void;
@@ -104,18 +109,23 @@ function EditableCell({
     if (e.key === 'Escape') { setDraft(value); setEditing(false); }
   };
 
-  // Staged AI suggestion → show new value with accept / reject.
+  // Staged AI suggestion → show new value with accept / reject / re-generate.
   if (suggestion != null) {
     return (
       <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
         <div className="text-xs text-foreground break-words whitespace-normal" title={suggestion}>{suggestion}</div>
         <div className="flex items-center gap-1">
-          <button type="button" onClick={onAccept} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700">
+          <button type="button" onClick={onAccept} disabled={generating} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
             <Check className="w-3 h-3" /> Accept
           </button>
-          <button type="button" onClick={onReject} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted">
+          <button type="button" onClick={onReject} disabled={generating} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
             <X className="w-3 h-3" /> Reject
           </button>
+          {onGenerate && (
+            <button type="button" onClick={onGenerate} disabled={generating} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
+              {generating ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
+            </button>
+          )}
         </div>
       </div>
     );
@@ -134,14 +144,27 @@ function EditableCell({
     );
   }
   return (
-    <button
-      type="button"
-      onClick={() => { setDraft(value); setEditing(true); }}
-      className={`block w-full text-left truncate text-xs leading-snug hover:underline decoration-dotted ${emphasis ? 'font-medium text-foreground' : ''}`}
-      title={value || placeholder}
-    >
-      {value || <span className="text-muted-foreground/60">{placeholder ?? '—'}</span>}
-    </button>
+    <div className="flex items-center gap-1 group">
+      <button
+        type="button"
+        onClick={() => { setDraft(value); setEditing(true); }}
+        className={`flex-1 min-w-0 text-left truncate text-xs leading-snug hover:underline decoration-dotted ${emphasis ? 'font-medium text-foreground' : ''}`}
+        title={value || placeholder}
+      >
+        {value || <span className="text-muted-foreground/60">{placeholder ?? '—'}</span>}
+      </button>
+      {onGenerate && (
+        <button
+          type="button"
+          onClick={onGenerate}
+          disabled={generating}
+          title="Generate with AI"
+          className="shrink-0 text-muted-foreground/50 hover:text-primary opacity-0 group-hover:opacity-100 disabled:opacity-100"
+        >
+          {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" /> : <Sparkles className="w-3.5 h-3.5" />}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -277,7 +300,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
 const SELECT_COL_WIDTH = 44;
 
 export function SEOModule() {
-  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete, bulkDuplicate, generateField: localGenerateField, scanLinks: localScanLinks } = useSeoContent();
+  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete: localBulkDelete, bulkDuplicate, generateField: localGenerateField, scanLinks: localScanLinks } = useSeoContent();
 
   // Text models available for AI generation (registry). The user picks one in the
   // header dropdown; its id+provider is sent with every generate call so that
@@ -343,6 +366,9 @@ export function SEOModule() {
   const quickCreate = isLocal ? localQuickCreate : remote.quickCreate;
   // Link scanning — local or on the connected remote site (analysis runs on the hub).
   const scanLinks = isLocal ? localScanLinks : remote.scanLinks;
+  // Bulk delete — local hook or the connected site's proxy (trash). Status uses the
+  // effective saveCell (works remote); duplicate stays local-only.
+  const bulkDelete = isLocal ? localBulkDelete : remote.deleteRows;
   // Per-column filters (funnel icon in each column header).
   const filterDefs = useMemo(() => buildFilterDefs(options), [options]);
   const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters();
@@ -448,6 +474,19 @@ export function SEOModule() {
   const rejectStaged = useCallback((id: number, field: string) => {
     setStaged((s) => { const next = { ...s }; delete next[`${id}:${field}`]; return next; });
   }, []);
+
+  // Per-cell AI: generate ONE field for ONE row (the cell ✦ icon), staging the
+  // result for review. Uses the same effective generateField as bulk (local or remote).
+  const handleGenerate = useCallback(async (id: number, field: string) => {
+    const key = `${id}:${field}`;
+    setGenKey(key);
+    try {
+      const value = await generateField(id, field, genModelId || undefined, genProvider);
+      setStaged((s) => ({ ...s, [key]: value }));
+    } catch { /* toast in hook */ } finally {
+      setGenKey(null);
+    }
+  }, [generateField, genModelId, genProvider]);
 
   // Bulk AI: generate the given fields across every selected row (sequential —
   // gentle on the provider), staging each result for review. In 'empty' mode,
@@ -725,6 +764,8 @@ export function SEOModule() {
                   placeholder="Untitled"
                   emphasis
                   onSave={(v) => saveCell(row.id, 'title', v)}
+                  onGenerate={() => handleGenerate(row.id, 'title')}
+                  generating={genKey === `${row.id}:title`}
                   suggestion={staged[`${row.id}:title`] ?? null}
                   onAccept={() => acceptStaged(row.id, 'title')}
                   onReject={() => rejectStaged(row.id, 'title')}
@@ -780,6 +821,8 @@ export function SEOModule() {
               value={row.slug}
               placeholder="slug"
               onSave={(v) => saveCell(row.id, 'slug', v)}
+              onGenerate={() => handleGenerate(row.id, 'slug')}
+              generating={genKey === ckey}
               suggestion={staged[ckey] ?? null}
               onAccept={() => acceptStaged(row.id, 'slug')}
               onReject={() => rejectStaged(row.id, 'slug')}
@@ -893,12 +936,15 @@ export function SEOModule() {
         const field = TEXT_FIELD_BY_KEY[key];
         if (!field) return null;
         const ckey = `${row.id}:${key}`;
+        const canGen = GEN_FIELDS.some((f) => f.key === key);
         return (
           <TableCell key={key}>
             <EditableCell
               value={String(row[key as keyof SeoRow] ?? '')}
               placeholder={field.label}
               onSave={(v) => saveCell(row.id, key, v)}
+              onGenerate={canGen ? () => handleGenerate(row.id, key) : undefined}
+              generating={genKey === ckey}
               suggestion={staged[ckey] ?? null}
               onAccept={() => acceptStaged(row.id, key)}
               onReject={() => rejectStaged(row.id, key)}
@@ -1114,8 +1160,7 @@ export function SEOModule() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {/* Bulk actions — grouped batch ops (local only): change status, duplicate, delete. */}
-          {isLocal && (
+          {/* Bulk actions — change status + delete (remote-aware); duplicate is local-only. */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" disabled={busy}>
@@ -1135,16 +1180,19 @@ export function SEOModule() {
                     ))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuItem className="text-xs" onClick={handleBulkDuplicate}>
-                  <Copy className="mr-2 h-3.5 w-3.5" /> Duplicate
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
+                {isLocal && (
+                  <>
+                    <DropdownMenuItem className="text-xs" onClick={handleBulkDuplicate}>
+                      <Copy className="mr-2 h-3.5 w-3.5" /> Duplicate
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem className="text-xs text-destructive focus:text-destructive" onClick={handleDelete}>
                   <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          )}
           {progress && (
             <span className="text-xs text-muted-foreground inline-flex items-center gap-1.5 whitespace-nowrap" aria-live="polite">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> {progress.done}/{progress.total}

@@ -325,6 +325,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content`, body: { type: input.type } }),
     },
+    "seo.remoteDelete": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/delete`, body: { type: input.type } }),
+    },
     "seo.remoteScanLinks": {
         endpoint: "seo/sites",
         method: "POST",

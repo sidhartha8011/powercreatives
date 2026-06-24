@@ -693,6 +693,29 @@ class PCM_SEO_Service
     }
 
     /**
+     * Trash a post/page on a connected site (via the proxy). force=false → Trash, not a
+     * permanent delete, so a mistaken bulk delete on a client site is recoverable.
+     *
+     * @return array{id:int,trashed:bool}|\WP_Error
+     */
+    public static function remote_delete_content(object $site, int $post_id, string $type)
+    {
+        self::ensure_sites_service();
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $res   = PCM_Sites_Service::remote_rest($site, 'DELETE', $route, array('force' => 'false'));
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_delete', $res->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($res['status'] ?? 0) >= 300) {
+            $msg = (is_array($res['body'] ?? null) && !empty($res['body']['message']))
+                ? (string) $res['body']['message']
+                : __('Could not delete on the remote site.', 'power-creatives');
+            return new WP_Error('pcm_seo_remote_delete', $msg, array('status' => 502));
+        }
+        return array('id' => $post_id, 'trashed' => true);
+    }
+
+    /**
      * Scan a connected site's post links — analysis runs on the HUB over the remote's
      * rendered content (internal/external counts + broken-link HEAD checks). Counts are
      * returned for the table (not persisted on the remote).

@@ -63,6 +63,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/ai', 'remote_ai_save', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/ai/build', 'remote_ai_build', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/schema', 'remote_set_schema', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/delete', 'remote_delete', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_get',   array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_save',  array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/llm-info/build', 'remote_llminfo_build', array(), 'manage_options'),
@@ -231,6 +232,23 @@ class PCM_REST_SEO extends PCM_REST_Base
         $params = $request->get_json_params() ?: array();
         $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
         $result = PCM_SEO_Service::remote_scan_links($site, absint($request->get_param('post')), $type);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/delete — trash a post/page on a connected site. */
+    public function remote_delete(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $result = PCM_SEO_Service::remote_delete_content($site, absint($request->get_param('post')), $type);
         if ($result instanceof WP_Error) {
             return $result;
         }

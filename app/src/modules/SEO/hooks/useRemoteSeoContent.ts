@@ -29,6 +29,8 @@ export interface UseRemoteSeoContentResult {
   scanLinks: (id: number) => Promise<void>;
   /** Set a remote post's Schema.org types; patches the row cache to the server's value. */
   setSchema: (id: number, types: string[]) => Promise<void>;
+  /** Trash the given posts/pages on the remote (bulk), then refresh the list. */
+  deleteRows: (ids: number[]) => Promise<void>;
 }
 
 export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentResult {
@@ -140,5 +142,26 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
     [rows, schemaMutation, siteId, queryClient],
   );
 
-  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate, scanLinks, setSchema };
+  const deleteMutation = trpc.seo.remoteDelete.useMutation();
+  const deleteRows = useCallback(
+    (ids: number[]): Promise<void> => {
+      if (ids.length === 0) return Promise.resolve();
+      const jobs = ids.map((id) => {
+        const type = rows.find((r) => Number(r.id) === id)?.type === 'page' ? 'page' : 'post';
+        return deleteMutation.mutateAsync({ siteId: siteId ?? 0, postId: id, type });
+      });
+      return Promise.allSettled(jobs).then((results) => {
+        queryClient.invalidateQueries({ queryKey: REMOTE_PREFIX });
+        const failed = results.filter((r) => r.status === 'rejected').length;
+        if (failed > 0) {
+          toast.error(`${failed} of ${ids.length} item(s) could not be deleted`);
+        } else {
+          toast.success(`${ids.length} item(s) moved to trash`);
+        }
+      });
+    },
+    [rows, deleteMutation, siteId, queryClient],
+  );
+
+  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate, scanLinks, setSchema, deleteRows };
 }
