@@ -27,7 +27,6 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Table, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import { useSortableTable } from '@/hooks/useSortableTable';
 import { useListState, textFilter, searchableSelect, type FilterState } from '@/components/shared/Kanban';
@@ -223,50 +222,56 @@ export function SitesModule() {
             <span className="ml-auto text-xs text-muted-foreground">{sortedData.length} of {sites.length}</span>
           </div>
 
-          {/* Sortable + filterable table */}
-          <div className="rounded-lg border border-border overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/60">
+          {/* Sortable + filterable table — spreadsheet styling matches the SEO table
+              (gridlines on every cell, compact h-9 rows, sticky header, bg-card). */}
+          <div className="rounded-md border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)] bg-card">
+            <table className="w-full border-collapse text-xs bg-card
+              [&_th]:border [&_th]:border-border/60 [&_td]:border [&_td]:border-border/60
+              [&_th]:px-2 [&_th]:h-9 [&_th]:font-normal [&_th]:text-foreground/80
+              [&_td]:px-2 [&_td]:h-9 [&_td]:py-0 [&_td]:align-middle
+              [&_td]:whitespace-nowrap [&_td]:overflow-hidden
+              [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-card">
+              <thead>
+                <tr>
                   <SortableTableHead columnKey="name" label="Name" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
                   <SortableTableHead columnKey="url" label="URL" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
                   <SortableTableHead columnKey="username" label="User" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
                   <SortableTableHead columnKey="method" label="Method" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
                   <SortableTableHead columnKey="status" label="Status" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
                   <SortableTableHead columnKey="createdAt" label="Added" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
+                  <th className="text-center">Actions</th>
+                </tr>
+              </thead>
               <tbody>
                 {sortedData.length === 0 ? (
-                  <tr><td colSpan={7} className="p-6 text-center text-sm text-muted-foreground">No sites match your filters.</td></tr>
+                  <tr><td colSpan={7} className="text-center text-muted-foreground">No sites match your filters.</td></tr>
                 ) : sortedData.map((site) => {
                   const isConnector = site.connectMethod === 'connector';
                   return (
-                    <tr key={site.id} className="border-t border-border hover:bg-muted/40">
-                      <td className="px-3 py-2">
+                    <tr key={site.id} className="hover:bg-muted/60">
+                      <td>
                         <div className="flex items-center gap-2 min-w-0">
                           <Globe className="w-4 h-4 shrink-0" style={{ color: colors.primary }} />
                           <span className="truncate font-medium" style={{ color: colors.text }}>{site.name}</span>
                         </div>
                       </td>
-                      <td className="px-3 py-2">
-                        <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-[260px] items-center gap-1 text-xs text-primary hover:underline">
+                      <td>
+                        <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-[260px] items-center gap-1 text-primary hover:underline">
                           <span className="truncate">{site.url}</span><ExternalLink className="w-3 h-3 shrink-0" />
                         </a>
                       </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">{site.username}</td>
-                      <td className="px-3 py-2">
+                      <td className="text-muted-foreground">{site.username}</td>
+                      <td>
                         <Badge variant="outline" className="gap-1 text-[10px]">
                           {isConnector ? <><Puzzle className="w-3 h-3" /> Plugin</> : <><KeyRound className="w-3 h-3" /> Password</>}
                         </Badge>
                       </td>
-                      <td className="px-3 py-2">
-                        <span className={`text-xs capitalize ${site.status === 'active' ? 'text-muted-foreground' : 'font-medium text-destructive'}`}>{site.status}</span>
+                      <td>
+                        <span className={`capitalize ${site.status === 'active' ? 'text-muted-foreground' : 'font-medium text-destructive'}`}>{site.status}</span>
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">{site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center justify-end gap-1">
+                      <td className="text-muted-foreground">{site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'}</td>
+                      <td>
+                        <div className="flex items-center justify-center gap-1">
                           <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>
                             {testingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Test
                           </Button>
@@ -279,7 +284,7 @@ export function SitesModule() {
                   );
                 })}
               </tbody>
-            </Table>
+            </table>
           </div>
         </>
       )}

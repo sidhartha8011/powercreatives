@@ -67,6 +67,7 @@ export interface DeliveryDialogProps {
     type?: string | null;
     brandId?: number | null;
     projectId?: number | null;
+    seoSiteId?: number | null;
     modules?: string[];
   }) => Promise<unknown>;
   /** Update handler. Resolves on server ack so the dialog can close. */
@@ -78,6 +79,7 @@ export interface DeliveryDialogProps {
     type?: string | null;
     brandId?: number | null;
     projectId?: number | null;
+    seoSiteId?: number | null;
     modules?: string[];
   }) => Promise<unknown>;
 }
@@ -101,6 +103,8 @@ export function DeliveryDialog({
   // '' = none — Select values are strings; converted to number|null on submit.
   const [brandId, setBrandId] = useState('');
   const [projectId, setProjectId] = useState('');
+  // SEO module — a connected site (Sites/SEO tab) chosen for this delivery.
+  const [seoSiteId, setSeoSiteId] = useState('');
   // Module grants for assignees (nav ids).
   const [modules, setModules] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -120,11 +124,16 @@ export function DeliveryDialog({
   // assigning it grants access to both.
   const { data: brandsRaw } = trpc.brands.list.useQuery();
   const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
+  // Connected sites for the SEO module — the same list shown in the SEO tab.
+  const { data: sitesRaw } = trpc.sites.list.useQuery();
   const brands: { id: number; name: string }[] = Array.isArray(brandsRaw)
     ? brandsRaw.map((b: any) => ({ id: Number(b.id), name: b.name }))
     : [];
   const projects: { id: number; name: string }[] = Array.isArray(projectsRaw)
     ? projectsRaw.map((p: any) => ({ id: Number(p.id), name: p.name }))
+    : [];
+  const sites: { id: number; name: string }[] = Array.isArray(sitesRaw)
+    ? sitesRaw.map((s: any) => ({ id: Number(s.id), name: String(s.name || s.url || `Site #${s.id}`) }))
     : [];
 
   // Sync form to the supplied delivery whenever the dialog opens. Both
@@ -139,6 +148,7 @@ export function DeliveryDialog({
       setType(delivery.type ?? '');
       setBrandId(delivery.brandId ? String(delivery.brandId) : '');
       setProjectId(delivery.projectId ? String(delivery.projectId) : '');
+      setSeoSiteId(delivery.seoSiteId ? String(delivery.seoSiteId) : '');
       setModules(Array.isArray(delivery.modules) ? delivery.modules : []);
     } else {
       setName('');
@@ -147,6 +157,7 @@ export function DeliveryDialog({
       setType('');
       setBrandId('');
       setProjectId('');
+      setSeoSiteId('');
       setModules([]);
     }
     setSubmitting(false);
@@ -170,6 +181,7 @@ export function DeliveryDialog({
           type: type || null,
           brandId: brandId ? Number(brandId) : null,
           projectId: projectId ? Number(projectId) : null,
+          seoSiteId: seoSiteId ? Number(seoSiteId) : null,
           modules,
         });
       } else {
@@ -181,6 +193,7 @@ export function DeliveryDialog({
           type: type || null,
           brandId: brandId ? Number(brandId) : null,
           projectId: projectId ? Number(projectId) : null,
+          seoSiteId: seoSiteId ? Number(seoSiteId) : null,
           modules,
         });
       }
@@ -194,7 +207,7 @@ export function DeliveryDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>
@@ -311,6 +324,30 @@ export function DeliveryDialog({
                     </Label>
                   </div>
                 ))}
+              </div>
+
+              {/* SEO module — a dropdown of connected sites (the SEO tab's site
+                  list), scoped to this caller. The chosen site is saved on the
+                  delivery (seoSiteId). */}
+              <div className="mt-2 grid gap-1.5">
+                <Label htmlFor="delivery-seo-site" className="font-normal">SEO module — site</Label>
+                <Select
+                  value={seoSiteId || 'none'}
+                  onValueChange={(v) => setSeoSiteId(v === 'none' ? '' : v)}
+                >
+                  <SelectTrigger id="delivery-seo-site">
+                    <SelectValue placeholder="No site selected" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No site</SelectItem>
+                    {sites.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                    ))}
+                    {sites.length === 0 && (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">No connected sites yet</div>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 

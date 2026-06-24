@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-19 (remote-SEO suite + SEO Hub pairing-code landed — ~4k LOC across 38 files) · verified current 2026-06-19_
+_Last updated: 2026-06-24 · verified current 2026-06-24 (HEAD `b49d5f0`). NOTE: SEO module is under active parallel development — the generation UI especially has churned (bulk-only → per-cell restored); verify SEO specifics against the code._
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -550,18 +550,22 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   `pcm_seo_field_prompts`) + `generate_field` (substitute_vars + build_field_vars
   + sanitize_ai_output → `PCM_LLM::invoke`); `POST /seo/content/{id}/generate`
   accepts optional `model` + `provider` (data-driven routing — no detect_provider).
-  **Generation UI (post-1.27):** generation is **bulk-only** — there are no
-  per-cell sparkles and no header per-column ✦/template button anymore (removed).
-  The sole entry point is a **"Generate all" split button in a FLOATING bulk bar**
-  (`fixed bottom-center`, shown only when rows are selected — `fixed` so the table
-  never reflows on select): left = generate every generatable column for the
-  selected rows; the ▾ dropdown is a column checklist (`genCols` state) → "Generate
-  selected (N)". Cells only DISPLAY a staged suggestion (accept/reject). A
-  **model picker** in the content header (next to Post/Page) lets the user pick
-  any text model (`trpc.models.getForGeneration {type:'text'}`); the choice
-  (id+provider) is sent with every generate call and persisted in
-  localStorage (`pcm:seo:gen-model`). (`ColumnHead` still carries an unused
-  optional `generate` prop — dead since the header ✦ was removed.)
+  **Generation UI (current — THREE entry points; churned a lot, verify live):**
+  (1) **per-cell ✦** — each editable cell has a Sparkles button (`handleGenerate`;
+  restored in commit `b49d5f0` after a brief bulk-only period — the EditableCell
+  docstring still says "no longer per-cell", that comment is stale);
+  (2) **header per-column ✦** — `ColumnHead.generate` prop → `handleColumnGenerate`
+  (template picker → generate the whole column);
+  (3) **bulk "Generate all" split button** in a FLOATING bar (`fixed bottom-center`,
+  shown when rows are selected; left = all generatable columns for selected rows,
+  ▾ dropdown = column checklist `genCols` + overwrite/empty mode → `runBulk`).
+  All stage suggestions for accept/reject/re-generate. A **model picker** in the
+  content header (next to Post/Page) picks any text model
+  (`trpc.models.getForGeneration {type:'text'}`); choice (id+provider) sent with
+  every generate call, persisted in localStorage (`pcm:seo:gen-model`).
+  Next to the split button, a **"Bulk actions" menu** (Change status / Duplicate /
+  Delete). Remote sites also have **bulk status + delete** (`b49d5f0`;
+  `POST /seo/sites/{id}/content/{post}/delete` → `remote_delete`).
   Next to the split button is a **"Bulk actions" menu** (local only): **Change
   status** (submenu of `options.statuses` → bulk `saveCell(id,'status',…)`),
   **Duplicate** (bulk → new `POST /seo/content/{id}/duplicate`), **Delete**

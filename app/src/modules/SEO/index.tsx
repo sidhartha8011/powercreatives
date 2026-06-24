@@ -255,8 +255,7 @@ const TOGGLE_COLUMNS: { key: string; label: string }[] = [
   { key: 'date', label: 'Date' },
   { key: 'traffic', label: 'Traffic' },
   { key: 'author', label: 'Author' },
-  { key: 'preview', label: 'Preview' },
-  { key: 'open', label: 'Open' },
+  { key: 'actions', label: 'Actions' },
 ];
 
 // --- Column layout (resize + reorder) metadata -------------------------------
@@ -285,7 +284,7 @@ const SORTABLE_KEYS = new Set<string>([
 const HEAD_ICONS: Record<string, LucideIcon> = {
   type: FileText, title: Type, status: CircleDot, schema: Braces, author: User,
   slug: Link2, featuredImage: ImageIcon, supportingKeyword: KeyRound,
-  date: Calendar, traffic: TrendingUp, preview: Eye,
+  date: Calendar, traffic: TrendingUp,
   internalLinks: Link2, externalLinks: ExternalLink, brokenLinks: Unlink, ...FIELD_ICONS,
 };
 /** Default px width per column (seeds the spreadsheet layout on first use). */
@@ -294,7 +293,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   metaTitle: 200, metaDescription: 260, primaryKeyword: 150, metaKeywords: 180,
   supportingKeyword: 150, schema: 150, date: 120, traffic: 90, author: 120,
   internalLinks: 110, externalLinks: 110, brokenLinks: 110,
-  preview: 72, open: 80,
+  actions: 100,
 };
 /** Fixed leading selection/row-number column (not reorderable/resizable). */
 const SELECT_COL_WIDTH = 44;
@@ -578,11 +577,15 @@ export function SEOModule() {
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someSelected = selected.size > 0 && !allSelected;
 
-  // Header ✦ → pick a template → generate the ENTIRE column (every visible row)
-  // with that template, staging each result for review (Optimizer behavior).
+  // Header ✦ → pick a template → generate the column with that template, staging
+  // each result for review. Scope: the SELECTED rows when any are selected,
+  // otherwise every visible row. (Selection narrows; preserves visible order.)
   const handleColumnGenerate = useCallback(async (field: string, templateId?: number) => {
     if (columnGenerating) return;
-    const ids = sortedData.map((r) => r.id);
+    const ids = (selected.size > 0
+      ? sortedData.filter((r) => selected.has(r.id))
+      : sortedData
+    ).map((r) => r.id);
     if (ids.length === 0) return;
     setColumnGenerating(field);
     const total = ids.length;
@@ -601,7 +604,7 @@ export function SEOModule() {
     setGenKey(null);
     setProgress(null);
     setColumnGenerating(null);
-  }, [columnGenerating, sortedData, generateField, genModelId, genProvider]);
+  }, [columnGenerating, sortedData, selected, generateField, genModelId, genProvider]);
 
   const toggleAll = () =>
     setSelected((prev) => {
@@ -719,11 +722,11 @@ export function SEOModule() {
         key={key}
         label={COLUMN_LABELS[key] ?? key}
         icon={HEAD_ICONS[key]}
-        className={key === 'open' ? 'text-center' : undefined}
+        className={key === 'actions' ? 'text-center' : undefined}
         sort={sortable
           ? { active: sortKey === key, dir: sortDir, onToggle: () => toggleSort(key as SeoSortKey) }
           : undefined}
-        filter={key !== 'open' && def
+        filter={key !== 'actions' && def
           ? { def, value: filterValues[key] ?? '', onChange: (v) => setFilter(key, v) }
           : undefined}
         generate={GENERATABLE.has(key)
@@ -897,24 +900,19 @@ export function SEOModule() {
           </TableCell>
         );
       }
-      case 'preview':
-        return (
-          <TableCell key={key} className="text-center">
-            <button
-              type="button"
-              onClick={() => setPreviewRow(row)}
-              disabled={!row.permalink}
-              className="text-muted-foreground hover:text-primary disabled:opacity-40"
-              title="Preview page"
-            >
-              <Eye className="w-3.5 h-3.5" />
-            </button>
-          </TableCell>
-        );
-      case 'open':
+      case 'actions':
         return (
           <TableCell key={key} className="text-center">
             <div className="inline-flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPreviewRow(row)}
+                disabled={!row.permalink}
+                className="text-muted-foreground hover:text-primary disabled:opacity-40"
+                title="Preview page"
+              >
+                <Eye className="w-3.5 h-3.5" />
+              </button>
               <button
                 type="button"
                 onClick={() => setOptimizeRow(row)}
@@ -924,7 +922,7 @@ export function SEOModule() {
                 <Sparkles className="w-3.5 h-3.5" />
               </button>
               {row.permalink && (
-                <a href={row.permalink} target="_blank" rel="noopener noreferrer" className="inline-flex text-muted-foreground hover:text-foreground" title="View page">
+                <a href={row.permalink} target="_blank" rel="noopener noreferrer" className="inline-flex text-muted-foreground! hover:text-foreground!" title="View page">
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               )}
@@ -1060,12 +1058,16 @@ export function SEOModule() {
             Page
           </PillButton>
           <Select
-            value={genModelId || '__default__'}
+            value={genModelId}
             onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
           >
-            <SelectTrigger className="h-8 w-[190px] bg-card text-xs" title="Model used for AI generation">
-              <Sparkles className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-              <SelectValue placeholder="Model" />
+            <SelectTrigger
+              className="h-9 w-[190px] gap-1 rounded-full border border-border bg-card px-4 text-xs shadow-sm hover:bg-muted/50"
+              title="Model used for AI generation"
+            >
+              <SelectValue
+                placeholder={<span className="text-muted-foreground">Select model</span>}
+              />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__default__" className="text-xs">Default model</SelectItem>
@@ -1327,6 +1329,11 @@ export function SEOModule() {
                 </button>
               </div>
             </div>
+            {/* Direct iframe for both local and connected sites: renders the live,
+                AUTHENTICATED page (the browser sends the site's login cookies), so the
+                WP admin bar — Edit Site / Edit Page / New — shows and works, same as
+                "This Site". (A server-side proxy can't do this: it fetches unauthenticated
+                HTML, stripping the admin bar.) */}
             <iframe src={previewRow.permalink} title="Page preview" className="h-full w-full flex-1 bg-white" />
           </div>
         </div>

@@ -1,5 +1,153 @@
 # Session Log
 
+## 2026-06-24 — Delivery dialog: scroll fix + SEO-module site dropdown [/build]
+- **Part 1 (UI fix):** the New/Edit delivery dialog overflowed the screen with no scroll.
+  `DialogContent` → added `max-h-[90vh] overflow-y-auto` (`DeliveryDialog.tsx`).
+- **Part 2 (feature):** added an "SEO module — site" dropdown in the "Modules needed"
+  section listing the user's connected sites (same list as the SEO tab; sites aren't
+  brand-scoped in the schema, and the user confirmed "all sites in the SEO tab").
+  Selection persists on the delivery as a new `seoSiteId`.
+  - Backend: `deliveries.seoSiteId int DEFAULT NULL` (schema; dbDelta adds it via
+    `maybe_upgrade`); **PCM_DB_VERSION 1.27.0 → 1.28.0**; `resolve_link_ids` validates
+    `seoSiteId` via `PCM_DB::get_site($id,$user)` (ownership-scoped, nullable);
+    `format_delivery` returns it. create_delivery/update_delivery pass `$data` straight
+    to `$wpdb` (no whitelist), so it flows.
+  - Frontend: `Delivery` type + `Create/UpdateDeliveryInput` + dialog state/sync/submit +
+    `trpc.sites.list` for the options. Parent passes `createDelivery`/`updateDelivery`
+    through unchanged.
+- **Who:** all inline (one coherent feature in a known codebase; delegation overhead not
+  worth it).
+- **Verified:** `php -l` clean (schema/controller/service/main); `npm run check` clean
+  (Deliveries); `npm run build` OK; served bundle == build; `GET /wp-json/` 200 fired
+  `maybe_upgrade` (1.27→1.28 → create_tables/dbDelta adds the column); `GET /deliveries`
+  403 (route intact). Live authenticated CRUD not exercised (needs a browser session) —
+  test create/edit in the UI. No commit.
+
+## 2026-06-24 — SEO "Select model" placeholder: single color [/task]
+- **Asked:** make the "model" word the same color as "Select" (drop the amber two-tone).
+- **Change (`SEO/index.tsx`):** placeholder → one `<span className="text-muted-foreground">Select model</span>`
+  (removed the nested amber span).
+- **Verified:** `npm run check` clean; `npm run build` OK; served bundle == build;
+  only SEO/index.tsx changed. No commit.
+
+## 2026-06-24 — SEO model dropdown → pill style ("Select model") [/task]
+- **Asked:** restyle the model dropdown to match the image (a pill: rounded-full,
+  bordered, light shadow, "Select model" with "model" in orange, chevron, no icon).
+- **Change (`SEO/index.tsx`, the gen-model `Select`):** trigger →
+  `h-9 rounded-full border bg-card px-4 shadow-sm hover:bg-muted/50`; dropped the
+  Sparkles icon (chevron is built into SelectTrigger). Switched to a placeholder
+  (ReactNode) showing two-tone "Select model" (`text-muted-foreground` + `text-amber-600`);
+  `value` now `genModelId` ('' → placeholder) instead of forcing the `__default__` item,
+  so the default state reads "Select model" (the "Default model" item still resets it).
+  (`--primary` is blue, so the orange is a deliberate amber accent, not the theme color.)
+- **Verified:** `npm run check` clean; `npm run build` OK; served bundle == build;
+  confirmed `.text-amber-600`/`.rounded-full`/`.shadow-sm` present in built CSS; only
+  SEO/index.tsx changed. No commit.
+
+## 2026-06-24 — Connected-site preview: direct iframe (fixes preview + admin-bar "Edit Site") [/build]
+- **Reported:** connected-site preview showed "Couldn't load the preview"; and the WP
+  admin-bar **"Edit Site"** (and Edit Page/New) didn't work in the preview. (User
+  clarified via screenshot that "edit site" = the WordPress admin-bar button inside the
+  rendered page, not a plugin control.)
+- **Root cause:** my prior task proxied the page server-side and rendered it via `srcDoc`.
+  A server fetch is UNauthenticated → it strips the logged-in admin bar (no Edit Site /
+  Edit Page), and the fetch was failing → the "Couldn't load" fallback.
+- **Fix:** reverted to the **direct `<iframe src={permalink}>` for connected sites too**
+  (identical to "This Site"). The browser sends the remote site's login cookies, so the
+  page renders authenticated WITH a working admin bar (Edit Site/Edit Page/New). This is
+  the only way those buttons can work — a proxy fundamentally can't.
+- **Removed the proxy plumbing** (all uncommitted from the prior task): frontend
+  effect/state/mutation + srcDoc branch (`SEO/index.tsx`), `seo.sitePreview` (trpc),
+  `remote_preview` route+handler (controller), `remote_preview_html` (service). Those 3
+  backend/lib files now match HEAD again.
+- **Verified:** no orphan refs; `php -l` clean; `npm run check` clean; `npm run build` OK;
+  served bundle == build; `POST /seo/sites/1/preview` → 404 (route removed). Only
+  `SEO/index.tsx` carries the change. No commit.
+- **Caveat:** if a specific connected site sends X-Frame-Options/CSP that blocks framing,
+  its preview will be blank — use the modal's "Open in new tab". User's site
+  (create.widgetify.co) frames fine (confirmed via screenshot).
+
+## 2026-06-24 — Deploy zip rebuilt to match reference (folder `powerplatform/`) [/task]
+- **Asked:** make the zip like `~/Downloads/power-creatives-f.zip` so it can be updated easily.
+- **Key finding:** the reference installs under inner folder **`powerplatform/`** (NOT
+  `powercreatives/`) — that's what lets WP overwrite/update the existing plugin. Its
+  `vendor/` is dev-only (composer `require` = just `php>=8.1`; phpunit/mockery/etc are
+  require-dev), so it's not needed at runtime.
+- **Built `C:/Users/sanky/Desktop/powercreatives/powerplatform.zip`** (Python zipfile,
+  forward slashes): full working copy under `powerplatform/`, excluding `.git/ .claude/
+  .agent/ .agents/ node_modules/`. 740 files, 2.88 MB, fresh `app/dist` (index-writer.js
+  4,450,801 B). Header: Power Creatives 1.7.0 / power-creatives. Differs from reference
+  only by omitting dev-only `vendor/`.
+- Supersedes last turn's `powercreatives-1.7.0.zip` (wrong inner folder `powercreatives/`).
+- No commit.
+
+## 2026-06-24 — Sites table styled to match the SEO table [/task]
+- **Asked:** make the Site tab table's styles/colors match the SEO tab table.
+- **Change (`Sites/index.tsx`):** replaced the shadcn `<Table>` (h-12 rows, border-b
+  only, text-sm) with a bare `<table>` carrying the SEO table's exact grid className
+  (gridlines on every th/td via `[&_th]/[&_td]:border`, compact `h-9`/`px-2`,
+  `text-xs`, `bg-card`, sticky `bg-card` header, row `hover:bg-muted/60`); wrapper now
+  `rounded-md border shadow-sm overflow-auto max-h-[calc(100vh-300px)] bg-card` (same
+  as SEO). `SortableTableHead` kept — its `<th>` inherits the grid styles via the
+  descendant selectors. Dropped the now-unused `ui/table` import; removed per-cell
+  `px-3 py-2` (handled by the table className). Used `w-full` (auto layout) instead of
+  SEO's `table-fixed`, since Sites has no colgroup/column-width management.
+- **Note:** the SEO header is currently `bg-card` (the earlier gray-header change was
+  reverted by parallel team churn) — matched current SEO, not the old gray.
+- **Verified:** `npm run check` clean for Sites/index.tsx; `npm run build` OK; served
+  bundle == build (junction); only Sites/index.tsx changed. No commit.
+
+## 2026-06-24 — SEO preview works for connected (remote) sites [/task]
+- **Bug:** preview (Eye) works for local but on connected sites shows blank /
+  "refused to connect". Cause (confirmed w/ user): remote pages send
+  X-Frame-Options/CSP that block the cross-origin iframe; pages are published.
+- **Fix — proxy the page HTML through the hub, render same-origin via `srcDoc`:**
+  - Backend: `POST /seo/sites/{id}/preview` (manage_options, owner-scoped via
+    `PCM_DB::get_site`) → `PCM_SEO_Service::remote_preview_html($site,$url)`:
+    SSRF-guards the URL (must start with `$site->url`), `wp_remote_get`s the page,
+    injects `<base href="{origin}/">` after `<head>` so relative assets resolve,
+    returns `{html}`.
+  - trpc `seo.sitePreview`; frontend `SEO/index.tsx`: an effect fetches the HTML
+    when previewing a remote row; the modal iframe uses `src` for local and
+    `srcDoc` for remote (+ loading spinner + "open in new tab" fallback).
+- **Verified:** `php -l` clean (controller+service); `npm run check` clean;
+  `npm run build` OK; served bundle == build; `POST /seo/sites/1/preview` → 403
+  (registered). Not driven live (read-tier browser; needs a connected site).
+  Caveat: works for PUBLISHED pages; drafts (no remote auth) + http-asset mixed
+  content out of scope. No commit.
+
+## 2026-06-24 — SEO Actions: force "view page" icon grey [/task]
+- **Asked:** make the Actions column's "view page" icon grey.
+- **Cause:** it's an `<a>` — WP admin's `#wpwrap a` blue (id-specificity) overrode the
+  plain `text-muted-foreground` class, so the icon rendered blue.
+- **Change (`SEO/index.tsx`):** the view-page `<a>` → `text-muted-foreground! hover:text-foreground!`
+  (Tailwind **v4 important SUFFIX** — NOT the v3 `!`-prefix, which silently generates
+  nothing in v4). `!important` beats the id-specificity admin link color.
+- **Verified:** confirmed the built CSS has `.text-muted-foreground\!{color:var(--muted-foreground)!important}`
+  + the hover variant; `npm run check` clean; `npm run build` OK; served bundle == build. No commit.
+
+## 2026-06-24 — SEO table: merge Open + Preview → single "Actions" column [/task]
+- **Asked:** combine the `open` and `preview` columns into one column named "Actions".
+- **Change (`SEO/index.tsx`):** TOGGLE_COLUMNS `preview`+`open` → one `{key:'actions',
+  label:'Actions'}`; renderCell merged into a single `actions` case (Preview Eye +
+  Optimize Sparkles + View ExternalLink, same handlers); DEFAULT_COLUMN_WIDTHS
+  `preview/open` → `actions:100`; dropped `preview` from HEAD_ICONS; renderHeader
+  center + filter guards now key off `'actions'`. (`useColumnLayout` reconciles saved
+  layouts — drops removed keys, appends `actions`.)
+- **Verified:** `npm run check` clean for SEO/index.tsx; `npm run build` OK; served
+  bundle == build (junction); only `'open'` residual is the unrelated media-frame
+  event; only index.tsx changed. No commit.
+
+## 2026-06-24 — SEO header ✦ respects row selection [/task]
+- **Asked:** the header sparkle generates a column for all rows; if rows are selected it
+  should generate only for those.
+- **Change (`SEO/index.tsx`, `handleColumnGenerate`):** scope = SELECTED rows when
+  `selected.size > 0` (filtered from `sortedData` to keep visible order), else all visible
+  rows. Added `selected` to deps; progress total reflects the scoped count. Matches the
+  bulk-bar's selected-rows behavior.
+- **Verified:** `npm run check` clean for SEO/index.tsx; `npm run build` OK; served bundle
+  == build (junction); only index.tsx changed. No commit.
+
 ## 2026-06-19 — Restore per-cell AI generate (✦) on table cells [/task]
 - A pulled commit ("changed seo tab") refactored generation to bulk-only and removed the per-cell ✦
   trigger from EditableCell + the single-cell handleGenerate. User wants it back.

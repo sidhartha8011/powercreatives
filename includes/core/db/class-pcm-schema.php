@@ -465,6 +465,7 @@ class PCM_Schema
             type varchar(64) DEFAULT NULL,
             brandId int(11) DEFAULT NULL,
             projectId int(11) DEFAULT NULL,
+            seoSiteId int(11) DEFAULT NULL,
             modules text DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,

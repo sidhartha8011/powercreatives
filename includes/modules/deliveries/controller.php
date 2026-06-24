@@ -306,6 +306,18 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             }
         }
 
+        // SEO module — a connected site (Sites/SEO tab) scoped to this caller.
+        if (array_key_exists('seoSiteId', $params)) {
+            $site_id = absint($params['seoSiteId'] ?? 0);
+            if ($site_id === 0) {
+                $out['seoSiteId'] = null;
+            } elseif (PCM_DB::get_site($site_id, $user_id)) {
+                $out['seoSiteId'] = $site_id;
+            } else {
+                return $this->error('Site not found.', 404, 'pcm_site_not_found');
+            }
+        }
+
         return $out;
     }
 }
