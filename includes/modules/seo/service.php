@@ -599,6 +599,57 @@ class PCM_SEO_Service
     }
 
     /**
+     * Fetch a connected site's page HTML AUTHENTICATED (Basic auth via the connector's
+     * Application Password) so it can be previewed SAME-ORIGIN with the WP admin bar.
+     * The connector enables app-password auth on front-end requests; rendering server-
+     * side here avoids the cross-origin third-party-cookie block that strips the admin
+     * bar from a direct iframe. A `<base href>` is injected so relative assets resolve.
+     * Only fetches the site's OWN host (the Basic-auth creds must not leak elsewhere).
+     *
+     * @return array{html:string}|\WP_Error
+     */
+    public static function remote_preview_html(object $site, string $url)
+    {
+        $url = trim($url);
+        if ($url === '') {
+            return new WP_Error('pcm_seo_bad_preview_url', __('No preview URL.', 'power-creatives'), array('status' => 400));
+        }
+        $url_host  = strtolower((string) wp_parse_url($url, PHP_URL_HOST));
+        $site_host = strtolower((string) wp_parse_url((string) $site->url, PHP_URL_HOST));
+        if ($url_host === '' || $site_host === '' || $url_host !== $site_host) {
+            return new WP_Error('pcm_seo_bad_preview_url', __('Preview URL is not on this site.', 'power-creatives'), array('status' => 400));
+        }
+        self::ensure_sites_service();
+        $password = PCM_Sites_Service::decrypt_password((string) $site->appPassword);
+        $res = wp_remote_get($url, array(
+            'timeout'     => 20,
+            'redirection' => 5,
+            'sslverify'   => false,
+            'headers'     => array(
+                'Authorization' => 'Basic ' . base64_encode($site->username . ':' . $password),
+                'Accept'        => 'text/html',
+            ),
+            'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreatives/1.0; +' . home_url() . ')',
+        ));
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_preview_failed', $res->get_error_message(), array('status' => 502));
+        }
+        $code = (int) wp_remote_retrieve_response_code($res);
+        $html = (string) wp_remote_retrieve_body($res);
+        if ($code < 200 || $code >= 400 || $html === '') {
+            return new WP_Error('pcm_seo_preview_failed', sprintf(__('The page returned HTTP %d.', 'power-creatives'), $code), array('status' => 502));
+        }
+        $scheme   = (string) (wp_parse_url($url, PHP_URL_SCHEME) ?: 'https');
+        $base_tag = '<base href="' . esc_url($scheme . '://' . $url_host . '/') . '">';
+        if (preg_match('/<head[^>]*>/i', $html)) {
+            $html = preg_replace('/(<head[^>]*>)/i', '$1' . $base_tag, $html, 1);
+        } else {
+            $html = $base_tag . $html;
+        }
+        return array('html' => $html);
+    }
+
+    /**
      * Save one SEO field to a connected site's post/page. Native fields (title/slug)
      * write directly; meta fields dual-write the pcm_* key plus Yoast/RankMath/SEOPress
      * keys so the value lands regardless of the remote's active SEO plugin.

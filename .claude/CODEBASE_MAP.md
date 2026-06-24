@@ -681,10 +681,14 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
 > original HMAC-handshake tenant ZIP, there's now a **generic, tenant-free
 > connector** ZIP (`GET /seohub/connector-download`, `manage_options:strict`;
 > built by a `PCM_SEOHub_Service` generic-source builder ~line 357). The remote
-> connector (Power Creatives Connector **v1.3.0**) exposes SEO meta in REST,
-> manages site-wide robots.txt + JSON-LD, serves `/llms.txt` + `/llm-info/`, and
-> shows a **one-paste connection code** in its admin — the user pastes that code
-> into the hub's "Add Site" to pair (no per-tenant ZIP, no activation handshake).
+> connector (Power Creatives Connector **v1.3.1**) exposes SEO meta in REST,
+> manages site-wide robots.txt + JSON-LD, serves `/llms.txt` + `/llm-info/`,
+> enables app-password auth on FRONT-END requests
+> (`application_password_is_api_request → __return_true`, v1.3.1 — lets the hub's
+> authenticated page preview render the WP admin bar), and shows a **one-paste
+> connection code** in its admin — the user pastes that code into the hub's "Add
+> Site" to pair (no per-tenant ZIP, no activation handshake). NOTE: connector
+> source changes require the user to RE-DOWNLOAD + reinstall the connector.
 > This is what powers the remote-SEO suite above (`/pcm-conn/v1/*`).
 
 Separate `seohub` module (`pcm/v1/seohub`). Tables `seo_tenants` +

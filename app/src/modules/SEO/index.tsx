@@ -435,6 +435,29 @@ export function SEOModule() {
   const [schemaOverrides, setSchemaOverrides] = useState<Record<number, string[]>>({});
   const [optimizeRow, setOptimizeRow] = useState<SeoRow | null>(null);
   const [previewRow, setPreviewRow] = useState<SeoRow | null>(null);
+  // Connected-site preview: a direct cross-origin iframe renders logged-out (the
+  // remote login cookie is a blocked third-party cookie) → no admin bar. So for a
+  // connected site we fetch the page AUTHENTICATED via the connector (server-side)
+  // and render it same-origin (srcDoc) — the admin bar shows. Local stays a direct src.
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const sitePreview = trpc.seo.sitePreview.useMutation();
+  useEffect(() => {
+    if (!previewRow || !previewRow.permalink || isLocal || typeof siteId !== 'number') {
+      setPreviewHtml(null);
+      setPreviewLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    setPreviewHtml(null);
+    sitePreview.mutateAsync({ siteId, url: previewRow.permalink })
+      .then((r: any) => { if (!cancelled) setPreviewHtml(String(r?.html ?? '')); })
+      .catch(() => { if (!cancelled) setPreviewHtml(null); })
+      .finally(() => { if (!cancelled) setPreviewLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewRow, isLocal, siteId]);
   const [scanningRows, setScanningRows] = useState<Set<number>>(() => new Set());
   const handleScan = useCallback((id: number) => {
     setScanningRows((s) => { if (s.has(id)) return s; const n = new Set(s); n.add(id); return n; });
@@ -1329,12 +1352,22 @@ export function SEOModule() {
                 </button>
               </div>
             </div>
-            {/* Direct iframe for both local and connected sites: renders the live,
-                AUTHENTICATED page (the browser sends the site's login cookies), so the
-                WP admin bar — Edit Site / Edit Page / New — shows and works, same as
-                "This Site". (A server-side proxy can't do this: it fetches unauthenticated
-                HTML, stripping the admin bar.) */}
-            <iframe src={previewRow.permalink} title="Page preview" className="h-full w-full flex-1 bg-white" />
+            {/* Local: direct same-origin iframe. Connected site: prefer the AUTHENTICATED
+                HTML fetched server-side via the connector (srcDoc) so the WP admin bar
+                shows. If that fetch fails (e.g. a draft on a connector without front-end
+                auth, or a transient error), FALL BACK to a direct iframe so the preview is
+                still shown rather than a dead-end. */}
+            {isLocal ? (
+              <iframe src={previewRow.permalink} title="Page preview" className="h-full w-full flex-1 bg-white" />
+            ) : previewLoading ? (
+              <div className="flex h-full w-full flex-1 items-center justify-center bg-white">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : previewHtml ? (
+              <iframe srcDoc={previewHtml} title="Page preview" className="h-full w-full flex-1 bg-white" />
+            ) : (
+              <iframe src={previewRow.permalink} title="Page preview" className="h-full w-full flex-1 bg-white" />
+            )}
           </div>
         </div>
       )}

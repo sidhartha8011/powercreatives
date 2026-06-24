@@ -386,9 +386,15 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, and shows a one-paste connection code.
- * Version: 1.3.0
+ * Version: 1.3.1
  */
 if (!defined('ABSPATH')) { exit; }
+
+// Let the hub authenticate FRONT-END page loads via the Application Password, so its
+// authenticated page preview renders the WP admin bar. WordPress normally limits
+// app-password auth to REST/XML-RPC; this only affects requests that carry a
+// Basic-auth header, so normal visitors are unaffected.
+add_filter('application_password_is_api_request', '__return_true');
 
 // Expose SEO meta over the standard REST API so the hub can read/write it.
 add_action('init', function () {
@@ -571,9 +577,15 @@ PHP;
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives SEO Hub.
- * Version: 1.0.0
+ * Version: 1.0.1
  */
 if (!defined('ABSPATH')) { exit; }
+
+// Let the hub authenticate FRONT-END page loads via the Application Password, so its
+// authenticated page preview renders the WP admin bar. WordPress normally limits
+// app-password auth to REST/XML-RPC; this only affects requests that carry a
+// Basic-auth header, so normal visitors are unaffected.
+add_filter('application_password_is_api_request', '__return_true');
 
 define('PCM_CONN_HUB_URL', '__HUB_URL__');
 define('PCM_CONN_CLIENT_ID', '__CLIENT_ID__');

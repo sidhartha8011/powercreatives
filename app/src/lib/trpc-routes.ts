@@ -310,6 +310,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content` }),
     },
+    "seo.sitePreview": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/preview`, body: { url: input.url } }),
+    },
     "seo.remoteSaveCell": {
         endpoint: "seo/sites",
         method: "POST",

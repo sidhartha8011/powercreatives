@@ -1,5 +1,60 @@
 # Session Log
 
+## 2026-06-24 — Rebuilt deploy zip (preview iframe fallback) [/task]
+- Regenerated `C:/Users/sanky/Desktop/powercreatives/powerplatform.zip` (Python zipfile,
+  folder `powerplatform/`, minus .git/.claude/.agent(s)/node_modules). 740 files, 2.88 MB.
+  Verified: dist index-writer.js 4,452,498 B, PCM_DB_VERSION 1.28.0, connector v1.3.1,
+  0 cruft. No commit.
+
+## 2026-06-24 — Preview: fall back to direct iframe when the proxy fails (no dead-end) [/task]
+- **Reported:** connected-site preview shows "Couldn't load the preview" (regression — the
+  authenticated proxy was failing) and no admin bar. Screenshot: bestclient.widgetify.co
+  `?p=30` "Untitled" (a DRAFT).
+- **Cause:** the proxy server-fetches the page; a draft returns 404 to an UNauthenticated
+  request, and the connector v1.3.1 front-end-auth filter isn't reinstalled yet, so the
+  fetch isn't authenticated → WP_Error → the old fallback was a dead-end "Couldn't load".
+- **Fix (`SEO/index.tsx`):** when the proxy returns no HTML, FALL BACK to the direct
+  `<iframe src={permalink}>` instead of the dead-end text. So the preview is always shown;
+  the authenticated proxy (srcDoc + admin bar) still takes over once it succeeds.
+- **Still needed for the admin bar / draft previews:** reinstall connector **v1.3.1** on
+  the connected site (front-end app-password auth). Until then: published posts preview
+  (proxy or fallback), drafts fall back to the direct iframe (need a browser session on
+  the remote to render).
+- **Verified:** `npm run check` clean; `npm run build` OK; served bundle == build; only
+  SEO/index.tsx changed. No commit.
+
+## 2026-06-24 — Rebuilt deploy zip (latest: preview proxy + connector v1.3.1) [/task]
+- Regenerated `C:/Users/sanky/Desktop/powercreatives/powerplatform.zip` (Python zipfile,
+  inner folder `powerplatform/`, full project minus .git/.claude/.agent(s)/node_modules).
+  740 files, 2.88 MB. Verified: fresh `app/dist` (index-writer.js 4,452,822 B),
+  PCM_DB_VERSION 1.28.0, connector source v1.3.1, 0 cruft entries. No commit.
+
+## 2026-06-24 — Connected-site preview: authenticated proxy so the WP admin bar shows [/task]
+- **Reported:** the WP admin bar isn't visible inside the connected-site preview.
+- **Root cause:** admin bar renders only for a logged-in user; a direct cross-origin
+  iframe sends the remote login as a THIRD-PARTY cookie (browser-blocked) → logged-out →
+  no admin bar. (User chose the "authenticated proxy" fix.)
+- **Fix (two sides):**
+  - **Connector** (`seohub/service.php`, both generated variants → v1.3.1 / v1.0.1):
+    `add_filter('application_password_is_api_request','__return_true')` so the hub can
+    authenticate FRONT-END page loads via the app password (WP normally limits app-pw
+    auth to REST/XML-RPC). Only affects requests carrying a Basic-auth header.
+  - **Hub:** `PCM_SEO_Service::remote_preview_html($site,$url)` GETs the page with the
+    connector's app-password Basic auth (host-guarded vs credential leak), injects
+    `<base href>`, returns `{html}`; `POST /seo/sites/{id}/preview` → `remote_preview`
+    (manage_options, owner-scoped); trpc `seo.sitePreview`; `SEO/index.tsx` renders the
+    connected-site preview via `srcDoc` (authenticated, same-origin → admin bar shows),
+    local stays a direct `src`. + loading/fallback.
+- **⚠ Requires:** user must RE-DOWNLOAD + reinstall the updated connector on each
+  connected site for the front-end-auth filter to take effect.
+- **Caveat:** admin-bar buttons (Edit Page/Site) are now VISIBLE; clicking them navigates
+  the iframe to the remote wp-admin (fresh cross-origin request) which may need a remote
+  login — use "Open in new tab" for full editing.
+- **Verified:** `php -l` clean (seohub/seo service/controller); `npm run check` clean;
+  `npm run build` OK; served bundle == build; `POST /seo/sites/1/preview` → 403
+  (registered). Map updated (connector v1.3.1 + front-end auth note). Not driven live
+  (needs the reinstalled connector + a connected site). No commit.
+
 ## 2026-06-24 — Delivery dialog: scroll fix + SEO-module site dropdown [/build]
 - **Part 1 (UI fix):** the New/Edit delivery dialog overflowed the screen with no scroll.
   `DialogContent` → added `max-h-[90vh] overflow-y-auto` (`DeliveryDialog.tsx`).
