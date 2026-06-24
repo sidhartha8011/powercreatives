@@ -26,7 +26,7 @@ import {
   Loader2,
   Share2,
 } from 'lucide-react';
-import { colors, typography, spacing } from '@/components/shared';
+import { PillButton, colors, typography, spacing } from '@/components/shared';
 import type { CopyType, CopyVariation, CopyResults, CopyAudience } from '../types';
 import { COPY_TYPE_LABELS, filterByAudience } from '../types';
 import { useTextModels } from '../useTextModels';
@@ -660,15 +660,15 @@ export function ResultsPanel({
             onCustomInstruction={handleCustomBulkInstruction}
           />
 
-          <Button
-            size="sm"
-            className="h-8 gap-1.5 text-xs"
+          <PillButton
+            variant="active"
+            icon={<PenLine />}
             onClick={handleGenerate}
+            loading={isGenerating}
             disabled={activeTypes.length === 0 || isGenerating}
           >
-            {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PenLine className="w-3.5 h-3.5" />}
             {isGenerating ? 'Generating…' : 'Generate'}
-          </Button>
+          </PillButton>
         </div>
       </div>
 

@@ -9,10 +9,10 @@
  *   • Non-admins: enter the site URL + WP username + an Application Password.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo, type ChangeEvent } from 'react';
 import {
   Globe, Plus, Trash2, RefreshCw, ExternalLink, Loader2,
-  KeyRound, Puzzle, Download,
+  KeyRound, Puzzle, Download, Search, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -24,7 +24,14 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
-import { colors, typography, shadows } from '@/components/shared/design-tokens';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import { Table, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
+import { useSortableTable } from '@/hooks/useSortableTable';
+import { useListState, textFilter, searchableSelect, type FilterState } from '@/components/shared/Kanban';
+import { colors, typography } from '@/components/shared/design-tokens';
 import { trpc, getConfig } from '@/lib/trpc';
 import { getIsAdmin } from '@/lib/pcmConfig';
 
@@ -41,6 +48,27 @@ interface Site {
 }
 
 type AddStep = null | 'choose' | 'password';
+
+type SiteSortKey = 'name' | 'url' | 'username' | 'method' | 'status' | 'createdAt';
+
+/** Sentinel for the Status select's "all" option (Radix forbids an empty value). */
+const ALL_STATUS = '__all__';
+
+/** Instant search + status select — reuses the shared Kanban filter engine
+ *  (the same primitives the Approvals board uses). */
+const siteFilters = [
+  textFilter<Site>('search', 'Search', (s) => [s.name, s.url, s.username].join(' '), { placeholder: 'Search sites…' }),
+  searchableSelect<Site>('status', 'Status', (s) => s.status || null),
+];
+
+function readSearch(state: FilterState): string {
+  const v = state['search'];
+  return v?.kind === 'text' ? v.query : '';
+}
+function readStatus(state: FilterState): string {
+  const v = state['status'];
+  return v?.kind === 'searchableSelect' && v.selected.length > 0 ? v.selected[0] : ALL_STATUS;
+}
 
 export function SitesModule() {
   const isAdmin = getIsAdmin();
@@ -116,6 +144,34 @@ export function SitesModule() {
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Download failed'); }
   }, []);
 
+  // ── Instant filter (shared Kanban engine) + column sort ──
+  const list = useListState<Site>(sites, siteFilters, [], {});
+  const { sortKey, sortDir, toggleSort, sortedData } = useSortableTable<Site, SiteSortKey>(list.filteredItems, {
+    defaultKey: 'name',
+    defaultDir: 'asc',
+    accessors: {
+      name: (s) => s.name.toLowerCase(),
+      url: (s) => s.url.toLowerCase(),
+      username: (s) => s.username.toLowerCase(),
+      method: (s) => (s.connectMethod === 'connector' ? 'plugin' : 'password'),
+      status: (s) => s.status,
+      createdAt: (s) => new Date(s.createdAt).getTime(),
+    },
+  });
+  const search = readSearch(list.filterState);
+  const statusValue = readStatus(list.filterState);
+  const statusOptions = useMemo(
+    () => Array.from(new Set(sites.map((s) => s.status).filter(Boolean))),
+    [sites],
+  );
+  const onSearch = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value;
+    list.setFilterValue('search', next.trim() ? { kind: 'text', query: next } : undefined);
+  }, [list]);
+  const onStatus = useCallback((value: string) => {
+    list.setFilterValue('status', value === ALL_STATUS ? undefined : { kind: 'searchableSelect', selected: [value] });
+  }, [list]);
+
   if (isLoading) {
     return <div className="flex items-center justify-center h-full"><Spinner className="w-6 h-6" /></div>;
   }
@@ -145,41 +201,87 @@ export function SitesModule() {
           <p style={{ color: colors.textMuted, fontSize: typography.sm, marginTop: '4px' }}>Add a WordPress site to start publishing content</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sites.map((site) => {
-            const isConnector = site.connectMethod === 'connector';
-            return (
-              <div key={site.id} className="rounded-lg p-4 flex flex-col gap-3" style={{ border: `1px solid ${colors.border}`, background: colors.bgSurface, boxShadow: shadows.card }}>
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: colors.primaryLight }}>
-                    <Globe className="w-4 h-4" style={{ color: colors.primary }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="truncate" style={{ fontSize: typography.body, fontWeight: typography.semibold, color: colors.text }}>{site.name}</h3>
-                    <a href={site.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 truncate" style={{ fontSize: typography.xs, color: colors.primary, textDecoration: 'none' }}>
-                      {site.url}<ExternalLink className="w-3 h-3 shrink-0" />
-                    </a>
-                  </div>
-                  <Badge variant="outline" className="gap-1 shrink-0 text-[10px]">
-                    {isConnector ? <><Puzzle className="w-3 h-3" /> Plugin</> : <><KeyRound className="w-3 h-3" /> Password</>}
-                  </Badge>
-                </div>
-                <div style={{ fontSize: typography.xs, color: colors.textMuted }}>
-                  <span>User: {site.username}</span>
-                  {site.status !== 'active' && <span> · <span className="capitalize" style={{ color: colors.danger ?? '#dc2626' }}>{site.status}</span></span>}
-                </div>
-                <div className="flex items-center gap-2 pt-1" style={{ borderTop: `1px solid ${colors.borderLight}` }}>
-                  <Button variant="outline" size="sm" className="flex-1" disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>
-                    {testingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Test
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => deleteMutation.mutate({ id: site.id })} className="text-muted-foreground hover:text-destructive">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <>
+          {/* Filter bar — instant search + status (shared Kanban filter engine) */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input value={search} onChange={onSearch} placeholder="Search sites…" className="h-9 w-[220px] pl-8 text-xs" />
+            </div>
+            <Select value={statusValue} onValueChange={onStatus}>
+              <SelectTrigger className="h-9 w-[150px] text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_STATUS} className="text-xs">All statuses</SelectItem>
+                {statusOptions.map((s) => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {list.activeFilterCount > 0 && (
+              <Button variant="ghost" size="sm" onClick={list.clearAll} className="h-9 gap-1 text-xs">
+                <X className="w-3.5 h-3.5" /> Clear
+              </Button>
+            )}
+            <span className="ml-auto text-xs text-muted-foreground">{sortedData.length} of {sites.length}</span>
+          </div>
+
+          {/* Sortable + filterable table */}
+          <div className="rounded-lg border border-border overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/60">
+                  <SortableTableHead columnKey="name" label="Name" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
+                  <SortableTableHead columnKey="url" label="URL" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
+                  <SortableTableHead columnKey="username" label="User" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
+                  <SortableTableHead columnKey="method" label="Method" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
+                  <SortableTableHead columnKey="status" label="Status" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
+                  <SortableTableHead columnKey="createdAt" label="Added" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <tbody>
+                {sortedData.length === 0 ? (
+                  <tr><td colSpan={7} className="p-6 text-center text-sm text-muted-foreground">No sites match your filters.</td></tr>
+                ) : sortedData.map((site) => {
+                  const isConnector = site.connectMethod === 'connector';
+                  return (
+                    <tr key={site.id} className="border-t border-border hover:bg-muted/40">
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Globe className="w-4 h-4 shrink-0" style={{ color: colors.primary }} />
+                          <span className="truncate font-medium" style={{ color: colors.text }}>{site.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-[260px] items-center gap-1 text-xs text-primary hover:underline">
+                          <span className="truncate">{site.url}</span><ExternalLink className="w-3 h-3 shrink-0" />
+                        </a>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{site.username}</td>
+                      <td className="px-3 py-2">
+                        <Badge variant="outline" className="gap-1 text-[10px]">
+                          {isConnector ? <><Puzzle className="w-3 h-3" /> Plugin</> : <><KeyRound className="w-3 h-3" /> Password</>}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`text-xs capitalize ${site.status === 'active' ? 'text-muted-foreground' : 'font-medium text-destructive'}`}>{site.status}</span>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">{site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>
+                            {testingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Test
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate({ id: site.id })}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          </div>
+        </>
       )}
 
       {/* ── Add Site: connector + one-paste code (admin) ── */}

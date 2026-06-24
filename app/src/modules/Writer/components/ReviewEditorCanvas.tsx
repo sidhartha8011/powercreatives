@@ -27,7 +27,7 @@ import { toast } from 'sonner';
 import { WriterBubbleMenu } from './WriterBubbleMenu';
 import { getEditorExtensions } from '../extensions/editorExtensions';
 import { Sparkles, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { PillButton } from '@/components/shared';
 import {
   Select,
   SelectContent,
@@ -326,15 +326,14 @@ export function ReviewEditorCanvas() {
         </Select>
 
         {/* Generate button */}
-          <Button
-            size="sm"
-            className="h-8 gap-1.5 text-xs"
+          <PillButton
+            variant="active"
+            icon={isPending ? <Loader2 className="animate-spin" /> : <Sparkles />}
             onClick={handleGenerate}
             disabled={isPending || !canGenerate}
           >
-            {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             {isPending ? 'Generating…' : 'Generate'}
-          </Button>
+          </PillButton>
       </div>
 
       {/* ── Editor Canvas Area ───────────────────────────── */}

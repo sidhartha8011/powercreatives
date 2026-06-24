@@ -2,9 +2,11 @@
  * SHARED COMPONENTS — Barrel Export
  *
  * Import everything from '@/components/shared' for convenience:
- *   import { SectionCard, SectionLabel, colors } from '@/components/shared';
+ *   import { PillButton, SectionCard, SectionLabel, colors } from '@/components/shared';
  */
 
+export { PillButton } from './PillButton';
+export type { PillButtonVariant } from './PillButton';
 export { PillTabBar } from './PillTabBar';
 export type { PillTabItem, PillTabBarProps } from './PillTabBar';
 export { ModeToggle } from './ModeToggle';

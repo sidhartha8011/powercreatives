@@ -579,7 +579,16 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   Tests:
   `SeoIntegrationTest` (key-map, detection, read-chain, dual-write, whitelist,
   substitution, output-sanitize, field map, prompt completeness).
-  **Prompts are user-editable in Settings → Prompts → SEO tab** (post-1.23):
+  **⚠ Prompt editing moved (post remote-SEO refactor):** SEO prompts are NO
+  longer in the Prompt editor — `PCM_REST_Prompts::get_default_sections('seo')`
+  now returns `[]` (deregistered). They live as **Templates (module=seo)**, edited
+  in **Settings → Templates → SEO**. `templates/controller.php` calls
+  `PCM_SEO_Service::seed_seo_templates()` when listing `module=seo` (seeds one
+  system default per section from `get_default_prompts()`), and
+  `resolve_prompt($section,$default,$userId)` reads the user's template (else the
+  `prompts.php` default). Adding a `prompts.php` entry auto-creates an editable
+  template. (The text below describing a "Settings → Prompts → SEO tab" is the
+  OLD pre-1.23 design — kept for context, but the editor path is now Templates.)
   the `prompts` module registers an `seo` module with 10 sections (`{use}_{mode}`:
   page_title/meta_title/meta_description/primary_keyword generate+optimize,
   meta_keywords generate, content_optimize). The editor section list in
@@ -609,6 +618,15 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   site-wide LocalBusiness JSON-LD + meta-keywords head, language/timezone
   with restorable backups. REST `GET/POST /seo/site` + `/restore`. Frontend
   third tab `SiteSettingsPanel`.
+  - **One-click "Optimize" (post-1.27):** Site tab has an **Optimize** button +
+    brand picker that AI-generates **robots.txt** + **LocalBusiness schema** from
+    editable prompts, fills the form, enables both (user reviews → Save). Backend
+    `POST /seo/site/generate` → `PCM_SEO_Service::generate_site_field(field,
+    brandId,…)` (field = `robots`|`schema`; uses `build_field_vars(0,$brand)` for
+    business/site vars; multi-line-safe fence-strip, NOT sanitize_ai_output). The
+    two prompts live in `prompts.php` (`robots`, `site_schema`) → auto-seeded as
+    editable **SEO Templates** (`Robots — Generate`, `Site Schema — Generate`) and
+    honored via `resolve_prompt`. trpc `seo.siteGenerate`.
 - **Phase 7 (GBP)**: `gbp.php` — `PCM_SEO_GBP_Provider` interface +
   `PCM_SEO_GBP_N8N_Provider` (n8n webhook, swappable for direct-Google via
   the `providers()` map + `seo_gbp_provider` setting) + shared `normalize()`

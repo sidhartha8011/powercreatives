@@ -6,8 +6,8 @@
  * `seo/site` REST endpoints (admin only).
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { Loader2, Save, Undo2, Download, Upload } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { Loader2, Save, Undo2, Download, Upload, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,9 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { trpc, apiFetch } from '@/lib/trpc';
 
 interface SiteSettings {
@@ -34,10 +37,43 @@ export function SiteSettingsPanel() {
   };
   const saveMutation = trpc.seo.siteSave.useMutation();
   const restoreMutation = trpc.seo.siteRestore.useMutation();
+  const generateMutation = trpc.seo.siteGenerate.useMutation();
+
+  // Brands → business context for the LocalBusiness schema (robots needs none).
+  const { data: brandsRaw } = trpc.brands.list.useQuery();
+  const brands = useMemo(
+    () => (Array.isArray(brandsRaw) ? (brandsRaw as any[]).map((b) => ({ id: Number(b.id), name: String(b.name) })) : []),
+    [brandsRaw],
+  );
+  const [genBrandId, setGenBrandId] = useState<string>('');
 
   const [form, setForm] = useState<SiteSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // One-click: AI-generate robots.txt + LocalBusiness schema from the editable
+  // prompts, fill the form, and enable both. The user reviews then Saves.
+  const handleOptimize = useCallback(async () => {
+    setBusy(true);
+    const brandId = genBrandId ? Number(genBrandId) : undefined;
+    let ok = false;
+    try {
+      const robots: any = await generateMutation.mutateAsync({ field: 'robots' });
+      const v = String(robots?.value ?? '');
+      if (v) { setForm((f) => (f ? { ...f, robotsText: v, robotsEnabled: true } : f)); ok = true; }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'robots.txt generation failed');
+    }
+    try {
+      const schema: any = await generateMutation.mutateAsync({ field: 'schema', brandId });
+      const v = String(schema?.value ?? '');
+      if (v) { setForm((f) => (f ? { ...f, schemaJson: v, schemaEnabled: true } : f)); ok = true; }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Schema generation failed');
+    }
+    if (ok) toast.success('Generated — review and click Save site settings');
+    setBusy(false);
+  }, [genBrandId, generateMutation]);
 
   const handleExport = useCallback(async () => {
     try {
@@ -114,6 +150,34 @@ export function SiteSettingsPanel() {
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {/* One-click optimize */}
+      <section className="rounded-xl border border-primary/30 bg-accent/40 p-4 space-y-3">
+        <div>
+          <Label className="text-sm font-medium">One-click optimize</Label>
+          <p className="text-xs text-muted-foreground">
+            Generate your robots.txt and a LocalBusiness JSON-LD block from your prompts.
+            Pick a brand for the business details. Edit how these are written in
+            Settings → Templates → SEO.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={genBrandId} onValueChange={setGenBrandId}>
+            <SelectTrigger className="h-9 w-[230px] text-xs" title="Brand for the schema's business details">
+              <SelectValue placeholder="Brand (business details)…" />
+            </SelectTrigger>
+            <SelectContent>
+              {brands.length === 0
+                ? <div className="px-2 py-1.5 text-xs text-muted-foreground">No brands yet</div>
+                : brands.map((b) => <SelectItem key={b.id} value={String(b.id)} className="text-xs">{b.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Button onClick={handleOptimize} disabled={busy} className="gap-1.5">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            Optimize
+          </Button>
+        </div>
+      </section>
+
       {/* robots.txt */}
       <section className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div className="flex items-center justify-between">

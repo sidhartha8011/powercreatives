@@ -84,9 +84,10 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/content/(?P<id>\d+)/schema', 'get_schema'),
             array('POST', '/seo/content/(?P<id>\d+)/schema', 'set_schema'),
             // Site-wide settings (admin only).
-            array('GET',  '/seo/site',         'site_get',     array(), 'manage_options'),
-            array('POST', '/seo/site',         'site_save',    array(), 'manage_options'),
-            array('POST', '/seo/site/restore', 'site_restore', array(), 'manage_options'),
+            array('GET',  '/seo/site',          'site_get',      array(), 'manage_options'),
+            array('POST', '/seo/site',          'site_save',     array(), 'manage_options'),
+            array('POST', '/seo/site/generate', 'site_generate', array(), 'manage_options'),
+            array('POST', '/seo/site/restore',  'site_restore',  array(), 'manage_options'),
             // GBP (business identity → admin only).
             array('POST', '/seo/gbp/search',                   'gbp_search',    array(), 'manage_options'),
             array('POST', '/seo/gbp/brand/(?P<brand>\d+)/save', 'gbp_save',     array(), 'manage_options'),
@@ -591,6 +592,24 @@ class PCM_REST_SEO extends PCM_REST_Base
     {
         $params = $request->get_json_params() ?: array();
         return $this->success(PCM_SEO_Site::save($params));
+    }
+
+    /** POST /seo/site/generate — AI-generate a site field (robots / schema) from its
+     *  editable prompt. Returns the text; the Site tab previews + saves it. */
+    public function site_generate(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $params   = $request->get_json_params() ?: array();
+        $field    = sanitize_text_field((string) ($params['field'] ?? ''));
+        $brand_id = isset($params['brandId']) && $params['brandId'] ? absint($params['brandId']) : null;
+        $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+
+        $user   = $this->get_current_pcm_user();
+        $result = $this->service->generate_site_field($field, $brand_id, $model, $user ? (int) $user->id : null, $provider);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** POST /seo/site/restore — restore language/timezone from backup. */

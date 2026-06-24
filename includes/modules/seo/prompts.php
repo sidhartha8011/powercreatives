@@ -96,4 +96,20 @@ return array(
             . "Current Slug: {{current_value}}\nPage Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nKeywords: {{meta_keywords}}\nBusiness: {{business.name}}\n\n"
             . "Requirements:\n- Base the slug on the primary keyword; fold in a supporting keyword only if it stays concise\n- If no keywords are provided, derive the slug from the page title\n- Lowercase, hyphen-separated words\n- Maximum 5 words\n- No stop words\n- ASCII letters, numbers and hyphens only\n- Output ONLY the slug (e.g. best-seo-tools), nothing else",
     ),
+
+    // ── Site-wide robots.txt (Site tab → Optimize) ──
+    'robots' => array(
+        'max'      => 600,
+        'generate' => "Generate a robots.txt file for this WordPress site.\n\n"
+            . "Website: {{website.url}}\n\n"
+            . "Requirements:\n- Standard robots.txt syntax\n- Allow legitimate search-engine crawlers by default\n- Disallow /wp-admin/ except /wp-admin/admin-ajax.php\n- Include a Sitemap directive pointing to {{website.url}}/sitemap.xml\n- Allow common AI crawlers (GPTBot, ClaudeBot, Google-Extended)\n- Do NOT include a Host directive (deprecated)\n- Output ONLY the robots.txt content — no explanation, no code fences",
+    ),
+
+    // ── Site-wide LocalBusiness JSON-LD schema (Site tab → Optimize) ──
+    'site_schema' => array(
+        'max'      => 800,
+        'generate' => "Generate a valid JSON-LD schema.org LocalBusiness block for this website.\n\n"
+            . "Business Name: {{business.name}}\nCategory: {{business.category}}\nAddress: {{business.address}}\nPhone: {{business.phone}}\nWebsite: {{website.url}}\nLatitude: {{business.lat}}\nLongitude: {{business.lng}}\nRating: {{business.rating}}\nOpening Hours: {{business.hours}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- Valid JSON-LD with @context and @type\n- Use LocalBusiness (or a more specific subtype if the category matches a schema.org type)\n- Include name, url, telephone, address (PostalAddress), geo (GeoCoordinates) when data is available\n- Include aggregateRating and openingHoursSpecification only when that data is provided\n- Output ONLY the raw JSON object — no markdown fences, no explanation",
+    ),
 );

@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
 import { ModuleHeader } from '@/components/shared/ModuleHeader';
+import { PillButton } from '@/components/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -53,6 +54,9 @@ import { BusinessPanel } from './BusinessPanel';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { SEO_TEXT_FIELDS, type SeoRow } from './types';
+
+// WordPress media library global (wp_enqueue_media() is called in class-pcm-admin.php).
+declare const wp: any;
 
 // ── Plain spreadsheet primitives ──
 // Bare <table> elements (NOT shadcn's Table, which forces h-12/p-4/border-b-only/
@@ -175,6 +179,13 @@ function RemoteSitePlaceholder({ siteName, siteUrl, section }: { siteName: strin
   );
 }
 
+/** Cell fields that support AI generation (every editable text column). */
+const GENERATABLE = new Set(['title', 'slug', 'metaTitle', 'metaDescription', 'primaryKeyword', 'metaKeywords']);
+/** Column key → the prompt `use` base (templates are keyed `{use}_{generate|optimize}`). */
+const SEO_USE_BY_COL: Record<string, string> = {
+  title: 'page_title', slug: 'slug', metaTitle: 'meta_title', metaDescription: 'meta_description',
+  primaryKeyword: 'primary_keyword', metaKeywords: 'meta_keywords',
+};
 /** Generatable fields for the bulk "Generate all" split button (key → short label). */
 const GEN_FIELDS: { key: string; label: string }[] = [
   { key: 'title', label: 'Title' },
@@ -291,6 +302,19 @@ export function SEOModule() {
     try { localStorage.setItem('pcm:seo:gen-model', id); } catch { /* ignore */ }
   }, []);
   const genProvider = textModels.find((m) => m.id === genModelId)?.provider;
+
+  // SEO prompt templates (module=seo) → the per-column "generate with template" picker.
+  const { data: seoTemplatesRaw } = trpc.templates.list.useQuery({ module: 'seo' }, { staleTime: 30_000 }) as { data?: any[] };
+  const seoTemplates = useMemo(() => (Array.isArray(seoTemplatesRaw) ? seoTemplatesRaw : []), [seoTemplatesRaw]);
+  /** Which column is currently bulk-generating (header ✦ → pick template → whole column). */
+  const [columnGenerating, setColumnGenerating] = useState<string | null>(null);
+  const templatesForCol = useCallback((col: string) => {
+    const use = SEO_USE_BY_COL[col];
+    if (!use) return [] as { id: number; name: string; sectionIsDefault?: boolean }[];
+    return seoTemplates
+      .filter((t: any) => typeof t.type === 'string' && t.type.startsWith(use + '_'))
+      .map((t: any) => ({ id: Number(t.id), name: String(t.name), sectionIsDefault: !!t.isDefault }));
+  }, [seoTemplates]);
 
   // Default generation model comes from Settings → Module Defaults → "SEO Module"
   // (mirrors Writer/Copy). A configured default is applied on load; the header
@@ -515,6 +539,31 @@ export function SEOModule() {
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someSelected = selected.size > 0 && !allSelected;
 
+  // Header ✦ → pick a template → generate the ENTIRE column (every visible row)
+  // with that template, staging each result for review (Optimizer behavior).
+  const handleColumnGenerate = useCallback(async (field: string, templateId?: number) => {
+    if (columnGenerating) return;
+    const ids = sortedData.map((r) => r.id);
+    if (ids.length === 0) return;
+    setColumnGenerating(field);
+    const total = ids.length;
+    let done = 0;
+    setProgress({ done, total });
+    for (const id of ids) {
+      const key = `${id}:${field}`;
+      setGenKey(key);
+      try {
+        const value = await generateField(id, field, genModelId || undefined, genProvider, templateId);
+        setStaged((s) => ({ ...s, [key]: value }));
+      } catch { /* toast in hook */ }
+      done += 1;
+      setProgress({ done, total });
+    }
+    setGenKey(null);
+    setProgress(null);
+    setColumnGenerating(null);
+  }, [columnGenerating, sortedData, generateField, genModelId, genProvider]);
+
   const toggleAll = () =>
     setSelected((prev) => {
       if (allSelected) return new Set();
@@ -574,6 +623,33 @@ export function SEOModule() {
     try { await quickCreate(type); } catch { /* surfaced */ } finally { setBusy(false); }
   }, [quickCreate]);
 
+  // Featured image — open the WP media library, preselect the current image, and
+  // set/clear the post thumbnail (same as WordPress' "Featured image"). Local only.
+  const openFeaturedImage = useCallback((row: SeoRow) => {
+    if (typeof wp === 'undefined' || !wp.media) {
+      toast.error('WordPress media library is unavailable.');
+      return;
+    }
+    const frame = wp.media({
+      title: 'Featured image',
+      button: { text: 'Use image' },
+      library: { type: 'image' },
+      multiple: false,
+    });
+    if (row.featuredImageId) {
+      frame.on('open', () => {
+        const selection = frame.state().get('selection');
+        const att = wp.media.attachment(row.featuredImageId);
+        if (att) { att.fetch(); selection.add([att]); }
+      });
+    }
+    frame.on('select', () => {
+      const att = frame.state().get('selection').first()?.toJSON();
+      void saveCell(row.id, 'featuredImage', String(att?.id ?? 0));
+    });
+    frame.open();
+  }, [saveCell]);
+
   // Columns in saved order, minus any hidden via the Columns menu.
   const orderedCols = colOrder.filter((k) => vis(k));
   const tableWidth = SELECT_COL_WIDTH + orderedCols.reduce((sum, k) => sum + colWidth(k), 0);
@@ -610,6 +686,13 @@ export function SEOModule() {
           : undefined}
         filter={key !== 'open' && def
           ? { def, value: filterValues[key] ?? '', onChange: (v) => setFilter(key, v) }
+          : undefined}
+        generate={GENERATABLE.has(key)
+          ? {
+              templates: templatesForCol(key),
+              busy: columnGenerating === key,
+              onGenerate: (tid?: number) => handleColumnGenerate(key, tid),
+            }
           : undefined}
         draggable
         onDragStart={(e) => { setDragKey(key); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', key); } catch { /* IE */ } }}
@@ -713,9 +796,22 @@ export function SEOModule() {
       case 'featuredImage':
         return (
           <TableCell key={key} className="text-center">
-            {row.featuredImage
-              ? <img src={row.featuredImage} alt="" loading="lazy" className="inline-block h-8 w-8 rounded object-cover align-middle" />
-              : <span className="text-xs text-muted-foreground">—</span>}
+            {isLocal ? (
+              <button
+                type="button"
+                onClick={() => openFeaturedImage(row)}
+                title={row.featuredImage ? 'Change featured image' : 'Set featured image'}
+                className="inline-flex items-center justify-center align-middle transition-opacity hover:opacity-80"
+              >
+                {row.featuredImage
+                  ? <img src={row.featuredImage} alt="" loading="lazy" className="h-8 w-8 rounded object-cover" />
+                  : <span className="flex h-8 w-8 items-center justify-center rounded border border-dashed border-border text-muted-foreground"><ImageIcon className="h-4 w-4" /></span>}
+              </button>
+            ) : (
+              row.featuredImage
+                ? <img src={row.featuredImage} alt="" loading="lazy" className="inline-block h-8 w-8 rounded object-cover align-middle" />
+                : <span className="text-xs text-muted-foreground">—</span>
+            )}
           </TableCell>
         );
       case 'date':
@@ -911,12 +1007,12 @@ export function SEOModule() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={() => handleCreate('post')} disabled={busy} className="h-8 gap-1.5 text-xs">
-            <Plus className="w-3.5 h-3.5" /> Post
-          </Button>
-          <Button size="sm" onClick={() => handleCreate('page')} disabled={busy} className="h-8 gap-1.5 text-xs">
-            <Plus className="w-3.5 h-3.5" /> Page
-          </Button>
+          <PillButton variant="active" icon={<Plus />} onClick={() => handleCreate('post')} disabled={busy}>
+            Post
+          </PillButton>
+          <PillButton variant="active" icon={<Plus />} onClick={() => handleCreate('page')} disabled={busy}>
+            Page
+          </PillButton>
           <Select
             value={genModelId || '__default__'}
             onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}

@@ -47,7 +47,7 @@ export function useSeoContent(): UseSeoContentResult {
 
   const rows = useMemo<SeoRow[]>(() => {
     if (!Array.isArray(listQuery.data)) return [];
-    return (listQuery.data as SeoRow[]).map((r) => ({ ...r, id: Number(r.id), authorId: Number(r.authorId) }));
+    return (listQuery.data as SeoRow[]).map((r) => ({ ...r, id: Number(r.id), authorId: Number(r.authorId), featuredImageId: Number(r.featuredImageId ?? 0) }));
   }, [listQuery.data]);
 
   const options = useMemo<SeoOptions | null>(

@@ -202,6 +202,7 @@ class PCM_SEO_Service
             'permalink'          => get_permalink($id),
             'editUrl'            => get_edit_post_link($id, 'raw'),
             'featuredImage'      => (string) get_the_post_thumbnail_url($id, 'thumbnail'),
+            'featuredImageId'    => (int) get_post_thumbnail_id($id),
             'excerpt'            => wp_trim_words(wp_strip_all_tags($post->post_content), 20, '…'),
             'metaTitle'          => self::seo_get($id, 'title'),
             'metaDescription'    => self::seo_get($id, 'description'),
@@ -412,6 +413,29 @@ class PCM_SEO_Service
      */
     public function save_cell(int $post_id, string $field, $value)
     {
+        // Featured image — a post-thumbnail action (set/clear by attachment id),
+        // not a column/meta field. Mirrors the WP "Featured image" behavior.
+        if ($field === 'featuredImage') {
+            $att_id = (int) $value;
+            if ($att_id > 0) {
+                $ptype = get_post_type($post_id);
+                if ($ptype && !post_type_supports($ptype, 'thumbnail')) {
+                    add_post_type_support($ptype, 'thumbnail');
+                }
+                if (!set_post_thumbnail($post_id, $att_id)) {
+                    return new WP_Error('pcm_seo_thumbnail_failed', __('Failed to set featured image.', 'power-creatives'), array('status' => 500));
+                }
+            } else {
+                delete_post_thumbnail($post_id);
+            }
+            $tid = (int) get_post_thumbnail_id($post_id);
+            return array(
+                'field'           => 'featuredImage',
+                'value'           => $tid ? (string) wp_get_attachment_image_url($tid, 'thumbnail') : '',
+                'featuredImageId' => $tid,
+            );
+        }
+
         $fields = self::save_cell_fields();
         if (!isset($fields[$field])) {
             return new WP_Error('pcm_seo_bad_field', __('Unknown field.', 'power-creatives'), array('status' => 400));
@@ -1747,6 +1771,66 @@ class PCM_SEO_Service
             // returned (handles chatty output / spaces / casing reliably).
             if ($field === 'slug') {
                 $value = sanitize_title($value);
+            }
+            if ($value === '') {
+                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
+            }
+            return array('field' => $field, 'value' => $value);
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
+    }
+
+    /**
+     * Generate a SITE-wide field (robots.txt / LocalBusiness JSON-LD) from its
+     * editable prompt (Settings → Templates, module=seo). Brand supplies the
+     * business context for the schema; robots only needs the site URL. Returns
+     * the generated text WITHOUT saving (the Site tab previews + saves).
+     *
+     * @param string      $field    'robots' | 'schema'.
+     * @param int|null    $brand_id Optional brand for {{business.*}} context.
+     * @param string|null $model    Optional model override.
+     * @param int|null    $user_id  PCM user (for prompt-template override).
+     * @param string|null $provider Optional provider override (paired with $model).
+     * @return array|WP_Error { field, value }.
+     */
+    public function generate_site_field(string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    {
+        $use_map = array('robots' => 'robots', 'schema' => 'site_schema');
+        if (!isset($use_map[$field])) {
+            return new WP_Error('pcm_seo_not_generatable', __('This site field cannot be generated.', 'power-creatives'), array('status' => 400));
+        }
+        $use     = $use_map[$field];
+        $prompts = self::field_prompts();
+        if (empty($prompts[$use]['generate'])) {
+            return new WP_Error('pcm_seo_no_prompt', __('No prompt configured for this field.', 'power-creatives'), array('status' => 500));
+        }
+
+        // Site-level vars (no post): business.* (from brand), website.url, site.lang.
+        $vars    = $this->build_field_vars(0, $brand_id);
+        $default = $prompts[$use]['generate'];
+        $tpl     = self::resolve_prompt($use . '_generate', $default, $user_id);
+        $prompt  = self::substitute_vars($tpl, $vars);
+        $max     = (int) ($prompts[$use]['max'] ?? 600);
+
+        if (!class_exists('PCM_LLM')) {
+            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
+        }
+
+        try {
+            $opts = array('max_tokens' => $max);
+            if (!empty($model)) {
+                $opts['model'] = $model;
+            }
+            if (!empty($provider)) {
+                $opts['provider'] = $provider;
+            }
+            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            // Multi-line output — strip a wrapping ```code fence``` only (do NOT use
+            // sanitize_ai_output, which collapses to a single line).
+            $value = trim((string) ($result['content'] ?? ''));
+            if (strpos($value, '```') === 0) {
+                $value = trim((string) preg_replace('/^```[a-zA-Z0-9]*\s*|\s*```$/', '', $value));
             }
             if ($value === '') {
                 return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));

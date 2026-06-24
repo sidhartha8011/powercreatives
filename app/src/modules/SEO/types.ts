@@ -14,6 +14,8 @@ export interface SeoRow {
   permalink: string;
   editUrl: string;
   featuredImage: string;
+  /** Attachment id of the featured image (0 = none) — preselects the media picker. */
+  featuredImageId: number;
   excerpt: string;
   metaTitle: string;
   metaDescription: string;

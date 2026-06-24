@@ -814,6 +814,142 @@
   (`seo_views.isDefault` tinyint present) on the triggering request.
 - Pull + rebuild only; no commit/push (these doc notes left uncommitted per request).
 
+## 2026-06-24 — Sites module: cards → sortable + filterable table (reuse approvals filter)
+- **Asked:** turn the Sites (connections) cards into a sortable/filterable table
+  with the "instant filter" from approvals — reuse or globalize the component.
+- **Reuse:** the instant filter is the shared **Kanban filter engine**
+  (`@/components/shared/Kanban`: `useListState` + `textFilter` + `searchableSelect`)
+  — already global; approvals' SetsBoard uses the same. That barrel deliberately
+  ships only the engine (consumers render their own bar), so I bound a bar to it.
+- **Change (`modules/Sites/index.tsx` only):** replaced the card grid with a
+  filter bar (instant search across name/url/user via `textFilter`; Status select
+  via `searchableSelect`; Clear; "N of M" count) + a shadcn `Table` whose headers
+  use the shared `SortableTableHead` + `useSortableTable` (columns: Name, URL, User,
+  Method, Status, Added, Actions). Test/Delete actions preserved; empty state kept;
+  added a "no matches" row. Removed the now-unused `shadows` import.
+- **Verified:** `npm run check` clean for Sites/index.tsx; `npm run build` OK;
+  served bundle == build (junction); markers ("Search sites", "No sites match")
+  in bundle; only Sites/index.tsx changed. Not visually driven (read-tier browser).
+  No commit.
+
+## 2026-06-24 — SEO Site tab: one-click Optimize (robots + schema) w/ editable prompts
+- **Asked:** one-click optimize site settings (robots.txt + schema) in the SEO Site
+  tab, generated from prompts editable in Settings (optimizer-plugin parity).
+  **Decisions:** scope = robots.txt + site schema (panel's current fields);
+  business context via a brand picker in the Site tab.
+- **Backend:** `prompts.php` += `robots` + `site_schema` prompts (vars
+  {{website.url}} / {{business.*}}/{{site.lang}}). `PCM_SEO_Service::generate_site_field
+  (field, brandId, model, userId, provider)` — resolve_prompt (`robots_generate` /
+  `site_schema_generate`) + `build_field_vars(0,$brand)` + PCM_LLM; multi-line-safe
+  output (fence-strip only, NOT sanitize_ai_output). Route `POST /seo/site/generate`
+  (manage_options) → `site_generate`.
+- **Editable prompts:** the two prompts auto-seed as **SEO Templates** ("Robots —
+  Generate" / "Site Schema — Generate") because `seed_seo_templates()` iterates
+  `get_default_prompts()` and `templates/controller.php` seeds on `module=seo` list.
+  Edited in **Settings → Templates → SEO**; honored on next Optimize via resolve_prompt.
+  (Discovery: SEO prompts are NOT in the Prompt editor anymore —
+  `get_default_sections('seo')` returns []. Map corrected.)
+- **Frontend (`SiteSettingsPanel.tsx` + trpc):** new top "One-click optimize" card
+  with a brand picker (`trpc.brands.list`) + **Optimize** button → `seo.siteGenerate`
+  for robots (no brand) + schema (brand) → fills the form + enables both toggles;
+  user reviews + Saves (existing flow). robots needs no brand; schema uses it.
+- **Verified:** `php -l` clean (3 files); `npm run check` clean for changed TS;
+  `npm run build` OK; served bundle == build; "One-click optimize" in bundle;
+  `POST /seo/site/generate` → 403 (registered); templates list seeds the new
+  sections. Not visually/LLM driven (read-tier browser + no local text key) — user
+  to hard-refresh + try Optimize. No commit.
+- **Map updated:** Phase 6 Site note + corrected the SEO-prompts-editing location.
+
+## 2026-06-24 — Built fresh deploy ZIP (current working copy)
+- **Asked:** give a new zip of the project.
+- **Built:** `C:\Users\sanky\Desktop\power-creatives.zip` (1.27 MB, 128 files) —
+  top-level folder `power-creatives/`, runtime only: `power-creatives.php`,
+  `uninstall.php`, `README.md`, `includes/` (119 PHP), `app/dist/` (freshly rebuilt
+  bundle incl. this session's uncommitted changes: featured-image picker, header ✦
+  restore, Post/Page pill, etc.). Excluded vendor (dev-only — nothing loads
+  vendor/autoload), node_modules, app/src, tests, docs, .git/.claude/.agent(s),
+  composer.*, dev junk.
+- **Gotcha handled:** PowerShell `Compress-Archive` writes BACKSLASH separators
+  (breaks WP's Linux ZipArchive/PclZip extraction → flat/mangled files). Rebuilt
+  with Python `zipfile` → forward-slash, spec-compliant entries.
+- **Verified:** Python `testzip()` OK; forward slashes confirmed;
+  `power-creatives/power-creatives.php` (header Version 1.7.0) + `app/dist/index-writer.js`
+  present; 119 includes PHP; zero dev-artifact leaks. No repo changes (artifact only).
+- **Note:** folder is `power-creatives/` (canonical slug). The local install dir is
+  `powercreatives` (junction) — to "Replace current" there, the wrapper would need
+  to be `powercreatives/` instead. For fresh installs / other sites this is correct.
+
+## 2026-06-24 — Restored SEO header per-column ✦ (generate whole column w/ template)
+- **Asked:** re-add the header sparkle that was removed in the 2026-06-23 bulk-bar
+  redesign (generate an entire column, with a template picker).
+- **Key fact:** `ColumnHead` still had the full ✦ UI (`GenerateState` prop +
+  templates dropdown) — only the wiring in `SEO/index.tsx` had been removed. So
+  this was a re-wire, not a rebuild. Recovered the exact removed code from the
+  pre-removal commit `3838385` and re-applied to the current file.
+- **Re-added (`SEO/index.tsx`):** consts `GENERATABLE` + `SEO_USE_BY_COL`;
+  `seoTemplates` query (`templates.list {module:'seo'}`) + `columnGenerating` state
+  + `templatesForCol`; `handleColumnGenerate(field, templateId)` (loops visible
+  rows, stages results, honors the model picker); and the `generate={…}` prop in
+  `renderHeader` for generatable columns. All referenced symbols
+  (genModelId/genProvider/sortedData/setProgress/setGenKey/generateField) already
+  present, so it dropped in cleanly.
+- **Verified:** `npm run check` clean for SEO files; `npm run build` OK; served
+  bundle == build (junction); only index.tsx changed. Not visually driven
+  (read-tier browser) — user to hard-refresh + click a column header's ✦. No commit.
+
+## 2026-06-24 — SEO Image column = editable featured image (Optimizer parity)
+- **Asked:** make the SEO table "Image" column work like Optimizer Simple's
+  featured-image cell (click → WP media picker → set the post's featured image).
+- **Reference (Optimizer):** click cell → `wp.media` image frame (preselect
+  current) → save attachment id → `set_post_thumbnail` → cell shows the thumb.
+- **Backend (`includes/modules/seo/service.php`):** `save_cell` now special-cases
+  `field==='featuredImage'` (set/clear post thumbnail by attachment id; ensures
+  thumbnail support; returns the new thumb URL + `featuredImageId`). `build_row`
+  exposes `featuredImageId = get_post_thumbnail_id`. Controller already passes the
+  field through + checks `edit_post`; `wp_enqueue_media()` already called.
+- **Frontend (`SEO/index.tsx` + types + both hooks):** added `declare const wp`;
+  `openFeaturedImage(row)` opens the media frame (mirrors RefinePanel/ReviewEditorCanvas),
+  preselects `featuredImageId`, on select calls `saveCell(id,'featuredImage',attId)`.
+  The Image cell is now a clickable button (LOCAL only) showing the thumb or a
+  dashed ImageIcon placeholder; remote sites stay display-only. `SeoRow.featuredImageId`
+  added; both content hooks normalize it to a number.
+- **Verified:** `php -l` clean; `npm run check` clean for changed SEO files;
+  `npm run build` OK; served bundle == build (junction); `POST /seo/content/1/cell`
+  → 403 (registered). Not visually driven (read-tier browser) — user to hard-refresh
+  + click an Image cell. No commit.
+
+## 2026-06-24 — SEO Post/Page buttons → PillButton (active pill) style
+- **Asked:** restyle the SEO "Post"/"Page" buttons to match the image (the
+  light-blue pill buttons like Writer's "Generate"/"Send to Approvals").
+- **Change (`SEO/index.tsx`):** the two `<Button size="sm" h-8 …>` Post/Page
+  buttons → `<PillButton variant="active" icon={<Plus />} …>` (blue-tint bg, blue
+  text, rounded pill — the image's prominent button look). Added
+  `import { PillButton } from '@/components/shared'`; kept the `Button` import
+  (still used by the Generate split button / Clear). Note: this is the inverse of
+  the reverted app-wide unification — scoped here only to Post/Page per request.
+- **Variant note:** used `active` (the prominent blue pill in the image). Can
+  switch to `default`/`subtle` (ghost) if they meant the fainter ones.
+- **Verified:** `npm run check` clean for SEO/index.tsx; `npm run build` OK;
+  served bundle == build (junction); only index.tsx changed. No commit.
+
+## 2026-06-24 — Reverted the PillButton→Button unification
+- **Asked:** revert the "make image buttons like Post/Page" task (the app-wide
+  PillButton→Button conversion).
+- **Wrinkle:** that task had since been COMMITTED — it's bundled in HEAD
+  `8000449 feat: updated seo suite` (which also contains other session SEO work),
+  so a plain `git checkout HEAD` / `git revert` wasn't usable.
+- **How:** the PillButton task was the ONLY session change to the Writer/Copy/shared
+  files, so restored exactly those 7 paths from the commit BEFORE it
+  (`3838385`, parent of 8000449): `git checkout 3838385 -- <PillButton.tsx,
+  shared/index.ts, Copy/ResultsPanel, Writer/index, ReviewEditorCanvas,
+  ReviewEditorToolbar, SeoMetadataPanel>`. Confirmed the 3838385→8000449 diff for
+  those paths was purely the PillButton task (no collateral). Other session SEO
+  work (in different files) untouched.
+- **Result:** PillButton.tsx restored, 9 `<PillButton>` usages + barrel export back.
+- **Verified:** `npm run check` clean for the reverted files; `npm run build` OK;
+  served bundle == build (junction). Left as uncommitted working-tree changes (no
+  commit per constraint).
+
 ## 2026-06-23 — Unify PillButton → solid Post/Page Button style (app-wide)
 - **Asked:** the pill/ghost buttons in the image (Writer toolbar: Copy Link, Show/
   Hide Revisions, Send to Approvals, Generate) should look like the SEO Post/Page

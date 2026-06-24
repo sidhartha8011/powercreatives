@@ -408,6 +408,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     // Site-wide settings
     "seo.siteGet": { endpoint: "seo/site", method: "GET" },
     "seo.siteSave": { endpoint: "seo/site", method: "POST" },
+    "seo.siteGenerate": {
+        endpoint: "seo/site",
+        method: "POST",
+        transform: (input: any) => ({ url: "seo/site/generate", body: { field: input.field, brandId: input.brandId, model: input.model, provider: input.provider } }),
+    },
     "seo.siteRestore": { endpoint: "seo/site/restore", method: "POST" },
     // GBP (Google Business Profile) — n8n-backed, provider-swappable
     "seo.gbpSearch": { endpoint: "seo/gbp/search", method: "POST" },
