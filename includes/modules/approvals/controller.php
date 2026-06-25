@@ -156,7 +156,7 @@ class PCM_REST_Approvals extends PCM_REST_Base
         $params   = $request->get_json_params() ?: array();
 
         $snapshot = isset($params['snapshot']) && is_array($params['snapshot']) ? $params['snapshot'] : array();
-        if (empty($snapshot['media']) && empty($snapshot['copy']) && empty($snapshot['articles'])) {
+        if (empty($snapshot['media']) && empty($snapshot['copy']) && empty($snapshot['articles']) && empty($snapshot['custom'])) {
             return $this->error('Nothing to append — snapshot data cannot be empty.');
         }
 

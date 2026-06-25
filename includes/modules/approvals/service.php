@@ -138,7 +138,7 @@ class PCM_Approvals_Service
      */
     public static function merge_snapshot(array $base, array $add): array
     {
-        foreach (array('media', 'copy', 'articles') as $bucket) {
+        foreach (array('media', 'copy', 'articles', 'custom') as $bucket) {
             $incoming = (!empty($add[$bucket]) && is_array($add[$bucket])) ? $add[$bucket] : array();
             if (empty($incoming)) {
                 continue;
@@ -428,6 +428,7 @@ class PCM_Approvals_Service
             'approvedVisualIds'  => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
             'approvedCopyIds'    => array_map('sanitize_text_field', $feedback['approvedCopyIds'] ?? array()),
             'approvedArticleIds' => array_map('sanitize_text_field', $feedback['approvedArticleIds'] ?? array()),
+            'approvedCustomIds'  => array_map('sanitize_text_field', $feedback['approvedCustomIds'] ?? array()),
             'comments'           => self::sanitize_comment_threads($feedback['comments'] ?? array(), $client_name),
         );
 
@@ -496,6 +497,7 @@ class PCM_Approvals_Service
             'approvedVisualIds'  => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
             'approvedCopyIds'    => array_map('sanitize_text_field', $feedback['approvedCopyIds'] ?? array()),
             'approvedArticleIds' => array_map('sanitize_text_field', $feedback['approvedArticleIds'] ?? array()),
+            'approvedCustomIds'  => array_map('sanitize_text_field', $feedback['approvedCustomIds'] ?? array()),
             'comments'           => self::sanitize_comment_threads($feedback['comments'] ?? array(), 'Client'),
         );
 
@@ -708,6 +710,7 @@ class PCM_Approvals_Service
             'approvedVisualIds'  => array_values($fb['approvedVisualIds'] ?? array()),
             'approvedCopyIds'    => array_values($fb['approvedCopyIds'] ?? array()),
             'approvedArticleIds' => array_values($fb['approvedArticleIds'] ?? array()),
+            'approvedCustomIds'  => array_values($fb['approvedCustomIds'] ?? array()),
             'comments'           => is_array($fb['comments'] ?? null) ? $fb['comments'] : array(),
         );
     }
@@ -988,6 +991,7 @@ class PCM_Approvals_Service
             'media'    => 'approvedVisualIds',
             'copy'     => 'approvedCopyIds',
             'articles' => 'approvedArticleIds',
+            'custom'   => 'approvedCustomIds',
         );
         foreach ($map as $key => $bucket) {
             if (!empty($snapshot[$key]) && is_array($snapshot[$key])) {
@@ -1014,6 +1018,7 @@ class PCM_Approvals_Service
             'media'    => 'approvedVisualIds',
             'copy'     => 'approvedCopyIds',
             'articles' => 'approvedArticleIds',
+            'custom'   => 'approvedCustomIds',
         );
 
         $total = 0;
@@ -1065,6 +1070,7 @@ class PCM_Approvals_Service
             $feedback['approvedVisualIds']  = self::collect_ids($snapshot, 'media');
             $feedback['approvedCopyIds']    = self::collect_ids($snapshot, 'copy');
             $feedback['approvedArticleIds'] = self::collect_ids($snapshot, 'articles');
+            $feedback['approvedCustomIds']  = self::collect_ids($snapshot, 'custom');
             $approved_asset = 'all';
         } else {
             $asset_id = sanitize_text_field($args['assetId'] ?? '');
@@ -1304,6 +1310,31 @@ class PCM_Approvals_Service
                     break;
                 }
             }
+        }
+
+        // Search in custom snapshot assets (Notion-style custom cards).
+        if (!$updated && !empty($snapshot['custom']) && is_array($snapshot['custom'])) {
+            foreach ($snapshot['custom'] as &$item) {
+                if (isset($item['id']) && (string)$item['id'] === (string)$asset_id) {
+                    if (isset($updates['title'])) {
+                        $item['title'] = sanitize_text_field($updates['title']);
+                    }
+                    if (isset($updates['content'])) {
+                        $item['content'] = wp_kses_post($updates['content']);
+                    }
+                    if (isset($updates['images']) && is_array($updates['images'])) {
+                        $item['images'] = array_map('esc_url_raw', $updates['images']);
+                    }
+                    // Annotation metadata is stored opaque (Phase 2) — passed through as-is.
+                    if (array_key_exists('annotation', $updates)) {
+                        $item['annotation'] = $updates['annotation'];
+                    }
+                    $item['updatedAt'] = current_time('mysql');
+                    $updated = true;
+                    break;
+                }
+            }
+            unset($item);
         }
 
         if (!$updated) {

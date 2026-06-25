@@ -1,5 +1,41 @@
 # Session Log
 
+## 2026-06-25 — Custom Approval Card — Phase 1 (no annotation yet) [/build]
+- **Goal:** add a 4th approval asset type "custom" (Notion-style doc) authored on the
+  Approvals board, reusing the entire existing approval/review lifecycle. User chose a
+  LIGHTER annotation lib over tldraw (to propose at Phase 2) and "build Phase 1 now".
+- **Schema:** NONE at DB level — `snapshot` + `reviewFeedback` are opaque JSON columns.
+  Added TS `CustomAsset` + `snapshot.custom` + `reviewFeedback.approvedCustomIds`
+  (types.ts). Backend whitelists/maps extended so `custom`/`approvedCustomIds` aren't
+  dropped.
+- **Backend (`approvals/service.php`):** `approvedCustomIds` added to both
+  `$sanitized_feedback` whitelists + `feedback_struct`; `custom→approvedCustomIds` added
+  to `bucket_for_asset` + `is_fully_approved` + approve-all `collect_ids`;
+  `merge_snapshot` now merges the `custom` bucket; `update_snapshot_asset` gained a
+  `custom` branch (title/content `wp_kses_post`/images/annotation passthrough).
+  `controller.php` append guard now allows custom-only appends. No new routes; reuses
+  `createSet`/`appendToSet`/`updateSnapshotAsset`.
+- **Frontend:**
+  - `kanban/SetsBoard.tsx`: "+ Add Approval Set" button (top-right) → new
+    `components/CreateCustomSetDialog.tsx` (set name + brand/project/delivery + Tiptap
+    editor) → `createSet` with `snapshot.custom:[card]` in the Draft lane; invalidates
+    `approvals.listSets`.
+  - NEW `components/CustomCardEditor.tsx`: reuses the SHARED `getEditorExtensions`
+    (headings/lists/block-image) + a formatting toolbar; images via the existing
+    `wp.media` frame. No new editor.
+  - Rendering: `CreativeAssetCard` got a `'custom'` type + render branch (reuses the
+    article read-only Tiptap viewer `ArticleViewerDialog`); `ClientReviewPage` wires
+    custom into state/merge/filter/approve/counts/draft/submit; `ClientStatusToolbar`
+    got a "Custom" filter chip. `PreviewDialog` iframes the review page → creator preview
+    + approval modal render custom automatically.
+- **Verified:** `php -l` clean (service+controller); `npm run check` — 0 errors in touched
+  files (56 = pre-existing baseline); `npm run build` OK (index-writer.js 4,484,322 B);
+  served bundle == build; markers "Add Approval Set"/"Write your document" in bundle;
+  `POST /approvals/sets` → 403 (route intact). NOT driven live (needs a browser session).
+- **Deferred:** (Phase 2) image annotation — pick the lighter lib + flatten-to-PNG; and a
+  re-edit-existing-custom-card affordance (backend `update_snapshot_asset` already
+  supports it). No commit.
+
 ## 2026-06-19 — AI Readiness → Optimizer parity, iterations 1b + 2 [/build] "complete both"
 - 1b) LOCAL parity finished — now fully matches Optimizer Simple:
   - ai-readiness.php: save_llms() (persist a hand-edited llms.txt), delete_all() (reset llms files +

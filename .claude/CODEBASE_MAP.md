@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-24 · verified current 2026-06-24 (HEAD `b49d5f0`). NOTE: SEO module is under active parallel development — the generation UI especially has churned (bulk-only → per-cell restored); verify SEO specifics against the code._
+_Last updated: 2026-06-24 · verified current 2026-06-24 (HEAD `fb1281f` — "AI Readiness optimizer parity + remote one-click optimize"; working tree clean). NOTE: SEO module is under active parallel development — generation UI, AI-readiness, and remote-site routes have churned; verify SEO specifics against the code._
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -21,7 +21,7 @@ _Last updated: 2026-06-24 · verified current 2026-06-24 (HEAD `b49d5f0`). NOTE:
 | Name / slug / text-domain | Power Creatives / `power-creatives` |
 | Main file | `power-creatives.php` |
 | Version (`PCM_VERSION`) | **1.7.0** |
-| DB version (`PCM_DB_VERSION`) | **1.27.0** (separate from plugin version) |
+| DB version (`PCM_DB_VERSION`) | **1.28.0** (separate from plugin version; 1.28.0 added `deliveries.seoSiteId`) |
 | Requires WP / PHP | 6.4+ / 8.1+ |
 | Const prefix | `PCM_` |
 | Composer package | `antigravity/power-creatives` (type `wordpress-plugin`) |
@@ -612,8 +612,9 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   HTML→Markdown, llms.txt index+full builders, per-post status (md5
   ready/stale/none via `_pcm_md_*`). Required from service.php (hooks every
   request). REST (admin): `GET /seo/ai-readiness` + `/build`,`/publish`,
-  `/settings`,`/generate`. Frontend: SEO module tabbed (Content / AI
-  Readiness), `AIReadinessPanel`.
+  `/settings`,`/generate`, and (post-1.27, optimizer-parity / `fb1281f`)
+  `/summarize`, `/save-llms`, `/site-desc`, `/delete-all`. Frontend: SEO module
+  tabbed (Content / AI Readiness), `AIReadinessPanel`.
 - **Phase 4 (Schema)**: `schema.php` (`PCM_SEO_Schema`) — JSON-LD on wp_head
   (Article/WebPage/BreadcrumbList/FAQPage/HowTo/Product, publisher+logo chain,
   about/mentions+sameAs, speakable). Meta `pcm_seo_schema[_faq/_howto/
@@ -656,15 +657,25 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
 - **Remote-site SEO (via the connector — major addition, was "coming soon"):**
   Connected remote sites are now managed end-to-end through the hub's
   `/seo/sites/{id}/*` routes (ALL `manage_options`), which proxy to the remote
-  connector plugin's `/pcm-conn/v1/*` endpoints (connector **v1.2.0+/v1.3.0**
-  required on the remote). Surfaces:
+  connector plugin's `/pcm-conn/v1/*` endpoints (connector **v1.3.1** required on
+  the remote; v1.3.1 adds front-end app-password auth for the page preview).
+  Surfaces:
   - Content: `GET/POST /seo/sites/{id}/content`, `.../content/{post}/cell`,
-    `.../generate`, `.../scan-links`, `.../schema` (`remote_*` methods in
-    `seo/service.php`; frontend `hooks/useRemoteSeoContent.ts`).
-  - Site SEO (robots + JSON-LD): `GET/POST /seo/sites/{id}/site` →
-    `RemoteSiteSettingsPanel.tsx` → connector `/pcm-conn/v1/site`.
+    `.../generate`, `.../scan-links`, `.../schema`, `.../delete`,
+    `.../content/{post}/featured` (set featured image; `fb1281f`) (`remote_*`
+    methods in `seo/service.php`; frontend `hooks/useRemoteSeoContent.ts`).
+  - **Authenticated page preview:** `POST /seo/sites/{id}/preview` →
+    `remote_preview` → `PCM_SEO_Service::remote_preview_html` GETs the page with
+    the connector's app-password Basic auth (host-guarded), injects `<base href>`,
+    returns `{html}`; `SEO/index.tsx` renders it via `srcDoc` (same-origin → WP
+    admin bar shows), FALLING BACK to a direct `<iframe src>` if the fetch fails.
+    Requires connector **v1.3.1** (front-end app-password auth) on the remote.
+  - Site SEO (robots + JSON-LD): `GET/POST /seo/sites/{id}/site` + `/site/generate`
+    (one-click optimize; `fb1281f`) → `RemoteSiteSettingsPanel.tsx` → connector
+    `/pcm-conn/v1/site`.
   - AI Readiness (llms.txt build/edit/toggle): `GET/POST /seo/sites/{id}/ai` +
-    `/ai/build` → `RemoteAIReadinessPanel.tsx` → connector `/pcm-conn/v1/ai`.
+    `/ai/build`, `/ai/posts`, `/ai/site-desc` (`fb1281f`) →
+    `RemoteAIReadinessPanel.tsx` → connector `/pcm-conn/v1/ai`.
   - LLM-info: `GET/POST /seo/sites/{id}/llm-info` + `/build`.
   - `RemoteSitePlaceholder` still renders as the FALLBACK for site tabs/sections
     not yet wired for a given remote; content/site/AI/llm-info tabs now show real

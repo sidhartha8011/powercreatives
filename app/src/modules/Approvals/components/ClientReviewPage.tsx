@@ -52,6 +52,7 @@ function saveDraft(token: string, data: {
   approvedVisualIds: string[];
   approvedCopyIds: string[];
   approvedArticleIds: string[];
+  approvedCustomIds: string[];
   comments: Record<string, CommentEntry[]>;
   clientName: string;
 }) {
@@ -82,12 +83,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const [approvedVisualIds, setApprovedVisualIds] = useState<string[]>(draft?.approvedVisualIds ?? []);
   const [approvedCopyIds, setApprovedCopyIds] = useState<string[]>(draft?.approvedCopyIds ?? []);
   const [approvedArticleIds, setApprovedArticleIds] = useState<string[]>(draft?.approvedArticleIds ?? []);
+  const [approvedCustomIds, setApprovedCustomIds] = useState<string[]>(draft?.approvedCustomIds ?? []);
   // Threaded comments: array of CommentEntry per asset ID
   const [comments, setComments] = useState<Record<string, CommentEntry[]>>(draft?.comments ?? {});
   const [activeAssetIdForComment, setActiveAssetIdForComment] = useState<string | null>(null);
   const [clientName, setClientName] = useState(draft?.clientName ?? '');
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<'all' | 'images' | 'videos' | 'copy' | 'articles'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'images' | 'videos' | 'copy' | 'articles' | 'custom'>('all');
 
   // Server-persisted truth: set has been submitted and entered the team pipeline.
   // Survives page refresh (unlike isSubmitted, which is local React state).
@@ -109,8 +111,8 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Auto-save draft to localStorage on every state change
   useEffect(() => {
     if (isLocked) return;
-    saveDraft(token, { approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, clientName });
-  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, clientName, isLocked]);
+    saveDraft(token, { approvedVisualIds, approvedCopyIds, approvedArticleIds, approvedCustomIds, comments, clientName });
+  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, approvedCustomIds, comments, clientName, isLocked]);
 
   // Hydrate approved/comment state from server draft or completed review feedback
   // Handles both legacy string-per-asset format and new array-of-objects format
@@ -119,6 +121,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       setApprovedVisualIds(set.reviewFeedback.approvedVisualIds || []);
       setApprovedCopyIds(set.reviewFeedback.approvedCopyIds || []);
       setApprovedArticleIds(set.reviewFeedback.approvedArticleIds || []);
+      setApprovedCustomIds(set.reviewFeedback.approvedCustomIds || []);
 
       // Migrate legacy comments (string) to new format (CommentEntry[])
       const rawComments = set.reviewFeedback.comments || {};
@@ -210,16 +213,19 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const handleToggleApprove = useCallback((id: string) => {
     if (isLocked || !set) return;
 
-    // Check if ID belongs to media, copy, or article
+    // Check if ID belongs to media, article, custom, or copy (default)
     const isMedia = set.snapshot.media?.some((m: any) => m.id === id);
     const isArticle = set.snapshot.articles?.some((a: any) => a.id === id);
+    const isCustom = set.snapshot.custom?.some((c: any) => c.id === id);
 
     // Compute the next approval state so the server persists the same value.
     const currentlyApproved = isMedia
       ? approvedVisualIds.includes(id)
       : isArticle
         ? approvedArticleIds.includes(id)
-        : approvedCopyIds.includes(id);
+        : isCustom
+          ? approvedCustomIds.includes(id)
+          : approvedCopyIds.includes(id);
     const nextApproved = !currentlyApproved;
 
     if (isMedia) {
@@ -228,6 +234,10 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       );
     } else if (isArticle) {
       setApprovedArticleIds((prev) =>
+        prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+      );
+    } else if (isCustom) {
+      setApprovedCustomIds((prev) =>
         prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
       );
     } else {
@@ -239,7 +249,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     // Persist immediately; the server flips the set to 'launch' + fires the
     // team webhook when this completes full approval.
     approveAssetMutation.mutate({ token, assetId: id, approved: nextApproved });
-  }, [set, isLocked, approvedVisualIds, approvedArticleIds, approvedCopyIds, token, approveAssetMutation]);
+  }, [set, isLocked, approvedVisualIds, approvedArticleIds, approvedCustomIds, approvedCopyIds, token, approveAssetMutation]);
 
   // New-comment handler — routes through the dedicated endpoint so the team
   // (client comment) or client (team reply) is notified, and so the comment
@@ -274,9 +284,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     const mediaIds = (set.snapshot.media || []).map((m: any) => m.id);
     const copyIds = (set.snapshot.copy || []).map((c: any) => c.id);
     const articleIds = (set.snapshot.articles || []).map((a: any) => a.id);
+    const customIds = (set.snapshot.custom || []).map((c: any) => c.id);
     setApprovedVisualIds(mediaIds);
     setApprovedCopyIds(copyIds);
     setApprovedArticleIds(articleIds);
+    setApprovedCustomIds(customIds);
     // Persist + let the server advance to 'launch' and notify the team.
     approveAssetMutation.mutate({ token, approveAll: true });
   }, [set, isLocked, token, approveAssetMutation]);
@@ -295,10 +307,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         approvedVisualIds,
         approvedCopyIds,
         approvedArticleIds,
+        approvedCustomIds,
         comments,
       },
     });
-  }, [token, clientName, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, submitMutation, isLocked]);
+  }, [token, clientName, approvedVisualIds, approvedCopyIds, approvedArticleIds, approvedCustomIds, comments, submitMutation, isLocked]);
 
   // Confirm submit handler — direct submission without name prompt
   const handleConfirmSubmit = useCallback(() => {
@@ -310,10 +323,11 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         approvedVisualIds,
         approvedCopyIds,
         approvedArticleIds,
+        approvedCustomIds,
         comments,
       },
     });
-  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, comments, submitMutation, isLocked]);
+  }, [token, approvedVisualIds, approvedCopyIds, approvedArticleIds, approvedCustomIds, comments, submitMutation, isLocked]);
 
   const handleAssetUpdate = useCallback(() => {
     utils.approvals.getPublicSet.invalidate({ token });
@@ -323,14 +337,16 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   const mediaAssets = useMemo(() => set?.snapshot?.media || [], [set]);
   const copyAssets = useMemo(() => set?.snapshot?.copy || [], [set]);
   const articleAssets = useMemo(() => set?.snapshot?.articles || [], [set]);
-  
+  const customAssets = useMemo(() => set?.snapshot?.custom || [], [set]);
+
   const counts = useMemo(() => {
     const videos = mediaAssets.filter((item: any) => isVideoAsset(item)).length;
     const images = mediaAssets.length - videos;
     const copy = copyAssets.length;
     const articles = articleAssets.length;
-    return { all: mediaAssets.length + copy + articles, images, videos, copy, articles };
-  }, [mediaAssets, copyAssets, articleAssets]);
+    const custom = customAssets.length;
+    return { all: mediaAssets.length + copy + articles + custom, images, videos, copy, articles, custom };
+  }, [mediaAssets, copyAssets, articleAssets, customAssets]);
 
   const allMergedAssets = useMemo(() => {
     const media = mediaAssets.map((item: any) => ({
@@ -348,8 +364,13 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       type: 'article' as const,
       data: item
     }));
-    return [...media, ...copy, ...articles];
-  }, [mediaAssets, copyAssets, articleAssets]);
+    const custom = customAssets.map((item: any) => ({
+      id: item.id,
+      type: 'custom' as const,
+      data: item
+    }));
+    return [...media, ...copy, ...articles, ...custom];
+  }, [mediaAssets, copyAssets, articleAssets, customAssets]);
 
   const activeAssetForComment = useMemo(() => {
     if (!activeAssetIdForComment) return null;
@@ -363,11 +384,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     if (activeFilter === 'videos') return allMergedAssets.filter(item => item.type === 'media' && isVideoAsset(item.data));
     if (activeFilter === 'copy') return allMergedAssets.filter(item => item.type === 'copy');
     if (activeFilter === 'articles') return allMergedAssets.filter(item => item.type === 'article');
+    if (activeFilter === 'custom') return allMergedAssets.filter(item => item.type === 'custom');
     return allMergedAssets;
   }, [activeFilter, allMergedAssets]);
 
   const totalCount = counts.all;
-  const approvedCount = approvedVisualIds.length + approvedCopyIds.length + approvedArticleIds.length;
+  const approvedCount = approvedVisualIds.length + approvedCopyIds.length + approvedArticleIds.length + approvedCustomIds.length;
   const reviewedCount = approvedCount + Object.keys(comments).length;
 
   // Hero subtitle — describes asset breakdown for the client
@@ -509,7 +531,9 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                 ? approvedVisualIds.includes(item.id)
                 : item.type === 'article'
                   ? approvedArticleIds.includes(item.id)
-                  : approvedCopyIds.includes(item.id);
+                  : item.type === 'custom'
+                    ? approvedCustomIds.includes(item.id)
+                    : approvedCopyIds.includes(item.id);
               const threadForAsset = comments[item.id] || [];
               const userRole = isTeamMember ? 'team' : 'client';
               const hasNewComment = threadForAsset.some(c => {

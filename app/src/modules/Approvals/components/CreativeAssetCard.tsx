@@ -138,7 +138,7 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, onClo
 
 interface CreativeAssetCardProps {
   asset: CreativeAsset;
-  type: 'media' | 'copy' | 'article';
+  type: 'media' | 'copy' | 'article' | 'custom';
   isApproved: boolean;
   /** Number of comments for this asset (0 means no comments yet) */
   commentCount: number;
@@ -175,18 +175,18 @@ export function CreativeAssetCard({
   const [showLightbox, setShowLightbox] = useState(false);
   const [showArticleViewer, setShowArticleViewer] = useState(false);
 
-  // Extract first image URL from article HTML content for thumbnail preview
+  // Extract first image URL from article/custom HTML content for thumbnail preview
   const articleThumbnail = useMemo(() => {
-    if (type !== 'article') return null;
+    if (type !== 'article' && type !== 'custom') return null;
     if (asset.featuredImage) return asset.featuredImage;
     // Extract first <img src> from HTML content
     const match = asset.content?.match(/<img[^>]+src=["']([^"']+)["']/);
     return match?.[1] ?? null;
   }, [type, asset.featuredImage, asset.content]);
 
-  // Extract plain-text snippet from article HTML for preview card
+  // Extract plain-text snippet from article/custom HTML for preview card
   const articleSnippet = useMemo(() => {
-    if (type !== 'article' || !asset.content) return '';
+    if ((type !== 'article' && type !== 'custom') || !asset.content) return '';
     const text = asset.content.replace(/<[^>]*>/g, '').trim();
     return text.length > 120 ? text.slice(0, 120) + '…' : text;
   }, [type, asset.content]);
@@ -523,6 +523,46 @@ export function CreativeAssetCard({
         </div>
       )}
 
+      {/* ─── CUSTOM CARD LAYOUT (Notion-style document) ─── */}
+      {type === 'custom' && (
+        <div
+          className="pcm-copy-body select-none flex flex-col flex-1 min-h-0"
+          style={{ cursor: 'pointer' }}
+          role="button"
+          tabIndex={0}
+          onClick={() => setShowArticleViewer(true)}
+        >
+          {articleThumbnail ? (
+            <div className="pcm-card-media select-none" style={{ maxHeight: '160px' }}>
+              <img src={articleThumbnail} alt={asset.title || 'Custom document'} style={{ objectFit: 'cover', width: '100%', height: '100%' }} />
+            </div>
+          ) : (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              height: '80px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', marginBottom: '0.75rem',
+            }}>
+              <FileText className="w-8 h-8" style={{ color: 'rgba(255,255,255,0.15)' }} />
+            </div>
+          )}
+
+          <div className="pcm-copy-platform">Custom</div>
+
+          <h4 className="pcm-copy-headline" style={{ marginBottom: '0.25rem' }}>
+            {asset.title || 'Untitled Document'}
+          </h4>
+
+          {articleSnippet && (
+            <p className="pcm-copy-text" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+              {articleSnippet}
+            </p>
+          )}
+
+          <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: 'auto', paddingTop: '0.5rem' }}>
+            Click to open →
+          </span>
+        </div>
+      )}
+
       {/* Card actions (shared for media + copy) */}
       <div className="pcm-card-actions select-none">
         <button
@@ -611,11 +651,11 @@ export function CreativeAssetCard({
         document.body
       )}
 
-      {/* ─── ARTICLE VIEWER DIALOG (full read-only Tiptap) ─── */}
-      {showArticleViewer && type === 'article' && (
+      {/* ─── ARTICLE / CUSTOM VIEWER DIALOG (full read-only Tiptap) ─── */}
+      {showArticleViewer && (type === 'article' || type === 'custom') && (
         <ArticleViewerDialog
           content={asset.content || ''}
-          title={asset.title || 'Untitled Article'}
+          title={asset.title || (type === 'custom' ? 'Untitled Document' : 'Untitled Article')}
           metaTitle={asset.metaTitle}
           metaDescription={asset.metaDescription}
           onClose={() => setShowArticleViewer(false)}

@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { KanbanSquare, Search, Trash2, X } from 'lucide-react';
+import { KanbanSquare, Plus, Search, Trash2, X } from 'lucide-react';
 
 import { trpc } from '@/lib/trpc';
 import { useApp } from '@/contexts/AppContext';
@@ -50,6 +50,7 @@ import {
 
 import { FeedbackDialog } from './FeedbackDialog';
 import { PreviewDialog } from './PreviewDialog';
+import { CreateCustomSetDialog } from '../components/CreateCustomSetDialog';
 import { SetCard } from './SetCard';
 import { setColumns } from './setColumns';
 import { setFilters } from './setFilters';
@@ -234,6 +235,9 @@ export function SetsBoard() {
 
   // ─── Delete confirmation flow ────────────────────────────────
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
+
+  // ─── "Add Approval Set" (custom card) creation flow ──────────
+  const [showCreate, setShowCreate] = useState(false);
 
   const requestSingleDelete = useCallback((s: ApprovalSet) => {
     setPendingDelete({ kind: 'single', set: s });
@@ -442,6 +446,15 @@ export function SetsBoard() {
           )}
 
           <div className="ml-auto flex items-center gap-3">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowCreate(true)}
+              className="h-9"
+            >
+              <Plus className="w-4 h-4 mr-1.5" aria-hidden="true" />
+              Add Approval Set
+            </Button>
             <div className="text-xs text-slate-500 font-medium">
               Showing {listState.filteredItems.length} set
               {listState.filteredItems.length === 1 ? '' : 's'}
@@ -502,6 +515,13 @@ export function SetsBoard() {
         set={previewSet}
         url={previewSet ? getPublicBoardUrl(previewSet.token) : null}
         onClose={closePreview}
+      />
+
+      {/* "Add Approval Set" → author a custom Notion-style card; the dialog
+          invalidates approvals.listSets so the board refreshes on create. */}
+      <CreateCustomSetDialog
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
       />
 
       {/* Delete confirmation — used for both single and bulk. The

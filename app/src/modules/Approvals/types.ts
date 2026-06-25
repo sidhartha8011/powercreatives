@@ -61,6 +61,31 @@ export interface SnapshotAsset {
 }
 
 /**
+ * A custom approval asset — a free-form, Notion-style document authored in the
+ * Approvals board with the shared Tiptap editor. The fourth asset type alongside
+ * media / copy / articles; reviewed through the exact same flow (comments keyed
+ * by `id`, approval via `approvedCustomIds`).
+ */
+export interface CustomAsset {
+  id: string;
+  /** Discriminator so the merged review pipeline can branch on it. */
+  type?: 'custom';
+  title?: string;
+  /** Tiptap HTML (rich text + inline uploaded images). */
+  content: string;
+  /** URLs of images embedded in the document (for previews / counts). */
+  images?: string[];
+  /**
+   * Image-annotation metadata (Phase 2). Keyed by the embedded image's id: the
+   * editable drawing doc + a flattened export rendered on the (runtime-free)
+   * review page. Reserved now; populated when the annotation lib lands.
+   */
+  annotation?: Record<string, { doc?: unknown; exportUrl?: string }>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
  * Valid statuses for a single comment in a review thread.
  */
 export type CommentStatus = 'New' | 'Team reply' | 'Done';
@@ -100,12 +125,16 @@ export interface ApprovalSet {
     copy: SnapshotAsset[];
     /** Writer articles packaged into this approval set (v1.12.0+) */
     articles?: SnapshotAsset[];
+    /** Custom Notion-style documents authored on the board (Custom card type). */
+    custom?: CustomAsset[];
   };
   reviewFeedback?: {
     approvedVisualIds: string[];
     approvedCopyIds: string[];
     /** Article IDs approved by the client (v1.12.0+) */
     approvedArticleIds?: string[];
+    /** Custom-card IDs approved by the client. */
+    approvedCustomIds?: string[];
     comments: Record<string, CommentEntry[]>;
   } | null;
   createdAt: string;
