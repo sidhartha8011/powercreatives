@@ -1,8 +1,12 @@
 /**
- * ColumnHead — a SEO-table header cell laid out like the original Optimizer:
+ * ColumnHead — a spreadsheet-style table header cell:
  *   [Filter • (far left, small dot)] [Title + Sort] … [Generate ✦]
- * No leading type icon. The Generate button (generatable columns) opens a
- * template dropdown; picking a template generates the ENTIRE column with it.
+ * Optional drag-to-reorder + drag-to-resize handles are wired by the table.
+ *
+ * Global/reusable: pairs with the shared `useColumnLayout` (order + widths) and
+ * `useColumnFilters` (per-column filters). Any module can compose a SEO-style
+ * spreadsheet table from these. The `generate` slot is optional (used by SEO's
+ * per-column AI generation; omit it elsewhere).
  */
 
 import type { DragEvent, PointerEvent } from 'react';
@@ -17,7 +21,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { SortDirection } from '@/hooks/useSortableTable';
-import type { FilterDef } from './seoFilters';
+import type { FilterDef } from '@/hooks/useColumnFilters';
 
 interface SortState {
   active: boolean;
@@ -26,7 +30,9 @@ interface SortState {
 }
 
 interface FilterState {
-  def: FilterDef;
+  // Row-agnostic here — the header only reads `kind`/`options` to render the UI;
+  // the row-typed predicate (`match`) is applied by useColumnFilters.
+  def: FilterDef<any>;
   value: string;
   onChange: (value: string) => void;
 }
@@ -85,7 +91,7 @@ export function ColumnHead({
     >
       {isDropTarget && <span className="pointer-events-none absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />}
       <div className="flex items-center gap-1 group">
-        {/* Filter — furthest left, a small dot (Optimizer style); primary when active. */}
+        {/* Filter — furthest left, a small dot; primary when active. */}
         {filter && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -139,8 +145,7 @@ export function ColumnHead({
           </DropdownMenu>
         )}
 
-        {/* Title (click to sort). Left-grouped so the Generate ✦ sits beside it,
-            not pushed to the far-right edge. */}
+        {/* Title (click to sort). Left-grouped so Generate ✦ sits beside it. */}
         {sort ? (
           <button type="button" onClick={sort.onToggle} className="flex min-w-0 items-center gap-1 text-left hover:text-foreground">
             <span className="truncate">{label}</span>

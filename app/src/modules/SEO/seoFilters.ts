@@ -14,22 +14,12 @@
  */
 
 import type { SeoRow, SeoOptions } from './types';
+// Generic column-filter types now live in the shared hook; SEO types them to SeoRow.
+import type { FilterKind, FilterOption, FilterDef as GenericFilterDef } from '@/hooks/useColumnFilters';
 
-export type FilterKind = 'text' | 'choice';
-
-export interface FilterOption {
-  value: string;
-  label: string;
-}
-
-export interface FilterDef {
-  key: string;
-  kind: FilterKind;
-  /** Choices for a 'choice' filter (omitted for 'text'). */
-  options?: FilterOption[];
-  /** True when the row passes this filter's active value. */
-  match: (row: SeoRow, value: string) => boolean;
-}
+export type { FilterKind, FilterOption };
+/** SEO-row-typed filter definition. */
+export type FilterDef = GenericFilterDef<SeoRow>;
 
 /** Recommended max lengths (SEO best practice) used by the "Too long" filter. */
 export const META_TITLE_MAX = 60;

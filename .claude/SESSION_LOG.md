@@ -1,5 +1,26 @@
 # Session Log
 
+## 2026-06-26 — Globalize SEO table building blocks (reusable spreadsheet table) [/task]
+- **Asked:** make the SEO table a global type for other modules. (User chose "globalize the
+  building blocks", not a full single-component refactor of the live SEO table.)
+- **Moved 3 SEO-local pieces to shared (behavior-identical):**
+  - `ColumnHead` → `@/components/ui/column-head.tsx` (drag-reorder/resize + sort + filter +
+    optional generate header). Row-agnostic: `FilterDef` import now from the shared hook;
+    `def: FilterDef<any>` (header only reads kind/options).
+  - `useColumnLayout` → `@/hooks/useColumnLayout.ts` (+ a `storageKey` param so tables
+    don't collide; SEO passes its existing `'pcm:seo:col-layout:v1'` → saved layouts kept).
+  - `useColumnFilters` → `@/hooks/useColumnFilters.ts`, generic `<T>`; now defines/exports
+    the generic `FilterDef<T>` / `FilterKind` / `FilterOption`.
+  - `seoFilters.ts` imports those generic types + aliases `FilterDef = FilterDef<SeoRow>`
+    (re-exports FilterKind/FilterOption); `SEO/index.tsx` imports the shared paths +
+    `useColumnFilters<SeoRow>()`. Deleted the 3 old SEO files.
+- Other modules can now compose a SEO-style spreadsheet table from
+  `useColumnLayout` + `useColumnFilters` + `ColumnHead` + their own `FilterDef<Row>` map.
+  (Complements the simple `@/components/ui/data-table` from the Sites task.)
+- **Verified:** `npm run check` 0 errors in touched files (56 baseline); `npm run build`
+  OK; no stale import paths. NOTE: HTTP served-sync not confirmed — the local site was
+  unresponsive (http 000) at verify time; the junction serves directly from app/dist. No commit.
+
 ## 2026-06-26 — SEO remote bulk: add Duplicate (was local-only) [/task]
 - **Reported:** on a connected (remote) site the SEO bulk-actions menu was missing
   Duplicate.

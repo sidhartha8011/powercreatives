@@ -39,10 +39,10 @@ import {
 
 import { useSeoContent } from './hooks/useSeoContent';
 import { useRemoteSeoContent } from './hooks/useRemoteSeoContent';
-import { useColumnFilters } from './hooks/useColumnFilters';
+import { useColumnFilters } from '@/hooks/useColumnFilters';
 import { useViews, type SeoView } from './hooks/useViews';
-import { useColumnLayout } from './hooks/useColumnLayout';
-import { ColumnHead } from './ColumnHead';
+import { useColumnLayout } from '@/hooks/useColumnLayout';
+import { ColumnHead } from '@/components/ui/column-head';
 import { ViewsToolbar } from './ViewsToolbar';
 import { buildFilterDefs } from './seoFilters';
 import { AIReadinessPanel } from './AIReadinessPanel';
@@ -370,7 +370,7 @@ export function SEOModule() {
   const bulkDuplicate = isLocal ? localBulkDuplicate : remote.bulkDuplicate;
   // Per-column filters (funnel icon in each column header).
   const filterDefs = useMemo(() => buildFilterDefs(options), [options]);
-  const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters();
+  const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters<SeoRow>();
   // Column visibility (Columns menu) — missing/true = visible, false = hidden.
   const [cols, setCols] = useState<Record<string, boolean>>(
     () => Object.fromEntries(TOGGLE_COLUMNS.map((c) => [c.key, true])),
@@ -380,7 +380,7 @@ export function SEOModule() {
   // Spreadsheet-style column order + widths (drag to reorder / resize; persisted
   // to localStorage). Selection column stays fixed and is not part of this.
   const { order: colOrder, width: colWidth, setWidth: setColWidth, moveColumn, reset: resetColumnLayout } =
-    useColumnLayout(COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS);
+    useColumnLayout(COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, 'pcm:seo:col-layout:v1');
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   // Saved Views (per-user, persisted via the seo REST API).
