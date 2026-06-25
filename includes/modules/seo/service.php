@@ -744,6 +744,58 @@ class PCM_SEO_Service
     }
 
     /**
+     * Duplicate a connected site's post/page via the connector: read the source
+     * (edit context → raw title/content + SEO meta) and create a draft "(Copy)".
+     * Mirrors the local duplicate(); the connector exposes the SEO meta keys in REST.
+     *
+     * @return array{id:int,type:string}|\WP_Error
+     */
+    public static function remote_duplicate_content(object $site, int $post_id, string $type)
+    {
+        self::ensure_sites_service();
+        $base = ($type === 'page') ? '/wp/v2/pages' : '/wp/v2/posts';
+
+        // Read the source with edit context so we get raw title/content + meta.
+        $get = PCM_Sites_Service::remote_rest($site, 'GET', $base . '/' . $post_id, array(
+            'context' => 'edit',
+            '_fields' => 'title,content,excerpt,meta',
+        ));
+        if (is_wp_error($get)) {
+            return new WP_Error('pcm_seo_remote_dup', $get->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($get['status'] ?? 0) >= 300 || !is_array($get['body'] ?? null)) {
+            return new WP_Error('pcm_seo_remote_dup', __('Could not read the source content.', 'power-creatives'), array('status' => 502));
+        }
+        $src     = $get['body'];
+        $title   = (string) ($src['title']['raw'] ?? $src['title']['rendered'] ?? __('Untitled', 'power-creatives'));
+        $content = (string) ($src['content']['raw'] ?? '');
+        $excerpt = (string) ($src['excerpt']['raw'] ?? '');
+
+        $body = array(
+            'title'   => $title . ' ' . __('(Copy)', 'power-creatives'),
+            'content' => $content,
+            'excerpt' => $excerpt,
+            'status'  => 'draft',
+        );
+        // Carry over the SEO meta the connector exposes (Yoast/RankMath/SEOPress/pcm_*).
+        if (isset($src['meta']) && is_array($src['meta']) && !empty($src['meta'])) {
+            $body['meta'] = $src['meta'];
+        }
+
+        $post = PCM_Sites_Service::remote_rest($site, 'POST', $base, array(), $body);
+        if (is_wp_error($post)) {
+            return new WP_Error('pcm_seo_remote_dup', $post->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($post['status'] ?? 0) >= 300 || !is_array($post['body'] ?? null) || empty($post['body']['id'])) {
+            $msg = (is_array($post['body'] ?? null) && !empty($post['body']['message']))
+                ? (string) $post['body']['message']
+                : ('HTTP ' . (int) ($post['status'] ?? 0));
+            return new WP_Error('pcm_seo_remote_dup', $msg, array('status' => 502));
+        }
+        return array('id' => (int) $post['body']['id'], 'type' => $type);
+    }
+
+    /**
      * Trash a post/page on a connected site (via the proxy). force=false → Trash, not a
      * permanent delete, so a mistaken bulk delete on a client site is recoverable.
      *

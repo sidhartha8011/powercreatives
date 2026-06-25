@@ -517,8 +517,8 @@ export function SetsBoard() {
         onClose={closePreview}
       />
 
-      {/* "Add Approval Set" → author a custom Notion-style card; the dialog
-          invalidates approvals.listSets so the board refreshes on create. */}
+      {/* "Add Approval Set" → author a custom Notion-style card, then send it to the
+          client through the shared SendToApprovalSetDialog (same flow as Copy). */}
       <CreateCustomSetDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}

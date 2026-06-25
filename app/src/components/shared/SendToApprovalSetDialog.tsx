@@ -68,12 +68,25 @@ export interface SnapshotCopyItem {
   modelUsed?: string;
 }
 
+/** Custom Notion-style document item (Approvals "custom" asset type). */
+export interface SnapshotCustomItem {
+  id: string;
+  type?: 'custom';
+  title?: string;
+  content: string;
+  images?: string[];
+  annotation?: Record<string, { doc?: unknown; exportUrl?: string }>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 interface SendToApprovalSetDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Frozen snapshot items for the approval set. Either/both may be empty. */
+  /** Frozen snapshot items for the approval set. Any/all may be empty. */
   media?: SnapshotMediaItem[];
   copy?: SnapshotCopyItem[];
+  custom?: SnapshotCustomItem[];
   /** Default name shown in the input (e.g. "Copy Set — Brand (Jun 9)"). */
   defaultName: string;
   brandId?: number | null;
@@ -91,6 +104,7 @@ export function SendToApprovalSetDialog({
   onClose,
   media = [],
   copy = [],
+  custom = [],
   defaultName,
   brandId,
   projectId,
@@ -176,7 +190,7 @@ export function SendToApprovalSetDialog({
 
   const appendMutation = trpc.approvals.appendToSet.useMutation({
     onSuccess: () => {
-      toast.success(`Added ${copy.length + media.length} item(s) to “${targetSet?.name ?? 'the set'}”.`);
+      toast.success(`Added ${copy.length + media.length + custom.length} item(s) to “${targetSet?.name ?? 'the set'}”.`);
       onClose();
     },
     onError: (err: any) => {
@@ -189,12 +203,12 @@ export function SendToApprovalSetDialog({
       toast.error('Pick the approval set to add to.');
       return;
     }
-    if (media.length === 0 && copy.length === 0) {
+    if (media.length === 0 && copy.length === 0 && custom.length === 0) {
       toast.error('Select at least one item to send for approval.');
       return;
     }
-    appendMutation.mutate({ id: targetSet.id, snapshot: { media, copy } });
-  }, [targetSet, media, copy, appendMutation]);
+    appendMutation.mutate({ id: targetSet.id, snapshot: { media, copy, custom } });
+  }, [targetSet, media, copy, custom, appendMutation]);
 
   const shareMutation = trpc.approvals.shareSet.useMutation({
     onSuccess: () => {
@@ -220,7 +234,7 @@ export function SendToApprovalSetDialog({
       toast.error('Please enter an approval set name.');
       return;
     }
-    if (media.length === 0 && copy.length === 0) {
+    if (media.length === 0 && copy.length === 0 && custom.length === 0) {
       toast.error('Select at least one item to send for approval.');
       return;
     }
@@ -233,11 +247,12 @@ export function SendToApprovalSetDialog({
       snapshot: {
         media,
         copy,
+        custom,
         brandName: brandName || 'PowerCreatives',
         brandLogoUrl: brandLogoUrl || null,
       },
     });
-  }, [setName, media, copy, brandId, projectId, deliveryId, brandName, brandLogoUrl, createMutation]);
+  }, [setName, media, copy, custom, brandId, projectId, deliveryId, brandName, brandLogoUrl, createMutation]);
 
   const handleCopyLink = useCallback(async () => {
     if (!shareableLink) return;

@@ -172,16 +172,12 @@ class PCM_Admin
     {
         $current_user = wp_get_current_user();
 
-        // Dynamically find the published page/post containing the [power_creatives] shortcode
+        // Resolve (creating if missing) the published page that hosts the
+        // [power_creatives] shortcode — client share links point at it. Without a
+        // page the link would fall back to home_url and render the theme's
+        // "nothing found" page.
         $shortcode_page_url = home_url('/'); // Safe default fallback
-        
-        global $wpdb;
-        $like_sc = '%' . $wpdb->esc_like('[power_creatives]') . '%';
-        $page_id = $wpdb->get_var($wpdb->prepare(
-            "SELECT ID FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_content LIKE %s LIMIT 1",
-            $like_sc
-        ));
-        
+        $page_id = $this->ensure_public_page();
         if ($page_id) {
             $shortcode_page_url = get_permalink((int) $page_id);
         }
@@ -217,6 +213,39 @@ class PCM_Admin
             // Plugin version
             'version' => PCM_VERSION,
         );
+    }
+
+    /**
+     * Resolve the published page that hosts the [power_creatives] shortcode,
+     * creating it once if none exists. Client approval share links point here;
+     * without it the link falls back to home_url and shows the theme's
+     * "nothing found" page. Idempotent — only creates when truly missing.
+     *
+     * @return int|null Page ID, or null if it could not be created.
+     */
+    private function ensure_public_page(): ?int
+    {
+        global $wpdb;
+        $like_sc = '%' . $wpdb->esc_like('[power_creatives]') . '%';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+        $page_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_type IN ('page','post') AND post_content LIKE %s LIMIT 1",
+            $like_sc
+        ));
+        if ($page_id) {
+            return (int) $page_id;
+        }
+
+        // None found — create a published page that renders the app/review board.
+        $new_id = wp_insert_post(array(
+            'post_title'   => 'Power Creatives',
+            'post_content' => '[power_creatives]',
+            'post_status'  => 'publish',
+            'post_type'    => 'page',
+            'post_author'  => get_current_user_id(),
+        ), true);
+
+        return is_wp_error($new_id) ? null : (int) $new_id;
     }
 
     /**

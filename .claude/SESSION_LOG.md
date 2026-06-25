@@ -1,5 +1,132 @@
 # Session Log
 
+## 2026-06-26 — SEO remote bulk: add Duplicate (was local-only) [/task]
+- **Reported:** on a connected (remote) site the SEO bulk-actions menu was missing
+  Duplicate.
+- **Cause:** Duplicate was gated `{isLocal && …}` because remote duplicate wasn't
+  implemented (only Change status + Delete were remote-aware).
+- **Built remote duplicate (mirrors local `duplicate()`):**
+  - `service.php` `remote_duplicate_content($site,$post,$type)` — connector GET (edit
+    context → raw title/content + SEO meta) then POST a draft "(Copy)" with content +
+    carried-over meta.
+  - `controller.php` route `POST /seo/sites/{id}/content/{post}/duplicate` →
+    `remote_duplicate` (manage_options); trpc `seo.remoteDuplicate`.
+  - `useRemoteSeoContent.bulkDuplicate(ids)` (mirrors `deleteRows`).
+  - `index.tsx`: `bulkDuplicate = isLocal ? local : remote.bulkDuplicate`; removed the
+    `isLocal &&` gate so Duplicate always shows.
+- **Verified:** `php -l` clean; `npm run check` 0 errors in touched files (56 baseline);
+  `npm run build` OK; served == build; `POST /seo/sites/1/content/1/duplicate` → 403
+  (registered). Not driven live (needs a connected site). No commit.
+
+## 2026-06-25 — Custom card: add content padding [/task]
+- **Asked:** add a little padding to the card.
+- **Cause:** custom cards lack the `.copy` class, so `.pcm-card.copy .pcm-copy-body`'s
+  18px padding never applied → text touched the edge.
+- **Change (`CreativeAssetCard.tsx`):** wrapped the badge/title/snippet/hint in a padded
+  flex column (`14px 16px`); image stays full-bleed above. Hint's `marginTop:auto` still
+  bottom-aligns within the wrapper.
+- **Verified:** `npm run check` clean; `npm run build` OK; served == build; only
+  CreativeAssetCard.tsx changed. No commit.
+
+## 2026-06-25 — Polish the custom approval card UI [/task]
+- **Asked:** small UI improvement to the custom card.
+- **Change (`CreativeAssetCard.tsx`, custom branch):** "Custom" label → rounded badge w/
+  FileText icon; thumbnail fixed 150px banner (overflow hidden, top-anchored cover);
+  snippet 2-line clamp + better contrast/line-height; replaced white-only rgba colors with
+  neutral/opacity values so it renders correctly on the LIGHT review theme (empty-state
+  icon + "Open document →" hint were previously near-invisible there).
+- **Verified:** `npm run check` clean; `npm run build` OK; served == build; only
+  CreativeAssetCard.tsx changed. No commit.
+
+## 2026-06-25 — Share link "nothing found": auto-create the shortcode page [/task]
+- **Reported:** the generated client link shows the WP theme "Sorry, but nothing was
+  found" (blog/home).
+- **Root cause (NOT custom-specific):** the share link = `shortcodePageUrl` +
+  `?pcm_public_token=`. `shortcodePageUrl` is the published page containing
+  `[power_creatives]`, else falls back to `home_url('/')`. The install had no such page →
+  link hit the site home → theme "nothing found". (Same reason the board preview failed.)
+- **Fix (`class-pcm-admin.php`):** new `ensure_public_page()` — when building the JS
+  config (plugin-admin page only), find the published `[power_creatives]` page or CREATE
+  one (`wp_insert_post` a published "Power Creatives" page with the shortcode).
+  Idempotent. `shortcodePageUrl` now always resolves to a real page; the shortcode already
+  renders the review when `pcm_public_token` is present (gate-bypassed).
+- **Verified:** `php -l` clean. Logic: shortcode handler line ~169 returns
+  `render_dashboard` on `pcm_public_token`; the page enqueues the bundle (line ~419).
+  Couldn't trigger live (page is created on an authenticated plugin-admin load). No commit.
+- **Note for user:** reload the Power Creatives admin page once (creates the page), then
+  re-generate the link / reopen the preview — already-copied old links point at home.
+
+## 2026-06-25 — Rework custom sets to use the Copy module's flow (SendToApprovalSetDialog) [/build]
+- **Feedback:** "completely wrong — make it like the Copy module's approval set." My
+  bespoke create/edit/share-on-click diverged from the canonical flow.
+- **Change:** custom sets now go through the SHARED `SendToApprovalSetDialog` (the exact
+  dialog Copy uses): name → `createSet` → move to 'client' (Awaiting Client Approval) →
+  share link + email invite.
+  - `SendToApprovalSetDialog` extended with an optional `custom` bucket (new
+    `SnapshotCustomItem` type) wired into the create snapshot, append, guards, counts.
+  - `CreateCustomSetDialog` rewritten as 2 steps: (1) author the doc (Tiptap editor +
+    images/annotations + brand/project), (2) hand the card to `SendToApprovalSetDialog`.
+    Removed all bespoke create/edit/share logic.
+  - `SetsBoard`: REVERTED the edit-on-click routing — custom sets now open the client
+    PREVIEW iframe like every other set (the committed ClientReviewPage already renders
+    the `custom` bucket). Removed `editCustomSet`/`handleOpenSet`/`apiFetch`.
+  - REVERTED the `hasCustom` flag (service.php `list_sets` + `format_set_row`, types.ts)
+    — no longer needed.
+- **Lifecycle/automation:** unchanged & automatic — set is created in 'client', full
+  client approval → 'launch' (committed triggers). Identical to Copy/Image sets.
+- **Files:** `SendToApprovalSetDialog.tsx`, `CreateCustomSetDialog.tsx`, `SetsBoard.tsx`
+  (backend reverts net to committed state). Custom review-rendering intact (committed).
+- **Verified:** `php -l` clean; `npm run check` 0 errors in touched files (56 baseline);
+  `npm run build` OK; served == build; markers "Send to Approval Set"/"1 custom document".
+  Not driven live. No commit.
+
+## 2026-06-25 — Fix custom-set reopen (board lacked snapshot) + guarantee share lane move [/task]
+- **Reported:** clicking a saved custom draft still showed the WP theme "nothing found"
+  (blog/home), and sharing didn't move it to "Awaiting Client Approval".
+- **Root cause:** `list_sets_by_user` selects everything EXCEPT `snapshot` (payload size),
+  so `set.snapshot.custom` was always empty on the board → last task's custom-detection
+  (`set.snapshot?.custom?.length`) was falsy → `handleOpenSet` fell through to the
+  client-preview iframe, which (no shortcode page) resolves to `home_url` → theme "nothing
+  found".
+- **Fix:**
+  - Backend (`service.php`): `list_sets` adds a cheap `(snapshot LIKE '%"custom":[{%') AS
+    hasCustom` flag (no snapshot shipped); `format_set_row` exposes `hasCustom` everywhere
+    (from the flag on lists, derived from the snapshot on full reads).
+  - `types.ts`: `ApprovalSet.hasCustom?`.
+  - `SetsBoard.handleOpenSet`: routes on `hasCustom`; for custom sets FETCHES the full set
+    (`apiFetch GET /approvals/sets/{token}` → returns full snapshot incl custom) and opens
+    the editable modal with the saved content. Others still open the preview iframe.
+  - Share: `CreateCustomSetDialog.handleShare` now `updateSetStatus({status:'client'})`
+    BEFORE `shareSet` (matches Ads flow) so it lands in "Awaiting Client Approval" even if
+    the move-lane automation rule is missing.
+- **Verified:** `php -l` clean; `npm run check` 0 errors in touched files (56 baseline);
+  `npm run build` OK; served == build; confirmed `success()` returns data un-enveloped so
+  `apiFetch` yields the set directly. Not driven live. No commit.
+
+## 2026-06-25 — Custom sets: reopen-to-edit + Share button (lifecycle parity) [/build]
+- **Reported:** (1) clicking a saved custom draft showed "Sorry, but nothing was found"
+  (WP theme/media empty state) instead of its content; (2) need a Share-with-client
+  button; (3) automation should move shared→"Awaiting Client Approval" and all-approved→
+  Launch like other sets.
+- **Root cause (1):** clicking any set opened the CLIENT-preview iframe
+  (`getPublicBoardUrl` = shortcode page + token); for a custom draft that path renders
+  nothing in the user's setup. Per the original spec a custom card should open an
+  EDITABLE modal with its saved content — not the client iframe.
+- **Fix:** `CreateCustomSetDialog` made dual-mode (create | EDIT). Clicking a set with
+  `snapshot.custom` now opens it in the editable modal (loads saved title/content via a
+  keyed editor remount); Save persists with `approvals.updateSnapshotAsset` (the custom
+  branch added last session). `SetsBoard.handleOpenSet` branches: custom → edit dialog,
+  else → preview iframe (unchanged).
+- **Share (2):** "Share with client" button in the edit modal → email → `approvals.shareSet`
+  (saves latest content first, reuses `buildDefaultInviteMessage`).
+- **Automation (3): NO code change.** `share_set` fires the existing "sent to client →
+  move to 'client'" automation; full client approval fires the "→ launch" trigger
+  (service.php). Both are status/trigger-based, so custom sets get identical lifecycle.
+- **Files:** `CreateCustomSetDialog.tsx`, `kanban/SetsBoard.tsx` (frontend only).
+- **Verified:** `npm run check` 0 errors in touched files (56 baseline); `npm run build`
+  OK; served == build; markers "Share with client"/"Save changes"/"Awaiting Client
+  Approval" in bundle. Not driven live. No commit.
+
 ## 2026-06-25 — Fix: annotator was inert (Radix body pointer-events:none) [/build]
 - **Reported (w/ screenshot):** the annotator opened but NOTHING inside worked — toolbar
   + drawing dead.

@@ -27,8 +27,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { useSortableTable } from '@/hooks/useSortableTable';
+import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { useListState, textFilter, searchableSelect, type FilterState } from '@/components/shared/Kanban';
 import { colors, typography } from '@/components/shared/design-tokens';
 import { trpc, getConfig } from '@/lib/trpc';
@@ -47,8 +46,6 @@ interface Site {
 }
 
 type AddStep = null | 'choose' | 'password';
-
-type SiteSortKey = 'name' | 'url' | 'username' | 'method' | 'status' | 'createdAt';
 
 /** Sentinel for the Status select's "all" option (Radix forbids an empty value). */
 const ALL_STATUS = '__all__';
@@ -143,20 +140,66 @@ export function SitesModule() {
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Download failed'); }
   }, []);
 
-  // ── Instant filter (shared Kanban engine) + column sort ──
+  // ── Instant filter (shared Kanban engine); sorting handled by <DataTable> ──
   const list = useListState<Site>(sites, siteFilters, [], {});
-  const { sortKey, sortDir, toggleSort, sortedData } = useSortableTable<Site, SiteSortKey>(list.filteredItems, {
-    defaultKey: 'name',
-    defaultDir: 'asc',
-    accessors: {
-      name: (s) => s.name.toLowerCase(),
-      url: (s) => s.url.toLowerCase(),
-      username: (s) => s.username.toLowerCase(),
-      method: (s) => (s.connectMethod === 'connector' ? 'plugin' : 'password'),
-      status: (s) => s.status,
-      createdAt: (s) => new Date(s.createdAt).getTime(),
+
+  // Column config for the global <DataTable>.
+  const columns = useMemo<DataTableColumn<Site>[]>(() => [
+    {
+      key: 'name', header: 'Name', sortAccessor: (s) => s.name.toLowerCase(),
+      cell: (site) => (
+        <div className="flex items-center gap-2 min-w-0">
+          <Globe className="w-4 h-4 shrink-0" style={{ color: colors.primary }} />
+          <span className="truncate font-medium" style={{ color: colors.text }}>{site.name}</span>
+        </div>
+      ),
     },
-  });
+    {
+      key: 'url', header: 'URL', sortAccessor: (s) => s.url.toLowerCase(),
+      cell: (site) => (
+        <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-[260px] items-center gap-1 text-primary hover:underline">
+          <span className="truncate">{site.url}</span><ExternalLink className="w-3 h-3 shrink-0" />
+        </a>
+      ),
+    },
+    {
+      key: 'username', header: 'User', sortAccessor: (s) => s.username.toLowerCase(),
+      className: 'text-muted-foreground', cell: (site) => site.username,
+    },
+    {
+      key: 'method', header: 'Method',
+      sortAccessor: (s) => (s.connectMethod === 'connector' ? 'plugin' : 'password'),
+      cell: (site) => (
+        <Badge variant="outline" className="gap-1 text-[10px]">
+          {site.connectMethod === 'connector' ? <><Puzzle className="w-3 h-3" /> Plugin</> : <><KeyRound className="w-3 h-3" /> Password</>}
+        </Badge>
+      ),
+    },
+    {
+      key: 'status', header: 'Status', sortAccessor: (s) => s.status,
+      cell: (site) => (
+        <span className={`capitalize ${site.status === 'active' ? 'text-muted-foreground' : 'font-medium text-destructive'}`}>{site.status}</span>
+      ),
+    },
+    {
+      key: 'createdAt', header: 'Added', sortAccessor: (s) => new Date(s.createdAt).getTime(),
+      className: 'text-muted-foreground',
+      cell: (site) => (site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'),
+    },
+    {
+      key: 'actions', header: 'Actions', className: 'text-center',
+      cell: (site) => (
+        <div className="flex items-center justify-center gap-1">
+          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>
+            {testingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Test
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate({ id: site.id })}>
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      ),
+    },
+  ], [colors, testingId, testMutation, deleteMutation]);
   const search = readSearch(list.filterState);
   const statusValue = readStatus(list.filterState);
   const statusOptions = useMemo(
@@ -219,73 +262,17 @@ export function SitesModule() {
                 <X className="w-3.5 h-3.5" /> Clear
               </Button>
             )}
-            <span className="ml-auto text-xs text-muted-foreground">{sortedData.length} of {sites.length}</span>
+            <span className="ml-auto text-xs text-muted-foreground">{list.filteredItems.length} of {sites.length}</span>
           </div>
 
-          {/* Sortable + filterable table — spreadsheet styling matches the SEO table
-              (gridlines on every cell, compact h-9 rows, sticky header, bg-card). */}
-          <div className="rounded-md border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)] bg-card">
-            <table className="w-full border-collapse text-xs bg-card
-              [&_th]:border [&_th]:border-border/60 [&_td]:border [&_td]:border-border/60
-              [&_th]:px-2 [&_th]:h-9 [&_th]:font-normal [&_th]:text-foreground/80
-              [&_td]:px-2 [&_td]:h-9 [&_td]:py-0 [&_td]:align-middle
-              [&_td]:whitespace-nowrap [&_td]:overflow-hidden
-              [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-card">
-              <thead>
-                <tr>
-                  <SortableTableHead columnKey="name" label="Name" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
-                  <SortableTableHead columnKey="url" label="URL" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
-                  <SortableTableHead columnKey="username" label="User" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
-                  <SortableTableHead columnKey="method" label="Method" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
-                  <SortableTableHead columnKey="status" label="Status" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
-                  <SortableTableHead columnKey="createdAt" label="Added" currentSortKey={sortKey} currentSortDir={sortDir} onToggle={toggleSort} />
-                  <th className="text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedData.length === 0 ? (
-                  <tr><td colSpan={7} className="text-center text-muted-foreground">No sites match your filters.</td></tr>
-                ) : sortedData.map((site) => {
-                  const isConnector = site.connectMethod === 'connector';
-                  return (
-                    <tr key={site.id} className="hover:bg-muted/60">
-                      <td>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Globe className="w-4 h-4 shrink-0" style={{ color: colors.primary }} />
-                          <span className="truncate font-medium" style={{ color: colors.text }}>{site.name}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-[260px] items-center gap-1 text-primary hover:underline">
-                          <span className="truncate">{site.url}</span><ExternalLink className="w-3 h-3 shrink-0" />
-                        </a>
-                      </td>
-                      <td className="text-muted-foreground">{site.username}</td>
-                      <td>
-                        <Badge variant="outline" className="gap-1 text-[10px]">
-                          {isConnector ? <><Puzzle className="w-3 h-3" /> Plugin</> : <><KeyRound className="w-3 h-3" /> Password</>}
-                        </Badge>
-                      </td>
-                      <td>
-                        <span className={`capitalize ${site.status === 'active' ? 'text-muted-foreground' : 'font-medium text-destructive'}`}>{site.status}</span>
-                      </td>
-                      <td className="text-muted-foreground">{site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'}</td>
-                      <td>
-                        <div className="flex items-center justify-center gap-1">
-                          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>
-                            {testingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Test
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate({ id: site.id })}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          {/* Sortable table via the shared global <DataTable>. */}
+          <DataTable
+            columns={columns}
+            data={list.filteredItems}
+            rowKey={(s) => s.id}
+            defaultSortKey="name"
+            emptyMessage="No sites match your filters."
+          />
         </>
       )}
 

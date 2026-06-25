@@ -533,33 +533,53 @@ export function CreativeAssetCard({
           onClick={() => setShowArticleViewer(true)}
         >
           {articleThumbnail ? (
-            <div className="pcm-card-media select-none" style={{ maxHeight: '160px' }}>
-              <img src={articleThumbnail} alt={asset.title || 'Custom document'} style={{ objectFit: 'cover', width: '100%', height: '100%' }} />
+            <div className="pcm-card-media select-none" style={{ height: '150px', overflow: 'hidden' }}>
+              <img src={articleThumbnail} alt={asset.title || 'Custom document'} style={{ objectFit: 'cover', objectPosition: 'center top', width: '100%', height: '100%' }} />
             </div>
           ) : (
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              height: '80px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', marginBottom: '0.75rem',
+              height: '90px', background: 'rgba(128,128,128,0.06)', borderRadius: '10px', marginBottom: '0.75rem',
             }}>
-              <FileText className="w-8 h-8" style={{ color: 'rgba(255,255,255,0.15)' }} />
+              <FileText className="w-8 h-8" style={{ opacity: 0.25 }} />
             </div>
           )}
 
-          <div className="pcm-copy-platform">Custom</div>
+          {/* Padded text area — the image above stays full-bleed. */}
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: '14px 16px 14px' }}>
+            {/* "Custom" badge — distinguishes this asset type at a glance. */}
+            <div
+              className="pcm-copy-platform"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '0.3rem', alignSelf: 'flex-start',
+                padding: '0.12rem 0.55rem', borderRadius: '9999px',
+                border: '1px solid rgba(128,128,128,0.28)', marginBottom: '0.5rem',
+              }}
+            >
+              <FileText style={{ width: '0.72rem', height: '0.72rem' }} aria-hidden="true" />
+              Custom
+            </div>
 
-          <h4 className="pcm-copy-headline" style={{ marginBottom: '0.25rem' }}>
-            {asset.title || 'Untitled Document'}
-          </h4>
+            <h4 className="pcm-copy-headline" style={{ marginBottom: '0.3rem' }}>
+              {asset.title || 'Untitled Document'}
+            </h4>
 
-          {articleSnippet && (
-            <p className="pcm-copy-text" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
-              {articleSnippet}
-            </p>
-          )}
+            {articleSnippet && (
+              <p
+                className="pcm-copy-text"
+                style={{
+                  fontSize: '0.82rem', opacity: 0.7, lineHeight: 1.5,
+                  display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                }}
+              >
+                {articleSnippet}
+              </p>
+            )}
 
-          <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: 'auto', paddingTop: '0.5rem' }}>
-            Click to open →
-          </span>
+            <span style={{ fontSize: '0.72rem', opacity: 0.45, marginTop: 'auto', paddingTop: '0.6rem' }}>
+              Open document →
+            </span>
+          </div>
         </div>
       )}
 

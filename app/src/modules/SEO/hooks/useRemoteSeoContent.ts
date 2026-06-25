@@ -31,6 +31,8 @@ export interface UseRemoteSeoContentResult {
   setSchema: (id: number, types: string[]) => Promise<void>;
   /** Trash the given posts/pages on the remote (bulk), then refresh the list. */
   deleteRows: (ids: number[]) => Promise<void>;
+  /** Duplicate the given posts/pages on the remote (each → a draft copy), then refresh. */
+  bulkDuplicate: (ids: number[]) => Promise<void>;
   /** Upload an image (by URL) to the remote + set it as the post's featured image. */
   setFeaturedImage: (id: number, imageUrl: string) => Promise<void>;
 }
@@ -165,6 +167,25 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
     [rows, deleteMutation, siteId, queryClient],
   );
 
+  const duplicateMutation = trpc.seo.remoteDuplicate.useMutation();
+  const bulkDuplicate = useCallback(
+    (ids: number[]): Promise<void> => {
+      if (ids.length === 0) return Promise.resolve();
+      const jobs = ids.map((id) => {
+        const type = rows.find((r) => Number(r.id) === id)?.type === 'page' ? 'page' : 'post';
+        return duplicateMutation.mutateAsync({ siteId: siteId ?? 0, postId: id, type });
+      });
+      return Promise.allSettled(jobs).then((results) => {
+        queryClient.invalidateQueries({ queryKey: REMOTE_PREFIX });
+        const failed = results.filter((r) => r.status === 'rejected').length;
+        const ok = ids.length - failed;
+        if (ok > 0) toast.success(`Duplicated ${ok} item(s)`);
+        if (failed > 0) toast.error(`${failed} of ${ids.length} item(s) could not be duplicated`);
+      });
+    },
+    [rows, duplicateMutation, siteId, queryClient],
+  );
+
   const featuredMutation = trpc.seo.remoteSetFeatured.useMutation();
   const setFeaturedImage = useCallback(
     (id: number, imageUrl: string): Promise<void> => {
@@ -191,5 +212,5 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
     [rows, featuredMutation, siteId, queryClient],
   );
 
-  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate, scanLinks, setSchema, deleteRows, setFeaturedImage };
+  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate, scanLinks, setSchema, deleteRows, bulkDuplicate, setFeaturedImage };
 }

@@ -67,6 +67,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/ai/site-desc', 'remote_ai_site_desc', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/schema', 'remote_set_schema', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/delete', 'remote_delete', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/duplicate', 'remote_duplicate', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/featured', 'remote_set_featured', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/preview', 'remote_preview', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_get',   array(), 'manage_options'),
@@ -260,6 +261,24 @@ class PCM_REST_SEO extends PCM_REST_Base
         $params = $request->get_json_params() ?: array();
         $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
         $result = PCM_SEO_Service::remote_scan_links($site, absint($request->get_param('post')), $type);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/duplicate — clone a connected site's
+     *  post/page (as a draft "(Copy)") with its content + SEO meta, via the connector. */
+    public function remote_duplicate(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $result = PCM_SEO_Service::remote_duplicate_content($site, absint($request->get_param('post')), $type);
         if ($result instanceof WP_Error) {
             return $result;
         }

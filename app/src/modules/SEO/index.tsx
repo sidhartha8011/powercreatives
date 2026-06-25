@@ -298,7 +298,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
 const SELECT_COL_WIDTH = 44;
 
 export function SEOModule() {
-  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete: localBulkDelete, bulkDuplicate, generateField: localGenerateField, scanLinks: localScanLinks } = useSeoContent();
+  const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete: localBulkDelete, bulkDuplicate: localBulkDuplicate, generateField: localGenerateField, scanLinks: localScanLinks } = useSeoContent();
 
   // Text models available for AI generation (registry). The user picks one in the
   // header dropdown; its id+provider is sent with every generate call so that
@@ -367,6 +367,7 @@ export function SEOModule() {
   // Bulk delete — local hook or the connected site's proxy (trash). Status uses the
   // effective saveCell (works remote); duplicate stays local-only.
   const bulkDelete = isLocal ? localBulkDelete : remote.deleteRows;
+  const bulkDuplicate = isLocal ? localBulkDuplicate : remote.bulkDuplicate;
   // Per-column filters (funnel icon in each column header).
   const filterDefs = useMemo(() => buildFilterDefs(options), [options]);
   const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters();
@@ -1179,7 +1180,7 @@ export function SEOModule() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {/* Bulk actions — change status + delete (remote-aware); duplicate is local-only. */}
+          {/* Bulk actions — change status, duplicate, delete (all remote-aware). */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" disabled={busy}>
@@ -1199,14 +1200,10 @@ export function SEOModule() {
                     ))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                {isLocal && (
-                  <>
-                    <DropdownMenuItem className="text-xs" onClick={handleBulkDuplicate}>
-                      <Copy className="mr-2 h-3.5 w-3.5" /> Duplicate
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
+                <DropdownMenuItem className="text-xs" onClick={handleBulkDuplicate}>
+                  <Copy className="mr-2 h-3.5 w-3.5" /> Duplicate
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-xs text-destructive focus:text-destructive" onClick={handleDelete}>
                   <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
                 </DropdownMenuItem>
