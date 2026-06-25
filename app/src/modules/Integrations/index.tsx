@@ -133,6 +133,7 @@ export function IntegrationsModule() {
   const toggleActiveMutation = trpc.integrations.toggleActive.useMutation();
   const deleteByProviderMutation = trpc.integrations.deleteByProvider.useMutation();
   const syncModelsMutation = trpc.models.syncFromIntegrations.useMutation();
+  const resyncMutation = trpc.models.resync.useMutation();
   const addCustomKieModelMutation = trpc.models.addCustomKieModel.useMutation();
   const trpcUtils = trpc.useUtils();
 
@@ -146,6 +147,7 @@ export function IntegrationsModule() {
     trpcUtils.integrations.list.invalidate();
     trpcUtils.models.getForGeneration.invalidate();
     trpcUtils.models.getForEditing.invalidate();
+    trpcUtils.models.listByProvider.invalidate(); // the integration card's "All Models" list
   };
 
   const handleAddCustomKieModel = async () => {
@@ -373,12 +375,14 @@ export function IntegrationsModule() {
     setVerifyingIds((prev) => new Set(prev).add(integration.id));
 
     try {
-      // We use the masked key from list, but validation needs the real key.
-      // The backend validateApiKey expects the real key. Since we only store
-      // the masked key on the frontend, we re-validate by calling the backend
-      // which already has the real key in the DB.
-      // For now, show a toast that verification requires re-entering the key.
-      toast.info('Connection status is based on last validation. Re-add integration to re-verify.');
+      // Re-sync using the STORED key (no re-entry): the backend re-fetches the
+      // provider's live model list and upserts it — picking up newly released
+      // models (e.g. GPT-5) and marking removed ones unavailable.
+      const res: any = await resyncMutation.mutateAsync({ provider: integration.provider });
+      toast.success(`Refreshed ${integration.provider} — ${res?.total ?? 0} model(s) synced`);
+      invalidateAll();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Refresh failed — check the API key');
     } finally {
       setVerifyingIds((prev) => {
         const next = new Set(prev);
@@ -854,7 +858,7 @@ export function IntegrationsModule() {
                           className="h-7 w-7 text-muted-foreground hover:text-primary"
                           onClick={() => handleVerifyConnection(integration)}
                           disabled={verifyingIds.has(integration.id)}
-                          title="Verify connection"
+                          title="Refresh models (re-sync latest)"
                         >
                           {verifyingIds.has(integration.id) ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />

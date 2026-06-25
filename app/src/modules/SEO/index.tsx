@@ -35,7 +35,6 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator,
   DropdownMenuItem, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
-  DropdownMenuRadioGroup, DropdownMenuRadioItem,
 } from '@/components/ui/dropdown-menu';
 
 import { useSeoContent } from './hooks/useSeoContent';
@@ -473,7 +472,9 @@ export function SEOModule() {
   // Generation fill mode: 'empty' skips cells that already have content (safe
   // default); 'overwrite' regenerates every selected cell. Applies to ALL bulk
   // generation (Generate all + Generate selected).
-  const [genMode, setGenMode] = useState<'empty' | 'overwrite'>('empty');
+  // Asked via a dialog on each Generate trigger (all / selected / column ✦) so a bulk
+  // run never silently overwrites existing content. Holds the staged run() until answered.
+  const [pendingGen, setPendingGen] = useState<{ run: (mode: 'empty' | 'overwrite') => void } | null>(null);
   // Which columns the "Generate all" split-button dropdown will generate (default: all).
   const [genCols, setGenCols] = useState<Set<string>>(() => new Set(GEN_FIELDS.map((f) => f.key)));
   const toggleGenCol = useCallback((key: string) => setGenCols((cur) => {
@@ -513,7 +514,7 @@ export function SEOModule() {
   // Bulk AI: generate the given fields across every selected row (sequential —
   // gentle on the provider), staging each result for review. In 'empty' mode,
   // cells that already have content are skipped; 'overwrite' regenerates all.
-  const runBulk = useCallback(async (fields: string[]) => {
+  const runBulk = useCallback(async (fields: string[], mode: 'empty' | 'overwrite') => {
     const ids = Array.from(selected);
     if (ids.length === 0 || fields.length === 0) return;
     const rowById = new Map(rows.map((r) => [r.id, r]));
@@ -525,7 +526,7 @@ export function SEOModule() {
     const jobs: { id: number; field: string }[] = [];
     for (const id of ids) {
       for (const field of fields) {
-        if (genMode === 'empty' && !cellIsEmpty(id, field)) continue;
+        if (mode === 'empty' && !cellIsEmpty(id, field)) continue;
         jobs.push({ id, field });
       }
     }
@@ -550,7 +551,7 @@ export function SEOModule() {
     setGenKey(null);
     setProgress(null);
     setBusy(false);
-  }, [selected, rows, genMode, generateField, genModelId, genProvider]);
+  }, [selected, rows, generateField, genModelId, genProvider]);
 
   // Accept / discard ALL staged AI suggestions (the source's bar).
   const acceptAllStaged = useCallback(() => {
@@ -603,13 +604,15 @@ export function SEOModule() {
   // Header ✦ → pick a template → generate the column with that template, staging
   // each result for review. Scope: the SELECTED rows when any are selected,
   // otherwise every visible row. (Selection narrows; preserves visible order.)
-  const handleColumnGenerate = useCallback(async (field: string, templateId?: number) => {
+  const handleColumnGenerate = useCallback(async (field: string, templateId: number | undefined, mode: 'empty' | 'overwrite') => {
     if (columnGenerating) return;
     const ids = (selected.size > 0
       ? sortedData.filter((r) => selected.has(r.id))
       : sortedData
-    ).map((r) => r.id);
-    if (ids.length === 0) return;
+    )
+      .filter((r) => mode === 'overwrite' || !String(r[field as keyof SeoRow] ?? '').trim())
+      .map((r) => r.id);
+    if (ids.length === 0) { toast('Nothing to generate — those cells already have content.'); return; }
     setColumnGenerating(field);
     const total = ids.length;
     let done = 0;
@@ -701,7 +704,7 @@ export function SEOModule() {
       library: { type: 'image' },
       multiple: false,
     });
-    if (row.featuredImageId) {
+    if (isLocal && row.featuredImageId) {
       frame.on('open', () => {
         const selection = frame.state().get('selection');
         const att = wp.media.attachment(row.featuredImageId);
@@ -710,10 +713,17 @@ export function SEOModule() {
     }
     frame.on('select', () => {
       const att = frame.state().get('selection').first()?.toJSON();
-      void saveCell(row.id, 'featuredImage', String(att?.id ?? 0));
+      if (isLocal) {
+        // Local: set the post thumbnail by attachment id.
+        void saveCell(row.id, 'featuredImage', String(att?.id ?? 0));
+      } else {
+        // Remote: upload the chosen image into the connected site's media library, then
+        // set it as the featured image (a local attachment id is meaningless there).
+        void remote.setFeaturedImage(row.id, String(att?.url ?? ''));
+      }
     });
     frame.open();
-  }, [saveCell]);
+  }, [saveCell, isLocal, remote]);
 
   // Columns in saved order, minus any hidden via the Columns menu.
   const orderedCols = colOrder.filter((k) => vis(k));
@@ -756,7 +766,7 @@ export function SEOModule() {
           ? {
               templates: templatesForCol(key),
               busy: columnGenerating === key,
-              onGenerate: (tid?: number) => handleColumnGenerate(key, tid),
+              onGenerate: (tid?: number) => setPendingGen({ run: (mode) => handleColumnGenerate(key, tid, mode) }),
             }
           : undefined}
         draggable
@@ -865,22 +875,16 @@ export function SEOModule() {
       case 'featuredImage':
         return (
           <TableCell key={key} className="text-center">
-            {isLocal ? (
-              <button
-                type="button"
-                onClick={() => openFeaturedImage(row)}
-                title={row.featuredImage ? 'Change featured image' : 'Set featured image'}
-                className="inline-flex items-center justify-center align-middle transition-opacity hover:opacity-80"
-              >
-                {row.featuredImage
-                  ? <img src={row.featuredImage} alt="" loading="lazy" className="h-8 w-8 rounded object-cover" />
-                  : <span className="flex h-8 w-8 items-center justify-center rounded border border-dashed border-border text-muted-foreground"><ImageIcon className="h-4 w-4" /></span>}
-              </button>
-            ) : (
-              row.featuredImage
-                ? <img src={row.featuredImage} alt="" loading="lazy" className="inline-block h-8 w-8 rounded object-cover align-middle" />
-                : <span className="text-xs text-muted-foreground">—</span>
-            )}
+            <button
+              type="button"
+              onClick={() => openFeaturedImage(row)}
+              title={row.featuredImage ? 'Change featured image' : 'Set featured image'}
+              className="inline-flex items-center justify-center align-middle transition-opacity hover:opacity-80"
+            >
+              {row.featuredImage
+                ? <img src={row.featuredImage} alt="" loading="lazy" className="h-8 w-8 rounded object-cover" />
+                : <span className="flex h-8 w-8 items-center justify-center rounded border border-dashed border-border text-muted-foreground"><ImageIcon className="h-4 w-4" /></span>}
+            </button>
           </TableCell>
         );
       case 'date':
@@ -1137,7 +1141,7 @@ export function SEOModule() {
               size="sm"
               className="h-8 gap-1.5 rounded-none rounded-l-md px-3 text-xs font-medium"
               disabled={busy}
-              onClick={() => runBulk(GEN_FIELDS.map((f) => f.key))}
+              onClick={() => setPendingGen({ run: (mode) => runBulk(GEN_FIELDS.map((f) => f.key), mode) })}
             >
               <Sparkles className="w-3.5 h-3.5" /> Generate all
             </Button>
@@ -1148,16 +1152,6 @@ export function SEOModule() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel className="text-xs">When a cell already has content</DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={genMode} onValueChange={(v) => setGenMode(v as 'empty' | 'overwrite')}>
-                  <DropdownMenuRadioItem value="empty" className="text-xs" onSelect={(e) => e.preventDefault()}>
-                    Only empty cells
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="overwrite" className="text-xs" onSelect={(e) => e.preventDefault()}>
-                    Overwrite existing
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-                <DropdownMenuSeparator />
                 <DropdownMenuLabel className="text-xs">Columns to generate</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {GEN_FIELDS.map((f) => (
@@ -1177,7 +1171,7 @@ export function SEOModule() {
                     size="sm"
                     className="h-8 w-full justify-center gap-1.5 px-3 text-xs"
                     disabled={busy || genCols.size === 0}
-                    onClick={() => runBulk(GEN_FIELDS.filter((f) => genCols.has(f.key)).map((f) => f.key))}
+                    onClick={() => setPendingGen({ run: (mode) => runBulk(GEN_FIELDS.filter((f) => genCols.has(f.key)).map((f) => f.key), mode) })}
                   >
                     <Sparkles className="w-3.5 h-3.5" /> Generate selected ({genCols.size})
                   </Button>
@@ -1316,6 +1310,30 @@ export function SEOModule() {
               ))}
             </TableBody>
           </Table>
+        </div>
+      )}
+      {/* Generate mode prompt — asked before any bulk / column generate so existing
+          content is never silently overwritten. */}
+      {pendingGen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
+          onClick={() => setPendingGen(null)}
+        >
+          <div className="w-[340px] rounded-xl border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold">Generate content</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Some of these cells may already have content. What should the generator do?
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <Button size="sm" className="justify-center gap-1.5" onClick={() => { const r = pendingGen.run; setPendingGen(null); r('empty'); }}>
+                <Sparkles className="w-3.5 h-3.5" /> Only where empty
+              </Button>
+              <Button size="sm" variant="outline" className="justify-center" onClick={() => { const r = pendingGen.run; setPendingGen(null); r('overwrite'); }}>
+                Overwrite existing
+              </Button>
+              <Button size="sm" variant="ghost" className="justify-center" onClick={() => setPendingGen(null)}>Cancel</Button>
+            </div>
+          </div>
         </div>
       )}
       {optimizeRow && (

@@ -31,6 +31,8 @@ export interface UseRemoteSeoContentResult {
   setSchema: (id: number, types: string[]) => Promise<void>;
   /** Trash the given posts/pages on the remote (bulk), then refresh the list. */
   deleteRows: (ids: number[]) => Promise<void>;
+  /** Upload an image (by URL) to the remote + set it as the post's featured image. */
+  setFeaturedImage: (id: number, imageUrl: string) => Promise<void>;
 }
 
 export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentResult {
@@ -163,5 +165,31 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
     [rows, deleteMutation, siteId, queryClient],
   );
 
-  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate, scanLinks, setSchema, deleteRows };
+  const featuredMutation = trpc.seo.remoteSetFeatured.useMutation();
+  const setFeaturedImage = useCallback(
+    (id: number, imageUrl: string): Promise<void> => {
+      const type = rows.find((r) => Number(r.id) === id)?.type === 'page' ? 'page' : 'post';
+      return featuredMutation
+        .mutateAsync({ siteId: siteId ?? 0, postId: id, type, imageUrl })
+        .then((res: any) => {
+          queryClient.setQueriesData<SeoRow[]>({ queryKey: REMOTE_PREFIX }, (prev) =>
+            Array.isArray(prev)
+              ? prev.map((r) => (Number(r.id) === id ? {
+                  ...r,
+                  featuredImage: String(res?.featuredImage ?? ''),
+                  featuredImageId: Number(res?.featuredImageId ?? 0),
+                } : r))
+              : prev,
+          );
+          toast.success('Featured image set on the connected site');
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'Failed to set featured image');
+          throw err;
+        });
+    },
+    [rows, featuredMutation, siteId, queryClient],
+  );
+
+  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate, scanLinks, setSchema, deleteRows, setFeaturedImage };
 }

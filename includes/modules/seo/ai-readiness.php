@@ -312,6 +312,68 @@ class PCM_SEO_AIReadiness
         return get_post_meta($post_id, self::META_HASH, true) !== md5($post->post_content) ? 'stale' : 'ready';
     }
 
+    /** Per-post AI-readiness detail for the status table (word count, summary, generated-at). */
+    public static function post_meta_row(int $post_id): array
+    {
+        $md      = (string) get_post_meta($post_id, self::META_MD, true);
+        $summary = (string) get_post_meta($post_id, self::META_SUMMARY, true);
+        return array(
+            'wordCount'  => $md !== '' ? (int) preg_match_all('/\S+/u', wp_strip_all_tags($md)) : 0,
+            'hasSummary' => $summary !== '',
+            'summary'    => $summary,
+            'generated'  => (string) get_post_meta($post_id, '_pcm_md_generated', true),
+        );
+    }
+
+    /**
+     * AI-generate a concise directory-listing description for a post (stored as META_SUMMARY).
+     * Faithful to Optimizer Simple's summarize prompt. Generates the .md first if needed.
+     *
+     * @return array{summary:string}|\WP_Error
+     */
+    public static function summarize(int $post_id, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    {
+        if (!class_exists('PCM_LLM')) {
+            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
+        }
+        $md = (string) get_post_meta($post_id, self::META_MD, true);
+        if ($md === '') {
+            $md = self::generate_md($post_id);
+        }
+        if (trim($md) === '') {
+            return new WP_Error('pcm_seo_no_content', __('Generate the Markdown first.', 'power-creatives'), array('status' => 400));
+        }
+        $post   = get_post($post_id);
+        $title  = $post ? $post->post_title : '';
+        $slug   = $post ? $post->post_name : '';
+        $body   = mb_substr(wp_strip_all_tags($md), 0, 2000);
+        $prompt = "Write a concise, factual description (20-35 words) for this page in a directory listing. "
+            . "CRITICAL: Write in the SAME language as the content below — do NOT translate, match the language exactly. "
+            . "Write as if hand-crafted by the site owner — conversational, authentic, not templated. "
+            . "Start with what the page offers (answer-first). Use specific details like prices, locations, or services when available. "
+            . "Do NOT start with 'This page', 'A page about', or 'An article about'. Do NOT use quotes around the output. "
+            . "Return ONLY the description text — no quotes, labels, prefixes, comments, symbols, or markdown.\n\n"
+            . "Page title: {$title}\nURL slug: {$slug}\n\nContent:\n{$body}";
+        try {
+            $opts = array('max_tokens' => 120);
+            if (!empty($model)) {
+                $opts['model'] = $model;
+            }
+            if (!empty($provider)) {
+                $opts['provider'] = $provider;
+            }
+            $res     = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $summary = trim((string) ($res['content'] ?? ''), " \t\n\r\"'");
+            if ($summary === '') {
+                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
+            }
+            update_post_meta($post_id, self::META_SUMMARY, $summary);
+            return array('summary' => $summary);
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
+    }
+
     // ── llms.txt builders ──
 
     private static function llms_string(string $key): string
@@ -409,18 +471,21 @@ class PCM_SEO_AIReadiness
     }
 
     /** Fetch the published posts for the configured types. */
-    public static function query_posts(): array
+    public static function query_posts(bool $respect_exclusions = true): array
     {
-        $s = self::settings();
-        $q = new WP_Query(array(
+        $s    = self::settings();
+        $args = array(
             'post_type'      => $s['post_types'],
             'post_status'    => 'publish',
             'posts_per_page' => -1,
-            'post__not_in'   => array_map('intval', $s['excluded_ids']),
             'orderby'        => 'menu_order title',
             'order'          => 'ASC',
             'no_found_rows'  => true,
-        ));
+        );
+        if ($respect_exclusions) {
+            $args['post__not_in'] = array_map('intval', $s['excluded_ids']);
+        }
+        $q = new WP_Query($args);
         return $q->posts;
     }
 
@@ -440,6 +505,71 @@ class PCM_SEO_AIReadiness
             self::flush();
         }
         return array('llmsBytes' => strlen($index), 'fullBytes' => strlen($full), 'posts' => count($posts));
+    }
+
+    /** Persist a hand-edited llms.txt (reflushed if published). */
+    public static function save_llms(string $content): void
+    {
+        update_option(self::OPT_LLMS, $content, false);
+        if (self::is_published()) {
+            self::flush();
+        }
+    }
+
+    /** Reset everything: clear both llms files, unpublish, drop per-post meta + site description. */
+    public static function delete_all(): void
+    {
+        delete_option(self::OPT_LLMS);
+        delete_option(self::OPT_LLMS_FULL);
+        update_option(self::OPT_PUBLISHED, false);
+        self::flush_remove();
+        foreach (self::query_posts() as $p) {
+            delete_post_meta((int) $p->ID, self::META_MD);
+            delete_post_meta((int) $p->ID, self::META_HASH);
+            delete_post_meta((int) $p->ID, self::META_SUMMARY);
+            delete_post_meta((int) $p->ID, '_pcm_md_generated');
+        }
+        $s = self::settings();
+        $s['site_description'] = '';
+        update_option(self::OPT_SETTINGS, $s, false);
+    }
+
+    /**
+     * AI-generate a 1–2 sentence site description from the top published pages.
+     *
+     * @return array{description:string}|\WP_Error
+     */
+    public static function gen_site_description(?string $model = null, ?int $user_id = null, ?string $provider = null)
+    {
+        if (!class_exists('PCM_LLM')) {
+            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
+        }
+        $pages  = get_posts(array('post_type' => 'page', 'post_status' => 'publish', 'numberposts' => 10, 'orderby' => 'menu_order', 'order' => 'ASC'));
+        $titles = array();
+        foreach ($pages as $pg) {
+            $titles[] = '- ' . html_entity_decode($pg->post_title, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        }
+        $name   = get_bloginfo('name');
+        $prompt = "Write a concise 1-2 sentence description of this website for an AI/LLM index file (llms.txt). "
+            . "Factual, answer-first, no marketing fluff. Plain text only — no quotes, labels, or markdown.\n\n"
+            . "Site name: {$name}\nKey pages:\n" . implode("\n", $titles);
+        try {
+            $opts = array('max_tokens' => 120);
+            if (!empty($model)) {
+                $opts['model'] = $model;
+            }
+            if (!empty($provider)) {
+                $opts['provider'] = $provider;
+            }
+            $res  = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $desc = trim((string) ($res['content'] ?? ''), " \t\n\r\"'");
+            if ($desc === '') {
+                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
+            }
+            return array('description' => $desc);
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
     }
 }
 

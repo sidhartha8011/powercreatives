@@ -59,11 +59,15 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/scan-links', 'remote_scan_links', array(), 'manage_options'),
             array('GET', '/seo/sites/(?P<id>\d+)/site', 'remote_site_get', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/site', 'remote_site_save', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/site/generate', 'remote_site_generate', array(), 'manage_options'),
             array('GET', '/seo/sites/(?P<id>\d+)/ai', 'remote_ai_get', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/ai', 'remote_ai_save', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/ai/build', 'remote_ai_build', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/ai/posts', 'remote_ai_posts', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/ai/site-desc', 'remote_ai_site_desc', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/schema', 'remote_set_schema', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/delete', 'remote_delete', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/featured', 'remote_set_featured', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/preview', 'remote_preview', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_get',   array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_save',  array(), 'manage_options'),
@@ -79,6 +83,10 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/ai-readiness/publish',    'air_publish',  array(), 'manage_options'),
             array('POST', '/seo/ai-readiness/settings',   'air_settings', array(), 'manage_options'),
             array('POST', '/seo/ai-readiness/generate',   'air_generate', array(), 'manage_options'),
+            array('POST', '/seo/ai-readiness/summarize',  'air_summarize', array(), 'manage_options'),
+            array('POST', '/seo/ai-readiness/save-llms',  'air_save_llms', array(), 'manage_options'),
+            array('POST', '/seo/ai-readiness/site-desc',  'air_gen_site_desc', array(), 'manage_options'),
+            array('POST', '/seo/ai-readiness/delete-all', 'air_delete_all', array(), 'manage_options'),
             array('GET',  '/seo/llm-info',                'llminfo_get',   array(), 'manage_options'),
             array('POST', '/seo/llm-info',                'llminfo_save',  array(), 'manage_options'),
             array('POST', '/seo/llm-info/build',          'llminfo_build', array(), 'manage_options'),
@@ -275,6 +283,27 @@ class PCM_REST_SEO extends PCM_REST_Base
         return $this->success($result);
     }
 
+    /** POST /seo/sites/{id}/content/{post}/featured — set a connected post's featured image (by URL). */
+    public function remote_set_featured(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $url    = esc_url_raw((string) ($params['imageUrl'] ?? ''));
+        if ($url === '') {
+            return $this->error('Image URL is required.', 400, 'pcm_seo_missing_image');
+        }
+        $result = PCM_SEO_Service::remote_set_featured_image($site, absint($request->get_param('post')), $type, $url);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
     /** GET /seo/sites/{id}/site — read a connected site's hub-managed Site settings. */
     public function remote_site_get(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
@@ -306,7 +335,46 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (array_key_exists('jsonld', $params)) {
             $fields['jsonld'] = (string) $params['jsonld'];
         }
+        if (array_key_exists('siteTitle', $params)) {
+            $fields['siteTitle'] = sanitize_text_field((string) $params['siteTitle']);
+        }
+        if (array_key_exists('tagline', $params)) {
+            $fields['tagline'] = sanitize_text_field((string) $params['tagline']);
+        }
         $result = PCM_SEO_Service::remote_site_save($site, $fields);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/site/generate — generate a site field for a CONNECTED site
+     *  (robots / schema / site_title / site_tagline), with the remote site's url/name as
+     *  the {{website.url}} / {{business.*}} context. Returns the text (not saved). */
+    public function remote_site_generate(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params   = $request->get_json_params() ?: array();
+        $field    = sanitize_text_field((string) ($params['field'] ?? ''));
+        $brand_id = isset($params['brandId']) && $params['brandId'] ? absint($params['brandId']) : null;
+        $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+
+        $url       = rtrim((string) $site->url, '/');
+        $overrides = array(
+            'website.url'               => $url,
+            'business.website'          => $url,
+            'business.website|hostname' => (string) wp_parse_url($url, PHP_URL_HOST),
+        );
+        // No brand picked → fall back to the connected site's name for {{business.name}}.
+        if (!$brand_id && ($site->name ?? '') !== '') {
+            $overrides['business.name'] = (string) $site->name;
+        }
+        $result = $this->service->generate_site_field($field, $brand_id, $model, $user ? (int) $user->id : null, $provider, $overrides);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -359,7 +427,38 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        return $this->success(array('llms' => PCM_SEO_Service::remote_ai_build($site)));
+        $params = $request->get_json_params() ?: array();
+        $desc   = isset($params['desc']) ? (string) $params['desc'] : '';
+        return $this->success(array('llms' => PCM_SEO_Service::remote_ai_build($site, $desc)));
+    }
+
+    /** GET /seo/sites/{id}/ai/posts — list the connected site's published pages (live .md URLs). */
+    public function remote_ai_posts(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(array('posts' => PCM_SEO_Service::remote_ai_posts($site)));
+    }
+
+    /** POST /seo/sites/{id}/ai/site-desc — AI-generate a site description for the connected site. */
+    public function remote_ai_site_desc(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params   = $request->get_json_params() ?: array();
+        $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+        $result   = PCM_SEO_Service::remote_ai_site_desc($site, $model, $user ? (int) $user->id : null, $provider);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** POST /seo/sites/{id}/content/{post}/schema — set a connected post's schema types. */
@@ -747,21 +846,25 @@ class PCM_REST_SEO extends PCM_REST_Base
     /** GET /seo/ai-readiness — published state, settings, urls, per-post status. */
     public function air_status(WP_REST_Request $request): WP_REST_Response
     {
-        $posts = array();
-        foreach (PCM_SEO_AIReadiness::query_posts() as $p) {
-            $posts[] = array(
-                'id'     => (int) $p->ID,
-                'title'  => $p->post_title,
-                'type'   => $p->post_type,
-                'status' => PCM_SEO_AIReadiness::status_for((int) $p->ID),
-                'mdUrl'  => PCM_SEO_AIReadiness::md_url((int) $p->ID),
-            );
+        $posts    = array();
+        $excluded = array_map('intval', PCM_SEO_AIReadiness::settings()['excluded_ids']);
+        // List ALL eligible posts (excluded ones marked) so the table can toggle inclusion.
+        foreach (PCM_SEO_AIReadiness::query_posts(false) as $p) {
+            $posts[] = array_merge(array(
+                'id'       => (int) $p->ID,
+                'title'    => $p->post_title,
+                'type'     => $p->post_type,
+                'status'   => PCM_SEO_AIReadiness::status_for((int) $p->ID),
+                'mdUrl'    => PCM_SEO_AIReadiness::md_url((int) $p->ID),
+                'excluded' => in_array((int) $p->ID, $excluded, true),
+            ), PCM_SEO_AIReadiness::post_meta_row((int) $p->ID));
         }
         return $this->success(array(
             'published'  => PCM_SEO_AIReadiness::is_published(),
             'settings'   => PCM_SEO_AIReadiness::settings(),
             'llmsUrl'    => home_url('/llms.txt'),
             'llmsFullUrl' => home_url('/llms-full.txt'),
+            'llmsTxt'    => get_option(PCM_SEO_AIReadiness::OPT_LLMS, ''),
             'posts'      => $posts,
         ));
     }
@@ -819,6 +922,53 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         $md = PCM_SEO_AIReadiness::generate_md($id);
         return $this->success(array('id' => $id, 'bytes' => strlen($md), 'status' => PCM_SEO_AIReadiness::status_for($id)));
+    }
+
+    /** POST /seo/ai-readiness/summarize — AI-generate one post's directory summary. */
+    public function air_summarize(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $params = $request->get_json_params() ?: array();
+        $id     = absint($params['id'] ?? 0);
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+        $user     = $this->get_current_pcm_user();
+        $result   = PCM_SEO_AIReadiness::summarize($id, $model, $user ? (int) $user->id : null, $provider);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array_merge(array('id' => $id), $result));
+    }
+
+    /** POST /seo/ai-readiness/save-llms — persist a hand-edited llms.txt. */
+    public function air_save_llms(WP_REST_Request $request): WP_REST_Response
+    {
+        $params = $request->get_json_params() ?: array();
+        PCM_SEO_AIReadiness::save_llms((string) ($params['llms'] ?? ''));
+        return $this->success(array('saved' => true));
+    }
+
+    /** POST /seo/ai-readiness/site-desc — AI-generate a site description from the top pages. */
+    public function air_gen_site_desc(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $params   = $request->get_json_params() ?: array();
+        $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+        $user     = $this->get_current_pcm_user();
+        $result   = PCM_SEO_AIReadiness::gen_site_description($model, $user ? (int) $user->id : null, $provider);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/ai-readiness/delete-all — reset all AI Readiness data. */
+    public function air_delete_all(WP_REST_Request $request): WP_REST_Response
+    {
+        PCM_SEO_AIReadiness::delete_all();
+        return $this->success(array('deleted' => true));
     }
 
     /** GET /seo/llm-info — current /llm-info/ settings + public URL. */

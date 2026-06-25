@@ -105,6 +105,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `models/${input.id}/toggle-module`, body: input }),
     },
     "models.syncFromIntegrations": { endpoint: "models/sync", method: "POST" },
+    "models.resync": { endpoint: "models/resync", method: "POST" },
     "models.bulkDelete": { endpoint: "models/bulk/delete", method: "POST" },
     "models.bulkChangeTier": { endpoint: "models/bulk/tier", method: "POST" },
     "models.bulkToggleModule": { endpoint: "models/bulk/toggle-module", method: "POST" },
@@ -335,6 +336,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/delete`, body: { type: input.type } }),
     },
+    "seo.remoteSetFeatured": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/featured`, body: { type: input.type, imageUrl: input.imageUrl } }),
+    },
     "seo.remoteScanLinks": {
         endpoint: "seo/sites",
         method: "POST",
@@ -348,7 +354,12 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteSiteSave": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/site`, body: { robots: input.robots, jsonld: input.jsonld } }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/site`, body: { robots: input.robots, jsonld: input.jsonld, siteTitle: input.siteTitle, tagline: input.tagline } }),
+    },
+    "seo.remoteSiteGenerate": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/site/generate`, body: { field: input.field, brandId: input.brandId, model: input.model, provider: input.provider } }),
     },
     "seo.remoteAiGet": {
         endpoint: "seo/sites",
@@ -363,7 +374,17 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteAiBuild": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai/build` }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai/build`, body: { desc: input.desc } }),
+    },
+    "seo.remoteAiPosts": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai/posts` }),
+    },
+    "seo.remoteAiSiteDesc": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai/site-desc`, body: { model: input.model, provider: input.provider } }),
     },
     "seo.remoteSetSchema": {
         endpoint: "seo/sites",
@@ -404,6 +425,10 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.airPublish": { endpoint: "seo/ai-readiness/publish", method: "POST" },
     "seo.airSettings": { endpoint: "seo/ai-readiness/settings", method: "POST" },
     "seo.airGenerate": { endpoint: "seo/ai-readiness/generate", method: "POST" },
+    "seo.airSummarize": { endpoint: "seo/ai-readiness/summarize", method: "POST" },
+    "seo.airSaveLlms": { endpoint: "seo/ai-readiness/save-llms", method: "POST" },
+    "seo.airGenSiteDesc": { endpoint: "seo/ai-readiness/site-desc", method: "POST" },
+    "seo.airDeleteAll": { endpoint: "seo/ai-readiness/delete-all", method: "POST" },
     // Schema (per-post)
     "seo.getSchema": {
         endpoint: "seo/content",

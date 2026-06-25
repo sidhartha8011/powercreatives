@@ -385,8 +385,8 @@ class PCM_SEOHub_Service
 <?php
 /**
  * Plugin Name: Power Creatives Connector
- * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, and shows a one-paste connection code.
- * Version: 1.3.1
+ * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, and shows a one-paste connection code.
+ * Version: 1.4.0
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -566,6 +566,28 @@ add_action('template_redirect', function () {
     echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . esc_html($name) . ' &mdash; Overview</title><meta name="robots" content="index,follow"></head><body><main style="max-width:760px;margin:2rem auto;padding:0 1rem;font-family:system-ui,-apple-system,sans-serif;line-height:1.6">' . $c . '</main></body></html>';
     exit;
 });
+
+// --- Fallback SEO meta: render <title> + meta description/keywords from the pcm_seo_*
+// meta on singular pages, ONLY when no SEO plugin (Yoast / Rank Math / SEOPress) is
+// handling the page (so we never double-output). ---
+function pcm_conn_seo_plugin_active() {
+    return defined('WPSEO_VERSION') || class_exists('WPSEO_Options')
+        || class_exists('RankMath') || defined('RANK_MATH_VERSION')
+        || function_exists('seopress_init') || defined('SEOPRESS_VERSION');
+}
+add_filter('pre_get_document_title', function ($title) {
+    if (pcm_conn_seo_plugin_active() || !is_singular()) { return $title; }
+    $t = trim((string) get_post_meta(get_queried_object_id(), 'pcm_seo_meta_title', true));
+    return $t !== '' ? $t : $title;
+}, 99);
+add_action('wp_head', function () {
+    if (pcm_conn_seo_plugin_active() || !is_singular()) { return; }
+    $id   = get_queried_object_id();
+    $desc = trim((string) get_post_meta($id, 'pcm_seo_meta_description', true));
+    $kw   = trim((string) get_post_meta($id, 'pcm_seo_meta_keywords', true));
+    if ($desc !== '') { echo '<meta name="description" content="' . esc_attr($desc) . '">' . "\n"; }
+    if ($kw !== '')   { echo '<meta name="keywords" content="' . esc_attr($kw) . '">' . "\n"; }
+}, 1);
 PHP;
     }
 

@@ -25,6 +25,8 @@ interface SiteSettings {
   schemaJson: string;
   robotsEnabled: boolean;
   robotsText: string;
+  siteTitle: string;
+  tagline: string;
   language: string;
   timezone: string;
   hasLangBackup: boolean;
@@ -71,8 +73,37 @@ export function SiteSettingsPanel() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Schema generation failed');
     }
+    try {
+      const title: any = await generateMutation.mutateAsync({ field: 'site_title', brandId });
+      const v = String(title?.value ?? '');
+      if (v) { setForm((f) => (f ? { ...f, siteTitle: v } : f)); ok = true; }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Site title generation failed');
+    }
+    try {
+      const tagline: any = await generateMutation.mutateAsync({ field: 'site_tagline', brandId });
+      const v = String(tagline?.value ?? '');
+      if (v) { setForm((f) => (f ? { ...f, tagline: v } : f)); ok = true; }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Tagline generation failed');
+    }
     if (ok) toast.success('Generated — review and click Save site settings');
     setBusy(false);
+  }, [genBrandId, generateMutation]);
+
+  // Generate a single Site-identity field (Site Title / Tagline) from the editable prompt.
+  const genSite = useCallback(async (field: 'site_title' | 'site_tagline', key: 'siteTitle' | 'tagline') => {
+    setBusy(true);
+    try {
+      const brandId = genBrandId ? Number(genBrandId) : undefined;
+      const res: any = await generateMutation.mutateAsync({ field, brandId });
+      const v = String(res?.value ?? '');
+      if (v) setForm((f) => (f ? { ...f, [key]: v } : f));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Generation failed');
+    } finally {
+      setBusy(false);
+    }
   }, [genBrandId, generateMutation]);
 
   const handleExport = useCallback(async () => {
@@ -119,6 +150,8 @@ export function SiteSettingsPanel() {
         schemaJson: form.schemaJson,
         robotsEnabled: form.robotsEnabled,
         robotsText: form.robotsText,
+        siteTitle: form.siteTitle,
+        tagline: form.tagline,
         ...(form.language ? { language: form.language } : {}),
         ...(form.timezone ? { timezone: form.timezone } : {}),
       });
@@ -155,9 +188,9 @@ export function SiteSettingsPanel() {
         <div>
           <Label className="text-sm font-medium">One-click optimize</Label>
           <p className="text-xs text-muted-foreground">
-            Generate your robots.txt and a LocalBusiness JSON-LD block from your prompts.
-            Pick a brand for the business details. Edit how these are written in
-            Settings → Templates → SEO.
+            Generate your Site Title, Tagline, robots.txt, and a LocalBusiness JSON-LD block
+            from your prompts. Pick a brand for the business details. Edit how these are
+            written in Settings → Templates → SEO.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -175,6 +208,32 @@ export function SiteSettingsPanel() {
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
             Optimize
           </Button>
+        </div>
+      </section>
+
+      {/* Site identity (WP Site Title + Tagline → blogname / blogdescription) */}
+      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <div>
+          <Label className="text-sm font-medium">Site identity</Label>
+          <p className="text-xs text-muted-foreground">Your WordPress Site Title &amp; Tagline. Generate from your brand, edit, then Save.</p>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Site Title</Label>
+          <div className="flex gap-1.5">
+            <Input value={form.siteTitle} onChange={(e) => patch('siteTitle', e.target.value)} placeholder="e.g. Acme Plumbing" className="text-xs" />
+            <Button variant="outline" size="icon" title="Generate site title" onClick={() => genSite('site_title', 'siteTitle')} disabled={busy}>
+              <Sparkles className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Tagline</Label>
+          <div className="flex gap-1.5">
+            <Input value={form.tagline} onChange={(e) => patch('tagline', e.target.value)} placeholder="e.g. Trusted local plumbers since 2008" className="text-xs" />
+            <Button variant="outline" size="icon" title="Generate tagline" onClick={() => genSite('site_tagline', 'tagline')} disabled={busy}>
+              <Sparkles className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </section>
 

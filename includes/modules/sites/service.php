@@ -110,6 +110,54 @@ class PCM_Sites_Service
     }
 
     /**
+     * Upload an image (by URL) into a connected site's media library via /wp/v2/media,
+     * returning the new attachment id + source URL. Raw-binary POST (the JSON remote_rest
+     * can't do file uploads), Basic-authed with the stored app password.
+     *
+     * @return array{id:int,url:string}|\WP_Error
+     */
+    public static function remote_upload_media(object $site, string $image_url)
+    {
+        $img = wp_remote_get($image_url, array('timeout' => 30));
+        if (is_wp_error($img)) {
+            return new WP_Error('pcm_media_fetch', $img->get_error_message(), array('status' => 502));
+        }
+        $bytes = wp_remote_retrieve_body($img);
+        if ($bytes === '') {
+            return new WP_Error('pcm_media_empty', __('Could not read the source image.', 'power-creatives'), array('status' => 502));
+        }
+        $mime = wp_remote_retrieve_header($img, 'content-type');
+        $mime = (is_string($mime) && str_starts_with($mime, 'image/')) ? $mime : 'image/jpeg';
+        $name = basename((string) wp_parse_url($image_url, PHP_URL_PATH));
+        if ($name === '' || strpos($name, '.') === false) {
+            $ext  = str_contains($mime, 'png') ? 'png' : (str_contains($mime, 'webp') ? 'webp' : (str_contains($mime, 'gif') ? 'gif' : 'jpg'));
+            $name = 'featured-' . time() . '.' . $ext;
+        }
+        $password = self::decrypt_password((string) $site->appPassword);
+        $url      = rtrim((string) $site->url, '/') . '/?' . http_build_query(array('rest_route' => '/wp/v2/media'));
+        $res = wp_remote_post($url, array(
+            'headers' => array(
+                'Authorization'       => 'Basic ' . base64_encode($site->username . ':' . $password),
+                'Content-Type'        => $mime,
+                'Content-Disposition' => 'attachment; filename="' . sanitize_file_name($name) . '"',
+            ),
+            'body'      => $bytes,
+            'timeout'   => 60,
+            'sslverify' => true,
+        ));
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_media_upload', $res->get_error_message(), array('status' => 502));
+        }
+        $code = (int) wp_remote_retrieve_response_code($res);
+        $body = json_decode(wp_remote_retrieve_body($res), true);
+        if ($code >= 300 || empty($body['id'])) {
+            $msg = (is_array($body) && !empty($body['message'])) ? (string) $body['message'] : ('HTTP ' . $code);
+            return new WP_Error('pcm_media_upload', $msg, array('status' => 502));
+        }
+        return array('id' => (int) $body['id'], 'url' => (string) ($body['source_url'] ?? ''));
+    }
+
+    /**
      * Test connection to a WordPress site.
      *
      * Calls GET /wp-json/wp/v2/users/me to verify credentials.

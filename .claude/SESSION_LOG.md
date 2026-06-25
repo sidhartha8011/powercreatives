@@ -1,5 +1,153 @@
 # Session Log
 
+## 2026-06-19 — AI Readiness → Optimizer parity, iterations 1b + 2 [/build] "complete both"
+- 1b) LOCAL parity finished — now fully matches Optimizer Simple:
+  - ai-readiness.php: save_llms() (persist a hand-edited llms.txt), delete_all() (reset llms files +
+    per-post meta + site description + unpublish), gen_site_description() (AI from top page titles),
+    query_posts(bool $respect_exclusions) so the status table can list ALL posts (excluded ones flagged)
+    while build still excludes.
+  - controller: air_status returns llmsTxt + a per-post `excluded` flag; new air_save_llms /
+    air_gen_site_desc / air_delete_all + routes. trpc airSaveLlms/airGenSiteDesc/airDeleteAll.
+  - AIReadinessPanel: editable llms.txt + Save, AI-generate site description, Reset (delete-all), and a
+    per-row exclude toggle (Eye/EyeOff, dims the row; persists via Save settings).
+- 2) CONNECTED-site parity — mirrors the local panel WITHOUT a connector change (the connector already
+  serves /llms.txt + live /{slug}.md):
+  - service.php: remote_ai_build($site, $desc) prepends a `> description`; remote_ai_posts() lists the
+    remote's published pages (id/title/type/status + live .md URL); remote_ai_site_desc() AI-generates a
+    site description from the remote's page titles.
+  - controller: routes GET /seo/sites/{id}/ai/posts + POST /seo/sites/{id}/ai/site-desc; remote_ai_build
+    handler passes desc. trpc remoteAiPosts/remoteAiSiteDesc + remoteAiBuild body gains desc.
+  - RemoteAIReadinessPanel rewritten to mirror local: enable + Site description (AI-generate) + Build
+    (with description) + editable llms.txt + Save + a per-page table with live .md links.
+- Verified: php -l OK; ai/posts + ai/site-desc routes REGISTERED; save-llms/site-desc/delete-all
+  REGISTERED; remote_ai_build 2 params; query_posts 1 param; methods callable; tsc 0 relevant errors
+  (56); vite build clean. Not committed; zip refreshed.
+- REMAINING (needs a connector version bump, next iteration): per-post AI summaries PERSISTED on the
+  remote (local stores them as post meta; remote currently uses excerpts + a site-level AI description),
+  and a connector-served /llms-full.txt (full per-page content is already available via the live .md
+  files). /llm-info/ stays code-only (hidden), to be redone later.
+
+## 2026-06-19 — AI Readiness → Optimizer parity, iteration 1 (local) [/build]
+- Decisions (asked): FULL parity on both sites (multi-iteration); hide /llm-info/ from the UI but keep
+  its code for later.
+- A) Hidden /llm-info/: removed the LlmInfoSection block + import from AIReadinessPanel +
+  RemoteAIReadinessPanel. LlmInfoEditor.tsx + the backend /llm-info routes/prompts are untouched (just
+  not rendered).
+- B) LOCAL AI Readiness parity (backend foundation mostly existed):
+  - ai-readiness.php: post_meta_row() (wordCount/hasSummary/summary/generated) + summarize() (per-post
+    AI directory description → META_SUMMARY, faithful to Optimizer's summarize prompt; auto-generates
+    the .md first).
+  - controller: air_status enriched with the per-post meta; new air_summarize + route
+    POST /seo/ai-readiness/summarize. trpc seo.airSummarize.
+  - AIReadinessPanel rebuilt: Settings section (post types / max pages / site description + Save), the
+    existing Build/Publish/llms links, and a per-post table with word counts + per-row Generate (.md)
+    + Summarize (AI) + view .md + the summary shown inline. Summarize uses the toolbar's selected model.
+- Verified: php -l OK; summarize route REGISTERED + summarize/post_meta_row callable; tsc 0 relevant
+  errors (56); vite build clean. Not committed; zip refreshed.
+- REMAINING for full parity (next iterations): LOCAL — editable llms.txt (save_llms), AI-generate site
+  description (gen_site_desc), delete-all, per-post preview, excluded-IDs picker. REMOTE (iteration 2) —
+  full AI Readiness on connected sites (per-post .md gen/serve, summaries, build, publish, settings via
+  a connector expansion).
+
+## 2026-06-19 — One-click site optimize now works for connected sites [/task]
+- Bug: the Site-tab one-click Optimize lived only in SiteSettingsPanel (local); connected sites render
+  RemoteSiteSettingsPanel, which had NO Optimize/generate button (robots+JSON-LD textareas + Save only).
+- Built (port the one-click into the remote panel + save to the remote):
+  - RemoteSiteSettingsPanel: added brand picker + "Optimize" (generates Site Title, Tagline, robots.txt,
+    JSON-LD), per-field ✦ generate, and a Site identity section (Title/Tagline). Save persists all four.
+  - Remote-aware generation: new POST /seo/sites/{id}/site/generate → remote_site_generate, which calls
+    generate_site_field with var_overrides (website.url / business.website|hostname = the CONNECTED
+    site's url; business.name falls back to the site name when no brand) so robots Sitemap + schema url
+    point to the remote site, not the hub. generate_site_field gained an optional $var_overrides param.
+    trpc seo.remoteSiteGenerate.
+  - Save targets: robots + JSON-LD → connector (/pcm-conn/v1/site); Site Title + Tagline → WP core
+    /wp/v2/settings (blogname/blogdescription). remote_site_get now also returns the remote's current
+    title/tagline; remote_site_save writes both targets; controller + trpc remoteSiteSave pass
+    siteTitle/tagline.
+- Verified: php -l OK; /seo/sites/{id}/site/generate REGISTERED; tsc 0 relevant errors (56); vite build
+  clean. Generation needs a keyed model; robots/JSON-LD save needs connector v1.2.0+ (title/tagline use
+  core REST). Not committed; zip refreshed.
+
+## 2026-06-19 — SEO: remote meta-tag render + generate-mode prompt + remote featured image [/task]
+- **#1 Remote meta tags render without an SEO plugin:** the connector never output per-post
+  <title>/description (only JSON-LD). Added a fallback renderer to connector_php_simple (v1.3.1→
+  1.4.0): pre_get_document_title (title) + wp_head (meta description/keywords) from pcm_seo_* on
+  singular pages, gated by pcm_conn_seo_plugin_active() so it never double-outputs when Yoast/
+  RankMath/SEOPress is present. → needs connector v1.4.0 reinstall on connected sites.
+- **#2 Ask overwrite/empty on generate:** replaced the dropdown's mode radios with a per-trigger
+  dialog. Generate all / Generate selected / column ✦ now open "Only where empty / Overwrite
+  existing / Cancel"; runBulk + handleColumnGenerate take the chosen mode (column generate now also
+  skips non-empty cells in 'empty' mode). Removed genMode state + unused RadioGroup imports.
+- **#3 Set featured image on a remote site:** the cell was display-only ("—"). Now the media picker
+  works for remote: PCM_Sites_Service::remote_upload_media (raw-binary POST → remote /wp/v2/media,
+  app-password authed — remote_rest is JSON-only) + PCM_SEO_Service::remote_set_featured_image
+  (upload by URL → set featured_media) + route POST /seo/sites/{id}/content/{post}/featured + trpc
+  remoteSetFeatured + useRemoteSeoContent.setFeaturedImage. openFeaturedImage branches local
+  (att id → set_post_thumbnail) vs remote (att url → upload + set). Uses core REST → any connector.
+- **Verified:** php -l OK (4 files); connector lints clean + v1.4.0 + fallback renderer + guard;
+  featured route REGISTERED + remote_set_featured_image/remote_upload_media callable; tsc 0 relevant
+  errors (56); vite build clean. Not committed; zip refreshed.
+
+## 2026-06-19 — Fix: latest OpenAI models not loading — wire one-click model re-sync [/task]
+- Symptom: newer OpenAI models (GPT-5) missing from the dropdown + integrations; Anthropic "dynamic".
+- Diagnosis (code was already correct): the OpenAI extractor fix (GPT-5 patterns + generic fallback)
+  survived the pulls; sync_models upserts new models (verified: sync of 'gpt-5' → created:1);
+  upsert_model inserts new (userId,modelId) rows. The integration's DB list was STALE because the
+  ONLY re-sync path was delete + re-add the key — the "Verify connection" button (RefreshCw) was a
+  no-op toast ("Re-add integration to re-verify"). Anthropic looked dynamic only because it was
+  re-added more recently. The purpose-built /models/resync (resync_provider — stored key, re-fetch,
+  mark_available) existed but was NOT exposed to the frontend.
+- Fix (frontend, 2 files; backend resync_provider already existed):
+  - trpc-routes.ts: added models.resync → POST /models/resync.
+  - Integrations/index.tsx: handleVerifyConnection now calls resyncMutation({provider}) (stored key →
+    re-fetch live /v1/models → re-sync via the fixed extractor) + toast + invalidateAll; button
+    relabeled "Refresh models (re-sync latest)". invalidateAll now also invalidates
+    models.listByProvider so the integration card's "All Models" list refreshes too.
+- Verified: tsc 0 errors (56 baseline); vite build clean; /models/resync REGISTERED; sync of a gpt-5
+  row inserts (created:1). After deploy: click the refresh icon on the OpenAI integration → GPT-5 (and
+  any newer models the account exposes) load in both the integrations list + the generate dropdown.
+  Not committed; zip refreshed.
+
+## 2026-06-19 — Site tab: add Site Title + Tagline ("Site name") — Optimizer parity [/build]
+- Diffed against the provided Optimizer Simple source (modules/site + prompt-templates config):
+  its `site` module generates/saves Site Title + Tagline (blogname/blogdescription) with editable
+  `title`/`tagline` prompts — the port had robots + schema only. "Site name" = WP Site Title + Tagline.
+- Built (matching the optimizer + the editable-prompt vision):
+  - prompts.php: new `site_title` + `site_tagline` entries (adapted from Optimizer's prompts) →
+    auto-flatten to site_title_generate / site_tagline_generate → auto-seeded into Settings →
+    Templates → SEO (editable, resolved via resolve_prompt — verified seeded).
+  - generate_site_field: use_map gains site_title/site_tagline; their output is single-line-cleaned
+    via sanitize_ai_output (robots/schema stay multi-line).
+  - seo/site.php: get_settings() returns siteTitle (blogname) + tagline (blogdescription); save()
+    writes blogname (only if non-empty) + blogdescription.
+  - SiteSettingsPanel: new "Site identity" section (Site Title + Tagline inputs + per-field ✦
+    generate); one-click "Optimize" now also generates title + tagline; Save persists them.
+- Verified: php -l OK; live — site_title_generate/site_tagline_generate in get_default_prompts +
+  seeded as editable templates; get_settings returns siteTitle/tagline; tsc 0 SiteSettingsPanel
+  errors (56); vite build clean. Real text gen needs a keyed model. Not committed; zip refreshed.
+- Not built (optimizer also has, not requested): site icon (favicon) + permalink structure.
+  Deferred still: AI Readiness lost-features diff vs Optimizer (#3) — source now available in /tmp.
+
+## 2026-06-19 — Verified: one-click Site optimize + editable site prompts (already shipped) [/build]
+- Requirement (one-click optimize robots.txt + site details in the Site tab; edit the generation
+  prompts in Settings, like Optimizer Simple) was ALREADY delivered by the pulled "changed seo tab"
+  commits. No code change — verified end-to-end:
+  - Site tab (SiteSettingsPanel): "One-click optimize" → handleOptimize generates robots.txt +
+    LocalBusiness JSON-LD via siteGenerate ('robots' + 'schema'), populates the editable fields, user
+    Saves. Backend: generate_site_field (prompts 'robots' + 'site_schema', prompts.php:101/109) →
+    POST /seo/site/generate.
+  - Editable prompts: get_default_prompts() flattens field_prompts → robots_generate +
+    site_schema_generate; seed_seo_templates() seeds them into the Templates table (module=seo,
+    labels "Robots — Generate" / "Site Schema — Generate"); resolve_prompt(user>0) reads the user's
+    edited template (seo_template_prompt, userId=me OR 0) → generation honors edits. Frontend Templates
+    module has an "SEO" filter tab, so they're reachable + editable.
+  - Live proof: get_default_prompts has robots_generate + site_schema_generate; 14 SEO templates
+    seeded incl. both; resolve_prompt(robots_generate/site_schema_generate, user 1) returns the
+    editable templates (not the fallback).
+- Open question (not built): the vision mentioned "Site name" as a generated detail — the Site tab
+  currently generates robots.txt + LocalBusiness JSON-LD only (no WP Site Title/Tagline generator).
+  Flagged for the user to confirm whether they want title/tagline generation added.
+
 ## 2026-06-24 — Rebuilt deploy zip (preview iframe fallback) [/task]
 - Regenerated `C:/Users/sanky/Desktop/powercreatives/powerplatform.zip` (Python zipfile,
   folder `powerplatform/`, minus .git/.claude/.agent(s)/node_modules). 740 files, 2.88 MB.

@@ -34,6 +34,8 @@ class PCM_SEO_Site
             'schemaJson'    => (string) get_option(self::OPT_SCHEMA_JSON, ''),
             'robotsEnabled' => (bool) get_option(self::OPT_ROBOTS_ON, false),
             'robotsText'    => (string) get_option(self::OPT_ROBOTS_TXT, self::default_robots()),
+            'siteTitle'     => (string) get_option('blogname', ''),
+            'tagline'       => (string) get_option('blogdescription', ''),
             'language'      => (string) get_option('WPLANG', ''),
             'timezone'      => (string) get_option('timezone_string', ''),
             'hasLangBackup' => get_option(self::BK_WPLANG, null) !== null,
@@ -68,6 +70,14 @@ class PCM_SEO_Site
         }
         if (array_key_exists('robotsText', $in)) {
             update_option(self::OPT_ROBOTS_TXT, sanitize_textarea_field((string) $in['robotsText']), false);
+        }
+        // WP Site Title (blogname) — only overwrite when a non-empty value is given.
+        if (array_key_exists('siteTitle', $in) && is_string($in['siteTitle']) && trim($in['siteTitle']) !== '') {
+            update_option('blogname', sanitize_text_field((string) $in['siteTitle']));
+        }
+        // WP Tagline (blogdescription) — may be blanked.
+        if (array_key_exists('tagline', $in) && is_string($in['tagline'])) {
+            update_option('blogdescription', sanitize_text_field((string) $in['tagline']));
         }
         if (!empty($in['language']) && is_string($in['language'])) {
             if (get_option(self::BK_WPLANG, null) === null) {

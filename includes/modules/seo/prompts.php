@@ -112,4 +112,20 @@ return array(
             . "Business Name: {{business.name}}\nCategory: {{business.category}}\nAddress: {{business.address}}\nPhone: {{business.phone}}\nWebsite: {{website.url}}\nLatitude: {{business.lat}}\nLongitude: {{business.lng}}\nRating: {{business.rating}}\nOpening Hours: {{business.hours}}\nLanguage: {{site.lang}}\n\n"
             . "Requirements:\n- Valid JSON-LD with @context and @type\n- Use LocalBusiness (or a more specific subtype if the category matches a schema.org type)\n- Include name, url, telephone, address (PostalAddress), geo (GeoCoordinates) when data is available\n- Include aggregateRating and openingHoursSpecification only when that data is provided\n- Output ONLY the raw JSON object — no markdown fences, no explanation",
     ),
+
+    // ── Site title (WP Site Title / blogname → Site tab → Optimize) ──
+    'site_title' => array(
+        'max'      => 60,
+        'generate' => "Generate an SEO-optimized site title for this website.\n\n"
+            . "Business: {{business.name}}\nCategory: {{business.category}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- Maximum 60 characters\n- Clearly identify the business or brand\n- Include the primary service or industry naturally\n- Compelling and memorable\n- Write in {{site.lang}}\n- Do NOT use quotation marks\n- Output ONLY the site title text, nothing else",
+    ),
+
+    // ── Site tagline (WP Tagline / blogdescription → Site tab → Optimize) ──
+    'site_tagline' => array(
+        'max'      => 120,
+        'generate' => "Generate an SEO-optimized tagline (site description) for this website.\n\n"
+            . "Business: {{business.name}}\nCategory: {{business.category}}\nAddress: {{business.address}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- Maximum 120 characters\n- Communicate the business value proposition clearly\n- Include the main service/industry keyword naturally\n- Compelling and succinct\n- Write in {{site.lang}}\n- Do NOT use quotation marks\n- Output ONLY the tagline text, nothing else",
+    ),
 );

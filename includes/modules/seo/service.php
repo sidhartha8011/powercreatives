@@ -767,6 +767,30 @@ class PCM_SEO_Service
     }
 
     /**
+     * Set a connected post's featured image from an image URL: uploads it into the remote
+     * media library, then sets featured_media. Returns the new thumbnail (url + id).
+     *
+     * @return array{featuredImage:string,featuredImageId:int}|\WP_Error
+     */
+    public static function remote_set_featured_image(object $site, int $post_id, string $type, string $image_url)
+    {
+        self::ensure_sites_service();
+        $media = PCM_Sites_Service::remote_upload_media($site, $image_url);
+        if ($media instanceof WP_Error) {
+            return $media;
+        }
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $res   = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array('featured_media' => (int) $media['id']));
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_featured', $res->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($res['status'] ?? 0) >= 300) {
+            return new WP_Error('pcm_seo_remote_featured', __('Could not set the featured image on the remote site.', 'power-creatives'), array('status' => 502));
+        }
+        return array('featuredImage' => (string) $media['url'], 'featuredImageId' => (int) $media['id']);
+    }
+
+    /**
      * Scan a connected site's post links — analysis runs on the HUB over the remote's
      * rendered content (internal/external counts + broken-link HEAD checks). Counts are
      * returned for the table (not persisted on the remote).
@@ -803,8 +827,16 @@ class PCM_SEO_Service
     public static function remote_site_get(object $site)
     {
         self::ensure_sites_service();
-        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/site');
-        return self::remote_site_result($res);
+        $result = self::remote_site_result(PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/site'));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        // Site Title + Tagline are WP core (blogname/blogdescription) — via /wp/v2/settings.
+        $settings = PCM_Sites_Service::remote_rest($site, 'GET', '/wp/v2/settings');
+        $sb = (!is_wp_error($settings) && is_array($settings['body'] ?? null)) ? $settings['body'] : array();
+        $result['siteTitle'] = (string) ($sb['title'] ?? '');
+        $result['tagline']   = (string) ($sb['description'] ?? '');
+        return $result;
     }
 
     /**
@@ -816,6 +848,7 @@ class PCM_SEO_Service
     public static function remote_site_save(object $site, array $fields)
     {
         self::ensure_sites_service();
+        // robots + JSON-LD → the connector (/pcm-conn/v1/site).
         $body = array();
         if (array_key_exists('robots', $fields)) {
             $body['robots'] = (string) $fields['robots'];
@@ -823,8 +856,30 @@ class PCM_SEO_Service
         if (array_key_exists('jsonld', $fields)) {
             $body['jsonld'] = (string) $fields['jsonld'];
         }
-        $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/site', array(), $body);
-        return self::remote_site_result($res);
+        if ($body) {
+            $res = self::remote_site_result(PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/site', array(), $body));
+            if ($res instanceof WP_Error) {
+                return $res;
+            }
+        }
+        // Site Title + Tagline → WP core /wp/v2/settings (blogname / blogdescription).
+        $settings = array();
+        if (array_key_exists('siteTitle', $fields) && trim((string) $fields['siteTitle']) !== '') {
+            $settings['title'] = (string) $fields['siteTitle'];
+        }
+        if (array_key_exists('tagline', $fields)) {
+            $settings['description'] = (string) $fields['tagline'];
+        }
+        if ($settings) {
+            $set = PCM_Sites_Service::remote_rest($site, 'POST', '/wp/v2/settings', array(), $settings);
+            if (is_wp_error($set)) {
+                return new WP_Error('pcm_seo_remote_site', $set->get_error_message(), array('status' => 502));
+            }
+            if ((int) ($set['status'] ?? 0) >= 300) {
+                return new WP_Error('pcm_seo_remote_site', __('Could not save the site title/tagline on the remote site.', 'power-creatives'), array('status' => 502));
+            }
+        }
+        return self::remote_site_get($site);
     }
 
     /** Normalise a /pcm-conn/v1/site proxy response into the Site shape or a WP_Error. */
@@ -907,11 +962,16 @@ class PCM_SEO_Service
      * proxy). Returns the generated text — the caller stages/saves it; nothing is written
      * to the remote here.
      */
-    public static function remote_ai_build(object $site): string
+    public static function remote_ai_build(object $site, string $desc = ''): string
     {
         $rows  = self::remote_list_content($site);
         $title = ($site->name ?? '') !== '' ? $site->name : (string) $site->url;
         $lines = array('# ' . $title, '');
+        $desc  = trim($desc);
+        if ($desc !== '') {
+            $lines[] = '> ' . $desc;
+            $lines[] = '';
+        }
         $posts = array();
         $pages = array();
         foreach ($rows as $r) {
@@ -937,6 +997,73 @@ class PCM_SEO_Service
             $lines   = array_merge($lines, $posts, array(''));
         }
         return implode("\n", $lines);
+    }
+
+    /**
+     * List a connected site's published posts/pages for the AI Readiness table — each with
+     * its live `/{slug}.md` URL (served by the connector). Read-only; no connector change.
+     *
+     * @return array<int,array{id:int,title:string,type:string,status:string,mdUrl:string}>
+     */
+    public static function remote_ai_posts(object $site): array
+    {
+        $out = array();
+        foreach (self::remote_list_content($site) as $r) {
+            if (($r['status'] ?? '') !== 'publish') {
+                continue;
+            }
+            $permalink = (string) ($r['permalink'] ?? '');
+            $out[]     = array(
+                'id'     => (int) ($r['id'] ?? 0),
+                'title'  => ($r['title'] ?? '') !== '' ? (string) $r['title'] : '(untitled)',
+                'type'   => (string) ($r['type'] ?? 'post'),
+                'status' => (string) ($r['status'] ?? ''),
+                'mdUrl'  => $permalink !== '' ? rtrim($permalink, '/') . '.md' : '',
+            );
+        }
+        return $out;
+    }
+
+    /**
+     * AI-generate a 1–2 sentence description for a connected site from its top page titles.
+     *
+     * @return array{description:string}|\WP_Error
+     */
+    public static function remote_ai_site_desc(object $site, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    {
+        if (!class_exists('PCM_LLM')) {
+            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
+        }
+        $titles = array();
+        foreach (self::remote_list_content($site) as $r) {
+            if (($r['status'] ?? '') === 'publish' && ($r['title'] ?? '') !== '') {
+                $titles[] = '- ' . (string) $r['title'];
+            }
+            if (count($titles) >= 12) {
+                break;
+            }
+        }
+        $name   = ($site->name ?? '') !== '' ? $site->name : (string) $site->url;
+        $prompt = "Write a concise 1-2 sentence description of this website for an AI/LLM index file (llms.txt). "
+            . "Factual, answer-first, no marketing fluff. Plain text only — no quotes, labels, or markdown.\n\n"
+            . "Site name: {$name}\nKey pages:\n" . implode("\n", $titles);
+        try {
+            $opts = array('max_tokens' => 120);
+            if (!empty($model)) {
+                $opts['model'] = $model;
+            }
+            if (!empty($provider)) {
+                $opts['provider'] = $provider;
+            }
+            $res = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $d   = trim((string) ($res['content'] ?? ''), " \t\n\r\"'");
+            if ($d === '') {
+                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
+            }
+            return array('description' => $d);
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
     }
 
     /**
@@ -1868,9 +1995,14 @@ class PCM_SEO_Service
      * @param string|null $provider Optional provider override (paired with $model).
      * @return array|WP_Error { field, value }.
      */
-    public function generate_site_field(string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    public function generate_site_field(string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null, array $var_overrides = array())
     {
-        $use_map = array('robots' => 'robots', 'schema' => 'site_schema');
+        $use_map = array(
+            'robots'       => 'robots',
+            'schema'       => 'site_schema',
+            'site_title'   => 'site_title',
+            'site_tagline' => 'site_tagline',
+        );
         if (!isset($use_map[$field])) {
             return new WP_Error('pcm_seo_not_generatable', __('This site field cannot be generated.', 'power-creatives'), array('status' => 400));
         }
@@ -1881,7 +2013,9 @@ class PCM_SEO_Service
         }
 
         // Site-level vars (no post): business.* (from brand), website.url, site.lang.
-        $vars    = $this->build_field_vars(0, $brand_id);
+        // $var_overrides lets a CONNECTED site inject its own url/name so {{website.url}}
+        // (robots Sitemap, schema url) resolves to the remote site, not the hub.
+        $vars    = array_merge($this->build_field_vars(0, $brand_id), $var_overrides);
         $default = $prompts[$use]['generate'];
         $tpl     = self::resolve_prompt($use . '_generate', $default, $user_id);
         $prompt  = self::substitute_vars($tpl, $vars);
@@ -1900,10 +2034,13 @@ class PCM_SEO_Service
                 $opts['provider'] = $provider;
             }
             $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
-            // Multi-line output — strip a wrapping ```code fence``` only (do NOT use
-            // sanitize_ai_output, which collapses to a single line).
             $value = trim((string) ($result['content'] ?? ''));
-            if (strpos($value, '```') === 0) {
+            if ($field === 'site_title' || $field === 'site_tagline') {
+                // Single-line value fields — strip markdown/commentary a chatty model adds.
+                $value = self::sanitize_ai_output($value);
+            } elseif (strpos($value, '```') === 0) {
+                // Multi-line output (robots/schema) — strip only a wrapping ```code fence```
+                // (do NOT use sanitize_ai_output, which collapses to a single line).
                 $value = trim((string) preg_replace('/^```[a-zA-Z0-9]*\s*|\s*```$/', '', $value));
             }
             if ($value === '') {

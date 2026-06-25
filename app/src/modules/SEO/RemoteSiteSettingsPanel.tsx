@@ -1,22 +1,30 @@
 /**
- * RemoteSiteSettingsPanel — manage a CONNECTED site's hub-managed Site SEO
- * (custom robots.txt rules + a site-wide JSON-LD block) through the connector's
- * /pcm-conn/v1/site route. Requires the Power Creatives connector v1.2.0+ on the
- * remote site (re-download from Add Site if older).
+ * RemoteSiteSettingsPanel — manage a CONNECTED site's Site SEO and one-click "Optimize" it.
+ *
+ * Generates Site Title + Tagline (WP core, via /wp/v2/settings), custom robots.txt + a
+ * site-wide JSON-LD block (via the connector's /pcm-conn/v1/site) from your prompts
+ * (Settings → Templates → SEO) and a chosen brand's business context, then saves to the
+ * connected site. robots/JSON-LD require the connector v1.2.0+; Title/Tagline use core REST.
  */
 
-import { useEffect, useState, useCallback } from 'react';
-import { Loader2, Save, AlertTriangle } from 'lucide-react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { Loader2, Save, Sparkles, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { trpc } from '@/lib/trpc';
 
 interface RemoteSite {
   robots: string;
   jsonld: string;
+  siteTitle: string;
+  tagline: string;
 }
 
 export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; siteName: string }) {
@@ -25,6 +33,17 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
     { enabled: siteId != null, retry: false },
   ) as { data?: unknown; isLoading: boolean; error?: unknown; refetch: () => void };
   const saveMutation = trpc.seo.remoteSiteSave.useMutation();
+  // Generates the TEXT from your prompts + a brand's business context, with the CONNECTED
+  // site's url/name as the {{website.url}} / {{business.*}} context (so robots Sitemap +
+  // schema url point to the remote site). We then save it to the connected site.
+  const generateMutation = trpc.seo.remoteSiteGenerate.useMutation();
+
+  const { data: brandsRaw } = trpc.brands.list.useQuery();
+  const brands = useMemo(
+    () => (Array.isArray(brandsRaw) ? (brandsRaw as any[]).map((b) => ({ id: Number(b.id), name: String(b.name) })) : []),
+    [brandsRaw],
+  );
+  const [genBrandId, setGenBrandId] = useState<string>('');
 
   const [form, setForm] = useState<RemoteSite | null>(null);
   const [busy, setBusy] = useState(false);
@@ -32,9 +51,46 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
   useEffect(() => {
     if (data && typeof data === 'object') {
       const d = data as Partial<RemoteSite>;
-      setForm({ robots: String(d.robots ?? ''), jsonld: String(d.jsonld ?? '') });
+      setForm({
+        robots: String(d.robots ?? ''),
+        jsonld: String(d.jsonld ?? ''),
+        siteTitle: String(d.siteTitle ?? ''),
+        tagline: String(d.tagline ?? ''),
+      });
     }
   }, [data]);
+
+  const patch = useCallback((k: keyof RemoteSite, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f)), []);
+
+  const genField = useCallback(async (field: 'site_title' | 'site_tagline' | 'robots' | 'schema', key: keyof RemoteSite): Promise<boolean> => {
+    const brandId = genBrandId ? Number(genBrandId) : undefined;
+    try {
+      const res: any = await generateMutation.mutateAsync({ siteId, field, brandId });
+      const v = String(res?.value ?? '');
+      if (v) { setForm((f) => (f ? { ...f, [key]: v } : f)); return true; }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `${field} generation failed`);
+    }
+    return false;
+  }, [genBrandId, generateMutation, siteId]);
+
+  // One-click: generate Site Title, Tagline, robots.txt + JSON-LD; fill the form; user Saves.
+  const handleOptimize = useCallback(async () => {
+    setBusy(true);
+    let ok = false;
+    if (await genField('site_title', 'siteTitle')) ok = true;
+    if (await genField('site_tagline', 'tagline')) ok = true;
+    if (await genField('robots', 'robots')) ok = true;
+    if (await genField('schema', 'jsonld')) ok = true;
+    if (ok) toast.success('Generated — review and click Save');
+    setBusy(false);
+  }, [genField]);
+
+  const genOne = useCallback(async (field: 'site_title' | 'site_tagline' | 'robots' | 'schema', key: keyof RemoteSite) => {
+    setBusy(true);
+    await genField(field, key);
+    setBusy(false);
+  }, [genField]);
 
   const handleSave = useCallback(async () => {
     if (!form) return;
@@ -49,7 +105,7 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
     }
     setBusy(true);
     try {
-      await saveMutation.mutateAsync({ siteId, robots: form.robots, jsonld: form.jsonld });
+      await saveMutation.mutateAsync({ siteId, robots: form.robots, jsonld: form.jsonld, siteTitle: form.siteTitle, tagline: form.tagline });
       toast.success(`Site settings saved to ${siteName}`);
       refetch();
     } catch (err) {
@@ -84,35 +140,86 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <p className="text-xs text-muted-foreground">
-        These apply to <span className="font-medium text-foreground">{siteName}</span> through the connector
-        (requires connector v1.2.0+).
-      </p>
+      {/* One-click optimize */}
+      <section className="rounded-xl border border-primary/30 bg-accent/40 p-4 space-y-3">
+        <div>
+          <Label className="text-sm font-medium">One-click optimize</Label>
+          <p className="text-xs text-muted-foreground">
+            Generate <span className="font-medium text-foreground">{siteName}</span>’s Site Title, Tagline,
+            robots.txt and a LocalBusiness JSON-LD block from your prompts. Pick a brand for the business
+            details. Edit how these are written in Settings → Templates → SEO.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={genBrandId} onValueChange={setGenBrandId}>
+            <SelectTrigger className="h-9 w-[230px] text-xs" title="Brand for the business details">
+              <SelectValue placeholder="Brand (business details)…" />
+            </SelectTrigger>
+            <SelectContent>
+              {brands.length === 0
+                ? <div className="px-2 py-1.5 text-xs text-muted-foreground">No brands yet</div>
+                : brands.map((b) => <SelectItem key={b.id} value={String(b.id)} className="text-xs">{b.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Button onClick={handleOptimize} disabled={busy} className="gap-1.5">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            Optimize
+          </Button>
+        </div>
+      </section>
 
+      {/* Site identity (WP core Title + Tagline) */}
       <section className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div>
-          <Label className="text-sm font-medium">Custom robots.txt rules</Label>
-          <p className="text-xs text-muted-foreground">Appended to the connected site’s robots.txt output.</p>
+          <Label className="text-sm font-medium">Site identity</Label>
+          <p className="text-xs text-muted-foreground">The connected site’s WordPress Title &amp; Tagline.</p>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Site Title</Label>
+          <div className="flex gap-1.5">
+            <Input value={form.siteTitle} onChange={(e) => patch('siteTitle', e.target.value)} placeholder="e.g. Acme Plumbing" className="text-xs" />
+            <Button variant="outline" size="icon" title="Generate site title" onClick={() => genOne('site_title', 'siteTitle')} disabled={busy}><Sparkles className="w-4 h-4" /></Button>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Tagline</Label>
+          <div className="flex gap-1.5">
+            <Input value={form.tagline} onChange={(e) => patch('tagline', e.target.value)} placeholder="e.g. Trusted local plumbers since 2008" className="text-xs" />
+            <Button variant="outline" size="icon" title="Generate tagline" onClick={() => genOne('site_tagline', 'tagline')} disabled={busy}><Sparkles className="w-4 h-4" /></Button>
+          </div>
+        </div>
+      </section>
+
+      {/* robots.txt (connector) */}
+      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <Label className="text-sm font-medium">Custom robots.txt rules</Label>
+            <p className="text-xs text-muted-foreground">Appended to the connected site’s robots.txt output (connector v1.2.0+).</p>
+          </div>
+          <Button variant="outline" size="icon" title="Generate robots.txt" onClick={() => genOne('robots', 'robots')} disabled={busy} className="shrink-0"><Sparkles className="w-4 h-4" /></Button>
         </div>
         <Textarea
           value={form.robots}
-          onChange={(e) => setForm((f) => (f ? { ...f, robots: e.target.value } : f))}
+          onChange={(e) => patch('robots', e.target.value)}
           rows={5}
           className="font-mono text-xs"
           placeholder={'User-agent: *\nDisallow: /private/'}
         />
       </section>
 
+      {/* Site-wide JSON-LD (connector) */}
       <section className="rounded-xl border border-border bg-card p-4 space-y-3">
-        <div>
-          <Label className="text-sm font-medium">Site-wide JSON-LD</Label>
-          <p className="text-xs text-muted-foreground">
-            Injected into every page’s &lt;head&gt; on the connected site. Must be valid JSON.
-          </p>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <Label className="text-sm font-medium">Site-wide JSON-LD</Label>
+            <p className="text-xs text-muted-foreground">Injected into every page’s &lt;head&gt; on the connected site. Must be valid JSON.</p>
+          </div>
+          <Button variant="outline" size="icon" title="Generate JSON-LD" onClick={() => genOne('schema', 'jsonld')} disabled={busy} className="shrink-0"><Sparkles className="w-4 h-4" /></Button>
         </div>
         <Textarea
           value={form.jsonld}
-          onChange={(e) => setForm((f) => (f ? { ...f, jsonld: e.target.value } : f))}
+          onChange={(e) => patch('jsonld', e.target.value)}
           rows={6}
           placeholder='{"@context":"https://schema.org","@type":"LocalBusiness","name":"..."}'
           className="font-mono text-xs"
