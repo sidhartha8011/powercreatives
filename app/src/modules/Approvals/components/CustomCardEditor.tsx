@@ -8,11 +8,12 @@
  * new upload endpoint. Annotation (Phase 2) layers on top of inserted images later.
  */
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
-import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon } from 'lucide-react';
+import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon, PenLine } from 'lucide-react';
 
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
+import { ImageAnnotator } from './ImageAnnotator';
 
 // WordPress media library global (wp_enqueue_media() runs in class-pcm-admin.php).
 declare const wp: any;
@@ -44,6 +45,9 @@ function ToolbarButton({ onClick, active, title, children }: {
 }
 
 export function CustomCardEditor({ content, onChange, placeholder }: CustomCardEditorProps) {
+  // Image to annotate (set after the user picks one via the media library).
+  const [annotateUrl, setAnnotateUrl] = useState<string | null>(null);
+
   const editor = useEditor({
     extensions: getEditorExtensions({ placeholder: placeholder ?? 'Write your document…' }),
     content: content || '<p></p>',
@@ -62,17 +66,19 @@ export function CustomCardEditor({ content, onChange, placeholder }: CustomCardE
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
 
-  const insertImage = () => {
+  // Open the WordPress media library and hand the chosen image URL to a callback.
+  const pickImage = (onPick: (url: string, alt?: string) => void) => {
     if (typeof wp === 'undefined' || !wp?.media) return;
-    const frame = wp.media({ title: 'Select or upload image', button: { text: 'Insert' }, multiple: false });
+    const frame = wp.media({ title: 'Select or upload image', button: { text: 'Use image' }, multiple: false });
     frame.on('select', () => {
       const att = frame.state().get('selection').first()?.toJSON();
-      if (att?.url && editor) {
-        editor.chain().focus().setImage({ src: att.url, alt: att.alt || '' }).run();
-      }
+      if (att?.url) onPick(att.url, att.alt || '');
     });
     frame.open();
   };
+
+  const insertImage = () => pickImage((url, alt) => editor?.chain().focus().setImage({ src: url, alt }).run());
+  const annotateImage = () => pickImage((url) => setAnnotateUrl(url));
 
   if (!editor) return null;
 
@@ -90,10 +96,22 @@ export function CustomCardEditor({ content, onChange, placeholder }: CustomCardE
         <ToolbarButton title="Numbered list" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered className="h-4 w-4" /></ToolbarButton>
         <span className="mx-1 h-5 w-px bg-border" />
         <ToolbarButton title="Insert image" onClick={insertImage}><ImageIcon className="h-4 w-4" /></ToolbarButton>
+        <ToolbarButton title="Annotate an image" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
       </div>
       <div className="max-h-[55vh] overflow-y-auto p-4">
         <EditorContent editor={editor} />
       </div>
+
+      {/* Annotation: draw on the picked image, then insert the flattened PNG. */}
+      <ImageAnnotator
+        open={!!annotateUrl}
+        imageUrl={annotateUrl}
+        onCancel={() => setAnnotateUrl(null)}
+        onInsert={(dataUrl) => {
+          editor.chain().focus().setImage({ src: dataUrl, alt: 'Annotated image' }).run();
+          setAnnotateUrl(null);
+        }}
+      />
     </div>
   );
 }

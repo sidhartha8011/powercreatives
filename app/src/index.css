@@ -922,3 +922,20 @@
   border-radius: 2px;
   padding: 0.05em 0.1em;
 }
+/* ── WordPress media library inside Radix dialogs ─────────────────────────────
+   The Custom-approval-card editor opens wp.media from within a Radix Dialog. The
+   media frame portals to <body> (z-index ~160000, above the dialog), but Radix's
+   modal layer can suppress pointer events on body siblings. Force the frame and
+   its backdrop to stay interactive so image selection works. The dialog itself is
+   kept open via onInteractOutside guards in CreateCustomSetDialog. */
+.media-modal,
+.media-modal-backdrop,
+.media-frame {
+  pointer-events: auto !important;
+}
+
+/* The image annotator portals to <body> above the Radix create dialog, which sets
+   `body { pointer-events: none }`. Force the annotator (and its subtree) interactive. */
+[data-pcm-annotator] {
+  pointer-events: auto !important;
+}

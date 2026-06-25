@@ -1,5 +1,40 @@
 # Session Log
 
+## 2026-06-25 — Fix: annotator was inert (Radix body pointer-events:none) [/build]
+- **Reported (w/ screenshot):** the annotator opened but NOTHING inside worked — toolbar
+  + drawing dead.
+- **Cause:** a modal Radix Dialog (the create dialog) sets `body { pointer-events: none }`
+  and only re-enables its own content. `ImageAnnotator` portals to <body> above it, so it
+  inherited `pointer-events: none` → canvas + buttons received no events. (Prior CSS only
+  re-enabled the wp.media frame, not the annotator.)
+- **Fix:** `pointer-events-auto` on the annotator root + a `[data-pcm-annotator]{pointer-
+  events:auto !important}` safety rule (index.css). Re-enables the whole annotator subtree.
+- **Verified:** `npm run build` OK; served JS+CSS == build; `pointer-events-auto` in JS +
+  `[data-pcm-annotator]` rule in CSS. Frontend-only. Not driven live. No commit.
+
+## 2026-06-25 — Custom card: fix image insert + add annotation (zero-dep) [/build]
+- **Reported:** in "Add Approval Set" the image-insert button didn't work, and the
+  drawing/annotation ("ti-draw") wasn't there.
+- **Image-insert bug:** the `wp.media` frame portals to <body> ("outside" the Radix
+  create dialog), so selecting an image triggered Radix's outside-dismiss and CLOSED the
+  dialog before insert. Fix: `onInteractOutside` guard on `CreateCustomSetDialog`'s
+  DialogContent (ignore `.media-modal/.media-frame/.wp-core-ui/[data-pcm-annotator]`) +
+  a defensive `pointer-events:auto` CSS rule for the media frame (index.css).
+- **Annotation (the deferred Phase 2, built with the user's chosen LIGHTER alt — and it's
+  ZERO-dependency):** new `components/ImageAnnotator.tsx` — freehand drawing on a
+  `<canvas>` overlaid on the picked image (colors/sizes/eraser/undo/clear); on insert it
+  FLATTENS image+strokes to a PNG data-URL. Stored inline in the card's Tiptap HTML —
+  safe because `approval_sets.snapshot` is LONGTEXT, and lightweight to render on the
+  review page (just an `<img>`, no drawing runtime). Wired into `CustomCardEditor` via an
+  "Annotate" toolbar button (pick image → annotate → insert). NO new package; NO new API.
+- **Files:** `CreateCustomSetDialog.tsx`, `CustomCardEditor.tsx`, `index.css` (mod) +
+  `ImageAnnotator.tsx` (new). Frontend-only.
+- **Verified:** `npm run check` — 0 errors in touched files (56 = baseline); `npm run build`
+  OK; served JS+CSS == build; markers "Annotate an image" / media guard / `.media-modal`
+  CSS present. Not driven live (needs a browser session). No commit.
+- **Note:** annotation is final-on-insert (flattened); re-editing strokes later isn't
+  persisted (matches the lighter-alt scope) — re-annotate by picking the image again.
+
 ## 2026-06-25 — Custom Approval Card — Phase 1 (no annotation yet) [/build]
 - **Goal:** add a 4th approval asset type "custom" (Notion-style doc) authored on the
   Approvals board, reusing the entire existing approval/review lifecycle. User chose a

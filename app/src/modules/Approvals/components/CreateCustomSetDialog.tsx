@@ -97,7 +97,18 @@ export function CreateCustomSetDialog({ open, onClose, onCreated }: CreateCustom
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent
+        className="sm:max-w-2xl max-h-[90vh] overflow-y-auto"
+        // Keep the dialog open while interacting with the WordPress media library
+        // frame or the image annotator (both portal to <body>, i.e. "outside" the
+        // Radix dialog) — otherwise selecting an image dismisses this dialog.
+        onInteractOutside={(e) => {
+          const t = e.target as HTMLElement | null;
+          if (t?.closest?.('.media-modal, .media-frame, .media-modal-backdrop, .wp-core-ui, [data-pcm-annotator]')) {
+            e.preventDefault();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>New approval set</DialogTitle>
           <DialogDescription>
