@@ -146,7 +146,7 @@ export function SitesModule() {
   // Column config for the global <DataTable>.
   const columns = useMemo<DataTableColumn<Site>[]>(() => [
     {
-      key: 'name', header: 'Name', sortAccessor: (s) => s.name.toLowerCase(),
+      key: 'name', header: 'Name', width: '20%', sortAccessor: (s) => s.name.toLowerCase(),
       cell: (site) => (
         <div className="flex items-center gap-2 min-w-0">
           <Globe className="w-4 h-4 shrink-0" style={{ color: colors.primary }} />
@@ -155,7 +155,7 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'url', header: 'URL', sortAccessor: (s) => s.url.toLowerCase(),
+      key: 'url', header: 'URL', width: '24%', sortAccessor: (s) => s.url.toLowerCase(),
       cell: (site) => (
         <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-[260px] items-center gap-1 text-primary hover:underline">
           <span className="truncate">{site.url}</span><ExternalLink className="w-3 h-3 shrink-0" />
@@ -163,11 +163,11 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'username', header: 'User', sortAccessor: (s) => s.username.toLowerCase(),
+      key: 'username', header: 'User', width: '13%', sortAccessor: (s) => s.username.toLowerCase(),
       className: 'text-muted-foreground', cell: (site) => site.username,
     },
     {
-      key: 'method', header: 'Method',
+      key: 'method', header: 'Method', width: '13%',
       sortAccessor: (s) => (s.connectMethod === 'connector' ? 'plugin' : 'password'),
       cell: (site) => (
         <Badge variant="outline" className="gap-1 text-[10px]">
@@ -176,18 +176,18 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'status', header: 'Status', sortAccessor: (s) => s.status,
+      key: 'status', header: 'Status', width: '10%', sortAccessor: (s) => s.status,
       cell: (site) => (
         <span className={`capitalize ${site.status === 'active' ? 'text-muted-foreground' : 'font-medium text-destructive'}`}>{site.status}</span>
       ),
     },
     {
-      key: 'createdAt', header: 'Added', sortAccessor: (s) => new Date(s.createdAt).getTime(),
+      key: 'createdAt', header: 'Added', width: '10%', sortAccessor: (s) => new Date(s.createdAt).getTime(),
       className: 'text-muted-foreground',
       cell: (site) => (site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'),
     },
     {
-      key: 'actions', header: 'Actions', className: 'text-center',
+      key: 'actions', header: 'Actions', width: '10%', className: 'text-center',
       cell: (site) => (
         <div className="flex items-center justify-center gap-1">
           <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>

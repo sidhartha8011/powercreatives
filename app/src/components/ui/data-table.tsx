@@ -29,9 +29,10 @@ import { cn } from '@/lib/utils';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import { useSortableTable, type SortDirection } from '@/hooks/useSortableTable';
 
-/** Spreadsheet styling shared by every DataTable (matches the SEO/Sites look). */
+/** Spreadsheet styling shared by every DataTable (matches the SEO table's look:
+ *  table-fixed grid, gridlines on every cell, sticky bg-card header, compact rows). */
 const GRID_CLASS =
-  'w-full border-collapse text-xs bg-card ' +
+  'table-fixed w-full border-collapse text-xs bg-card ' +
   '[&_th]:border [&_th]:border-border/60 [&_td]:border [&_td]:border-border/60 ' +
   '[&_th]:px-2 [&_th]:h-9 [&_th]:font-normal [&_th]:text-foreground/80 ' +
   '[&_td]:px-2 [&_td]:h-9 [&_td]:py-0 [&_td]:align-middle ' +

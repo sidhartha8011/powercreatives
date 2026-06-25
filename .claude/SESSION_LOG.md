@@ -1,5 +1,16 @@
 # Session Log
 
+## 2026-06-26 — Sites table: match SEO table styling (table-fixed grid) [/task]
+- **Asked:** make the Sites table CSS the same as the SEO table.
+- **Finding:** the grid classes were already identical (gridlines, px-2/h-9, text-xs,
+  sticky bg-card header, row hover:bg-muted/60). The only diff: SEO uses `table-fixed`
+  (rigid even grid) while the global `DataTable` used `w-full` auto-layout.
+- **Change:** `DataTable` GRID_CLASS `w-full` → `table-fixed w-full` (now matches SEO for
+  all consumers); added balanced `width`s to the Sites columns (20/24/13/13/10/10/10 %)
+  so fixed layout renders cleanly and nothing clips.
+- **Verified:** `npm run check` 0 errors in touched files (56 baseline); `npm run build`
+  OK; served == build (site back up). 2 files: data-table.tsx, Sites/index.tsx. No commit.
+
 ## 2026-06-26 — Globalize SEO table building blocks (reusable spreadsheet table) [/task]
 - **Asked:** make the SEO table a global type for other modules. (User chose "globalize the
   building blocks", not a full single-component refactor of the live SEO table.)
