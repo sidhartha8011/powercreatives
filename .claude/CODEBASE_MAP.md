@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-24 · verified current 2026-06-24 (HEAD `fb1281f` — "AI Readiness optimizer parity + remote one-click optimize"; working tree clean). NOTE: SEO module is under active parallel development — generation UI, AI-readiness, and remote-site routes have churned; verify SEO specifics against the code._
+_Last updated: 2026-06-26 · verified 2026-06-26 (read-only; Bash classifier was down so git HEAD not re-checked — last known HEAD `fb1281f`, but the working tree has uncommitted 2026-06-25/26 work: see below). SINCE THE LAST MAP: (1) **Global table kit** — `@/components/ui/data-table.tsx` (config-driven DataTable, used by Sites) + the SEO spreadsheet building blocks moved to shared: `@/components/ui/column-head.tsx`, `@/hooks/useColumnLayout.ts`, `@/hooks/useColumnFilters.ts` (generic). (2) **Custom approval cards** (4th asset type). (3) SEO remote `duplicate` route. (4) Shortcode page auto-created. NOTE: SEO + Approvals are under active churn — verify specifics against the code._
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -499,6 +499,26 @@ A small rules engine: a **trigger** (something happens in module A) + **conditio
   mirror site + idempotent back-fill gate (`< 1.22.1` → both seeders for all
   users) in `PCM_Activator::maybe_upgrade`.
 
+## Custom approval cards (4th asset type, 2026-06-25/26)
+A "Custom" Notion-style document type alongside media / copy / articles. **No new
+APIs** — reuses the whole approval lifecycle.
+- **Snapshot:** `snapshot.custom: CustomAsset[]` (`{id, type:'custom', title?, content
+  (Tiptap HTML), images?, overlay?/annotation?, createdAt, updatedAt}`); review feedback
+  gains `approvedCustomIds`. Backend (`approvals/service.php`) extends the feedback
+  whitelist + `feedback_struct` + `bucket_for_asset` + `is_fully_approved` + `merge_snapshot`
+  + `update_snapshot_asset` for the `custom` bucket. `snapshot`/`reviewFeedback` are
+  opaque JSON (longtext) → **no DB migration**.
+- **Create:** board "+ Add Approval Set" → `CreateCustomSetDialog` (author with
+  `CustomCardEditor` — shared `getEditorExtensions` Tiptap + `wp.media` image insert +
+  `ImageAnnotator` zero-dep canvas overlay flattened to a PNG data-URL) → hands the card to
+  the SHARED `SendToApprovalSetDialog` (now accepts a `custom` bucket) — exact Copy-module
+  flow (name → createSet → 'client' lane → share link + email). Clicking a set on the board
+  opens the normal client-preview iframe (custom renders via `ClientReviewPage` /
+  `CreativeAssetCard` 'custom' branch).
+- ⚠ Share link needs the `[power_creatives]` shortcode page; `PCM_Admin::ensure_public_page()`
+  now AUTO-CREATES a published "Power Creatives" page if missing (on the plugin admin page)
+  so links/preview resolve instead of hitting `home_url` → theme "nothing found".
+
 ## Async Kie.ai generation (shared-hosting safe)
 The original `/image/generate`, `/image/edit`, and `/video/generate` block
 the HTTP request while polling Kie.ai (up to 600–800s) — shared hosts kill
@@ -537,7 +557,11 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
 - **Phase 2 (frontend)**: `app/src/modules/SEO` content table (inline edit,
   status dropdown, sortable, type filter, plugin badge, bulk trash,
   quick-create) wired via ModuleId/trpc-routes/Sidebar/Shell.
-  - **Spreadsheet column resize + reorder** (`hooks/useColumnLayout.ts`): the
+  - **Spreadsheet column resize + reorder** (now GLOBAL: `@/hooks/useColumnLayout.ts`
+    + `@/hooks/useColumnFilters.ts` (generic `<T>`) + `@/components/ui/column-head.tsx`
+    — moved out of SEO so any module can build this style of table; SEO passes its
+    storageKey `'pcm:seo:col-layout:v1'`. `seoFilters.ts` keeps the SEO-specific
+    `buildFilterDefs` + `FilterDef = FilterDef<SeoRow>`): the
     table is rendered data-driven from an ordered column list + a `<colgroup>`
     of px widths. Drag a header's right edge to resize (pointer events); drag a
     header to reorder (native HTML5 DnD). Order+widths persist to **localStorage**
@@ -662,8 +686,10 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   Surfaces:
   - Content: `GET/POST /seo/sites/{id}/content`, `.../content/{post}/cell`,
     `.../generate`, `.../scan-links`, `.../schema`, `.../delete`,
-    `.../content/{post}/featured` (set featured image; `fb1281f`) (`remote_*`
-    methods in `seo/service.php`; frontend `hooks/useRemoteSeoContent.ts`).
+    `.../content/{post}/featured` (set featured image; `fb1281f`),
+    `.../content/{post}/duplicate` → `remote_duplicate` (clone as draft "(Copy)"
+    with content + SEO meta; bulk Duplicate now works on remote, 2026-06-26)
+    (`remote_*` methods in `seo/service.php`; frontend `hooks/useRemoteSeoContent.ts`).
   - **Authenticated page preview:** `POST /seo/sites/{id}/preview` →
     `remote_preview` → `PCM_SEO_Service::remote_preview_html` GETs the page with
     the connector's app-password Basic auth (host-guarded), injects `<base href>`,
@@ -779,6 +805,13 @@ flow is a **one-paste pairing code**, which sidesteps the public-hub requirement
 - **New AI provider**: `includes/core/providers/class-pcm-provider-{name}.php` implementing
   `PCM_Provider_Interface`, register in the provider registry. Models sync via Integrations.
 - **New admin settings**: extend the `settings` module / `PCM_Settings` blob (one option key).
+- **New table UI** — DON'T hand-roll `<table>`. Two reusable tiers:
+  - Simple/standard table → `@/components/ui/data-table.tsx` `<DataTable columns data rowKey>`
+    (config-driven: per-column `{key, header, cell, sortAccessor?, width?, className?}`; owns
+    SEO-style grid styling + sorting via `useSortableTable`). Reference: `modules/Sites/index.tsx`.
+  - Rich spreadsheet (resize/reorder/persist/inline-edit/per-column filter+generate) → compose
+    `@/components/ui/column-head.tsx` + `@/hooks/useColumnLayout.ts` (pass a unique storageKey) +
+    `@/hooks/useColumnFilters.ts<Row>` + your own `FilterDef<Row>` map. Reference: `modules/SEO/index.tsx`.
 - **New automation TRIGGER**: in the source module, (1) create/extend
   `includes/modules/{id}/automations.php` → `PCM_Automation_Triggers::register([... 'implemented'=>true,
   'contextKeys', 'conditionFields ...])`; (2) at the state-change point call

@@ -238,14 +238,151 @@ class PCM_SEO_Service
     {
         $post    = get_post($post_id);
         $content = $post ? (string) $post->post_content : '';
-        $counts  = self::count_links($content, home_url());
-        $broken  = self::check_broken_links($content);
-        $now     = current_time('mysql');
-        update_post_meta($post_id, 'pcm_seo_internal_links', $counts['internal']);
-        update_post_meta($post_id, 'pcm_seo_external_links', $counts['external']);
+        $from    = get_permalink($post_id) ?: '';
+        $links   = self::scan_link_details($content, $from, home_url());
+        $internal = 0; $external = 0; $broken = 0;
+        foreach ($links as $l) {
+            if ($l['kind'] === 'internal') { $internal++; } else { $external++; }
+            if (!empty($l['broken'])) { $broken++; }
+        }
+        $now = current_time('mysql');
+        update_post_meta($post_id, 'pcm_seo_internal_links', $internal);
+        update_post_meta($post_id, 'pcm_seo_external_links', $external);
         update_post_meta($post_id, 'pcm_seo_broken_links', $broken);
         update_post_meta($post_id, 'pcm_seo_links_scanned_at', $now);
-        return array('internal' => $counts['internal'], 'external' => $counts['external'], 'broken' => $broken, 'scannedAt' => $now);
+        update_post_meta($post_id, 'pcm_seo_links', wp_json_encode($links));
+        return array('internal' => $internal, 'external' => $external, 'broken' => $broken, 'scannedAt' => $now);
+    }
+
+    /**
+     * Parse every <a> in content into a detailed record: anchor text, source URL,
+     * target, the exact HTML, an HTTP status, internal/external kind, and broken flag.
+     * Shared by local + remote scanning. HTTP status is checked (capped) so a big
+     * page doesn't time out; uncapped links get status 0 (unchecked).
+     *
+     * @return array<int,array{anchor:string,from:string,to:string,html:string,status:int,kind:string,broken:bool}>
+     */
+    public static function scan_link_details(string $content, string $from_url, string $site_url): array
+    {
+        if ($content === '' || !preg_match_all('/<a\s([^>]*?)>(.*?)<\/a>/is', $content, $matches, PREG_SET_ORDER)) {
+            return array();
+        }
+        $site_host = wp_parse_url($site_url, PHP_URL_HOST);
+        $args = array('timeout' => 4, 'redirection' => 5, 'user-agent' => 'WordPress/PowerCreatives; ' . home_url(), 'sslverify' => false);
+        $checked = 0;
+        $links   = array();
+        foreach ($matches as $m) {
+            if (!preg_match('/href=[\'"]([^\'"]+)[\'"]/i', $m[1], $h)) {
+                continue;
+            }
+            $href = trim($h[1]);
+            if ($href === '' || preg_match('#^(\#|tel:|mailto:|javascript:|data:)#i', $href)) {
+                continue;
+            }
+            $anchor = trim(wp_strip_all_tags($m[2]));
+            $host   = wp_parse_url($href, PHP_URL_HOST);
+            $kind   = (!$host || $host === $site_host || ($site_host && str_ends_with($host, '.' . $site_host))) ? 'internal' : 'external';
+
+            $check_url = str_starts_with($href, '/') ? rtrim($site_url, '/') . $href : $href;
+            $status = 0;
+            $broken = false;
+            if ($checked < 30 && preg_match('#^https?://#i', $check_url)) {
+                $resp = wp_remote_head($check_url, $args);
+                if (is_wp_error($resp)) {
+                    $broken = true;
+                } else {
+                    $status = (int) wp_remote_retrieve_response_code($resp);
+                    if ($status === 405) {
+                        $resp   = wp_remote_get($check_url, $args);
+                        $status = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+                    }
+                    $broken = ($status === 0 || $status >= 400);
+                }
+                $checked++;
+            }
+            $links[] = array(
+                'anchor' => $anchor,
+                'from'   => $from_url,
+                'to'     => $href,
+                'html'   => $m[0],
+                'status' => $status,
+                'kind'   => $kind,
+                'broken' => $broken,
+            );
+        }
+        return $links;
+    }
+
+    /** Stored per-link details for a local post (from the last scan), with index ids. */
+    public function get_post_links(int $post_id): array
+    {
+        $raw   = get_post_meta($post_id, 'pcm_seo_links', true);
+        $links = (is_string($raw) && $raw !== '') ? json_decode($raw, true) : array();
+        if (!is_array($links)) {
+            $links = array();
+        }
+        return array_values(array_map(static function ($l, $i) {
+            $l = is_array($l) ? $l : array();
+            $l['id'] = (int) $i;
+            return $l;
+        }, $links, array_keys($links)));
+    }
+
+    /**
+     * Edit a link in a local post's content: replace its href and/or anchor text in
+     * the stored <a> HTML, save the post, re-scan. Returns the refreshed link list.
+     */
+    public function update_post_link(int $post_id, int $index, ?string $anchor, ?string $href)
+    {
+        $links = $this->get_post_links($post_id);
+        if (!isset($links[$index])) {
+            return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
+        }
+        $post = get_post($post_id);
+        if (!$post) {
+            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
+        }
+        $old_html = (string) $links[$index]['html'];
+        $new_href = $href !== null ? esc_url_raw($href) : (string) $links[$index]['to'];
+        $new_text = $anchor !== null ? wp_kses_post($anchor) : (string) $links[$index]['anchor'];
+
+        // Rebuild the <a> (callbacks avoid $-escaping issues in replacements).
+        $new_html = preg_replace_callback('/href=[\'"][^\'"]*[\'"]/i', static fn() => 'href="' . $new_href . '"', $old_html, 1);
+        $new_html = preg_replace_callback('/(<a\s[^>]*>)(.*)(<\/a>)/is', static fn($m) => $m[1] . $new_text . $m[3], $new_html, 1);
+
+        $content = (string) $post->post_content;
+        $pos = strpos($content, $old_html);
+        if ($pos === false) {
+            return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
+        }
+        $content = substr_replace($content, (string) $new_html, $pos, strlen($old_html));
+        wp_update_post(array('ID' => $post_id, 'post_content' => $content));
+        $this->scan_links($post_id);
+        return $this->get_post_links($post_id);
+    }
+
+    /** Remove a link from a local post's content (unwrap the <a>, keep its text), save, re-scan. */
+    public function remove_post_link(int $post_id, int $index)
+    {
+        $links = $this->get_post_links($post_id);
+        if (!isset($links[$index])) {
+            return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
+        }
+        $post = get_post($post_id);
+        if (!$post) {
+            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
+        }
+        $old_html = (string) $links[$index]['html'];
+        $inner    = preg_replace('/^<a\s[^>]*>(.*)<\/a>$/is', '$1', $old_html);
+        $content  = (string) $post->post_content;
+        $pos      = strpos($content, $old_html);
+        if ($pos === false) {
+            return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
+        }
+        $content = substr_replace($content, (string) $inner, $pos, strlen($old_html));
+        wp_update_post(array('ID' => $post_id, 'post_content' => $content));
+        $this->scan_links($post_id);
+        return $this->get_post_links($post_id);
     }
 
     /** Count internal vs external <a href> links in content. */
@@ -868,6 +1005,69 @@ class PCM_SEO_Service
             'broken'    => self::check_broken_links($content, (string) $site->url),
             'scannedAt' => current_time('mysql'),
         );
+    }
+
+    /** Per-link details for a connected post (computed on-demand from its raw content). */
+    public static function remote_get_links(object $site, int $post_id, string $type): array
+    {
+        self::ensure_sites_service();
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content,link'));
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return array();
+        }
+        $content = (string) ($res['body']['content']['raw'] ?? $res['body']['content']['rendered'] ?? '');
+        $from    = (string) ($res['body']['link'] ?? $site->url);
+        $links   = self::scan_link_details($content, $from, (string) $site->url);
+        return array_values(array_map(static function ($l, $i) { $l['id'] = (int) $i; return $l; }, $links, array_keys($links)));
+    }
+
+    /** Fetch raw content, mutate the indexed link's <a> HTML via $build, PUT it back, re-read. */
+    private static function remote_rewrite_link_content(object $site, int $post_id, string $type, int $index, callable $build)
+    {
+        self::ensure_sites_service();
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content,link'));
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return new WP_Error('pcm_seo_remote_link', __('Could not read the remote post.', 'power-creatives'), array('status' => 502));
+        }
+        $content = (string) ($res['body']['content']['raw'] ?? '');
+        $from    = (string) ($res['body']['link'] ?? $site->url);
+        $links   = self::scan_link_details($content, $from, (string) $site->url);
+        if (!isset($links[$index])) {
+            return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
+        }
+        $old_html = (string) $links[$index]['html'];
+        $new_html = (string) $build($old_html, $links[$index]);
+        $pos = strpos($content, $old_html);
+        if ($pos === false) {
+            return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
+        }
+        $content = substr_replace($content, $new_html, $pos, strlen($old_html));
+        $put = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array('content' => $content));
+        if (is_wp_error($put) || (int) ($put['status'] ?? 0) >= 300) {
+            return new WP_Error('pcm_seo_remote_link', __('Could not save the remote post.', 'power-creatives'), array('status' => 502));
+        }
+        return self::remote_get_links($site, $post_id, $type);
+    }
+
+    /** Edit a connected post's link (href/anchor), via the connector. */
+    public static function remote_update_link(object $site, int $post_id, string $type, int $index, ?string $anchor, ?string $href)
+    {
+        return self::remote_rewrite_link_content($site, $post_id, $type, $index, static function ($old_html, $link) use ($anchor, $href) {
+            $new_href = $href !== null ? esc_url_raw($href) : (string) $link['to'];
+            $new_text = $anchor !== null ? wp_kses_post($anchor) : (string) $link['anchor'];
+            $h = preg_replace_callback('/href=[\'"][^\'"]*[\'"]/i', static fn() => 'href="' . $new_href . '"', $old_html, 1);
+            return preg_replace_callback('/(<a\s[^>]*>)(.*)(<\/a>)/is', static fn($m) => $m[1] . $new_text . $m[3], $h, 1);
+        });
+    }
+
+    /** Remove a connected post's link (unwrap the <a>, keep text), via the connector. */
+    public static function remote_remove_link(object $site, int $post_id, string $type, int $index)
+    {
+        return self::remote_rewrite_link_content($site, $post_id, $type, $index, static function ($old_html) {
+            return preg_replace('/^<a\s[^>]*>(.*)<\/a>$/is', '$1', $old_html);
+        });
     }
 
     /**

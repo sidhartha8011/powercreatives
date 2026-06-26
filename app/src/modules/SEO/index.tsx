@@ -52,6 +52,7 @@ import { RemoteSiteSettingsPanel } from './RemoteSiteSettingsPanel';
 import { BusinessPanel } from './BusinessPanel';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
+import { LinksPopup, type LinkKind } from './LinksPopup';
 import { SEO_TEXT_FIELDS, type SeoRow } from './types';
 
 // WordPress media library global (wp_enqueue_media() is called in class-pcm-admin.php).
@@ -465,6 +466,10 @@ export function SEOModule() {
       setScanningRows((s) => { const n = new Set(s); n.delete(id); return n; }),
     );
   }, [scanLinks]);
+  // Bulk "Scan links" — scans every visible row's links (internal/external/dead).
+  const [scanningAll, setScanningAll] = useState(false);
+  // Per-post link inspector popup (clicked from an Internal/External/Dead count cell).
+  const [linksPopup, setLinksPopup] = useState<{ id: number; kind: LinkKind; title: string; type: 'post' | 'page' } | null>(null);
   // AI staging: suggestions keyed `${id}:${field}`, plus the in-flight key.
   const [staged, setStaged] = useState<Record<string, string>>({});
   const [genKey, setGenKey] = useState<string | null>(null);
@@ -601,6 +606,18 @@ export function SEOModule() {
   const visibleIds = sortedData.map((r) => r.id);
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someSelected = selected.size > 0 && !allSelected;
+
+  // Bulk scan — scan every visible row's links sequentially (each does HTTP checks).
+  const handleScanAll = useCallback(async () => {
+    if (scanningAll) return;
+    setScanningAll(true);
+    for (const id of sortedData.map((r) => r.id)) {
+      setScanningRows((s) => { const n = new Set(s); n.add(id); return n; });
+      try { await scanLinks(id); } catch { /* per-row toast in hook */ }
+      setScanningRows((s) => { const n = new Set(s); n.delete(id); return n; });
+    }
+    setScanningAll(false);
+  }, [scanningAll, sortedData, scanLinks]);
 
   // Header ✦ → pick a template → generate the column with that template, staging
   // each result for review. Scope: the SELECTED rows when any are selected,
@@ -906,13 +923,22 @@ export function SEOModule() {
         const scanned = !!row.linksScannedAt;
         const value = key === 'internalLinks' ? row.internalLinks : key === 'externalLinks' ? row.externalLinks : row.brokenLinks;
         const isBroken = key === 'brokenLinks';
+        const popupKind: LinkKind = key === 'internalLinks' ? 'internal' : key === 'externalLinks' ? 'external' : 'broken';
+        const linkType: 'post' | 'page' = row.type === 'page' ? 'page' : 'post';
         return (
           <TableCell key={key} className="text-center text-xs">
             {scanning ? (
               <Loader2 className="inline-block w-3.5 h-3.5 animate-spin text-primary" />
             ) : scanned ? (
               <span className="inline-flex items-center justify-center gap-1">
-                <span className={isBroken && (value ?? 0) > 0 ? 'font-semibold text-destructive' : 'text-muted-foreground'}>{value ?? 0}</span>
+                <button
+                  type="button"
+                  onClick={() => setLinksPopup({ id: row.id, kind: popupKind, title: row.title || `#${row.id}`, type: linkType })}
+                  title={`Click to view & edit the ${popupKind === 'broken' ? 'dead' : popupKind} links`}
+                  className={`cursor-pointer underline decoration-dotted underline-offset-2 ${isBroken && (value ?? 0) > 0 ? 'font-semibold text-destructive hover:text-destructive/80' : 'text-primary hover:text-primary/80'}`}
+                >
+                  {value ?? 0}
+                </button>
                 <button
                   type="button"
                   onClick={() => handleScan(row.id)}
@@ -1079,6 +1105,14 @@ export function SEOModule() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <PillButton
+            variant="active"
+            icon={scanningAll ? <Loader2 className="animate-spin" /> : <Link2 />}
+            onClick={handleScanAll}
+            disabled={busy || scanningAll || sortedData.length === 0}
+          >
+            {scanningAll ? 'Scanning…' : 'Scan links'}
+          </PillButton>
           <PillButton variant="active" icon={<Plus />} onClick={() => handleCreate('post')} disabled={busy}>
             Post
           </PillButton>
@@ -1340,6 +1374,20 @@ export function SEOModule() {
           keyword={optimizeRow.primaryKeyword}
           open={!!optimizeRow}
           onClose={() => setOptimizeRow(null)}
+        />
+      )}
+
+      {/* Link inspector — opened from an Internal / External / Dead count cell. */}
+      {linksPopup && (
+        <LinksPopup
+          open={!!linksPopup}
+          onClose={() => setLinksPopup(null)}
+          postId={linksPopup.id}
+          kind={linksPopup.kind}
+          title={linksPopup.title}
+          type={linksPopup.type}
+          isLocal={isLocal}
+          siteId={typeof siteId === 'number' ? siteId : null}
         />
       )}
 

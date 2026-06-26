@@ -47,6 +47,9 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/content/(?P<id>\d+)/cell',   'save_cell'),
             array('POST', '/seo/content/(?P<id>\d+)/generate', 'generate_field'),
             array('POST', '/seo/content/(?P<id>\d+)/scan-links', 'scan_links'),
+            array('GET',  '/seo/content/(?P<id>\d+)/links', 'get_links'),
+            array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)', 'update_link'),
+            array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)/remove', 'remove_link'),
             array('GET',  '/seo/content/(?P<id>\d+)/body',     'get_body'),
             array('POST', '/seo/content/(?P<id>\d+)/body',     'save_body'),
             array('POST', '/seo/content/(?P<id>\d+)/optimize', 'optimize_body'),
@@ -68,6 +71,9 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/schema', 'remote_set_schema', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/delete', 'remote_delete', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/duplicate', 'remote_duplicate', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links', 'remote_get_links', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)', 'remote_update_link', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/remove', 'remote_remove_link', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/featured', 'remote_set_featured', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/preview', 'remote_preview', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_get',   array(), 'manage_options'),
@@ -265,6 +271,54 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success($result);
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/links — per-link details for a connected post. */
+    public function remote_get_links(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
+        return $this->success(array('links' => PCM_SEO_Service::remote_get_links($site, absint($request->get_param('post')), $type)));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/links/{idx} — edit a connected post's link. */
+    public function remote_update_link(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $anchor = array_key_exists('anchor', $params) ? (string) $params['anchor'] : null;
+        $href   = array_key_exists('href', $params) ? (string) $params['href'] : null;
+        $result = PCM_SEO_Service::remote_update_link($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $anchor, $href);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('links' => $result));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/links/{idx}/remove — unwrap a connected post's link. */
+    public function remote_remove_link(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $result = PCM_SEO_Service::remote_remove_link($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('links' => $result));
     }
 
     /** POST /seo/sites/{id}/content/{post}/duplicate — clone a connected site's
@@ -587,6 +641,53 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         $result = $this->service->scan_links($id);
         return $this->success(array_merge(array('id' => $id), $result));
+    }
+
+    /** GET /seo/content/{id}/links — stored per-link details for the popup table. */
+    public function get_links(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        return $this->success(array('links' => $this->service->get_post_links($id)));
+    }
+
+    /** POST /seo/content/{id}/links/{idx} — edit a link's anchor/href in the post content. */
+    public function update_link(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $params = $request->get_json_params() ?: array();
+        $anchor = array_key_exists('anchor', $params) ? (string) $params['anchor'] : null;
+        $href   = array_key_exists('href', $params) ? (string) $params['href'] : null;
+        $result = $this->service->update_post_link($id, absint($request->get_param('idx')), $anchor, $href);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('links' => $result));
+    }
+
+    /** POST /seo/content/{id}/links/{idx}/remove — unwrap a link (keep its text). */
+    public function remove_link(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $result = $this->service->remove_post_link($id, absint($request->get_param('idx')));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('links' => $result));
     }
 
     // =====================================================================

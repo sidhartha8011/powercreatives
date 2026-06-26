@@ -306,6 +306,38 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/content/${input.id}/scan-links` }),
     },
+    // ── Link inspector (popup) — local ──
+    "seo.getLinks": {
+        endpoint: "seo/content",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/links` }),
+    },
+    "seo.updateLink": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/links/${input.index}`, body: { anchor: input.anchor, href: input.href } }),
+    },
+    "seo.removeLink": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/links/${input.index}/remove` }),
+    },
+    // ── Link inspector (popup) — remote (connected sites) ──
+    "seo.remoteGetLinks": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links?type=${input.type ?? 'post'}` }),
+    },
+    "seo.remoteUpdateLink": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}`, body: { type: input.type, anchor: input.anchor, href: input.href } }),
+    },
+    "seo.remoteRemoveLink": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/remove`, body: { type: input.type } }),
+    },
     "seo.remoteContent": {
         endpoint: "seo/sites",
         method: "GET",

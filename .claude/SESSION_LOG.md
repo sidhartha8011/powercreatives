@@ -1,5 +1,53 @@
 # Session Log
 
+## 2026-06-26 — SEO link popup "didn't appear" → discoverability fix [/task]
+- **Diagnosis:** not a bug — the "Scan links" button only *scans*; the popup opens when you
+  click the **count number** in the Internal/External/Dead column (per the original spec).
+  Verified the click→`setLinksPopup`→`LinksPopup` path + tRPC proxy resolution are correct
+  and shipped ("Edit a link" + `links/` routes present in the bundle). Couldn't drive the
+  live site (connected Chrome is on macOS; `powercreatives.local` is on this Windows box).
+- **Fix:** made scanned counts look obviously clickable (persistent dotted underline +
+  primary color + cursor-pointer; dead stays red) so the number reads as a link. Added a
+  **"Re-scan this page"** button in the popup's empty state (local `scanLinks` / remote
+  `remoteScanLinks` → refetch) so a stale/old-scan empty list self-recovers.
+- **Files:** `SEO/index.tsx` (count-cell styling), `SEO/LinksPopup.tsx` (rescan + empty state).
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  (4,521,575); markers `Click to view & edit` + `Re-scan this page` in bundle.
+
+## 2026-06-26 — SEO link inspector: bulk Scan + per-link popup (edit/remove), local+remote [/task]
+- **Built:** a "Scan links" pill button (before Post/Page) that scans every visible row;
+  Internal/External/Dead count cells are now CLICKABLE → open a popup table (SEO grid
+  styling) of those links: select · anchor · from · to · html · status · action
+  (redirect = open in new tab, remove = unwrap the <a>). Anchor + To are inline-editable;
+  Save rewrites the <a> in the page's content. + bulk "Remove selected". Works on the
+  local site AND connected sites (user chose local+remote).
+- **Backend (`seo/service.php`):** extended `scan_links` to store per-link details
+  (`pcm_seo_links` meta) via new `scan_link_details()` (anchor/from/to/html/status/kind/
+  broken; HTTP status capped at 30/scan). New `get_post_links` / `update_post_link` /
+  `remove_post_link` (rewrite content via preg + substr_replace, `wp_update_post`, re-scan).
+  Remote: `remote_get_links` / `remote_update_link` / `remote_remove_link` (fetch raw
+  content via connector `context=edit`, rewrite, PUT back). `controller.php`: GET
+  `/seo/content/{id}/links`, POST `.../links/{idx}`, `.../links/{idx}/remove` + the
+  `/seo/sites/{id}/content/{post}/links[...]` remote trio (manage_options).
+- **Frontend:** new `SEO/LinksPopup.tsx`; trpc `seo.{getLinks,updateLink,removeLink,
+  remoteGetLinks,remoteUpdateLink,remoteRemoveLink}`; `SEO/index.tsx` bulk-scan handler +
+  clickable cells + popup render (isLocal/siteId/type aware).
+- **Verified:** `php -l` clean; `npm run check` 0 errors in touched files (56 baseline);
+  `npm run build` OK; served == build; link routes → 403 (registered). Not driven live
+  (needs posts with links + a browser session). No commit.
+- **Notes:** status capped at 30 links/scan; "from" = the post permalink (same per row in a
+  single-post popup); identical duplicate `<a>` edited by first occurrence (re-scan keeps fresh).
+
+## 2026-06-26 — "Pulled code but changes not reflected" → rebuild frontend [/task]
+- **Cause:** `git pull` updated the SOURCE (HEAD now `84a59db`, in sync w/ origin) but the
+  plugin serves the BUILT bundle `app/dist/index-writer.js`, which is **gitignored** — so a
+  pull never updates it. Built bundle was 02:25; pulled source 17:09 → stale. (PHP changes
+  pull live; only React/TS/CSS need a rebuild.)
+- **Fix:** `cd app && npm run build` → bundle now 17:22, served byte-matches (4,506,109 B).
+  DB version unchanged (1.28.0) → no migration. User must hard-refresh.
+- **Rule:** after any pull/branch-switch touching `app/src`, run `cd app && npm run build`
+  then hard-refresh. No commit.
+
 ## 2026-06-19 — Fix "WordPress media library is unavailable" off-admin [/task]
 - Bug: the SEO featured-image picker (and every other wp.media user — custom editor, Writer) errored
   with "WordPress media library is unavailable." when the plugin was opened via a front-end WordPress
