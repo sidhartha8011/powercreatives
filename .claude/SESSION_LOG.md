@@ -1,5 +1,21 @@
 # Session Log
 
+## 2026-06-19 — Fix remote link editing + remote count/popup mismatch [/task]
+- Bug 2 (count shows 1 but popup empty, remote): remote_scan_links counted RENDERED content via
+  count_links/check_broken_links, while the popup (remote_get_links) lists from RAW content via
+  scan_link_details → they disagreed. Fix: remote_scan_links now derives counts from remote_get_links
+  (the exact source the popup uses), so table counts always match the popup. (count_links /
+  check_broken_links now unused.)
+- Bug 1 (can't edit remote links): edit rewrites the post's RAW content, but the read used raw with no
+  clear handling when raw is unavailable → misleading "Link not found". Fix: remote_rewrite_link_content
+  now (a) errors clearly when there's no editable raw content (e.g. page-builder layouts: "content isn't
+  editable through the API"), and (b) surfaces the real PUT failure (HTTP status + "user may lack edit
+  permission") instead of a generic message. Standard posts (raw available) edit as before.
+- Frontend popup already opens in remote mode correctly (isLocal/siteId passed). PHP-only change.
+- Verified: php -l OK. Couldn't live-test against a connected site (sandbox blocks outbound HTTP); logic
+  verified by reading. If remote edit still fails for a standard post, the new error now states the exact
+  reason. Not committed.
+
 ## 2026-06-19 — Seeded test links into local content for link-scan testing [/task] (local DB only)
 - Appended a removable, marked block (<!-- PCM-LINK-TEST-START/END -->) of 13 mixed links to each
   published item (#1 post, #2 page, #5 page): 4 internal-OK (other pages), 2 internal-broken (home/404

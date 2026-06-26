@@ -991,21 +991,20 @@ class PCM_SEO_Service
      */
     public static function remote_scan_links(object $site, int $post_id, string $type)
     {
-        self::ensure_sites_service();
-        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
-        $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'content'));
-        if (is_wp_error($res)) {
-            return new WP_Error('pcm_seo_remote_scan', $res->get_error_message(), array('status' => 502));
+        // Count from the SAME source the popup lists from (remote_get_links → the post's raw
+        // content + scan_link_details), so the table counts always match the popup detail.
+        // (Previously this counted rendered content via count_links → counts could show links
+        // the popup, which reads raw, never displayed.)
+        $links    = self::remote_get_links($site, $post_id, $type);
+        $internal = 0; $external = 0; $broken = 0;
+        foreach ($links as $l) {
+            if (($l['kind'] ?? '') === 'internal') { $internal++; } else { $external++; }
+            if (!empty($l['broken'])) { $broken++; }
         }
-        if ((int) ($res['status'] ?? 0) >= 300) {
-            return new WP_Error('pcm_seo_remote_scan', __('Could not read the remote post.', 'power-creatives'), array('status' => 502));
-        }
-        $content = (string) ($res['body']['content']['rendered'] ?? '');
-        $counts  = self::count_links($content, (string) $site->url);
         return array(
-            'internal'  => $counts['internal'],
-            'external'  => $counts['external'],
-            'broken'    => self::check_broken_links($content, (string) $site->url),
+            'internal'  => $internal,
+            'external'  => $external,
+            'broken'    => $broken,
             'scannedAt' => current_time('mysql'),
         );
     }
@@ -1030,26 +1029,37 @@ class PCM_SEO_Service
     {
         self::ensure_sites_service();
         $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        // context=edit returns content.raw — required to rewrite the post's stored content
+        // (and needs an app password whose user can edit posts on the remote).
         $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content,link'));
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
-            return new WP_Error('pcm_seo_remote_link', __('Could not read the remote post.', 'power-creatives'), array('status' => 502));
+            return new WP_Error('pcm_seo_remote_link', __('Could not read the remote post — the connector’s app password may not have edit access.', 'power-creatives'), array('status' => 502));
         }
-        $content = (string) ($res['body']['content']['raw'] ?? '');
-        $from    = (string) ($res['body']['link'] ?? $site->url);
-        $links   = self::scan_link_details($content, $from, (string) $site->url);
+        $raw  = (string) ($res['body']['content']['raw'] ?? '');
+        $from = (string) ($res['body']['link'] ?? $site->url);
+        // No editable raw content (e.g. a page-builder layout stores it outside the editor) →
+        // its links can't be rewritten via post content. Say so clearly rather than failing as
+        // "link not found".
+        if ($raw === '') {
+            return new WP_Error('pcm_seo_no_raw', __('This page’s content isn’t editable through the API (e.g. a page-builder layout), so its links can’t be edited here.', 'power-creatives'), array('status' => 422));
+        }
+        $links = self::scan_link_details($raw, $from, (string) $site->url);
         if (!isset($links[$index])) {
             return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
         }
         $old_html = (string) $links[$index]['html'];
         $new_html = (string) $build($old_html, $links[$index]);
-        $pos = strpos($content, $old_html);
+        $pos = strpos($raw, $old_html);
         if ($pos === false) {
             return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
         }
-        $content = substr_replace($content, $new_html, $pos, strlen($old_html));
-        $put = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array('content' => $content));
-        if (is_wp_error($put) || (int) ($put['status'] ?? 0) >= 300) {
-            return new WP_Error('pcm_seo_remote_link', __('Could not save the remote post.', 'power-creatives'), array('status' => 502));
+        $new_content = substr_replace($raw, $new_html, $pos, strlen($old_html));
+        $put = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array('content' => $new_content));
+        if (is_wp_error($put)) {
+            return new WP_Error('pcm_seo_remote_link', $put->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($put['status'] ?? 0) >= 300) {
+            return new WP_Error('pcm_seo_remote_link', sprintf(__('Could not save the remote post (HTTP %d) — the connector’s user may lack edit permission.', 'power-creatives'), (int) $put['status']), array('status' => 502));
         }
         return self::remote_get_links($site, $post_id, $type);
     }
