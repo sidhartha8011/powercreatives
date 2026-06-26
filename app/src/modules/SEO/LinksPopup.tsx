@@ -1,16 +1,15 @@
 /**
  * LinksPopup — inspect & edit a post/page's links (internal / external / dead).
  *
- * Opened by clicking a count in the Internal / External / Dead columns. Shows the
- * links in a spreadsheet-style table (same grid look as the SEO table) with columns:
- *   select · anchor · from · to · html · status · action (redirect, remove).
- * Anchor + To are inline-editable; Save rewrites the <a> in the page's content
- * (local or, for connected sites, via the connector). Remove unwraps the <a>.
- * Redirect opens the target URL in a new tab.
+ * Opened by clicking a count in the Internal / External / Dead columns. Renders the links
+ * in the SHARED SEO spreadsheet table (seo-table.tsx) with click-to-edit Anchor + To cells
+ * (Enter/blur rewrites the <a> on the page; Esc cancels). Remove unwraps the <a> (keeps the
+ * text). For the Dead view, "Remove all dead links" unwraps every broken link in one click.
+ * Works on the local site and (via the connector) on connected sites.
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Unlink, Save, Loader2, Trash2, RefreshCw } from 'lucide-react';
+import { ExternalLink, Unlink, Loader2, Trash2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -18,8 +17,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Table, TableHeader, TableBody, TableRow, TableHead, TableCell, EditableTextCell, SEO_TABLE_GRID,
+} from './seo-table';
 
 export type LinkKind = 'internal' | 'external' | 'broken';
 
@@ -46,14 +47,6 @@ interface LinksPopupProps {
   type: 'post' | 'page';
 }
 
-// Same spreadsheet grid styling as the SEO table.
-const GRID =
-  'w-full border-collapse text-xs bg-card ' +
-  '[&_th]:border [&_th]:border-border/60 [&_td]:border [&_td]:border-border/60 ' +
-  '[&_th]:px-2 [&_th]:h-9 [&_th]:font-normal [&_th]:text-foreground/80 ' +
-  '[&_td]:px-2 [&_td]:py-1 [&_td]:align-middle ' +
-  '[&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:bg-card';
-
 function StatusCell({ link }: { link: LinkRow }) {
   if (link.broken) {
     return <span className="font-medium text-destructive">{link.status > 0 ? link.status : 'dead'}</span>;
@@ -64,7 +57,6 @@ function StatusCell({ link }: { link: LinkRow }) {
 
 export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId, type }: LinksPopupProps) {
   const [links, setLinks] = useState<LinkRow[]>([]);
-  const [edits, setEdits] = useState<Record<number, { anchor: string; to: string }>>({});
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -90,7 +82,6 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
     if (!open) return;
     const list: LinkRow[] = Array.isArray(queryData?.links) ? queryData.links : [];
     setLinks(list);
-    setEdits({});
     setSelected(new Set());
   }, [open, queryData]);
 
@@ -99,28 +90,22 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
     [links, kind],
   );
 
-  const editFor = (l: LinkRow) => edits[l.id] ?? { anchor: l.anchor, to: l.to };
-  const setEdit = (l: LinkRow, field: 'anchor' | 'to', val: string) =>
-    setEdits((e) => ({ ...e, [l.id]: { ...editFor(l), [field]: val } }));
-  const isDirty = (l: LinkRow) => {
-    const e = edits[l.id];
-    return !!e && (e.anchor !== l.anchor || e.to !== l.to);
-  };
-
   const applyResult = (res: any) => {
     setLinks(Array.isArray(res?.links) ? res.links : []);
-    setEdits({});
     setSelected(new Set());
   };
 
-  const save = async (l: LinkRow) => {
-    const e = edits[l.id];
-    if (!e) return;
+  // Save one field (anchor or to) — keeps the other field's current value. Rewrites the
+  // <a> on the page and re-scans (server returns the refreshed list).
+  const saveField = async (l: LinkRow, field: 'anchor' | 'to', val: string) => {
+    if (val === (field === 'anchor' ? l.anchor : l.to)) return;
     setBusyIdx(l.id);
     try {
+      const anchor = field === 'anchor' ? val : l.anchor;
+      const href = field === 'to' ? val : l.to;
       const res = isLocal
-        ? await updateLocal.mutateAsync({ id: postId, index: l.id, anchor: e.anchor, href: e.to } as any)
-        : await updateRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, anchor: e.anchor, href: e.to } as any);
+        ? await updateLocal.mutateAsync({ id: postId, index: l.id, anchor, href } as any)
+        : await updateRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, anchor, href } as any);
       applyResult(res);
       toast.success('Link saved to the page');
     } catch (err: any) {
@@ -145,10 +130,9 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
     }
   };
 
-  // Bulk remove — re-resolves each selected link by its html against the fresh
-  // list every iteration (indices shift after each server re-scan).
-  const removeSelected = async () => {
-    const htmls = filtered.filter((l) => selected.has(l.id)).map((l) => l.html);
+  // Remove a set of links by their html (indices shift after each server re-scan, so we
+  // re-resolve each by html against the freshest list every iteration).
+  const removeLinks = async (htmls: string[]) => {
     if (htmls.length === 0) return;
     setBulkBusy(true);
     let current = links;
@@ -163,10 +147,22 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
       } catch { /* keep going */ }
     }
     setLinks(current);
-    setEdits({});
     setSelected(new Set());
     setBulkBusy(false);
+  };
+
+  const removeSelected = async () => {
+    await removeLinks(filtered.filter((l) => selected.has(l.id)).map((l) => l.html));
     toast.success('Removed selected links');
+  };
+
+  // One-click fix for dead links: unwrap every broken link (keeps the anchor text).
+  const removeAllBroken = async () => {
+    const htmls = filtered.map((l) => l.html);
+    if (htmls.length === 0) return;
+    if (!window.confirm(`Remove all ${htmls.length} dead link(s)? This unwraps each broken <a> (the text stays).`)) return;
+    await removeLinks(htmls);
+    toast.success('Removed all dead links');
   };
 
   // Re-scan this page from inside the popup (recovers an empty/stale list).
@@ -182,7 +178,6 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
         const r: any = await remoteQuery.refetch();
         setLinks(Array.isArray(r?.data?.links) ? r.data.links : []);
       }
-      setEdits({});
       setSelected(new Set());
       toast.success('Page re-scanned');
     } catch (err: any) {
@@ -204,76 +199,79 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
         <DialogHeader>
           <DialogTitle className="capitalize">{kind === 'broken' ? 'Dead' : kind} links · {title}</DialogTitle>
           <DialogDescription>
-            Edit a link's text or target and Save to rewrite it on the page. Remove unwraps the
-            link (keeps the text). Redirect opens the target in a new tab.
+            Click a link's text or target to edit it (Enter saves, Esc cancels) — the change is rewritten on
+            the page. Remove unwraps the link (keeps the text). Redirect opens the target in a new tab.
           </DialogDescription>
         </DialogHeader>
 
+        {/* Dead-links one-click fix. */}
+        {kind === 'broken' && filtered.length > 0 && (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+            <span className="text-xs text-muted-foreground">
+              {filtered.length} dead link{filtered.length === 1 ? '' : 's'} found. One-click fix unwraps each broken link, keeping its text.
+            </span>
+            <Button variant="destructive" size="sm" disabled={bulkBusy} onClick={removeAllBroken} className="gap-1.5 shrink-0">
+              {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlink className="h-3.5 w-3.5" />}
+              Remove all dead links
+            </Button>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-md border border-border py-8 text-center text-muted-foreground">
+            <div className="flex flex-col items-center gap-2">
+              <span>
+                No {kind === 'broken' ? 'dead' : kind} links
+                {links.length === 0 ? ' — this page may not have been scanned yet.' : ' found.'}
+              </span>
+              <Button variant="outline" size="sm" disabled={rescanning} onClick={rescan} className="gap-1.5">
+                {rescanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                Re-scan this page
+              </Button>
+            </div>
+          </div>
         ) : (
           <div className="rounded-md border border-border overflow-auto">
-            <table className={GRID}>
-              <thead>
-                <tr>
-                  <th className="w-8 text-center"><Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all" /></th>
-                  <th>Anchor</th>
-                  <th>From</th>
-                  <th>To</th>
-                  <th>HTML</th>
-                  <th className="text-center">Status</th>
-                  <th className="text-center">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-6 text-center text-muted-foreground">
-                      <div className="flex flex-col items-center gap-2">
-                        <span>
-                          No {kind === 'broken' ? 'dead' : kind} links
-                          {links.length === 0 ? ' — this page may not have been scanned yet.' : ' found.'}
-                        </span>
-                        <Button variant="outline" size="sm" disabled={rescanning} onClick={rescan} className="gap-1.5">
-                          {rescanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                          Re-scan this page
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((l) => {
-                    const e = editFor(l);
-                    const rowBusy = busyIdx === l.id || bulkBusy;
-                    return (
-                      <tr key={l.id} className="hover:bg-muted/60">
-                        <td className="text-center"><Checkbox checked={selected.has(l.id)} onCheckedChange={() => toggleOne(l.id)} aria-label="Select link" /></td>
-                        <td><Input value={e.anchor} onChange={(ev) => setEdit(l, 'anchor', ev.target.value)} className="h-7 text-xs" /></td>
-                        <td className="max-w-[150px] truncate text-muted-foreground" title={l.from}>{l.from}</td>
-                        <td><Input value={e.to} onChange={(ev) => setEdit(l, 'to', ev.target.value)} className="h-7 text-xs" /></td>
-                        <td className="max-w-[180px] truncate font-mono text-[10px] text-muted-foreground" title={l.html}>{l.html}</td>
-                        <td className="text-center"><StatusCell link={l} /></td>
-                        <td>
-                          <div className="flex items-center justify-center gap-1">
-                            {isDirty(l) && (
-                              <Button size="sm" className="h-7 px-2 text-xs" disabled={rowBusy} onClick={() => save(l)} title="Save to page">
-                                {busyIdx === l.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                              </Button>
-                            )}
-                            <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => window.open(l.to, '_blank', 'noopener,noreferrer')} title="Open link in a new tab">
-                              <ExternalLink className="h-3 w-3" />
-                            </Button>
-                            <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-destructive" disabled={rowBusy} onClick={() => remove(l)} title="Remove link">
-                              <Unlink className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+            <Table className={`w-full ${SEO_TABLE_GRID}`}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8 text-center"><Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all" /></TableHead>
+                  <TableHead>Anchor</TableHead>
+                  <TableHead>From</TableHead>
+                  <TableHead>To</TableHead>
+                  <TableHead>HTML</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-center">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((l) => {
+                  const rowBusy = busyIdx === l.id || bulkBusy;
+                  return (
+                    <TableRow key={l.id} className="hover:bg-muted/60">
+                      <TableCell className="text-center"><Checkbox checked={selected.has(l.id)} onCheckedChange={() => toggleOne(l.id)} aria-label="Select link" /></TableCell>
+                      <TableCell><EditableTextCell value={l.anchor} placeholder="(no text)" onSave={(v) => saveField(l, 'anchor', v)} /></TableCell>
+                      <TableCell className="text-muted-foreground"><div className="max-w-[150px] truncate" title={l.from}>{l.from}</div></TableCell>
+                      <TableCell><EditableTextCell value={l.to} onSave={(v) => saveField(l, 'to', v)} /></TableCell>
+                      <TableCell className="text-muted-foreground"><div className="max-w-[180px] truncate font-mono text-[10px]" title={l.html}>{l.html}</div></TableCell>
+                      <TableCell className="text-center"><StatusCell link={l} /></TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-center gap-1">
+                          <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => window.open(l.to, '_blank', 'noopener,noreferrer')} title="Open link in a new tab">
+                            <ExternalLink className="h-3 w-3" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-destructive" disabled={rowBusy} onClick={() => remove(l)} title="Remove link">
+                            {busyIdx === l.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Unlink className="h-3 w-3" />}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         )}
 

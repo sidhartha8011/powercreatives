@@ -1,5 +1,81 @@
 # Session Log
 
+## 2026-06-19 — Seeded test links into local content for link-scan testing [/task] (local DB only)
+- Appended a removable, marked block (<!-- PCM-LINK-TEST-START/END -->) of 13 mixed links to each
+  published item (#1 post, #2 page, #5 page): 4 internal-OK (other pages), 2 internal-broken (home/404
+  paths), 4 external-OK (wordpress.org/google/github/wikipedia), 3 external-broken (nonexistent domain +
+  httpstat.us/404 + /500). Reset each item's scan meta so they show "unscanned".
+- To remove later: delete the block between the PCM-LINK-TEST markers (or strip via the marker).
+- No plugin code changed. Verified counts (13/14/13 <a>), seeded markers present, state unscanned, WP up.
+
+## 2026-06-19 — Research: how other plugins fix broken links (options only, no code) [/task]
+- Reviewed Broken Link Checker (BLC/AIOSEO), Internet Archive Wayback Machine Link Fixer
+  (github.com/a8cteam51/…), Archivarix Broken Links Recovery, Redirection/Yoast 404→301, Link Whisper.
+- Delivered options to the user (no implementation): (A) reduce false positives — "mark not broken"
+  ignore-list + better status checks (HEAD→GET fallback, treat 403/429 as uncertain); (B) Wayback Machine
+  one-click "replace with archived version" for dead EXTERNAL links (archive.org Availability API); (C)
+  internal-link suggestion (closest slug/title) for dead INTERNAL links; (D) site-wide 301 redirect to fix
+  all occurrences at once; (E) bulk recheck/mark; (F) scheduled site-wide rechecking + email alerts.
+- No code changed.
+
+## 2026-06-19 — Links popup: SEO-table cells + one-click dead-link fix + remote verified [/task]
+- (1) Popup now renders the real SEO table: added shared EditableTextCell to seo-table.tsx (click-to-edit,
+  Enter/blur saves, Esc cancels — same look as the SEO cells). LinksPopup's Anchor/To use it (per-cell
+  auto-save via saveField) instead of always-on Inputs, so rows are the same compact h-9 / same gap /
+  same structure as the SEO grid. Dropped the per-row Save button + edits state.
+- (2) One-click dead-link fix: in the Dead view, a "Remove all dead links" button (with confirm) unwraps
+  every broken <a> at once (keeps the anchor text) via the existing remove flow. (Auto-guessing a correct
+  replacement URL isn't reliable, so unwrapping is the safe one-click fix; per-link edit/redirect remain.)
+- (3) Remote: verified the connected-site flow is fully wired — trpc remoteGetLinks/remoteUpdateLink/
+  remoteRemoveLink/remoteScanLinks + controller handlers; remote_get_links computes on-demand from raw
+  content (context=edit) and edit/remove read raw content + PUT it back (remote_rewrite_link_content). No
+  stored meta on the hub → unaffected by the wp_slash bug. Works on connected sites (hub does the HTTP
+  status checks).
+- Verified: tsc 0 errors in touched files (total 56 baseline); vite build clean; rebuilt for live; WP HTTP 200.
+  Not committed.
+
+## 2026-06-19 — Links popup now uses the SAME SEO table (shared module) [/task]
+- Per the house convention ("new tables use the SEO table"), extracted the SEO spreadsheet table into a
+  shared module: app/src/modules/SEO/seo-table.tsx — exports SEO_TABLE_GRID (the exact grid/cell styling)
+  + bare primitives (Table/TableHeader/TableBody/TableRow/TableHead/TableCell).
+- SEO/index.tsx: main content table now applies `table-fixed ${SEO_TABLE_GRID}` (kept its local primitives;
+  single source for the styling).
+- LinksPopup.tsx: rebuilt on the shared primitives + `w-full ${SEO_TABLE_GRID}` so it renders the identical
+  grid; moved the empty state to its own div (the grid forces h-9/overflow-hidden, which would clip the
+  multi-line "Re-scan" message); From/HTML truncate via an inner max-w div (auto-layout safe).
+- Verified: tsc 0 errors in touched files (total 56 baseline); vite build clean; rebuilt for live; WP HTTP 200.
+  Not committed. Memory (seo-table-pattern-for-new-tables) updated to point at the shared module.
+
+## 2026-06-19 — Fix: scanned links not showing in the popup (counts ok, detail empty) [/task]
+- Bug: row count cells showed 1/1/1 but the links popup said "No … links — not scanned yet". Counts and
+  the per-link detail are both written by scan_links, but the detail (pcm_seo_links) came back empty.
+- Root cause: scan_links stored the detail with update_post_meta($id,'pcm_seo_links', wp_json_encode($links)).
+  update_metadata() runs wp_unslash() on the value, stripping the backslashes that JSON uses to escape the
+  quotes inside each link's <a href="…"> HTML → corrupted JSON → get_post_links() json_decode → []. Counts
+  (plain ints) stored fine, so the mismatch.
+- Fix: wp_slash(wp_json_encode($links)) at service.php:256 so unslash restores valid JSON. update/remove
+  link re-scan via scan_links, so they're covered too. Remote path is unaffected (remote_get_links computes
+  on-demand from raw content, no stored JSON meta).
+- Verified: reproduced (no-slash → get_post_links 0; wp_slash → 1, with real href="…" link HTML); php -l OK.
+  PHP-only (no rebuild). Cleaned up all probe/temp posts + restored post 2.
+- NOTE: posts scanned BEFORE this fix have corrupted detail meta — click "Re-scan this page" (or the Scan
+  button) once to repopulate; new scans are correct.
+
+## 2026-06-19 — Verify SEO Links feature + table convention [/task] (no code change)
+- Investigated the pulled SEO Links feature. Findings (verified against live WP):
+  - Scan-link button WORKS: scan_links scans content, classifies internal/external/broken, status-checks
+    each, stores pcm_seo_links + pcm_seo_links_scanned_at. (Per-link HTTP status needs outbound network —
+    fine on the real server; stalled only in the sandbox.)
+  - Links populate the popup: seo.getLinks → controller get_links → service get_post_links returns the
+    stored links in the exact LinkRow shape the popup renders (verified get_post_links round-trips). Popup
+    also has a "Re-scan this page" button when empty.
+  - LinksPopup uses a raw <table> matching the SEO main table's grid (NOT the TanStack DataTable<T>, which
+    only Sites + Keywords use).
+- Decision (user): "for all the new tables we will use the seo table" — the SEO grid pattern is the house
+  standard for NEW tables; LinksPopup already conforms, so no change. Recorded in auto-memory
+  (seo-table-pattern-for-new-tables).
+- Cleanup: removed temp test posts + cleared scan meta my probe left on real post 2. No code changed.
+
 ## 2026-06-26 — SEO link popup "didn't appear" → discoverability fix [/task]
 - **Diagnosis:** not a bug — the "Scan links" button only *scans*; the popup opens when you
   click the **count number** in the Internal/External/Dead column (per the original spec).

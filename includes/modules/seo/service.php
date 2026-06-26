@@ -250,7 +250,10 @@ class PCM_SEO_Service
         update_post_meta($post_id, 'pcm_seo_external_links', $external);
         update_post_meta($post_id, 'pcm_seo_broken_links', $broken);
         update_post_meta($post_id, 'pcm_seo_links_scanned_at', $now);
-        update_post_meta($post_id, 'pcm_seo_links', wp_json_encode($links));
+        // wp_slash: update_metadata() runs wp_unslash() on the value, which would strip the
+        // backslashes JSON uses to escape the quotes inside each link's <a href="…"> HTML and
+        // corrupt the stored JSON (counts saved fine, but the popup detail list came back empty).
+        update_post_meta($post_id, 'pcm_seo_links', wp_slash(wp_json_encode($links)));
         return array('internal' => $internal, 'external' => $external, 'broken' => $broken, 'scannedAt' => $now);
     }
 

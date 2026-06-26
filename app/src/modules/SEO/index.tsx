@@ -53,6 +53,7 @@ import { BusinessPanel } from './BusinessPanel';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { LinksPopup, type LinkKind } from './LinksPopup';
+import { SEO_TABLE_GRID } from './seo-table';
 import { SEO_TEXT_FIELDS, type SeoRow } from './types';
 
 // WordPress media library global (wp_enqueue_media() is called in class-pcm-admin.php).
@@ -1287,12 +1288,7 @@ export function SEOModule() {
               ellipsis — click a cell to edit (and see) the full value. */}
           <Table
             style={{ width: tableWidth, minWidth: '100%' }}
-            className="table-fixed border-collapse text-xs bg-card
-            [&_th]:border [&_th]:border-border/60 [&_td]:border [&_td]:border-border/60
-            [&_th]:px-2 [&_th]:h-9 [&_th]:font-normal [&_th]:text-foreground/80
-            [&_td]:px-2 [&_td]:h-9 [&_td]:py-0 [&_td]:align-middle
-            [&_td]:whitespace-nowrap [&_td]:overflow-hidden
-            [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-card">
+            className={`table-fixed ${SEO_TABLE_GRID}`}>
 
             <colgroup>
               <col style={{ width: SELECT_COL_WIDTH }} />
