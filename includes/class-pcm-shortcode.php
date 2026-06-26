@@ -400,6 +400,16 @@ class PCM_Shortcode
             return;
         }
 
+        // Enable the WordPress Media Library for the React app (featured-image picker,
+        // image inserts) when a logged-in team member opens the dashboard via a page or
+        // shortcode — mirrors PCM_Admin::enqueue_assets(). Without this, wp.media is
+        // undefined off-admin and the picker errors with "media library is unavailable".
+        // Clients on the public review link don't need it, and the media modal is
+        // capability-gated server-side regardless.
+        if (is_user_logged_in() && (current_user_can('edit_posts') || current_user_can('manage_options'))) {
+            wp_enqueue_media();
+        }
+
         wp_enqueue_style(
             'pcm-google-fonts',
             'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',

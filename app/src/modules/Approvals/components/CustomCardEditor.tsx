@@ -5,15 +5,22 @@
  * set the public review page renders custom content with — so authoring and review
  * stay pixel-consistent. Images are inserted through the existing WordPress media
  * library frame (`wp.media`, enqueued in class-pcm-admin.php); no new editor and no
- * new upload endpoint. Annotation (Phase 2) layers on top of inserted images later.
+ * new upload endpoint. AI image actions (Edit / Regenerate hover overlay) are disabled
+ * here via `imageActions: false`.
+ *
+ * Two annotation tools:
+ *   • Annotate an image — flattens strokes onto ONE picked image (ImageAnnotator).
+ *   • Draw — a persistent freehand layer over the WHOLE card (text + images), stored as
+ *     a transparent PNG overlay and rendered on top of the content here and on review.
  */
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
-import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon, PenLine } from 'lucide-react';
+import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon, PenLine, Brush } from 'lucide-react';
 
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
 import { ImageAnnotator } from './ImageAnnotator';
+import { CardDrawLayer } from './CardDrawLayer';
 
 // WordPress media library global (wp_enqueue_media() runs in class-pcm-admin.php).
 declare const wp: any;
@@ -24,6 +31,10 @@ interface CustomCardEditorProps {
   /** Emitted with updated HTML on every change. */
   onChange: (html: string) => void;
   placeholder?: string;
+  /** Persistent draw-layer overlay (transparent PNG data-URL), or null. */
+  overlay?: string | null;
+  /** Emitted when the draw layer is committed/cleared. */
+  onOverlayChange?: (url: string | null) => void;
 }
 
 function ToolbarButton({ onClick, active, title, children }: {
@@ -44,16 +55,22 @@ function ToolbarButton({ onClick, active, title, children }: {
   );
 }
 
-export function CustomCardEditor({ content, onChange, placeholder }: CustomCardEditorProps) {
+export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange }: CustomCardEditorProps) {
   // Image to annotate (set after the user picks one via the media library).
   const [annotateUrl, setAnnotateUrl] = useState<string | null>(null);
+  // Whole-card draw layer.
+  const [drawing, setDrawing] = useState(false);
+  const [drawDims, setDrawDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const contentBoxRef = useRef<HTMLDivElement | null>(null);
+  const overlayBeforeDraw = useRef<string | null>(null);
 
   const editor = useEditor({
-    extensions: getEditorExtensions({ placeholder: placeholder ?? 'Write your document…' }),
+    // imageActions: false → plain images, no Edit/Regenerate hover overlay in this editor.
+    extensions: getEditorExtensions({ placeholder: placeholder ?? 'Write your document…', imageActions: false }),
     content: content || '<p></p>',
     editable: true,
     editorProps: {
-      attributes: { class: 'outline-none prose prose-sm max-w-none min-h-[280px] focus:outline-none' },
+      attributes: { class: 'outline-none prose prose-sm max-w-none min-h-[460px] focus:outline-none' },
     },
     onUpdate: ({ editor }: { editor: Editor }) => onChange(editor.getHTML()),
   });
@@ -80,6 +97,14 @@ export function CustomCardEditor({ content, onChange, placeholder }: CustomCardE
   const insertImage = () => pickImage((url, alt) => editor?.chain().focus().setImage({ src: url, alt }).run());
   const annotateImage = () => pickImage((url) => setAnnotateUrl(url));
 
+  // Snapshot the content box size, then open the whole-card draw layer over it.
+  const startDraw = () => {
+    const box = contentBoxRef.current;
+    if (box) setDrawDims({ w: box.offsetWidth, h: Math.max(box.scrollHeight, box.offsetHeight) });
+    overlayBeforeDraw.current = overlay ?? null;
+    setDrawing(true);
+  };
+
   if (!editor) return null;
 
   return (
@@ -97,9 +122,28 @@ export function CustomCardEditor({ content, onChange, placeholder }: CustomCardE
         <span className="mx-1 h-5 w-px bg-border" />
         <ToolbarButton title="Insert image" onClick={insertImage}><ImageIcon className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title="Annotate an image" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
+        <ToolbarButton title="Draw on the whole card" active={drawing} onClick={startDraw}><Brush className="h-4 w-4" /></ToolbarButton>
       </div>
-      <div className="max-h-[55vh] overflow-y-auto p-4">
-        <EditorContent editor={editor} />
+      <div className="max-h-[72vh] overflow-y-auto p-4">
+        {/* Positioned wrapper so the draw layer + overlay align with the content. */}
+        <div ref={contentBoxRef} className="relative">
+          <EditorContent editor={editor} />
+          {/* Saved draw layer, shown on top of the content while not actively drawing. */}
+          {overlay && !drawing && (
+            <img src={overlay} alt="" aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" />
+          )}
+          {/* Active whole-card draw layer. */}
+          {drawing && (
+            <CardDrawLayer
+              width={drawDims.w}
+              height={drawDims.h}
+              initial={overlayBeforeDraw.current}
+              onChange={(url) => onOverlayChange?.(url)}
+              onDone={() => setDrawing(false)}
+              onCancel={() => { onOverlayChange?.(overlayBeforeDraw.current); setDrawing(false); }}
+            />
+          )}
+        </div>
       </div>
 
       {/* Annotation: draw on the picked image, then insert the flattened PNG. */}

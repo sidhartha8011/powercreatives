@@ -8,16 +8,20 @@
  * @package PowerCreatives
  */
 
-import { KanbanSquare } from 'lucide-react';
+import { useState } from 'react';
+import { KanbanSquare, Plus } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { colors, typography } from '@/components/shared/design-tokens';
 
 import { SetsBoard } from './kanban/SetsBoard';
+import { CreateCustomSetDialog } from './components/CreateCustomSetDialog';
 import { useApprovalSets } from './hooks/useApprovalSets';
 
 export function ApprovalsModule() {
   const { sets, isLoading } = useApprovalSets();
+  const [showCreate, setShowCreate] = useState(false);
 
   // First-load splash only when nothing is cached yet.
   const showSplash = isLoading && sets.length === 0;
@@ -39,9 +43,17 @@ export function ApprovalsModule() {
             Approvals Pipeline
           </h1>
         </div>
+        <Button type="button" onClick={() => setShowCreate(true)} className="gap-2">
+          <Plus className="w-4 h-4" />
+          Add Approval Set
+        </Button>
       </div>
 
       <SetsBoard />
+
+      {/* "Add Approval Set" → author a custom Notion-style card, then send it to the
+          client through the shared SendToApprovalSetDialog (same flow as Copy). */}
+      <CreateCustomSetDialog open={showCreate} onClose={() => setShowCreate(false)} />
     </div>
   );
 }

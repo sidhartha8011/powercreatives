@@ -38,15 +38,19 @@ export interface CreativeAsset {
   metaDescription?: string;
   schemaType?: string;
   featuredImage?: string;
+  /** Custom card persistent draw layer (transparent PNG data-URL). */
+  overlay?: string;
   [key: string]: unknown;
 }
 
 /** Read-only article viewer using the full shared Tiptap extension set */
-function ArticleViewerDialog({ content, title, metaTitle, metaDescription, onClose }: {
+function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overlay, onClose }: {
   content: string;
   title: string;
   metaTitle?: string;
   metaDescription?: string;
+  /** Persistent freehand draw layer rendered on top of the content (custom cards). */
+  overlay?: string;
   onClose: () => void;
 }) {
   const editor = useEditor({
@@ -126,9 +130,17 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, onClo
           </div>
         )}
 
-        {/* Tiptap read-only rendered content */}
-        <div className="pcm-article-content" style={{ color: '#d4d4d4', lineHeight: 1.7, fontSize: '0.95rem' }}>
+        {/* Tiptap read-only rendered content (+ persistent draw layer on top) */}
+        <div className="pcm-article-content" style={{ color: '#d4d4d4', lineHeight: 1.7, fontSize: '0.95rem', position: 'relative' }}>
           {editor && <EditorContent editor={editor} />}
+          {overlay && (
+            <img
+              src={overlay}
+              alt=""
+              aria-hidden
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+            />
+          )}
         </div>
       </div>
     </div>,
@@ -527,7 +539,7 @@ export function CreativeAssetCard({
       {type === 'custom' && (
         <div
           className="pcm-copy-body select-none flex flex-col flex-1 min-h-0"
-          style={{ cursor: 'pointer' }}
+          style={{ cursor: 'pointer', position: 'relative' }}
           role="button"
           tabIndex={0}
           onClick={() => setShowArticleViewer(true)}
@@ -580,6 +592,16 @@ export function CreativeAssetCard({
               Open document →
             </span>
           </div>
+
+          {/* Persistent draw layer — shown on top of the card preview on the board / review grid. */}
+          {asset.overlay && (
+            <img
+              src={asset.overlay}
+              alt=""
+              aria-hidden
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+            />
+          )}
         </div>
       )}
 
@@ -678,6 +700,7 @@ export function CreativeAssetCard({
           title={asset.title || (type === 'custom' ? 'Untitled Document' : 'Untitled Article')}
           metaTitle={asset.metaTitle}
           metaDescription={asset.metaDescription}
+          overlay={type === 'custom' ? asset.overlay : undefined}
           onClose={() => setShowArticleViewer(false)}
         />
       )}

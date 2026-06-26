@@ -42,9 +42,10 @@ interface CreateCustomSetDialogProps {
 }
 
 export function CreateCustomSetDialog({ open, onClose }: CreateCustomSetDialogProps) {
-  const [step, setStep] = useState<'author' | 'send'>('author');
+  const [step, setStep] = useState<'author' | 'details' | 'send'>('author');
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('<p></p>');
+  const [overlay, setOverlay] = useState<string | null>(null);
   const [brandId, setBrandId] = useState('');
   const [projectId, setProjectId] = useState('');
   const [card, setCard] = useState<SnapshotCustomItem | null>(null);
@@ -66,7 +67,7 @@ export function CreateCustomSetDialog({ open, onClose }: CreateCustomSetDialogPr
   useEffect(() => {
     if (!open) return;
     setStep('author');
-    setTitle(''); setContent('<p></p>'); setBrandId(''); setProjectId(''); setCard(null);
+    setTitle(''); setContent('<p></p>'); setOverlay(null); setBrandId(''); setProjectId(''); setCard(null);
   }, [open]);
 
   const handleContinue = () => {
@@ -76,6 +77,7 @@ export function CreateCustomSetDialog({ open, onClose }: CreateCustomSetDialogPr
       type: 'custom',
       title: title.trim() || undefined,
       content,
+      overlay: overlay ?? undefined,
       createdAt: now,
       updatedAt: now,
     });
@@ -99,11 +101,13 @@ export function CreateCustomSetDialog({ open, onClose }: CreateCustomSetDialogPr
     );
   }
 
-  // Step 1 — author the document.
+  // Step 1 — author on a clean canvas. Step 2 — details (title / brand / project),
+  // revealed only after "Send to Approval Set".
+  const isAuthor = step === 'author';
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
-        className="sm:max-w-2xl max-h-[90vh] overflow-y-auto"
+        className="sm:max-w-5xl max-h-[94vh] overflow-y-auto"
         // Keep the dialog open while interacting with the WordPress media library
         // frame or the image annotator (both portal to <body>).
         onInteractOutside={(e) => {
@@ -114,53 +118,68 @@ export function CreateCustomSetDialog({ open, onClose }: CreateCustomSetDialogPr
         }}
       >
         <DialogHeader>
-          <DialogTitle>New approval set</DialogTitle>
+          <DialogTitle>{isAuthor ? 'New approval set' : 'Send to approval set'}</DialogTitle>
           <DialogDescription>
-            Author a custom, Notion-style document, then send it to your client for
-            approval — same flow as every other approval set.
+            {isAuthor
+              ? 'Author your custom, Notion-style document. Add the details when you’re ready to send.'
+              : 'Add a title, brand and project, then create the set and share it with your client.'}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label htmlFor="cset-card-title">Document title</Label>
-            <Input id="cset-card-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional — shown on the card" autoFocus maxLength={256} />
+        {isAuthor ? (
+          // Step 1 — canvas only.
+          <div className="py-2">
+            <CustomCardEditor content={content} onChange={setContent} overlay={overlay} onOverlayChange={setOverlay} />
           </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        ) : (
+          // Step 2 — details (revealed after "Send to Approval Set").
+          <div className="grid gap-4 py-2">
             <div className="grid gap-2">
-              <Label>Brand</Label>
-              <Select value={brandId || 'none'} onValueChange={(v) => setBrandId(v === 'none' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="No brand" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No brand</SelectItem>
-                  {brands.map((b) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="cset-card-title">Document title</Label>
+              <Input id="cset-card-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional — shown on the card" autoFocus maxLength={256} />
             </div>
-            <div className="grid gap-2">
-              <Label>Project</Label>
-              <Select value={projectId || 'none'} onValueChange={(v) => setProjectId(v === 'none' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="No project" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No project</SelectItem>
-                  {projects.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
 
-          <div className="grid gap-2">
-            <Label>Content</Label>
-            <CustomCardEditor content={content} onChange={setContent} />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label>Brand</Label>
+                <Select value={brandId || 'none'} onValueChange={(v) => setBrandId(v === 'none' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder="No brand" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No brand</SelectItem>
+                    {brands.map((b) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label>Project</Label>
+                <Select value={projectId || 'none'} onValueChange={(v) => setProjectId(v === 'none' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder="No project" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No project</SelectItem>
+                    {projects.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
 
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button type="button" onClick={handleContinue} className="gap-1.5">
-            <Send className="h-4 w-4" /> Send to Approval Set
-          </Button>
+          {isAuthor ? (
+            <>
+              <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button type="button" onClick={() => setStep('details')} className="gap-1.5">
+                <Send className="h-4 w-4" /> Send to Approval Set
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button type="button" variant="ghost" onClick={() => setStep('author')}>Back</Button>
+              <Button type="button" onClick={handleContinue} className="gap-1.5">
+                <Send className="h-4 w-4" /> Continue
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -45,6 +45,12 @@ export interface EditorExtensionOptions {
    * If not provided, pasted images are logged to console (dev mode).
    */
   onImageFiles?: (files: File[]) => void;
+
+  /**
+   * When false, images render plainly with no hover overlay (Edit / Regenerate). Used by
+   * the Custom approval editor, where AI image actions don't apply. Defaults to enabled.
+   */
+  imageActions?: boolean;
 }
 
 /** Default placeholder text for an empty editor */
@@ -124,10 +130,14 @@ export function getEditorExtensions(options?: EditorExtensionOptions): Extension
           },
         };
       },
-      // Custom React NodeView — renders ImageNodeViewComponent with hover overlay
-      addNodeView() {
-        return ReactNodeViewRenderer(ImageNodeViewComponent);
-      },
+      // Custom React NodeView — renders ImageNodeViewComponent with hover overlay.
+      // Skipped when imageActions === false (Custom approval editor) → plain images, no
+      // Edit / Regenerate overlay.
+      ...(options?.imageActions === false ? {} : {
+        addNodeView() {
+          return ReactNodeViewRenderer(ImageNodeViewComponent);
+        },
+      }),
     }).configure({
       inline: false,          // Render as block element (own paragraph)
       allowBase64: true,      // Required for copy-paste until upload pipeline exists

@@ -1,5 +1,65 @@
 # Session Log
 
+## 2026-06-19 — Fix "WordPress media library is unavailable" off-admin [/task]
+- Bug: the SEO featured-image picker (and every other wp.media user — custom editor, Writer) errored
+  with "WordPress media library is unavailable." when the plugin was opened via a front-end WordPress
+  page / shortcode link, instead of the wp-admin page.
+- Cause: wp_enqueue_media() was only called in class-pcm-admin.php (admin page). The front-end render
+  path (class-pcm-shortcode.php::enqueue_assets) loaded the SPA but never the media library, so wp.media
+  was undefined off-admin.
+- Fix: class-pcm-shortcode.php enqueue_assets() now calls wp_enqueue_media() for logged-in team members
+  (current_user_can edit_posts||manage_options) — mirrors PCM_Admin. Clients on the public review link
+  don't load it (not needed; media is capability-gated server-side anyway).
+- Verified: php -l OK; wp_enqueue_media wired + gated; local WP HTTP 200. PHP-only (no rebuild). Not committed.
+
+## 2026-06-19 — Custom approval: draw layer now visible on the board card [/task]
+- Bug: the drawing showed only in the full-screen viewer (ArticleViewerDialog), not on the custom
+  card preview shown on the team board / client review grid. (Persistence was fine — create_set stores
+  the snapshot JSON as-is, so `overlay` was saved; the gap was purely rendering.)
+- Fix: CreativeAssetCard custom-card preview now renders `asset.overlay` as an absolute, pointer-events-
+  none image over the card body (added position:relative to the body). Covers both the internal board
+  and the client review page (both render custom items through CreativeAssetCard).
+- Verified: tsc 0 errors in the file (total 56 baseline); vite build clean; local WP HTTP 200. Not committed.
+
+## 2026-06-19 — Approvals: move "Add Approval Set" to the page header [/task]
+- The primary CTA was buried mid-row in SetsBoard's filter/sort bar (between "Showing N sets" and the
+  Sort dropdown) — inconsistent with other modules (Brands "New Brand", etc.) that put the primary
+  action top-right in the page header.
+- Moved the button + its create flow (showCreate state + CreateCustomSetDialog) from SetsBoard.tsx to
+  the Approvals orchestrator header (index.tsx), top-right of the title row. Removed the now-unused
+  Plus + CreateCustomSetDialog imports from SetsBoard. React Query invalidation on create still refreshes
+  the board (both index + SetsBoard read the same useApprovalSets query), and the button is now always
+  visible (incl. empty/filtered states), not only in the filter bar.
+- Verified: tsc 0 errors in touched files (total 56 baseline); vite build clean; local WP HTTP 200. Not committed.
+
+## 2026-06-19 — Custom approval creation: canvas-first flow [/task]
+- Reorganized CreateCustomSetDialog into canvas-first steps (single file):
+  - Step 1 'author': ONLY the canvas (CustomCardEditor) + "Send to Approval Set" button.
+  - Step 2 'details' (NEW, revealed by that button): Document title + Brand + Project + Back/Continue.
+  - Step 3 'send': the existing shared SendToApprovalSetDialog (unchanged).
+  Title/brand/project moved out of the start screen so authoring opens on a clean, big canvas.
+- Verified: tsc 0 errors in the file (total 56 baseline); vite build clean; local WP HTTP 200. Not committed.
+
+## 2026-06-19 — Custom approval creation: remove image actions + whole-card Draw layer [/task]
+- A) Removed the two image-hover buttons (Edit + Regenerate) from the Custom approval editor:
+  getEditorExtensions gained an `imageActions?` option; when false it skips the Image custom NodeView
+  (ImageOverlay) → plain images, no hover actions. CustomCardEditor passes imageActions:false. Other
+  editors (Copy/Writer generation) are unchanged — they still get Edit/Regenerate.
+- B) Whole-card Draw layer (persistent overlay, chosen approach — no new dependency):
+  - New CardDrawLayer.tsx — zero-dep freehand canvas sized to the card's content box (colors/sizes/
+    eraser/undo/clear/done), exporting a transparent strokes-only PNG. Unlike ImageAnnotator (flattens
+    onto ONE image), it never rasterizes the text, so you draw over the whole card (text + images).
+  - CustomCardEditor: a "Draw" toolbar button overlays CardDrawLayer over the content; the committed
+    overlay shows on top while authoring. SnapshotCustomItem gained `overlay?`; CreateCustomSetDialog
+    holds overlay state, resets it, and stores it on the card → carried in snapshot.custom (no stripping).
+  - Review render: CreativeAssetCard's ArticleViewerDialog renders the overlay (absolute, over the
+    content) for custom cards, so the drawing shows on the client review page too.
+- Verified: tsc 0 errors in touched files (total 56 baseline); vite build clean. Not committed.
+- Notes/limits: overlay scales width/height:100% over the content box → aligns best when authoring and
+  review widths match (raster, not vector). The draw toolbar sits at the top of the content (scrolls
+  with very tall cards). Browser-visual check not run (WP-admin SPA needs wp.media + a real set) —
+  manual path: Approvals → + Add Approval Set → Custom → Brush (Draw).
+
 ## 2026-06-26 — Sites table: match SEO table styling (table-fixed grid) [/task]
 - **Asked:** make the Sites table CSS the same as the SEO table.
 - **Finding:** the grid classes were already identical (gridlines, px-2/h-9, text-xs,

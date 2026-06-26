@@ -74,6 +74,8 @@ export interface SnapshotCustomItem {
   type?: 'custom';
   title?: string;
   content: string;
+  /** Persistent freehand draw layer over the whole card (transparent PNG data-URL). */
+  overlay?: string;
   images?: string[];
   annotation?: Record<string, { doc?: unknown; exportUrl?: string }>;
   createdAt?: string;
