@@ -97,6 +97,22 @@ class PCM_Automation_Seeds
     }
 
     /**
+     * Remove a previously-seeded rule (by its stable seed key) for every user.
+     * Idempotent. Used to retire a seed that shipped in an earlier version.
+     *
+     * @param string $seed_key Seed identifier embedded in the rule's config JSON.
+     * @return int Rows deleted.
+     */
+    public static function remove_seeded_rule(string $seed_key): int
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('automations');
+        $needle = '%"' . self::SEED_KEY_FIELD . '":"' . $seed_key . '"%';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+        return (int) $wpdb->query($wpdb->prepare("DELETE FROM {$table} WHERE config LIKE %s", $needle));
+    }
+
+    /**
      * The default rule set. Keyed by stable seed id (stored in config to detect
      * already-seeded rules). All rules are created with `isActive => true`.
      * No hardcoded business detail — URLs / minDays / messages are user-editable.
@@ -117,6 +133,10 @@ class PCM_Automation_Seeds
                 'config'       => array('lane' => 'client'),
                 'inputMapping' => array(),
             ),
+            // NOTE: the client invite email is sent by the built-in dispatch path
+            // (PCM_Automation_Events::APPROVAL_SET_SHARED → client_invite template in
+            // automations/service.php) when share_set() runs. Do NOT add an email.send
+            // rule on 'approvals.set_shared' here — it would double-send the invite.
             'approvals.notify.comment' => array(
                 'name'         => __('Notify on new approval-set comment', 'power-creatives'),
                 'triggerId'    => 'approvals.comment_added',

@@ -54,6 +54,7 @@ import {
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { trpc } from '@/lib/trpc';
+import { BrevoSenderPicker } from './BrevoSenderPicker';
 
 // ============================================
 // Types (local to this module)
@@ -779,6 +780,11 @@ export function IntegrationsModule() {
                           onToggle={() => toggleProviderExpanded(integration.provider)}
                           totalCount={parsedModels.length}
                         />
+                      )}
+
+                      {/* Brevo: choose the verified sender that client invites are sent FROM */}
+                      {integration.provider === 'brevo' && integration.isActive && (
+                        <BrevoSenderPicker />
                       )}
 
                       {/* Add Custom Model button for Kie.ai */}

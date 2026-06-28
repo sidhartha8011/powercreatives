@@ -99,6 +99,12 @@ interface SendToApprovalSetDialogProps {
   brandClientEmail?: string | null;
   /** Short human summary for the description line, e.g. "5 copies" / "3 images". */
   itemSummary?: string;
+  /**
+   * When provided, the dialog shows a Project picker (the custom-approval flow). The chosen
+   * project sets the set's projectId; brand + delivery are inherited live from it. Omit it
+   * (Copy/Image flows) to keep the existing prop-driven behaviour.
+   */
+  projects?: { id: number; name: string }[];
 }
 
 export function SendToApprovalSetDialog({
@@ -114,6 +120,7 @@ export function SendToApprovalSetDialog({
   brandLogoUrl,
   brandClientEmail,
   itemSummary,
+  projects,
 }: SendToApprovalSetDialogProps) {
   const [setName, setSetName] = useState('');
   const [shareableLink, setShareableLink] = useState('');
@@ -124,6 +131,8 @@ export function SendToApprovalSetDialog({
   const [inviteSent, setInviteSent] = useState(false);
   // '' = none — Select values are strings; converted to number|null on submit.
   const [deliveryId, setDeliveryId] = useState('');
+  // Custom-approval flow only (when `projects` is provided): which project the set belongs to.
+  const [projectSel, setProjectSel] = useState('');
   // 'create' = new set (existing flow); 'append' = add to an open set.
   const [mode, setMode] = useState<'create' | 'append'>('create');
   const [targetSet, setTargetSet] = useState<AppendableSet | null>(null);
@@ -154,6 +163,7 @@ export function SendToApprovalSetDialog({
       setInviteSent(false);
       setMode('create');
       setTargetSet(null);
+      setProjectSel(projectId != null ? String(projectId) : '');
       // Pre-pick the delivery linked to the current brand, when there is one.
       const brandDelivery = brandId
         ? deliveries.find((d) => d.brandId === Number(brandId))
@@ -183,7 +193,16 @@ export function SendToApprovalSetDialog({
       setSetId(Number(data.id));
       // Sharing the link == the set is now out for client review.
       moveStatusMutation.mutate({ id: Number(data.id), status: 'client' });
-      toast.success('Client sharing board created successfully!');
+
+      // When a client email was entered, the SERVER already emailed the invite as
+      // part of create (create_set → share_set → client_invite) — reliable, no
+      // second browser request to miss. Just reflect it in the UI.
+      if (clientEmail.trim()) {
+        setInviteSent(true);
+        toast.success('Approval set created — invite emailed to the client.');
+      } else {
+        toast.success('Client sharing board created successfully!');
+      }
     },
     onError: (err: any) => {
       toast.error(err.message || 'Failed to generate approval set.');
@@ -241,20 +260,27 @@ export function SendToApprovalSetDialog({
       return;
     }
 
+    const effProjectId = projectSel ? Number(projectSel) : (projectId || null);
+    const inviteEmail = clientEmail.trim();
     createMutation.mutate({
       name: setName.trim(),
       brandId: brandId || null,
-      projectId: projectId || null,
+      projectId: effProjectId,
       deliveryId: deliveryId ? Number(deliveryId) : null,
+      // When provided, the server shares the set on create — moves it to the client
+      // lane AND emails the invite — so the client is notified in one request.
+      clientEmail: inviteEmail || null,
+      clientMessage: clientMessage.trim() || null,
       snapshot: {
         media,
         copy,
-        custom,
+        // Custom docs with no title inherit the set name (so there's no separate "name the doc" step).
+        custom: custom.map((c) => (c.title && c.title.trim() ? c : { ...c, title: setName.trim() || undefined })),
         brandName: brandName || 'PowerCreatives',
         brandLogoUrl: brandLogoUrl || null,
       },
     });
-  }, [setName, media, copy, custom, brandId, projectId, deliveryId, brandName, brandLogoUrl, createMutation]);
+  }, [setName, media, copy, custom, brandId, projectId, projectSel, deliveryId, brandName, brandLogoUrl, clientEmail, clientMessage, createMutation]);
 
   const handleCopyLink = useCallback(async () => {
     if (!shareableLink) return;
@@ -338,26 +364,72 @@ export function SendToApprovalSetDialog({
                     disabled={createMutation.isLoading}
                   />
 
+                  {projects && projects.length > 0 ? (
+                    <>
+                      <label style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
+                        Project
+                      </label>
+                      <Select
+                        value={projectSel || 'none'}
+                        onValueChange={(v) => setProjectSel(v === 'none' ? '' : v)}
+                        disabled={createMutation.isLoading}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="No project" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No project</SelectItem>
+                          {projects.map((p) => (
+                            <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p style={{ fontSize: typography.xs, color: colors.textMuted }}>
+                        Brand &amp; delivery are inherited from the project.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <label
+                        style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}
+                      >
+                        Delivery (optional)
+                      </label>
+                      <Select
+                        value={deliveryId || 'none'}
+                        onValueChange={(v) => setDeliveryId(v === 'none' ? '' : v)}
+                        disabled={createMutation.isLoading}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="No delivery linked" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No delivery</SelectItem>
+                          {deliveries.map((d) => (
+                            <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </>
+                  )}
+
                   <label
+                    htmlFor="client-email"
                     style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}
                   >
-                    Delivery (optional)
+                    Client email (we’ll email the link automatically)
                   </label>
-                  <Select
-                    value={deliveryId || 'none'}
-                    onValueChange={(v) => setDeliveryId(v === 'none' ? '' : v)}
+                  <Input
+                    id="client-email"
+                    type="email"
+                    value={clientEmail}
+                    onChange={(e) => setClientEmail(e.target.value)}
+                    placeholder="client@company.com"
                     disabled={createMutation.isLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="No delivery linked" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No delivery</SelectItem>
-                      {deliveries.map((d) => (
-                        <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  />
+                  <p style={{ fontSize: typography.xs, color: colors.textMuted }}>
+                    Leave blank to just generate a link. Sends via your Brevo integration.
+                  </p>
                 </>
               )}
             </div>
@@ -471,7 +543,7 @@ export function SendToApprovalSetDialog({
                   ) : (
                     <>
                       <Share2 className="w-4 h-4" />
-                      Generate Share Link
+                      {clientEmail.trim() ? 'Create & Email Client' : 'Generate Share Link'}
                     </>
                   )}
                 </Button>

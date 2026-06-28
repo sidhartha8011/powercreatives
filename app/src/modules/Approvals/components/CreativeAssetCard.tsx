@@ -85,7 +85,7 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overl
         className="pcm-article-viewer"
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: '#111214',
+          background: '#ffffff',
           borderRadius: '16px',
           maxWidth: '780px',
           width: '90vw',
@@ -93,8 +93,8 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overl
           overflow: 'auto',
           padding: '2.5rem 2rem',
           position: 'relative',
-          border: '1px solid rgba(255,255,255,0.06)',
-          boxShadow: '0 40px 80px rgba(0,0,0,0.6)',
+          border: '1px solid rgba(0,0,0,0.08)',
+          boxShadow: '0 24px 60px rgba(0,0,0,0.18)',
         }}
       >
         <button
@@ -111,7 +111,7 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overl
         <h1 style={{
           fontSize: '1.65rem',
           fontWeight: 700,
-          color: '#f0f0f0',
+          color: '#111827',
           lineHeight: 1.3,
           marginBottom: '0.5rem',
         }}>{title}</h1>
@@ -120,9 +120,9 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overl
         {(metaTitle || metaDescription) && (
           <div style={{
             fontSize: '0.75rem',
-            color: 'rgba(255,255,255,0.4)',
+            color: '#6b7280',
             marginBottom: '1.5rem',
-            borderBottom: '1px solid rgba(255,255,255,0.06)',
+            borderBottom: '1px solid rgba(0,0,0,0.08)',
             paddingBottom: '1rem',
           }}>
             {metaTitle && <div><strong>Meta Title:</strong> {metaTitle}</div>}
@@ -131,7 +131,7 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overl
         )}
 
         {/* Tiptap read-only rendered content (+ persistent draw layer on top) */}
-        <div className="pcm-article-content" style={{ color: '#d4d4d4', lineHeight: 1.7, fontSize: '0.95rem', position: 'relative' }}>
+        <div className="pcm-article-content" style={{ color: '#374151', lineHeight: 1.7, fontSize: '0.95rem', position: 'relative' }}>
           {editor && <EditorContent editor={editor} />}
           {overlay && (
             <img

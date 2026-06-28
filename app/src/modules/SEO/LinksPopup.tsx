@@ -8,7 +8,7 @@
  * Works on the local site and (via the connector) on connected sites.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type PointerEvent } from 'react';
 import { ExternalLink, Unlink, Loader2, Trash2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -21,6 +21,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell, EditableTextCell, SEO_TABLE_GRID,
 } from './seo-table';
+import { ColumnHead } from '@/components/ui/column-head';
+import { useColumnLayout } from '@/hooks/useColumnLayout';
 
 export type LinkKind = 'internal' | 'external' | 'broken';
 
@@ -46,6 +48,19 @@ interface LinksPopupProps {
   siteId: number | null;
   type: 'post' | 'page';
 }
+
+// Resizable columns (drag the right edge; widths persist per-browser), like the SEO table.
+const LINK_COLS = [
+  { key: 'anchor', label: 'Anchor', w: 200 },
+  { key: 'from',   label: 'From',   w: 150 },
+  { key: 'to',     label: 'To',     w: 220 },
+  { key: 'html',   label: 'HTML',   w: 200 },
+  { key: 'status', label: 'Status', w: 72 },
+  { key: 'action', label: 'Action', w: 96 },
+] as const;
+const LINK_KEYS = LINK_COLS.map((c) => c.key);
+const LINK_DEFAULT_WIDTHS: Record<string, number> = Object.fromEntries(LINK_COLS.map((c) => [c.key, c.w]));
+const LINK_SELECT_W = 36;
 
 function StatusCell({ link }: { link: LinkRow }) {
   if (link.broken) {
@@ -73,6 +88,25 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   const localScan = trpc.seo.scanLinks.useMutation();
   const remoteScan = trpc.seo.remoteScanLinks.useMutation();
   const [rescanning, setRescanning] = useState(false);
+
+  // Resizable, persisted column widths (shared SEO-table mechanism).
+  const { width: colWidth, setWidth: setColWidth } = useColumnLayout(LINK_KEYS, LINK_DEFAULT_WIDTHS, 'pcm:seo:links:col-layout:v1');
+  const startResize = (key: string) => (e: PointerEvent<HTMLSpanElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = colWidth(key);
+    const onMove = (ev: globalThis.PointerEvent) => setColWidth(key, startW + (ev.clientX - startX));
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.cursor = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+  const tableWidth = LINK_SELECT_W + LINK_KEYS.reduce((s, k) => s + colWidth(k), 0);
 
   const queryData: any = isLocal ? localQuery.data : remoteQuery.data;
   const loading = isLocal ? localQuery.isLoading : remoteQuery.isLoading;
@@ -234,16 +268,23 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
           </div>
         ) : (
           <div className="rounded-md border border-border overflow-auto">
-            <Table className={`w-full ${SEO_TABLE_GRID}`}>
+            <Table style={{ width: tableWidth, minWidth: '100%' }} className={`table-fixed ${SEO_TABLE_GRID}`}>
+              <colgroup>
+                <col style={{ width: LINK_SELECT_W }} />
+                {LINK_COLS.map((c) => <col key={c.key} style={{ width: colWidth(c.key) }} />)}
+              </colgroup>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-8 text-center"><Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all" /></TableHead>
-                  <TableHead>Anchor</TableHead>
-                  <TableHead>From</TableHead>
-                  <TableHead>To</TableHead>
-                  <TableHead>HTML</TableHead>
-                  <TableHead className="text-center">Status</TableHead>
-                  <TableHead className="text-center">Action</TableHead>
+                  <TableHead className="text-center"><Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all" /></TableHead>
+                  {LINK_COLS.map((c) => (
+                    <ColumnHead
+                      key={c.key}
+                      label={c.label}
+                      width={`${colWidth(c.key)}px`}
+                      className={c.key === 'status' || c.key === 'action' ? 'text-center' : undefined}
+                      onResizeStart={startResize(c.key)}
+                    />
+                  ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -253,9 +294,9 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
                     <TableRow key={l.id} className="hover:bg-muted/60">
                       <TableCell className="text-center"><Checkbox checked={selected.has(l.id)} onCheckedChange={() => toggleOne(l.id)} aria-label="Select link" /></TableCell>
                       <TableCell><EditableTextCell value={l.anchor} placeholder="(no text)" onSave={(v) => saveField(l, 'anchor', v)} /></TableCell>
-                      <TableCell className="text-muted-foreground"><div className="max-w-[150px] truncate" title={l.from}>{l.from}</div></TableCell>
+                      <TableCell className="text-muted-foreground"><div className="truncate" title={l.from}>{l.from}</div></TableCell>
                       <TableCell><EditableTextCell value={l.to} onSave={(v) => saveField(l, 'to', v)} /></TableCell>
-                      <TableCell className="text-muted-foreground"><div className="max-w-[180px] truncate font-mono text-[10px]" title={l.html}>{l.html}</div></TableCell>
+                      <TableCell className="text-muted-foreground"><div className="truncate font-mono text-[10px]" title={l.html}>{l.html}</div></TableCell>
                       <TableCell className="text-center"><StatusCell link={l} /></TableCell>
                       <TableCell>
                         <div className="flex items-center justify-center gap-1">

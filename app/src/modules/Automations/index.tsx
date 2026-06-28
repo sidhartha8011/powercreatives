@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 import {
   Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem,
 } from '@/components/ui/command';
+import { EmailDiagnostics } from './EmailDiagnostics';
 
 /* ── Searchable Combobox (module-grouped, "coming soon" aware) ───────────────
  * Reusable for both the trigger and action dropdowns. Keeps grouping by
@@ -512,6 +513,9 @@ export function AutomationsModule() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* Email diagnostics + recent send log (verify Brevo + see what fired) */}
+      <EmailDiagnostics />
 
       {/* List */}
       {rules.length === 0 ? (

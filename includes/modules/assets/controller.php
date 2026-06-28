@@ -61,6 +61,7 @@ class PCM_REST_Assets extends PCM_REST_Base
                 array('DELETE', '/assets/projects/(?P<id>\d+)', 'delete_project'),
                 array('PATCH', '/assets/projects/(?P<id>\d+)', 'rename_project'),
                 array('POST', '/assets/projects/(?P<id>\d+)/duplicate', 'duplicate_project'),
+                array('PATCH', '/assets/projects/(?P<id>\d+)/delivery', 'set_project_delivery'),
         );
     }
 
@@ -368,7 +369,7 @@ class PCM_REST_Assets extends PCM_REST_Base
         $scope = PCM_Access::scope_clause('userId', 'id', (int) $user->id, PCM_Access::granted_project_ids((int) $user->id));
         // phpcs:ignore WordPress.DB.PreparedSQL -- clause built from %d placeholders only.
         $results = $wpdb->get_results($wpdb->prepare(
-            "SELECT id, name, description, status, settings, createdAt FROM $table WHERE {$scope['sql']} ORDER BY name ASC",
+            "SELECT id, name, description, status, settings, deliveryId, createdAt FROM $table WHERE {$scope['sql']} ORDER BY name ASC",
             ...$scope['params']
         ));
 
@@ -416,6 +417,9 @@ class PCM_REST_Assets extends PCM_REST_Base
             'type' => $settings['type'] ?? 'general',
             'assetCount' => $mapped_data['count'],
             'images' => $images,
+            // Brand → Delivery → Project: deliveryId is stored; brandId is derived live.
+            'deliveryId' => !empty($row->deliveryId) ? (int) $row->deliveryId : null,
+            'brandId' => class_exists('PCM_Hierarchy') ? PCM_Hierarchy::brand_for_project((int) $row->id) : null,
             'createdAt' => $row->createdAt,
             );
         }, $results);
@@ -466,6 +470,42 @@ class PCM_REST_Assets extends PCM_REST_Base
             'name' => $params['name'],
             'type' => $params['type'] ?? 'general',
         ), 201);
+    }
+
+    /**
+     * Assign (or clear) the Delivery a project belongs to — the canonical
+     * Project → Delivery → Brand chain (see PCM_Hierarchy). Anything attached to the project
+     * (e.g. approval sets) then inherits delivery + brand live. Body: { deliveryId: int|null }.
+     *
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response|WP_Error
+     */
+    public function set_project_delivery(WP_REST_Request $request)
+    {
+        global $wpdb;
+        $user        = $this->get_current_pcm_user();
+        $table       = PCM_Schema::table('projects');
+        $id          = absint($request->get_param('id'));
+        $params      = $request->get_json_params() ?: array();
+        $delivery_id = isset($params['deliveryId']) && $params['deliveryId'] !== null ? absint($params['deliveryId']) : null;
+
+        // The project must be the caller's (owned or granted).
+        $scope = PCM_Access::scope_clause('userId', 'id', (int) $user->id, PCM_Access::granted_project_ids((int) $user->id));
+        // phpcs:ignore WordPress.DB.PreparedSQL, WordPress.DB.DirectDatabaseQuery
+        $owns = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE id = %d AND {$scope['sql']}", $id, ...$scope['params']));
+        if (!$owns) {
+            return $this->not_found('Project');
+        }
+        // The delivery (if set) must belong to the caller.
+        if ($delivery_id !== null && !PCM_DB::get_delivery_by_id($delivery_id, (int) $user->id)) {
+            return $this->not_found('Delivery');
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update($table, array('deliveryId' => $delivery_id, 'updatedAt' => current_time('mysql')), array('id' => $id));
+
+        $chain = PCM_Hierarchy::for_project($id);
+        return $this->success(array('id' => $id, 'deliveryId' => $chain['deliveryId'], 'brandId' => $chain['brandId']));
     }
 
     /**

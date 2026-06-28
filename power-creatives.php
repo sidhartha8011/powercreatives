@@ -23,7 +23,7 @@ if (!defined('ABSPATH')) {
 
 // ── Plugin Constants ──
 define('PCM_VERSION', '1.7.0');
-define('PCM_DB_VERSION', '1.28.0');
+define('PCM_DB_VERSION', '1.31.0');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -34,6 +34,7 @@ require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-settings.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/db/class-pcm-schema.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/db/class-pcm-db.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-access.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-hierarchy.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-admin.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-shortcode.php';
 require_once PCM_PLUGIN_DIR . 'includes/class-pcm-shortcode-admin.php';

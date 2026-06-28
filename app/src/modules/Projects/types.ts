@@ -6,5 +6,9 @@ export interface Project {
   type: string;
   assetCount: number;
   images: string[];
+  /** The delivery this project belongs to (Brand → Delivery → Project). */
+  deliveryId?: number | null;
+  /** Brand derived live from the project's delivery (read-only; not stored on the project). */
+  brandId?: number | null;
   createdAt: string;
 }

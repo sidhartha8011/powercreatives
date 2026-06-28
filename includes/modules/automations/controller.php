@@ -35,8 +35,28 @@ class PCM_REST_Automations extends PCM_REST_Base
             array('PATCH',  '/automations/(?P<id>\d+)',  'update_item', array(), 'manage_options'),
             array('DELETE', '/automations/(?P<id>\d+)',  'delete_item', array(), 'manage_options'),
             array('GET',    '/automations/catalog',      'catalog',     array(), 'manage_options'),
+            array('GET',    '/automations/logs',         'list_logs',   array(), 'manage_options'),
             array('POST',   '/automations/test',         'test_send',   array(), 'manage_options'),
         );
+    }
+
+    /**
+     * GET /automations/logs — recent automation run/send log (diagnostics).
+     * Lets the admin see exactly what fired (e.g. client-invite emails) and the
+     * channel result/HTTP code, without DB access.
+     */
+    public function list_logs(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('automation_logs');
+        $limit = min(100, max(1, (int) ($request->get_param('limit') ?: 30)));
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, userId, event, channel, target, status, httpCode, error, createdAt"
+            . " FROM {$table} ORDER BY id DESC LIMIT %d",
+            $limit
+        ));
+        return $this->success($rows ?: array());
     }
 
     /** GET /automations — list the caller's automation rules. */

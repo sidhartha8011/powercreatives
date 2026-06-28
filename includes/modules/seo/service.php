@@ -1061,6 +1061,22 @@ class PCM_SEO_Service
         if ((int) ($put['status'] ?? 0) >= 300) {
             return new WP_Error('pcm_seo_remote_link', sprintf(__('Could not save the remote post (HTTP %d) — the connector’s user may lack edit permission.', 'power-creatives'), (int) $put['status']), array('status' => 502));
         }
+
+        // Verify the edit actually persisted. Some remotes return 200 but keep the old content
+        // (a security plugin locking REST writes, an aggressive page cache, or a user who can
+        // read but not save) — which would otherwise show a misleading "saved". Re-read the raw
+        // content and confirm it changed; if not, surface an honest error instead of success.
+        $verify = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content'));
+        if (!is_wp_error($verify) && is_array($verify['body'] ?? null)) {
+            $saved_raw = (string) ($verify['body']['content']['raw'] ?? '');
+            if ($saved_raw !== '' && $saved_raw === $raw) {
+                return new WP_Error(
+                    'pcm_seo_link_not_saved',
+                    __('The remote site accepted the request but kept the old content, so the link was NOT changed. The post is likely locked to REST edits (e.g. a security plugin), or the connector’s user can’t edit it — change it on the site, or check the connector’s app-password permissions.', 'power-creatives'),
+                    array('status' => 409)
+                );
+            }
+        }
         return self::remote_get_links($site, $post_id, $type);
     }
 

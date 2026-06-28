@@ -135,6 +135,17 @@ class PCM_REST_Approvals extends PCM_REST_Base
                 return $this->error('Failed to save approval set.', 500);
             }
 
+            // If the caller supplied a client email, share immediately — this both
+            // moves the set to the client lane AND emails the invite (built-in
+            // dispatch → client_invite template). Sending server-side here means
+            // "create + notify the client" is one reliable request, not dependent on
+            // a follow-up share call from the browser.
+            $client_email = isset($params['clientEmail']) ? sanitize_email((string) $params['clientEmail']) : '';
+            if ($client_email !== '' && is_email($client_email)) {
+                $client_message = isset($params['clientMessage']) ? sanitize_textarea_field((string) $params['clientMessage']) : '';
+                PCM_Approvals_Service::share_set((int) $set_id, (int) $pcm_user->id, $client_email, $client_message);
+            }
+
             $set = PCM_Approvals_Service::get_set_by_id((int)$set_id, (int)$pcm_user->id);
             return $this->success($set, 201);
         } catch (\Throwable $e) {

@@ -106,17 +106,23 @@ class PCM_Schema
         dbDelta($sql);
 
         // ── Projects ──
+        // deliveryId (v1.29.0): a Project belongs to a Delivery (Brand → Delivery → Project).
+        // Anything attached to a project derives its delivery + brand LIVE from this chain
+        // (see PCM_Hierarchy) — never stored/hardcoded — so reassigning the project's delivery
+        // (or that delivery's brand) moves everything that belongs to the project with it.
         $sql = "CREATE TABLE {$prefix}projects (
             id int(11) NOT NULL AUTO_INCREMENT,
             userId int(11) NOT NULL,
             name varchar(256) NOT NULL,
             description text DEFAULT NULL,
             status varchar(50) DEFAULT 'active' NOT NULL,
+            deliveryId int(11) DEFAULT NULL,
             settings text DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
-            KEY idx_userId (userId)
+            KEY idx_userId (userId),
+            KEY idx_deliveryId (deliveryId)
         ) $charset_collate;";
         dbDelta($sql);
 
@@ -1021,6 +1027,39 @@ class PCM_Schema
                 )
             );
         }
+    }
+
+    /**
+     * Backfill projects.deliveryId (v1.29.0). A project inherits the delivery that currently
+     * references it (deliveries.projectId — the legacy delivery-centric link), so existing data
+     * gains the Project → Delivery chain. Idempotent: only fills projects with no delivery yet.
+     *
+     * @return void
+     */
+    public static function migrate_backfill_project_delivery(): void
+    {
+        global $wpdb;
+        $projects   = self::table('projects');
+        $deliveries = self::table('deliveries');
+
+        // Defensive: needs the new column (added by dbDelta in create_tables, which runs first).
+        $col = $wpdb->get_var($wpdb->prepare('SHOW COLUMNS FROM ' . $projects . ' LIKE %s', 'deliveryId'));
+        if (!$col) {
+            return;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $wpdb->query(
+            "UPDATE {$projects} p
+             JOIN (
+                 SELECT projectId, MAX(id) AS did
+                 FROM {$deliveries}
+                 WHERE projectId IS NOT NULL
+                 GROUP BY projectId
+             ) d ON d.projectId = p.id
+             SET p.deliveryId = d.did
+             WHERE p.deliveryId IS NULL"
+        );
     }
 
     /**

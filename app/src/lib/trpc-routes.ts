@@ -29,6 +29,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "integrations.list": { endpoint: "integrations", method: "GET" },
     "integrations.listProviders": { endpoint: "integrations/providers", method: "GET" },
     "integrations.providerDetails": { endpoint: "integrations/providers/details", method: "GET" },
+    "integrations.brevoSenders": { endpoint: "integrations/brevo/senders", method: "GET" },
     "integrations.validateApiKey": { endpoint: "integrations/validate", method: "POST" },
     "integrations.create": { endpoint: "integrations", method: "POST" },
     "integrations.update": {
@@ -587,6 +588,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `assets/projects/${input.id}/duplicate`, body: input }),
     },
+    "assets.setProjectDelivery": {
+        endpoint: "assets/projects",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `assets/projects/${input.id}/delivery`, body: { deliveryId: input.deliveryId } }),
+    },
 
     // ── Copy ──
     "copy.generate": { endpoint: "copy/generate", method: "POST" },
@@ -819,4 +825,10 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `automations/${input.id}` }),
     },
     "automations.test":    { endpoint: "automations/test", method: "POST" },
+    "automations.logs":    { endpoint: "automations/logs", method: "GET" },
+
+    // ── Server-side site settings (PCM_Settings) — distinct from the localStorage
+    // app settings in AppContext. Used for the email sender (automations_from_*). ──
+    "settings.get":        { endpoint: "settings", method: "GET" },
+    "settings.update":     { endpoint: "settings", method: "POST" },
 };

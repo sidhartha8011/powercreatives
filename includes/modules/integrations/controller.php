@@ -38,6 +38,7 @@ class PCM_REST_Integrations extends PCM_REST_Base
                 array('GET', '/integrations', 'list_items'),
                 array('GET', '/integrations/providers', 'list_providers'),
                 array('GET', '/integrations/providers/details', 'provider_details'),
+                array('GET', '/integrations/brevo/senders', 'brevo_senders'),
 
             // Validation
                 array('POST', '/integrations/validate', 'validate_api_key'),
@@ -51,6 +52,46 @@ class PCM_REST_Integrations extends PCM_REST_Base
             // Sync from localStorage
                 array('POST', '/integrations/sync', 'sync_to_database'),
         );
+    }
+
+    /**
+     * GET /integrations/brevo/senders — list the Brevo account's verified senders
+     * so the user can PICK the "from" address (only verified senders deliver).
+     * Returns array of { email, name, active }. Empty if no key / API error.
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response
+     */
+    public function brevo_senders(WP_REST_Request $request): WP_REST_Response
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $key = $this->get_provider_api_key('brevo', (int) $pcm_user->id);
+        if ($key === '') {
+            return $this->success(array());
+        }
+
+        $resp = wp_remote_get('https://api.brevo.com/v3/senders', array(
+            'headers' => array('api-key' => $key, 'Accept' => 'application/json'),
+            'timeout' => 15,
+        ));
+        if (is_wp_error($resp)) {
+            return $this->success(array());
+        }
+
+        $body    = json_decode((string) wp_remote_retrieve_body($resp), true);
+        $senders = array();
+        foreach ((array) ($body['senders'] ?? array()) as $s) {
+            $email = sanitize_email((string) ($s['email'] ?? ''));
+            if ($email === '') {
+                continue;
+            }
+            $senders[] = array(
+                'email'  => $email,
+                'name'   => sanitize_text_field((string) ($s['name'] ?? '')),
+                'active' => !empty($s['active']),
+            );
+        }
+        return $this->success($senders);
     }
 
     /**

@@ -63,10 +63,26 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   const [drawDims, setDrawDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const contentBoxRef = useRef<HTMLDivElement | null>(null);
   const overlayBeforeDraw = useRef<string | null>(null);
+  const editorRef = useRef<Editor | null>(null);
+
+  // Insert pasted / dropped image files inline (as base64). Lets you paste an image
+  // straight from the clipboard onto the card. Uses a ref because the editor isn't
+  // created yet when these extensions are built.
+  const insertImageFiles = (files: File[]) => {
+    files.forEach((file) => {
+      if (!file.type.startsWith('image/')) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = reader.result as string;
+        if (url) editorRef.current?.chain().focus().setImage({ src: url, alt: file.name || 'Pasted image' }).run();
+      };
+      reader.readAsDataURL(file);
+    });
+  };
 
   const editor = useEditor({
     // imageActions: false → plain images, no Edit/Regenerate hover overlay in this editor.
-    extensions: getEditorExtensions({ placeholder: placeholder ?? 'Write your document…', imageActions: false }),
+    extensions: getEditorExtensions({ placeholder: placeholder ?? 'Write your document…', imageActions: false, onImageFiles: insertImageFiles }),
     content: content || '<p></p>',
     editable: true,
     editorProps: {
@@ -77,6 +93,7 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
 
   // Hydrate once the editor is ready (edit mode passes existing content).
   useEffect(() => {
+    editorRef.current = editor; // keep the ref current for paste/drop image inserts
     if (editor && content && editor.getHTML() !== content) {
       editor.commands.setContent(content);
     }

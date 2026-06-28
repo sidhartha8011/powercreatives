@@ -252,6 +252,46 @@ class PCM_Activator
             // (per-user anchor; the feed hides events at/older than it). Additive
             // via dbDelta above — no bespoke migration method needed.
 
+            // v1.29.0: Brand → Delivery → Project. Adds projects.deliveryId (additive via
+            // dbDelta above) + backfills it from the delivery that referenced each project,
+            // so the project-inheritance chain (PCM_Hierarchy) has data on existing installs.
+            if (version_compare($installed_version, '1.29.0', '<')) {
+                PCM_Schema::migrate_backfill_project_delivery();
+            }
+
+            // v1.30.0: seed the new "email the client the review link when shared" automation
+            // rule for existing users (seed_for_user is idempotent — it skips already-seeded
+            // rules, so only the new rule is added).
+            if (version_compare($installed_version, '1.30.0', '<')) {
+                global $wpdb;
+                $users_table = PCM_Schema::table('users');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $user_ids = $wpdb->get_col("SELECT id FROM {$users_table}");
+                foreach (($user_ids ?: array()) as $uid) {
+                    if (class_exists('PCM_Automation_Seeds')) {
+                        PCM_Automation_Seeds::seed_for_user((int) $uid);
+                    }
+                }
+            }
+
+            // v1.31.0: the client invite email is sent by the built-in dispatch path
+            // (APPROVAL_SET_SHARED → client_invite template). The duplicate email.send
+            // rule seeded under v1.30.0 double-sent the invite — remove it. Idempotent.
+            // Match by structural identity (trigger + action) scoped to SEEDED rows so a
+            // user's hand-made rule is left untouched, regardless of the seed-key format.
+            if (version_compare($installed_version, '1.31.0', '<')) {
+                if (class_exists('PCM_Automation_Seeds')) {
+                    PCM_Automation_Seeds::remove_seeded_rule('approvals.set_shared.email');
+                }
+                global $wpdb;
+                $auto = PCM_Schema::table('automations');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+                $wpdb->query(
+                    "DELETE FROM {$auto} WHERE triggerId = 'approvals.set_shared'"
+                    . " AND actionId = 'email.send' AND config LIKE '%\"__seedKey\"%'"
+                );
+            }
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

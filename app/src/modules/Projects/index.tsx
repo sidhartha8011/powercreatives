@@ -89,6 +89,25 @@ export function ProjectsModule() {
   const projectsQuery = trpc.assets.getProjects.useQuery({ includeThumbnails: true });
   const projects: Project[] = projectsQuery.data ?? [];
 
+  // Brand → Delivery → Project: assign the delivery a project belongs to. Brand is then
+  // inherited live from that delivery everywhere (approval sets, etc.) — never stored.
+  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
+  const deliveries: { id: number; name: string }[] = Array.isArray(deliveriesRaw)
+    ? (deliveriesRaw as any[]).map((d) => ({ id: Number(d.id), name: String(d.name) }))
+    : [];
+  const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation();
+  const handleSetProjectDelivery = async (deliveryId: number | null) => {
+    if (!selectedProject) return;
+    try {
+      await setProjectDeliveryMutation.mutateAsync({ id: selectedProject.id, deliveryId });
+      setSelectedProject({ ...selectedProject, deliveryId });
+      projectsQuery.refetch();
+      toast.success(deliveryId ? 'Delivery assigned — brand now inherited from it' : 'Delivery cleared');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to set the project delivery');
+    }
+  };
+
   // Filter State
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -268,6 +287,20 @@ export function ProjectsModule() {
             <p className="text-sm text-slate-500 mt-1 capitalize">
               {assets.length} media asset{assets.length !== 1 ? 's' : ''} · {copyResults.length} copy card{copyResults.length !== 1 ? 's' : ''} · {selectedProject.type}
             </p>
+          </div>
+          {/* Brand → Delivery → Project: pick the delivery this project belongs to. */}
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">Delivery</span>
+            <Select
+              value={selectedProject.deliveryId != null ? String(selectedProject.deliveryId) : 'none'}
+              onValueChange={(v) => handleSetProjectDelivery(v === 'none' ? null : Number(v))}
+            >
+              <SelectTrigger className="h-9 w-[220px] text-xs bg-white"><SelectValue placeholder="No delivery" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No delivery</SelectItem>
+                {deliveries.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 

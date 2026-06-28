@@ -1,5 +1,96 @@
 # Session Log
 
+## 2026-06-19 — End-to-end verification of the session's work [/task] (no code change)
+- Backend (wp-load live runtime): 11/11 PASS — db_version 1.30.0; projects.deliveryId column;
+  PCM_Hierarchy::for_project(1) → brand+delivery; approvals enrich_context + format_set_row both derive
+  brand from the project (item 5); invite-email rule active (item 1) + Brevo key present for user 1;
+  routes registered (set_project_delivery, local + remote links); SEO links wp_slash round-trip
+  (get_post_links reads stored detail).
+- Frontend: php -l 8/8; tsc total 56 (baseline, 0 new errors); vite build clean; bundle contains the
+  clipboard-paste, combined send dialog, project picker, light review card, and draw features.
+- NOT testable here: browser-driven UI (WP-admin SPA) — and the local web server (:8080) is DOWN
+  (environmental; the dev-server process isn't running). Restart it to click through in the browser.
+- No code changed; temp test posts cleaned up.
+
+## 2026-06-19 — Remote link edit: stop false "success" when the change doesn't persist [/task]
+- Bug: editing a link on a connected site showed "saved" but the remote didn't change. The edit path
+  (remote_rewrite_link_content) reads raw content, rewrites the <a>, PUTs /wp/v2/posts/{id}, and only
+  checked the HTTP status — so a remote that returns 200 but keeps the old content (a security plugin
+  locking REST content edits, a user without unfiltered_html mangling blocks, or a front-end page cache)
+  was reported as success.
+- Fix: after the PUT, re-read content.raw and confirm it actually changed. If the remote kept the old
+  content (saved_raw === raw), return a clear WP_Error ("accepted the request but kept the old content …
+  locked to REST edits or the connector's user can't edit it") instead of success. The popup already
+  toasts the error message. (remote_save_cell writes title/slug/meta to the same endpoint and works, so
+  the endpoint/auth are fine — the failure is content-specific: a REST-content lock or front-end cache.)
+- Verified: php -l OK; verification path added. PHP-only (no rebuild). Not committed.
+- Follow-up option (definitive, larger): route content updates through the connector (pcm-conn/v1 →
+  wp_update_post server-side), bypassing REST locks/KSES — needs a connector version bump + reinstall.
+
+## 2026-06-19 — Item 4: collapse the custom-approval send into one popup [/task]
+- CreateCustomSetDialog is now 2 steps: canvas → ONE combined popup. The intermediate "details"
+  step (title + brand + project) is gone; brand/title/project no longer collected there.
+- The combined popup is the shared SendToApprovalSetDialog, extended (backward-compatibly) with an
+  optional `projects` prop: when provided (custom flow) it shows a Project picker IN PLACE of the
+  Delivery picker (brand + delivery inherit from the project — item 5), and custom docs with no title
+  inherit the set name (so naming the doc + naming the set are one field). Copy/Image flows pass no
+  `projects` → unchanged (delivery picker, prop-driven projectId).
+- Verified: tsc 0 errors in touched files (total 56 baseline); vite build clean. Not committed.
+- Status: items 1-6 now all addressed (5-6 step 3 — platform-wide access-scoping — still deferred per user).
+
+## 2026-06-19 — Approvals items 1-3 (email / clipboard paste / light card) [/build]
+- Item 1 (no email on share): root cause — seeded automations for approvals.set_shared only MOVED the set
+  to the client lane; no rule emailed the client. Added seeded rule "Email the client the review link when
+  shared" (approvals.set_shared → email.send, to={{clientEmail}}, subject/message with {{link}}). DB bump
+  1.29.0 → 1.30.0 + upgrade gate re-seeds existing users (seed_for_user is per-rule idempotent). Verified:
+  rule seeded + active for all users (e.g. rule #41). NOTE: delivery needs wp_mail/SMTP — local WP won't
+  deliver without it; a real server will.
+- Item 2 (clipboard image paste): CustomCardEditor now passes onImageFiles to the shared editor — pasted /
+  dropped image files insert inline as base64 (via FileReader + editor.setImage), using an editorRef.
+- Item 3 (dark card → light Notion/Slite): CreativeAssetCard's document viewer (ArticleViewerDialog)
+  restyled light — white bg, slate text (#111827 title / #374151 body), light borders + softer shadow.
+- Verified: php -l OK (6 files); tsc 0 new errors (total 56 baseline); vite build clean. Not committed.
+- REMAINING: item 4 — collapse the details + send steps into one popup after the canvas (touches the
+  shared SendToApprovalSetDialog; staged). Item 5-6 step 3 (platform-wide access-scoping) still deferred.
+
+## 2026-06-19 — Brand→Delivery→Project: steps 1+2 (approvals derive + assign delivery) [/build]
+- Step 1 (approvals inherit brand/delivery LIVE from the project, never stored):
+  - enrich_context (email/webhook context) refactored project-first: derives brand+delivery+project
+    from set->projectId via PCM_Hierarchy (legacy fallback to stored brand/delivery for old sets).
+  - format_set_row (the set DTO shown on the board) derives brandId+deliveryId from the project chain.
+  - Proven: a set bound to project #1 → brandId 2 (Profit Media), deliveryId 9 (ads), projectName 'test'
+    with NO stored brand/delivery. Move the project's delivery/brand and the set follows.
+- Step 2 (assign a delivery to a project):
+  - Backend: get_projects returns deliveryId (+ derived brandId); new PATCH /assets/projects/{id}/delivery
+    → set_project_delivery (ownership-checked; validates the delivery belongs to the caller). Route
+    REGISTERED + handler verified.
+  - Frontend: Projects module detail header now has a Delivery picker (trpc assets.setProjectDelivery);
+    Project type gained deliveryId/brandId.
+- Step 3 (platform-wide access-scoping adoption) intentionally DEFERRED per user; access still uses the
+  stored brandId for now (create dialog still passes it), so no access gap.
+- Verified: php -l OK; resolver + enrich_context + format_set_row proven via wp-load; tsc 0 errors in
+  touched files (total 56 baseline); vite build clean. NOTE: local web server (:8080) was down at check
+  time (environmental) — code verified via CLI/build. Not committed.
+- REMAINING: items 1-4 (email-send bug, clipboard image paste, light Notion-style review card, single
+  combined send step).
+
+## 2026-06-19 — Brand→Delivery→Project inheritance: foundation (items 5-6, phase 1) [/build]
+- Decisions (asked up front): build the data model (5-6) FIRST, then 1-4. Canonical hierarchy:
+  Project → Delivery → Brand (a project belongs to a delivery; a delivery to a brand). Approval sets
+  (and anything project-bound) derive brand+delivery LIVE, never stored.
+- Landed (safe, additive, verified):
+  - Schema: projects.deliveryId (+ idx); DB version 1.28.0 → 1.29.0; idempotent backfill
+    (migrate_backfill_project_delivery) fills it from the delivery that referenced each project.
+  - PCM_Hierarchy (includes/core/class-pcm-hierarchy.php): the single source of truth —
+    for_project($id) → {projectId, deliveryId, brandId} resolved live (project.deliveryId →
+    delivery.brandId). Required in power-creatives.php after PCM_Access.
+- Verified on live DB: php -l OK (4 files); maybe_upgrade ran → db_version 1.29.0; projects.deliveryId
+  EXISTS; backfill set 1/1 projects; PCM_Hierarchy::for_project(1) → {deliveryId:9, brandId:2}. Nothing
+  else changed yet (no breakage). Not committed.
+- STAGED (next): (5-6) wire approvals to derive brand/delivery via PCM_Hierarchy (DTO/list/email),
+  Projects UI to assign a delivery, then platform-wide adoption (access-scoping, filters). Then items
+  1-4: email-send bug, clipboard image paste, light Notion-style review card, single combined step.
+
 ## 2026-06-19 — Fix remote link editing + remote count/popup mismatch [/task]
 - Bug 2 (count shows 1 but popup empty, remote): remote_scan_links counted RENDERED content via
   count_links/check_broken_links, while the popup (remote_get_links) lists from RAW content via
@@ -3543,3 +3634,68 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   (`user_can`), not full HTTP. UI check pending user hard-reload
   (`verify_editor` WP user left in place for that).
 - **Uncommitted** along with the rest of `feat/approvals-automations` work.
+
+## 2026-06-29 — Fix: client invite email "not going" (root cause = frontend, not a missing rule)
+- **Root cause:** `share_set()` already sends the client invite via the built-in dispatch path
+  (`APPROVAL_SET_SHARED` → `PCM_Automation_Templates::client_invite()`), proven by an intercepted
+  end-to-end test (Brevo HTTP faked): `share_set(50,1,…)` → log `approval.set.shared/email = sent 201`.
+  The email never fired because the **frontend never called `share_set`** — "Generate Share Link" only
+  created the set; the email was a separate, easily-missed manual "Send" step in phase 2.
+- **Fix (frontend, `SendToApprovalSetDialog.tsx`):** added a Client-email field to the create form and
+  auto-send the invite on create (`createMutation.onSuccess` fires `shareMutation` when an email is
+  present). Button label → "Create & Email Client" when an email is entered. One action now both
+  creates the set and emails the client.
+- **De-dup:** my earlier item-1 seed (`approvals.set_shared.email` → `email.send`) double-sent the
+  invite alongside the built-in dispatch. Removed the seed from `PCM_Automation_Seeds::rules()`; added
+  `remove_seeded_rule()` + a v1.31.0 activator migration (structural delete of seeded `email.send` rules
+  on `approvals.set_shared`). `PCM_DB_VERSION` 1.30.0 → 1.31.0.
+- **Verified:** php -l ok; intercepted `share_set` now logs exactly ONE invite email (built-in dispatch);
+  0 `email.send` rules remain on `approvals.set_shared`; tsc 56 (baseline), vite build clean; zip rebuilt
+  (DB 1.31.0, "Create & Email Client" present). No real emails sent (Brevo intercepted in tests).
+
+## 2026-06-29 — Custom-approval invite email: make the send server-side (reliable)
+- Report: invite still not received when sharing from the **custom approval creation** flow. The earlier
+  fix relied on a frontend follow-up (`createMutation.onSuccess` → `shareMutation`), which is fragile
+  (stale bundle/cache, closure timing).
+- **Fix:** `create_set` now shares server-side. Controller `create_set` reads optional `clientEmail` /
+  `clientMessage` and, when present, calls `PCM_Approvals_Service::share_set()` after creating — moving the
+  set to the client lane AND emailing the invite (built-in dispatch → `client_invite`) in ONE request.
+  Frontend (`SendToApprovalSetDialog`) now passes `clientEmail`/`clientMessage` in the create payload and
+  reflects "invite emailed" in the UI (removed the follow-up `shareMutation` to avoid double-send).
+- **Verified (Brevo intercepted, no real email):** `create_set(custom snapshot)` → `share_set` logs exactly
+  ONE invite email (#78, HTTP 201) + move-to-lane (#77). php -l ok; tsc 56 (baseline); vite build clean; zip
+  rebuilt (server-side share present, DB 1.31.0). Test set cleaned up.
+
+## 2026-06-29 — In-app email diagnostics + send-log viewer (Automations page)
+- Need: user reports invite emails still not arriving and asked "how to check logs". The send log lives in
+  `wp_pcm_automation_logs`; there was no in-app viewer, and the user's site DB isn't visible from here.
+- **Added:** `GET /pcm/v1/automations/logs` (`list_logs`, manage_options) returning the recent send log; a
+  new `EmailDiagnostics` collapsible panel on the Automations page with (1) a one-click "Send test email"
+  (reuses existing `automations.test` → Brevo channel) and (2) a recent-send-log table (event / channel /
+  to / status+HTTP / error). trpc route `automations.logs` added.
+- Diagnostic logic for the user: test email arrives ⇒ Brevo OK on that site ⇒ issue is the share flow
+  (old bundle / email not entered). No log row after sharing ⇒ request never reached the send. Row shows
+  "sent (201)" but no email ⇒ spam / Brevo sender not verified.
+- **Verified:** php -l ok; route registered (`/pcm/v1/automations/logs`); tsc 56 (baseline); vite build clean;
+  zip rebuilt (panel + route present). Namespace is `pcm/v1` (not `power-creatives/v1`).
+
+## 2026-06-29 — ROOT CAUSE (hosted site): no sender email + no UI to set it
+- Opened the hosted site (create.widgetify.co) via Chrome MCP. The new diagnostics log showed every
+  invite: `approval.set.shared → email = failed: "No valid from-email configured (set automations_from_email)"`.
+  Brevo key present + active; lane-move rules succeed; only the email fails. `automations_from_email` was
+  blank — and there was NO UI anywhere (Settings/General, Integrations/Brevo card) to set it. That's the gap.
+- **Fix:** added a "Sender (from email + name)" field to the EmailDiagnostics panel that loads/saves
+  `automations_from_email` / `automations_from_name` via the existing `POST /pcm/v1/settings`
+  (`PCM_Settings::set_many`). Added trpc routes `settings.get` / `settings.update` (the frontend previously
+  only persisted app settings to localStorage — nothing wrote server settings).
+- **Verified:** tsc 56 (baseline); build clean; `/pcm/v1/settings` registered; "Save sender" in bundle; zip rebuilt.
+
+## 2026-06-29 — Brevo sender picker on the Integrations card (user's chosen UX)
+- Per user ("select from the Brevo key integration place"): added a verified-sender DROPDOWN to the Brevo
+  card on the Integrations page. New endpoint `GET /pcm/v1/integrations/brevo/senders` fetches the account's
+  verified senders via Brevo `GET /v3/senders` (using the stored key); `BrevoSenderPicker` lists them and
+  saves the choice to `automations_from_email`/`_name` via `settings.update`. Only verified senders are
+  offered, which also prevents the silent "accepted (201) but not delivered" failure.
+- trpc route `integrations.brevoSenders` added; picker injected into the card (provider==='brevo' && active).
+- **Verified:** php -l ok; route registered; live Brevo fetch returned 9 verified senders (incl. hello@profitmedia.se);
+  tsc 56 (baseline); build clean; "Sender for client emails" present in bundle; zip rebuilt.

@@ -623,6 +623,17 @@ class PCM_Approvals_Service
     {
         $row->snapshot       = !empty($row->snapshot) ? json_decode($row->snapshot, true) : array();
         $row->reviewFeedback = !empty($row->reviewFeedback) ? json_decode($row->reviewFeedback, true) : null;
+        // Brand → Delivery → Project: derive brand + delivery LIVE from the set's project so the
+        // displayed scope follows the project, never the value stored at creation time.
+        if (class_exists('PCM_Hierarchy') && !empty($row->projectId)) {
+            $chain = PCM_Hierarchy::for_project((int) $row->projectId);
+            if (!empty($chain['brandId'])) {
+                $row->brandId = (int) $chain['brandId'];
+            }
+            if (!empty($chain['deliveryId'])) {
+                $row->deliveryId = (int) $chain['deliveryId'];
+            }
+        }
         return $row;
     }
 
@@ -834,7 +845,14 @@ class PCM_Approvals_Service
         global $wpdb;
 
         $owner_id = (int) $set->userId;
-        $brand_id = !empty($set->brandId) ? (int) $set->brandId : 0;
+
+        // Brand → Delivery → Project is canonical: when the set has a project, derive its brand
+        // + delivery LIVE from the project's current chain (PCM_Hierarchy) so reassigning the
+        // project (or its delivery/brand) moves the set with it. Legacy sets with no project
+        // chain fall back to the brand/delivery stored on the set.
+        $chain        = class_exists('PCM_Hierarchy') ? PCM_Hierarchy::for_project((int) ($set->projectId ?? 0)) : array();
+        $brand_id     = !empty($chain['brandId']) ? (int) $chain['brandId'] : (!empty($set->brandId) ? (int) $set->brandId : 0);
+        $eff_delivery = !empty($chain['deliveryId']) ? (int) $chain['deliveryId'] : (!empty($set->deliveryId) ? (int) $set->deliveryId : 0);
 
         $brand_name = '';
         if ($brand_id > 0) {
@@ -842,24 +860,22 @@ class PCM_Approvals_Service
             $brand_name = $brand ? (string) $brand->name : '';
         }
 
-        // Delivery for the set: prefer the EXPLICIT deliveryId chosen in the
-        // share dialog (v1.20); fall back to the latest delivery linked to the
-        // set's brand for older sets.
         $delivery_name = '';
         $delivery_id   = 0;
         $project_name  = '';
-        $project_id    = 0;
+        $project_id    = (int) ($set->projectId ?? 0); // canonical: the set's own project
         $assignees     = '';
         $delivery      = null;
         $deliveries_t  = PCM_Schema::table('deliveries');
-        if (!empty($set->deliveryId)) {
+        if ($eff_delivery > 0) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $delivery = $wpdb->get_row($wpdb->prepare(
                 "SELECT id, name, projectId FROM {$deliveries_t} WHERE id = %d",
-                (int) $set->deliveryId
+                $eff_delivery
             ));
         }
-        if (!$delivery && $brand_id > 0) {
+        if (!$delivery && $brand_id > 0 && $project_id === 0) {
+            // Legacy fallback (set has no project): latest delivery linked to the brand.
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $delivery = $wpdb->get_row($wpdb->prepare(
                 "SELECT id, name, projectId FROM {$deliveries_t}
@@ -873,14 +889,10 @@ class PCM_Approvals_Service
             $delivery_name = (string) $delivery->name;
             $delivery_id   = (int) $delivery->id;
 
-            if (!empty($delivery->projectId)) {
+            // The project name is resolved from the canonical $project_id below; only borrow the
+            // delivery's legacy projectId when the set itself has no project.
+            if ($project_id === 0 && !empty($delivery->projectId)) {
                 $project_id = (int) $delivery->projectId;
-                $projects_t = PCM_Schema::table('projects');
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                $project_name = (string) ($wpdb->get_var($wpdb->prepare(
-                    "SELECT name FROM {$projects_t} WHERE id = %d",
-                    (int) $delivery->projectId
-                )) ?? '');
             }
 
             $assignments_t = PCM_Schema::table('delivery_assignments');
@@ -893,6 +905,17 @@ class PCM_Approvals_Service
                 (int) $delivery->id
             ));
             $assignees = implode(', ', array_filter(array_map('strval', $names ?: array())));
+        }
+
+        // Resolve the project name from the canonical project id (set's own project, or the
+        // delivery's legacy project as a fallback).
+        if ($project_id > 0) {
+            $projects_t = PCM_Schema::table('projects');
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $project_name = (string) ($wpdb->get_var($wpdb->prepare(
+                "SELECT name FROM {$projects_t} WHERE id = %d",
+                $project_id
+            )) ?? '');
         }
 
         $share_url = self::build_share_url((string) $set->token);
