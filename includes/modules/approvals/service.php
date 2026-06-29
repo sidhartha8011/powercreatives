@@ -687,13 +687,24 @@ class PCM_Approvals_Service
 
         $share_url = self::build_share_url((string) $set->token);
 
+        // Client email: the set's own value first; fall back to the brand's stored
+        // clientEmail so a team reply still emails the client even when the set was
+        // shared as a bare link (no email captured on the set).
+        $client_email = isset($set->clientEmail) ? (string) $set->clientEmail : '';
+        if ($client_email === '' && !empty($set->brandId)) {
+            $brand = PCM_DB::get_brand_by_id((int) $set->brandId, (int) $set->userId);
+            if ($brand && !empty($brand->clientEmail)) {
+                $client_email = (string) $brand->clientEmail;
+            }
+        }
+
         $context = array(
             'setId'       => (int) $set->id,
             'setName'     => (string) $set->name,
             'token'       => (string) $set->token,
             'brandId'     => !empty($set->brandId) ? (int) $set->brandId : null,
             'brandName'   => (string) ($snapshot['brandName'] ?? ''),
-            'clientEmail' => isset($set->clientEmail) ? (string) $set->clientEmail : '',
+            'clientEmail' => $client_email,
             'shareUrl'    => $share_url,
         );
 

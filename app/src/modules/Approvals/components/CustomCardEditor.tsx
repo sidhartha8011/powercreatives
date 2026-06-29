@@ -19,6 +19,7 @@ import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon, ImagePlus, PenLine, Brush } from 'lucide-react';
 
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
+import { WriterBubbleMenu } from '@/modules/Writer/components/WriterBubbleMenu';
 import { ImageAnnotator } from './ImageAnnotator';
 import { CardDrawLayer } from './CardDrawLayer';
 
@@ -176,6 +177,10 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
         {/* Positioned wrapper so the draw layer + overlay align with the content. */}
         <div ref={contentBoxRef} className="relative">
           <EditorContent editor={editor} />
+          {/* Floating formatting toolbar — the same contextual bubble menu as the Writer
+              canvas (appears on selection / empty paragraph). Image button reuses the
+              multi-select picker; drawing mode hides it to avoid overlapping the canvas. */}
+          {!drawing && <WriterBubbleMenu editor={editor} onOpenImagePicker={insertImage} />}
           {/* Saved draw layer, shown on top of the content while not actively drawing. */}
           {overlay && !drawing && (
             <img src={overlay} alt="" aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" />

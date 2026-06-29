@@ -1,5 +1,42 @@
 # Session Log
 
+## 2026-06-29 — Team-reply → client email: already built + brand-email fallback [/build]
+- **Finding:** the requested feature already exists. Team reply (admin board → `/approvals/sets/{id}/reply`
+  → `add_team_reply` → `add_team_comment` → `append_comment(..., APPROVAL_COMMENT_TEAM_REPLY)`) calls
+  `PCM_Automation_Engine::dispatch(TEAM_REPLY)`, which synthesizes a default **email** rule
+  (`EVENT_CHANNELS[TEAM_REPLY]=['email']`) → `render_email_for_event` → `PCM_Automation_Templates::team_reply`
+  → Brevo, sent to `clientEmail`. Brevo channel id is `email`; both channels registered in `boot()`.
+- **Gap fixed (`approvals/service.php` `build_event_context`):** `clientEmail` came ONLY from the set, so a
+  set shared as a bare link (no email captured) silently sent nothing. Added a fallback to the brand's
+  stored `clientEmail` (`PCM_DB::get_brand_by_id`, `SELECT *` so the column is present), guarded to run
+  only when the set's value is empty + a brandId exists.
+- **Why it may have looked broken:** commenting on the PUBLIC review page is a CLIENT comment (→ team
+  notification), not a team reply; team replies happen in the admin board. Also requires Brevo configured
+  + a client email somewhere.
+- **Who did what:** investigation + one-line backend fix — inline, no subagents.
+- **Verified:** `php -l` clean; reply route → 403 (registered+gated); brand getter confirmed to select
+  `clientEmail`. Live email not exercisable here (no Brevo creds / can't drive the site). Note: `composer
+  test` not runnable on this box — the new conditional `get_brand_by_id` call may need a mock in any
+  build_event_context-touching unit test.
+
+## 2026-06-29 — Approvals custom card: Writer's floating bubble-menu toolbar [/build]
+- **Want:** the Writer canvas's floating formatting toolbar (H1–H4, B/I/U/S, code, align,
+  lists, quote, hr, image, link, highlight, super/subscript, undo/redo) to also appear in the
+  Approvals custom-card canvas.
+- **Change (`Approvals/components/CustomCardEditor.tsx`):** reused the existing
+  `WriterBubbleMenu` component (`modules/Writer/components/WriterBubbleMenu.tsx`) verbatim —
+  rendered it inside the editor wrapper, wired its image button to the multi-select
+  `insertImage`, hidden while the whole-card Draw layer is active. No new component, no new dep.
+- **Dialog safety checked:** the card editor lives in a Radix Dialog; `@tiptap/extension-bubble-menu`
+  appends the menu to `editor.view.dom.parentElement` (INSIDE the dialog), so pointer-events stay
+  `auto` and it doesn't trip the dialog's outside-close — no portal/guard hacks needed. Floating
+  UI flip handles top-edge clipping. Shared `getEditorExtensions` already provides every command
+  the menu calls (underline/textAlign/highlight/super/subscript/link verified present).
+- **Who did what:** single-file reuse — inline, no subagents.
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  (4,543,383). Couldn't click-test live (Chrome on macOS; site on Windows). The static custom-card
+  toolbar (image/add-images/annotate/draw + basic formatting) was kept — bubble menu is additive.
+
 ## 2026-06-29 — Approvals custom card: "Add images" append button [/task]
 - **Why:** "Insert image" inserts at the cursor; after an insert the cursor sits on the block
   image as a NodeSelection, so clicking it again replaces that image. User wanted a dedicated
