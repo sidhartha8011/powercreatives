@@ -327,6 +327,7 @@ class PCM_SEO_Service
         return array_values(array_map(static function ($l, $i) {
             $l = is_array($l) ? $l : array();
             $l['id'] = (int) $i;
+            $l['editable'] = true; // local links live in post_content → always editable
             return $l;
         }, $links, array_keys($links)));
     }
@@ -1018,10 +1019,20 @@ class PCM_SEO_Service
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
             return array();
         }
-        $content = (string) ($res['body']['content']['raw'] ?? $res['body']['content']['rendered'] ?? '');
-        $from    = (string) ($res['body']['link'] ?? $site->url);
-        $links   = self::scan_link_details($content, $from, (string) $site->url);
-        return array_values(array_map(static function ($l, $i) { $l['id'] = (int) $i; return $l; }, $links, array_keys($links)));
+        $from = (string) ($res['body']['link'] ?? $site->url);
+        $raw  = (string) ($res['body']['content']['raw'] ?? '');
+        // Editable links live in the post's editable content (raw). When raw is empty
+        // (a page-builder / block-stored layout), fall back to rendered HTML for VISIBILITY
+        // but flag those links non-editable — so the popup shows them read-only instead of
+        // letting a Save fail later as "link not found" / "not editable".
+        $editable = ($raw !== '');
+        $content  = $editable ? $raw : (string) ($res['body']['content']['rendered'] ?? '');
+        $links    = self::scan_link_details($content, $from, (string) $site->url);
+        return array_values(array_map(static function ($l, $i) use ($editable) {
+            $l['id']       = (int) $i;
+            $l['editable'] = $editable;
+            return $l;
+        }, $links, array_keys($links)));
     }
 
     /** Fetch raw content, mutate the indexed link's <a> HTML via $build, PUT it back, re-read. */

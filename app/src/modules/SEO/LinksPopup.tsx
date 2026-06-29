@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useState, type PointerEvent } from 'react';
-import { ExternalLink, Unlink, Loader2, Trash2, RefreshCw } from 'lucide-react';
+import { ExternalLink, Unlink, Loader2, Trash2, RefreshCw, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -35,7 +35,12 @@ interface LinkRow {
   status: number;
   kind: 'internal' | 'external';
   broken: boolean;
+  /** False when the link lives outside the post's editable content (e.g. a page-builder
+   *  layout) — shown read-only because a rewrite can't reach it. Defaults to editable. */
+  editable?: boolean;
 }
+
+const isEditable = (l: LinkRow) => l.editable !== false;
 
 interface LinksPopupProps {
   open: boolean;
@@ -186,13 +191,13 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   };
 
   const removeSelected = async () => {
-    await removeLinks(filtered.filter((l) => selected.has(l.id)).map((l) => l.html));
+    await removeLinks(filtered.filter((l) => selected.has(l.id) && isEditable(l)).map((l) => l.html));
     toast.success('Removed selected links');
   };
 
-  // One-click fix for dead links: unwrap every broken link (keeps the anchor text).
+  // One-click fix for dead links: unwrap every (editable) broken link (keeps the anchor text).
   const removeAllBroken = async () => {
-    const htmls = filtered.map((l) => l.html);
+    const htmls = filtered.filter(isEditable).map((l) => l.html);
     if (htmls.length === 0) return;
     if (!window.confirm(`Remove all ${htmls.length} dead link(s)? This unwraps each broken <a> (the text stays).`)) return;
     await removeLinks(htmls);
@@ -223,9 +228,12 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
 
   const toggleOne = (id: number) =>
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
+  // Only editable links are selectable / bulk-removable.
+  const selectable = filtered.filter(isEditable);
+  const allSelected = selectable.length > 0 && selectable.every((l) => selected.has(l.id));
   const toggleAll = () =>
-    setSelected(allSelected ? new Set() : new Set(filtered.map((l) => l.id)));
+    setSelected(allSelected ? new Set() : new Set(selectable.map((l) => l.id)));
+  const hasReadOnly = filtered.some((l) => !isEditable(l));
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -248,6 +256,17 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
               {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlink className="h-3.5 w-3.5" />}
               Remove all dead links
             </Button>
+          </div>
+        )}
+
+        {/* Some links live outside the editable post content (page-builder / theme layout). */}
+        {!loading && hasReadOnly && (
+          <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Some links sit in a page-builder or theme layout, not the editable post content — they're shown
+              <span className="font-medium"> read-only</span>. Edit those on the site itself.
+            </span>
           </div>
         )}
 
@@ -290,12 +309,22 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
               <TableBody>
                 {filtered.map((l) => {
                   const rowBusy = busyIdx === l.id || bulkBusy;
+                  const editable = isEditable(l);
+                  const roTitle = 'Read-only — this link lives in a page-builder or theme layout, not the editable post content. Edit it on the site.';
                   return (
                     <TableRow key={l.id} className="hover:bg-muted/60">
-                      <TableCell className="text-center"><Checkbox checked={selected.has(l.id)} onCheckedChange={() => toggleOne(l.id)} aria-label="Select link" /></TableCell>
-                      <TableCell><EditableTextCell value={l.anchor} placeholder="(no text)" onSave={(v) => saveField(l, 'anchor', v)} /></TableCell>
+                      <TableCell className="text-center"><Checkbox checked={selected.has(l.id)} disabled={!editable} onCheckedChange={() => toggleOne(l.id)} aria-label="Select link" /></TableCell>
+                      <TableCell>
+                        {editable
+                          ? <EditableTextCell value={l.anchor} placeholder="(no text)" onSave={(v) => saveField(l, 'anchor', v)} />
+                          : <div className="truncate" title={l.anchor}>{l.anchor || <span className="text-muted-foreground/50">(no text)</span>}</div>}
+                      </TableCell>
                       <TableCell className="text-muted-foreground"><div className="truncate" title={l.from}>{l.from}</div></TableCell>
-                      <TableCell><EditableTextCell value={l.to} onSave={(v) => saveField(l, 'to', v)} /></TableCell>
+                      <TableCell>
+                        {editable
+                          ? <EditableTextCell value={l.to} onSave={(v) => saveField(l, 'to', v)} />
+                          : <div className="truncate" title={l.to}>{l.to}</div>}
+                      </TableCell>
                       <TableCell className="text-muted-foreground"><div className="truncate font-mono text-[10px]" title={l.html}>{l.html}</div></TableCell>
                       <TableCell className="text-center"><StatusCell link={l} /></TableCell>
                       <TableCell>
@@ -303,9 +332,15 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
                           <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => window.open(l.to, '_blank', 'noopener,noreferrer')} title="Open link in a new tab">
                             <ExternalLink className="h-3 w-3" />
                           </Button>
-                          <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-destructive" disabled={rowBusy} onClick={() => remove(l)} title="Remove link">
-                            {busyIdx === l.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Unlink className="h-3 w-3" />}
-                          </Button>
+                          {editable ? (
+                            <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-destructive" disabled={rowBusy} onClick={() => remove(l)} title="Remove link">
+                              {busyIdx === l.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Unlink className="h-3 w-3" />}
+                            </Button>
+                          ) : (
+                            <span className="inline-flex h-7 w-7 items-center justify-center text-muted-foreground/50" title={roTitle}>
+                              <Lock className="h-3 w-3" />
+                            </span>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>

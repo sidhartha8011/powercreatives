@@ -1,5 +1,65 @@
 # Session Log
 
+## 2026-06-29 — Approvals custom card: "Add images" append button [/task]
+- **Why:** "Insert image" inserts at the cursor; after an insert the cursor sits on the block
+  image as a NodeSelection, so clicking it again replaces that image. User wanted a dedicated
+  button that appends without overwriting.
+- **Change (`Approvals/components/CustomCardEditor.tsx`):** new toolbar button (ImagePlus icon,
+  next to Insert image) → `appendImages`, which multi-selects from the media library and inserts
+  at the END of the doc via `insertContentAt(editor.state.doc.content.size, nodes)`. Never
+  replaces a selection; repeated clicks keep stacking images (array-like). Existing "Insert
+  image" (insert-at-cursor) left unchanged.
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  (4,543,264); `Add images (append` marker in the bundle. Couldn't click-test live (Chrome on
+  macOS; site on Windows).
+
+## 2026-06-29 — Approvals custom card: multi-image insert ACTUALLY works [/build]
+- **Follow-up to the earlier /task today.** That fix enabled multi-SELECT in wp.media but the
+  insert still collapsed to one image. Root cause: the Image extension is block-level
+  (`editorExtensions.ts` → `inline:false`); a block image inserts as an atom **NodeSelection**,
+  so looping `setImage().run()` per image made each insert REPLACE the previously-selected one —
+  only the last survived.
+- **Fix (`Approvals/components/CustomCardEditor.tsx`):** insert all images in ONE transaction as
+  a fragment — `editor.chain().focus().insertContent(images.map(i => ({type:'image', attrs:{src,alt}}))).run()`.
+  Applied to BOTH the media-library picker (`insertImage`) and paste/drop (`insertImageFiles`,
+  which now reads all files via `Promise.all` then inserts them together). Node name `'image'`
+  confirmed from the shared extension.
+- **Who did what:** single-file, focused change — done inline (no subagents; not parallel/
+  reading-heavy enough to delegate).
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  (4,542,755). Logic verified by the ProseMirror block-atom/NodeSelection reasoning above;
+  couldn't click-test live (Chrome on macOS, site on this Windows box).
+
+## 2026-06-29 — Approvals custom card: insert multiple images [/task]
+- **Problem:** the Custom Card editor's "Insert image" opened the WP media library with
+  `multiple: false`, so only one image could be added at a time.
+- **Fix (`Approvals/components/CustomCardEditor.tsx`):** renamed `pickImage`→`pickImages`
+  with a `multiple` flag; the callback now receives an ARRAY of `{url, alt}` (reads the whole
+  `selection.toJSON()`, not just `.first()`). "Insert image" opens in multi-select mode and
+  inserts every picked image in order; "Annotate" stays single (`images[0]`). Paste/drop
+  (`insertImageFiles`) already looped over multiple files — unchanged.
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  (4,542,402); `Use images` marker in the bundle; no stale `pickImage` refs.
+
+## 2026-06-29 — SEO link inspector: fix remote edit (editable flag) [/task]
+- **Problem:** editing a link on a CONNECTED site often failed. Root cause: an asymmetry —
+  `remote_get_links` (popup + count) listed links from `content.raw ?? rendered`, but the
+  editor (`remote_rewrite_link_content`) uses `raw` only. On page-builder/block pages (empty
+  `raw`), the popup showed RENDERED links that can't be rewritten → Save failed (422/404).
+- **Fix (backend `seo/service.php`):** each link now carries an `editable` flag — local
+  `get_post_links` → always `true`; `remote_get_links` → `true` only when the link came from
+  `content.raw` (raw present), else lists rendered links flagged `editable:false` for
+  visibility. (`remote_rewrite_link_content`'s 422/404 kept as a server-side safety net.)
+- **Fix (frontend `SEO/LinksPopup.tsx`):** non-editable links render read-only — Anchor/To
+  shown as static text (no inline edit), checkbox disabled, a Lock icon replaces Remove, and
+  a banner explains "these live in a page-builder/theme layout — edit on the site." Redirect
+  (open) still works. Bulk remove / select-all only act on editable links.
+- **Note:** for genuinely-editable links the edit already worked; if a remote still rejects a
+  `content` write (security plugin / REST lock), the existing 409/502 messages surface it.
+- **Verified:** `php -l` clean; `npm run check` 0 new errors (56 baseline); `npm run build` OK;
+  served==build (4,542,109); `editable` flag in service.php + read-only hint in the bundle.
+  Couldn't drive the live connected site (Chrome on macOS; site on this Windows box).
+
 ## 2026-06-29 — Notion popup: restore list markers (bullets/numbers) [/task]
 - **Bug:** regression from the Notion redesign — bullet/numbered list markers vanished in
   the `.pcm-notion-prose` viewer. Cause: dropping the Tailwind `prose` class left Tailwind's

@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
-import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon, PenLine, Brush } from 'lucide-react';
+import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon, ImagePlus, PenLine, Brush } from 'lucide-react';
 
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
 import { ImageAnnotator } from './ImageAnnotator';
@@ -69,14 +69,21 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   // straight from the clipboard onto the card. Uses a ref because the editor isn't
   // created yet when these extensions are built.
   const insertImageFiles = (files: File[]) => {
-    files.forEach((file) => {
-      if (!file.type.startsWith('image/')) return;
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+    // Read every file, then insert ALL images in ONE transaction. Block images are atom
+    // NodeSelections, so inserting them one-by-one makes each replace the previous; a single
+    // insertContent with an array adds them as a fragment so they all land in order.
+    Promise.all(imageFiles.map((file) => new Promise<{ src: string; alt: string } | null>((resolve) => {
       const reader = new FileReader();
-      reader.onload = () => {
-        const url = reader.result as string;
-        if (url) editorRef.current?.chain().focus().setImage({ src: url, alt: file.name || 'Pasted image' }).run();
-      };
+      reader.onload = () => resolve(reader.result ? { src: String(reader.result), alt: file.name || 'Pasted image' } : null);
+      reader.onerror = () => resolve(null);
       reader.readAsDataURL(file);
+    }))).then((results) => {
+      const nodes = results
+        .filter((r): r is { src: string; alt: string } => r !== null)
+        .map((r) => ({ type: 'image', attrs: { src: r.src, alt: r.alt } }));
+      if (nodes.length) editorRef.current?.chain().focus().insertContent(nodes).run();
     });
   };
 
@@ -101,18 +108,41 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   }, [editor]);
 
   // Open the WordPress media library and hand the chosen image URL to a callback.
-  const pickImage = (onPick: (url: string, alt?: string) => void) => {
+  // Open the WordPress media library. With `multiple`, the user can pick several images
+  // at once (Insert image); single mode is used for Annotate (one image at a time).
+  const pickImages = (onPick: (images: { url: string; alt: string }[]) => void, multiple = false) => {
     if (typeof wp === 'undefined' || !wp?.media) return;
-    const frame = wp.media({ title: 'Select or upload image', button: { text: 'Use image' }, multiple: false });
+    const frame = wp.media({
+      title: multiple ? 'Select or upload images' : 'Select or upload image',
+      button: { text: multiple ? 'Use images' : 'Use image' },
+      multiple,
+    });
     frame.on('select', () => {
-      const att = frame.state().get('selection').first()?.toJSON();
-      if (att?.url) onPick(att.url, att.alt || '');
+      const items = frame.state().get('selection').toJSON();
+      const images = (Array.isArray(items) ? items : [])
+        .filter((a: any) => a?.url)
+        .map((a: any) => ({ url: String(a.url), alt: String(a.alt || '') }));
+      if (images.length) onPick(images);
     });
     frame.open();
   };
 
-  const insertImage = () => pickImage((url, alt) => editor?.chain().focus().setImage({ src: url, alt }).run());
-  const annotateImage = () => pickImage((url) => setAnnotateUrl(url));
+  // Insert all picked images in ONE transaction (as a fragment). Inserting block images one
+  // at a time makes each replace the previous (atom NodeSelection), so only one would survive.
+  const insertImage = () => pickImages(
+    (images) => editor?.chain().focus()
+      .insertContent(images.map((img) => ({ type: 'image', attrs: { src: img.url, alt: img.alt } })))
+      .run(),
+    true,
+  );
+  // "Add images" — always APPENDS at the end of the document, so it never replaces a selected
+  // image. Repeated clicks keep stacking images (array-like), regardless of cursor position.
+  const appendImages = () => pickImages((images) => {
+    if (!editor) return;
+    const nodes = images.map((img) => ({ type: 'image', attrs: { src: img.url, alt: img.alt } }));
+    editor.chain().focus().insertContentAt(editor.state.doc.content.size, nodes).run();
+  }, true);
+  const annotateImage = () => pickImages((images) => setAnnotateUrl(images[0].url));
 
   // Snapshot the content box size, then open the whole-card draw layer over it.
   const startDraw = () => {
@@ -138,6 +168,7 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
         <ToolbarButton title="Numbered list" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered className="h-4 w-4" /></ToolbarButton>
         <span className="mx-1 h-5 w-px bg-border" />
         <ToolbarButton title="Insert image" onClick={insertImage}><ImageIcon className="h-4 w-4" /></ToolbarButton>
+        <ToolbarButton title="Add images (append — keeps the existing ones)" onClick={appendImages}><ImagePlus className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title="Annotate an image" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title="Draw on the whole card" active={drawing} onClick={startDraw}><Brush className="h-4 w-4" /></ToolbarButton>
       </div>

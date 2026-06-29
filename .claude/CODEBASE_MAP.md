@@ -702,7 +702,10 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
     `.../content/{post}/links` (GET, on-demand parse of remote raw content) +
     `.../links/{idx}` (update) + `.../links/{idx}/remove` — `remote_get_links` /
     `remote_update_link` / `remote_remove_link` (fetch via connector `context=edit`,
-    rewrite the `<a>`, PUT back); same `LinksPopup` UI, 2026-06-26,
+    rewrite the `<a>`, PUT back); same `LinksPopup` UI, 2026-06-26. Each link carries an
+    `editable` flag (remote: true only when it lives in `content.raw`; rendered-only links
+    from page-builder/block layouts are listed `editable:false` and shown read-only in the
+    popup — 2026-06-29 fix for "remote edit not working"),
     `.../content/{post}/duplicate` → `remote_duplicate` (clone as draft "(Copy)"
     with content + SEO meta; bulk Duplicate now works on remote, 2026-06-26)
     (`remote_*` methods in `seo/service.php`; frontend `hooks/useRemoteSeoContent.ts`).
