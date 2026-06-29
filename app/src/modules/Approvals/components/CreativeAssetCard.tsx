@@ -58,7 +58,7 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overl
     content: content || '<p></p>',
     editable: false,
     editorProps: {
-      attributes: { class: 'outline-none prose prose-sm max-w-none' },
+      attributes: { class: 'outline-none' },
     },
   });
 
@@ -73,74 +73,68 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overl
     };
   }, [onClose]);
 
+  // Notion-style document modal: borderless top bar (breadcrumb + close), a single
+  // centred 708px column, large title, optional "properties", then the rendered body.
   return createPortal(
     <div
-      className="pcm-lightbox"
+      className="pcm-notion-overlay"
       onClick={onClose}
       role="dialog"
-      aria-label="Article preview"
-      style={{ alignItems: 'flex-start', paddingTop: '3vh' }}
+      aria-label="Document preview"
     >
-      <div
-        className="pcm-article-viewer"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#ffffff',
-          borderRadius: '16px',
-          maxWidth: '780px',
-          width: '90vw',
-          maxHeight: '90vh',
-          overflow: 'auto',
-          padding: '2.5rem 2rem',
-          position: 'relative',
-          border: '1px solid rgba(0,0,0,0.08)',
-          boxShadow: '0 24px 60px rgba(0,0,0,0.18)',
-        }}
-      >
-        <button
-          type="button"
-          className="pcm-lightbox-close"
-          onClick={onClose}
-          aria-label="Close preview"
-          style={{ position: 'absolute', top: '1rem', right: '1rem' }}
-        >
-          <X className="w-5 h-5" />
-        </button>
+      <div className="pcm-notion-modal" onClick={(e) => e.stopPropagation()}>
+        {/* Top bar — icons only, no border (Notion peek) */}
+        <div className="pcm-notion-topbar">
+          <span className="pcm-notion-crumb">
+            <FileText className="w-[15px] h-[15px]" style={{ opacity: 0.55, flexShrink: 0 }} />
+            {title}
+          </span>
+          <button
+            type="button"
+            className="pcm-notion-iconbtn"
+            onClick={onClose}
+            aria-label="Close preview"
+          >
+            <X className="w-[18px] h-[18px]" />
+          </button>
+        </div>
 
-        {/* Article title */}
-        <h1 style={{
-          fontSize: '1.65rem',
-          fontWeight: 700,
-          color: '#111827',
-          lineHeight: 1.3,
-          marginBottom: '0.5rem',
-        }}>{title}</h1>
+        {/* Page */}
+        <div className="pcm-notion-page">
+          <div className="pcm-notion-col">
+            <h1 className="pcm-notion-title">{title}</h1>
 
-        {/* Meta info bar */}
-        {(metaTitle || metaDescription) && (
-          <div style={{
-            fontSize: '0.75rem',
-            color: '#6b7280',
-            marginBottom: '1.5rem',
-            borderBottom: '1px solid rgba(0,0,0,0.08)',
-            paddingBottom: '1rem',
-          }}>
-            {metaTitle && <div><strong>Meta Title:</strong> {metaTitle}</div>}
-            {metaDescription && <div style={{ marginTop: '0.25rem' }}><strong>Meta Description:</strong> {metaDescription}</div>}
+            {/* Properties (article meta) — Notion property rows */}
+            {(metaTitle || metaDescription) && (
+              <div className="pcm-notion-props">
+                {metaTitle && (
+                  <div className="pcm-notion-prop">
+                    <span className="pcm-notion-prop-label">Meta title</span>
+                    <span className="pcm-notion-prop-value">{metaTitle}</span>
+                  </div>
+                )}
+                {metaDescription && (
+                  <div className="pcm-notion-prop">
+                    <span className="pcm-notion-prop-label">Meta description</span>
+                    <span className="pcm-notion-prop-value">{metaDescription}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tiptap read-only rendered content (+ persistent draw layer on top) */}
+            <div className="pcm-notion-prose" style={{ position: 'relative' }}>
+              {editor && <EditorContent editor={editor} />}
+              {overlay && (
+                <img
+                  src={overlay}
+                  alt=""
+                  aria-hidden
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+                />
+              )}
+            </div>
           </div>
-        )}
-
-        {/* Tiptap read-only rendered content (+ persistent draw layer on top) */}
-        <div className="pcm-article-content" style={{ color: '#374151', lineHeight: 1.7, fontSize: '0.95rem', position: 'relative' }}>
-          {editor && <EditorContent editor={editor} />}
-          {overlay && (
-            <img
-              src={overlay}
-              alt=""
-              aria-hidden
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-            />
-          )}
         </div>
       </div>
     </div>,

@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-26 · verified 2026-06-26 (read-only; Bash classifier was down so git HEAD not re-checked — last known HEAD `fb1281f`, but the working tree has uncommitted 2026-06-25/26 work: see below). SINCE THE LAST MAP: (1) **Global table kit** — `@/components/ui/data-table.tsx` (config-driven DataTable, used by Sites) + the SEO spreadsheet building blocks moved to shared: `@/components/ui/column-head.tsx`, `@/hooks/useColumnLayout.ts`, `@/hooks/useColumnFilters.ts` (generic). (2) **Custom approval cards** (4th asset type). (3) SEO remote `duplicate` route. (4) Shortcode page auto-created. NOTE: SEO + Approvals are under active churn — verify specifics against the code._
+_Last updated: 2026-06-29 · verified 2026-06-29 (read-only). NEWEST (2026-06-26, uncommitted): **SEO link inspector** — bulk "Scan links" button + clickable Internal/External/Dead count cells → `SEO/LinksPopup.tsx` (edit/remove links, rewrites post content), local + remote; see *SEO suite → New local features / Remote-site SEO*. PRIOR SINCE THE LAST MAP: (1) **Global table kit** — `@/components/ui/data-table.tsx` (config-driven DataTable, used by Sites) + the SEO spreadsheet building blocks moved to shared: `@/components/ui/column-head.tsx`, `@/hooks/useColumnLayout.ts`, `@/hooks/useColumnFilters.ts` (generic). (2) **Custom approval cards** (4th asset type). (3) SEO remote `duplicate` route. (4) Shortcode page auto-created. NOTE: SEO + Approvals are under active churn — verify specifics against the code._
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -21,7 +21,7 @@ _Last updated: 2026-06-26 · verified 2026-06-26 (read-only; Bash classifier was
 | Name / slug / text-domain | Power Creatives / `power-creatives` |
 | Main file | `power-creatives.php` |
 | Version (`PCM_VERSION`) | **1.7.0** |
-| DB version (`PCM_DB_VERSION`) | **1.28.0** (separate from plugin version; 1.28.0 added `deliveries.seoSiteId`) |
+| DB version (`PCM_DB_VERSION`) | **1.31.0** (separate from plugin version. 1.28.0 `deliveries.seoSiteId`; **1.29.0** `projects.deliveryId` (Brand→Delivery→Project, additive + backfill `class-pcm-schema.php:1033`); **1.30.0** seeded a "email client review link on share" automation; **1.31.0** removes that rule — it double-sent vs the built-in dispatch path — idempotent, `class-pcm-activator.php:282`) |
 | Requires WP / PHP | 6.4+ / 8.1+ |
 | Const prefix | `PCM_` |
 | Composer package | `antigravity/power-creatives` (type `wordpress-plugin`) |
@@ -670,7 +670,19 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
 - **SEO SUITE COMPLETE (Phases 1–9 + 3b).** All 9 source modules ported native.
 - **New local features (post-1.27):**
   - **`scan-links`** `POST /seo/content/{id}/scan-links` (`PCM_SEO_Service::scan_links`)
-    — internal-link scan for a post.
+    — scans a post's links (internal/external/dead). As of 2026-06-26 it ALSO stores
+    **per-link details** in post meta `pcm_seo_links` (JSON: anchor/from/to/html/status/
+    kind/broken) via `scan_link_details()` (HTTP status checked, capped at 30/scan), not
+    just the counts.
+  - **Link inspector** (2026-06-26) — `GET /seo/content/{id}/links` (`get_post_links`),
+    `POST /seo/content/{id}/links/{idx}` (`update_post_link` — rewrites the `<a>` href/
+    anchor in the post content via preg + `wp_update_post`, re-scans), `POST
+    /seo/content/{id}/links/{idx}/remove` (`remove_post_link` — unwraps the `<a>`, keeps
+    text). `edit_posts` + `edit_post`. Frontend: a **"Scan links"** bulk PillButton
+    (scans every visible row), the Internal/External/Dead **count cells are clickable**
+    (open `SEO/LinksPopup.tsx` — a 7-col table select/anchor/from/to/html/status/action
+    with inline edit→Save, Redirect=open in new tab, Remove, bulk-remove, + a "Re-scan
+    this page" empty-state action). Same grid styling as the SEO table.
   - **Body editor** `GET/POST /seo/content/{id}/body` (+ `/optimize`) — read/save the
     full post body (the OptimizeModal flow now has explicit get/save body routes).
   - **LLM-info** `GET/POST /seo/llm-info` + `/seo/llm-info/build` (`build_llm_info`,
@@ -687,6 +699,10 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
   - Content: `GET/POST /seo/sites/{id}/content`, `.../content/{post}/cell`,
     `.../generate`, `.../scan-links`, `.../schema`, `.../delete`,
     `.../content/{post}/featured` (set featured image; `fb1281f`),
+    `.../content/{post}/links` (GET, on-demand parse of remote raw content) +
+    `.../links/{idx}` (update) + `.../links/{idx}/remove` — `remote_get_links` /
+    `remote_update_link` / `remote_remove_link` (fetch via connector `context=edit`,
+    rewrite the `<a>`, PUT back); same `LinksPopup` UI, 2026-06-26,
     `.../content/{post}/duplicate` → `remote_duplicate` (clone as draft "(Copy)"
     with content + SEO meta; bulk Duplicate now works on remote, 2026-06-26)
     (`remote_*` methods in `seo/service.php`; frontend `hooks/useRemoteSeoContent.ts`).

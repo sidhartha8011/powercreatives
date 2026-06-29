@@ -820,6 +820,133 @@
 }
 
 
+/* ─── Notion-style document viewer (custom + article cards) ───
+ * Portaled to <body> (outside .pcm-client-review), so these selectors are global
+ * and define their own font var. Faithful to Notion's page peek: borderless top
+ * bar, a single centred 708px text column, 40px title, warm near-black ink. */
+.pcm-notion-overlay {
+  --pcm-notion-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji";
+  --pcm-notion-ink: #37352f;
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(15, 15, 15, 0.55);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 4vh 16px;
+  cursor: default;
+  animation: pcmFadeIn .15s ease;
+}
+.pcm-notion-modal {
+  position: relative;
+  background: #ffffff;
+  width: min(977px, 94vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px rgba(15,15,15,0.05), 0 20px 60px rgba(15,15,15,0.22);
+  animation: pcmNotionIn .18s cubic-bezier(.2,.7,.3,1);
+}
+@keyframes pcmNotionIn {
+  from { opacity: 0; transform: translateY(8px) scale(.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+.pcm-notion-topbar {
+  position: sticky; top: 0; z-index: 3;
+  height: 45px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 10px 0 14px;
+  background: rgba(255,255,255,0.86);
+  backdrop-filter: blur(6px);
+}
+.pcm-notion-crumb {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--pcm-notion-font);
+  font-size: 14px; font-weight: 500;
+  color: rgba(55,53,47,0.65);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 72%;
+}
+.pcm-notion-iconbtn {
+  appearance: none; border: none; background: transparent;
+  color: rgba(55,53,47,0.6);
+  width: 28px; height: 28px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background .12s ease, color .12s ease;
+}
+.pcm-notion-iconbtn:hover { background: rgba(55,53,47,0.08); color: rgba(55,53,47,0.9); }
+
+.pcm-notion-page { padding: 6px 0 22vh; }
+.pcm-notion-col { max-width: 708px; margin: 0 auto; padding: 0 24px; }
+@media (min-width: 820px) { .pcm-notion-col { padding: 0; } }
+
+.pcm-notion-title {
+  font-family: var(--pcm-notion-font);
+  font-size: 40px; line-height: 1.2; font-weight: 700;
+  letter-spacing: -0.018em;
+  color: var(--pcm-notion-ink);
+  margin: 34px 0 6px;
+  word-break: break-word;
+}
+
+.pcm-notion-props {
+  display: flex; flex-direction: column; gap: 7px;
+  margin: 4px 0 18px;
+}
+.pcm-notion-prop {
+  display: flex; align-items: flex-start; gap: 10px;
+  font-family: var(--pcm-notion-font); font-size: 14px; line-height: 1.5;
+}
+.pcm-notion-prop-label { flex: 0 0 128px; color: rgba(55,53,47,0.5); }
+.pcm-notion-prop-value { color: var(--pcm-notion-ink); }
+
+/* Notion typography for the rendered (Tiptap) document body. */
+.pcm-notion-prose {
+  font-family: var(--pcm-notion-font);
+  color: var(--pcm-notion-ink);
+  font-size: 16px; line-height: 1.5;
+}
+.pcm-notion-prose .ProseMirror { outline: none; }
+.pcm-notion-prose h1,
+.pcm-notion-prose h2,
+.pcm-notion-prose h3,
+.pcm-notion-prose h4 {
+  color: var(--pcm-notion-ink); font-weight: 600; line-height: 1.3; margin: 1.4em 0 2px;
+}
+.pcm-notion-prose h1 { font-size: 1.875em; }
+.pcm-notion-prose h2 { font-size: 1.5em; }
+.pcm-notion-prose h3 { font-size: 1.25em; }
+.pcm-notion-prose h4 { font-size: 1.05em; }
+.pcm-notion-prose p { margin: 1px 0; padding: 3px 0; }
+/* Tailwind's base reset sets `ul,ol { list-style: none }`; we dropped the `prose`
+ * class, so restore the markers explicitly (disc/decimal + Notion's nested glyphs). */
+.pcm-notion-prose ul,
+.pcm-notion-prose ol { margin: 2px 0; padding-left: 1.7em; list-style-position: outside; }
+.pcm-notion-prose ul { list-style-type: disc; }
+.pcm-notion-prose ol { list-style-type: decimal; }
+.pcm-notion-prose ul ul { list-style-type: circle; }
+.pcm-notion-prose ul ul ul { list-style-type: square; }
+.pcm-notion-prose li { padding: 2px 0; }
+.pcm-notion-prose li::marker { color: rgba(55,53,47,0.5); }
+.pcm-notion-prose a {
+  color: inherit; text-decoration: underline;
+  text-decoration-color: rgba(55,53,47,0.35); text-underline-offset: 2px;
+}
+.pcm-notion-prose strong { font-weight: 600; }
+.pcm-notion-prose blockquote {
+  margin: 8px 0; padding-left: 14px;
+  border-left: 3px solid rgba(55,53,47,0.85); color: var(--pcm-notion-ink);
+}
+.pcm-notion-prose hr { border: none; border-top: 1px solid rgba(55,53,47,0.16); margin: 14px 0; }
+.pcm-notion-prose img { max-width: 100%; height: auto; border-radius: 4px; margin: 6px 0; }
+.pcm-notion-prose code {
+  background: rgba(135,131,120,0.15); color: #eb5757;
+  border-radius: 4px; padding: .2em .4em; font-size: 85%;
+  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+.pcm-notion-prose pre { background: #f7f6f3; border-radius: 6px; padding: 16px; overflow: auto; margin: 8px 0; }
+.pcm-notion-prose pre code { background: none; color: inherit; padding: 0; font-size: 85%; }
+
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * COMMENT INSPECTOR — Side drawer panel
  * Uses the same --ink palette, font-family, and design tokens

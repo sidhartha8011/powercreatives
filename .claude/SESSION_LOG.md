@@ -1,5 +1,35 @@
 # Session Log
 
+## 2026-06-29 — Notion popup: restore list markers (bullets/numbers) [/task]
+- **Bug:** regression from the Notion redesign — bullet/numbered list markers vanished in
+  the `.pcm-notion-prose` viewer. Cause: dropping the Tailwind `prose` class left Tailwind's
+  base reset (`ul,ol { list-style: none }`) in effect, and the new CSS set `padding-left`
+  but no `list-style-type`.
+- **Fix (`client-review.css`):** `.pcm-notion-prose ul { list-style-type: disc }` +
+  `ol { decimal }` + nested `ul ul { circle }` / `ul ul ul { square }` + `list-style-position:
+  outside`. Selector specificity (0,1,1) beats the reset (0,0,1), so markers show.
+- **Verified:** `npm run build` OK; `index.css` served==build (292,392); rules present in the
+  bundle (`disc`/`decimal`/`circle`/`square`). Visual only — couldn't drive the live page.
+
+## 2026-06-29 — Custom-card preview popup → Notion-style redesign [/task]
+- **What:** the client-review popup that opens when you click a Custom (or Article) card
+  is `ArticleViewerDialog` in `Approvals/components/CreativeAssetCard.tsx` (the circular
+  grey X in the report screenshot = `.pcm-lightbox-close`). Redesigned it to look/feel like
+  a Notion page peek.
+- **Changes:** new modal markup — borderless sticky top bar (FileText breadcrumb + close),
+  a single centred **708px** column, **40px/700** title, article meta rendered as Notion
+  "property" rows, then the body. Dropped the Tailwind `prose prose-sm` classes on the
+  read-only editor and added a faithful Notion typography stylesheet
+  (`.pcm-notion-*` in `client-review.css`): warm near-black ink `#37352f`, system sans
+  stack, Notion heading sizes/spacing, list markers, blockquote/hr/code/img. Portaled to
+  `<body>` so the classes are global + self-define their font var. The persistent draw-layer
+  overlay (custom cards) still renders on top. Same dialog serves article cards (meta shows
+  as properties).
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  for **both** `index-writer.js` (4,540,214) and `index.css` (291,982); markers
+  `pcm-notion-modal` (css) + `pcm-notion-overlay` (js) present. Visual only — couldn't drive
+  the live review page (connected Chrome is on macOS; site is on this Windows box).
+
 ## 2026-06-19 — End-to-end verification of the session's work [/task] (no code change)
 - Backend (wp-load live runtime): 11/11 PASS — db_version 1.30.0; projects.deliveryId column;
   PCM_Hierarchy::for_project(1) → brand+delivery; approvals enrich_context + format_set_row both derive
