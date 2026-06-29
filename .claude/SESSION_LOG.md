@@ -1,5 +1,16 @@
 # Session Log
 
+## 2026-06-29 — Custom card: header hint for the contextual formatting toolbar [/build]
+- **Why:** the floating bubble-menu toolbar (added earlier) is selection-driven — it hides once you
+  start typing. Tiptap's bubble menu has no native keyboard shortcut to force-open, so the "other
+  way" is to re-select text (or click an empty line, per its `shouldShow`).
+- **Change (`Approvals/components/CustomCardEditor.tsx`):** added a right-aligned muted note in the
+  editor's toolbar header — "Select text (or click an empty line) to open the formatting toolbar" with
+  an Info icon + tooltip. `ml-auto` so it sits at the right; wraps on narrow widths.
+- **Who did what:** one-line UI addition — inline, no subagents.
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  (4,543,817); hint string present in the bundle.
+
 ## 2026-06-29 — Team-reply → client email: already built + brand-email fallback [/build]
 - **Finding:** the requested feature already exists. Team reply (admin board → `/approvals/sets/{id}/reply`
   → `add_team_reply` → `add_team_comment` → `append_comment(..., APPROVAL_COMMENT_TEAM_REPLY)`) calls
