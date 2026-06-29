@@ -226,12 +226,22 @@ export function SitesModule() {
         <h1 style={{ fontSize: typography.title, fontWeight: typography.bold, color: colors.text }}>Sites</h1>
         <Badge variant="secondary" className="ml-1">{sites.length} connected</Badge>
         <div className="flex-1" />
+        {isAdmin && (
+          <Button
+            variant="outline"
+            onClick={downloadGenericConnector}
+            title="Download the latest connector plugin (v2.0.0). To UPDATE an already-connected site, install this over the old one: on the site → Plugins → Add New → Upload Plugin → Replace current with uploaded → Activate."
+          >
+            <Download className="w-4 h-4" /> Download connector
+          </Button>
+        )}
         <Button onClick={openAdd}><Plus className="w-4 h-4" /> Add Site</Button>
       </div>
       <p className="text-xs text-muted-foreground mb-4 max-w-3xl">
         Connect your other WordPress sites to publish to them.{' '}
         {isAdmin
-          ? 'Install our connector plugin and paste the code it shows, or add one with an Application Password.'
+          ? 'Install our connector plugin and paste the code it shows, or add one with an Application Password. '
+            + 'Already connected? Page-builder link editing needs connector v2.0.0+ — use “Download connector” and reinstall it (Replace current with uploaded) to update.'
           : 'Add one with its URL and an Application Password.'}
       </p>
 

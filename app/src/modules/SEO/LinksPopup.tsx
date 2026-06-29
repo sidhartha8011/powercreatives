@@ -146,7 +146,14 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
         ? await updateLocal.mutateAsync({ id: postId, index: l.id, anchor, href } as any)
         : await updateRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, anchor, href } as any);
       applyResult(res);
-      toast.success('Link saved to the page');
+      // Remote pages are often behind a page/CDN cache (e.g. Cloudflare) — the edit saves to
+      // the post, but the cached HTML can keep showing the old link until purged. Set that
+      // expectation so a cached page isn't mistaken for the edit not working.
+      toast.success(
+        isLocal
+          ? 'Link saved to the page'
+          : 'Link saved. If the live page still shows the old link, clear its page/CDN cache (e.g. Cloudflare).',
+      );
     } catch (err: any) {
       toast.error(err?.message || 'Failed to save the link');
     } finally {

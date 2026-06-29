@@ -385,8 +385,8 @@ class PCM_SEOHub_Service
 <?php
 /**
  * Plugin Name: Power Creatives Connector
- * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, and shows a one-paste connection code.
- * Version: 1.4.0
+ * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance + any custom field, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
+ * Version: 2.0.0
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -411,6 +411,183 @@ add_action('init', function () {
         }
     }
 });
+
+// Flush known page + page-builder caches for a post so a change shows on the live page. Many
+// cache plugins purge on an editor save but SKIP programmatic/REST saves, so the hub's edit
+// persists in the DB (and the SEO scan shows it) while the cached HTML keeps serving the old
+// version. This forces the purge + triggers Cloudflare-bridge plugins (Super Page Cache for
+// Cloudflare, LiteSpeed, etc.). A bare Cloudflare proxy with NO WordPress integration can't be
+// purged from here — install the official Cloudflare plugin or purge the Cloudflare cache manually.
+function pcm_conn_purge_caches($post_id) {
+    $post_id = (int) $post_id;
+    if (function_exists('clean_post_cache'))            { clean_post_cache($post_id); }
+    if (function_exists('rocket_clean_post'))           { rocket_clean_post($post_id); }            // WP Rocket
+    if (function_exists('w3tc_flush_post'))             { w3tc_flush_post($post_id); }              // W3 Total Cache
+    if (function_exists('wp_cache_post_change'))        { wp_cache_post_change($post_id); }         // WP Super Cache
+    if (function_exists('wpfc_clear_post_cache_by_id')) { wpfc_clear_post_cache_by_id($post_id); }  // WP Fastest Cache
+    do_action('litespeed_purge_post', $post_id);
+    do_action('cache_enabler_clear_page_cache_by_post', $post_id);
+    do_action('rt_nginx_helper_purge_post', $post_id);
+    do_action('breeze_clear_all_cache');
+    do_action('siteground_optimizer_flush_cache');
+    do_action('swcfpc_purge_cache');           // Super Page Cache for Cloudflare → purges CF edge
+    do_action('autoptimize_flush_pagecache');
+    // Page builders cache their rendered CSS/HTML — clear it so edited builder data re-renders.
+    do_action('elementor/core/files/clear_cache');
+    if (class_exists('\\Elementor\\Plugin')) {
+        try { \Elementor\Plugin::$instance->files_manager->clear_cache(); } catch (\Throwable $e) {}
+    }
+    if (class_exists('FLBuilderModel') && method_exists('FLBuilderModel', 'delete_asset_cache')) {
+        try { FLBuilderModel::delete_asset_cache($post_id); } catch (\Throwable $e) {}
+    }
+    // The official Cloudflare plugin auto-purges on post transitions; nothing to call here.
+}
+// Recursively replace strings inside a meta value (which may be a JSON string, a PHP-serialized
+// array, or nested objects — page builders use all three). Counts replacements via $count.
+function pcm_conn_replace_in($val, $search, $replace, &$count) {
+    if (is_string($val)) { $c = 0; $out = str_replace($search, $replace, $val, $c); $count += $c; return $out; }
+    if (is_array($val))  { foreach ($val as $k => $v) { $val[$k] = pcm_conn_replace_in($v, $search, $replace, $count); } return $val; }
+    if (is_object($val)) { foreach (get_object_vars($val) as $k => $v) { $val->$k = pcm_conn_replace_in($v, $search, $replace, $count); } return $val; }
+    return $val;
+}
+
+// ── Universal builder-aware link replacement ────────────────────────────────────────────────
+// Pluggable: each handler DETECTS whether its builder owns a post and REGENERATES that builder's
+// cache/CSS after an edit. The URL replacement itself is universal (post_content + every custom
+// field, serialization-safe via pcm_conn_replace_in) so links update no matter how a builder
+// stores them; handlers add accurate detection + cache regeneration for clean, immediate rendering.
+interface PCM_Conn_Builder_Handler {
+    public function key();
+    public function label();
+    public function detect($post_id);     // bool — does this builder own the post?
+    public function regenerate($post_id); // clear/rebuild this builder's cache + CSS
+}
+abstract class PCM_Conn_Builder_Base implements PCM_Conn_Builder_Handler {
+    public function regenerate($post_id) {}
+    protected function meta_has($post_id, $key) {
+        $v = get_post_meta($post_id, $key, true);
+        return $v !== '' && $v !== false && $v !== null && $v !== array();
+    }
+}
+class PCM_Conn_B_Elementor extends PCM_Conn_Builder_Base {
+    public function key() { return 'elementor'; }
+    public function label() { return 'Elementor'; }
+    public function detect($post_id) { return get_post_meta($post_id, '_elementor_edit_mode', true) === 'builder' || $this->meta_has($post_id, '_elementor_data'); }
+    public function regenerate($post_id) {
+        do_action('elementor/core/files/clear_cache');
+        if (class_exists('\\Elementor\\Plugin')) { try { \Elementor\Plugin::$instance->files_manager->clear_cache(); } catch (\Throwable $e) {} }
+    }
+}
+class PCM_Conn_B_Bricks extends PCM_Conn_Builder_Base {
+    public function key() { return 'bricks'; }
+    public function label() { return 'Bricks'; }
+    public function detect($post_id) { return get_post_meta($post_id, '_bricks_editor_mode', true) === 'bricks' || $this->meta_has($post_id, '_bricks_page_content_2'); }
+    public function regenerate($post_id) {
+        delete_post_meta($post_id, '_bricks_inline_css'); // rebuilt on next render
+        if (class_exists('\\Bricks\\Assets') && method_exists('\\Bricks\\Assets', 'clear_cache_in_db')) { try { \Bricks\Assets::clear_cache_in_db(); } catch (\Throwable $e) {} }
+    }
+}
+class PCM_Conn_B_Divi extends PCM_Conn_Builder_Base {
+    public function key() { return 'divi'; }
+    public function label() { return 'Divi'; }
+    public function detect($post_id) { return get_post_meta($post_id, '_et_pb_use_builder', true) === 'on' || strpos((string) get_post_field('post_content', $post_id), '[et_pb_') !== false; }
+    public function regenerate($post_id) {
+        delete_post_meta($post_id, '_et_pb_static_css_file');
+        delete_post_meta($post_id, '_et_dynamic_cached_shortcodes');
+        delete_post_meta($post_id, '_et_dynamic_cached_attributes');
+    }
+}
+class PCM_Conn_B_WPBakery extends PCM_Conn_Builder_Base {
+    public function key() { return 'wpbakery'; }
+    public function label() { return 'WPBakery'; }
+    public function detect($post_id) { return get_post_meta($post_id, '_wpb_vc_js_status', true) === 'true' || strpos((string) get_post_field('post_content', $post_id), '[vc_row') !== false; }
+}
+class PCM_Conn_B_Oxygen extends PCM_Conn_Builder_Base {
+    public function key() { return 'oxygen'; }
+    public function label() { return 'Oxygen'; }
+    public function detect($post_id) { return $this->meta_has($post_id, 'ct_builder_shortcodes'); }
+    public function regenerate($post_id) {
+        delete_post_meta($post_id, 'ct_page_css_cache');
+        if (function_exists('oxygen_vsb_cache_universal_css')) { try { oxygen_vsb_cache_universal_css(); } catch (\Throwable $e) {} }
+    }
+}
+class PCM_Conn_B_Breakdance extends PCM_Conn_Builder_Base {
+    public function key() { return 'breakdance'; }
+    public function label() { return 'Breakdance'; }
+    public function detect($post_id) { return $this->meta_has($post_id, '_breakdance_data'); }
+    public function regenerate($post_id) {
+        if (function_exists('__breakdance_clearCachedCssForPost')) { try { __breakdance_clearCachedCssForPost($post_id); } catch (\Throwable $e) {} }
+    }
+}
+class PCM_Conn_Builder_Manager {
+    private $handlers = array();
+    public function register($h) { $this->handlers[] = $h; return $this; }
+    /** Builders that own this post (for reporting + cache regeneration). */
+    public function detect($post_id) {
+        $out = array();
+        foreach ($this->handlers as $h) { try { if ($h->detect($post_id)) { $out[] = $h; } } catch (\Throwable $e) {} }
+        return $out;
+    }
+    /** Replace every old=>new URL across post_content + ALL custom fields (serialization-safe),
+     *  regenerate detected builders' caches, purge caches, then VERIFY. Returns a step report. */
+    public function replace_links($post_id, $replacements) {
+        $report = array('replaced' => 0, 'where' => array(), 'builders' => array(), 'steps' => array(), 'verified' => false, 'remaining' => array());
+        $search = array(); $replace = array(); $olds = array();
+        foreach ($replacements as $old => $new) {
+            $old = (string) $old; $new = (string) $new;
+            if ($old === '' || $new === '' || $old === $new) { continue; }
+            $olds[] = $old; $search[] = $old; $replace[] = $new;
+            $oe = str_replace('/', '\\/', $old);
+            if ($oe !== $old) { $search[] = $oe; $replace[] = str_replace('/', '\\/', $new); }
+        }
+        if (empty($search)) { return $report; }
+        global $wpdb;
+        // 1. Post content.
+        $c = 0; $npc = str_replace($search, $replace, (string) get_post_field('post_content', $post_id), $c);
+        if ($c > 0) { wp_update_post(array('ID' => $post_id, 'post_content' => $npc)); $report['replaced'] += $c; $report['where'][] = 'post_content'; $report['steps'][] = 'post_content updated'; }
+        // 2. EVERY custom field — serialization-safe (JSON strings, PHP-serialized arrays, objects).
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
+        foreach ((array) $rows as $row) {
+            $raw = (string) $row->meta_value; $hit = false;
+            foreach ($search as $s) { if ($s !== '' && strpos($raw, $s) !== false) { $hit = true; break; } }
+            if (!$hit) { continue; }
+            $cnt = 0; $newVal = pcm_conn_replace_in(maybe_unserialize($raw), $search, $replace, $cnt);
+            if ($cnt > 0) { update_metadata_by_mid('post', (int) $row->meta_id, wp_slash($newVal)); $report['replaced'] += $cnt; $report['where'][] = (string) $row->meta_key; }
+        }
+        // 3. Regenerate detected builders' caches/CSS so the edit renders cleanly.
+        foreach ($this->detect($post_id) as $h) {
+            try { $h->regenerate($post_id); $report['builders'][] = $h->label(); $report['steps'][] = $h->label() . ' regenerated'; }
+            catch (\Throwable $e) { $report['steps'][] = $h->label() . ' regenerate failed'; }
+        }
+        // 4. Purge page caches.
+        pcm_conn_purge_caches($post_id); $report['steps'][] = 'caches purged';
+        // 5. Verify — no OLD url should remain in content or any meta (read fresh from the DB).
+        $blob = (string) get_post_field('post_content', $post_id) . "\n" . implode("\n", (array) $wpdb->get_col($wpdb->prepare("SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id)));
+        foreach ($olds as $old) {
+            $oe = str_replace('/', '\\/', $old);
+            if (strpos($blob, $old) !== false || ($oe !== $old && strpos($blob, $oe) !== false)) { $report['remaining'][] = $old; }
+        }
+        $report['verified'] = empty($report['remaining']);
+        if ($report['verified']) { $report['steps'][] = 'verified'; }
+        $report['where'] = array_values(array_unique($report['where']));
+        return $report;
+    }
+}
+function pcm_conn_builder_manager() {
+    static $mgr = null;
+    if ($mgr === null) {
+        $mgr = new PCM_Conn_Builder_Manager();
+        $mgr->register(new PCM_Conn_B_Elementor())->register(new PCM_Conn_B_Bricks())->register(new PCM_Conn_B_Divi())
+            ->register(new PCM_Conn_B_WPBakery())->register(new PCM_Conn_B_Oxygen())->register(new PCM_Conn_B_Breakdance());
+    }
+    return $mgr;
+}
+add_action('wp_after_insert_post', function ($post_id) {
+    if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) { return; }
+    $post = get_post($post_id);
+    if (!$post || !in_array($post->post_type, array('post', 'page'), true)) { return; }
+    pcm_conn_purge_caches($post_id);
+}, 99);
 
 // Ensure one Application Password exists for the hub + store it for the connection code.
 function pcm_conn_ensure() {
@@ -467,6 +644,28 @@ add_action('rest_api_init', function () {
             if (is_array($p) && array_key_exists('jsonld', $p)) { update_option('pcm_conn_jsonld', (string) $p['jsonld']); }
             return call_user_func($read);
         }),
+    ));
+    // Builder-aware URL replacement: replace a link's target across post_content AND any page
+    // builder's data (Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/…), regenerate that
+    // builder's cache, purge caches, and verify. Accepts {old,new} and/or a {replacements} map.
+    register_rest_route('pcm-conn/v1', '/replace-url', array(
+        'methods' => 'POST',
+        'permission_callback' => $perm,
+        'callback' => function ($req) {
+            $p   = $req->get_json_params();
+            $pid = is_array($p) && isset($p['post_id']) ? absint($p['post_id']) : 0;
+            $replacements = array();
+            if (is_array($p)) {
+                if (isset($p['old'], $p['new'])) { $replacements[(string) $p['old']] = (string) $p['new']; }
+                if (isset($p['replacements']) && is_array($p['replacements'])) {
+                    foreach ($p['replacements'] as $o => $n) { $replacements[(string) $o] = (string) $n; }
+                }
+            }
+            if (!$pid || empty($replacements)) { return new WP_REST_Response(array('replaced' => 0, 'error' => 'bad_params'), 400); }
+            if (!get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            if (!current_user_can('edit_post', $pid)) { return new WP_REST_Response(array('error' => 'forbidden'), 403); }
+            return new WP_REST_Response(pcm_conn_builder_manager()->replace_links($pid, $replacements), 200);
+        },
     ));
 });
 add_filter('robots_txt', function ($output) {
