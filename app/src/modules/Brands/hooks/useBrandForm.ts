@@ -45,6 +45,7 @@ export function useBrandForm({ editBrand, open, isFetchingRef }: UseBrandFormOpt
         businessSummary: mapped.businessSummary ?? editBrand.businessSummary ?? "",
         language: normalizeLanguage(mapped.language ?? editBrand.language ?? ""),
         colors: (editBrand as any).colors ?? [],
+        externalId: (editBrand as any).externalId ?? "",
       });
     } else {
       setForm(EMPTY_FORM);

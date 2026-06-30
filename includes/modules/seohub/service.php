@@ -386,7 +386,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance + any custom field, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
- * Version: 2.0.0
+ * Version: 2.1.3
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -552,7 +552,15 @@ class PCM_Conn_Builder_Manager {
             foreach ($search as $s) { if ($s !== '' && strpos($raw, $s) !== false) { $hit = true; break; } }
             if (!$hit) { continue; }
             $cnt = 0; $newVal = pcm_conn_replace_in(maybe_unserialize($raw), $search, $replace, $cnt);
-            if ($cnt > 0) { update_metadata_by_mid('post', (int) $row->meta_id, wp_slash($newVal)); $report['replaced'] += $cnt; $report['where'][] = (string) $row->meta_key; }
+            if ($cnt > 0) {
+                // Write the exact value via $wpdb — update_metadata_by_mid()'s slashing differs by WP
+                // version (some unslash, some don't), and wp_slash() here double-escaped JSON/serialized
+                // builder data, corrupting it. $wpdb stores the value as-is, then we bust the meta cache.
+                $store = is_scalar($newVal) ? (string) $newVal : maybe_serialize($newVal);
+                $wpdb->update($wpdb->postmeta, array('meta_value' => $store), array('meta_id' => (int) $row->meta_id));
+                wp_cache_delete($post_id, 'post_meta');
+                $report['replaced'] += $cnt; $report['where'][] = (string) $row->meta_key;
+            }
         }
         // 3. Regenerate detected builders' caches/CSS so the edit renders cleanly.
         foreach ($this->detect($post_id) as $h) {
@@ -571,6 +579,139 @@ class PCM_Conn_Builder_Manager {
         if ($report['verified']) { $report['steps'][] = 'verified'; }
         $report['where'] = array_values(array_unique($report['where']));
         return $report;
+    }
+    /** Element-scoped replace: rewrite $old→$new ONLY inside the builder element $el_id, so editing
+     *  one button/link doesn't touch other links that share the URL. Decodes the meta, replaces within
+     *  the element subtree, re-encodes, then regenerates builders + purges caches. */
+    public function replace_link_in_element($post_id, $el_id, $old, $new) {
+        $report = array('replaced' => 0, 'where' => array(), 'builders' => array(), 'steps' => array(), 'verified' => false, 'remaining' => array());
+        $el_id = (string) $el_id; $old = (string) $old; $new = (string) $new;
+        if ($el_id === '' || $old === '' || $new === '' || $old === $new) { return $report; }
+        global $wpdb;
+        $oe = str_replace('/', '\\/', $old); // escaped-slash variant, in case a meta is a raw JSON string
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
+        foreach ((array) $rows as $row) {
+            $raw = (string) $row->meta_value;
+            if (strpos($raw, $el_id) === false) { continue; }                       // element not in this meta
+            if (strpos($raw, $old) === false && strpos($raw, $oe) === false) { continue; }
+            $val = maybe_unserialize($raw); $is_json = false;
+            if (is_string($val) && $val !== '' && ($val[0] === '[' || $val[0] === '{')) {
+                $j = json_decode($val, true);
+                if (is_array($j)) { $val = $j; $is_json = true; }
+            }
+            if (!is_array($val) && !is_object($val)) { continue; }                   // can't target inside a plain string safely
+            $cnt = 0; $newVal = self::replace_in_element($val, $el_id, $old, $new, false, $cnt);
+            if ($cnt > 0) {
+                $store = $is_json ? wp_json_encode($newVal) : (is_scalar($newVal) ? (string) $newVal : maybe_serialize($newVal));
+                $wpdb->update($wpdb->postmeta, array('meta_value' => $store), array('meta_id' => (int) $row->meta_id));
+                wp_cache_delete($post_id, 'post_meta');
+                $report['replaced'] += $cnt; $report['where'][] = (string) $row->meta_key;
+            }
+        }
+        foreach ($this->detect($post_id) as $h) {
+            try { $h->regenerate($post_id); $report['builders'][] = $h->label(); $report['steps'][] = $h->label() . ' regenerated'; }
+            catch (\Throwable $e) { $report['steps'][] = $h->label() . ' regenerate failed'; }
+        }
+        pcm_conn_purge_caches($post_id); $report['steps'][] = 'caches purged';
+        $report['verified'] = $report['replaced'] > 0;
+        $report['where'] = array_values(array_unique($report['where']));
+        return $report;
+    }
+    /** Find every link on a post for the hub to show: <a href> in post_content + URLs stored in
+     *  builder data (Elementor/Divi/etc. custom fields) that post_content scanning misses. De-duped
+     *  by URL (replace-url rewrites every occurrence). Returns [{anchor,to,html,source}]. */
+    public function scan_links($post_id) {
+        $out = array();
+        $content = (string) get_post_field('post_content', $post_id);
+        if (preg_match_all('#<a\s[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)</a>#is', $content, $m, PREG_SET_ORDER)) {
+            foreach ($m as $mm) { $out[] = array('anchor' => trim(wp_strip_all_tags($mm[3])), 'to' => $mm[2], 'html' => $mm[0], 'source' => 'content', 'elId' => ''); }
+        }
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", (int) $post_id));
+        foreach ((array) $rows as $row) {
+            $raw = (string) $row->meta_value;
+            $val = maybe_unserialize($raw);
+            // Elementor/Bricks store their layout as a JSON STRING (not PHP-serialized) — decode it
+            // so link URLs in widget settings are reachable, not buried in an opaque string.
+            if (is_string($val) && $val !== '' && ($val[0] === '[' || $val[0] === '{')) {
+                $j = json_decode($val, true);
+                if (is_array($j)) { $val = $j; }
+            }
+            self::collect_links($val, $out);
+        }
+        // Keep EVERY builder link — each is a distinct element the user sees on the page (e.g. three
+        // "View Details" buttons that share a URL are three real links, not one). Only drop a
+        // post_content link that merely duplicates a builder link: Elementor renders its builder
+        // links into the body too, and we don't want both copies of the same one.
+        $builder_keys = array();
+        foreach ($out as $l) {
+            if (($l['source'] ?? '') === 'builder' && (string) $l['to'] !== '') {
+                $builder_keys[$l['to'] . '|' . (string) ($l['anchor'] ?? '')] = 1;
+            }
+        }
+        $result = array();
+        foreach ($out as $l) {
+            if ((string) $l['to'] === '') { continue; }
+            if (($l['source'] ?? '') === 'content'
+                && isset($builder_keys[$l['to'] . '|' . (string) ($l['anchor'] ?? '')])) {
+                continue;
+            }
+            $result[] = $l;
+        }
+        return $result;
+    }
+    /** Recursively pull link URLs out of decoded builder data (arrays / objects / inline HTML). */
+    private static function collect_links($val, &$out, $label = '', $el_id = '') {
+        if (is_array($val)) {
+            // Track the nearest builder ELEMENT id (Elementor/Bricks/etc. elements carry id + elType)
+            // so each captured link can be edited in isolation — rewriting just that one element, not
+            // every link that happens to share the URL.
+            if (isset($val['id'], $val['elType']) && is_string($val['id'])) { $el_id = $val['id']; }
+            // A widget's text/title labels its link, which is a nested {url:...} field. Pass the label
+            // DOWN so the link inherits it — and capture each link ONCE (no empty-anchor duplicate).
+            $lbl = $label;
+            foreach (array('text', 'title', 'button_text', 'heading_title', 'label') as $lk) {
+                if (!empty($val[$lk]) && is_string($val[$lk])) { $lbl = trim(wp_strip_all_tags($val[$lk])); break; }
+            }
+            if (isset($val['url']) && is_string($val['url']) && preg_match('#^https?://#i', $val['url'])) {
+                $out[] = array('anchor' => $lbl, 'to' => $val['url'], 'html' => '', 'source' => 'builder', 'elId' => $el_id);
+            }
+            foreach ($val as $k => $v) {
+                if ($k === 'url') { continue; }
+                self::collect_links($v, $out, $lbl, $el_id);
+            }
+            return;
+        }
+        if (is_object($val)) { foreach (get_object_vars($val) as $v) { self::collect_links($v, $out, $label, $el_id); } return; }
+        if (is_string($val) && stripos($val, '<a ') !== false && preg_match_all('#<a\s[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)</a>#is', $val, $m, PREG_SET_ORDER)) {
+            foreach ($m as $mm) { if (preg_match('#^https?://#i', $mm[2])) { $out[] = array('anchor' => trim(wp_strip_all_tags($mm[3])), 'to' => $mm[2], 'html' => $mm[0], 'source' => 'builder', 'elId' => $el_id); } }
+        }
+    }
+    /** Replace $old→$new only inside the builder element whose id is $target (and its descendants),
+     *  leaving identical links in OTHER elements untouched. Returns the decoded structure + count. */
+    private static function replace_in_element($node, $target, $old, $new, $inside, &$count) {
+        if (is_array($node)) {
+            $here = $inside || (isset($node['id']) && (string) $node['id'] === (string) $target);
+            $r = array();
+            foreach ($node as $k => $v) {
+                if ($here && is_string($v) && strpos($v, $old) !== false) {
+                    $c = 0; $v = str_replace($old, $new, $v, $c); $count += $c;
+                } elseif (is_array($v) || is_object($v)) {
+                    $v = self::replace_in_element($v, $target, $old, $new, $here, $count);
+                }
+                $r[$k] = $v;
+            }
+            return $r;
+        }
+        if (is_object($node)) {
+            $here = $inside || (isset($node->id) && (string) $node->id === (string) $target);
+            foreach (get_object_vars($node) as $k => $v) {
+                if ($here && is_string($v) && strpos($v, $old) !== false) { $c = 0; $node->$k = str_replace($old, $new, $v, $c); $count += $c; }
+                elseif (is_array($v) || is_object($v)) { $node->$k = self::replace_in_element($v, $target, $old, $new, $here, $count); }
+            }
+            return $node;
+        }
+        return $node;
     }
 }
 function pcm_conn_builder_manager() {
@@ -664,7 +805,23 @@ add_action('rest_api_init', function () {
             if (!$pid || empty($replacements)) { return new WP_REST_Response(array('replaced' => 0, 'error' => 'bad_params'), 400); }
             if (!get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
             if (!current_user_can('edit_post', $pid)) { return new WP_REST_Response(array('error' => 'forbidden'), 403); }
+            // When the hub passes an element id, rewrite ONLY that element so other links sharing the
+            // URL stay put. Falls back to the global (every-occurrence) replace when no element id.
+            $el_id = (is_array($p) && isset($p['elId'])) ? (string) $p['elId'] : '';
+            if ($el_id !== '' && count($replacements) === 1) {
+                $old = (string) array_key_first($replacements); $new = (string) $replacements[$old];
+                return new WP_REST_Response(pcm_conn_builder_manager()->replace_link_in_element($pid, $el_id, $old, $new), 200);
+            }
             return new WP_REST_Response(pcm_conn_builder_manager()->replace_links($pid, $replacements), 200);
+        },
+    ));
+    register_rest_route('pcm-conn/v1', '/scan-links', array(
+        'methods' => 'GET',
+        'permission_callback' => function () { return current_user_can('edit_posts'); },
+        'callback' => function ($req) {
+            $pid = absint($req->get_param('post_id'));
+            if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            return new WP_REST_Response(array('links' => pcm_conn_builder_manager()->scan_links($pid)), 200);
         },
     ));
 });

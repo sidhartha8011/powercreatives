@@ -53,6 +53,17 @@ export function BrandFormFields({ form, onChange }: BrandFormFieldsProps) {
         />
       </div>
 
+      {/* External ID */}
+      <div className="space-y-1.5">
+        <Label htmlFor="brand-external-id">External ID</Label>
+        <Input
+          id="brand-external-id"
+          placeholder="Optional — used for webhook/automation mapping"
+          value={form.externalId}
+          onChange={(e) => set("externalId", e.target.value)}
+        />
+      </div>
+
       {/* Niche + Location row */}
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">

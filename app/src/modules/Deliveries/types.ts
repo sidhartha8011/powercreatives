@@ -24,6 +24,8 @@ export interface Delivery {
   seoSiteId?: number | null;
   /** Module grants for assignees (frontend nav ids, e.g. 'copy', 'ads'). */
   modules?: string[];
+  /** Optional external identifier — used for webhook/automation mapping. */
+  externalId?: string | null;
   createdAt: string;
   updatedAt: string;
 }

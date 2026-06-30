@@ -169,6 +169,7 @@ export function BrandsModule() {
         businessSummary: data.businessSummary || null,
         language: data.language || null,
         colors: data.colors.length > 0 ? data.colors : null,
+        externalId: data.externalId || null,
       });
     } else {
       createMutation.mutate({
@@ -180,6 +181,7 @@ export function BrandsModule() {
         businessSummary: data.businessSummary || undefined,
         language: data.language || undefined,
         colors: data.colors.length > 0 ? data.colors : undefined,
+        externalId: data.externalId || undefined,
       });
     }
   };

@@ -38,6 +38,9 @@ interface LinkRow {
   /** False when the link lives outside the post's editable content (e.g. a page-builder
    *  layout) — shown read-only because a rewrite can't reach it. Defaults to editable. */
   editable?: boolean;
+  /** Builder element id (Elementor/etc.) for this link, so editing rewrites just this one
+   *  element — not every link that shares the same URL. Empty for post-body links. */
+  elId?: string;
 }
 
 const isEditable = (l: LinkRow) => l.editable !== false;
@@ -80,6 +83,9 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  // The target a link was just edited to — kept visible even if its type (internal/external/broken)
+  // changed and it would otherwise fall out of this filtered view, so the edit is confirmable.
+  const [justEditedTo, setJustEditedTo] = useState<string | null>(null);
 
   const localQuery = trpc.seo.getLinks.useQuery({ id: postId }, { enabled: open && isLocal });
   const remoteQuery = trpc.seo.remoteGetLinks.useQuery(
@@ -122,12 +128,20 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
     const list: LinkRow[] = Array.isArray(queryData?.links) ? queryData.links : [];
     setLinks(list);
     setSelected(new Set());
+    setJustEditedTo(null);
   }, [open, queryData]);
 
-  const filtered = useMemo(
-    () => links.filter((l) => (kind === 'broken' ? l.broken : l.kind === kind)),
-    [links, kind],
-  );
+  const filtered = useMemo(() => {
+    const base = links.filter((l) => (kind === 'broken' ? l.broken : l.kind === kind));
+    // Keep a just-edited link in view even if its type changed (e.g. external→internal, or it's no
+    // longer broken) — otherwise it vanishes after a successful edit and looks like it was lost.
+    if (justEditedTo) {
+      for (const l of links) {
+        if (l.to === justEditedTo && !base.includes(l)) { base.push(l); }
+      }
+    }
+    return base;
+  }, [links, kind, justEditedTo]);
 
   const applyResult = (res: any) => {
     setLinks(Array.isArray(res?.links) ? res.links : []);
@@ -144,15 +158,24 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
       const href = field === 'to' ? val : l.to;
       const res = isLocal
         ? await updateLocal.mutateAsync({ id: postId, index: l.id, anchor, href } as any)
-        : await updateRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, anchor, href } as any);
+        // oldHref lets the backend replace the URL across builder data (Elementor/Divi), reaching
+        // links the post-body scan can't — the only way to edit links on builder-built pages.
+        : await updateRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, anchor, href, oldHref: l.to, elId: l.elId ?? '' } as any);
       applyResult(res);
+      setJustEditedTo(field === 'to' ? href : l.to); // keep the edited link visible after the re-scan
+      // When editing in the Dead view, the just-edited link drops off the list (its broken flag is
+      // cleared on the fast re-scan) — explain that so it doesn't look like the link was deleted.
+      const movedNote = kind === 'broken'
+        ? ' It’s no longer flagged broken, so it left this Dead-links list — click “Re-scan this page”, or open the Internal/External count, to see it with its new URL.'
+        : '';
       // Remote pages are often behind a page/CDN cache (e.g. Cloudflare) — the edit saves to
       // the post, but the cached HTML can keep showing the old link until purged. Set that
       // expectation so a cached page isn't mistaken for the edit not working.
       toast.success(
-        isLocal
-          ? 'Link saved to the page'
-          : 'Link saved. If the live page still shows the old link, clear its page/CDN cache (e.g. Cloudflare).',
+        (isLocal
+          ? 'Link saved. If the live page still shows the old link, hard-refresh or clear your site/CDN cache (e.g. Cloudflare).'
+          : 'Link saved. If the live page still shows the old link, clear its page/CDN cache (e.g. Cloudflare).')
+        + movedNote,
       );
     } catch (err: any) {
       toast.error(err?.message || 'Failed to save the link');

@@ -367,6 +367,59 @@ class PCM_SEO_Service
         return ($pos === false) ? null : (int) $pos;
     }
 
+    /** Fire known WP + page-builder + CDN-bridge cache purges for a post so a programmatic edit
+     *  (which many cache plugins SKIP vs. an editor save) shows on the live page. A bare Cloudflare
+     *  proxy with no WP integration must be purged manually. Mirrors the connector's purge so the
+     *  OWN site behaves like a connected one. */
+    private static function purge_post_caches(int $post_id): void
+    {
+        if (function_exists('clean_post_cache'))            { clean_post_cache($post_id); }
+        if (function_exists('rocket_clean_post'))           { rocket_clean_post($post_id); }            // WP Rocket
+        if (function_exists('w3tc_flush_post'))             { w3tc_flush_post($post_id); }              // W3 Total Cache
+        if (function_exists('wp_cache_post_change'))        { wp_cache_post_change($post_id); }         // WP Super Cache
+        if (function_exists('wpfc_clear_post_cache_by_id')) { wpfc_clear_post_cache_by_id($post_id); }  // WP Fastest Cache
+        do_action('litespeed_purge_post', $post_id);
+        do_action('cache_enabler_clear_page_cache_by_post', $post_id);
+        do_action('breeze_clear_all_cache');
+        do_action('siteground_optimizer_flush_cache');
+        do_action('swcfpc_purge_cache');           // Super Page Cache for Cloudflare → purges CF edge
+        do_action('autoptimize_flush_pagecache');
+        do_action('elementor/core/files/clear_cache');
+    }
+
+    /** Recursively replace strings inside a value (string / array / object) — serialization-safe. */
+    private static function deep_str_replace(array $search, array $replace, $val, int &$count)
+    {
+        if (is_string($val)) { $c = 0; $out = str_replace($search, $replace, $val, $c); $count += $c; return $out; }
+        if (is_array($val))  { foreach ($val as $k => $v) { $val[$k] = self::deep_str_replace($search, $replace, $v, $count); } return $val; }
+        if (is_object($val)) { foreach (get_object_vars($val) as $k => $v) { $val->$k = self::deep_str_replace($search, $replace, $v, $count); } return $val; }
+        return $val;
+    }
+
+    /** Replace an old URL with a new one across EVERY custom field — page builders (Elementor/Divi/
+     *  Beaver/etc.) store the layout in meta and render from THERE, not post_content. Serialization-
+     *  safe (JSON strings, PHP-serialized arrays/objects). Returns the number of places changed. */
+    private static function replace_url_in_meta(int $post_id, string $old, string $new): int
+    {
+        if ($old === '' || $new === '' || $old === $new) { return 0; }
+        global $wpdb;
+        $search = array($old); $replace = array($new);
+        $oe = str_replace('/', '\\/', $old); // slash-escaped (JSON-in-meta) form
+        if ($oe !== $old) { $search[] = $oe; $replace[] = str_replace('/', '\\/', $new); }
+        $changed = 0;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
+        foreach ((array) $rows as $row) {
+            $raw = (string) $row->meta_value; $hit = false;
+            foreach ($search as $s) { if ($s !== '' && strpos($raw, $s) !== false) { $hit = true; break; } }
+            if (!$hit) { continue; }
+            $cnt = 0;
+            $newVal = self::deep_str_replace($search, $replace, maybe_unserialize($raw), $cnt);
+            if ($cnt > 0) { update_metadata_by_mid('post', (int) $row->meta_id, wp_slash($newVal)); $changed += $cnt; }
+        }
+        return $changed;
+    }
+
     /**
      * Edit a link in a local post's content: replace its href and/or anchor text in
      * the stored <a> HTML, save the post, re-scan. Returns the refreshed link list.
@@ -396,6 +449,16 @@ class PCM_SEO_Service
         }
         $content = substr_replace($content, (string) $new_html, $pos, strlen($old_html));
         wp_update_post(array('ID' => $post_id, 'post_content' => $content));
+
+        // If the link's TARGET changed, propagate it across custom fields too — page builders store
+        // the layout in meta and render from THERE, not post_content — then purge caches so the live
+        // page reflects it. Brings the OWN site to parity with the connector's remote behaviour.
+        $old_url = (string) $links[$index]['to'];
+        if ($new_href !== '' && $new_href !== $old_url) {
+            self::replace_url_in_meta($post_id, $old_url, $new_href);
+        }
+        self::purge_post_caches($post_id);
+
         $this->scan_links($post_id, false); // fast refresh — skip per-link HTTP checks (avoid timeout)
         return $this->get_post_links($post_id);
     }
@@ -420,6 +483,7 @@ class PCM_SEO_Service
         }
         $content = substr_replace($content, (string) $inner, $pos, strlen($old_html));
         wp_update_post(array('ID' => $post_id, 'post_content' => $content));
+        self::purge_post_caches($post_id);
         $this->scan_links($post_id, false); // fast refresh — skip per-link HTTP checks (avoid timeout)
         return $this->get_post_links($post_id);
     }
@@ -1063,9 +1127,65 @@ class PCM_SEO_Service
     }
 
     /** Per-link details for a connected post (computed on-demand from its raw content). */
+    /** HTTP status of a URL (HEAD; 0 on transport error). Note: bot-protected hosts (Google,
+     *  Cloudflare challenge) can answer 403/503 to automated checks — a known false-positive. */
+    private static function link_http_status(string $url): int
+    {
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            return 0;
+        }
+        $resp = wp_remote_head($url, array(
+            'timeout'     => 8,
+            'redirection' => 3,
+            'sslverify'   => false,
+            'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreatives link check)',
+        ));
+        return is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+    }
+
     public static function remote_get_links(object $site, int $post_id, string $type, bool $check_status = true): array
     {
         self::ensure_sites_service();
+
+        // Prefer the connector's BUILDER-AWARE scan (v2.1.0+): it reads links from post_content AND
+        // builder data (Elementor/Divi/etc. custom fields) that the post-body-only scan misses — the
+        // real on-page links (e.g. Elementor button URLs) live there, not in post_content.
+        $scan = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/scan-links', array('post_id' => $post_id));
+        if (!is_wp_error($scan) && (int) ($scan['status'] ?? 0) < 300 && is_array($scan['body']['links'] ?? null)) {
+            $site_host = (string) (wp_parse_url((string) $site->url, PHP_URL_HOST) ?: '');
+            $out = array();
+            $i = 0;
+            foreach ($scan['body']['links'] as $l) {
+                $to = (string) ($l['to'] ?? '');
+                if ($to === '') { continue; }
+                $host     = (string) (wp_parse_url($to, PHP_URL_HOST) ?: '');
+                $internal = $host !== '' && $site_host !== '' && strcasecmp($host, $site_host) === 0;
+                $status   = $check_status ? self::link_http_status($to) : 0;
+                $anchor   = (string) ($l['anchor'] ?? '');
+                $html     = (string) ($l['html'] ?? '');
+                // Builder links (Elementor button widgets etc.) aren't <a> tags, so the connector
+                // can't return real markup — synthesize a readable anchor so the HTML column isn't
+                // blank. The To (URL) is the real, editable target.
+                if ($html === '') {
+                    $html = '<a href="' . esc_url($to) . '">' . esc_html($anchor !== '' ? $anchor : $to) . '</a>';
+                }
+                $out[] = array(
+                    'id'       => $i++,
+                    'anchor'   => $anchor,
+                    'from'     => (string) $site->url,
+                    'to'       => $to,
+                    'html'     => $html,
+                    'status'   => $status,
+                    'kind'     => $internal ? 'internal' : 'external',
+                    'broken'   => $status >= 400,
+                    'editable' => true, // edited via the connector's URL-replace (works in builder data)
+                    'elId'     => (string) ($l['elId'] ?? ''), // builder element id → edit just this one
+                );
+            }
+            return $out;
+        }
+
+        // Fallback (older connector / no connector): scan the post body only.
         $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
         $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content,link'));
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
@@ -1135,15 +1255,34 @@ class PCM_SEO_Service
         // (404) on a connector older than the replace-url endpoint.
         $replace_count = null; // null = connector didn't answer; int = how many places changed
         $replace_builders = array(); // page builders the connector detected + regenerated
-        if ($rendered_needle !== null) {
+        $replace_diag = '';          // when null: WHY the builder-aware write didn't run (for the error)
+        if ($rendered_needle === null) {
+            $replace_diag = __('this was an anchor-text edit, not a URL change — anchor edits don’t yet have a builder-aware path, so they only save via the post body', 'power-creatives');
+        } else {
             $old_url = (string) ($links[$index]['to'] ?? '');
-            if ($old_url !== '' && $old_url !== $rendered_needle) {
+            if ($old_url === '') {
+                $replace_diag = __('the link has no source URL to match', 'power-creatives');
+            } elseif ($old_url === $rendered_needle) {
+                $replace_diag = __('the URL is unchanged', 'power-creatives');
+            } else {
+                // Generous timeout (60s): builder-aware replace re-reads ALL meta, regenerates the
+                // builder + verifies — slow on big Elementor pages. A short timeout was making the
+                // hub give up while the connector was still (successfully) finishing server-side.
                 $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-url', array(), array(
                     'post_id' => $post_id,
                     'old'     => $old_url,
                     'new'     => $rendered_needle,
-                ));
-                if (!is_wp_error($rep) && (int) ($rep['status'] ?? 0) < 300 && isset($rep['body']['replaced'])) {
+                ), 60);
+                if (is_wp_error($rep)) {
+                    $err = $rep->get_error_message();
+                    $replace_diag = (stripos($err, 'timed out') !== false || stripos($err, 'timeout') !== false || stripos($err, 'cURL error 28') !== false)
+                        ? __('the connector took too long to respond (a large page) — the change likely DID apply on the site; re-scan and check, then clear the page/CDN cache', 'power-creatives')
+                        : sprintf(__('the connector’s replace-url call failed (%s)', 'power-creatives'), $err);
+                } elseif ((int) ($rep['status'] ?? 0) >= 300) {
+                    $replace_diag = sprintf(__('the connector’s replace-url returned HTTP %d — likely blocked by a security plugin or Cloudflare bot protection on the connected site', 'power-creatives'), (int) ($rep['status'] ?? 0));
+                } elseif (!isset($rep['body']['replaced'])) {
+                    $replace_diag = __('the connector’s replace-url gave no result (an outdated connector, or a proxy stripped the response)', 'power-creatives');
+                } else {
                     $replace_count = (int) $rep['body']['replaced'];
                     if (!empty($rep['body']['builders']) && is_array($rep['body']['builders'])) {
                         $replace_builders = array_map('strval', $rep['body']['builders']);
@@ -1159,10 +1298,20 @@ class PCM_SEO_Service
         $verify = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content'));
         if (!is_wp_error($verify) && is_array($verify['body'] ?? null)) {
             $saved_raw = (string) ($verify['body']['content']['raw'] ?? '');
-            if ($saved_raw !== '' && $saved_raw === $raw) {
+            // "Body unchanged" only counts as a failure when the connector ALSO didn't change
+            // anything ($replace_count === null = its builder-aware /replace-url wasn't consulted
+            // or didn't answer — e.g. an anchor-only edit, or a connector that can't reach it). On a
+            // page builder the body is regenerated from the builder's meta on save, so post_content
+            // legitimately reverts — but /replace-url has already updated the link in that meta
+            // ($replace_count is 0 or >0). In that case fall through to the rendered-source check
+            // below, which reports accurately (updated / cached / not found) instead of this
+            // misleading "REST is locked" error.
+            if ($saved_raw !== '' && $saved_raw === $raw && $replace_count === null) {
+                $why = $replace_diag !== '' ? ' ' . sprintf(__('Reason: %s.', 'power-creatives'), $replace_diag) : '';
                 return new WP_Error(
                     'pcm_seo_link_not_saved',
-                    __('The remote site accepted the request but kept the old content, so the link was NOT changed. The post is likely locked to REST edits (e.g. a security plugin), or the connector’s user can’t edit it — change it on the site, or check the connector’s app-password permissions.', 'power-creatives'),
+                    __('The remote site accepted the request but kept the old content, so the link was NOT changed.', 'power-creatives') . $why
+                    . ' ' . __('Edit the To/URL (not the anchor) for builder pages; otherwise the post is likely locked to REST edits (a security plugin or Cloudflare), or the connector’s user can’t edit it — change it on the site, or check the connector’s app-password permissions.', 'power-creatives'),
                     array('status' => 409)
                 );
             }
@@ -1181,13 +1330,17 @@ class PCM_SEO_Service
                     if ($replace_count === null) {
                         // The connector didn't answer the replace-url call — read its INSTALLED version
                         // so the user knows exactly whether the update actually took (vs. a different error).
-                        $ver = self::remote_connector_version($site);
+                        $ver       = self::remote_connector_version($site);
+                        $site_host = (string) (wp_parse_url((string) ($site->url ?? ''), PHP_URL_HOST) ?: ($site->name ?? __('the connected site', 'power-creatives')));
                         if ($ver !== '' && version_compare($ver, '2.0.0', '>=')) {
                             $msg = sprintf(__('Saved to the post content, but the live page is built by a page builder/theme that ignores it. The connector (v%s) is current but couldn’t apply the change to the builder — the post’s REST API may be restricted, or the page is hardcoded. Edit this link in the page builder on the site.', 'power-creatives'), $ver);
                         } elseif ($ver !== '') {
-                            $msg = sprintf(__('Saved to the post content, but the live page is built by a page builder/theme that ignores it. The connected site is running Power Creatives Connector **v%s**, which is too old for builder-aware link editing — re-download the connector from this hub and reinstall it (need v2.0.0+), then try again.', 'power-creatives'), $ver);
+                            // The Connector is a SEPARATE plugin on the CONNECTED site — reinstalling
+                            // Power Creatives on THIS hub never updates it. Spell that out so a hub
+                            // reinstall isn't mistaken for a connector update.
+                            $msg = sprintf(__('Saved to the post content, but the live page is built by a page builder/theme that ignores it. Builder-aware editing needs Connector v2.0.0+ — %1$s is still on v%2$s. The Connector is a SEPARATE plugin that lives on %1$s, NOT this hub, so reinstalling Power Creatives here will not update it. On %1$s: Plugins → Add New → Upload Plugin → the connector zip (get it from Sites → Download connector here) → “Replace current with uploaded” → Activate. Its version should then read 2.0.0 under Plugins on %1$s. Then try again.', 'power-creatives'), $site_host, $ver);
                         } else {
-                            $msg = __('Saved to the post content, but the live page is built by a page builder/theme that ignores it, and the connector didn’t respond. Re-download + reinstall the Power Creatives Connector (v2.0.0+) on the connected site (its version should read 2.0.0 under Plugins), then try again.', 'power-creatives');
+                            $msg = sprintf(__('Saved to the post content, but the live page is built by a page builder/theme that ignores it, and the connector didn’t respond. The Connector is a SEPARATE plugin on %1$s (not this hub): get the latest from Sites → Download connector, then on %1$s install it via Plugins → Add New → Upload → “Replace current with uploaded” → Activate (it should read 2.0.0 under Plugins), then try again.', 'power-creatives'), $site_host);
                         }
                     } elseif ($replace_count > 0) {
                         // We DID update builder data, but the rendered output is still old → render cache.
@@ -1209,16 +1362,56 @@ class PCM_SEO_Service
     }
 
     /** Edit a connected post's link (href/anchor), via the connector. */
-    public static function remote_update_link(object $site, int $post_id, string $type, int $index, ?string $anchor, ?string $href)
+    public static function remote_update_link(object $site, int $post_id, string $type, int $index, ?string $anchor, ?string $href, ?string $old_href = null, ?string $el_id = null)
     {
-        // When the To/href changed, verify it shows up in the rendered page (detects builder/template).
-        $needle = ($href !== null && trim($href) !== '') ? esc_url_raw($href) : null;
+        // Builder-aware path: given the link's CURRENT url + a NEW url, replace it across the page's
+        // content AND builder data via the connector — the only way to edit links the post-body scan
+        // can't reach (Elementor/Divi button URLs live in meta, not post_content). When the link
+        // carries a builder element id, the connector rewrites just THAT element (not every link with
+        // the same URL).
+        $new_url = ($href !== null && trim($href) !== '') ? esc_url_raw($href) : '';
+        $old_url = $old_href !== null ? esc_url_raw($old_href) : '';
+        if ($new_url !== '' && $old_url !== '' && $new_url !== $old_url) {
+            return self::remote_replace_link_url($site, $post_id, $type, $old_url, $new_url, (string) ($el_id ?? ''));
+        }
+
+        // Legacy/anchor path: rewrite the indexed <a> in post_content (body links only).
+        $needle = $new_url !== '' ? $new_url : null;
         return self::remote_rewrite_link_content($site, $post_id, $type, $index, static function ($old_html, $link) use ($anchor, $href) {
             $new_href = $href !== null ? esc_url_raw($href) : (string) $link['to'];
             $new_text = $anchor !== null ? wp_kses_post($anchor) : (string) $link['anchor'];
             $h = preg_replace_callback('/href=[\'"][^\'"]*[\'"]/i', static fn() => 'href="' . $new_href . '"', $old_html, 1);
             return preg_replace_callback('/(<a\s[^>]*>)(.*)(<\/a>)/is', static fn($m) => $m[1] . $new_text . $m[3], $h, 1);
         }, $needle);
+    }
+
+    /** Builder-aware remote URL edit: replace $old_url → $new_url across the post's content + ALL
+     *  builder/custom-field data via the connector (/replace-url, 60s), then re-scan. Reaches links
+     *  the post-body scan can't (Elementor/Divi button URLs, etc.). */
+    private static function remote_replace_link_url(object $site, int $post_id, string $type, string $old_url, string $new_url, string $el_id = '')
+    {
+        self::ensure_sites_service();
+        $body = array(
+            'post_id' => $post_id,
+            'old'     => $old_url,
+            'new'     => $new_url,
+        );
+        if ($el_id !== '') { $body['elId'] = $el_id; } // edit just this element, not every same-URL link
+        $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-url', array(), $body, 60);
+        if (is_wp_error($rep)) {
+            $err = $rep->get_error_message();
+            $msg = (stripos($err, 'timed out') !== false || stripos($err, 'timeout') !== false || stripos($err, 'cURL error 28') !== false)
+                ? __('The connector took too long (large page) — the change likely applied; re-scan and clear the page/CDN cache.', 'power-creatives')
+                : sprintf(__('Could not reach the connector to edit the link (%s).', 'power-creatives'), $err);
+            return new WP_Error('pcm_seo_remote_link', $msg, array('status' => 502));
+        }
+        if ((int) ($rep['status'] ?? 0) >= 300) {
+            return new WP_Error('pcm_seo_remote_link', sprintf(__('The connector rejected the edit (HTTP %d) — check its app-password user can edit, and that the connector is v2.1.0+.', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
+        }
+        if ((int) ($rep['body']['replaced'] ?? 0) === 0) {
+            return new WP_Error('pcm_seo_link_not_found', __('That link wasn’t found in the page content or any builder field — it may be hardcoded in the theme, a menu, or a widget. Edit it on the site.', 'power-creatives'), array('status' => 409));
+        }
+        return self::remote_get_links($site, $post_id, $type, false); // refreshed (builder-aware) list
     }
 
     /** Remove a connected post's link (unwrap the <a>, keep text), via the connector. */

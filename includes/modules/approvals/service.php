@@ -336,13 +336,22 @@ class PCM_Approvals_Service
         }
         PCM_Automation_Engine::fire_trigger(
             'approvals.set_status_changed',
-            array(
-                'setId'   => (int) $set->id,
-                'name'    => (string) $set->name,
-                'status'  => $new_status,
-                'token'   => (string) $set->token,
-                'link'    => self::build_share_url((string) $set->token),
-                'brandId' => !empty($set->brandId) ? (int) $set->brandId : null,
+            array_merge(
+                // Full brand→delivery→project + set tokens (names + links) so a webhook can map
+                // the set to the right delivery/client/chat. enrich_context supplies setID/setName/
+                // setLink/setInternalLink/brandName/deliveryName/projectName etc.
+                self::enrich_context($set),
+                array(
+                    // Legacy keys — kept so existing rules keep resolving.
+                    'setId'     => (int) $set->id,
+                    'name'      => (string) $set->name,
+                    'status'    => $new_status,
+                    'token'     => (string) $set->token,
+                    'link'      => self::build_share_url((string) $set->token),
+                    'brandId'   => !empty($set->brandId) ? (int) $set->brandId : null,
+                    // Status is event-specific (the lane just entered), so it's set here, not in enrich.
+                    'setStatus' => $new_status,
+                )
             ),
             (int) $set->userId
         );
@@ -834,7 +843,7 @@ class PCM_Approvals_Service
                     'body'      => $comment['text'],
                     'brandId'   => !empty($set->brandId) ? (int) $set->brandId : null,
                 ),
-                self::enrich_context($set, $asset_id)
+                self::enrich_context($set, $asset_id, $comment['text']) // setComment = this comment's content
             ),
             (int) $set->userId
         );
@@ -851,7 +860,7 @@ class PCM_Approvals_Service
      * @param string|null $asset_id Optional asset id for the comment deep link.
      * @return array
      */
-    private static function enrich_context(object $set, ?string $asset_id = null): array
+    private static function enrich_context(object $set, ?string $asset_id = null, string $comment = ''): array
     {
         global $wpdb;
 
@@ -866,14 +875,18 @@ class PCM_Approvals_Service
         $eff_delivery = !empty($chain['deliveryId']) ? (int) $chain['deliveryId'] : (!empty($set->deliveryId) ? (int) $set->deliveryId : 0);
 
         $brand_name = '';
+        $brand_ext  = '';
         if ($brand_id > 0) {
             $brand      = PCM_DB::get_brand_by_id($brand_id, $owner_id);
             $brand_name = $brand ? (string) $brand->name : '';
+            $brand_ext  = $brand ? (string) ($brand->externalId ?? '') : ''; // manual/automation external id
         }
 
         $delivery_name = '';
+        $delivery_ext  = '';
         $delivery_id   = 0;
         $project_name  = '';
+        $project_ext   = '';
         $project_id    = (int) ($set->projectId ?? 0); // canonical: the set's own project
         $assignees     = '';
         $delivery      = null;
@@ -881,7 +894,7 @@ class PCM_Approvals_Service
         if ($eff_delivery > 0) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $delivery = $wpdb->get_row($wpdb->prepare(
-                "SELECT id, name, projectId FROM {$deliveries_t} WHERE id = %d",
+                "SELECT id, name, projectId, externalId FROM {$deliveries_t} WHERE id = %d",
                 $eff_delivery
             ));
         }
@@ -889,7 +902,7 @@ class PCM_Approvals_Service
             // Legacy fallback (set has no project): latest delivery linked to the brand.
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $delivery = $wpdb->get_row($wpdb->prepare(
-                "SELECT id, name, projectId FROM {$deliveries_t}
+                "SELECT id, name, projectId, externalId FROM {$deliveries_t}
                  WHERE userId = %d AND brandId = %d
                  ORDER BY updatedAt DESC, id DESC LIMIT 1",
                 $owner_id,
@@ -898,6 +911,7 @@ class PCM_Approvals_Service
         }
         if ($delivery) {
             $delivery_name = (string) $delivery->name;
+            $delivery_ext  = (string) ($delivery->externalId ?? '');
             $delivery_id   = (int) $delivery->id;
 
             // The project name is resolved from the canonical $project_id below; only borrow the
@@ -923,24 +937,38 @@ class PCM_Approvals_Service
         if ($project_id > 0) {
             $projects_t = PCM_Schema::table('projects');
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $project_name = (string) ($wpdb->get_var($wpdb->prepare(
-                "SELECT name FROM {$projects_t} WHERE id = %d",
+            $prow = $wpdb->get_row($wpdb->prepare(
+                "SELECT name, externalId FROM {$projects_t} WHERE id = %d",
                 $project_id
-            )) ?? '');
+            ));
+            $project_name = $prow ? (string) $prow->name : '';
+            $project_ext  = $prow ? (string) ($prow->externalId ?? '') : '';
         }
 
         $share_url = self::build_share_url((string) $set->token);
 
         return array(
+            // Set-level tokens — well-named for webhook/automation consumers (n8n etc.).
+            'setID'           => (int) $set->id,
+            'setName'         => (string) $set->name,
+            'setStatus'       => (string) ($set->status ?? ''),
+            'setLink'         => $share_url, // public client review link
+            'setInternalLink' => admin_url('admin.php?page=power-creatives&pcm_approval_set=' . (int) $set->id), // team edit link inside the Approvals module
+            'setComment'      => $comment, // the comment text that triggered the hook (empty for non-comment triggers)
             // IDs are exposed alongside names so webhook consumers (n8n etc.)
             // can key off stable identifiers, not just display strings. Empty
             // ids are emitted as '' (the webhook handler drops empty values).
+            // *ExtID are the entity's own EXTERNAL id field (set manually or by an automation),
+            // for mapping our brand/delivery/project to the consumer's system of record.
             'brandId'         => $brand_id > 0 ? $brand_id : '',
             'brandName'       => $brand_name,
+            'brandExtID'      => $brand_ext,
             'deliveryId'      => $delivery_id > 0 ? $delivery_id : '',
             'deliveryName'    => $delivery_name,
+            'deliveryExtID'   => $delivery_ext,
             'projectId'       => $project_id > 0 ? $project_id : '',
             'projectName'     => $project_name,
+            'projectExtID'    => $project_ext,
             'projectAssignee' => $assignees,
             'commentUrl'      => $asset_id !== null && $asset_id !== ''
                 ? $share_url . '#asset-' . rawurlencode($asset_id)
@@ -1255,13 +1283,19 @@ class PCM_Approvals_Service
         if ($needs_share && class_exists('PCM_Automation_Engine')) {
             PCM_Automation_Engine::fire_trigger(
                 'approvals.set_shared',
-                array(
-                    'setId'       => (int) $set->id,
-                    'name'        => (string) $set->name,
-                    'token'       => (string) $set->token,
-                    'link'        => self::build_share_url((string) $set->token),
-                    'clientEmail' => $email,
-                    'brandId'     => !empty($set->brandId) ? (int) $set->brandId : null,
+                array_merge(
+                    // Full brand→delivery→project + set tokens (setID/setName/setStatus/setLink/
+                    // setInternalLink/brandName/deliveryName/projectName) for webhook mapping.
+                    self::enrich_context($set),
+                    array(
+                        // Legacy keys — kept so existing rules keep resolving.
+                        'setId'       => (int) $set->id,
+                        'name'        => (string) $set->name,
+                        'token'       => (string) $set->token,
+                        'link'        => self::build_share_url((string) $set->token),
+                        'clientEmail' => $email,
+                        'brandId'     => !empty($set->brandId) ? (int) $set->brandId : null,
+                    )
                 ),
                 $user_id
             );

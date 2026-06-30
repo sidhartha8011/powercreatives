@@ -4176,3 +4176,198 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   `php -l` clean on controller.php + merged seo/seohub service.php; frontend `npm run check` = 56 (baseline,
   none in touched files); `npm run build` clean (2114 modules).
 - **Pushed:** `8d37357..f721831 feat/seo-suite-port` → origin; branch in sync (no ahead/behind).
+
+## 2026-06-29 — Research: llms.txt repos for whole-site AI-readable index (no code)
+- Task: find top repos to build an llms.txt page for the whole website (ties to the SEO AI Readiness module).
+- Recommended top 3, tailored to a WordPress plugin:
+  1. robertdevore/llms-txt-generator — WP/PHP, WP-cron regen + post-type selection, served at /llms.txt (best implementation reference).
+  2. AnswerDotAI/llms-txt — the canonical spec (2.5k★, Jeremy Howard); defines format + proposes clean .md page variants.
+  3. firecrawl/llmstxt-generator — whole-site crawl → llms.txt + llms-full.txt (hosted API deprecated; use as logic reference).
+     Alt: apify/actor-llmstxt-generator (actively-maintained deep crawler).
+- Suggested next step: add whole-site llms.txt + llms-full.txt to AI Readiness (spec format + WP-cron + reuse Summarize pipeline). No code changed.
+
+## 2026-06-30 — SEO link update: own-site builder-aware + cache purge (parity with remote)
+- Report: "update link" shows success but the live page doesn't change, on own site AND remote.
+- Diagnosed: the write CODE works (plain-post post_content edit persists — verified). The remote path is
+  already robust (connector v2.0.0+ `/pcm-conn/v1/replace-url`: replaces across content+ALL meta, builder-
+  aware, purges caches, verifies rendered). But the OWN-site path (`update_post_link`/`remove_post_link`)
+  only wrote post_content — no builder-meta propagation, no cache purge — so a page built by a builder
+  (content in meta, e.g. `_elementor_data`) or behind any cache showed the old link.
+- Fix (seo/service.php): added `purge_post_caches()` (WP + WP-Rocket/W3TC/LiteSpeed/SuperCache/SG/Breeze/
+  swcfpc Cloudflare-bridge/Elementor) and `replace_url_in_meta()` (serialization-safe recursive replace
+  across every postmeta). On a TARGET change the own site now propagates the URL into builder meta + purges
+  caches; remove also purges. Local toast now sets the cache-bust expectation (own site = Cloudflare too).
+- Verified: php -l ok; local E2E — link in post_content AND `_elementor_data` both rewritten old→new, old
+  fully gone; tsc 56 (baseline); build clean; zip rebuilt.
+- Findings to flag: (1) create.widgetify.co is behind Cloudflare (cf-cache-status DYNAMIC — not caching HTML).
+  (2) Its pages scan to 0/0/0 links → fully builder-based; the scanner reads only post_content so it can't
+  surface links that live ONLY in builder meta (future: scan builder meta). (3) Remote needs connector v2.0.0+.
+
+## 2026-06-30 — Approval webhook payload: well-named tokens (delivery/client mapping)
+- Need: webhook/automation payload should expose brand/delivery/project + set tokens by exact name so n8n
+  can map the right delivery→client→chat. The set_status_changed / set_shared triggers only exposed
+  setId/name/status/token/link/brandId (no brandName/deliveryName/projectName — so {{deliveryName}} was null).
+- Built: `enrich_context()` now also emits set-level tokens — setID, setName, setStatus, setLink, and
+  **setInternalLink** (admin deep-link `?page=power-creatives&pcm_approval_set=<id>` that opens the Approvals
+  module focused on the set so the team can edit directly). Wired enrich_context into the set_status_changed
+  and set_shared fire_trigger contexts (were bare inline), keeping legacy keys (setId/name/status/link/token/
+  brandId) for back-compat. Updated `contextKeys` (the "Available {{tokens}}" hint) on all 5 approval triggers.
+  Frontend: AppContext reads `?pcm_approval_set=<id>` on load → focuses that set.
+- Deferred per user: brandExtID/deliveryExtID/projectExtID (needs a new external-ID field — they'll specify)
+  and setComment (comment source TBD). Not emitted yet.
+- Verified: php -l ok; live — enrich_context on set #45 resolves setID/setName/setStatus/setLink/
+  setInternalLink + brandName=Profit Media, deliveryName=ads, projectName=test (derived via PCM_Hierarchy);
+  deferred tokens correctly absent; tsc 56 (baseline); build clean. NOTE: tokens are case-sensitive — use
+  exact camelCase ({{deliveryName}}, not {{deliveryname}}).
+
+## 2026-06-30 — Connector "too old (v1.4.0)" — clarify it's a SEPARATE plugin on the connected site
+- User reinstalled the HUB plugin (create.widgetify.co) but still saw "Connector v1.4.0 too old". Root cause:
+  the Connector is a separate plugin on the CONNECTED site (massagegoteborg.nu); reinstalling the hub never
+  touches it. Verified the hub's "Download connector" button serves the GENERIC connector (connector_php_simple,
+  Version 2.0.0, builder-aware) via /seohub/connector-download; slug is consistent (pcm-connector/pcm-connector.php)
+  so a real connector reinstall updates v1.4.0→2.0.0 cleanly. (Note: the per-tenant connector_php template is
+  still v1.0.1, but the frontend button uses the generic v2.0.0 one.)
+- Fix (clarity only, no behavior change): rewrote the two "builder ignores post content / connector too old"
+  messages (seo/service.php) to name the connected site (`$site_host`) and state explicitly that the Connector is
+  a SEPARATE plugin on that site and reinstalling the hub won't update it, with exact install steps. Same
+  clarification added to the Sites "Download connector" hint (Sites/index.tsx).
+- Verified: php -l ok; sprintf renders with host+version; tsc 56 (baseline); build clean.
+
+## 2026-06-30 — Remote link edit "kept old content" — false negative when connector updated builder meta
+- User installed the v2.0.0 connector (verified correct: valid PHP, Version 2.0.0, /replace-url, all 6 builder
+  handlers, replace_links/purge_caches) but still got "accepted the request but kept the old content … locked
+  to REST edits". Root cause in the HUB: remote_rewrite_link_content errored whenever post_content RAW was
+  unchanged, without checking the connector's /replace-url result ($replace_count). On a page builder the body
+  is regenerated from builder meta on save (so post_content legitimately reverts) — but /replace-url already
+  updated the link in that meta, so the change DID succeed. The error was a false negative.
+- Fix (seo/service.php): only fire `pcm_seo_link_not_saved` when `$replace_count === null` (connector's
+  builder-aware replace wasn't consulted/didn't answer — e.g. an anchor-only edit). When it WAS consulted
+  (0 or >0), fall through to the rendered-source check, which reports accurately (updated / cached → clear
+  cache / not-found). Lives in the HUB → reinstall the hub plugin (connector stays v2.0.0).
+- Verified: php -l ok; tsc 56 (baseline); build clean; hub zip rebuilt. Connector zip the user installed
+  confirmed correct.
+
+## 2026-06-30 — Remote link edit: make "kept old content" say WHY (diagnostic)
+- User has the prior hub fix (saw "Updated 2 places") but got "kept old content" again → $replace_count was
+  null, meaning the connector's builder-aware /replace-url didn't run. Causes: anchor-only edit (no builder
+  path), URL unchanged/empty, or the replace-url HTTP call blocked (security plugin / Cloudflare bot protection).
+- Fix (seo/service.php): capture `$replace_diag` in the replace-url block (anchor-only / no-source-url /
+  unchanged / HTTP <code> blocked / no-result) and append it to the `pcm_seo_link_not_saved` message + a
+  pointer to edit the To/URL (not the anchor) on builder pages. Self-explaining error now.
+- Verified: php -l ok; tsc 56 (baseline); build clean; hub zip rebuilt. Hub-side change → reinstall the hub.
+
+## 2026-06-30 — Remote link edit diagnosis: ruled out everything but timeout; bumped it
+- Live-checked massagegoteborg.nu: connector v2.0.0 ACTIVE; site is Elementor (+ Pro); NO firewall/security
+  plugin (only Profit Umbrella mgmt); all 3 users are Administrators; /pcm-conn/v1/replace-url route exists
+  (unauth POST → 401 rest_forbidden, not 404). Earlier I proved the connector's replace_links works end-to-end
+  locally (replaced 2: post_content + _elementor_data, verified). So connector code, Cloudflare, perms, firewall,
+  anchor all ruled OUT.
+- Remaining cause = the hub's HTTP call to /replace-url timing out (it used a fixed 30s; builder replace
+  re-reads ALL meta + regenerates Elementor + verifies — slow on big pages). On timeout → is_wp_error → null →
+  "kept old content", even though the connector likely finished server-side.
+- Fix: `PCM_Sites_Service::remote_rest()` gained an optional `$timeout` (default 30, back-compat); the
+  replace-url call now uses 60s. On a genuine timeout the error now says the change likely applied (re-scan +
+  clear cache) instead of a misleading "failed". Hub-side → reinstall the hub.
+- Verified: php -l ok (both files); tsc 56 (baseline); build clean; hub zip rebuilt.
+
+## 2026-06-30 — Dead-links: explain why a fixed link "disappears" from the scan
+- Report: edited a /pris/ link to example.com → it vanished from the scan. Cause (expected): the /pris/
+  links were all 403 (Dead view); pointing one to example.com (200) clears its broken flag on the fast
+  re-scan, so it correctly drops off the Dead-links list — but nothing told the user that, so it looked
+  like deletion.
+- Fix (LinksPopup.tsx): when editing in the `broken` (Dead) view, the success toast now adds "It's no
+  longer flagged broken, so it left this Dead-links list — Re-scan, or open the Internal/External count,
+  to see it with its new URL." No behaviour change; just clarity. (The deeper fix for builder pages
+  losing links from the post-body scan is the still-pending builder-aware scanner.)
+- Verified: tsc 56 (baseline); build clean; note present in bundle; hub zip rebuilt.
+
+## 2026-07-01 — Builder-aware link SCANNER + edit (Elementor links the post-body scan missed)
+- Screenshots proved it: Elementor "View Details" button = profitmedia.se/brokenlink (in _elementor_data),
+  but the table showed example.com (from post_content) — the scan reads the wrong source.
+- Built (connector v2.0.0→2.1.0): `scan_links()` reads links from post_content + builder meta (JSON-decodes
+  Elementor/Bricks data, recursively pulls link URLs with their label, de-duped by URL) + `GET /pcm-conn/v1/
+  scan-links` route. Hub: `remote_get_links()` now prefers the connector scan (v2.1.0+, falls back to body
+  scan); `remote_update_link()` gained `$old_href` → `remote_replace_link_url()` edits the URL via the
+  connector's /replace-url (reaches builder links), then re-scans. Frontend passes `oldHref`. Added
+  `link_http_status()` helper.
+- BUG FOUND + FIXED in existing `replace_links`: `update_metadata_by_mid(wp_slash($newVal))` double-escaped
+  JSON/serialized builder data on WP versions that don't unslash (corrupted _elementor_data). Now writes the
+  exact value via `$wpdb->update` + busts the meta cache — version-independent.
+- Verified: connector php -l ok (v2.1.0, /scan-links present); hub php -l ok; tsc 56 (baseline); build clean;
+  local end-to-end round-trip (scan → edit Elementor button → meta stays valid JSON → re-scan shows new URL)
+  = PASS. Needs BOTH a hub reinstall AND a connector reinstall to v2.1.0.
+
+## 2026-07-01 — Builder link edit "Link not found": trpc transform dropped oldHref
+- Editing a builder link (from the new scanner) hit the legacy post-body path ("Link not found — re-scan")
+  instead of the builder-aware replace. Cause: the `seo.remoteUpdateLink` trpc transform hard-codes the body
+  ({type,anchor,href}) and OMITTED `oldHref` — so the frontend sent it but it was stripped before the backend,
+  leaving `$old_href` null → legacy path. Fix: include `oldHref` in the transform body. Also synthesized a
+  readable HTML representation for builder links (hub-side) so the HTML column isn't blank.
+- Verified: tsc 56 (baseline); build clean; oldHref present in bundle; hub zip rebuilt. Hub-only (frontend) —
+  reinstall hub + hard-refresh the browser (cached JS).
+
+## 2026-07-01 — Edited link vanishes from popup after save (frontend filter)
+- Report: builder link edits now apply, but the edited link disappears from the table. Reproduced locally:
+  the connector re-scan correctly returns the edited link with its new URL (View Details → NEW ✅) — so it's
+  a FRONTEND issue: the popup re-filters by column type (internal/external/broken) and the edited link can
+  change type (or de-dupe) and fall out of the current view, looking like it was lost.
+- Fix (LinksPopup.tsx): track `justEditedTo` (the URL just saved) and keep that link in `filtered` even if its
+  type no longer matches the open view; reset on dialog open. So a successful edit stays visible/confirmable.
+- Verified: tsc 56 (baseline); build clean; hub zip rebuilt. Hub-only (frontend) — reinstall hub + hard-refresh.
+
+## 2026-07-01 — Builder links merging/disappearing: de-dupe key + double-capture fix (connector v2.1.1)
+- Report: "only 1 link, previously changed one disappeared." Cause: the connector de-duped links by URL ONLY,
+  so two DIFFERENT links that end up sharing a target (e.g. you edited one to a URL another already uses)
+  collapsed into one row. Fix: de-dupe by URL + anchor — distinct links (different button text) stay
+  separate; only identical (same url+text) duplicates merge.
+- That exposed a 2nd bug: `collect_links` captured each builder link TWICE (once with its label, once with an
+  empty anchor from recursing into the link sub-array), so an empty-anchor dup row appeared. Rewrote it to
+  pass the label DOWN and capture each link once. Connector v2.1.0 → 2.1.1.
+- Verified: connector php -l ok (v2.1.1); local — candy + View Details + Book Now stay as 3 separate rows
+  (same URL no longer merges them, identical buttons still merge, no empty-anchor dup); round-trip edit keeps
+  the others visible. Hub zip rebuilt. Needs a CONNECTOR reinstall to v2.1.1 on the connected site.
+
+## 2026-07-01 — "Not all links scanned": de-dupe was hiding identical builder links (connector v2.1.2)
+- /build report: ~4-5 links on /pris/ but only ~3 showing. Got GROUND TRUTH via same-origin fetch of the live
+  page (user's authenticated session, passes Cloudflare): /pris/ has 4 external links — 1 "full price list" +
+  3 "View Details" buttons, all currently https://example.com/ (converged by the user's testing).
+- Cause: scan_links de-duped by URL+anchor, collapsing the 3 identical "View Details" buttons into 1 row — they
+  look "missing" but are 3 distinct on-page elements. Fix: keep EVERY builder link; only drop a post_content
+  link that's the rendered copy of a builder link (same url+anchor) so Elementor's body-render doesn't double.
+  Connector v2.1.1 → 2.1.2. Hub remote_get_links has no de-dupe, so it preserves all rows.
+- Verified locally against the exact /pris/ structure: scan now returns all 4 rows (1 price list + 3 View
+  Details) ✅; a normal distinct-URL page still returns the right count (content/builder overlap collapsed).
+  Connector php -l ok; hub zip rebuilt. NOTE: editing one of several same-URL links rewrites ALL of them
+  (replace-url is URL-based) — fine for distinct URLs (the normal case); only the test's converged URLs share.
+  Needs a CONNECTOR reinstall to v2.1.2 on the connected site.
+
+## 2026-07-01 — Per-link (per-element) editing: edit one link, not every same-URL link (connector v2.1.3)
+- User: editing one link must NOT change other links that share the URL (chose "per element"). The connector's
+  /replace-url did a global URL replace. Implemented ELEMENT-SCOPED editing:
+  - Connector: collect_links now emits each builder link's nearest element id (`elId`, Elementor/Bricks id+elType).
+    New `replace_link_in_element()` + `replace_in_element()` rewrite old→new only inside that element's subtree;
+    /replace-url uses it when an `elId` is sent (else falls back to the global replace). v2.1.2 → 2.1.3.
+  - Hub: remote_get_links maps `elId` onto each row; remote_update_link + remote_replace_link_url forward it;
+    controller reads `elId` from the body.
+  - Frontend: LinkRow gains `elId`; saveField sends it; trpc body includes it.
+- Verified locally: 3 "View Details" buttons (btn1/btn2/btn3) all → example.com; editing btn2 → only btn2
+  changed, btn1+btn3 untouched, data still valid JSON (3 rows). php -l (3 files) ok; tsc 56 (baseline);
+  build clean; elId in bundle; hub zip rebuilt. Needs hub reinstall + CONNECTOR reinstall to v2.1.3 + hard-refresh.
+
+## 2026-07-01 — Webhook tokens: external IDs + setComment (DB v1.32.0)
+- Client (Filip) clarified the deferred webhook tokens: brandExtID/deliveryExtID/projectExtID = an EXTERNAL ID
+  field on each entity (set manually or by an automation, for mapping to an outside system); setComment = the
+  comment content that triggered the hook (a client's comment).
+- Backend (inline): added `externalId varchar(191)` to brands/deliveries/projects (DB 1.31.0 → 1.32.0, additive
+  via dbDelta). enrich_context now reads + emits `brandExtID`/`deliveryExtID`/`projectExtID` and `setComment`
+  (new $comment param; append_comment passes the comment text). create/update/get for all three entities accept
+  + return `externalId` (brands controller+service, deliveries controller+service, assets project create/rename
+  + get_projects list). Webhook channel already array_merges the full context → tokens reach n8n automatically.
+- Frontend (frontend-developer subagent + me): "External ID" input on Brand (BrandFormFields/useBrandForm/types/
+  index), Delivery (DeliveryDialog/useDeliveries/types), Project create (Projects/index). I additionally wired
+  the Project Rename→Edit modal to view/edit externalId (the only existing project-edit path) so existing
+  projects can be set, not just new ones.
+- Verified: 8 PHP files php -l clean; live test — migration adds all 3 columns, enrich_context emits
+  brandExtID=B-100/deliveryExtID=D-200/projectExtID=P-300/setComment='Looks great, approve it!' ✅; tsc 56
+  (baseline); build clean; externalId 19× in bundle; hub zip rebuilt. Needs hub reinstall (DB migration runs on
+  upgrade). Nothing committed.

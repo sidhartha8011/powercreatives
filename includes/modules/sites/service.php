@@ -82,7 +82,7 @@ class PCM_Sites_Service
      * @param array|null $body   JSON body for write requests.
      * @return array{status:int,body:mixed}|\WP_Error
      */
-    public static function remote_rest(object $site, string $method, string $route, array $query = array(), ?array $body = null)
+    public static function remote_rest(object $site, string $method, string $route, array $query = array(), ?array $body = null, int $timeout = 30)
     {
         $password = self::decrypt_password((string) $site->appPassword);
         $qs  = array_merge(array('rest_route' => $route), $query);
@@ -93,7 +93,7 @@ class PCM_Sites_Service
                 'Authorization' => 'Basic ' . base64_encode($site->username . ':' . $password),
                 'Content-Type'  => 'application/json',
             ),
-            'timeout'   => 30,
+            'timeout'   => max(1, $timeout),
             'sslverify' => true,
         );
         if ($body !== null) {

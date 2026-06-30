@@ -1,5 +1,5 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-06-29 · verified 2026-06-29 (read-only). NEWEST (2026-06-26, uncommitted): **SEO link inspector** — bulk "Scan links" button + clickable Internal/External/Dead count cells → `SEO/LinksPopup.tsx` (edit/remove links, rewrites post content), local + remote; see *SEO suite → New local features / Remote-site SEO*. PRIOR SINCE THE LAST MAP: (1) **Global table kit** — `@/components/ui/data-table.tsx` (config-driven DataTable, used by Sites) + the SEO spreadsheet building blocks moved to shared: `@/components/ui/column-head.tsx`, `@/hooks/useColumnLayout.ts`, `@/hooks/useColumnFilters.ts` (generic). (2) **Custom approval cards** (4th asset type). (3) SEO remote `duplicate` route. (4) Shortcode page auto-created. NOTE: SEO + Approvals are under active churn — verify specifics against the code._
+_Last updated: 2026-06-30 · verified 2026-06-30 (read-only). NEWEST (2026-06-29/30, committed `2ba6020`): **Client-invite email path fixed end-to-end** — server-side send on `create_set`, Brevo verified-sender picker on the Integrations card, Email diagnostics panel (`/automations/logs`, `/automations/test`), `settings.get`/`update` routes; **Brand → Delivery → Project** dynamic inheritance via `PCM_Hierarchy` (DB 1.31.0). See *Brand → Delivery → Project* + *Client-invite email & diagnostics*. PRIOR — **SEO link inspector** — bulk "Scan links" button + clickable Internal/External/Dead count cells → `SEO/LinksPopup.tsx` (edit/remove links, rewrites post content), local + remote; see *SEO suite → New local features / Remote-site SEO*. PRIOR SINCE THE LAST MAP: (1) **Global table kit** — `@/components/ui/data-table.tsx` (config-driven DataTable, used by Sites) + the SEO spreadsheet building blocks moved to shared: `@/components/ui/column-head.tsx`, `@/hooks/useColumnLayout.ts`, `@/hooks/useColumnFilters.ts` (generic). (2) **Custom approval cards** (4th asset type). (3) SEO remote `duplicate` route. (4) Shortcode page auto-created. NOTE: SEO + Approvals are under active churn — verify specifics against the code._
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -21,7 +21,7 @@ _Last updated: 2026-06-29 · verified 2026-06-29 (read-only). NEWEST (2026-06-26
 | Name / slug / text-domain | Power Creatives / `power-creatives` |
 | Main file | `power-creatives.php` |
 | Version (`PCM_VERSION`) | **1.7.0** |
-| DB version (`PCM_DB_VERSION`) | **1.31.0** (separate from plugin version. 1.28.0 `deliveries.seoSiteId`; **1.29.0** `projects.deliveryId` (Brand→Delivery→Project, additive + backfill `class-pcm-schema.php:1033`); **1.30.0** seeded a "email client review link on share" automation; **1.31.0** removes that rule — it double-sent vs the built-in dispatch path — idempotent, `class-pcm-activator.php:282`) |
+| DB version (`PCM_DB_VERSION`) | **1.32.0** (separate from plugin version. 1.28.0 `deliveries.seoSiteId`; **1.29.0** `projects.deliveryId` (Brand→Delivery→Project, additive + backfill `class-pcm-schema.php:1033`); **1.30.0** seeded a "email client review link on share" automation; **1.31.0** removes that rule — it double-sent vs the built-in dispatch path — idempotent, `class-pcm-activator.php:282`; **1.32.0** adds `externalId varchar(191)` to brands/deliveries/projects — backs the webhook `brandExtID`/`deliveryExtID`/`projectExtID` tokens, additive via dbDelta) |
 | Requires WP / PHP | 6.4+ / 8.1+ |
 | Const prefix | `PCM_` |
 | Composer package | `antigravity/power-creatives` (type `wordpress-plugin`) |
@@ -210,13 +210,13 @@ uses `pcm/v1` + the path in `routes()`.
 | Module | rest_namespace (declared) | Purpose |
 |---|---|---|
 | approvals | pcm/v1/approvals | Client approval boards + public share links. Public routes (`/sets/{token}/comment`,`/approve`,`/review`,`/draft`) + auth routes (`/sets/{id}/reply`,`/share`,`/status`). Emits `approvals.set_status_changed` / `set_shared` / `set_fully_approved` automation triggers (the lane move on share/full-approval is rule-driven, not hardcoded). |
-| automations | pcm/v1/automations | **Cross-module IF→THEN engine** (triggers → conditions → actions). CRUD + `/catalog` + `/test`. See the Automations section below. |
-| assets | pcm/v1/assets | Generated asset CRUD, refine, export |
+| automations | pcm/v1/automations | **Cross-module IF→THEN engine** (triggers → conditions → actions). CRUD + `/catalog` + `/test` + **`GET /automations/logs`** (recent send log, `manage_options`, `controller.php` `list_logs`). See the Automations section below + *Client-invite email & diagnostics*. |
+| assets | pcm/v1/assets | Generated asset CRUD, refine, export. **`PATCH /assets/projects/{id}/delivery`** → `set_project_delivery` (reassign a project's delivery; ownership-scoped) — feeds the Brand→Delivery→Project chain. |
 | brands | pcm/v1/brands | Business profiles, logos, colors |
 | copy | pcm/v1/copy | AI ad copy (SSE streaming, framework-driven) |
 | deliveries | pcm/v1/deliveries | Project delivery tracking (v1.6.0+) |
 | image | pcm/v1/image | AI image gen/edit/upscale |
-| integrations | pcm/v1/integrations | Provider API key management |
+| integrations | pcm/v1/integrations | Provider API key management. **`GET /integrations/brevo/senders`** → `brevo_senders` (lists the Brevo account's verified senders via `GET /v3/senders`; powers the "From" picker on the Brevo card). See *Client-invite email & diagnostics*. |
 | keywords | pcm/v1/keywords | SEO keyword lists (user meta `pcm_keyword_lists`) |
 | models | pcm/v1/models | AI model CRUD + sync from providers |
 | notifications | pcm/v1/notifications | In-app notifications (`GET /notifications` → items+unseen; `POST /notifications/seen`). `edit_posts`. See *Notifications (v1.19.0)*. |
@@ -224,7 +224,7 @@ uses `pcm/v1` + the path in `routes()`.
 | scraper | pcm/v1/scraper | URL scrape + AI vision |
 | seo | pcm/v1/seo | Content SEO suite (cross-plugin meta, AI field/body generate, schema, AI-readiness, site, GBP, export, **scan-links**, **llm-info**). `edit_posts` + per-post checks. **Plus a full REMOTE-site suite** under `/seo/sites/{id}/*` (`manage_options`) proxied through the connector — see *SEO suite → Remote-site SEO*. See *SEO suite*. |
 | seohub | pcm/v1/seohub | Multi-site connectors. Two connect paths: HMAC-handshake tenant ZIP **and a tenant-free pairing-code "one-paste" connector** (`/seohub/connector-download`). Tenant CRUD `manage_options:strict`; public `/seohub/connector/hello`. See *SEO Hub*. |
-| settings | pcm/v1 | Global settings + prompt editor |
+| settings | pcm/v1 | Global settings + prompt editor. `GET`/`POST /settings` (`PCM_Settings::set_many`, no key whitelist) now also drives the **email sender** (`automations_from_email` / `_name`) — wired to the frontend via `settings.get` / `settings.update` (previously app settings only persisted to localStorage). See *Client-invite email & diagnostics*. |
 | sites | pcm/v1/sites | Connected WP site metadata |
 | strategy | pcm/v1/strategies | Strategic planning |
 | templates | pcm/v1/templates | Reusable form templates / frameworks |
@@ -446,6 +446,38 @@ A small rules engine: a **trigger** (something happens in module A) + **conditio
   `consumePendingApprovalSetId`, mirrors pendingVideoData);
   NotificationsPanel's "Approvals" button uses it; `SetsBoard` consumes it once
   sets load and applies the existing Set filter to that set's name.
+
+## Brand → Delivery → Project (dynamic inheritance, DB 1.29.0)
+- Canonical chain: **Brand → Delivery → Project → things (e.g. approval sets)**.
+  Stored as links: `projects.deliveryId` → `deliveries.brandId`. **`PCM_Hierarchy`**
+  (`includes/core/class-pcm-hierarchy.php`) is the single source of truth resolver:
+  `for_project(?int): {projectId,deliveryId,brandId}` + `delivery_for_project` /
+  `brand_for_project`. Loaded in `power-creatives.php` after `PCM_Access`.
+- **Nothing attached to a project stores brand/delivery** — they're derived LIVE via
+  `PCM_Hierarchy`, so reassigning a project's delivery (or that delivery's brand) makes
+  everything follow. Approvals: `enrich_context()` + `format_set_row()` resolve brand/
+  delivery from the set's `projectId` through `PCM_Hierarchy` (the stored `brandId`/
+  `deliveryId` are only fallbacks for legacy rows). `assets/controller.php` exposes
+  `deliveryId`+`brandId` per project and `set_project_delivery` (PATCH route above).
+- Migration: `migrate_backfill_project_delivery()` (`class-pcm-schema.php`) backfills
+  `projects.deliveryId` from the delivery that referenced each project; gate at 1.29.0.
+
+## Client-invite email & diagnostics (DB 1.30.0–1.31.0)
+- **The client invite email is sent by the built-in dispatch path, NOT an automation rule:**
+  `share_set()` → `PCM_Automation_Engine::dispatch(APPROVAL_SET_SHARED)` →
+  `automations/service.php::render_email_for_event()` → `PCM_Automation_Templates::client_invite()`
+  → Brevo, to `context['clientEmail']`. Do NOT seed an `email.send` rule on
+  `approvals.set_shared` — it double-sends (the v1.30.0 seed did; **v1.31.0 removes it**,
+  `PCM_Automation_Seeds::remove_seeded_rule` + structural delete in `class-pcm-activator.php`).
+- **Send is now server-side on create**: `approvals/controller.php::create_set` reads optional
+  `clientEmail`/`clientMessage` and calls `share_set()` — so "create + notify" is one request
+  (the old flow needed a separate, easily-missed manual "Send" click).
+- **Sender (`automations_from_email`) is required** or every email fails *"No valid from-email
+  configured."* It's set via the **Brevo integration card** → `BrevoSenderPicker.tsx` (a verified-
+  sender dropdown from `GET /integrations/brevo/senders`), saved through `settings.update`.
+  Brevo key is per-user (`PCM_Brevo_Email_Channel::get_brevo_key`); integrations are **per-site**.
+- **Diagnostics**: `Automations/EmailDiagnostics.tsx` (collapsible panel) = test-send (`/automations/test`)
+  + recent send log (`/automations/logs`). Use it to see whether a share fired and Brevo's HTTP result.
 
 ## Per-delivery module grants (v1.21.0, DB 1.21.0)
 - `wp_pcm_deliveries.modules` (JSON of nav ids; whitelist

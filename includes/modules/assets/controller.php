@@ -369,7 +369,7 @@ class PCM_REST_Assets extends PCM_REST_Base
         $scope = PCM_Access::scope_clause('userId', 'id', (int) $user->id, PCM_Access::granted_project_ids((int) $user->id));
         // phpcs:ignore WordPress.DB.PreparedSQL -- clause built from %d placeholders only.
         $results = $wpdb->get_results($wpdb->prepare(
-            "SELECT id, name, description, status, settings, deliveryId, createdAt FROM $table WHERE {$scope['sql']} ORDER BY name ASC",
+            "SELECT id, name, description, status, settings, deliveryId, externalId, createdAt FROM $table WHERE {$scope['sql']} ORDER BY name ASC",
             ...$scope['params']
         ));
 
@@ -420,6 +420,7 @@ class PCM_REST_Assets extends PCM_REST_Base
             // Brand → Delivery → Project: deliveryId is stored; brandId is derived live.
             'deliveryId' => !empty($row->deliveryId) ? (int) $row->deliveryId : null,
             'brandId' => class_exists('PCM_Hierarchy') ? PCM_Hierarchy::brand_for_project((int) $row->id) : null,
+            'externalId' => $row->externalId ?? '',
             'createdAt' => $row->createdAt,
             );
         }, $results);
@@ -455,6 +456,7 @@ class PCM_REST_Assets extends PCM_REST_Base
             'description' => sanitize_textarea_field($params['description'] ?? ''),
             'status' => 'active',
             'settings' => wp_json_encode(array('type' => $params['type'] ?? 'general')),
+            'externalId' => sanitize_text_field($params['externalId'] ?? ''),
             'createdAt' => $now,
             'updatedAt' => $now,
         ));
@@ -469,6 +471,7 @@ class PCM_REST_Assets extends PCM_REST_Base
             'id' => $id,
             'name' => $params['name'],
             'type' => $params['type'] ?? 'general',
+            'externalId' => sanitize_text_field($params['externalId'] ?? ''),
         ), 201);
     }
 
@@ -528,11 +531,11 @@ class PCM_REST_Assets extends PCM_REST_Base
         $project = $wpdb->get_row($wpdb->prepare("SELECT id FROM $table WHERE id = %d AND userId = %d", $id, $user->id));
         if (!$project) return $this->not_found('Project');
 
-        $wpdb->update(
-            $table,
-            array('name' => sanitize_text_field($params['name']), 'updatedAt' => current_time('mysql')),
-            array('id' => $id)
-        );
+        $fields = array('name' => sanitize_text_field($params['name']), 'updatedAt' => current_time('mysql'));
+        if (array_key_exists('externalId', $params)) {
+            $fields['externalId'] = sanitize_text_field((string) $params['externalId']); // webhook projectExtID
+        }
+        $wpdb->update($table, $fields, array('id' => $id));
 
         return $this->success(array('success' => true));
     }

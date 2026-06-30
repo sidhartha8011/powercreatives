@@ -241,7 +241,7 @@ export function SitesModule() {
         Connect your other WordPress sites to publish to them.{' '}
         {isAdmin
           ? 'Install our connector plugin and paste the code it shows, or add one with an Application Password. '
-            + 'Already connected? Page-builder link editing needs connector v2.0.0+ — use “Download connector” and reinstall it (Replace current with uploaded) to update.'
+            + 'Already connected? Page-builder link editing needs connector v2.0.0+. The connector is a SEPARATE plugin that lives ON the connected site — reinstalling Power Creatives here will NOT update it. Use “Download connector”, then install the zip ON that site (its wp-admin → Plugins → Add New → Upload Plugin → “Replace current with uploaded” → Activate); its version should then read 2.0.0 under Plugins.'
           : 'Add one with its URL and an Application Password.'}
       </p>
 

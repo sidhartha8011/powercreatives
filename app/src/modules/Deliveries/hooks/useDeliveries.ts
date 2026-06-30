@@ -39,6 +39,7 @@ export interface CreateDeliveryInput {
   projectId?: number | null;
   seoSiteId?: number | null;
   modules?: string[];
+  externalId?: string | null;
 }
 
 export interface UpdateDeliveryInput {
@@ -51,6 +52,7 @@ export interface UpdateDeliveryInput {
   projectId?: number | null;
   seoSiteId?: number | null;
   modules?: string[];
+  externalId?: string | null;
 }
 
 export interface UseDeliveriesResult {

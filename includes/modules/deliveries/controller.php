@@ -134,6 +134,7 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             'name'       => $name,
             'clientName' => sanitize_text_field($request->get_param('clientName') ?? ''),
             'status'     => $status,
+            'externalId' => sanitize_text_field($request->get_param('externalId') ?? ''),
         );
 
         // Optional brand/project linkage — must belong to the caller.
@@ -204,6 +205,11 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         $client = $request->get_param('clientName');
         if (null !== $client) {
             $update['clientName'] = sanitize_text_field($client);
+        }
+
+        $external_id = $request->get_param('externalId');
+        if (null !== $external_id) {
+            $update['externalId'] = sanitize_text_field($external_id); // webhook deliveryExtID
         }
 
         $status_input = $request->get_param('status');

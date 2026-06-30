@@ -54,6 +54,8 @@ export interface BrandFormData {
   businessSummary: string;
   language: string;
   colors: string[];
+  /** Optional external identifier — used for webhook/automation mapping */
+  externalId: string;
   /** Logo URL discovered during website fetch — caller handles saving as brand asset */
   logoUrl?: string;
 }
@@ -68,6 +70,7 @@ export const EMPTY_FORM: BrandFormData = {
   businessSummary: "",
   language: "",
   colors: [],
+  externalId: "",
 };
 
 /** Maximum number of brand colors allowed */

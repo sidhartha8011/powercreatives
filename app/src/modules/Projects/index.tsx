@@ -11,6 +11,7 @@ import { InlineEditableCard } from '../Copy/components/InlineEditableCard';
 import { ModuleHeader } from '@/components/shared/ModuleHeader';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -116,10 +117,11 @@ export function ProjectsModule() {
   const { deleteProject, renameProject, duplicateProject, isDeleting, isDuplicating, isRenaming } = useProjectActions();
   const [mutatingId, setMutatingId] = useState<number | null>(null);
 
-  // Rename Modal State
+  // Rename/Edit Modal State
   const [renameModalOpen, setRenameModalOpen] = useState(false);
   const [projectToRename, setProjectToRename] = useState<Project | null>(null);
   const [newName, setNewName] = useState('');
+  const [renameExternalId, setRenameExternalId] = useState('');
 
   // Copy & Media Selection & Movement States
   const [selectedCopyIds, setSelectedCopyIds] = useState<string[]>([]);
@@ -176,12 +178,14 @@ export function ProjectsModule() {
   // Create Project State
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState('');
+  const [createExternalId, setCreateExternalId] = useState('');
 
   const createMutation = trpc.assets.createProject.useMutation({
     onSuccess: (data: any) => {
       toast.success(`Created project "${data.name}"`);
       projectsQuery.refetch();
       setCreateName('');
+      setCreateExternalId('');
       setShowCreate(false);
     },
     onError: (err: any) => {
@@ -191,7 +195,11 @@ export function ProjectsModule() {
 
   const handleCreate = () => {
     if (!createName.trim()) return;
-    createMutation.mutate({ name: createName.trim(), type: 'general' });
+    createMutation.mutate({
+      name: createName.trim(),
+      type: 'general',
+      externalId: createExternalId.trim() || undefined,
+    });
   };
 
   // Handlers for Project Actions
@@ -214,14 +222,18 @@ export function ProjectsModule() {
   const openRenameModal = (p: Project) => {
     setProjectToRename(p);
     setNewName(p.name);
+    setRenameExternalId(p.externalId ?? '');
     setRenameModalOpen(true);
   };
+
+  const renameDirty = !!projectToRename
+    && (newName !== projectToRename.name || renameExternalId !== (projectToRename.externalId ?? ''));
 
   const submitRename = () => {
     if (projectToRename && newName.trim()) {
       setMutatingId(projectToRename.id);
       renameProject(
-        { id: projectToRename.id, name: newName.trim() },
+        { id: projectToRename.id, name: newName.trim(), externalId: renameExternalId.trim() },
         {
           onSuccess: () => setRenameModalOpen(false),
           onSettled: () => setMutatingId(null)
@@ -529,19 +541,32 @@ export function ProjectsModule() {
 
       {/* Inline Create Form */}
       {showCreate && (
-        <div className="flex items-center gap-2 mb-6 p-3 bg-white rounded-lg border border-slate-200 shadow-sm animate-in slide-in-from-top-2">
-          <Input
-            value={createName}
-            onChange={(e) => setCreateName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-            placeholder="Project name..."
-            className="flex-1 max-w-sm"
-            autoFocus
-          />
+        <div className="flex flex-wrap items-end gap-3 mb-6 p-3 bg-white rounded-lg border border-slate-200 shadow-sm animate-in slide-in-from-top-2">
+          <div className="flex-1 min-w-[200px] max-w-sm space-y-1.5">
+            <Label htmlFor="project-name">Project name</Label>
+            <Input
+              id="project-name"
+              value={createName}
+              onChange={(e) => setCreateName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+              placeholder="Project name..."
+              autoFocus
+            />
+          </div>
+          <div className="flex-1 min-w-[200px] max-w-sm space-y-1.5">
+            <Label htmlFor="project-external-id">External ID</Label>
+            <Input
+              id="project-external-id"
+              value={createExternalId}
+              onChange={(e) => setCreateExternalId(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+              placeholder="Optional — used for webhook/automation mapping"
+            />
+          </div>
           <Button onClick={handleCreate} disabled={!createName.trim() || createMutation.isPending} size="sm">
             {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create'}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => { setShowCreate(false); setCreateName(''); }}>
+          <Button variant="ghost" size="sm" onClick={() => { setShowCreate(false); setCreateName(''); setCreateExternalId(''); }}>
             Cancel
           </Button>
         </div>
@@ -634,21 +659,36 @@ export function ProjectsModule() {
       <Dialog open={renameModalOpen} onOpenChange={setRenameModalOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Rename Project</DialogTitle>
+            <DialogTitle>Edit Project</DialogTitle>
           </DialogHeader>
-          <div className="py-4">
-            <Input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submitRename()}
-              placeholder="Enter new name..."
-              className="w-full"
-              autoFocus
-            />
+          <div className="py-4 space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="project-rename-name">Project name</Label>
+              <Input
+                id="project-rename-name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submitRename()}
+                placeholder="Enter new name..."
+                className="w-full"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="project-rename-extid">External ID</Label>
+              <Input
+                id="project-rename-extid"
+                value={renameExternalId}
+                onChange={(e) => setRenameExternalId(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submitRename()}
+                placeholder="Optional — used for webhook/automation mapping"
+                className="w-full"
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenameModalOpen(false)}>Cancel</Button>
-            <Button onClick={submitRename} disabled={!newName.trim() || newName === projectToRename?.name || isRenaming}>
+            <Button onClick={submitRename} disabled={!newName.trim() || !renameDirty || isRenaming}>
               {isRenaming ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
               Save Changes
             </Button>

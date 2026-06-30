@@ -148,6 +148,7 @@ class PCM_Deliveries_Service
             'projectId'  => isset($row->projectId) && $row->projectId !== null ? (int) $row->projectId : null,
             'seoSiteId'  => isset($row->seoSiteId) && $row->seoSiteId !== null ? (int) $row->seoSiteId : null,
             'modules'    => self::decode_modules($row->modules ?? null),
+            'externalId' => $row->externalId ?? '',
             'createdAt'  => $row->createdAt,
             'updatedAt'  => $row->updatedAt,
         );

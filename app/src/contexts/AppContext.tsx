@@ -296,6 +296,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('creative-machine-settings', JSON.stringify(state.settings));
   }, [state.settings]);
 
+  // Deep-link: ?pcm_approval_set=<id> (the team's `setInternalLink` from automation
+  // webhooks/emails) opens the Approvals module focused on that set so they can edit it.
+  useEffect(() => {
+    try {
+      const id = Number(new URLSearchParams(window.location.search).get('pcm_approval_set'));
+      if (Number.isFinite(id) && id > 0) {
+        dispatch({ type: 'SET_PENDING_APPROVAL_SET', payload: id });
+        dispatch({ type: 'SET_ACTIVE_MODULE', payload: 'approvals' });
+      }
+    } catch { /* no-op */ }
+  }, []);
+
   const value: AppContextValue = {
     state,
     dispatch,

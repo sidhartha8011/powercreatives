@@ -492,6 +492,7 @@ class PCM_Brands_Service
             'fonts' => json_decode($brand->fonts ?? '[]', true) ?: array(),
             'assets' => json_decode($brand->assets ?? '[]', true) ?: array(),
             'scrapedAt' => $brand->scrapedAt ?? null,
+            'externalId' => $brand->externalId ?? '',
             'createdAt' => $brand->createdAt,
             'updatedAt' => $brand->updatedAt,
         );

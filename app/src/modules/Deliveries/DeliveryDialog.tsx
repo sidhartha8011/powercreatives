@@ -69,6 +69,7 @@ export interface DeliveryDialogProps {
     projectId?: number | null;
     seoSiteId?: number | null;
     modules?: string[];
+    externalId?: string | null;
   }) => Promise<unknown>;
   /** Update handler. Resolves on server ack so the dialog can close. */
   onUpdate: (data: {
@@ -81,6 +82,7 @@ export interface DeliveryDialogProps {
     projectId?: number | null;
     seoSiteId?: number | null;
     modules?: string[];
+    externalId?: string | null;
   }) => Promise<unknown>;
 }
 
@@ -95,6 +97,7 @@ export function DeliveryDialog({
 
   const [name, setName] = useState('');
   const [clientName, setClientName] = useState('');
+  const [externalId, setExternalId] = useState('');
   const [status, setStatus] = useState<DeliveryStatus>('active');
   // '' = none. Picking a type pre-fills the module checkboxes from the
   // central preset (Settings → Delivery Types); checkboxes stay editable.
@@ -144,6 +147,7 @@ export function DeliveryDialog({
     if (delivery) {
       setName(delivery.name);
       setClientName(delivery.clientName ?? '');
+      setExternalId(delivery.externalId ?? '');
       setStatus(delivery.status);
       setType(delivery.type ?? '');
       setBrandId(delivery.brandId ? String(delivery.brandId) : '');
@@ -153,6 +157,7 @@ export function DeliveryDialog({
     } else {
       setName('');
       setClientName('');
+      setExternalId('');
       setStatus('active');
       setType('');
       setBrandId('');
@@ -171,6 +176,7 @@ export function DeliveryDialog({
 
     setSubmitting(true);
     try {
+      const trimmedExternalId = externalId.trim();
       if (isEdit && delivery) {
         const trimmedClient = clientName.trim();
         await onUpdate({
@@ -183,6 +189,7 @@ export function DeliveryDialog({
           projectId: projectId ? Number(projectId) : null,
           seoSiteId: seoSiteId ? Number(seoSiteId) : null,
           modules,
+          externalId: trimmedExternalId.length > 0 ? trimmedExternalId : null,
         });
       } else {
         const trimmedClient = clientName.trim();
@@ -195,6 +202,7 @@ export function DeliveryDialog({
           projectId: projectId ? Number(projectId) : null,
           seoSiteId: seoSiteId ? Number(seoSiteId) : null,
           modules,
+          externalId: trimmedExternalId.length > 0 ? trimmedExternalId : null,
         });
       }
       onClose();
@@ -243,6 +251,17 @@ export function DeliveryDialog({
                 value={clientName}
                 onChange={(e) => setClientName(e.target.value)}
                 placeholder="Client / account name (optional)"
+                maxLength={256}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="delivery-external-id">External ID</Label>
+              <Input
+                id="delivery-external-id"
+                value={externalId}
+                onChange={(e) => setExternalId(e.target.value)}
+                placeholder="Optional — used for webhook/automation mapping"
                 maxLength={256}
               />
             </div>

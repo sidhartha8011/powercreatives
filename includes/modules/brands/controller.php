@@ -162,6 +162,7 @@ class PCM_REST_Brands extends PCM_REST_Base
             'colors' => wp_json_encode($request->get_param('colors') ?? array()),
             'fonts' => wp_json_encode($request->get_param('fonts') ?? array()),
             'assets' => wp_json_encode(array()),
+            'externalId' => sanitize_text_field($request->get_param('externalId') ?? ''),
         );
 
         // Add scrapedAt if provided (ISO 8601 from frontend)
@@ -256,6 +257,12 @@ class PCM_REST_Brands extends PCM_REST_Base
         $client_email = $request->get_param('clientEmail');
         if (null !== $client_email) {
             $update['clientEmail'] = sanitize_email($client_email);
+        }
+
+        // External id — single-line value for mapping to an outside system (webhook brandExtID).
+        $external_id = $request->get_param('externalId');
+        if (null !== $external_id) {
+            $update['externalId'] = sanitize_text_field($external_id);
         }
 
         $json_fields = array('colors', 'fonts');
