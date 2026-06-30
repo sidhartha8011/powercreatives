@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
-import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon, ImagePlus, PenLine, Brush } from 'lucide-react';
+import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon, ImagePlus, PenLine, Brush, Info } from 'lucide-react';
 
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
 import { WriterBubbleMenu } from '@/modules/Writer/components/WriterBubbleMenu';
@@ -172,6 +172,12 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
         <ToolbarButton title="Add images (append — keeps the existing ones)" onClick={appendImages}><ImagePlus className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title="Annotate an image" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title="Draw on the whole card" active={drawing} onClick={startDraw}><Brush className="h-4 w-4" /></ToolbarButton>
+        {/* The floating formatting toolbar is contextual — it hides while typing.
+            Tell users how to bring it back (select text, or click an empty line). */}
+        <span className="ml-auto flex items-center gap-1.5 pr-1 text-[11px] text-muted-foreground" title="The floating toolbar appears when you select text or place the cursor on an empty line.">
+          <Info className="h-3.5 w-3.5 shrink-0" />
+          Select text (or click an empty line) to open the formatting toolbar
+        </span>
       </div>
       <div className="max-h-[72vh] overflow-y-auto p-4">
         {/* Positioned wrapper so the draw layer + overlay align with the content. */}

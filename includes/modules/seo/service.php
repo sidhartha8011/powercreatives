@@ -234,12 +234,12 @@ class PCM_SEO_Service
      *
      * @return array{internal:int,external:int,broken:int,scannedAt:string}
      */
-    public function scan_links(int $post_id): array
+    public function scan_links(int $post_id, bool $check_status = true): array
     {
         $post    = get_post($post_id);
         $content = $post ? (string) $post->post_content : '';
         $from    = get_permalink($post_id) ?: '';
-        $links   = self::scan_link_details($content, $from, home_url());
+        $links   = self::scan_link_details($content, $from, home_url(), $check_status);
         $internal = 0; $external = 0; $broken = 0;
         foreach ($links as $l) {
             if ($l['kind'] === 'internal') { $internal++; } else { $external++; }
@@ -265,7 +265,7 @@ class PCM_SEO_Service
      *
      * @return array<int,array{anchor:string,from:string,to:string,html:string,status:int,kind:string,broken:bool}>
      */
-    public static function scan_link_details(string $content, string $from_url, string $site_url): array
+    public static function scan_link_details(string $content, string $from_url, string $site_url, bool $check_status = true): array
     {
         if ($content === '' || !preg_match_all('/<a\s([^>]*?)>(.*?)<\/a>/is', $content, $matches, PREG_SET_ORDER)) {
             return array();
@@ -289,7 +289,7 @@ class PCM_SEO_Service
             $check_url = str_starts_with($href, '/') ? rtrim($site_url, '/') . $href : $href;
             $status = 0;
             $broken = false;
-            if ($checked < 30 && preg_match('#^https?://#i', $check_url)) {
+            if ($check_status && $checked < 30 && preg_match('#^https?://#i', $check_url)) {
                 $resp = wp_remote_head($check_url, $args);
                 if (is_wp_error($resp)) {
                     $broken = true;
@@ -333,6 +333,41 @@ class PCM_SEO_Service
     }
 
     /**
+     * Byte offset of the link at $index within $content — OCCURRENCE-AWARE so that
+     * duplicate <a> HTML (the same anchor + href appearing several times, e.g. repeated
+     * "View Details" buttons) resolves to the CORRECT occurrence instead of always the
+     * first. Returns null when not found (content changed since the scan the index came
+     * from). $links must be in document order (as scan_link_details returns them).
+     */
+    private static function nth_link_pos(string $content, array $links, int $index): ?int
+    {
+        if (!isset($links[$index]['html'])) {
+            return null;
+        }
+        $html = (string) $links[$index]['html'];
+        if ($html === '') {
+            return null;
+        }
+        // Count earlier links with the exact same HTML → which occurrence to target.
+        $occurrence = 0;
+        for ($i = 0; $i < $index; $i++) {
+            if (isset($links[$i]['html']) && (string) $links[$i]['html'] === $html) {
+                $occurrence++;
+            }
+        }
+        $pos    = false;
+        $offset = 0;
+        for ($n = 0; $n <= $occurrence; $n++) {
+            $pos = strpos($content, $html, $offset);
+            if ($pos === false) {
+                return null;
+            }
+            $offset = $pos + 1;
+        }
+        return ($pos === false) ? null : (int) $pos;
+    }
+
+    /**
      * Edit a link in a local post's content: replace its href and/or anchor text in
      * the stored <a> HTML, save the post, re-scan. Returns the refreshed link list.
      */
@@ -355,13 +390,13 @@ class PCM_SEO_Service
         $new_html = preg_replace_callback('/(<a\s[^>]*>)(.*)(<\/a>)/is', static fn($m) => $m[1] . $new_text . $m[3], $new_html, 1);
 
         $content = (string) $post->post_content;
-        $pos = strpos($content, $old_html);
-        if ($pos === false) {
+        $pos = self::nth_link_pos($content, $links, $index);
+        if ($pos === null) {
             return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
         }
         $content = substr_replace($content, (string) $new_html, $pos, strlen($old_html));
         wp_update_post(array('ID' => $post_id, 'post_content' => $content));
-        $this->scan_links($post_id);
+        $this->scan_links($post_id, false); // fast refresh — skip per-link HTTP checks (avoid timeout)
         return $this->get_post_links($post_id);
     }
 
@@ -379,13 +414,13 @@ class PCM_SEO_Service
         $old_html = (string) $links[$index]['html'];
         $inner    = preg_replace('/^<a\s[^>]*>(.*)<\/a>$/is', '$1', $old_html);
         $content  = (string) $post->post_content;
-        $pos      = strpos($content, $old_html);
-        if ($pos === false) {
+        $pos      = self::nth_link_pos($content, $links, $index);
+        if ($pos === null) {
             return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
         }
         $content = substr_replace($content, (string) $inner, $pos, strlen($old_html));
         wp_update_post(array('ID' => $post_id, 'post_content' => $content));
-        $this->scan_links($post_id);
+        $this->scan_links($post_id, false); // fast refresh — skip per-link HTTP checks (avoid timeout)
         return $this->get_post_links($post_id);
     }
 
@@ -1010,8 +1045,25 @@ class PCM_SEO_Service
         );
     }
 
+    /** Installed version of the Power Creatives Connector on a connected site (via /wp/v2/plugins),
+     *  or '' if it can't be read. Used to tell the user precisely whether their connector is current. */
+    private static function remote_connector_version(object $site): string
+    {
+        self::ensure_sites_service();
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/wp/v2/plugins', array('_fields' => 'name,version'));
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return '';
+        }
+        foreach ($res['body'] as $plugin) {
+            if (stripos((string) ($plugin['name'] ?? ''), 'Power Creatives Connector') !== false) {
+                return (string) ($plugin['version'] ?? '');
+            }
+        }
+        return '';
+    }
+
     /** Per-link details for a connected post (computed on-demand from its raw content). */
-    public static function remote_get_links(object $site, int $post_id, string $type): array
+    public static function remote_get_links(object $site, int $post_id, string $type, bool $check_status = true): array
     {
         self::ensure_sites_service();
         $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
@@ -1027,7 +1079,7 @@ class PCM_SEO_Service
         // letting a Save fail later as "link not found" / "not editable".
         $editable = ($raw !== '');
         $content  = $editable ? $raw : (string) ($res['body']['content']['rendered'] ?? '');
-        $links    = self::scan_link_details($content, $from, (string) $site->url);
+        $links    = self::scan_link_details($content, $from, (string) $site->url, $check_status);
         return array_values(array_map(static function ($l, $i) use ($editable) {
             $l['id']       = (int) $i;
             $l['editable'] = $editable;
@@ -1035,8 +1087,11 @@ class PCM_SEO_Service
         }, $links, array_keys($links)));
     }
 
-    /** Fetch raw content, mutate the indexed link's <a> HTML via $build, PUT it back, re-read. */
-    private static function remote_rewrite_link_content(object $site, int $post_id, string $type, int $index, callable $build)
+    /** Fetch raw content, mutate the indexed link's <a> HTML via $build, PUT it back, re-read.
+     *  $rendered_needle (a URL): if set and it does NOT appear in the page's rendered output
+     *  after saving, the live page is produced by a page builder / template that ignores
+     *  post_content — surfaced as an honest error instead of a misleading "saved". */
+    private static function remote_rewrite_link_content(object $site, int $post_id, string $type, int $index, callable $build, ?string $rendered_needle = null)
     {
         self::ensure_sites_service();
         $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
@@ -1054,14 +1109,14 @@ class PCM_SEO_Service
         if ($raw === '') {
             return new WP_Error('pcm_seo_no_raw', __('This page’s content isn’t editable through the API (e.g. a page-builder layout), so its links can’t be edited here.', 'power-creatives'), array('status' => 422));
         }
-        $links = self::scan_link_details($raw, $from, (string) $site->url);
+        $links = self::scan_link_details($raw, $from, (string) $site->url, false); // find by index; no HTTP checks
         if (!isset($links[$index])) {
             return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
         }
         $old_html = (string) $links[$index]['html'];
         $new_html = (string) $build($old_html, $links[$index]);
-        $pos = strpos($raw, $old_html);
-        if ($pos === false) {
+        $pos = self::nth_link_pos($raw, $links, $index);
+        if ($pos === null) {
             return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
         }
         $new_content = substr_replace($raw, $new_html, $pos, strlen($old_html));
@@ -1071,6 +1126,30 @@ class PCM_SEO_Service
         }
         if ((int) ($put['status'] ?? 0) >= 300) {
             return new WP_Error('pcm_seo_remote_link', sprintf(__('Could not save the remote post (HTTP %d) — the connector’s user may lack edit permission.', 'power-creatives'), (int) $put['status']), array('status' => 502));
+        }
+
+        // If the link's TARGET changed, ask the connector to replace the old URL across the post's
+        // content + ALL custom fields (page builders store the layout in meta — Elementor as JSON,
+        // Beaver/Divi as serialized arrays — and render from there, not post_content) + bust caches,
+        // so the change appears on the live page. Returns {replaced, where[]}. Best-effort: a no-op
+        // (404) on a connector older than the replace-url endpoint.
+        $replace_count = null; // null = connector didn't answer; int = how many places changed
+        $replace_builders = array(); // page builders the connector detected + regenerated
+        if ($rendered_needle !== null) {
+            $old_url = (string) ($links[$index]['to'] ?? '');
+            if ($old_url !== '' && $old_url !== $rendered_needle) {
+                $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-url', array(), array(
+                    'post_id' => $post_id,
+                    'old'     => $old_url,
+                    'new'     => $rendered_needle,
+                ));
+                if (!is_wp_error($rep) && (int) ($rep['status'] ?? 0) < 300 && isset($rep['body']['replaced'])) {
+                    $replace_count = (int) $rep['body']['replaced'];
+                    if (!empty($rep['body']['builders']) && is_array($rep['body']['builders'])) {
+                        $replace_builders = array_map('strval', $rep['body']['builders']);
+                    }
+                }
+            }
         }
 
         // Verify the edit actually persisted. Some remotes return 200 but keep the old content
@@ -1087,19 +1166,59 @@ class PCM_SEO_Service
                     array('status' => 409)
                 );
             }
+
+            // Rendered-source check: the edit DID save to post_content (raw changed above), but
+            // if the new target doesn't appear in the page's RENDERED output, the live page is
+            // produced by a page builder / theme template that ignores post_content — so the
+            // change won't show. Tell the user honestly. (Compare on host+path so URL encoding of
+            // query strings doesn't cause false negatives.)
+            if ($rendered_needle !== null) {
+                $rendered = (string) ($verify['body']['content']['rendered'] ?? '');
+                $parts    = wp_parse_url($rendered_needle);
+                $needle   = (string) ($parts['host'] ?? '') . (string) ($parts['path'] ?? '');
+                if ($rendered !== '' && $needle !== '' && strpos($rendered, $needle) === false) {
+                    // Use the connector's replace result to give an ACCURATE, actionable reason.
+                    if ($replace_count === null) {
+                        // The connector didn't answer the replace-url call — read its INSTALLED version
+                        // so the user knows exactly whether the update actually took (vs. a different error).
+                        $ver = self::remote_connector_version($site);
+                        if ($ver !== '' && version_compare($ver, '2.0.0', '>=')) {
+                            $msg = sprintf(__('Saved to the post content, but the live page is built by a page builder/theme that ignores it. The connector (v%s) is current but couldn’t apply the change to the builder — the post’s REST API may be restricted, or the page is hardcoded. Edit this link in the page builder on the site.', 'power-creatives'), $ver);
+                        } elseif ($ver !== '') {
+                            $msg = sprintf(__('Saved to the post content, but the live page is built by a page builder/theme that ignores it. The connected site is running Power Creatives Connector **v%s**, which is too old for builder-aware link editing — re-download the connector from this hub and reinstall it (need v2.0.0+), then try again.', 'power-creatives'), $ver);
+                        } else {
+                            $msg = __('Saved to the post content, but the live page is built by a page builder/theme that ignores it, and the connector didn’t respond. Re-download + reinstall the Power Creatives Connector (v2.0.0+) on the connected site (its version should read 2.0.0 under Plugins), then try again.', 'power-creatives');
+                        }
+                    } elseif ($replace_count > 0) {
+                        // We DID update builder data, but the rendered output is still old → render cache.
+                        $in = !empty($replace_builders) ? sprintf(' (%s)', implode(', ', $replace_builders)) : '';
+                        $msg = sprintf(__('Updated the link in %d place(s)%s on the connected site, but its cached/rendered output still shows the old link. Clear the site’s page + page-builder cache (or re-save the page in the builder) and it will update.', 'power-creatives'), $replace_count, $in);
+                    } else {
+                        // replaced === 0: the URL isn't in post content OR any custom field.
+                        $msg = __('This link isn’t stored in the page’s content or any custom field on the connected site — it’s likely hardcoded in the theme template, a navigation menu, or a widget. Edit it there on the site.', 'power-creatives');
+                    }
+                    return new WP_Error('pcm_seo_link_not_rendered', $msg, array('status' => 409));
+                }
+            }
         }
-        return self::remote_get_links($site, $post_id, $type);
+        // Fast refresh: re-list links WITHOUT the per-link HTTP status checks (up to 30 ×
+        // ~4s). Those checks on the edit response could push the whole request past the
+        // remote/PHP time limit so the save appeared to "do nothing" — the popup just
+        // needs the updated list; statuses refresh on the next explicit scan.
+        return self::remote_get_links($site, $post_id, $type, false);
     }
 
     /** Edit a connected post's link (href/anchor), via the connector. */
     public static function remote_update_link(object $site, int $post_id, string $type, int $index, ?string $anchor, ?string $href)
     {
+        // When the To/href changed, verify it shows up in the rendered page (detects builder/template).
+        $needle = ($href !== null && trim($href) !== '') ? esc_url_raw($href) : null;
         return self::remote_rewrite_link_content($site, $post_id, $type, $index, static function ($old_html, $link) use ($anchor, $href) {
             $new_href = $href !== null ? esc_url_raw($href) : (string) $link['to'];
             $new_text = $anchor !== null ? wp_kses_post($anchor) : (string) $link['anchor'];
             $h = preg_replace_callback('/href=[\'"][^\'"]*[\'"]/i', static fn() => 'href="' . $new_href . '"', $old_html, 1);
             return preg_replace_callback('/(<a\s[^>]*>)(.*)(<\/a>)/is', static fn($m) => $m[1] . $new_text . $m[3], $h, 1);
-        });
+        }, $needle);
     }
 
     /** Remove a connected post's link (unwrap the <a>, keep text), via the connector. */

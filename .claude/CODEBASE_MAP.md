@@ -826,8 +826,25 @@ section. `seo_tenants` still keeps the handshake secret + its own proxy creds.
 The HMAC handshake / `register_ping` / per-tenant connector / "Pending connections" path
 above is **legacy and frontend-orphaned** (kept in the backend, unused by the UI). The live
 flow is a **one-paste pairing code**, which sidesteps the public-hub requirement entirely:
-- **Connector = `PCM_SEOHub_Service::connector_php_simple()`** (generic, no handshake), bumped to
-  **v1.2.0**, downloaded via `GET /seohub/connector-download` (`download_connector_generic`,
+- **Connector = `PCM_SEOHub_Service::connector_php_simple()`** (generic, no handshake), now
+  **v2.0.0 — universal builder-aware link replacement**: pluggable handler architecture inside the
+  connector — `PCM_Conn_Builder_Handler` interface + `PCM_Conn_B_{Elementor,Bricks,Divi,WPBakery,
+  Oxygen,Breakdance}` (detect() via builder meta/content signals + regenerate() its CSS/cache) +
+  `PCM_Conn_Builder_Manager` (register/detect/replace_links) + `pcm_conn_builder_manager()` registry.
+  `POST /pcm-conn/v1/replace-url` {post_id, old, new | replacements{}} → manager replaces the URL in
+  post_content AND **every custom field** (serialization-safe via `pcm_conn_replace_in` recursion over
+  strings/arrays/objects + `update_metadata_by_mid(wp_slash())`, matching plain + JSON `\/` forms) →
+  regenerates detected builders' caches → `pcm_conn_purge_caches($id)` (WP Rocket/W3TC/WP Super/WP
+  Fastest/LiteSpeed/Cache Enabler/SG/Nginx-Helper/Super-Page-Cache-for-Cloudflare) → VERIFIES no old
+  URL remains → returns `{replaced, where[], builders[], steps[], verified, remaining[]}`. Also a
+  `wp_after_insert_post` cache-purge hook. The hub's `remote_rewrite_link_content` calls it after a
+  href edit; the rendered-check message uses the result + `remote_connector_version()` (reads the
+  connector's installed version via remote `/wp/v2/plugins`): replaced>0 but cached → "clear cache
+  (builders)"; replaced=0 → "link is in theme/menu/widget"; connector <2.0.0 → "reinstall v2.0.0+".
+  Bare Cloudflare proxy w/o a WP plugin still needs manual purge / official CF plugin. ⚠ NB: connector
+  version is SEPARATE from `PCM_VERSION` (main plugin = 1.7.0). **Connector changes require re-download
+  + reinstall on each connected site.**),
+  downloaded via `GET /seohub/connector-download` (`download_connector_generic`,
   streamed). On activation it self-creates one WP Application Password and its admin page shows a
   **`base64(JSON{url,user,pass})`** connection code. It registers Yoast/RankMath/SEOPress/`pcm_seo_*`
   meta (incl. **`pcm_seo_schema`**) in REST.

@@ -1,5 +1,271 @@
 # Session Log
 
+## 2026-06-30 — Always-visible "Download connector" button (connector update path) [/task]
+- **Root cause of the recurring failure (now proven):** the version-reporting showed the connected
+  site is on connector **v1.4.0** — it has NEVER been updated this session. The hub can't push a
+  plugin update remotely (WP only allows wp.org-repo installs), so it must be reinstalled manually —
+  but the **"Download connector" button only existed inside the "Add Site" dialog**, so for an
+  EXISTING connection there was no obvious way to re-download the updated connector. Confirmed the
+  zip folder is stable (`pcm-connector/pcm-connector.php` → reinstall REPLACES) and the download
+  serves the current v2.0.0 (`nocache_headers`).
+- **Fix (`Sites/index.tsx`):** added an always-visible, admin-only **"Download connector"** button to
+  the Sites toolbar (reuses `downloadGenericConnector`), with a tooltip + help-text spelling out the
+  update flow: "already connected? needs v2.0.0+ — Download connector and reinstall (Plugins → Add
+  New → Upload → Replace current with uploaded → Activate)."
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  (4,544,677); marker present (button + help text). Frontend-only.
+
+## 2026-06-30 — Rebuild plugin zip (connector v2.0.0 builder-aware) [/task]
+- Re-ran packaging recipe (regenerated classmap autoloader (96 classes), `npm run build`, GNU tar
+  stage → `powerplatform/`, bsdtar zip). Connector version confirmed **2.0.0** before zipping.
+- **Output:** `C:\Users\sanky\Desktop\powercreatives\power-creatives.zip` (2.21 MB, 477 entries,
+  forward-slash). 3 required files present; app/src + node_modules + tests excluded. **Reminder:**
+  updates the HUB; connected sites still need the connector RE-DOWNLOADED + reinstalled (v2.0.0). No commit.
+
+## 2026-06-30 — Universal builder-aware link replacement (connector v2.0.0) [/build]
+- **Built** the full spec inside the connector (`seohub/service.php` `connector_php_simple`, bumped to
+  2.0.0): pluggable `PCM_Conn_Builder_Handler` interface + handlers `PCM_Conn_B_{Elementor,Bricks,Divi,
+  WPBakery,Oxygen,Breakdance}` (each: detect() via builder meta/content signals + regenerate() its
+  CSS/cache) + `PCM_Conn_Builder_Manager` (register/detect/replace_links) + `pcm_conn_builder_manager()`
+  registry. `replace_links()` = universal serialization-safe replace (post_content + EVERY custom
+  field via `pcm_conn_replace_in` recursion + `update_metadata_by_mid(wp_slash())`, plain + JSON `\/`)
+  → regenerate detected builders → purge caches → VERIFY no old URL remains → returns
+  `{replaced, where[], builders[], steps[], verified, remaining[]}`. Reuses existing
+  `pcm_conn_replace_in` + `pcm_conn_purge_caches` (no duplication). `/replace-url` route now delegates
+  to the manager + accepts a `replacements{}` map (backwards-compatible with {old,new}).
+- **Hub (`seo/service.php`):** captures `builders[]` from the report → "cached" message names the
+  builders; version threshold bumped to 2.0.0.
+- **Who/how:** inline (one cohesive connector file + hub; not parallelizable), no subagents.
+- **Verified:** `php -l` clean on both hub files AND the extracted generated connector; stateful
+  end-to-end unit test of the REAL manager — replaced=3, verified=YES, where=[post_content,
+  _elementor_data], builders=[Elementor,WPBakery] (detected via meta AND content), steps =
+  "post_content updated | Elementor regenerated | WPBakery regenerated | caches purged | verified",
+  content + Elementor JSON both updated with `\/` slashes preserved + valid JSON. Couldn't drive the
+  live site (Cloudflare). **Requires connector re-download + reinstall (v2.0.0).**
+
+## 2026-06-30 — Surface the connected site's actual connector version [/task]
+- **Why:** the user keeps getting the "connector too old" message ($replace_count === null = the
+  remote's `/pcm-conn/v1/replace-url` didn't answer → old connector). Root issue is deployment: the
+  hub IS updated (new message shows) but the CONNECTOR on the connected site isn't v1.8.0. No way to
+  tell whether the connector reinstall actually took.
+- **Change (hub `seo/service.php`):** new `remote_connector_version($site)` reads the connector's
+  installed version from the remote's core `GET /wp/v2/plugins`. The "connector too old" branch now
+  reports it precisely: `<1.8.0` → "running Connector v1.5.0, too old — reinstall v1.8.0+"; `>=1.8.0`
+  but still failed → "connector current but couldn't apply — REST restricted/hardcoded, edit in
+  builder"; unreadable → generic. So the user sees EXACTLY what's installed and whether their update
+  took. Hub-only (no connector change → this enhancement works as soon as the hub zip is installed).
+- **Verified:** `php -l` clean; helper + `version_compare($ver,'1.8.0')` present; version_compare
+  sanity (1.5.0→too old, 1.8.0→current). Backend-only, no rebuild. Couldn't drive the live site.
+
+## 2026-06-30 — Rebuild plugin zip (connector v1.8.0 all-meta builder fix) [/task]
+- Re-ran packaging recipe (regenerated classmap autoloader (96 classes), `npm run build`, GNU tar
+  stage → `powerplatform/`, bsdtar zip). Connector version confirmed **1.8.0** before zipping.
+- **Output:** `C:\Users\sanky\Desktop\powercreatives\power-creatives.zip` (2.21 MB, 477 entries,
+  forward-slash). 3 required files present; app/src + node_modules + tests excluded. **Reminder:**
+  updates the HUB; connected sites still need the connector RE-DOWNLOADED + reinstalled (v1.8.0). No commit.
+
+## 2026-06-30 — Builder link edit: all-meta + serialization-safe replace (connector v1.8.0) [/build]
+- **Two real bugs found:** (1) version confusion — user reported connector "1.7.0", but that's
+  `PCM_VERSION` (main plugin); the connector I generate was only 1.6.0, so the builder fix likely
+  wasn't even installed on the connected site. (2) The v1.6.0 `replace-url` only handled `is_string`
+  meta (Elementor JSON) and SKIPPED PHP-serialized builder data (Beaver/Divi → get_post_meta returns
+  an array → `is_string` false → never touched).
+- **Fix — connector `connector_php_simple` → v1.8.0 (`seohub/service.php`):** rewrote `replace-url` to
+  scan EVERY custom field via raw `$wpdb` rows + `maybe_unserialize` + new recursive `pcm_conn_replace_in`
+  (handles strings/arrays/objects) + `update_metadata_by_mid(wp_slash(...))` — serialization-safe, no
+  hardcoded builder list. Matches plain URL + JSON `\/` form. Returns `{replaced, where[]}`. Bumped to
+  1.8.0 (above the confusing "1.7.0").
+- **Hub (`seo/service.php`):** captures the connector's `replaced` count and gives an accurate message
+  when the page still isn't updated: replaced>0 → "clear page/builder cache or re-save in builder";
+  replaced=0 → "link is hardcoded in a theme template/menu/widget — edit there"; no answer → "reinstall
+  connector v1.8.0+".
+- **Who/how:** inline (interconnected connector+hub), no subagents. **Verified:** `php -l` clean on both
+  hub files AND the extracted generated connector; reflection-style unit test of the REAL
+  `pcm_conn_replace_in` — serialized array replaced=1 + still reserializable (the previously-skipped
+  case), Elementor JSON replaced=1 + valid, non-matching=0. Couldn't drive the live site (Cloudflare).
+  **Requires re-download + reinstall of the connector (v1.8.0).**
+
+## 2026-06-30 — Rebuild plugin zip (connector v1.6.0 builder-data fix) [/task]
+- Re-ran packaging recipe (regenerated classmap autoloader via `gen_vendor.php` (96 classes),
+  `npm run build`, GNU tar stage → `powerplatform/`, bsdtar zip).
+- **Output:** `C:\Users\sanky\Desktop\powercreatives\power-creatives.zip` (2.21 MB, 477 entries,
+  forward-slash). 3 required files present; app/src + node_modules + tests excluded. Includes the
+  connector v1.6.0 replace-url/builder-data + cache fix. **Reminder:** updates the HUB; connected
+  sites still need the connector RE-DOWNLOADED + reinstalled (v1.6.0). No commit.
+
+## 2026-06-30 — Make link edits reflect on page-builder pages (connector v1.6.0) [/task]
+- **Confirmed cause:** the user now gets the rendered-check warning → the new URL really is absent
+  from `content.rendered` → the page is a page builder (Elementor/etc.) that stores the link in its
+  OWN data and renders from there, ignoring post_content. So editing post_content (what the scan
+  reads) can't change the page.
+- **Fix — connector `connector_php_simple` → v1.6.0 (`seohub/service.php`):** new route
+  **`POST /pcm-conn/v1/replace-url` {post_id, old, new}** that str_replaces the URL across
+  post_content AND builder meta (`_elementor_data`, `_fl_builder_data`/draft, `ct_builder_shortcodes`,
+  Themify, Cornerstone, Brizy) — matching BOTH the plain URL and its JSON `\/`-escaped form (with
+  `wp_slash` on write so the escapes survive) — then busts page + builder caches via the refactored
+  `pcm_conn_purge_caches()`.
+- **Hub (`seo/service.php` `remote_rewrite_link_content`):** after the post_content PUT, when the
+  href changed, calls the connector's replace-url (old→new) BEFORE the verify GET — so the
+  rendered-check then sees the new URL and returns success. Best-effort: 404 no-op on a pre-1.6.0
+  connector (falls back to the warning).
+- **Verified:** `php -l` clean on both hub files AND the extracted generated connector; route +
+  purge fn present; URL-replace unit test — plain content replaced=1 (new present); Elementor JSON
+  replaced=1, new present, **JSON still valid** (slashes preserved). Backend-only, no rebuild.
+  Couldn't drive the live site. **Requires re-download + reinstall of the connector (v1.6.0).**
+- **Coverage:** Elementor, Beaver, Oxygen, Brizy, Cornerstone, Themify; other builders not yet mapped.
+
+## 2026-06-30 — Rebuild plugin zip (includes connector cache-purge v1.5.0) [/task]
+- Re-ran packaging recipe (composer/rsync/zip absent → regenerated classmap autoloader via
+  `gen_vendor.php` (96 classes), `npm run build`, GNU tar stage → `powerplatform/`, bsdtar zip).
+- **Output:** `C:\Users\sanky\Desktop\powercreatives\power-creatives.zip` (2.20 MB, 477 entries,
+  forward-slash). Verified the 3 required files present; app/src + node_modules + tests excluded.
+  Includes updated `seohub/service.php` (connector v1.5.0 cache-purge). **Reminder:** this updates
+  the HUB; connected sites still need the connector RE-DOWNLOADED + reinstalled to get the purge.
+  No commit.
+
+## 2026-06-30 — Remote link edit not reflecting: connector cache-purge [/task]
+- **Deep investigation:** confirmed there is NO code bug. Our edit writes `post_content` (local
+  `wp_update_post`; remote = core REST `content` field), which is exactly what the scan reads back —
+  so "scan shows new, page shows old" = the remote serves stale/builder HTML, not a write failure.
+  Probed `massagegoteborg.nu` directly → Cloudflare hard-403s all requests (Server: cloudflare,
+  CF-RAY) → confirms a Cloudflare layer; couldn't read the page itself. No cache-purge existed
+  anywhere (hub or connector).
+- **Fix (connector, `seohub/service.php` `connector_php_simple` → v1.5.0):** added a
+  `wp_after_insert_post` hook that flushes known page caches after ANY post/page save — including
+  the hub's REST edits, which many cache plugins skip. Calls WP Rocket / W3TC / WP Super Cache / WP
+  Fastest Cache directly + fires action hooks for LiteSpeed / Cache Enabler / Breeze / SG / Nginx
+  Helper / **Super Page Cache for Cloudflare** (→ purges CF edge). Bumped connector version; **user
+  must re-download + reinstall the connector** on each connected site.
+- **Solution matrix (every cause → fix):** (1) WP cache plugin skipping REST → connector purge ✅
+  (this fix). (2) Cloudflare-bridge plugin → connector purge triggers it ✅. (3) Bare Cloudflare
+  proxy, no WP plugin → install official Cloudflare WP plugin (then auto-purges on our save) OR
+  manual purge OR future hub-side CF-API purge with the user's token. (4) Page builder stores link
+  in its own data → rendered-check already warns; needs editing in the builder.
+- **Verified:** `php -l` clean on the hub file AND on the extracted generated-connector PHP (my
+  injected hook is valid); purge hook + `swcfpc_purge_cache` present in the generated connector.
+  Couldn't drive the user's site (Cloudflare-blocked). Map updated (connector v1.5.0).
+
+## 2026-06-30 — Triage remote-site console errors + cache-aware save toast [/task]
+- **Triage:** user pasted console errors from the hub (create.widgetify.co) + connected site
+  (massagegoteborg.nu). NONE are from Power Creatives — verified `donutty` + `feature_collector`
+  = 0 in our source AND the built bundle; admin only enqueues `wp_enqueue_media()` + the React
+  bundle. They're WP core (JQMIGRATE), other plugins on the Widgetify hub (Donutty chart lib,
+  feature_collector), the user's ad-blocker (Cloudflare beacon ERR_BLOCKED_BY_CLIENT), and the
+  browser (slow-network font fallback). webp 403s = massagegoteborg's own server/security.
+- **Key finding:** massagegoteborg.nu is behind **Cloudflare** (cloudflareinsights beacon) → the
+  HTML page is edge-cached → the link edit DOES save (scan shows it) but the cached page serves the
+  old link until purged. This is the "cache" branch of yesterday's diagnosis, made concrete.
+- **Change (`SEO/LinksPopup.tsx`):** for REMOTE edits, the success toast now says "Link saved. If
+  the live page still shows the old link, clear its page/CDN cache (e.g. Cloudflare)." — the
+  rendered-check correctly classifies cache (not builder) so it returns success with no hint;
+  this fills that gap so a cached page isn't mistaken for a failed edit. Local toast unchanged.
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  (4,543,946); cache-hint string in bundle. The plugin errors needed no fix (none were ours).
+
+## 2026-06-30 — SEO remote link edit: detect builder/cache (page not reflecting) [/task]
+- **Symptom:** edit "to" → re-scan shows the new URL (so post_content DID update), but the live
+  page still shows the old link. = the page's visible output comes from a different source than
+  post_content: a page builder (Elementor/Divi render from their own meta) OR a page cache.
+- **Change (`seo/service.php` `remote_rewrite_link_content`):** after the save, reuse the verify
+  GET's `content.rendered` and check whether the new URL's host+path appears in it. If not → the
+  page is builder/template-rendered (ignores post_content) → return an honest error telling the
+  user to edit in the builder (or clear cache if it does use post_content), instead of a misleading
+  "saved". `remote_update_link` passes the new href as the needle; remove passes none. Also made the
+  PRE-edit parse skip HTTP checks (further speed-up; only the post-edit refresh was fast before).
+- **Why honest-error not auto-fix:** can't generically rewrite arbitrary page-builder data, and
+  can't purge arbitrary remote page caches — the right action is the user's (edit in builder / clear cache).
+- **Verified:** `php -l` clean; unit test of the detection logic 5/5 (builder→warn, content→no-warn,
+  encoded-query→no false positive, empty-rendered→skip, relative-href→ok). Backend-only, no rebuild.
+  Couldn't drive the user's hub (unreachable). Deploy updated code to their hub.
+
+## 2026-06-30 — Rebuild plugin zip (includes remote link-edit timeout fix) [/task]
+- Re-ran the packaging recipe (composer/rsync/zip absent → regenerated classmap autoloader via
+  scratchpad `gen_vendor.php` (96 classes), `npm run build`, GNU tar stage → `powerplatform/`,
+  Windows bsdtar `--format=zip`).
+- **Output:** `C:\Users\sanky\Desktop\powercreatives\power-creatives.zip` (2.20 MB, 477 entries,
+  forward-slash). Verified: `powerplatform/power-creatives.php`, `.../vendor/autoload.php`,
+  `.../app/dist/index-writer.js` present; app/src + node_modules + tests excluded. Includes the
+  updated `seo/service.php` (scan_link_details `check_status` fast-refresh fix). No commit.
+
+## 2026-06-30 — SEO remote link edit: fix timeout ("nothing happens") [/task]
+- **Symptom (user):** editing a "to" link on a connected site does nothing — NO toast at all
+  (success or error). User unsure if the page uses a builder.
+- **Root cause:** the post-edit refresh re-listed links via `remote_get_links → scan_link_details`,
+  which HTTP-HEAD-checks every link (cap 30 × ~4s = up to 120s) ON TOP of the GET+PUT+verify GET.
+  That blew past the remote/PHP time limit, so the request hung and never resolved → no toast.
+  Local edits read cached meta (fast), which is why only remote broke.
+- **Fix (`seo/service.php`):** added `bool $check_status = true` to `scan_link_details`,
+  `scan_links`, and `remote_get_links`. The post-edit refresh now passes `false`
+  (`remote_rewrite_link_content` → `remote_get_links(...,false)`; local `update_post_link`/
+  `remove_post_link` → `scan_links($post_id,false)`) — no per-link HTTP checks, so the edit
+  returns in a few seconds and the toast/result appears. Statuses refresh on the next explicit
+  Scan. Popup-open + the Scan button still check statuses (unchanged).
+- **Verified:** `php -l` clean; reflection unit test — `check_status=false` → 0 `wp_remote_head`
+  calls (vs 3 when true), links still parse correctly (anchors/tos intact).
+- **Caveat (couldn't confirm — user's hub unreachable, 0 sites on powercreatives.local):** if after
+  this the save shows "Link saved" but the live page still doesn't change, the page is likely
+  page-builder/cached (renders from builder data, not post_content) — separate follow-up. This fix
+  ensures the edit completes + gives feedback either way. Backend-only; deploy updated code to their hub.
+
+## 2026-06-30 — Rebuild plugin zip (includes duplicate-link fix) [/task]
+- Re-ran the packaging recipe (same env workarounds as the earlier zip task: composer/rsync/zip
+  absent → regenerated classmap autoloader via scratchpad `gen_vendor.php` (96 classes), `npm run
+  build`, GNU tar stage → `powerplatform/`, Windows bsdtar `--format=zip`).
+- **Output:** `C:\Users\sanky\Desktop\powercreatives\power-creatives.zip` (2.20 MB, 477 entries,
+  forward-slash). Verified: `powerplatform/power-creatives.php`, `powerplatform/vendor/autoload.php`,
+  `powerplatform/app/dist/index-writer.js` all present; app/src + node_modules + tests excluded.
+  Includes the updated `seo/service.php` (nth_link_pos duplicate-link fix). No commit.
+
+## 2026-06-30 — SEO link edit on remote: fix duplicate-link occurrence [/build]
+- **Bug:** editing a link's "to" on a connected site didn't reflect on the page when the post had
+  DUPLICATE links (screenshot: two identical "View Details" → same meet.google URL). All three
+  rewrite paths used `strpos($content, $old_html)` = FIRST occurrence, so editing the 2nd/3rd
+  duplicate rewrote the 1st — the edited link appeared unchanged (no error, since content DID change).
+- **Fix (`seo/service.php`):** new occurrence-aware helper `nth_link_pos($content,$links,$index)` —
+  counts earlier links with identical HTML and targets the Nth occurrence. Wired into
+  `update_post_link`, `remove_post_link` (local) and `remote_rewrite_link_content` (remote update +
+  remove). Unique links unaffected; duplicates now hit the exact one the user edited.
+- **Diagnosis note:** the local hub (powercreatives.local) has 0 connected sites — the user's
+  massagegoteborg connection lives on a DIFFERENT install I can't reach. Used a token-gated,
+  read-only temp `_diag.php` (Local's PHP, deleted after) to confirm that; root-caused from the
+  screenshot's visible duplicate links.
+- **Verified:** `php -l` clean; reflection unit test on the real `nth_link_pos` — index1→pos57
+  (1st dup), index2→pos123 (2nd dup), distinct; editing idx2 changes the 2nd link, leaves the 1st
+  intact (old strpos would've hit pos57 both times). Backend-only — no rebuild. Couldn't drive the
+  user's actual remote site; ships in the plugin code (deploy the rebuilt zip to their hub).
+- **Who:** diagnosis + fix inline, no subagents.
+
+## 2026-06-30 — Build installable plugin zip (powerplatform/) [/task]
+- **Output:** `C:\Users\sanky\Desktop\powercreatives\power-creatives.zip` (2.2 MB, 477 entries, top
+  folder `powerplatform/`). Verified contains `powerplatform/power-creatives.php`,
+  `powerplatform/vendor/autoload.php`, `powerplatform/app/dist/index-writer.js`; forward-slash
+  entries (Linux/WP-safe); app/src + node_modules + tests + .git excluded.
+- **vendor/ (composer not installed here):** composer.json has NO third-party deps
+  (`require: {php}`, classmap over includes/), so `composer install` would only emit an autoloader.
+  Generated a faithful, self-contained classmap autoloader (`vendor/autoload.php` +
+  `vendor/composer/autoload_classmap.php`, 96 classes — every mapped path verified to a real file).
+  NB: runtime never loads it — `power-creatives.php` explicitly `require_once`s every class; only
+  `tests/bootstrap.php` (excluded) uses vendor/autoload. So it's a safety-net + satisfies the
+  packaging contract; inert on the live site.
+- **Tooling deviations (Windows box):** composer/rsync/zip absent. Frontend: ran `npm run build`
+  (skipped `npm ci` — node_modules already installed + building all session; ci is slow + risks the
+  documented win32 rollup-binary issue). Packaging: GNU tar (exclude-copy) → staging `powerplatform/`,
+  then Windows bsdtar `--format=zip` (NOT Compress-Archive, which can emit backslash paths that break
+  WP extraction).
+- **Note:** a few harmless dev files remain (mock.js, test.jpg, original_review.txt, ORIGINAL_REQUEST.md,
+  export-metadata.json) — not in the task's exclude list; can strip on request. No commit.
+
+## 2026-06-29 — Custom card: header hint for the contextual formatting toolbar [/build]
+- **Why:** the floating bubble-menu toolbar (added earlier) is selection-driven — it hides once you
+  start typing. Tiptap's bubble menu has no native keyboard shortcut to force-open, so the "other
+  way" is to re-select text (or click an empty line, per its `shouldShow`).
+- **Change (`Approvals/components/CustomCardEditor.tsx`):** added a right-aligned muted note in the
+  editor's toolbar header — "Select text (or click an empty line) to open the formatting toolbar" with
+  an Info icon + tooltip. `ml-auto` so it sits at the right; wraps on narrow widths.
+- **Who did what:** one-line UI addition — inline, no subagents.
+- **Verified:** `npm run check` 0 new errors (56 baseline); `npm run build` OK; served==build
+  (4,543,817); hint string present in the bundle.
+
 ## 2026-06-29 — Team-reply → client email: already built + brand-email fallback [/build]
 - **Finding:** the requested feature already exists. Team reply (admin board → `/approvals/sets/{id}/reply`
   → `add_team_reply` → `add_team_comment` → `append_comment(..., APPROVAL_COMMENT_TEAM_REPLY)`) calls
