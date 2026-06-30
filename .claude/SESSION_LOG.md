@@ -4165,3 +4165,14 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - **Net:** server-side decode proven on real code; client-side escape proven earlier in Node. End-to-end
   through an actual WAF host still can't be reproduced locally (clean host doesn't strip). No code changed
   this turn (test-only); map's machine-`krith` section updated with the bundled-PHP recipe.
+
+## 2026-06-30 — Pull + merge emoji fix + push (feat/seo-suite-port)
+- **Context:** branch had diverged — local ahead 1 (`d26509b "added new fix"` = the emoji fix:
+  CreativeAssetCard.tsx + controller.php + CODEBASE_MAP + SESSION_LOG), origin ahead 2 (`8d37357`,
+  `2ba6020` — more "changed seo tab" work touching SEO/Sites/seohub/CustomCardEditor).
+- **Merge:** `git merge origin/feat/seo-suite-port` → clean auto-merge, **no conflicts** (code sides
+  disjoint; the two `.claude/*.md` files auto-reconciled in non-overlapping regions). Merge commit `f721831`.
+- **Verified before push:** emoji fix intact post-merge (escapeAstral ×4, decode_numeric_entities ×2);
+  `php -l` clean on controller.php + merged seo/seohub service.php; frontend `npm run check` = 56 (baseline,
+  none in touched files); `npm run build` clean (2114 modules).
+- **Pushed:** `8d37357..f721831 feat/seo-suite-port` → origin; branch in sync (no ahead/behind).
