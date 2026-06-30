@@ -389,6 +389,20 @@ class PCM_REST_Approvals extends PCM_REST_Base
             }
         }
 
+        // ── Decode ASCII-escaped emoji ──
+        // The client escapes astral-plane characters (emoji, > U+FFFF) to ASCII
+        // numeric HTML entities (&#128640;) BEFORE sending, so a request-stripping
+        // security/WAF layer can't drop the 4-byte UTF-8 in transit (the raw-body
+        // safeguard above can only help when the parsed params lost bytes the raw
+        // body kept — it can't recover bytes that never reached PHP at all).
+        // Decode them back to UTF-8 here so the value stored matches what the user
+        // typed. Numeric references only — named entities / literal text untouched.
+        foreach (array('body', 'headline', 'description') as $field) {
+            if (isset($params[$field]) && is_string($params[$field])) {
+                $params[$field] = self::decode_numeric_entities($params[$field]);
+            }
+        }
+
         // Opt-in probe: enable WP_DEBUG to log where an emoji is lost on this host
         // (raw → parsed → after-sanitize). raw=1 parsed=0 ⇒ a request-level layer
         // stripped it; raw=0 ⇒ the browser never sent it (stale bundle / cache).
@@ -430,6 +444,31 @@ class PCM_REST_Approvals extends PCM_REST_Base
             $value
         );
         return is_int($n) ? $n : 0;
+    }
+
+    /**
+     * Decode ASCII numeric HTML character references (decimal &#128640; and hex
+     * &#x1F680;) back to their UTF-8 characters. Pairs with the frontend's
+     * astral-plane escaping (escapeAstral) so emojis survive a request-stripping
+     * WAF/security layer. Only numeric references are touched — named entities
+     * and literal text pass through unchanged. No-op when mbstring is missing
+     * (the entity is left as-is rather than crashing).
+     */
+    private static function decode_numeric_entities(string $value): string
+    {
+        if (strpos($value, '&#') === false || !function_exists('mb_chr')) {
+            return $value;
+        }
+        $decode = static function (int $cp, string $original): string {
+            return ($cp > 0 && $cp <= 0x10FFFF) ? mb_chr($cp, 'UTF-8') : $original;
+        };
+        $value = preg_replace_callback('/&#(\d+);/', static function ($m) use ($decode) {
+            return $decode((int) $m[1], $m[0]);
+        }, $value);
+        $value = preg_replace_callback('/&#x([0-9a-fA-F]+);/', static function ($m) use ($decode) {
+            return $decode((int) hexdec($m[1]), $m[0]);
+        }, $value);
+        return $value;
     }
 
     /**

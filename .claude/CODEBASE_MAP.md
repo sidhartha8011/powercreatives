@@ -54,7 +54,42 @@ npm run check                 # tsc --noEmit  ← run this after every TS change
 There is **no PHP linter configured** (no `phpcs.xml`); follow WPCS conventions by hand.
 
 ## Local WordPress (LIVE verification IS available)
-> **Mac dev box (this machine — confirmed live 2026-06-18).** WP **7.0** / PHP
+> **Windows dev box `krith` (confirmed live 2026-06-29).** Clean machine — toolchain
+> installed from scratch via winget: **Node 24.18.0 / npm 11.16.0** + **Local by
+> Flywheel 10.1.1** (`C:\Users\krith\AppData\Local\Programs\Local\Local.exe`). No
+> PHP/Composer/wp-cli **on PATH**, so `composer test` can't run here — runtime needs
+> NO `vendor/`, the plugin uses its own require chain, so the site runs fine without
+> it. **BUT Local bundles a usable PHP (8.2.29):**
+> `C:\Users\krith\AppData\Local\Programs\Local\resources\extraResources\lightning-services\php-8.2.29+0\bin\win64\php.exe`
+> — use it for `php -l` and standalone PHP scripts (verified 2026-06-30). A bare
+> `php -r` loads NO ini (so `mb_*`/PDO are absent); add
+> `-d extension_dir="…\bin\win64\ext" -d extension=php_mbstring.dll` when you need
+> mbstring (the running site's php-fpm loads it by default — `mb_chr` IS available
+> in the real runtime). Class files guard with `if(!defined('ABSPATH'))exit;`, so a
+> standalone harness must `define('ABSPATH', …)` before `require`-ing them; you can
+> then reflect-invoke methods without a full `wp-load` (no DB needed unless the code
+> path hits `$wpdb`). DB-backed bootstrap still needs the site STARTED (MySQL up).
+> **Working copy is OneDrive-synced:** `C:\Users\krith\OneDrive\Desktop\Powercreatives\powercreatives`
+> (the inner dir holding `power-creatives.php`). **Local site = `power-creatives`**
+> (note the hyphen) → **`http://power-creatives.local`**. Plugin linked as a **directory
+> junction** `…\Local Sites\power-creatives\app\public\wp-content\plugins\`**`powercreatives`**
+> → the OneDrive working copy (junction name `powercreatives`, no hyphen, to match the
+> activated entry `powercreatives/power-creatives.php`). ⚠️ **Two-clones trap (hit
+> 2026-06-29):** the site originally ran a SEPARATE standalone git clone in its plugins
+> dir, so `git pull`/`npm run build` in the OneDrive working copy never reached it. Fixed
+> by moving that clone aside to `…/wp-content/powercreatives-standalone-backup` (outside
+> `plugins/` so WP doesn't list it) and replacing it with the junction above. Now
+> `git pull` (OneDrive copy) + `cd app && npm run build` reflects live. **Frontend
+> bundle has FIXED filenames (`index-writer.js`/`index.css`, no content hash) — after a
+> rebuild you MUST hard-refresh (Ctrl+F5) the browser** or WP serves the cached bundle.
+> Build env on PATH only after refreshing it from the registry in a new shell
+> (`$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User')`).
+> **Auth-free smoke test (confirmed):** `GET http://power-creatives.local/wp-json/` →
+> `namespaces` contains `pcm/v1`; `GET /wp-json/pcm/v1` lists **~204 routes** (grew from
+> the older ~165/167 as the SEO suite landed); `GET /wp-json/pcm/v1/brands` → **403**
+> (loaded + nonce/cap-guarded, not 404).
+>
+> **Mac dev box (confirmed live 2026-06-18).** WP **7.0** / PHP
 > **8.5.7** served by the **PHP built-in server**: `php -S localhost:8080 router.php`
 > (process cwd = docroot). **Docroot:** `~/Desktop/wordpress-local`. **Plugins dir:**
 > `~/Desktop/wordpress-local/wp-content/plugins/`. The plugin is installed as a

@@ -3826,3 +3826,76 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - trpc route `integrations.brevoSenders` added; picker injected into the card (provider==='brevo' && active).
 - **Verified:** php -l ok; route registered; live Brevo fetch returned 9 verified senders (incl. hello@profitmedia.se);
   tsc 56 (baseline); build clean; "Sender for client emails" present in bundle; zip rebuilt.
+
+## 2026-06-29 — "git pull didn't reflect" → two disconnected clones (machine `krith`)
+- **Symptom:** user ran `git pull origin feat/seo-suite-port` but changes didn't show in the running site.
+- **Diagnosis:** pull DID succeed in the OneDrive working copy (`…\Desktop\Powercreatives\powercreatives`,
+  fast-forward `a56edc6 → 7cf04fe`). But WordPress (Local site `power-creatives`) was running a SEPARATE
+  git clone in its plugins dir (`…\plugins\powercreatives`, still at `a56edc6`, missing `7cf04fe`). Two
+  disconnected clones → pull/build in one never reaches the other. Secondary: the frontend `app/dist/`
+  bundle is pre-built and not auto-rebuilt by a pull (commit `7cf04fe` touched `CustomCardEditor.tsx` +
+  `approvals/service.php`; bundle was 14 min older than the pulled TS).
+- **Fix (user chose "one source of truth"):** moved the standalone clone to
+  `…/wp-content/powercreatives-standalone-backup` (outside `plugins/` so WP doesn't list it) and replaced
+  it with a **directory junction** `…\plugins\powercreatives` → the OneDrive working copy (named
+  `powercreatives` to keep the activated entry valid). Rebuilt the frontend in the working copy
+  (`cd app && npm run build`, 2114 modules, clean).
+- **Verified (live, no auth):** `GET http://power-creatives.local/wp-json/` → 200, `pcm/v1` present;
+  `/wp-json/pcm/v1` → **204 routes**; `/wp-json/pcm/v1/brands` → **403** (loaded + guarded). Junction
+  resolves `power-creatives.php` + fresh `app/dist/index-writer.js` (22:35:51 > pulled src 22:31:19).
+- **Env note (machine `krith`, clean box):** installed Node 24.18.0 + Local by Flywheel 10.1.1 via winget;
+  no PHP/Composer (tests can't run here; runtime needs no `vendor/`). Map's *Local WordPress* section
+  updated with this box + the two-clones trap. **Reminder for the user: hard-refresh (Ctrl+F5) after every
+  rebuild** — bundle filenames are fixed (no hash), so the browser caches the old one.
+
+## 2026-06-30 — Fix: emoji stripped when editing a copy/ad card in an approval set
+- **Symptom:** generate an ad in Copy → send to approval → open the set → click a copy card →
+  edit → click outside (blur autosave) → the saved copy loses its emoji.
+- **Root cause:** NOT in the app code — every code path is already emoji-safe (the snapshot is stored
+  via `wp_json_encode` = `\uXXXX` ASCII; `format_set_row` reads it straight back; `sanitize_textarea_field`
+  preserves valid UTF-8; the frontend Tiptap round-trip + `decodeHtmlEntities` keep emoji; columns are
+  utf8mb4 via `get_charset_collate()`). The loss is at the **request transport**: a security/WAF layer on
+  the host strips 4-byte (astral-plane) UTF-8 from the JSON body *before PHP runs*. The pre-existing
+  raw-body safeguard (commit `0f30366`) can only recover bytes the parsed params lost but the raw body
+  kept — it can't recover bytes that never reached PHP. That's why prior fixes didn't stick.
+- **Fix (host-proof; no-op on clean hosts):** escape emoji to ASCII *before the wire*, decode on the server.
+  - Frontend `app/src/modules/Approvals/components/CreativeAssetCard.tsx`: new `escapeAstral()` converts
+    code points > U+FFFF to decimal numeric entities (`🚀`→`&#128640;`); applied to body/headline/description
+    in the `updateSnapshotAsset` mutation. BMP chars (❤, ☺, Swedish å/ä/ö) untouched — they survive a 4-byte
+    filter already.
+  - Backend `includes/modules/approvals/controller.php` `update_snapshot_asset()`: new
+    `decode_numeric_entities()` decodes decimal + hex numeric refs back to UTF-8 (numeric only — named
+    entities / literal text untouched; guarded by `function_exists('mb_chr')`); runs after the existing
+    raw-body safeguard, before sanitize/store. Decoded value flows to both the snapshot and the
+    `copy_results` propagation.
+- **Scope:** copy fields (body/headline/description), matching the existing safeguard's field list.
+  Article/custom `content`/`title` not included (out of reported scope; same approach would extend cleanly).
+- **Verified:** frontend `npm run check` = 56 TS errors (unchanged baseline; none in the touched files);
+  `npm run build` clean (2114 modules, `index-writer.js` rebuilt); escape↔decode round-trip proven lossless
+  in Node for plain text, single + multiple emoji, ZWJ family emoji, and BMP/Swedish chars (astral chars
+  become pure-ASCII on the wire). **Not verified:** `php -l`/PHPUnit (no PHP on machine `krith`) and live
+  end-to-end on the actual WAF host (the stripping environment can't be reproduced locally). Hand-checked
+  PHP syntax. No commit (per workspace rule). Reminder: hard-refresh (Ctrl+F5) after the rebuild.
+
+## 2026-06-30 — CLI test of the emoji fix (real shipped code, via Local's bundled PHP)
+- **Goal:** verify the 2026-06-30 emoji fix through the CLI (not just JS round-trip logic).
+- **Discovery (contradicts the map, now updated):** the box has no PHP on PATH, but **Local bundles
+  PHP 8.2.29** at `…\lightning-services\php-8.2.29+0\bin\win64\php.exe`. Usable for `php -l` + standalone
+  scripts. A bare `php -r` loads no ini (mbstring absent) → add `-d extension_dir=…\ext -d extension=php_mbstring.dll`;
+  the running site's php-fpm loads mbstring by default, so `mb_chr` IS available in the real runtime.
+- **What was tested:**
+  1. `php -l includes/modules/approvals/controller.php` → **No syntax errors** (the lint I couldn't run before).
+  2. **Contract test against the REAL shipped method:** a harness defines `ABSPATH`, requires
+     `base-controller.php` + `approvals/controller.php`, and reflect-invokes the private
+     `PCM_REST_Approvals::decode_numeric_entities()` on payloads produced by the client's actual
+     `escapeAstral()` logic. **7/7 PASS** — single/multi emoji (🚀🔥❤), hex form (`&#x1F680;`), ZWJ family
+     (👨‍👩‍👧‍👦), Swedish/BMP (å ä ö ❤ ☺), plain ASCII + `<b>`, and `&amp;` (named entities deliberately
+     left untouched). `mb_chr loaded: yes`.
+  3. Confirmed the active site's plugin **junction resolves to the edited controller** (the new method is
+     present at `…\Local Sites\power-creatives\…\plugins\powercreatives\…\controller.php`).
+- **Not run:** live HTTP smoke (`GET http://power-creatives.local/wp-json/`) — the Local site was **stopped**
+  (curl → HTTP 000); starting it needs the Local desktop app (no reliable headless start). The reflection
+  test exercises the same shipped code, so this is a coverage gap on transport, not on the fix logic.
+- **Net:** server-side decode proven on real code; client-side escape proven earlier in Node. End-to-end
+  through an actual WAF host still can't be reproduced locally (clean host doesn't strip). No code changed
+  this turn (test-only); map's machine-`krith` section updated with the bundled-PHP recipe.
