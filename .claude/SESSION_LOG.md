@@ -4371,3 +4371,60 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   brandExtID=B-100/deliveryExtID=D-200/projectExtID=P-300/setComment='Looks great, approve it!' ✅; tsc 56
   (baseline); build clean; externalId 19× in bundle; hub zip rebuilt. Needs hub reinstall (DB migration runs on
   upgrade). Nothing committed.
+
+## 2026-07-01 — Connector security assessment artifact (docs/CONNECTOR-SECURITY-ASSESSMENT.md)
+- Task: security-scan the connector against known WordPress CVE classes; produce a documentation artifact.
+  Reference example CVE-2026-8732 (WP Maps Pro, CWE-306 missing-auth, CVSS 9.8 — unauth admin creation).
+- Did a code-grounded manual static review of the connector (v2.1.3) against the WP/OWASP/CWE vuln taxonomy.
+  Verified in source: every REST route has an enforced permission_callback (no __return_true on a route),
+  per-object current_user_can('edit_post',$pid) on /replace-url, all SQL via $wpdb->prepare(%d), output escaped
+  (esc_html/esc_attr/esc_textarea), llm-info HTML wp_kses_post-filtered, check_admin_referer on admin POSTs,
+  outbound wp_remote_post targets the fixed PCM_CONN_HUB_URL (no SSRF), and NO eval/exec/file-write/user-or-role
+  -creation sinks anywhere. Result: no exploitable vuln; specifically NOT susceptible to the reference CVE class.
+- Two informational hardening notes documented honestly: OBS-1 maybe_unserialize() on the post's own meta
+  (auth+edit_post-gated, not request-controlled); OBS-2 application_password_is_api_request forced true (broadens
+  where a valid credential is accepted, bypasses no authorization). Both carry optional hardening suggestions.
+- Artifact: docs/CONNECTOR-SECURITY-ASSESSMENT.md (exec summary, scope/methodology w/ honest "static review,
+  not a live CVE-feed scan" disclaimer, attack-surface inventory, 11-class CWE findings table, recommendations
+  incl. WPScan/Patchstack for ongoing monitoring, code-reference + document-control appendices). No code changed;
+  nothing committed. Done inline (no security-auditor subagent) given deep familiarity with the single-file connector.
+
+## 2026-07-01 — Fix: automation create/edit dialog not scrollable with long content
+- Report: the Automations popup (New/Edit automation) overflowed the viewport with no scroll when it had a lot
+  of content (many conditions etc.). Cause: its `<DialogContent className="sm:max-w-lg">` lacked a height cap +
+  overflow — unlike the rest of the app's dialogs.
+- Fix (Automations/index.tsx, 1 line): added `max-h-[85vh] overflow-y-auto`, matching the dominant dialog
+  convention (BrandDialog/Deliveries/LinksPopup/etc.). Trigger/action pickers are Radix Popover/Command which
+  portal to body, so they aren't clipped by the dialog's overflow.
+- Verified: tsc 56 (baseline); build clean. WP-admin SPA change (no standalone preview).
+
+## 2026-07-01 — Emojis dropped from approval COPIES on share (not just card edit)
+- Report: emojis still vanish from approval cards (only the last surviving), incl. while editing. Root cause:
+  the earlier escapeAstral/decode fix covered ONLY the card-edit path (update_snapshot_asset). The
+  SEND-TO-APPROVAL path (SendToApprovalSetDialog → create_set / append_assets) sends the full copy snapshot
+  ({media,copy,custom}) in the request body with RAW emoji — a WAF that strips 4-byte UTF-8 drops them in
+  transit, so the frozen snapshot loses them before they ever reach a card.
+- Fix (symmetric, de-duped):
+  - New shared util app/src/lib/escapeAstral.ts: escapeAstral + escapeAstralDeep (recurses string leaves).
+    CreativeAssetCard now imports it (removed its local copy).
+  - SendToApprovalSetDialog: escapeAstralDeep the snapshot before BOTH createMutation + appendMutation.
+  - Controller: new recursive decode_snapshot_emojis(); applied in create_set + append_assets to decode the
+    snapshot on ingest (pairs with decode_numeric_entities used by the card-edit path).
+- Verified: php -l clean; full JS→wire→PHP round-trip lossless — a nested snapshot with 6 emoji (🚀🔥🎉🎊📄
+  + ❤️) escapes to pure ASCII (0 raw astral bytes) then decodes back to ALL 6 (not just the last); tsc 56
+  (baseline); build clean; escape logic in bundle; hub zip rebuilt. Needs hub reinstall + hard-refresh.
+
+## 2026-07-01 — Emoji ROOT fix: escape ALL non-ASCII, not just astral (BMP emoji ✨ were dropped)
+- Screenshots showed ✨ (U+2728) vanishing from a copy card on edit, while the headline's 🎬 (astral, in a plain
+  textarea) survived. Root cause: escapeAstral only escaped code points > U+FFFF (astral/4-byte). ✨ U+2728 and
+  other BMP emoji/symbols (❤ U+2764, ☺, dingbats, variation selectors) are ≤ U+FFFF, so they were sent RAW —
+  and this host's filter strips 3-byte BMP emoji too, not only 4-byte. The earlier "BMP survives a 4-byte filter"
+  assumption was wrong for this host.
+- Fix (root, 1 file): escapeAstral now escapes EVERY non-ASCII char (cp > 0x7F) to a numeric entity, so the
+  request body is pure ASCII and nothing in transport can strip it. Backend decode_numeric_entities /
+  decode_snapshot_emojis already decode any numeric ref (mb_chr), so accented Swedish letters round-trip too.
+  Covers both fixed approval paths (card edit escapeAstral; share escapeAstralDeep).
+- Verified: round-trip — a snapshot with ✨❤☺ (BMP) + 🎬 (astral) + å/ä/ö escapes to PURE ASCII (max codepoint
+  ≤ 0x7F, confirmed) then decodes back identical; tsc 56 (baseline); build clean; hub zip rebuilt. Needs hub
+  reinstall + hard-refresh. NOTE: the Copy-module author/save path is a separate send site that still lacks the
+  escape — flagged as a follow-up (not in the reported approval-card scope).

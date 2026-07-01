@@ -6,29 +6,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { isVideoAsset } from './ClientReviewPage';
 import { TiptapBodyEditor } from '@/components/shared/TiptapBodyEditor';
+import { escapeAstral } from '@/lib/escapeAstral';
 import { useAutoResizeTextarea } from '@/hooks/useAutoResizeTextarea';
 import { trpc } from '@/lib/trpc';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
-
-/* Escape astral-plane characters (emoji, > U+FFFF) to ASCII numeric HTML
- * entities (e.g. 🚀 → "&#128640;") BEFORE the value hits the wire. Some hosts
- * run a security/WAF layer that strips 4-byte UTF-8 (emoji) from the request
- * body before PHP can read it, so by the time the server-side raw-body
- * safeguard runs the bytes are already gone. Sending them pre-escaped as pure
- * ASCII means nothing in the transport can drop them; the server decodes the
- * numeric entities back to UTF-8 (PCM_REST_Approvals::decode_numeric_entities).
- * No-op for plain ASCII text; BMP chars (≤ U+FFFF, incl. ❤/☺ and Swedish
- * å/ä/ö) are left untouched since they survive a 4-byte filter already. */
-function escapeAstral(text: string): string {
-  if (!text) return text;
-  let out = '';
-  for (const ch of text) {
-    const cp = ch.codePointAt(0) ?? 0;
-    out += cp > 0xffff ? `&#${cp};` : ch;
-  }
-  return out;
-}
 
 export interface CreativeAsset {
   id: string;

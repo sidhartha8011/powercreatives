@@ -128,7 +128,9 @@ class PCM_REST_Approvals extends PCM_REST_Base
                 'brandId'    => !empty($params['brandId']) ? (int)$params['brandId'] : null,
                 'projectId'  => !empty($params['projectId']) ? (int)$params['projectId'] : null,
                 'deliveryId' => $delivery_id,
-                'snapshot'   => $params['snapshot'], // Sanitized in service layer
+                // Decode ASCII-escaped emoji (escapeAstralDeep on the client) so they survive a
+                // WAF that strips 4-byte UTF-8 from the request body. Sanitized in the service layer.
+                'snapshot'   => self::decode_snapshot_emojis($params['snapshot']),
             ));
 
             if (!$set_id) {
@@ -170,6 +172,9 @@ class PCM_REST_Approvals extends PCM_REST_Base
         if (empty($snapshot['media']) && empty($snapshot['copy']) && empty($snapshot['articles']) && empty($snapshot['custom'])) {
             return $this->error('Nothing to append — snapshot data cannot be empty.');
         }
+        // Decode ASCII-escaped emoji (escapeAstralDeep on the client) so they survive a WAF
+        // that strips 4-byte UTF-8 from the request body, before the snapshot is frozen.
+        $snapshot = self::decode_snapshot_emojis($snapshot);
 
         require_once __DIR__ . '/service.php';
 
@@ -468,6 +473,28 @@ class PCM_REST_Approvals extends PCM_REST_Base
         $value = preg_replace_callback('/&#x([0-9a-fA-F]+);/', static function ($m) use ($decode) {
             return $decode((int) hexdec($m[1]), $m[0]);
         }, $value);
+        return $value;
+    }
+
+    /**
+     * Recursively decode ASCII-escaped emoji in every string of an approval snapshot
+     * (copy / custom / media item fields). Server-side pair to the client's
+     * escapeAstralDeep() so emoji survive a WAF that strips 4-byte UTF-8 from the
+     * create/append request body. No-op for strings without a numeric reference.
+     *
+     * @param mixed $value Snapshot value (array tree or scalar).
+     * @return mixed
+     */
+    private static function decode_snapshot_emojis($value)
+    {
+        if (is_string($value)) {
+            return self::decode_numeric_entities($value);
+        }
+        if (is_array($value)) {
+            foreach ($value as $k => $v) {
+                $value[$k] = self::decode_snapshot_emojis($v);
+            }
+        }
         return $value;
     }
 

@@ -11,6 +11,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { escapeAstralDeep } from '@/lib/escapeAstral';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -228,7 +229,9 @@ export function SendToApprovalSetDialog({
       toast.error('Select at least one item to send for approval.');
       return;
     }
-    appendMutation.mutate({ id: targetSet.id, snapshot: { media, copy, custom } });
+    // Escape emoji to ASCII entities so a WAF that strips 4-byte UTF-8 can't drop them
+    // in transit; the server decodes them back on append. (Same fix as the card editor.)
+    appendMutation.mutate({ id: targetSet.id, snapshot: escapeAstralDeep({ media, copy, custom }) });
   }, [targetSet, media, copy, custom, appendMutation]);
 
   const shareMutation = trpc.approvals.shareSet.useMutation({
@@ -271,14 +274,16 @@ export function SendToApprovalSetDialog({
       // lane AND emails the invite — so the client is notified in one request.
       clientEmail: inviteEmail || null,
       clientMessage: clientMessage.trim() || null,
-      snapshot: {
+      // Escape emoji to ASCII entities so a WAF that strips 4-byte UTF-8 can't drop them
+      // in transit; the server decodes them back on create. (Same fix as the card editor.)
+      snapshot: escapeAstralDeep({
         media,
         copy,
         // Custom docs with no title inherit the set name (so there's no separate "name the doc" step).
         custom: custom.map((c) => (c.title && c.title.trim() ? c : { ...c, title: setName.trim() || undefined })),
         brandName: brandName || 'PowerCreatives',
         brandLogoUrl: brandLogoUrl || null,
-      },
+      }),
     });
   }, [setName, media, copy, custom, brandId, projectId, projectSel, deliveryId, brandName, brandLogoUrl, clientEmail, clientMessage, createMutation]);
 

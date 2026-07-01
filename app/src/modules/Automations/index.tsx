@@ -355,7 +355,7 @@ export function AutomationsModule() {
 
         <Button className="gap-2" onClick={openCreate}><Plus className="w-4 h-4" />New automation</Button>
         <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingId != null ? 'Edit automation' : 'New automation'}</DialogTitle>
               <DialogDescription>Choose a trigger, narrow it with conditions, and pick an action.</DialogDescription>
