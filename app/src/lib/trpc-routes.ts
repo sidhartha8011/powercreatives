@@ -332,7 +332,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteUpdateLink": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}`, body: { type: input.type, anchor: input.anchor, href: input.href, oldHref: input.oldHref, elId: input.elId } }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}`, body: { type: input.type, anchor: input.anchor, href: input.href, oldHref: input.oldHref, elId: input.elId, oldAnchor: input.oldAnchor } }),
     },
     "seo.remoteRemoveLink": {
         endpoint: "seo/sites",

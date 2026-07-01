@@ -4588,3 +4588,53 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   is seeing a cached bundle (fixed filenames → needs Ctrl+F5) or a data-gated element. Asked the user to
   name/screenshot the specific feature so I can point to where it moved or why it's not rendering.
 - **Specialists:** none (diff/forensics only). No commit.
+
+## 2026-07-01 — SEO link table: builder-link ANCHOR (text) edit was erroring — added builder-aware path (connector v2.1.4)
+- Report: editing the "To" (URL) works but changing the anchor returns an API error. Cause: an anchor-only edit
+  sends an unchanged URL, so remote_update_link skipped the builder URL path and fell to remote_rewrite_link_content,
+  which reads the remote post's content.raw — EMPTY on an Elementor page → 422 "isn't editable through the API".
+  Builder anchors live in _elementor_data, not post_content.
+- Built a builder-aware ANCHOR update mirroring the per-element URL replace:
+  - Connector (v2.1.3→2.1.4): replace_anchor_in_element() + set_anchor_in_element() + replace_inline_anchor_text()
+    + node_has_url(); new /replace-anchor route. Sets a widget label field (text/title/…) or the inner text of
+    an inline <a>, scoped to one element.
+  - Hub: remote_replace_link_anchor() + routing in remote_update_link (anchor-changed + elId → builder path;
+    content links still use the legacy path). Controller reads oldAnchor; frontend sends oldAnchor: l.anchor;
+    trpc passes it.
+- ULTRACODE adversarial review (4 lenses → verify each): 4/4 confirmed, 0 false positives, ALL FIXED:
+  (1) HIGH — anchor pre-filter strpos($raw,$old_anchor) searched the RAW escaped JSON for the decoded anchor →
+      non-ASCII (→,é), slash (24/7) and emoji anchors falsely "not found"; removed the pre-filter (el_id guard +
+      decoded match). (2) MED — label branch relabeled ALL same-text fields in an element ignoring the URL;
+      added node_has_url() so only the item carrying this link's URL is renamed. (3) LOW — backend anchor gate
+      used trim() while the frontend guard is exact → whitespace-only change fell to the erroring legacy path;
+      aligned to exact compare. (4) LOW — a connector 404 was always "update the connector"; now a not_found body
+      (deleted post) falls through instead.
+- Verified: php -l clean; local suite — button/inline/URL isolation, special-chars, dup-across-elements,
+  substring-safety, icon-list, heading, no-op guard, AND the 4 fixed bugs (non-ASCII/slash/emoji anchors,
+  same-text sibling isolation) all ✅; tsc 56 (baseline); build clean; oldAnchor in bundle; zip rebuilt. Needs
+  hub reinstall + CONNECTOR reinstall to v2.1.4 + hard-refresh. Nothing committed.
+
+## 2026-07-01 — SEO link table: transient doubling of builder links (display de-dupe)
+- Report: links "maybe showing double sometimes and it gets back to normal suddenly" (screenshot: 3 builder
+  rows duplicated, scan spinner active). Cause: a re-scan taken right after an edit — while the page builder
+  regenerates — can momentarily return the same element twice; the list briefly doubles, then the next scan
+  settles. Frontend replaces `links` on every set (no concat), so it's a transient data dup, not a UI concat.
+- Fix (LinksPopup.tsx, display-only, minimal): de-dupe `filtered` by BUILDER element identity
+  (elId|to|anchor). Distinct on-page elements have distinct element ids, so the real links (incl. several
+  identical-looking buttons) are all preserved; only an exact same-element duplicate is collapsed. Content
+  links (no elId) are untouched, so their index-based editing is unaffected. Doesn't mutate `links`/`l.id`,
+  so edits still target the right row.
+- Verified: tsc 56 (baseline); build clean; hub zip rebuilt. Hub-only (frontend) — reinstall hub + hard-refresh;
+  no connector change.
+
+## 2026-07-01 — Pulled + merged remote a38f3cd (llm-info/keywords) into local anchor-edit batch — no conflicts
+- Local was 0 ahead / 1 behind mine/feat/seo-suite-port (incoming c2228e5..a38f3cd "surface /llm-info/ in AI
+  Readiness + auto-detect site keywords", 8 files). Had an uncommitted batch (anchor-edit connector v2.1.4 +
+  hub/controller/frontend, + LinksPopup doubling de-dupe).
+- Merge: backed up the batch (patch), stashed, ff'd to a38f3cd, popped. The 3 overlapping code files
+  (seo/service.php, seo/controller.php, trpc-routes.ts) AUTO-MERGED cleanly — my anchor code and their llm-info
+  code live in different methods. Only SESSION_LOG.md (append-only) conflicted; resolved by keeping both blocks.
+- Verified: 0 conflict markers; both sides present (remote_replace_link_anchor/oldAnchor/replace_anchor_in_element
+  AND llminfo_keywords/llmInfo routes); php -l clean (3 files); tsc 56 (baseline); build clean; post-merge
+  connector anchor round-trip (non-ASCII) still OK ✅; hub zip rebuilt. Stash dropped (backup patch retained).
+  Nothing committed. Note: PHPUnit (the incoming SeoIntegrationTest.php) not run — needs PHP 8.1–8.2, this box is 8.5.

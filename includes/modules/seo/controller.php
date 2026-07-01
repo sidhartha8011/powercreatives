@@ -299,9 +299,10 @@ class PCM_REST_SEO extends PCM_REST_Base
         $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
         $anchor   = array_key_exists('anchor', $params) ? (string) $params['anchor'] : null;
         $href     = array_key_exists('href', $params) ? (string) $params['href'] : null;
-        $old_href = array_key_exists('oldHref', $params) ? (string) $params['oldHref'] : null;
-        $el_id    = array_key_exists('elId', $params) ? (string) $params['elId'] : null;
-        $result = PCM_SEO_Service::remote_update_link($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $anchor, $href, $old_href, $el_id);
+        $old_href   = array_key_exists('oldHref', $params) ? (string) $params['oldHref'] : null;
+        $el_id      = array_key_exists('elId', $params) ? (string) $params['elId'] : null;
+        $old_anchor = array_key_exists('oldAnchor', $params) ? (string) $params['oldAnchor'] : null;
+        $result = PCM_SEO_Service::remote_update_link($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $anchor, $href, $old_href, $el_id, $old_anchor);
         if ($result instanceof WP_Error) {
             return $result;
         }

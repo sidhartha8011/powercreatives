@@ -1362,7 +1362,7 @@ class PCM_SEO_Service
     }
 
     /** Edit a connected post's link (href/anchor), via the connector. */
-    public static function remote_update_link(object $site, int $post_id, string $type, int $index, ?string $anchor, ?string $href, ?string $old_href = null, ?string $el_id = null)
+    public static function remote_update_link(object $site, int $post_id, string $type, int $index, ?string $anchor, ?string $href, ?string $old_href = null, ?string $el_id = null, ?string $old_anchor = null)
     {
         // Builder-aware path: given the link's CURRENT url + a NEW url, replace it across the page's
         // content AND builder data via the connector — the only way to edit links the post-body scan
@@ -1371,8 +1371,16 @@ class PCM_SEO_Service
         // the same URL).
         $new_url = ($href !== null && trim($href) !== '') ? esc_url_raw($href) : '';
         $old_url = $old_href !== null ? esc_url_raw($old_href) : '';
+        $el      = (string) ($el_id ?? '');
         if ($new_url !== '' && $old_url !== '' && $new_url !== $old_url) {
-            return self::remote_replace_link_url($site, $post_id, $type, $old_url, $new_url, (string) ($el_id ?? ''));
+            return self::remote_replace_link_url($site, $post_id, $type, $old_url, $new_url, $el);
+        }
+
+        // Builder-aware ANCHOR (link text) path: a builder link's text lives in meta, not post_content,
+        // so the legacy rewrite below would fail on a page-builder page (empty content.raw → 422). When
+        // the link carries an element id and only the anchor changed, update it via the connector.
+        if ($el !== '' && $anchor !== null && $old_anchor !== null && (string) $anchor !== (string) $old_anchor) {
+            return self::remote_replace_link_anchor($site, $post_id, $type, $el, ($old_url !== '' ? $old_url : $new_url), (string) $old_anchor, (string) $anchor);
         }
 
         // Legacy/anchor path: rewrite the indexed <a> in post_content (body links only).
@@ -1410,6 +1418,37 @@ class PCM_SEO_Service
         }
         if ((int) ($rep['body']['replaced'] ?? 0) === 0) {
             return new WP_Error('pcm_seo_link_not_found', __('That link wasn’t found in the page content or any builder field — it may be hardcoded in the theme, a menu, or a widget. Edit it on the site.', 'power-creatives'), array('status' => 409));
+        }
+        return self::remote_get_links($site, $post_id, $type, false); // refreshed (builder-aware) list
+    }
+
+    /** Builder-aware remote ANCHOR (link text) edit: update just the element $el_id's link text via
+     *  the connector (/replace-anchor), then re-scan. Reaches builder-stored labels (Elementor button
+     *  text etc.) the post_content rewrite can't. */
+    private static function remote_replace_link_anchor(object $site, int $post_id, string $type, string $el_id, string $url, string $old_anchor, string $new_anchor)
+    {
+        self::ensure_sites_service();
+        $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-anchor', array(), array(
+            'post_id'   => $post_id,
+            'elId'      => $el_id,
+            'url'       => $url,
+            'oldAnchor' => $old_anchor,
+            'newAnchor' => $new_anchor,
+        ), 60);
+        if (is_wp_error($rep)) {
+            return new WP_Error('pcm_seo_remote_link', sprintf(__('Could not reach the connector to edit the link text (%s).', 'power-creatives'), $rep->get_error_message()), array('status' => 502));
+        }
+        // A 404 with no body means the route itself is missing → connector too old. A 404 whose body
+        // is the connector's own not_found payload means the remote post was deleted — let it fall
+        // through to the generic error below rather than misreport "update the connector".
+        if ((int) ($rep['status'] ?? 0) === 404 && (string) ($rep['body']['error'] ?? '') !== 'not_found') {
+            return new WP_Error('pcm_seo_conn_old', __('Editing link text on a page-builder page needs the connector at v2.1.4+ — update the connector on the connected site.', 'power-creatives'), array('status' => 502));
+        }
+        if ((int) ($rep['status'] ?? 0) >= 300) {
+            return new WP_Error('pcm_seo_remote_link', sprintf(__('The connector rejected the text edit (HTTP %d).', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
+        }
+        if ((int) ($rep['body']['replaced'] ?? 0) === 0) {
+            return new WP_Error('pcm_seo_link_not_found', __('Couldn’t find that link’s text to edit — it may be split by formatting or an icon. Re-scan, or edit it on the site.', 'power-creatives'), array('status' => 409));
         }
         return self::remote_get_links($site, $post_id, $type, false); // refreshed (builder-aware) list
     }

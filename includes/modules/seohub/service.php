@@ -386,7 +386,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance + any custom field, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
- * Version: 2.1.3
+ * Version: 2.1.4
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -617,6 +617,111 @@ class PCM_Conn_Builder_Manager {
         $report['where'] = array_values(array_unique($report['where']));
         return $report;
     }
+    /** Element-scoped ANCHOR (link text) update — the mirror of replace_link_in_element for URLs.
+     *  Sets the label of the link inside element $el_id from $old_anchor → $new_anchor: a widget
+     *  text/title field whose current text equals $old_anchor, or the inner text of an inline
+     *  <a href="$url">…</a>. Builder anchors live in meta, not post_content, so this is how the hub
+     *  edits them. */
+    public function replace_anchor_in_element($post_id, $el_id, $url, $old_anchor, $new_anchor) {
+        $report = array('replaced' => 0, 'where' => array(), 'builders' => array(), 'steps' => array(), 'verified' => false);
+        $el_id = (string) $el_id; $url = (string) $url; $old_anchor = (string) $old_anchor;
+        $new_anchor = sanitize_text_field((string) $new_anchor); // link text is plain text
+        if ($el_id === '' || $old_anchor === '' || $new_anchor === $old_anchor) { return $report; }
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
+        foreach ((array) $rows as $row) {
+            $raw = (string) $row->meta_value;
+            // Guard on the element id only. Do NOT pre-filter on $old_anchor: the raw JSON escapes
+            // non-ASCII (\uXXXX) + slashes (\/), so a decoded anchor like "Learn More →" or "24/7"
+            // would never strpos-match the raw string and the edit would falsely report "not found".
+            // The decoded label match in set_anchor_in_element does the real matching.
+            if (strpos($raw, $el_id) === false) { continue; }
+            $val = maybe_unserialize($raw); $is_json = false;
+            if (is_string($val) && $val !== '' && ($val[0] === '[' || $val[0] === '{')) {
+                $j = json_decode($val, true);
+                if (is_array($j)) { $val = $j; $is_json = true; }
+            }
+            if (!is_array($val) && !is_object($val)) { continue; }
+            $cnt = 0; $newVal = self::set_anchor_in_element($val, $el_id, $url, $old_anchor, $new_anchor, false, $cnt);
+            if ($cnt > 0) {
+                $store = $is_json ? wp_json_encode($newVal) : (is_scalar($newVal) ? (string) $newVal : maybe_serialize($newVal));
+                $wpdb->update($wpdb->postmeta, array('meta_value' => $store), array('meta_id' => (int) $row->meta_id));
+                wp_cache_delete($post_id, 'post_meta');
+                $report['replaced'] += $cnt; $report['where'][] = (string) $row->meta_key;
+            }
+        }
+        foreach ($this->detect($post_id) as $h) {
+            try { $h->regenerate($post_id); $report['builders'][] = $h->label(); $report['steps'][] = $h->label() . ' regenerated'; }
+            catch (\Throwable $e) { $report['steps'][] = $h->label() . ' regenerate failed'; }
+        }
+        pcm_conn_purge_caches($post_id); $report['steps'][] = 'caches purged';
+        $report['verified'] = $report['replaced'] > 0;
+        $report['where'] = array_values(array_unique($report['where']));
+        return $report;
+    }
+    /** Recursively set the anchor text inside the target element: a label field (text/title/…)
+     *  whose current text equals $old_anchor, or the inner text of an inline <a href="$url">. */
+    private static function set_anchor_in_element($node, $target, $url, $old_anchor, $new_anchor, $inside, &$count) {
+        $label_keys = array('text', 'title', 'button_text', 'heading_title', 'label');
+        if (is_array($node)) {
+            $here = $inside || (isset($node['id']) && (string) $node['id'] === (string) $target);
+            foreach ($node as $k => $v) {
+                if ($here && is_string($v)) {
+                    // Only rename a label whose OWN item carries this link's URL — so two same-text
+                    // links in one widget (e.g. an icon-list with matching labels, different URLs)
+                    // don't both get relabeled. When $url is empty (unknown), fall back to text-only.
+                    if (in_array($k, $label_keys, true) && trim(wp_strip_all_tags($v)) === $old_anchor && ($url === '' || self::node_has_url($node, $url))) {
+                        $node[$k] = $new_anchor; $count++; continue;
+                    }
+                    if (strpos($v, '<a ') !== false && strpos($v, $old_anchor) !== false) {
+                        $rep = self::replace_inline_anchor_text($v, $url, $old_anchor, $new_anchor, $count);
+                        if ($rep !== $v) { $node[$k] = $rep; continue; }
+                    }
+                } elseif (is_array($v) || is_object($v)) {
+                    $node[$k] = self::set_anchor_in_element($v, $target, $url, $old_anchor, $new_anchor, $here, $count);
+                }
+            }
+            return $node;
+        }
+        if (is_object($node)) {
+            $here = $inside || (isset($node->id) && (string) $node->id === (string) $target);
+            foreach (get_object_vars($node) as $k => $v) {
+                if ($here && is_string($v)) {
+                    if (in_array($k, $label_keys, true) && trim(wp_strip_all_tags($v)) === $old_anchor && ($url === '' || self::node_has_url($node, $url))) { $node->$k = $new_anchor; $count++; continue; }
+                    if (strpos($v, '<a ') !== false && strpos($v, $old_anchor) !== false) { $rep = self::replace_inline_anchor_text($v, $url, $old_anchor, $new_anchor, $count); if ($rep !== $v) { $node->$k = $rep; continue; } }
+                } elseif (is_array($v) || is_object($v)) { $node->$k = self::set_anchor_in_element($v, $target, $url, $old_anchor, $new_anchor, $here, $count); }
+            }
+            return $node;
+        }
+        return $node;
+    }
+    /** Swap the inner text of <a href="$url">$old</a> → <a …>$new</a> within an HTML string. */
+    private static function replace_inline_anchor_text($html, $url, $old_anchor, $new_anchor, &$count) {
+        $href = $url !== '' ? preg_quote($url, '#') : '[^"\']*';
+        $pattern = '#(<a\b[^>]*href=(["\'])' . $href . '\2[^>]*>)' . preg_quote($old_anchor, '#') . '(</a>)#is';
+        $out = preg_replace_callback($pattern, function ($m) use ($new_anchor, &$count) { $count++; return $m[1] . $new_anchor . $m[3]; }, $html);
+        return ($out === null) ? $html : $out;
+    }
+    /** True if $node's subtree carries a link 'url' equal to $url — used to tie a label to its own
+     *  link when disambiguating same-text siblings (icon-list rows etc.). */
+    private static function node_has_url($node, $url) {
+        if ($url === '') { return true; }
+        if (is_array($node)) {
+            foreach ($node as $k => $v) {
+                if ($k === 'url' && is_string($v) && $v === $url) { return true; }
+                if ((is_array($v) || is_object($v)) && self::node_has_url($v, $url)) { return true; }
+            }
+            return false;
+        }
+        if (is_object($node)) {
+            foreach (get_object_vars($node) as $k => $v) {
+                if ($k === 'url' && is_string($v) && $v === $url) { return true; }
+                if ((is_array($v) || is_object($v)) && self::node_has_url($v, $url)) { return true; }
+            }
+            return false;
+        }
+        return false;
+    }
     /** Find every link on a post for the hub to show: <a href> in post_content + URLs stored in
      *  builder data (Elementor/Divi/etc. custom fields) that post_content scanning misses. De-duped
      *  by URL (replace-url rewrites every occurrence). Returns [{anchor,to,html,source}]. */
@@ -813,6 +918,24 @@ add_action('rest_api_init', function () {
                 return new WP_REST_Response(pcm_conn_builder_manager()->replace_link_in_element($pid, $el_id, $old, $new), 200);
             }
             return new WP_REST_Response(pcm_conn_builder_manager()->replace_links($pid, $replacements), 200);
+        },
+    ));
+    // Builder-aware ANCHOR (link text) edit — post_content can't reach a builder link's label
+    // (it lives in meta), so the hub edits it here by element id.
+    register_rest_route('pcm-conn/v1', '/replace-anchor', array(
+        'methods' => 'POST',
+        'permission_callback' => $perm,
+        'callback' => function ($req) {
+            $p     = $req->get_json_params();
+            $pid   = is_array($p) && isset($p['post_id']) ? absint($p['post_id']) : 0;
+            $el_id = (is_array($p) && isset($p['elId'])) ? (string) $p['elId'] : '';
+            $url   = (is_array($p) && isset($p['url'])) ? (string) $p['url'] : '';
+            $old_a = (is_array($p) && isset($p['oldAnchor'])) ? (string) $p['oldAnchor'] : '';
+            $new_a = (is_array($p) && isset($p['newAnchor'])) ? (string) $p['newAnchor'] : '';
+            if (!$pid || $el_id === '' || $old_a === '' || $new_a === $old_a) { return new WP_REST_Response(array('replaced' => 0, 'error' => 'bad_params'), 400); }
+            if (!get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            if (!current_user_can('edit_post', $pid)) { return new WP_REST_Response(array('error' => 'forbidden'), 403); }
+            return new WP_REST_Response(pcm_conn_builder_manager()->replace_anchor_in_element($pid, $el_id, $url, $old_a, $new_a), 200);
         },
     ));
     register_rest_route('pcm-conn/v1', '/scan-links', array(

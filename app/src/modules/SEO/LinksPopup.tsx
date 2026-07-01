@@ -140,7 +140,22 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
         if (l.to === justEditedTo && !base.includes(l)) { base.push(l); }
       }
     }
-    return base;
+    // De-dupe exact-duplicate BUILDER links (same element id + target + text). A re-scan taken mid
+    // page-builder regeneration (right after an edit) can momentarily return the same element twice,
+    // so the list briefly doubles before the next scan settles. Distinct on-page elements have
+    // distinct element ids, so the real links (e.g. several identical buttons) are all preserved;
+    // only a same-element duplicate is collapsed. Content links (no element id) are left untouched.
+    const seen = new Set<string>();
+    const deduped: LinkRow[] = [];
+    for (const l of base) {
+      if (l.elId) {
+        const key = `${l.elId}|${l.to}|${l.anchor}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+      deduped.push(l);
+    }
+    return deduped;
   }, [links, kind, justEditedTo]);
 
   const applyResult = (res: any) => {
@@ -160,7 +175,7 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
         ? await updateLocal.mutateAsync({ id: postId, index: l.id, anchor, href } as any)
         // oldHref lets the backend replace the URL across builder data (Elementor/Divi), reaching
         // links the post-body scan can't — the only way to edit links on builder-built pages.
-        : await updateRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, anchor, href, oldHref: l.to, elId: l.elId ?? '' } as any);
+        : await updateRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, anchor, href, oldHref: l.to, elId: l.elId ?? '', oldAnchor: l.anchor } as any);
       applyResult(res);
       setJustEditedTo(field === 'to' ? href : l.to); // keep the edited link visible after the re-scan
       // When editing in the Dead view, the just-edited link drops off the list (its broken flag is
