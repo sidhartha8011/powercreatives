@@ -1719,6 +1719,11 @@ class PCM_SEO_Service
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
         }
+        // Auto-derive target keywords from the site's own content when none were provided,
+        // so the summary is optimized for what the site actually ranks/talks about.
+        if (trim((string) ($ctx['keywords'] ?? '')) === '' && !empty($ctx['pages']) && is_array($ctx['pages'])) {
+            $ctx['keywords'] = self::keywords_to_string(self::top_keywords($ctx['pages']));
+        }
         $prompt = self::llm_info_prompt($ctx);
         try {
             $opts = array('max_tokens' => 1400);
@@ -1738,6 +1743,78 @@ class PCM_SEO_Service
         } catch (\Throwable $e) {
             return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
         }
+    }
+
+    /**
+     * Most-used keywords across a content corpus (title + text), for /llm-info/ auto-fill.
+     * Counts single words plus adjacent two-word phrases (bigrams give useful phrases like
+     * "emergency plumber"), minus common English stopwords. Pure — no WP calls — so it's
+     * unit-testable and works identically for local + remote corpora.
+     *
+     * @param array $pages  [ ['title'=>, 'text'=>], ... ] as from local_/remote_content_corpus().
+     * @param int   $limit  Max terms to return.
+     * @return array<int,array{term:string,count:int}>  Ranked most → least frequent.
+     */
+    public static function top_keywords(array $pages, int $limit = 12): array
+    {
+        static $stop = null;
+        if ($stop === null) {
+            $stop = array_flip(explode(' ', 'the a an and or but if then else of to in on at by for from with without into onto over under about as is are was were be been being it its it\'s this that these those i you he she we they them us our your his her their my me him do does did done has have had having not no nor so than too very can will just should now also more most other some such only own same up down out off then once here there all any both each few how what when where which who whom why your yours we\'re you\'re our ours us get got new one two three per via etc com www http https')); // common noise
+        }
+        $text = '';
+        foreach ($pages as $p) {
+            $text .= ' ' . (string) ($p['title'] ?? '') . ' ' . (string) ($p['text'] ?? '');
+        }
+        $text  = strtolower($text);
+        $text  = preg_replace('/[^a-z0-9\s]+/', ' ', $text);
+        $words = preg_split('/\s+/', trim((string) $text), -1, PREG_SPLIT_NO_EMPTY) ?: array();
+
+        $tokens = array();
+        foreach ($words as $w) {
+            if (strlen($w) < 3 || ctype_digit($w) || isset($stop[$w])) {
+                continue;
+            }
+            $tokens[] = $w;
+        }
+
+        $counts = array();
+        $n      = count($tokens);
+        for ($i = 0; $i < $n; $i++) {
+            $counts[$tokens[$i]] = ($counts[$tokens[$i]] ?? 0) + 1;
+            if ($i + 1 < $n) {
+                $bi          = $tokens[$i] . ' ' . $tokens[$i + 1];
+                $counts[$bi] = ($counts[$bi] ?? 0) + 1;
+            }
+        }
+        arsort($counts);
+
+        $out = array();
+        foreach ($counts as $term => $count) {
+            if ($count < 2) { // ignore one-off noise
+                continue;
+            }
+            $out[] = array('term' => (string) $term, 'count' => (int) $count);
+            if (count($out) >= $limit) {
+                break;
+            }
+        }
+        return $out;
+    }
+
+    /** Flatten top_keywords() into a comma-separated string for the generator / keywords field. */
+    public static function keywords_to_string(array $list, int $limit = 8): string
+    {
+        $terms = array();
+        foreach ($list as $row) {
+            $t = trim((string) ($row['term'] ?? ''));
+            if ($t !== '') {
+                $terms[] = $t;
+            }
+            if (count($terms) >= $limit) {
+                break;
+            }
+        }
+        return implode(', ', $terms);
     }
 
     /** The persuasive, truthful /llm-info/ prompt — only emits guidance for facts that are present. */

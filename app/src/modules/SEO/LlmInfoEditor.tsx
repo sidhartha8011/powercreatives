@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
-import { Loader2, Save, Sparkles, ExternalLink, AlertTriangle } from 'lucide-react';
+import { Loader2, Save, Sparkles, ExternalLink, AlertTriangle, ScanSearch, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,7 @@ export interface LlmInfoData {
 }
 
 interface LlmInfoInputs { keywords: string; years: string; area: string; strengths: string }
+interface DetectedKeyword { term: string; count: number }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -42,17 +43,20 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function LlmInfoEditor({ data, isLoading, error, onBuild, onSave, models, modelId, onModelChange }: {
+export function LlmInfoEditor({ data, isLoading, error, onBuild, onSave, onDetectKeywords, models, modelId, onModelChange }: {
   data: LlmInfoData | null;
   isLoading: boolean;
   error?: unknown;
   onBuild: (inputs: LlmInfoInputs) => Promise<string>;
   onSave: (next: LlmInfoData) => Promise<void>;
+  onDetectKeywords: () => Promise<{ keywords: string; list: DetectedKeyword[] }>;
   models: ModelOption[];
   modelId: string;
   onModelChange: (id: string) => void;
 }) {
   const [form, setForm] = useState<LlmInfoData | null>(null);
+  const [detected, setDetected] = useState<DetectedKeyword[]>([]);
+  const [detecting, setDetecting] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -87,6 +91,24 @@ export function LlmInfoEditor({ data, isLoading, error, onBuild, onSave, models,
     }
   }, [form, onBuild]);
 
+  const handleDetect = useCallback(async () => {
+    setDetecting(true);
+    try {
+      const res = await onDetectKeywords();
+      setDetected(Array.isArray(res.list) ? res.list : []);
+      if (res.keywords) {
+        setForm((f) => (f ? { ...f, keywords: res.keywords } : f));
+        toast.success('Top keywords detected from your site');
+      } else {
+        toast.info('No prominent keywords found — add some content first, or type keywords manually');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not scan site keywords');
+    } finally {
+      setDetecting(false);
+    }
+  }, [onDetectKeywords]);
+
   const handleSave = useCallback(async () => {
     if (!form) return;
     setBusy(true);
@@ -116,6 +138,11 @@ export function LlmInfoEditor({ data, isLoading, error, onBuild, onSave, models,
 
   return (
     <div className="space-y-6 max-w-2xl">
+      <div className="flex items-center gap-2">
+        <FileText className="w-4 h-4 text-primary" />
+        <h3 className="text-base font-semibold">LLM Info <span className="font-normal text-muted-foreground">— AI overview page</span></h3>
+      </div>
+
       <section className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div>
@@ -136,14 +163,39 @@ export function LlmInfoEditor({ data, isLoading, error, onBuild, onSave, models,
       <section className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div>
           <Label className="text-sm font-medium">Inputs</Label>
-          <p className="text-xs text-muted-foreground">Used to frame the summary — only facts you provide are used (no invented claims).</p>
+          <p className="text-xs text-muted-foreground">Used to frame the summary — only facts you provide are used (no invented claims). Leave <span className="font-medium">Target keywords</span> blank and the summary is optimized for your site's most-used keywords automatically.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Target keywords"><Input value={form.keywords} onChange={(e) => patch('keywords', e.target.value)} placeholder="emergency plumber, boiler repair" className="text-xs" /></Field>
+          <Field label="Target keywords">
+            <div className="flex gap-1.5">
+              <Input value={form.keywords} onChange={(e) => patch('keywords', e.target.value)} placeholder="auto-detected from your site" className="text-xs" />
+              <Button type="button" variant="outline" size="icon" title="Detect the most-used keywords from your site content" onClick={handleDetect} disabled={detecting || busy} className="shrink-0">
+                {detecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanSearch className="w-4 h-4" />}
+              </Button>
+            </div>
+          </Field>
           <Field label="Service area"><Input value={form.area} onChange={(e) => patch('area', e.target.value)} placeholder="Manchester, UK" className="text-xs" /></Field>
           <Field label="Years in business"><Input value={form.years} onChange={(e) => patch('years', e.target.value)} placeholder="since 2008 / 15+ years" className="text-xs" /></Field>
           <Field label="Strengths / recommendations"><Input value={form.strengths} onChange={(e) => patch('strengths', e.target.value)} placeholder="4.9★ Google, Gas Safe registered" className="text-xs" /></Field>
         </div>
+        {detected.length > 0 && (
+          <div className="space-y-1">
+            <span className="text-[11px] text-muted-foreground">Most-used on your site (click to add):</span>
+            <div className="flex flex-wrap gap-1">
+              {detected.map((k) => (
+                <button
+                  key={k.term}
+                  type="button"
+                  onClick={() => patch('keywords', form.keywords.trim() === '' ? k.term : (form.keywords.split(',').map((s) => s.trim()).includes(k.term) ? form.keywords : `${form.keywords.replace(/,\s*$/, '')}, ${k.term}`))}
+                  title={`Appears ${k.count}×`}
+                  className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary hover:text-foreground"
+                >
+                  {k.term} <span className="text-muted-foreground/60">{k.count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={modelId || '__default__'} onValueChange={(v) => onModelChange(v === '__default__' ? '' : v)}>
             <SelectTrigger className="h-8 w-auto min-w-[11rem] text-xs"><SelectValue /></SelectTrigger>
@@ -208,8 +260,10 @@ export function LlmInfoSection({ siteId }: { siteId?: number }) {
   const remoteQ = trpc.seo.remoteLlmInfoGet.useQuery({ siteId: siteId ?? 0 }, { enabled: remote, retry: false }) as { data?: unknown; isLoading: boolean; error?: unknown; refetch: () => void };
   const localBuild = trpc.seo.llmInfoBuild.useMutation();
   const localSave = trpc.seo.llmInfoSave.useMutation();
+  const localKeywords = trpc.seo.llmInfoKeywords.useMutation();
   const remoteBuild = trpc.seo.remoteLlmInfoBuild.useMutation();
   const remoteSave = trpc.seo.remoteLlmInfoSave.useMutation();
+  const remoteKeywords = trpc.seo.remoteLlmInfoKeywords.useMutation();
 
   const q = remote ? remoteQ : localQ;
   const data = q.data && typeof q.data === 'object'
@@ -224,6 +278,14 @@ export function LlmInfoSection({ siteId }: { siteId?: number }) {
     return String((res as { content?: string } | undefined)?.content ?? '');
   }, [remote, siteId, remoteBuild, localBuild, modelId, provider]);
 
+  const onDetectKeywords = useCallback(async (): Promise<{ keywords: string; list: DetectedKeyword[] }> => {
+    const res = remote
+      ? await remoteKeywords.mutateAsync({ siteId })
+      : await localKeywords.mutateAsync({});
+    const r = (res ?? {}) as { keywords?: string; list?: DetectedKeyword[] };
+    return { keywords: String(r.keywords ?? ''), list: Array.isArray(r.list) ? r.list : [] };
+  }, [remote, siteId, remoteKeywords, localKeywords]);
+
   const onSave = useCallback(async (next: LlmInfoData): Promise<void> => {
     if (remote) {
       await remoteSave.mutateAsync({ siteId, content: next.content, enabled: next.enabled });
@@ -236,5 +298,5 @@ export function LlmInfoSection({ siteId }: { siteId?: number }) {
     q.refetch();
   }, [remote, siteId, remoteSave, localSave, q]);
 
-  return <LlmInfoEditor data={data} isLoading={!!q.isLoading} error={q.error} onBuild={onBuild} onSave={onSave} models={models} modelId={modelId} onModelChange={onModelChange} />;
+  return <LlmInfoEditor data={data} isLoading={!!q.isLoading} error={q.error} onBuild={onBuild} onSave={onSave} onDetectKeywords={onDetectKeywords} models={models} modelId={modelId} onModelChange={onModelChange} />;
 }

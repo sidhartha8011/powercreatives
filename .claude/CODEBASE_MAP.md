@@ -70,16 +70,25 @@ There is **no PHP linter configured** (no `phpcs.xml`); follow WPCS conventions 
 > then reflect-invoke methods without a full `wp-load` (no DB needed unless the code
 > path hits `$wpdb`). DB-backed bootstrap still needs the site STARTED (MySQL up).
 > **Working copy is OneDrive-synced:** `C:\Users\krith\OneDrive\Desktop\Powercreatives\powercreatives`
-> (the inner dir holding `power-creatives.php`). **Local site = `power-creatives`**
-> (note the hyphen) → **`http://power-creatives.local`**. Plugin linked as a **directory
-> junction** `…\Local Sites\power-creatives\app\public\wp-content\plugins\`**`powercreatives`**
-> → the OneDrive working copy (junction name `powercreatives`, no hyphen, to match the
-> activated entry `powercreatives/power-creatives.php`). ⚠️ **Two-clones trap (hit
-> 2026-06-29):** the site originally ran a SEPARATE standalone git clone in its plugins
-> dir, so `git pull`/`npm run build` in the OneDrive working copy never reached it. Fixed
-> by moving that clone aside to `…/wp-content/powercreatives-standalone-backup` (outside
-> `plugins/` so WP doesn't list it) and replacing it with the junction above. Now
-> `git pull` (OneDrive copy) + `cd app && npm run build` reflects live. **Frontend
+> (the inner dir holding `power-creatives.php`).
+> ⚠️ **TWO Local sites exist — don't confuse them (clarified 2026-07-02):**
+> (1) **`power-creatives`** (hyphen) → `http://power-creatives.local`, and
+> (2) **`powercreatives`** (NO hyphen) → `http://powercreatives.local`. **The user actively
+> uses `powercreatives.local` (no hyphen)** — that's the one to verify against. BOTH now link
+> their `plugins/powercreatives` dir as a **directory junction → the SAME OneDrive working
+> copy** (junction name `powercreatives` to match the activated entry
+> `powercreatives/power-creatives.php`; junction MUST target the inner dir holding
+> `power-creatives.php`). Since both junction to one working copy, `git pull` + `npm run build`
+> in the OneDrive copy reflects on BOTH sites (DBs are per-site).
+> ⚠️ **Two-clones trap — hit TWICE:** each site originally ran its OWN standalone git clone in
+> its plugins dir, so builds in the OneDrive copy never reached it. Fixed for `power-creatives`
+> 2026-06-29 (backup `…/wp-content/powercreatives-standalone-backup`) and for **`powercreatives`
+> 2026-07-02** (its clone was branch `feat/seo-suite-port`, clean, a commit behind at `a56edc6`;
+> moved aside to `…/plugins/powercreatives-standalone-backup` and replaced with the junction).
+> If a change "doesn't show" on a site, FIRST check `plugins/powercreatives` is a junction
+> (`Get-Item … | Select LinkType,Target`), not a real dir. Note also: uncommitted changes in the
+> OneDrive copy can only reach a site via the junction — a standalone clone's `git pull` won't see
+> them. **Frontend
 > bundle has FIXED filenames (`index-writer.js`/`index.css`, no content hash) — after a
 > rebuild you MUST hard-refresh (Ctrl+F5) the browser** or WP serves the cached bundle.
 > Build env on PATH only after refreshing it from the registry in a new shell
@@ -752,9 +761,26 @@ modules; verbatim prompt inventory; reuse map). **Phase 1 shipped**: new
     this page" empty-state action). Same grid styling as the SEO table.
   - **Body editor** `GET/POST /seo/content/{id}/body` (+ `/optimize`) — read/save the
     full post body (the OptimizeModal flow now has explicit get/save body routes).
-  - **LLM-info** `GET/POST /seo/llm-info` + `/seo/llm-info/build` (`build_llm_info`,
-    `manage_options`) — generates an LLM-facing site info doc (served at `/llm-info/`,
-    distinct from AI-readiness's `/llms.txt`); takes model+provider like field-gen.
+  - **LLM-info** `GET/POST /seo/llm-info` + `/seo/llm-info/build` + **`/seo/llm-info/keywords`**
+    (`manage_options`; remote mirror `/seo/sites/{id}/llm-info/{build,keywords}`) — generates
+    an LLM-facing site info doc (served at `/llm-info/`, distinct from AI-readiness's `/llms.txt`);
+    takes model+provider like field-gen. Prompt (`llm_info_prompt`) is keyword-optimized +
+    positively framed (authority, years-in-business, local-to-area) from facts you provide.
+    **Keyword auto-detection (2026-07-02):** `PCM_SEO_Service::top_keywords($pages,$limit)`
+    (pure — unigram+bigram frequency over the content corpus, minus stopwords, count≥2) +
+    `keywords_to_string()`; the `/keywords` routes return `{keywords, list:[{term,count}]}` and
+    `build_llm_info` **auto-fills** target keywords from the corpus when the field is left blank
+    (local uses `local_content_corpus`, remote uses `remote_content_corpus`). Unit-tested in
+    `tests/unit/SeoIntegrationTest.php` (`test_top_keywords_*`, `test_keywords_to_string_*`).
+    Editor UI has a "Detect from site" (ScanSearch) button + clickable frequency chips. **UI: `LlmInfoSection`
+    (`SEO/LlmInfoEditor.tsx`) renders at the TOP of the AI Readiness tab**, mounted in
+    `SEO/index.tsx` under `tab === 'air'` (ABOVE `AIReadinessPanel`/`RemoteAIReadinessPanel`)
+    — deliberately OUTSIDE those panels so it stays usable even when the llms.txt status/
+    form fails to load (e.g. older connector on a remote site). Self-wires local vs remote
+    by the optional `siteId` prop. Nav path: SEO module → *This Site* (or a connected-site
+    tab) → left nav **AI Readiness**. (It was fully built — routes + trpc + component — but
+    orphaned/unrendered until 2026-07-02; first wired inside the two panels, then lifted to
+    the tab top the same day for discoverability + decoupling.)
   - **AI field generation** now also accepts a `template_id` (prompt template) in
     addition to `model`+`provider`.
 - **Remote-site SEO (via the connector — major addition, was "coming soon"):**

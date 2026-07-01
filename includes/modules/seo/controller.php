@@ -79,6 +79,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_get',   array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_save',  array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/llm-info/build', 'remote_llminfo_build', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/llm-info/keywords', 'remote_llminfo_keywords', array(), 'manage_options'),
             // Saved views (per-user column/filter configs).
             array('GET',    '/seo/views',                'views_list'),
             array('POST',   '/seo/views',                'views_create'),
@@ -97,6 +98,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/llm-info',                'llminfo_get',   array(), 'manage_options'),
             array('POST', '/seo/llm-info',                'llminfo_save',  array(), 'manage_options'),
             array('POST', '/seo/llm-info/build',          'llminfo_build', array(), 'manage_options'),
+            array('POST', '/seo/llm-info/keywords',       'llminfo_keywords', array(), 'manage_options'),
             // Schema (per-post → edit_post checked in handler).
             array('GET',  '/seo/content/(?P<id>\d+)/schema', 'get_schema'),
             array('POST', '/seo/content/(?P<id>\d+)/schema', 'set_schema'),
@@ -1143,6 +1145,16 @@ class PCM_REST_SEO extends PCM_REST_Base
         return $this->success(array('content' => $html));
     }
 
+    /** POST /seo/llm-info/keywords — most-used keywords across this site's published content. */
+    public function llminfo_keywords(WP_REST_Request $request): WP_REST_Response
+    {
+        $list = PCM_SEO_Service::top_keywords(PCM_SEO_Service::local_content_corpus());
+        return $this->success(array(
+            'keywords' => PCM_SEO_Service::keywords_to_string($list),
+            'list'     => $list,
+        ));
+    }
+
     /** GET /seo/sites/{id}/llm-info — read a connected site's /llm-info/. */
     public function remote_llminfo_get(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
@@ -1194,6 +1206,21 @@ class PCM_REST_SEO extends PCM_REST_Base
         );
         $result = PCM_SEO_Service::remote_llminfo_build($site, $inputs, $model, (int) $user->id, $provider);
         return $result instanceof WP_Error ? $result : $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/llm-info/keywords — most-used keywords across a connected site's content. */
+    public function remote_llminfo_keywords(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $list = PCM_SEO_Service::top_keywords(PCM_SEO_Service::remote_content_corpus($site));
+        return $this->success(array(
+            'keywords' => PCM_SEO_Service::keywords_to_string($list),
+            'list'     => $list,
+        ));
     }
 
     /** POST /seo/content/bulk-delete — trash selected posts. */

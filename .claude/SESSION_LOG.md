@@ -4428,3 +4428,163 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   ≤ 0x7F, confirmed) then decodes back identical; tsc 56 (baseline); build clean; hub zip rebuilt. Needs hub
   reinstall + hard-refresh. NOTE: the Copy-module author/save path is a separate send site that still lacks the
   escape — flagged as a follow-up (not in the reported approval-card scope).
+
+## 2026-07-01 — Pull latest (feat/seo-suite-port)
+- **Task:** pull the latest version of the code.
+- **State before:** on `feat/seo-suite-port`, working tree clean, local at `97f46d2` (behind origin).
+- **Action:** `git pull --ff-only` → **fast-forward** `97f46d2..c2228e5`, no conflicts. 34 files, +1152/-116
+  (SEO service/seohub, approvals emoji fix + `escapeAstral.ts`, Brands/Deliveries/Projects fields,
+  `docs/CONNECTOR-SECURITY-ASSESSMENT.md`, schema, map + session-log updates from remote).
+- **After:** HEAD `c2228e5` "fix: emoji preservation on approval share/edit + automation dialog scroll +
+  connector security doc"; branch in sync with origin, tree clean. Map matched reality (active branch
+  still `feat/seo-suite-port`) — no manual map edits. No build/test run (pull-only; no local PHP, and no
+  code authored this turn). Reminder: `cd app && npm run build` + Ctrl+F5 if verifying the pulled UI live.
+
+## 2026-07-02 — Surface /llm-info/ AI-overview in AI Readiness (local + remote)
+- **Task:** in SEO → AI Readiness, add a feature that builds a keyword-optimized, positively-framed
+  business summary (authority, specialist expertise, years-in-business, local-to-area) published at
+  `/llm-info/`, working on remote sites too. Don't change existing AI Readiness features.
+- **Finding:** the feature was **already implemented end-to-end but orphaned in the UI.** Backend
+  `PCM_SEO_Service::build_llm_info` + `llm_info_prompt` already do exactly the requested framing
+  (keywords woven in, authority, years as "proven track record", local-to-area, positive strengths,
+  facts-only). Routes exist local (`/seo/llm-info[/build]`) + remote (`/seo/sites/{id}/llm-info[/build]`),
+  the connector serves `/pcm-conn/v1/llm-info` + renders `/llm-info/`, trpc client entries exist, and the
+  styled editor component `LlmInfoSection`/`LlmInfoEditor` (`SEO/LlmInfoEditor.tsx`) — which self-wires
+  local vs remote via an optional `siteId` — was fully built. **But `LlmInfoSection` was never rendered
+  anywhere** (grep: defined, zero usages).
+- **Change (minimal, +26 lines, 2 files, no existing feature touched):** import + render `LlmInfoSection`
+  as a new bordered section at the bottom of both AI Readiness panels —
+  `app/src/modules/SEO/AIReadinessPanel.tsx` (`<LlmInfoSection />`, local) and
+  `RemoteAIReadinessPanel.tsx` (`<LlmInfoSection siteId={siteId} />`, remote), each under an
+  "AI overview page (/llm-info/)" heading.
+- **Specialists:** none spawned — 2-file wiring of a pre-built, pre-styled component; no new UI design
+  or architecture. Did read the full backend (service/controller/connector) + frontend to confirm the
+  gap was purely the missing render.
+- **Verified:** `cd app && npm run check` → **56 TS errors (documented baseline, unchanged; none in the
+  three touched/related files)**; `npm run build` → clean, **2116 modules** (was 2114 — the previously
+  tree-shaken `LlmInfoEditor` is now included), `index-writer.js` rebuilt. Live browser check NOT run —
+  Local site was stopped (`curl … /wp-json/` → 000; no headless start). No commit (workspace rule).
+  Reminder: hard-refresh (Ctrl+F5) after the rebuild. Remote `/llm-info/` management needs connector
+  v1.3.0+ on the connected site (editor shows a friendly "update connector" state otherwise).
+- **Map:** updated the SEO → LLM-info bullet to record that `LlmInfoSection` is now rendered in both
+  AI Readiness panels (was built-but-orphaned).
+
+## 2026-07-02 — Update the plugin in Local (serve the llm-info UI change)
+- **Task:** update the plugin in the local WP install so it serves the latest code (the /llm-info/
+  AI-Readiness wiring from the prior turn).
+- **Mechanism (per map):** Local site `power-creatives` links the plugin via a directory junction, so
+  PHP is live and only the frontend `app/dist/` bundle needs a rebuild + hard-refresh.
+- **Verified junction & freshness (no code changed this turn):**
+  - Junction intact: `…\Local Sites\power-creatives\app\public\wp-content\plugins\powercreatives` →
+    `C:\Users\krith\OneDrive\Desktop\Powercreatives\powercreatives` (no two-clones trap).
+  - `app/dist/` built 2026-07-02 00:08:41 — AFTER the source edits (00:07:xx); bundle is current.
+  - New feature string **"AI overview page"** appears **2×** in `app/dist/index-writer.js` AND in the
+    same file resolved **through the Local junction** — so the live plugin path serves the updated code.
+  - No PHP changes this session, so nothing else to propagate (PHP is picked up live via the junction).
+- **Not done:** live HTTP smoke test — the Local site is **stopped** (`GET …/wp-json/` → 000) and Local
+  has no reliable headless start (needs the desktop app). Bundle has fixed filenames, so after starting
+  the site the user must **hard-refresh (Ctrl+F5)** to drop the cached bundle.
+- **Specialists:** none (operational/deploy task, no code). No commit. No `PCM_VERSION` bump (linked dev
+  plugin; CLAUDE.md forbids bumping unless asked). Map matched reality — no map edits.
+
+## 2026-07-02 — Locate + fix discoverability of the /llm-info/ feature
+- **Task:** user couldn't find/use the /llm-info/ AI-overview feature — "help me locate it".
+- **Where it was:** SEO module → *This Site* (or a connected-site tab) → left nav **AI Readiness**, at the
+  **very bottom** of the panel (below the full per-post table). Two problems: (1) buried far down a long
+  panel; (2) I'd nested `LlmInfoSection` AFTER each panel's early-return guard (`if (!status||!settings)`
+  local / `if (error||!form)` remote), so if AI-Readiness status/form failed to load — likely on remote
+  with an older connector — the whole panel INCLUDING llm-info was replaced by an error card. That
+  coupling is the probable "unable to use it".
+- **Fix (relocate + decouple, net small diff, 3 files):**
+  - `SEO/index.tsx` — import `LlmInfoSection`; under `tab === 'air'` render it FIRST, above the panel,
+    inside a `space-y-8` wrapper, for both local (`<LlmInfoSection/>`) and remote
+    (`<LlmInfoSection siteId={siteId}/>`); placeholder branch (remote tab, no numeric siteId) unchanged.
+    Now independent of the AI-Readiness status load.
+  - `AIReadinessPanel.tsx` / `RemoteAIReadinessPanel.tsx` — reverted yesterday's bottom-of-panel section
+    + import (back to original).
+- **Specialists:** none — small frontend relocation of an existing component; live visual check not
+  possible (Local site stopped). Reasoned about the guard-coupling from the code.
+- **Verified:** `npm run check` → **56 baseline TS errors, none in touched files**; `npm run build` clean
+  (`index-writer.js` rebuilt). Bundle served **through the Local junction** contains the editor strings
+  (`Serve /llm-info/`, `Generate summary`). No commit. Reminder: **start the Local site + hard-refresh
+  (Ctrl+F5)** to see it — it's now the first block under AI Readiness.
+- **Map:** updated the SEO → LLM-info bullet — mount point is now `SEO/index.tsx` (top of AI Readiness
+  tab), not the two panels; added the nav path.
+
+## 2026-07-02 — LLM Info section + auto-detect most-used site keywords
+- **Task:** user still couldn't fetch the feature; wanted a clear LLM-info section inside AI Readiness
+  that checks the site's most-used keywords and creates the summary page.
+- **Diagnosis:** local backend GET (`llminfo_get` → `PCM_SEO_AIReadiness::llm_info()`) is robust (returns
+  merged defaults), so no fetch bug on local — the "can't fetch" is almost certainly the Local site not
+  restarted / bundle not hard-refreshed. Made the section unmistakable + added the requested capability.
+- **New capability — most-used keyword detection → summary:**
+  - **Backend** (`seo/service.php`): `top_keywords(array $pages, int $limit=12)` — PURE unigram+bigram
+    frequency over the page/post corpus, minus a stopword list, count≥2, ranked; `keywords_to_string()`
+    flattens to a comma list. `build_llm_info` now **auto-fills** target keywords from the corpus when the
+    keywords input is blank (works local + remote — both already pass `pages`). New routes
+    `POST /seo/llm-info/keywords` (`llminfo_keywords`) + `POST /seo/sites/{id}/llm-info/keywords`
+    (`remote_llminfo_keywords`), both `manage_options`, returning `{keywords, list:[{term,count}]}`.
+  - **Frontend**: `trpc-routes.ts` — `seo.llmInfoKeywords` + `seo.remoteLlmInfoKeywords`.
+    `SEO/LlmInfoEditor.tsx` — a clear **"LLM Info — AI overview page"** heading; a **"Detect from site"**
+    (ScanSearch) button beside Target keywords that fills the field from the site's top terms + shows
+    clickable frequency chips; note that leaving keywords blank auto-optimizes on Generate. `LlmInfoSection`
+    wires the detect mutation local vs remote by `siteId`.
+- **Specialists:** none — implemented inline (full codebase context; live visual verification impossible
+  with the Local site stopped). Followed WPCS/PCM conventions; nonce+cap via `PCM_REST_Base`; read-only
+  analysis of the site's own content (no new external input surface).
+- **Verified:**
+  - PHP `php -l` (Local's bundled PHP 8.2.29) clean on service.php / controller.php / SeoIntegrationTest.php.
+  - **Algorithm proven on real shipped code** via a standalone reflect harness (Local PHP): a plumber
+    corpus yielded `boiler, repair, boiler repair, plumber, emergency, emergency plumber, manchester`;
+    empty corpus → `[]` / `''`. Added matching unit tests (`test_top_keywords_*`, `keywords_to_string`).
+  - Frontend `npm run check` → **56 baseline TS errors, none in touched files**; `npm run build` clean
+    (`index-writer.js` rebuilt). Bundle via the Local junction contains `LLM Info`,
+    `auto-detected from your site`, and `llm-info/keywords`.
+  - NOT run: phpunit (no composer/PHP-on-PATH) + live HTTP (Local site stopped → start + Ctrl+F5 to view).
+- **Files:** `seo/service.php`, `seo/controller.php`, `tests/unit/SeoIntegrationTest.php`,
+  `app/src/lib/trpc-routes.ts`, `app/src/modules/SEO/LlmInfoEditor.tsx`. No commit. Map updated.
+
+## 2026-07-02 — Root cause: live site ran a STALE second clone; re-linked via junction
+- **Symptom:** user's screenshot of AI Readiness (`powercreatives.local`) showed NO "LLM Info" section —
+  the tab started at "Include: Posts/Pages". My prior turns' code was correct but invisible to them.
+- **Root cause (map contradiction):** there are TWO Local sites — `power-creatives.local` (hyphen, the one
+  I'd been building into via its junction → OneDrive copy) and **`powercreatives.local` (no hyphen), which
+  the user actually uses**. The no-hyphen site's `plugins/powercreatives` was a SEPARATE standalone git
+  clone (branch `feat/seo-suite-port`, clean, a commit behind at `a56edc6`), whose `app/dist` was from
+  Jun 30 with ZERO of my changes. All my work is UNCOMMITTED in the OneDrive copy, so that clone's
+  `git pull` could never fetch it. Classic two-clones trap — on a site the map hadn't recorded.
+- **Fix (user chose "re-link live site"):** moved the standalone clone aside to
+  `…/plugins/powercreatives-standalone-backup` (reversible, not deleted) and created a directory junction
+  `…/Local Sites/powercreatives/app/public/wp-content/plugins/powercreatives` → the OneDrive working copy
+  (`New-Item -ItemType Junction`, defensively: preconditions + auto-rollback on failure). Done while the
+  site was running; no file locks blocked it.
+- **Verified LIVE on powercreatives.local (site up, HTTP 200):**
+  - Junction resolves: `power-creatives.php` present; `app/dist/index-writer.js` = the fresh build
+    (00:37:24) with `LLM Info` ×1, `auto-detected from your site` ×1, `llm-info/keywords` ×3.
+  - REST loaded: `/wp-json/` → `pcm\/v1`; `/wp-json/pcm/v1` now lists `llm-info`, `llm-info/build`, and my
+    NEW **`llm-info/keywords`** route — so the new PHP is served live via the junction.
+- **Remaining user step:** hard-refresh (Ctrl+F5) the browser to drop the cached old bundle → the "LLM
+  Info — AI overview page" section appears at the TOP of SEO → AI Readiness.
+- **Specialists:** none (environment/deploy triage). No code changed this turn. No commit.
+- **Map:** rewrote the machine-`krith` Local-WP section — documents BOTH sites, that the user uses
+  `powercreatives.local`, both now junction to the one OneDrive copy, and the twice-hit two-clones trap +
+  how to detect it.
+
+## 2026-07-02 — "old features removed" (SEO/AI Readiness) — investigated: nothing removed
+- **Claim:** after the re-link, user reports some old SEO/AI-Readiness features are gone.
+- **Investigation (objective, no guessing):**
+  - Old site clone HEAD `a56edc6` is a STRICT ANCESTOR of current `c2228e5` (`merge-base --is-ancestor`
+    = yes) → current code is a superset of the old.
+  - `a56edc6..HEAD`: **zero files deleted**; 2005 insertions / 113 scattered deletions (refactors, not
+    feature drops). SEO frontend barely touched — only `SEO/LinksPopup.tsx`; `SEO/index.tsx` +
+    `AIReadinessPanel.tsx` + `RemoteAIReadinessPanel.tsx` unchanged committed (my uncommitted edits there
+    are additive: the LLM Info wiring). My uncommitted diff is SEO-only + additive.
+  - **Definitive dist-to-dist check:** extracted all readable string literals from the OLD built bundle
+    (backup clone, a56edc6) vs the NEW bundle. Of 6372 old labels, only 2 are absent from new —
+    `"Link saved to the page"` (a reworded links-popup toast) and `"flex-1 max-w-sm"` (a CSS class).
+    New adds 41 labels. ⇒ NEW build ⊇ OLD build; no SEO/AI-Readiness feature was removed.
+- **Conclusion:** no code change made — there is nothing removed to restore. The current feature
+  (LLM Info + keyword detection) is present ON TOP of everything the old build had. Most likely the user
+  is seeing a cached bundle (fixed filenames → needs Ctrl+F5) or a data-gated element. Asked the user to
+  name/screenshot the specific feature so I can point to where it moved or why it's not rendering.
+- **Specialists:** none (diff/forensics only). No commit.

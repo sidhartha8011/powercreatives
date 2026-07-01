@@ -47,6 +47,7 @@ import { ViewsToolbar } from './ViewsToolbar';
 import { buildFilterDefs } from './seoFilters';
 import { AIReadinessPanel } from './AIReadinessPanel';
 import { RemoteAIReadinessPanel } from './RemoteAIReadinessPanel';
+import { LlmInfoSection } from './LlmInfoEditor';
 import { SiteSettingsPanel } from './SiteSettingsPanel';
 import { RemoteSiteSettingsPanel } from './RemoteSiteSettingsPanel';
 import { BusinessPanel } from './BusinessPanel';
@@ -1061,11 +1062,21 @@ export function SEOModule() {
         {/* Section content */}
         <div className="min-w-0 flex-1">
       {tab === 'air' ? (
-        isLocal
-          ? <AIReadinessPanel />
-          : typeof siteId === 'number'
-            ? <RemoteAIReadinessPanel siteId={siteId} siteName={activeSite?.name || activeSite?.url || 'this site'} />
-            : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
+        // /llm-info/ (AI overview page) renders FIRST and independently of the AI-Readiness
+        // status load, so it stays usable even when llms.txt/status fails (e.g. older connector).
+        isLocal ? (
+          <div className="space-y-8">
+            <LlmInfoSection />
+            <AIReadinessPanel />
+          </div>
+        ) : typeof siteId === 'number' ? (
+          <div className="space-y-8">
+            <LlmInfoSection siteId={siteId} />
+            <RemoteAIReadinessPanel siteId={siteId} siteName={activeSite?.name || activeSite?.url || 'this site'} />
+          </div>
+        ) : (
+          <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
+        )
       ) : tab === 'site' ? (
         isLocal
           ? <SiteSettingsPanel />

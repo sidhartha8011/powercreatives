@@ -141,6 +141,45 @@ class SeoIntegrationTest extends TestCase
         $this->assertSame('He said "hi"', PCM_SEO_Service::sanitize_ai_output('He said "hi"'));
     }
 
+    public function test_top_keywords_ranks_frequent_terms_and_phrases(): void
+    {
+        $pages = array(
+            array('title' => 'Emergency Plumber Manchester', 'text' => 'Our emergency plumber team handles boiler repair across Manchester. Emergency plumber callouts and boiler repair.'),
+            array('title' => 'Boiler Repair Services', 'text' => 'Boiler repair and boiler installation. Fast boiler repair in Manchester with emergency plumber support.'),
+        );
+        $terms = array_column(PCM_SEO_Service::top_keywords($pages), 'term');
+
+        // Dominant single words + the useful bigram surface; stopwords ("and", "with", "our") do not.
+        $this->assertContains('boiler', $terms);
+        $this->assertContains('repair', $terms);
+        $this->assertContains('boiler repair', $terms);
+        $this->assertNotContains('and', $terms);
+        $this->assertNotContains('with', $terms);
+
+        // Ranked most-frequent first, and one-off noise (count < 2) is dropped.
+        $ranked = PCM_SEO_Service::top_keywords($pages);
+        $this->assertGreaterThanOrEqual($ranked[1]['count'], $ranked[0]['count']);
+        foreach ($ranked as $row) {
+            $this->assertGreaterThanOrEqual(2, $row['count']);
+        }
+    }
+
+    public function test_top_keywords_empty_corpus_is_safe(): void
+    {
+        $this->assertSame(array(), PCM_SEO_Service::top_keywords(array()));
+        $this->assertSame('', PCM_SEO_Service::keywords_to_string(array()));
+    }
+
+    public function test_keywords_to_string_joins_and_caps(): void
+    {
+        $list = array();
+        foreach (range(1, 12) as $i) {
+            $list[] = array('term' => "kw{$i}", 'count' => 20 - $i);
+        }
+        $str = PCM_SEO_Service::keywords_to_string($list, 3);
+        $this->assertSame('kw1, kw2, kw3', $str);
+    }
+
     public function test_field_use_map_only_lists_generatable_fields(): void
     {
         $map = PCM_SEO_Service::field_use_map();

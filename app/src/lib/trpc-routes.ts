@@ -441,6 +441,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/llm-info/build`, body: input }),
     },
+    "seo.llmInfoKeywords": {
+        endpoint: "seo/llm-info/keywords",
+        method: "POST",
+        transform: () => ({ url: `seo/llm-info/keywords`, body: {} }),
+    },
     // /llm-info/ — AI-optimization summary (connected site)
     "seo.remoteLlmInfoGet": {
         endpoint: "seo/sites",
@@ -456,6 +461,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "seo/sites",
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/llm-info/build`, body: { keywords: input.keywords, years: input.years, area: input.area, strengths: input.strengths, model: input.model, provider: input.provider } }),
+    },
+    "seo.remoteLlmInfoKeywords": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/llm-info/keywords`, body: {} }),
     },
     // AI Readiness (llms.txt / virtual routes)
     "seo.airStatus": { endpoint: "seo/ai-readiness", method: "GET" },
