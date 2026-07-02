@@ -39,6 +39,8 @@ import { toast } from 'sonner';
 import { ModelRegistrySection } from './ModelRegistrySection';
 import { PromptEditorSection } from './PromptEditorSection';
 import { DeliveryTypesSection } from './DeliveryTypesSection';
+import { ModuleEmailSenderRow, DefaultEmailSenderRow } from './EmailSendersSection';
+import { Mail, KanbanSquare, Building2 } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -206,6 +208,8 @@ export function SettingsModule() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <ModuleEmailSenderRow moduleId="image" />
             </section>
 
             {/* ── Video Module ── */}
@@ -344,6 +348,8 @@ export function SettingsModule() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <ModuleEmailSenderRow moduleId="copy" />
             </section>
 
             {/* ── Writer Module ── */}
@@ -378,6 +384,8 @@ export function SettingsModule() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <ModuleEmailSenderRow moduleId="writer" />
             </section>
 
             {/* ── SEO Module ── */}
@@ -412,6 +420,39 @@ export function SettingsModule() {
                   </SelectContent>
                 </Select>
               </div>
+            </section>
+
+            {/* ── Approvals Module ── (email sender today; future approvals defaults go here) */}
+            <section className="card-powerkeys p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center">
+                  <KanbanSquare className="w-3.5 h-3.5 text-primary" />
+                </div>
+                <h3 className="text-sm font-medium text-foreground">Approvals Module</h3>
+              </div>
+              <ModuleEmailSenderRow moduleId="approvals" />
+            </section>
+
+            {/* ── Brands Module ── (email sender today; future brand defaults go here) */}
+            <section className="card-powerkeys p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center">
+                  <Building2 className="w-3.5 h-3.5 text-primary" />
+                </div>
+                <h3 className="text-sm font-medium text-foreground">Brands Module</h3>
+              </div>
+              <ModuleEmailSenderRow moduleId="brands" />
+            </section>
+
+            {/* ── Email Defaults ── (the fallback sender every module without a pick uses) */}
+            <section className="card-powerkeys p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center">
+                  <Mail className="w-3.5 h-3.5 text-primary" />
+                </div>
+                <h3 className="text-sm font-medium text-foreground">Email Defaults</h3>
+              </div>
+              <DefaultEmailSenderRow />
             </section>
 
           </div>

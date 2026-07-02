@@ -386,7 +386,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance + any custom field, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
- * Version: 2.1.4
+ * Version: 2.1.6
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -457,6 +457,8 @@ function pcm_conn_replace_in($val, $search, $replace, &$count) {
 // field, serialization-safe via pcm_conn_replace_in) so links update no matter how a builder
 // stores them; handlers add accurate detection + cache regeneration for clean, immediate rendering.
 interface PCM_Conn_Builder_Handler {
+    public function source_keys();        // string[] — meta keys holding this builder's SOURCE data
+                                          // (empty = the builder renders from post_content)
     public function key();
     public function label();
     public function detect($post_id);     // bool — does this builder own the post?
@@ -464,6 +466,7 @@ interface PCM_Conn_Builder_Handler {
 }
 abstract class PCM_Conn_Builder_Base implements PCM_Conn_Builder_Handler {
     public function regenerate($post_id) {}
+    public function source_keys() { return array(); } // default: builder renders from post_content
     protected function meta_has($post_id, $key) {
         $v = get_post_meta($post_id, $key, true);
         return $v !== '' && $v !== false && $v !== null && $v !== array();
@@ -472,6 +475,7 @@ abstract class PCM_Conn_Builder_Base implements PCM_Conn_Builder_Handler {
 class PCM_Conn_B_Elementor extends PCM_Conn_Builder_Base {
     public function key() { return 'elementor'; }
     public function label() { return 'Elementor'; }
+    public function source_keys() { return array('_elementor_data'); }
     public function detect($post_id) { return get_post_meta($post_id, '_elementor_edit_mode', true) === 'builder' || $this->meta_has($post_id, '_elementor_data'); }
     public function regenerate($post_id) {
         do_action('elementor/core/files/clear_cache');
@@ -481,6 +485,7 @@ class PCM_Conn_B_Elementor extends PCM_Conn_Builder_Base {
 class PCM_Conn_B_Bricks extends PCM_Conn_Builder_Base {
     public function key() { return 'bricks'; }
     public function label() { return 'Bricks'; }
+    public function source_keys() { return array('_bricks_page_content_2'); }
     public function detect($post_id) { return get_post_meta($post_id, '_bricks_editor_mode', true) === 'bricks' || $this->meta_has($post_id, '_bricks_page_content_2'); }
     public function regenerate($post_id) {
         delete_post_meta($post_id, '_bricks_inline_css'); // rebuilt on next render
@@ -505,6 +510,7 @@ class PCM_Conn_B_WPBakery extends PCM_Conn_Builder_Base {
 class PCM_Conn_B_Oxygen extends PCM_Conn_Builder_Base {
     public function key() { return 'oxygen'; }
     public function label() { return 'Oxygen'; }
+    public function source_keys() { return array('ct_builder_shortcodes'); }
     public function detect($post_id) { return $this->meta_has($post_id, 'ct_builder_shortcodes'); }
     public function regenerate($post_id) {
         delete_post_meta($post_id, 'ct_page_css_cache');
@@ -514,6 +520,7 @@ class PCM_Conn_B_Oxygen extends PCM_Conn_Builder_Base {
 class PCM_Conn_B_Breakdance extends PCM_Conn_Builder_Base {
     public function key() { return 'breakdance'; }
     public function label() { return 'Breakdance'; }
+    public function source_keys() { return array('_breakdance_data'); }
     public function detect($post_id) { return $this->meta_has($post_id, '_breakdance_data'); }
     public function regenerate($post_id) {
         if (function_exists('__breakdance_clearCachedCssForPost')) { try { __breakdance_clearCachedCssForPost($post_id); } catch (\Throwable $e) {} }
@@ -662,7 +669,10 @@ class PCM_Conn_Builder_Manager {
     /** Recursively set the anchor text inside the target element: a label field (text/title/…)
      *  whose current text equals $old_anchor, or the inner text of an inline <a href="$url">. */
     private static function set_anchor_in_element($node, $target, $url, $old_anchor, $new_anchor, $inside, &$count) {
-        $label_keys = array('text', 'title', 'button_text', 'heading_title', 'label');
+        // Any bespoke string field can hold a widget's label (addon widgets use custom keys, e.g.
+        // cmsmasters-featured-box), so match by VALUE (=== the old anchor) on non-technical keys —
+        // guarded by the element id + the link's URL — rather than an exact key list.
+        $skip_keys = array('url', 'id', 'elType', 'widgetType', 'html_tag', 'css_classes');
         if (is_array($node)) {
             $here = $inside || (isset($node['id']) && (string) $node['id'] === (string) $target);
             foreach ($node as $k => $v) {
@@ -670,7 +680,7 @@ class PCM_Conn_Builder_Manager {
                     // Only rename a label whose OWN item carries this link's URL — so two same-text
                     // links in one widget (e.g. an icon-list with matching labels, different URLs)
                     // don't both get relabeled. When $url is empty (unknown), fall back to text-only.
-                    if (in_array($k, $label_keys, true) && trim(wp_strip_all_tags($v)) === $old_anchor && ($url === '' || self::node_has_url($node, $url))) {
+                    if (!in_array($k, $skip_keys, true) && strpos((string) $k, '_') !== 0 && trim(wp_strip_all_tags($v)) === $old_anchor && ($url === '' || self::node_has_url($node, $url))) {
                         $node[$k] = $new_anchor; $count++; continue;
                     }
                     if (strpos($v, '<a ') !== false && strpos($v, $old_anchor) !== false) {
@@ -687,7 +697,7 @@ class PCM_Conn_Builder_Manager {
             $here = $inside || (isset($node->id) && (string) $node->id === (string) $target);
             foreach (get_object_vars($node) as $k => $v) {
                 if ($here && is_string($v)) {
-                    if (in_array($k, $label_keys, true) && trim(wp_strip_all_tags($v)) === $old_anchor && ($url === '' || self::node_has_url($node, $url))) { $node->$k = $new_anchor; $count++; continue; }
+                    if (!in_array($k, $skip_keys, true) && strpos((string) $k, '_') !== 0 && trim(wp_strip_all_tags($v)) === $old_anchor && ($url === '' || self::node_has_url($node, $url))) { $node->$k = $new_anchor; $count++; continue; }
                     if (strpos($v, '<a ') !== false && strpos($v, $old_anchor) !== false) { $rep = self::replace_inline_anchor_text($v, $url, $old_anchor, $new_anchor, $count); if ($rep !== $v) { $node->$k = $rep; continue; } }
                 } elseif (is_array($v) || is_object($v)) { $node->$k = self::set_anchor_in_element($v, $target, $url, $old_anchor, $new_anchor, $here, $count); }
             }
@@ -727,12 +737,31 @@ class PCM_Conn_Builder_Manager {
      *  by URL (replace-url rewrites every occurrence). Returns [{anchor,to,html,source}]. */
     public function scan_links($post_id) {
         $out = array();
-        $content = (string) get_post_field('post_content', $post_id);
-        if (preg_match_all('#<a\s[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)</a>#is', $content, $m, PREG_SET_ORDER)) {
-            foreach ($m as $mm) { $out[] = array('anchor' => trim(wp_strip_all_tags($mm[3])), 'to' => $mm[2], 'html' => $mm[0], 'source' => 'content', 'elId' => ''); }
+        // When a META-BASED builder owns this post (Elementor/Bricks/Oxygen/Breakdance), the page
+        // renders from the builder's SOURCE meta — post_content is dead weight and other metas are
+        // render caches. Scanning those produced phantom rows (invisible post_content links, stale
+        // cache copies of edited links), so scan ONLY the source keys. Content-based builders
+        // (Divi/WPBakery shortcodes) and classic posts keep the full post_content + all-meta scan.
+        $source_keys = array();
+        foreach ($this->detect($post_id) as $h) {
+            foreach ((array) $h->source_keys() as $k) { $source_keys[] = (string) $k; }
+        }
+        $meta_based = !empty($source_keys);
+
+        if (!$meta_based) {
+            $content = (string) get_post_field('post_content', $post_id);
+            if (preg_match_all('#<a\s[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)</a>#is', $content, $m, PREG_SET_ORDER)) {
+                foreach ($m as $mm) { $out[] = array('anchor' => trim(wp_strip_all_tags($mm[3])), 'to' => $mm[2], 'html' => $mm[0], 'source' => 'content', 'elId' => ''); }
+            }
         }
         global $wpdb;
-        $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", (int) $post_id));
+        if ($meta_based) {
+            $ph   = implode(',', array_fill(0, count($source_keys), '%s'));
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key IN ($ph)", (int) $post_id, ...$source_keys));
+        } else {
+            $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", (int) $post_id));
+        }
         foreach ((array) $rows as $row) {
             $raw = (string) $row->meta_value;
             $val = maybe_unserialize($raw);
@@ -778,6 +807,14 @@ class PCM_Conn_Builder_Manager {
             foreach (array('text', 'title', 'button_text', 'heading_title', 'label') as $lk) {
                 if (!empty($val[$lk]) && is_string($val[$lk])) { $lbl = trim(wp_strip_all_tags($val[$lk])); break; }
             }
+            if ($lbl === $label) {
+                // Addon widgets (e.g. cmsmasters-featured-box) store their button text under
+                // bespoke keys the exact list can't know. Generic fallback: any label-ish key
+                // (contains text/title/label/name, minus style-ish keys), preferring button-ish
+                // keys, then the SHORTEST value — button labels are short, headings/descriptions long.
+                $generic = self::label_from_node($val);
+                if ($generic !== '') { $lbl = $generic; }
+            }
             if (isset($val['url']) && is_string($val['url']) && preg_match('#^https?://#i', $val['url'])) {
                 $out[] = array('anchor' => $lbl, 'to' => $val['url'], 'html' => '', 'source' => 'builder', 'elId' => $el_id);
             }
@@ -791,6 +828,25 @@ class PCM_Conn_Builder_Manager {
         if (is_string($val) && stripos($val, '<a ') !== false && preg_match_all('#<a\s[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)</a>#is', $val, $m, PREG_SET_ORDER)) {
             foreach ($m as $mm) { if (preg_match('#^https?://#i', $mm[2])) { $out[] = array('anchor' => trim(wp_strip_all_tags($mm[3])), 'to' => $mm[2], 'html' => $mm[0], 'source' => 'builder', 'elId' => $el_id); } }
         }
+    }
+    /** Best label among a node's bespoke string fields: keys containing text/title/label/name
+     *  (minus style-ish keys), button-ish keys first, then the shortest value. '' when none. */
+    private static function label_from_node($val) {
+        if (!is_array($val)) { return ''; }
+        $button = array(); $plain = array();
+        foreach ($val as $k => $v) {
+            if (!is_string($v) || !is_string($k)) { continue; }
+            $t = trim(wp_strip_all_tags($v));
+            if ($t === '' || strlen($t) > 100 || strpos($t, '://') !== false) { continue; }
+            $lk = strtolower($k);
+            if (!preg_match('/(text|title|label|name|button|btn)/', $lk)) { continue; }
+            if (preg_match('/(align|color|size|tag|typography|style|position|transform|decoration|shadow|spacing|gap|weight|family|icon|css|class|hover|animation)/', $lk)) { continue; }
+            if (preg_match('/(button|btn)/', $lk)) { $button[] = $t; } else { $plain[] = $t; }
+        }
+        $pool = !empty($button) ? $button : $plain;
+        if (empty($pool)) { return ''; }
+        usort($pool, static function ($a, $b) { return strlen($a) <=> strlen($b); });
+        return $pool[0];
     }
     /** Replace $old→$new only inside the builder element whose id is $target (and its descendants),
      *  leaving identical links in OTHER elements untouched. Returns the decoded structure + count. */

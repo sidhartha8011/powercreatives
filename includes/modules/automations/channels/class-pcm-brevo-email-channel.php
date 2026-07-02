@@ -30,6 +30,36 @@ class PCM_Brevo_Email_Channel implements PCM_Automation_Channel
         return 'email';
     }
 
+    /**
+     * The firing module's configured sender, from Settings → Email senders
+     * (module_email_senders: { module => { email, name } }). The module is the
+     * event id's prefix ('approvals.set_shared' → 'approvals'). Returns
+     * ['email' => '', 'name' => ''] when the event has no module entry.
+     *
+     * @param string $event Firing event/trigger id (may be '').
+     * @return array{email:string,name:string}
+     */
+    private static function module_sender(string $event): array
+    {
+        $none   = array('email' => '', 'name' => '');
+        $module = strstr($event, '.', true);
+        if (!is_string($module) || $module === '') {
+            return $none;
+        }
+        $map = PCM_Settings::get('module_email_senders', array());
+        if (!is_array($map) || empty($map[$module]) || !is_array($map[$module])) {
+            return $none;
+        }
+        $email = sanitize_email((string) ($map[$module]['email'] ?? ''));
+        if ($email === '' || !is_email($email)) {
+            return $none;
+        }
+        return array(
+            'email' => $email,
+            'name'  => sanitize_text_field((string) ($map[$module]['name'] ?? '')),
+        );
+    }
+
     public function send(array $config, array $context, int $user_id): array
     {
         $email = isset($context['email']) && is_array($context['email']) ? $context['email'] : array();
@@ -51,19 +81,27 @@ class PCM_Brevo_Email_Channel implements PCM_Automation_Channel
             );
         }
 
+        // Sender resolution: rule-level override → the firing MODULE's own sender
+        // (Settings → Email senders; module = the event id's prefix, e.g. 'approvals.…')
+        // → the global default sender.
+        $module_sender = self::module_sender((string) ($context['event'] ?? ''));
         $from_email = isset($config['fromEmail']) && $config['fromEmail'] !== ''
             ? sanitize_email((string) $config['fromEmail'])
-            : sanitize_email((string) PCM_Settings::get('automations_from_email', ''));
+            : ($module_sender['email'] !== ''
+                ? $module_sender['email']
+                : sanitize_email((string) PCM_Settings::get('automations_from_email', '')));
         $from_name = isset($config['fromName']) && $config['fromName'] !== ''
             ? sanitize_text_field((string) $config['fromName'])
-            : sanitize_text_field((string) PCM_Settings::get('automations_from_name', 'Power Creatives'));
+            : ($module_sender['name'] !== ''
+                ? $module_sender['name']
+                : sanitize_text_field((string) PCM_Settings::get('automations_from_name', 'Power Creatives')));
 
         if ($from_email === '' || !is_email($from_email)) {
             return array(
                 'ok'      => false,
                 'code'    => 0,
                 'target'  => $to,
-                'error'   => 'No valid from-email configured (set automations_from_email).',
+                'error'   => 'No valid from-email configured (set a sender in Settings → Email senders).',
                 'skipped' => false,
             );
         }

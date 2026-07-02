@@ -58,11 +58,12 @@ interface LinksPopupProps {
 }
 
 // Resizable columns (drag the right edge; widths persist per-browser), like the SEO table.
+// Defaults sized for the wide dialog so the whole table fits without horizontal scrolling.
 const LINK_COLS = [
-  { key: 'anchor', label: 'Anchor', w: 200 },
-  { key: 'from',   label: 'From',   w: 150 },
-  { key: 'to',     label: 'To',     w: 220 },
-  { key: 'html',   label: 'HTML',   w: 200 },
+  { key: 'anchor', label: 'Anchor', w: 220 },
+  { key: 'from',   label: 'From',   w: 260 },
+  { key: 'to',     label: 'To',     w: 300 },
+  { key: 'html',   label: 'HTML',   w: 240 },
   { key: 'status', label: 'Status', w: 72 },
   { key: 'action', label: 'Action', w: 96 },
 ] as const;
@@ -101,7 +102,9 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   const [rescanning, setRescanning] = useState(false);
 
   // Resizable, persisted column widths (shared SEO-table mechanism).
-  const { width: colWidth, setWidth: setColWidth } = useColumnLayout(LINK_KEYS, LINK_DEFAULT_WIDTHS, 'pcm:seo:links:col-layout:v1');
+  // v2 storage key: the dialog got wider + column defaults grew — a saved v1 layout would keep the
+  // old cramped widths, so start fresh (users' future resizes still persist under v2).
+  const { width: colWidth, setWidth: setColWidth } = useColumnLayout(LINK_KEYS, LINK_DEFAULT_WIDTHS, 'pcm:seo:links:col-layout:v2');
   const startResize = (key: string) => (e: PointerEvent<HTMLSpanElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -282,7 +285,7 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[min(1400px,95vw)] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="capitalize">{kind === 'broken' ? 'Dead' : kind} links · {title}</DialogTitle>
           <DialogDescription>
@@ -364,11 +367,45 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
                           ? <EditableTextCell value={l.anchor} placeholder="(no text)" onSave={(v) => saveField(l, 'anchor', v)} />
                           : <div className="truncate" title={l.anchor}>{l.anchor || <span className="text-muted-foreground/50">(no text)</span>}</div>}
                       </TableCell>
-                      <TableCell className="text-muted-foreground"><div className="truncate" title={l.from}>{l.from}</div></TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <a
+                          href={l.from}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block truncate hover:text-primary hover:underline"
+                          title={`${l.from} — open in a new tab`}
+                        >
+                          {l.from}
+                        </a>
+                      </TableCell>
                       <TableCell>
-                        {editable
-                          ? <EditableTextCell value={l.to} onSave={(v) => saveField(l, 'to', v)} />
-                          : <div className="truncate" title={l.to}>{l.to}</div>}
+                        {editable ? (
+                          // Text stays click-to-edit; the icon opens the target directly.
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <a
+                              href={l.to}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="shrink-0 text-muted-foreground hover:text-primary"
+                              title="Open in a new tab"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                            <div className="min-w-0 flex-1">
+                              <EditableTextCell value={l.to} onSave={(v) => saveField(l, 'to', v)} />
+                            </div>
+                          </div>
+                        ) : (
+                          <a
+                            href={l.to}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block truncate hover:text-primary hover:underline"
+                            title={`${l.to} — open in a new tab`}
+                          >
+                            {l.to}
+                          </a>
+                        )}
                       </TableCell>
                       <TableCell className="text-muted-foreground"><div className="truncate font-mono text-[10px]" title={l.html}>{l.html}</div></TableCell>
                       <TableCell className="text-center"><StatusCell link={l} /></TableCell>

@@ -256,7 +256,7 @@ export function DeliveryDialog({
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="delivery-external-id">External ID</Label>
+              <Label htmlFor="delivery-external-id">External ID (eg. airtable or other PM tool)</Label>
               <Input
                 id="delivery-external-id"
                 value={externalId}

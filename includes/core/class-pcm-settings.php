@@ -74,9 +74,13 @@ class PCM_Settings
         // Optional HMAC secret. When set, webhooks are signed with
         // X-PCM-Signature: sha256=<hmac(secret, body)> so receivers can verify.
         'automations_webhook_secret' => '',
-        // Sender identity for Brevo transactional emails.
+        // Sender identity for Brevo transactional emails (global default).
         'automations_from_email' => '',
         'automations_from_name' => 'Power Creatives',
+        // Per-module sender overrides: { module => { email, name } }. A module's emails
+        // (matched by the firing event's `module.` prefix) send from its own verified
+        // Brevo sender; modules without an entry fall back to automations_from_email.
+        'module_email_senders' => array(),
     );
 
     /**

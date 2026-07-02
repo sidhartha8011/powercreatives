@@ -66,6 +66,27 @@ class PCM_Settings_Controller extends PCM_REST_Base
                 $raw === null ? null : PCM_Deliveries_Service::normalize_presets($raw);
         }
 
+        // Per-module email senders are structured data — normalize on write so the
+        // option only ever stores { module => { email, name } } with clean values.
+        if (array_key_exists('module_email_senders', $params)) {
+            $raw   = $params['module_email_senders'];
+            $clean = array();
+            if (is_array($raw)) {
+                foreach ($raw as $module => $sender) {
+                    $module = sanitize_key((string) $module);
+                    $email  = is_array($sender) ? sanitize_email((string) ($sender['email'] ?? '')) : '';
+                    if ($module === '' || $email === '' || !is_email($email)) {
+                        continue; // empty email = "use the global default" → drop the entry
+                    }
+                    $clean[$module] = array(
+                        'email' => $email,
+                        'name'  => is_array($sender) ? sanitize_text_field((string) ($sender['name'] ?? '')) : '',
+                    );
+                }
+            }
+            $params['module_email_senders'] = $clean;
+        }
+
         PCM_Settings::set_many($params);
 
         return $this->success(PCM_Settings::get_all());

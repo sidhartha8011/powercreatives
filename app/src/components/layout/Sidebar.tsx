@@ -35,6 +35,7 @@ import {
   Users,
   Bell,
   Gauge,
+  ScrollText,
 } from 'lucide-react';
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc';
@@ -76,6 +77,7 @@ const configNavItems: NavItem[] = [
 // enforces manage_options on these routes regardless; hiding is UX only.
 const adminNavItems: NavItem[] = [
   { id: 'users', label: 'Users', icon: <Users className="w-[1.2rem] h-[1.2rem]" /> },
+  { id: 'logs', label: 'Logs', icon: <ScrollText className="w-[1.2rem] h-[1.2rem]" /> },
 ];
 
 // ============================================

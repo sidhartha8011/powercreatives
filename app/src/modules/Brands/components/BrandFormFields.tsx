@@ -55,7 +55,7 @@ export function BrandFormFields({ form, onChange }: BrandFormFieldsProps) {
 
       {/* External ID */}
       <div className="space-y-1.5">
-        <Label htmlFor="brand-external-id">External ID</Label>
+        <Label htmlFor="brand-external-id">External ID (eg. airtable or other PM tool)</Label>
         <Input
           id="brand-external-id"
           placeholder="Optional — used for webhook/automation mapping"

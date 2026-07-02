@@ -1153,9 +1153,48 @@ class PCM_SEO_Service
         $scan = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/scan-links', array('post_id' => $post_id));
         if (!is_wp_error($scan) && (int) ($scan['status'] ?? 0) < 300 && is_array($scan['body']['links'] ?? null)) {
             $site_host = (string) (wp_parse_url((string) $site->url, PHP_URL_HOST) ?: '');
+
+            // "From" = the PAGE the links live on (its permalink), not the site root.
+            $from = (string) $site->url;
+            $perma = PCM_Sites_Service::remote_rest(
+                $site,
+                'GET',
+                ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id,
+                array('_fields' => 'link')
+            );
+            if (!is_wp_error($perma) && !empty($perma['body']['link']) && is_string($perma['body']['link'])) {
+                $from = (string) $perma['body']['link'];
+            }
+
+            // De-dupe before the per-link HTTP checks: the connector scans EVERY postmeta, so a
+            // builder's rendered-HTML cache meta re-captures the same link its editable source data
+            // already provided (same to+anchor; the cache copy carries no element id). Keep every
+            // elId row (distinct on-page elements — several identical buttons stay separate) and
+            // drop elId-less rows that duplicate an elId row's to+anchor, collapsing repeated
+            // elId-less copies to one.
+            $links = is_array($scan['body']['links']) ? $scan['body']['links'] : array();
+            $sourced = array(); // to|anchor keys owned by an elId (editable source) row
+            foreach ($links as $l) {
+                if ((string) ($l['elId'] ?? '') !== '') {
+                    $sourced[(string) ($l['to'] ?? '') . '|' . (string) ($l['anchor'] ?? '')] = true;
+                }
+            }
+            $seen_orphan = array();
+            $links = array_values(array_filter($links, static function ($l) use ($sourced, &$seen_orphan) {
+                if ((string) ($l['elId'] ?? '') !== '') {
+                    return true;
+                }
+                $k = (string) ($l['to'] ?? '') . '|' . (string) ($l['anchor'] ?? '');
+                if (isset($sourced[$k]) || isset($seen_orphan[$k])) {
+                    return false;
+                }
+                $seen_orphan[$k] = true;
+                return true;
+            }));
+
             $out = array();
             $i = 0;
-            foreach ($scan['body']['links'] as $l) {
+            foreach ($links as $l) {
                 $to = (string) ($l['to'] ?? '');
                 if ($to === '') { continue; }
                 $host     = (string) (wp_parse_url($to, PHP_URL_HOST) ?: '');
@@ -1172,7 +1211,7 @@ class PCM_SEO_Service
                 $out[] = array(
                     'id'       => $i++,
                     'anchor'   => $anchor,
-                    'from'     => (string) $site->url,
+                    'from'     => $from,
                     'to'       => $to,
                     'html'     => $html,
                     'status'   => $status,
@@ -1798,19 +1837,34 @@ class PCM_SEO_Service
     {
         static $stop = null;
         if ($stop === null) {
-            $stop = array_flip(explode(' ', 'the a an and or but if then else of to in on at by for from with without into onto over under about as is are was were be been being it its it\'s this that these those i you he she we they them us our your his her their my me him do does did done has have had having not no nor so than too very can will just should now also more most other some such only own same up down out off then once here there all any both each few how what when where which who whom why your yours we\'re you\'re our ours us get got new one two three per via etc com www http https')); // common noise
+            $stop = array_flip(array_merge(
+                // English noise
+                explode(' ', 'the a an and or but if then else of to in on at by for from with without into onto over under about as is are was were be been being it its it\'s this that these those i you he she we they them us our your his her their my me him do does did done has have had having not no nor so than too very can will just should now also more most other some such only own same up down out off then once here there all any both each few how what when where which who whom why your yours we\'re you\'re our ours us get got new one two three per via etc com www http https'),
+                // Swedish noise (connected sites are often Swedish — function words must not
+                // surface as "keywords": att/och/till/som/kan/din/det/med etc.)
+                explode(' ', 'och att det som en ett på är av för med till den de i om så men har du din dina ditt vi ni han hon vad var när här där kan ska skall vill från eller hur alla vid mycket också bara bli blir bra då sedan efter innan under över mellan genom mot utan samt både dess denna detta dessa vara varit hos man sig sin sina sitt oss er ert era mig dig honom henne dem vem vilken vilket vilka något någon några ingen inget inga annan annat andra samma nya ny nytt mer mest än upp ner ut in hela även redan kommer kommit gör göra gjort finns fanns fick få får'),
+                // HTML-entity residue (when un-decoded copies slip into a corpus)
+                explode(' ', 'nbsp amp quot apos middot ndash mdash hellip rsquo lsquo rdquo ldquo')
+            ));
         }
         $text = '';
         foreach ($pages as $p) {
             $text .= ' ' . (string) ($p['title'] ?? '') . ' ' . (string) ($p['text'] ?? '');
         }
-        $text  = strtolower($text);
-        $text  = preg_replace('/[^a-z0-9\s]+/', ' ', $text);
-        $words = preg_split('/\s+/', trim((string) $text), -1, PREG_SPLIT_NO_EMPTY) ?: array();
+        // Decode entities (&middot; &amp; …) and keep UNICODE letters — the previous
+        // [^a-z0-9] pass destroyed å/ä/ö words, so Swedish keywords vanished while
+        // stopwords dominated the ranking.
+        $text  = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text  = function_exists('mb_strtolower') ? mb_strtolower($text, 'UTF-8') : strtolower($text);
+        $text  = preg_replace('/[^\p{L}\p{N}\s]+/u', ' ', $text);
+        $words = preg_split('/\s+/u', trim((string) $text), -1, PREG_SPLIT_NO_EMPTY) ?: array();
 
+        $len    = static function (string $w): int {
+            return function_exists('mb_strlen') ? mb_strlen($w, 'UTF-8') : strlen($w);
+        };
         $tokens = array();
         foreach ($words as $w) {
-            if (strlen($w) < 3 || ctype_digit($w) || isset($stop[$w])) {
+            if ($len($w) < 3 || ctype_digit($w) || isset($stop[$w])) {
                 continue;
             }
             $tokens[] = $w;
@@ -2438,6 +2492,8 @@ class PCM_SEO_Service
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $rows  = $wpdb->get_results($wpdb->prepare("SELECT id, userId, formData, isDefault FROM {$table} WHERE (userId = %d OR userId = 0) AND module = 'seo'", $user_id), ARRAY_A);
         $chosen = null;
+        $chosen_shared = false; // requested id points at a SHARED (userId=0) row
+        $user_fork = null;      // the user's edited copy of this section (fork-on-edit)
         $user_default = null;
         $system_default = null;
         $any = null;
@@ -2452,6 +2508,10 @@ class PCM_SEO_Service
             }
             if ($template_id && (int) $r['id'] === $template_id) {
                 $chosen = $prompt;
+                $chosen_shared = ((int) $r['userId'] === 0);
+            }
+            if ((int) $r['userId'] === $user_id && $user_fork === null) {
+                $user_fork = $prompt;
             }
             if (!empty($r['isDefault'])) {
                 if ((int) $r['userId'] === $user_id && $user_default === null) {
@@ -2463,6 +2523,13 @@ class PCM_SEO_Service
             if ($any === null) {
                 $any = $prompt;
             }
+        }
+        // A picker can pass the ORIGINAL shared template's id from a cached list even after the
+        // user's edit forked it into their own copy (the shared row stays in the DB, only hidden
+        // from the list). Honoring the stale shared row would silently ignore the user's edit —
+        // redirect to their fork of the same section instead.
+        if ($chosen !== null && $chosen_shared && $user_fork !== null) {
+            $chosen = $user_fork;
         }
         return $chosen ?? $user_default ?? $system_default ?? $any;
     }

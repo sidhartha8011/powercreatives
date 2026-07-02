@@ -34,7 +34,8 @@ PCM_Automation_Triggers::register(array(
     'description' => __('Fires when an approval set moves into a lane (e.g. Launch).', 'power-creatives'),
     'contextKeys' => array(
         'setID', 'setName', 'setStatus', 'setLink', 'setInternalLink',
-        'brandName', 'deliveryName', 'projectName', 'brandId', 'deliveryId', 'projectId', 'projectAssignee', 'dashboardUrl',
+        'brandName', 'brandExtID', 'deliveryName', 'deliveryExtID', 'projectName', 'projectExtID',
+        'brandId', 'deliveryId', 'projectId', 'projectAssignee', 'dashboardUrl',
         // legacy aliases (kept so existing rules keep working)
         'setId', 'name', 'status', 'token', 'link',
     ),
@@ -66,7 +67,8 @@ PCM_Automation_Triggers::register(array(
     'description'     => __('Fires when an approval set is shared with the client.', 'power-creatives'),
     'contextKeys'     => array(
         'setID', 'setName', 'setStatus', 'setLink', 'setInternalLink',
-        'brandName', 'deliveryName', 'projectName', 'brandId', 'deliveryId', 'projectId', 'projectAssignee', 'dashboardUrl',
+        'brandName', 'brandExtID', 'deliveryName', 'deliveryExtID', 'projectName', 'projectExtID',
+        'brandId', 'deliveryId', 'projectId', 'projectAssignee', 'dashboardUrl',
         // legacy aliases
         'setId', 'name', 'token', 'link', 'clientEmail',
     ),
@@ -83,7 +85,8 @@ PCM_Automation_Triggers::register(array(
     'description'     => __('Fires when every asset in an approval set has been approved.', 'power-creatives'),
     'contextKeys'     => array(
         'setID', 'setName', 'setStatus', 'setLink', 'setInternalLink',
-        'brandName', 'deliveryName', 'projectName', 'brandId', 'deliveryId', 'projectId', 'projectAssignee', 'dashboardUrl',
+        'brandName', 'brandExtID', 'deliveryName', 'deliveryExtID', 'projectName', 'projectExtID',
+        'brandId', 'deliveryId', 'projectId', 'projectAssignee', 'dashboardUrl',
         // legacy aliases
         'setId', 'name', 'token', 'link',
     ),
@@ -105,7 +108,7 @@ PCM_Automation_Triggers::register(array(
     'implemented'     => true,
     'label'           => __('Approval set receives a comment', 'power-creatives'),
     'description'     => __('Fires when a client or team member comments on an asset in an approval set.', 'power-creatives'),
-    'contextKeys'     => array('setID', 'setName', 'setStatus', 'setLink', 'setInternalLink', 'setId', 'name', 'token', 'link', 'assetId', 'commentId', 'author', 'body', 'brandId', 'brandName', 'deliveryId', 'deliveryName', 'projectId', 'projectName', 'projectAssignee', 'commentUrl', 'dashboardUrl'),
+    'contextKeys'     => array('setID', 'setName', 'setStatus', 'setLink', 'setInternalLink', 'setComment', 'setId', 'name', 'token', 'link', 'assetId', 'commentId', 'author', 'body', 'brandId', 'brandName', 'brandExtID', 'deliveryId', 'deliveryName', 'deliveryExtID', 'projectId', 'projectName', 'projectExtID', 'projectAssignee', 'commentUrl', 'dashboardUrl'),
     'conditionFields' => array(),
 ));
 
@@ -117,7 +120,7 @@ PCM_Automation_Triggers::register(array(
     'implemented'     => true,
     'label'           => __('Asset is approved in a set', 'power-creatives'),
     'description'     => __('Fires when the client approves an asset (or everything) in an approval set.', 'power-creatives'),
-    'contextKeys'     => array('setID', 'setName', 'setStatus', 'setLink', 'setInternalLink', 'setId', 'name', 'token', 'link', 'assetId', 'brandId', 'brandName', 'deliveryId', 'deliveryName', 'projectId', 'projectName', 'projectAssignee', 'dashboardUrl'),
+    'contextKeys'     => array('setID', 'setName', 'setStatus', 'setLink', 'setInternalLink', 'setId', 'name', 'token', 'link', 'assetId', 'brandId', 'brandName', 'brandExtID', 'deliveryId', 'deliveryName', 'deliveryExtID', 'projectId', 'projectName', 'projectExtID', 'projectAssignee', 'dashboardUrl'),
     'conditionFields' => array(),
 ));
 

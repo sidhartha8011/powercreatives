@@ -4638,3 +4638,206 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   AND llminfo_keywords/llmInfo routes); php -l clean (3 files); tsc 56 (baseline); build clean; post-merge
   connector anchor round-trip (non-ASCII) still OK ✅; hub zip rebuilt. Stash dropped (backup patch retained).
   Nothing committed. Note: PHPUnit (the incoming SeoIntegrationTest.php) not run — needs PHP 8.1–8.2, this box is 8.5.
+
+## 2026-07-01 — Templates: editing a shared SEO prompt template errored + silently reverted (fork-on-edit)
+- Report: Templates → SEO → "Meta title" → edit the prompt → save shows an error, sometimes saves/sometimes not,
+  the value resets to the old one, and SEO generation ignores the change. Cause: the seeded SEO prompt templates
+  are SHARED system rows (userId=0). update_item verifies ownership with `WHERE id=%d AND userId=<user>`, which
+  never matches a userId=0 row → returns not_found (the error) → nothing persists → generation keeps reading the
+  untouched shared template. "Sometimes saves" = when the row was already user-owned.
+- Fix (templates/controller.php, backend-only, minimal): fork-on-edit. When update_item can't find a user-owned
+  row but the id is a shared (userId=0) template, `fork_shared_template()` writes a user-owned copy with the
+  edits, marked isDefault for its module+type — and reuses an existing fork (same module+name) so repeated/stale
+  saves don't pile up duplicates. seo_template_prompt() already prefers the user's default, so generation now
+  uses the new prompt. list_items() hides a shared template when the user has their own copy (module+name), so
+  the list shows one row, not the original + the fork. No frontend change (update already invalidates the list).
+- Verified: php -l clean; live end-to-end — editing the shared "Meta Title — Generate" forks it (isDefault=1),
+  generation returns the NEW prompt, a stale re-save makes no duplicate (count=1), list dedupes to 1 row. All ✅.
+  Hub zip rebuilt (PHP-only). Needs hub reinstall.
+
+## 2026-07-01 — Verified: fork-on-edit works for ALL 16 SEO prompt templates (not just Meta title)
+- Follow-up check on the templates fork-on-edit fix. Looped over every seeded shared SEO template
+  (userId=0, module=seo) — 16 sections: meta_title/description/keywords (gen+opt), page_title, primary_keyword,
+  slug, content_optimize, robots, site_schema/tagline/title. For each: forked with a unique new prompt via the
+  controller, then confirmed seo_template_prompt() returns that new prompt (i.e. generation uses it), and the
+  Templates list shows no duplicate names. 16/16 ✅, 0 duplicate rows. No code change — verification only.
+
+## 2026-07-02 — SEO links popup: wider dialog + clickable From/To
+- Request: less left-right scrolling in the links popup; From/To should be clickable to open the page.
+- LinksPopup.tsx: DialogContent sm:max-w-4xl → sm:max-w-[min(1400px,95vw)]; column defaults grew
+  (anchor 220 / from 260 / to 300 / html 240; total 1224px < 1400 cap → fits w/o h-scroll). Column-layout
+  storage key bumped v1→v2 so the new defaults apply over previously saved cramped widths (resizes persist
+  under v2). From cell is now an <a target=_blank> (hover underline); To keeps click-to-edit with an inline
+  ExternalLink icon that opens the target, and renders as a plain link when the row is read-only.
+- Verified: tsc 56 (baseline); build clean; v2 key in bundle; hub zip rebuilt. Hub-only (frontend) —
+  reinstall hub + hard-refresh.
+
+## 2026-07-02 — Verified: all 12 webhook tokens exact-name complete (no change needed)
+- Client checklist re-check: brandName/brandExtID/deliveryName/deliveryExtID/projectName/projectExtID/setID/
+  setName/setStatus/setLink/setInternalLink/setComment. Live test on a real brand→delivery→project chain with
+  external ids: all 12 keys present with exact names + correct values; setInternalLink deep-links to
+  admin.php?page=power-creatives&pcm_approval_set=<id>; a real signed webhook payload carries all 12.
+  enrich_context is merged into all 4 approvals triggers (status/comment/approved/shared). Implementation
+  shipped earlier in 08a5585 (DB 1.32.0) — reminder: tokens appear on the live site only after the hub zip
+  reinstall runs the migration. Verification-only, no code changed.
+
+## 2026-07-02 — External ID field label per client spec: "External ID (eg. airtable or other PM tool)"
+- Client asked for the mapping field on Deliveries, Client (= Brand in this app) and Projects named exactly
+  "External ID (eg. airtable or other PM tool)", and to re-verify the automation side. The FIELD already
+  existed everywhere (built with DB 1.32.0); renamed the label in all 4 form locations: BrandFormFields,
+  DeliveryDialog, Projects create form, Projects Edit modal. Automation side re-verified last turn (all 12
+  exact tokens incl. brandExtID/deliveryExtID/projectExtID flow into the signed webhook payload).
+- Verified: tsc 56 (baseline); build clean; label string present in bundle (4 label sites); hub zip rebuilt.
+  Hub-only (frontend) — reinstall hub + hard-refresh.
+
+## 2026-07-02 — New Logs module (skeleton) — email logs moved in, built to expand
+- Request: a simple new module hosting the existing email logs, extensible later (generation logs etc.).
+- Built app/src/modules/Logs/: index.tsx is a deliberate skeleton — LOG_TYPES registry (id/label/icon/component)
+  renders a pill switcher + the active panel; adding a future log type = one component + one entry.
+  EmailDiagnostics.tsx MOVED from Automations (git mv, all @-aliased imports, no changes needed) as the first
+  log type. Wired: ModuleId += 'logs' (types/index.ts), Shell moduleRegistry += logs: LogsModule, Sidebar
+  adminNavItems += Logs (ScrollText icon; admin-only like Users — the automations.logs backend routes are
+  admin-gated anyway). Removed the panel + import from Automations/index.tsx (it lives in Logs now).
+- Verified: tsc 56 (baseline); build clean; hub zip rebuilt. Hub-only (frontend) — reinstall + hard-refresh.
+
+## 2026-07-02 — Per-module email senders in Settings; picker removed from Integrations
+- Request: each module gets its own default Brevo sender, configured in Settings; remove the sender picker
+  from the Integrations module.
+- Backend: new setting `module_email_senders` ({ module → { email, name } }, PCM_Settings default). Brevo
+  channel sender resolution is now rule-config fromEmail → the FIRING MODULE's sender (module = the event id's
+  prefix, e.g. 'approvals.set_shared' → 'approvals'; run_action already injects event into ctx) → global
+  automations_from_email. settings controller normalizes module_email_senders on write (sanitize_key module,
+  sanitize_email; invalid/empty entries dropped = "use default"). Error message now points at Settings.
+- Frontend: new Settings → General → "Email senders" card (EmailSendersSection.tsx): global default picker +
+  one picker per email-capable module (approvals/brands/copy/image/writer — the trigger-id prefixes), options
+  from the verified Brevo senders list; per-module "Use default sender" clears the override. Old
+  Integrations/BrevoSenderPicker.tsx deleted; mount + import removed from Integrations/index.tsx.
+- Verified: php -l clean (3 files); live — approvals event resolves to its module sender, brands/no-event fall
+  back to global, sanitizer drops junk ✅; tsc 56 (baseline); build clean; hub zip rebuilt. Hub-only —
+  reinstall + hard-refresh.
+
+## 2026-07-02 — Email senders card moved: Settings → General → Settings → Module Defaults
+- Feedback: the per-module email senders belong on the Module Defaults tab (where modules are already
+  listed), not General. Moved the whole "Email senders" card (EmailSendersSection) to the bottom of the
+  defaults TabsContent, styled to match that tab's module cards (w-7 icon tile, text-sm heading, pl-10 body).
+  General tab restored to its previous content. No logic change.
+- Verified: tsc 56 (baseline); build clean; hub zip rebuilt. Hub-only — reinstall + hard-refresh.
+
+## 2026-07-02 — Email senders folded into per-module cards (+ new empty-extensible Approvals/Brands cards)
+- Feedback: use the Module Defaults per-module cards, creating cards for modules that lack one so future
+  settings can be added into them. Refactored EmailSendersSection.tsx into two reusable rows sharing a
+  useEmailSenders() hook (react-query dedupes the senders/settings queries across mounts; module map is
+  rebuilt from the latest settings data at save time, then invalidated):
+  ModuleEmailSenderRow({moduleId}) + DefaultEmailSenderRow.
+- Settings → Module Defaults: "Email sender" row appended inside the existing Image / Copy / Writer cards;
+  NEW "Approvals Module" + "Brands Module" cards created (sender row is their first setting — the cards are
+  the extension point for future module defaults); a slim "Email Defaults" card hosts the global fallback
+  sender. Grouped "Email senders" card removed. Backend unchanged (same settings keys + resolution).
+- Verified: tsc 56 (baseline); build clean; 5 module rows + default row mounted; hub zip rebuilt. Hub-only —
+  reinstall + hard-refresh.
+
+## 2026-07-02 — Links popup: From = the page's permalink; rendered-cache duplicates dropped (hub-side)
+- Report: From showed the site root (massagegoteborg.nu) instead of the page (…/pris/), and duplicates persisted.
+  Screenshot forensics: the dup pairs had DIFFERENT HTML (plain vs class="cmsmasters…") — the connector scans
+  EVERY postmeta, so a builder addon's rendered-HTML cache meta re-captures the same link its editable source
+  (_elementor_data, has elId) already provided; cache copies carry elId='' so the earlier elId-keyed de-dupe
+  couldn't collapse them.
+- Fix (hub remote_get_links, connector path — no connector reinstall):
+  (1) From: fetch the post's permalink (/wp/v2/{type}s/{id}?_fields=link) and use it; falls back to site url.
+  (2) De-dupe BEFORE the per-link HTTP checks: keep every elId row (distinct elements — identical buttons stay);
+      drop elId-less rows whose to|anchor is owned by an elId row (cache copies); collapse repeated elId-less
+      copies to one; genuinely-unsourced orphans (candy, "(no text)") survive once.
+- Verified: php -l clean; simulation with the exact screenshot data — 11 rows → 7 (all 5 source rows incl. the
+  b3/b4 identical-button pair + 2 orphans; all cache copies gone) ✅. Backend-only; hub zip rebuilt. Reinstall hub.
+
+## 2026-07-02 — LLM Info: keyword auto-detect returned Swedish stopwords/entity junk (fixed in top_keywords)
+- Report: "the new llminfo is not working" (screenshot: keyword chips = att/och/till/som/kan/din/det/med).
+  Traced the whole chain live: all 8 trpc routes exist and match; local GET/save/keywords endpoints 200;
+  connector /llm-info route handles content+enabled and serves the page; Generate summary works end-to-end
+  (HTTP 200, real Anthropic call). The actual defect: PCM_SEO_Service::top_keywords() was English-only —
+  (1) no Swedish stopwords, so function words dominated; (2) its [^a-z0-9] scrub destroyed å/ä/ö words
+  (hälsa → lsa), erasing the real Swedish keywords; (3) HTML entities weren't decoded ("middot" ranked as a
+  keyword locally). Since build_llm_info auto-derives keywords from top_keywords when Target keywords is
+  blank, generation quality was poisoned too.
+- Fix (top_keywords only — nothing removed from AI Readiness): html_entity_decode first; mb_strtolower +
+  \p{L}\p{N} unicode scrub (accented words survive); stopword list extended with Swedish function words +
+  entity-residue tokens; mb_strlen for the short-word filter.
+- Verified live: Swedish corpus → massage(7), fysioterapi(5), hälsa(4), göteborg(3), friskvård(3), rehab(3),
+  bigram "massage fysioterapi" — no stopwords, no entities ✅; /seo/llm-info GET+POST 200; /llm-info/build
+  200 with 2.4k chars of generated HTML ✅. php -l clean; hub zip rebuilt (backend-only). Reinstall hub, then
+  press the keyword-detect button again on the remote site.
+
+## 2026-07-02 — LLM Info: "summary generated but not visible" (hydrate effect wiped unsaved state)
+- Screenshot: success toast fired but the Summary textarea stayed empty. Root cause (deterministic, not a
+  transport/API issue — generation itself returns 200 + content): in LlmInfoSection, `data` was rebuilt as a
+  NEW object literal on every render. The build mutation resolving re-renders the section → fresh `data`
+  reference → the editor's hydrate useEffect([data]) fired AFTER handleBuild's setForm(content) commit and
+  re-hydrated the form from the stored (still-empty) server data — wiping the just-generated summary (and any
+  unsaved input edits) every time.
+- Fix (LlmInfoEditor.tsx, 2 spots): memoize `data` with useMemo on [q.data] (react-query structural sharing
+  keeps q.data referentially stable when server content is unchanged, so refetches no longer clobber a dirty
+  form either); handleBuild now toasts an ERROR instead of success when the model returns empty text.
+- Verified: tsc 56 (baseline); build clean; hub zip rebuilt. Hub-only (frontend) — reinstall + hard-refresh.
+
+## 2026-07-02 — Links scan: source-only scanning kills phantom rows + fixes anchor "works on some" (connector v2.1.5)
+- Report: anchor update works on some links not others ("Link not found — re-scan" toast) + still more rows than
+  the page has. GROUND TRUTH via the user's browser (rendered /pris/ content scope): exactly 4 external links
+  (full price list→google, View Details test→google//, 2× View Details→google). The popup showed 6.
+- Forensics: (1) "candy" + "(no text)" rows live in POST_CONTENT, which Elementor doesn't render — invisible
+  on the page, elId='' → anchor edits fell to the legacy content path whose index doesn't match → the exact
+  "Link not found" toast. (2) The example.com "View Details"/"full price list" rows were STALE COPIES in an
+  addon's rendered-cache meta (cmsmasters class in their HTML) still holding pre-edit URLs.
+- Fix (connector v2.1.4 → 2.1.5): PCM_Conn_Builder_Handler gains source_keys() (Elementor _elementor_data,
+  Bricks _bricks_page_content_2, Oxygen ct_builder_shortcodes, Breakdance _breakdance_data; Divi/WPBakery
+  empty = content-based). scan_links: when a meta-based builder owns the post, scan ONLY its source keys —
+  no post_content pass, no other metas (caches). Classic posts + content-based builders keep the old full scan.
+  Result: every row carries an elId → anchor edits ALWAYS take the builder path; phantoms + stale rows gone.
+- Verified live (local WP): Elementor page with post_content residue + stale cmsmasters cache meta + 4-link
+  source → scan returns exactly the 4 real links, all with elIds ✅; anchor edit works (button + inline) ✅;
+  URL edit still per-element ✅; classic no-builder post_content scan intact ✅. php -l clean; zip rebuilt.
+  NEEDS: hub reinstall + CONNECTOR reinstall to v2.1.5 on the connected site.
+
+## 2026-07-02 — "full price list" showed as "(no text)": bespoke addon widget label keys (connector v2.1.6)
+- After v2.1.5's source-only scan, /pris/ showed 4 correct rows but the FULL PRICE LIST button appeared as
+  "(no text)". Ground truth via the user's browser DOM: it's a cmsmasters-featured-box widget — a theme-addon
+  widget storing its button label under a bespoke settings key not in the exact list (text/title/button_text/
+  heading_title/label), so collect_links captured its link.url with an empty label.
+- Fix (connector v2.1.5 → 2.1.6):
+  (1) collect_links: when the exact keys miss, label_from_node() scans the node's string fields generically —
+      keys containing text/title/label/name/button/btn, minus style-ish keys (align/color/size/tag/typography/
+      hover/animation/…), value ≤100 chars, non-URL; button-ish keys preferred, then SHORTEST value (labels are
+      short, headings long).
+  (2) set_anchor_in_element: label match is now VALUE-based (=== old anchor) on any non-technical key (skip
+      url/id/elType/widgetType/html_tag/css_classes + _-prefixed), still guarded by element id + node URL — so
+      anchor edits work on bespoke-key widgets too.
+- Verified live (7/7): featured-box shape labels as FULL PRICE LIST (box_title long → button_text_custom short
+  wins; style keys excluded); anchor edit on the bespoke key works; 'button' key labeled; exact-key precedence,
+  icon-list sibling isolation, substring safety, non-ASCII anchors all intact. php -l clean; zip rebuilt.
+  NEEDS connector v2.1.6 on the connected site (supersedes the 2.1.5 the user may just have uploaded) + hub zip.
+
+## 2026-07-02 — SEO generate ignored edited template when the picker passed the OLD shared id (fixed)
+- Client: edited the Meta Title template (write in Chinese) but column generation ignores it. Re-traced the
+  full chain live: generate_field → resolve_prompt → seo_template_prompt correctly prefers the user's fork
+  when NO templateId is passed ✅. Found a REAL residual bug: the generate menu can pass the ORIGINAL shared
+  template's id (cached list / stored pick from before the edit) — the shared row stays in the DB after
+  fork-on-edit (only hidden from the list), and seo_template_prompt honored it directly → stale prompt used,
+  edit silently ignored.
+- Fix (seo_template_prompt): track whether the requested id hit a SHARED (userId=0) row + capture the user's
+  fork for the same section; when both, redirect $chosen to the fork. A user with no fork still gets the
+  shared prompt for a shared id (no cross-user leakage).
+- Verified live (4/4): no templateId → fork; STALE shared id → fork (the fix); fork id → fork; no-fork user +
+  shared id → shared prompt. php -l clean; hub zip rebuilt (backend-only). DEPLOYMENT NOTE: the client's live
+  hub likely predates the fork-on-edit fix too (same uncommitted batch) — the whole templates story lands with
+  this one hub reinstall; no connector change.
+
+## 2026-07-02 — Automations UI: external-ID tokens now listed as webhook options
+- Question: does the automation module's webhook show OPTIONS for the external ids? Payload-wise yes (the
+  webhook channel ships the whole context — verified earlier); UI-wise NO: the rule dialog's "Available:
+  {{…}}" helper renders the trigger's declared contextKeys, and the approvals triggers didn't declare the
+  new tokens.
+- Fix (approvals/automations.php, declarations only): added brandExtID/deliveryExtID/projectExtID to the five
+  enrich_context-merging triggers (set_status_changed, set_shared, set_fully_approved, comment_added,
+  asset_approved) and setComment to comment_added. set_pending_in_client intentionally unchanged — it doesn't
+  emit the enriched tokens, so advertising them there would mislead.
+- Verified live: PCM_Automation_Triggers::all() → extIDs ✅ on all five, setComment ✅ on comment_added.
+  php -l clean; hub zip rebuilt (backend-only, no connector change).

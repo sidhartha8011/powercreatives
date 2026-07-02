@@ -103,8 +103,22 @@ class PCM_REST_Templates extends PCM_REST_Base
             ));
         }
 
+        // Hide a shared (userId=0) template when the user has their own copy of it (same module+name)
+        // — e.g. after editing a seeded SEO template, which forks it into a user-owned override — so
+        // the list shows one row (their edited copy), not the original + the fork.
+        $results = $results ?: array();
+        $owned = array();
+        foreach ($results as $r) {
+            if ((int) $r->userId === (int) $user->id) {
+                $owned[$r->module . '|' . $r->name] = true;
+            }
+        }
+        $results = array_values(array_filter($results, static function ($r) use ($owned, $user) {
+            return (int) $r->userId !== 0 || empty($owned[$r->module . '|' . $r->name]);
+        }));
+
         // Parse JSON formData and format for frontend
-        $templates = array_map(array($this, 'format_template'), $results ?: array());
+        $templates = array_map(array($this, 'format_template'), $results);
 
         // Optional type filter (type lives in formData JSON, so filter in PHP)
         if ($type_filter) {
@@ -252,6 +266,17 @@ class PCM_REST_Templates extends PCM_REST_Base
         ));
 
         if (!$existing) {
+            // Editing a SHARED system template (userId=0, e.g. a seeded SEO prompt): the user can't
+            // own it, so instead of failing (which looked like "saved" but silently reverted), FORK it
+            // into a user-owned copy carrying their edits + marked default for its section. Generation
+            // (seo_template_prompt) prefers the user's copy, so the change actually takes effect.
+            $shared = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM $table WHERE id = %d AND userId = 0",
+                $id
+            ));
+            if ($shared) {
+                return $this->fork_shared_template($shared, is_array($params) ? $params : array(), (int) $user->id);
+            }
             return $this->not_found('Template');
         }
 
@@ -301,6 +326,85 @@ class PCM_REST_Templates extends PCM_REST_Base
             $id
         ));
 
+        return $this->success($this->format_template($row));
+    }
+
+    /**
+     * Fork a shared (userId=0) system template into a user-owned copy carrying the caller's edits.
+     * Used when a user edits a seeded template they can't own (e.g. SEO prompt templates) — the copy
+     * is marked default for its module+type so generation and the Templates list prefer it.
+     *
+     * @param object $shared  The shared template row (userId=0).
+     * @param array  $params  Update params from the request.
+     * @param int    $user_id Caller's PCM user id.
+     * @return WP_REST_Response|WP_Error
+     */
+    private function fork_shared_template(object $shared, array $params, int $user_id)
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('templates');
+
+        $form = json_decode((string) $shared->formData, true);
+        if (!is_array($form)) {
+            $form = array();
+        }
+        // Apply the same field merges a normal update would.
+        if (isset($params['entries'])) {
+            $form['entries'] = $params['entries'];
+        }
+        if (array_key_exists('type', $params)) {
+            $form['type'] = $params['type'];
+        }
+        if (array_key_exists('niche', $params)) {
+            $form['niche'] = $params['niche'];
+        }
+        if (array_key_exists('groupName', $params)) {
+            $form['groupName'] = $params['groupName'];
+        }
+        if (isset($params['sortOrder'])) {
+            $form['sortOrder'] = (int) $params['sortOrder'];
+        }
+
+        $name        = isset($params['name']) ? sanitize_text_field($params['name']) : (string) $shared->name;
+        $module      = isset($params['module']) ? (string) $params['module'] : (string) $shared->module;
+        $description = isset($params['description']) ? sanitize_textarea_field($params['description']) : (string) ($shared->description ?? '');
+        $now         = current_time('mysql');
+
+        // If the user already forked this shared template (same module+name), update that copy rather
+        // than piling up duplicates (e.g. a stale dialog re-submitting the original shared id).
+        $prior = $wpdb->get_row($wpdb->prepare(
+            "SELECT id FROM $table WHERE userId = %d AND module = %s AND name = %s LIMIT 1",
+            $user_id,
+            $module,
+            $name
+        ));
+        if ($prior) {
+            $wpdb->update($table, array(
+                'formData'    => wp_json_encode($form),
+                'description' => $description,
+                'isDefault'   => 1,
+                'updatedAt'   => $now,
+            ), array('id' => (int) $prior->id, 'userId' => $user_id));
+            $new_id = (int) $prior->id;
+        } else {
+            $wpdb->insert($table, array(
+                'userId'      => $user_id,
+                'name'        => $name,
+                'module'      => $module,
+                'formData'    => wp_json_encode($form),
+                'description' => $description,
+                'isDefault'   => 1, // the user's edited copy becomes their default for this module+type
+                'createdAt'   => $now,
+                'updatedAt'   => $now,
+            ));
+            $new_id = (int) $wpdb->insert_id;
+            if (!$new_id) {
+                return $this->error('Failed to save template.', 500);
+            }
+        }
+        $this->clear_other_defaults($new_id, $user_id, $module, $form['type'] ?? null);
+
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table WHERE id = %d", $new_id));
         return $this->success($this->format_template($row));
     }
 

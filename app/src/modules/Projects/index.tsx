@@ -554,7 +554,7 @@ export function ProjectsModule() {
             />
           </div>
           <div className="flex-1 min-w-[200px] max-w-sm space-y-1.5">
-            <Label htmlFor="project-external-id">External ID</Label>
+            <Label htmlFor="project-external-id">External ID (eg. airtable or other PM tool)</Label>
             <Input
               id="project-external-id"
               value={createExternalId}
@@ -675,7 +675,7 @@ export function ProjectsModule() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="project-rename-extid">External ID</Label>
+              <Label htmlFor="project-rename-extid">External ID (eg. airtable or other PM tool)</Label>
               <Input
                 id="project-rename-extid"
                 value={renameExternalId}

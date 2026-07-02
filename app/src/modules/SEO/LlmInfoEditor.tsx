@@ -82,6 +82,10 @@ export function LlmInfoEditor({ data, isLoading, error, onBuild, onSave, onDetec
     setBusy(true);
     try {
       const html = await onBuild({ keywords: form.keywords, years: form.years, area: form.area, strengths: form.strengths });
+      if (!html.trim()) {
+        toast.error('The model returned no text — try again.');
+        return;
+      }
       setForm((f) => (f ? { ...f, content: html } : f));
       toast.success('Summary generated — review, then Save');
     } catch (e) {
@@ -266,9 +270,16 @@ export function LlmInfoSection({ siteId }: { siteId?: number }) {
   const remoteKeywords = trpc.seo.remoteLlmInfoKeywords.useMutation();
 
   const q = remote ? remoteQ : localQ;
-  const data = q.data && typeof q.data === 'object'
-    ? { keywords: '', years: '', area: '', strengths: '', enabled: false, content: '', ...(q.data as Record<string, unknown>) } as LlmInfoData
-    : null;
+  // MEMOIZED on q.data: this object feeds the editor's hydrate effect. Rebuilding it on
+  // every render (e.g. the re-render when the build mutation resolves) gave the effect a
+  // fresh reference each time, so it re-hydrated from the stored server data and WIPED
+  // unsaved local edits — including a just-generated summary ("generated but not visible").
+  const data = useMemo<LlmInfoData | null>(
+    () => (q.data && typeof q.data === 'object'
+      ? { keywords: '', years: '', area: '', strengths: '', enabled: false, content: '', ...(q.data as Record<string, unknown>) } as LlmInfoData
+      : null),
+    [q.data],
+  );
 
   const onBuild = useCallback(async (inputs: LlmInfoInputs): Promise<string> => {
     const model = modelId || undefined;
