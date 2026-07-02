@@ -153,13 +153,38 @@ abstract class PCM_REST_Base
                 return true;
             }
 
-            // Source 2: Gate-authenticated visitor — only treated as authorised
-            // for the standard read/write capability used across PCM endpoints.
+            // Source 2: Gate-authenticated visitor — treated as authorised for the
+            // standard read/write capability used across PCM endpoints, but with
+            // the SAME per-delivery module grants + per-module brand scoping a
+            // restricted WP user gets: a platform user only reaches the modules
+            // and brands their assigned deliveries grant.
             if (
                 class_exists('PCM_Gate_Auth')
                 && PCM_Gate_Auth::is_authenticated()
                 && in_array($capability, array('manage_options', 'read', 'edit_posts'), true)
             ) {
+                $gate_user = PCM_Gate_Auth::get_gate_user();
+                if (!$gate_user) {
+                    return new WP_Error(
+                        'pcm_forbidden',
+                        __('You do not have permission to perform this action.', 'power-creatives'),
+                        array('status' => 403)
+                    );
+                }
+                if (!empty($this->module_grant_keys)) {
+                    $granted = PCM_Access::granted_module_ids((int) $gate_user->id);
+                    if (empty(array_intersect($this->module_grant_keys, $granted))) {
+                        return new WP_Error(
+                            'pcm_module_not_granted',
+                            __('This module is not part of your assigned deliveries.', 'power-creatives'),
+                            array('status' => 403)
+                        );
+                    }
+                    $brand_check = $this->check_module_brand($request, $gate_user);
+                    if ($brand_check instanceof WP_Error) {
+                        return $brand_check;
+                    }
+                }
                 return true;
             }
 
@@ -276,17 +301,18 @@ abstract class PCM_REST_Base
      */
     protected function get_current_pcm_user(): object
     {
-        // Gate-authed visitor without a WP login → shared workspace user
+        // Gate-authed visitor without a WP login → the specific platform user their
+        // login cookie identifies (each visitor is their own workspace user).
         if (
             !is_user_logged_in()
             && class_exists('PCM_Gate_Auth')
             && PCM_Gate_Auth::is_authenticated()
         ) {
-            $shared = PCM_Gate_Auth::get_shared_pcm_user();
-            if ($shared) {
-                return $shared;
+            $gate_user = PCM_Gate_Auth::get_gate_user();
+            if ($gate_user) {
+                return $gate_user;
             }
-            // Fall through to existing logic if the shared user could not be created.
+            // Fall through to existing logic if the cookie user could not be resolved.
         }
 
         $wp_user = wp_get_current_user();

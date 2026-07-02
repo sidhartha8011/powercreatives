@@ -323,6 +323,38 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/content/${input.id}/links/${input.index}/remove` }),
     },
+    // ── Heading editor (expandable rows) — local ──
+    "seo.getHeadings": {
+        endpoint: "seo/content",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/headings` }),
+    },
+    "seo.updateHeading": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/headings/${input.index}`, body: { text: input.text, level: input.level } }),
+    },
+    "seo.optimizeHeading": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/headings/${input.index}/optimize`, body: { text: input.text, brandId: input.brandId, model: input.model, provider: input.provider, templateId: input.templateId } }),
+    },
+    // ── Heading editor — remote (connected sites) ──
+    "seo.remoteGetHeadings": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/headings?type=${input.type ?? 'post'}` }),
+    },
+    "seo.remoteUpdateHeading": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/headings/${input.index}`, body: { type: input.type, text: input.text, level: input.level } }),
+    },
+    "seo.remoteOptimizeHeading": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/headings/${input.index}/optimize`, body: { type: input.type, text: input.text, model: input.model, provider: input.provider, templateId: input.templateId } }),
+    },
     // ── Link inspector (popup) — remote (connected sites) ──
     "seo.remoteGetLinks": {
         endpoint: "seo/sites",
@@ -814,6 +846,17 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
 
     // ── Users (admin-only user management) ──
     "users.list": { endpoint: "users", method: "GET" },
+    "users.create": { endpoint: "users", method: "POST" },
+    "users.setPassword": {
+        endpoint: "users",
+        method: "PUT",
+        transform: (input: any) => ({ url: `users/${input.pcmId}/password`, body: { password: input.password } }),
+    },
+    "users.delete": {
+        endpoint: "users",
+        method: "DELETE",
+        transform: (input: any) => ({ url: `users/${input.pcmId}` }),
+    },
     "users.assignDeliveries": {
         endpoint: "users",
         method: "PUT",

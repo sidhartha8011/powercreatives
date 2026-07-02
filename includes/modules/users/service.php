@@ -42,12 +42,7 @@ class PCM_Users_Service
                 // automation rules (their approval sets never produce
                 // notifications) and no default prompts.
                 if ($pcm_user) {
-                    if (class_exists('PCM_Prompt_Seeds')) {
-                        PCM_Prompt_Seeds::seed_for_user((int) $pcm_user->id);
-                    }
-                    if (class_exists('PCM_Automation_Seeds')) {
-                        PCM_Automation_Seeds::seed_for_user((int) $pcm_user->id);
-                    }
+                    $this->seed_defaults((int) $pcm_user->id);
                 }
             }
             if (!$pcm_user) {
@@ -55,13 +50,31 @@ class PCM_Users_Service
             }
 
             $items[] = array(
-                'pcmId'     => (int) $pcm_user->id,
-                'wpUserId'  => (int) $wp_user->ID,
-                'name'      => $wp_user->display_name,
-                'email'     => $wp_user->user_email,
-                'avatarUrl' => get_avatar_url($wp_user->ID),
+                'pcmId'          => (int) $pcm_user->id,
+                'wpUserId'       => (int) $wp_user->ID,
+                'name'           => $wp_user->display_name,
+                'email'          => $wp_user->user_email,
+                'avatarUrl'      => get_avatar_url($wp_user->ID),
                 // LIVE level — always mirrors current WP capabilities.
-                'role'      => user_can($wp_user, 'manage_options') ? 'admin' : 'user',
+                'role'           => user_can($wp_user, 'manage_options') ? 'admin' : 'user',
+                'isPlatformUser' => false,
+                'username'       => null,
+            );
+        }
+
+        // Platform users — created in this module (username + password login,
+        // no WordPress account). These are the accounts a visitor uses at the
+        // [power_creatives] shortcode gate.
+        foreach ($this->platform_users() as $pu) {
+            $items[] = array(
+                'pcmId'          => (int) $pu->id,
+                'wpUserId'       => 0,
+                'name'           => (string) $pu->name,
+                'email'          => (string) $pu->email,
+                'avatarUrl'      => '',
+                'role'           => in_array($pu->role, array('admin', 'user'), true) ? (string) $pu->role : 'user',
+                'isPlatformUser' => true,
+                'username'       => (string) $pu->username,
             );
         }
 
@@ -73,6 +86,147 @@ class PCM_Users_Service
         unset($item);
 
         return $items;
+    }
+
+    /**
+     * Create a platform-native login user (username + password, no WP account).
+     * Seeds default prompts + automation rules just like a mirrored WP user, so
+     * the new user has a working workspace from first login.
+     *
+     * @param array $data { username, password, name?, email?, role? }
+     * @return array|WP_Error The created user's list row, or a validation error.
+     */
+    public function create_user(array $data): array|WP_Error
+    {
+        $username = strtolower(trim((string) ($data['username'] ?? '')));
+        $password = (string) ($data['password'] ?? '');
+        $name     = sanitize_text_field((string) ($data['name'] ?? ''));
+        $email    = trim((string) ($data['email'] ?? ''));
+        // Platform users are ALWAYS 'user'. The 'admin' level mirrors WP
+        // manage_options (team-wide oversight) and must never be granted to a
+        // passwordless gate account — a client login is a self-scoped workspace,
+        // never a plugin admin. (Defence-in-depth: PCM_Access::is_admin() also
+        // refuses to treat any user with a passwordHash as admin.)
+        $role     = 'user';
+
+        // Username: 3–191 chars, lowercase letters/digits/._- only (a stable,
+        // URL-safe handle — also keeps the derived openId 'pcm_local_<username>' clean).
+        if (!preg_match('/^[a-z0-9._-]{3,191}$/', $username)) {
+            return new WP_Error('pcm_invalid_username', __('Username must be 3–191 characters: lowercase letters, digits, dot, underscore or hyphen.', 'power-creatives'), array('status' => 400));
+        }
+        if (strlen($password) < 8 || strlen($password) > 256) {
+            return new WP_Error('pcm_invalid_password', __('Password must be 8–256 characters.', 'power-creatives'), array('status' => 400));
+        }
+        if ($email !== '' && !is_email($email)) {
+            return new WP_Error('pcm_invalid_email', __('Enter a valid email address, or leave it blank.', 'power-creatives'), array('status' => 400));
+        }
+        if (PCM_DB::get_user_by_username($username)) {
+            return new WP_Error('pcm_username_taken', __('That username is already taken.', 'power-creatives'), array('status' => 409));
+        }
+
+        $id = PCM_DB::create_platform_user(array(
+            'username' => $username,
+            'password' => $password,
+            'name'     => $name !== '' ? $name : $username,
+            'email'    => $email,
+            'role'     => $role,
+        ));
+        if (!$id) {
+            return new WP_Error('pcm_create_failed', __('Could not create the user. The username may already be taken.', 'power-creatives'), array('status' => 500));
+        }
+
+        $this->seed_defaults($id);
+
+        return array(
+            'pcmId'          => $id,
+            'wpUserId'       => 0,
+            'name'           => $name !== '' ? $name : $username,
+            'email'          => $email,
+            'avatarUrl'      => '',
+            'role'           => $role,
+            'isPlatformUser' => true,
+            'username'       => $username,
+            'assignedDeliveryIds' => array(),
+        );
+    }
+
+    /**
+     * Reset a platform user's password. WP-mirrored users are rejected — they
+     * authenticate through WordPress, not through this module.
+     *
+     * @param int    $pcm_id   Target PCM user id.
+     * @param string $password New plain password (8–256 chars).
+     * @return true|WP_Error
+     */
+    public function set_password(int $pcm_id, string $password): bool|WP_Error
+    {
+        if (strlen($password) < 8 || strlen($password) > 256) {
+            return new WP_Error('pcm_invalid_password', __('Password must be 8–256 characters.', 'power-creatives'), array('status' => 400));
+        }
+        $user = PCM_DB::get_user_by_id($pcm_id);
+        if (!$user || empty($user->username)) {
+            return new WP_Error('pcm_not_platform_user', __('Only platform users (username + password) can have their password reset here.', 'power-creatives'), array('status' => 404));
+        }
+        if (!PCM_DB::set_user_password($pcm_id, $password)) {
+            return new WP_Error('pcm_password_failed', __('Could not update the password.', 'power-creatives'), array('status' => 500));
+        }
+        return true;
+    }
+
+    /**
+     * Delete a platform user. WP-mirrored users are rejected (they belong to
+     * WordPress, not this module). Their delivery assignments are removed too.
+     *
+     * @param int $pcm_id Target PCM user id.
+     * @return true|WP_Error
+     */
+    public function delete_user(int $pcm_id): bool|WP_Error
+    {
+        global $wpdb;
+        $user = PCM_DB::get_user_by_id($pcm_id);
+        if (!$user || empty($user->username)) {
+            return new WP_Error('pcm_not_platform_user', __('Only platform users can be deleted here.', 'power-creatives'), array('status' => 404));
+        }
+
+        // Remove any delivery assignments pointing at this user, then the row.
+        $assignments_table = PCM_Schema::table('delivery_assignments');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->delete($assignments_table, array('userId' => $pcm_id), array('%d'));
+
+        $users_table = PCM_Schema::table('users');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $deleted = $wpdb->delete($users_table, array('id' => $pcm_id), array('%d'));
+        if (!$deleted) {
+            return new WP_Error('pcm_delete_failed', __('Could not delete the user.', 'power-creatives'), array('status' => 500));
+        }
+        return true;
+    }
+
+    /** Seed default prompts + automation rules for a freshly created PCM user. */
+    private function seed_defaults(int $pcm_id): void
+    {
+        if (class_exists('PCM_Prompt_Seeds')) {
+            PCM_Prompt_Seeds::seed_for_user($pcm_id);
+        }
+        if (class_exists('PCM_Automation_Seeds')) {
+            PCM_Automation_Seeds::seed_for_user($pcm_id);
+        }
+    }
+
+    /**
+     * All platform users (username + password logins created in this module).
+     *
+     * @return object[]
+     */
+    private function platform_users(): array
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('users');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->get_results(
+            "SELECT id, username, name, email, role FROM {$table} WHERE username IS NOT NULL ORDER BY username ASC"
+        );
+        return $rows ?: array();
     }
 
     /**

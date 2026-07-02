@@ -1,5 +1,213 @@
 # Session Log
 
+## 2026-07-03 — SEO heading editor: flatten the H1–H6 tag chip to fit the cell [/task]
+- **Ask:** the tag "boxes" (H2/H3 dropdown) rendered as tall, rounded, floating pills — make them match
+  the cell size and look flush.
+- **Root cause:** the chip used shadcn `SelectTrigger`, whose base variant sets height via
+  `data-[size=default]:h-9` (36px) + `shadow-xs` + `rounded-md`. That attribute-selector height beats a
+  plain `h-5` utility on CSS specificity, so the chip stayed 36px tall and raised.
+- **Fix (`SEO/HeadingsPanel.tsx`, 2 classNames):** force the height with `!h-5` (important beats the
+  data-attr rule → 20px), `shadow-none`, `rounded-[3px]`, tighter `px-1`/`gap-0.5`, smaller chevron
+  (`[&>svg]:w-2.5`), `w-auto min-w-[40px]`. Made the read-only badge span match exactly. Now a flat
+  colored badge that sits inside the h-9 cell instead of a floating dropdown box.
+- **Verified:** `tsc` 56 = baseline; `vite build` OK; confirmed the override compiled into the CSS bundle
+  (`height: calc(var(--spacing) * 5) !important`); bundle redeployed to `app/dist` (live via symlink).
+  In-browser screenshot not run (preview session logged out; WP-admin auth credential-gated) — user
+  verifies on hard-reload.
+- **Specialists:** inline (2-line CSS override). No commit; frontend-only.
+
+## 2026-07-03 — SEO heading editor: make subrows part of the table (sizing consistency) [/task]
+- **Ask:** the expandable H1–H6 heading panel's column/box sizing didn't match the main SEO table — make
+  it look like part of the table.
+- **Root cause:** the first pass rendered the outline as a single full-width `<td colSpan>` containing a
+  SEPARATE nested `<table>` with its own column widths + cell padding — so nothing lined up with the
+  spreadsheet grid.
+- **Fix (`SEO/HeadingsPanel.tsx` rewrite → `HeadingRows`, + the one call site in `SEO/index.tsx`):** each
+  heading is now a REAL row of the main table — the same `TableRow`/`TableCell` primitives from
+  `seo-table.tsx`, a leading select-column cell + one `<td>` per visible `orderedCols` key, all under the
+  parent `table-fixed` + `SEO_TABLE_GRID` + `<colgroup>`. Result: identical column widths, `h-9` cell
+  height, gridlines, and hover. The heading (tag chip + click-to-edit text + ✦ Optimize) lives in the
+  `title` column, indented by level; other columns render as empty cells to keep the gridlines
+  continuous. The AI-suggestion state reuses the exact Accept/Reject/Re-generate markup of the table's
+  `EditableCell`, and the retag control is a compact H1–H6 chip-styled `Select`.
+- **Verified:** `tsc` 56 = baseline (0 new); `vite build` OK; bundle redeployed to `app/dist` (symlinked
+  to the live plugin). Structural guarantee confirmed by grep (shared `seo-table` primitives, one cell
+  per column). In-browser screenshot not run — the preview session is logged out and WP-admin auth is
+  credential-gated here; user verifies on reload of their logged-in tab.
+- **Specialists:** inline (single-component styling refactor). No commit. Backend/zip unchanged from the
+  heading-editor build earlier today (no need to re-zip for a frontend-only tweak unless redeploying the hub).
+
+## 2026-07-03 — SEO table: expandable H1–H6 heading editor (local + remote) [/task]
+- **Ask:** click a page row in the SEO table → expand its heading structure as subrows (text + colored
+  Hn tag chip, indented by level); rewrite a heading inline, AI-Optimize it (own prompt template), and
+  change its tag level H1–H6 from a dropdown. Local WP + connected remote sites (user chose "full").
+- **Backend (mirrors the link inspector's proven pattern + reuses its builder-aware machinery):**
+  - `seo/prompts.php`: new `heading` section (generate + optimize) → auto-flattens to
+    `heading_generate`/`heading_optimize`, seeded as editable Templates like every other SEO prompt.
+    Updated the PHPUnit guard `test_get_default_prompts_covers_every_editor_section`.
+  - `seo/service.php` (local): `parse_heading_details` (regex H1–H6 in DOM order), `get_post_headings`,
+    `update_post_heading` (rewrite tag+text in post_content, occurrence-aware via the shared
+    `nth_link_pos`, + `replace_url_in_meta` for content-based builder meta, purge), `optimize_heading`,
+    and a shared `run_prompt_section` AI helper. (remote): `remote_get_headings` (connector
+    `/scan-headings`, fallback content.raw parse), `remote_update_heading` (builder-field → connector
+    `/replace-heading`; content/inline-HTML → the existing builder-aware `/replace-url` with
+    oldHtml→newHtml), `remote_optimize_heading`.
+  - `seo/controller.php`: 3 local + 3 remote routes (`GET …/headings`, `POST …/headings/{idx}`,
+    `POST …/headings/{idx}/optimize`), same nonce+cap enforcement as the link routes.
+  - **Connector** (`seohub/service.php`, bumped **2.1.6 → 2.1.7**): `scan_headings` (post_content H1–H6 +
+    inline `<hN>` in builder data + builder-WIDGET headings whose text/level live in separate meta
+    fields — Elementor `title`+`header_size`, Bricks `tag`, generic `html_tag`), `replace_heading_field`
+    + `set_heading_in_element` (sets a widget's text + tag field inside one element), and `/scan-headings`
+    + `/replace-heading` routes. Hub gates heading edits on connector **v2.1.7+**.
+- **Frontend:** new `SEO/HeadingsPanel.tsx` (lazy-fetches on expand; mini table with indented text,
+  colored Hn chips, inline text edit, H1–H6 `Select`, AI-Optimize → staged Accept/Reject; local vs
+  remote routes off `siteId`). `SEO/index.tsx`: expand chevron in the title cell + a full-width
+  `<td colSpan>` subrow under expanded rows; `expandedRows` state (collapses on site switch).
+  `trpc-routes.ts`: 6 new routes.
+- **Verified:** `php -l` clean (5 files) + extracted-connector `php -l`; **service 19/19** live (parse,
+  get, text/level/both edits, occurrence-aware duplicate handling, prompt seeding); **connector 13/13**
+  live (content scan, Elementor widget detect + field edit text+level, re-scan); **REST 8/8** live via
+  authenticated internal dispatch (GET headings, POST update text+level rewrites post_content, nonce →
+  403, no-op safety); all 6 routes registered; `tsc` 56 = baseline (0 new); `vite build` OK; PHPUnit
+  **107/107**. Compiled heading UI confirmed present in the bundled `app/dist`.
+  Not run: a logged-in browser click-through (WP admin password is credential-gated in this env) — the
+  React layer is type-checked, built, and uses the module's existing trpc query/mutation infra.
+- **Honesty/limits:** content-stored + shortcode-builder + Elementor/Bricks heading-WIDGET headings are
+  fully editable; a heading hardcoded in a theme template surfaces an honest "edit on the site" 409
+  (same as the link inspector). Local builder-field headings (Elementor on the OWN hub site) are edited
+  on remote via the connector; the OWN site parses post_content only (matches link-inspector local behavior).
+- **Specialists:** a 3-agent Explore workflow mapped the three layers up front; implementation +
+  verification done inline (delicate connector string + tight cross-layer contract).
+- **Deliverable:** hub zip rebuilt → `~/Desktop/power-creatives.zip` (top-level `powerplatform/`).
+  **NEEDS:** hub plugin update (no DB change beyond v1.33.0) **AND** — for heading editing on connected
+  sites — reinstall the connector (v2.1.7) on each remote site. No commit.
+
+## 2026-07-02 — Platform users: restrict to assigned modules/brands/deliveries [/task]
+- **Ask:** platform (gate-login) users must see ONLY what their assigned deliveries grant — same
+  restriction model as a non-admin WP user ("only assigned modules brands and deliveries are visible
+  to them in this also").
+- **Gap:** the REST gate grant (base-controller "Source 2") returned bare `true` — no module-grant or
+  brand check; and `get_js_config()` sent `allowedModules:null` / `brandsByModule:null`, so the sidebar
+  couldn't show a platform user's granted modules (they saw only the always-visible basics) and brand
+  pickers were unrestricted. (Data-level brand/delivery scoping already worked via the earlier
+  `is_admin` fix.)
+- **Fix (2 files, exact parity with restricted WP users, reusing the existing helpers):**
+  - `includes/core/base-controller.php` Source 2: resolve `get_gate_user()`; when the controller
+    declares `module_grant_keys`, enforce `PCM_Access::granted_module_ids()` intersection (403
+    `pcm_module_not_granted`) + `check_module_brand()` (403 `pcm_brand_not_granted`) — the identical
+    checks Source 1 runs for WP non-admins.
+  - `includes/class-pcm-shortcode.php` `get_js_config()` gate branch: send real
+    `PCM_Access::granted_module_ids()` / `PCM_Access::brands_by_module()` instead of null/null.
+- **No frontend change needed:** Sidebar already filters non-admins on `allowedModules` (+
+  ALWAYS_VISIBLE basics: brands/deliveries/projects/assets/approvals whose data is per-user scoped),
+  and `getBrandsForModule()` already treats an array as a restriction.
+- **Verified (live HTTP, 2 platform users, 12/12):** user A assigned a delivery with modules=[copy] +
+  brand 16 → pcmConfig `allowedModules:["copy"]` + `brandsByModule:{copy:[16]}`; copy route passes
+  permission (404 on missing job, not 403); keywords route → 403 `pcm_module_not_granted`; `/brands`
+  returns exactly 1 (the granted brand); `/deliveries` shows the assigned delivery; foreign
+  `brandId:99999` on a copy route → 403 `pcm_brand_not_granted`, granted brandId passes. User B (no
+  assignments) → `allowedModules:[]`, copy route 403, `/brands` = []. `php -l` clean ×2; PHPUnit
+  107/107 still green. Test data cleaned up.
+- **Specialists:** none — 2-file backend change reusing audited access helpers; verified inline via
+  live HTTP.
+- **Deliverable:** hub zip rebuilt → `~/Desktop/power-creatives.zip`. NEEDS hub reinstall
+  (backend-only; no connector change, no DB change beyond the earlier v1.33.0 migration). No commit.
+- **Packaging gotcha (recurred, now recorded):** the zip's TOP-LEVEL FOLDER MUST BE `powerplatform/`
+  (that's the installed plugin's directory on the live site) or WP won't offer "Replace current with
+  uploaded" and would install a duplicate side-by-side. Today's first rebuild used `power-creatives/`
+  and the user hit exactly that; rebuilt correctly as `~/Desktop/power-creatives.zip` and deleted the
+  mismatched artifact. Zip filename itself doesn't matter — only the inner folder name does.
+
+## 2026-07-02 — Full test pass: verify user-management feature + green the PHPUnit suite [/task]
+- **Ask:** "test and check if all is working and fix if anything is not working" (following the
+  platform-user-management build earlier today).
+- **Feature verified working end-to-end** (real HTTP, booted `php -S localhost:8080` against the
+  symlinked plugin): login form now asks username+password; **7/7 HTTP round-trip** — signed
+  nonce/time-gate present, wrong password sets no cookie, correct password → 302 + `Set-Cookie:
+  pcm_shortcode_auth=` shaped `uid|expires|hmac`, authed page drops the login form and renders the SPA.
+  **REST 3/3 + strict lockout** — `pcmConfig.user` reports the specific platform user (`id:12`, not 0),
+  gate-authed `GET /brands` → 200 with `[]` (own scoped workspace), unauth `GET /brands` → 403, gate
+  `POST /users` (`:strict`) → 403. No production-code changes were needed — the feature works as shipped.
+- **PHPUnit was red (pre-existing, unrelated to the feature):** 4 `SeoIntegrationTest` + 1
+  `AutomationEmailHandlerTest`. Root-caused each and confirmed the production code is correct
+  (`isDefault` column exists; `get_col` is valid; SEO prompts were intentionally moved to the Templates
+  module, so `get_default_sections('seo')` is now empty by design). All were **stale tests**, not bugs.
+- **Fixed (test-only, no production code touched):**
+  - `test_get_default_prompts_covers_every_editor_section` — expected list was missing the 6 sections
+    added with the Templates migration (`robots_/site_schema_/site_tagline_/site_title_/slug_*`); updated
+    the list + the stale "must mirror get_default_sections" comment.
+  - `test_list_views_decodes_config_to_array` — fixture stdClass lacked `isDefault` (which `list_views`
+    now reads); added it + an assertion.
+  - `test_resolve_prompt_prefers_active_db_override` / `_ignores_blank_override` — `resolve_prompt(user>0)`
+    now routes through Templates (seed + lookup) before the legacy override; re-mocked the seed/lookup
+    path (building the "already-seeded" list from `get_default_prompts()` so it auto-adapts) so each still
+    asserts its legacy-fallback contract.
+  - `AutomationEmailHandlerTest::setUp` — added a `get_option` mock. The Brevo channel reads the
+    from-sender via `PCM_Settings::get()→get_option()`; the test only passed before by borrowing a
+    `get_option` mock leaked from an earlier test (test-order pollution). Fixing the SEO tests un-masked
+    it; it failed in isolation too, proving it pre-existing.
+- **Verified:** `SeoIntegrationTest` alone 34/34; `AutomationEmailHandlerTest` alone 4/4; **full suite
+  107/107, 381 assertions, OK** (only a harmless PHP 8.5 `setAccessible` deprecation notice remains).
+- **Specialists:** none spawned — diagnosis + fixes were small and test-only; did the live HTTP/REST
+  verification and PHP test triage inline.
+- No production code changed → no zip rebuild needed. No commit.
+
+## 2026-07-02 — Platform-native user management + per-user shortcode login [/build]
+- **What changed (requirement):** replace the single global shortcode password with per-user login.
+  An admin creates login accounts inside the plugin's Users module (username + password, NO WordPress
+  account); each such user signs in at the `[power_creatives]` shortcode page with their own creds and
+  operates as their own workspace user. WP admins (`manage_options`) still bypass the gate.
+- **Schema (`class-pcm-schema.php`, DB v1.32.0→1.33.0):** added `username varchar(191) DEFAULT NULL` +
+  `passwordHash varchar(255) DEFAULT NULL` to the users table with `UNIQUE KEY idx_username`. dbDelta
+  additive; NULL usernames (all WP-mirrored users) coexist under the unique index. **DB migration →
+  a hub reinstall is required.**
+- **Gate auth (`class-pcm-gate-auth.php`, full rewrite):** was a global-password check + one shared
+  user; now a per-user model. `authenticate(user,pass)` verifies against platform users (bcrypt,
+  length-capped before verify), `set_cookie(int $uid)` issues an HMAC-signed cookie
+  `"<uid>|<expires>|hmac(uid|expires, wp_salt('auth').'|pcm_gate_user')"`, `authed_user_id()` validates
+  expiry + `hash_equals` sig, `get_gate_user()` resolves the cookie's uid to its row (rejects rows with
+  no passwordHash). Removed `get_shared_pcm_user()` / `SHARED_OPEN_ID`.
+- **Wiring:** `base-controller.php` `get_current_pcm_user()` gate branch → `get_gate_user()` (specific
+  user, not shared). `class-pcm-shortcode.php` login POST → `authenticate()` + `set_cookie($user->id)`;
+  login form gained a Username field and lost the "no global password" state; `get_js_config` gate
+  branch sends the specific user's id/name/email (role hardcoded 'user' — gate role is inert). The gate
+  REST grant (base-controller "Source 2") is unchanged and role-independent; `:strict` routes stay
+  WP-admin-only.
+- **Users module:** `service.php` gained `create_user` (validates username `^[a-z0-9._-]{3,191}$`,
+  password 8–256, optional email, role∈{admin,user}, dedupe; seeds default prompts+automations),
+  `set_password`, `delete_user` (both reject WP-mirrored users), and `list_users` now also lists
+  platform users (`isPlatformUser`,`username`). `controller.php` added `POST /users`,
+  `PUT /users/{id}/password`, `DELETE /users/{id}` — all `manage_options:strict`.
+- **Obsolete UI:** `class-pcm-shortcode-admin.php` global-password setter removed; page repurposed to
+  gate-behaviour settings (session length, rate limit, clear lockouts) + a link to the Users module.
+- **Frontend:** `Users/index.tsx` — "Add user" dialog (username/name/email/password/role), reset-password
+  + delete actions on platform users, Login column distinguishing Platform vs WordPress. `trpc-routes.ts`
+  added `users.create` / `users.setPassword` / `users.delete`.
+- **Who/how:** inline (single cohesive auth slice, not parallelizable); one adversarial security-audit
+  subagent on the auth flow.
+- **Security audit + fix (HIGH, found by the auditor, now closed):** minting a platform user with
+  `role='admin'` gave team-wide READ access to every workspace's brands/deliveries/approval sets
+  (client emails + share tokens)/notifications — because `PCM_Access::is_admin()` trusted the stored
+  `role` column, and the role-sync that keeps that honest only runs for WP logins, never for gate users.
+  **Fixed at the source:** `class-pcm-access.php::is_admin()` now also requires `passwordHash` to be
+  empty (a platform login is never a plugin admin); belt-and-suspenders, `create_user()` forces
+  `role='user'` and the frontend dropped the admin/user selector. Regression-tested: real WP-mirrored
+  admins are still `is_admin`. Auditor also confirmed sound: HMAC cookie (5-vector forgery sweep), SQLi
+  surface (only raw query has no user input), auth-bypass (WP rows unreachable via gate), DoS caps,
+  enumeration (swamped by rate limiter), no open redirect.
+- **Verified:** `php -l` clean on all 10 changed PHP files; `tsc` 56 errors = baseline (0 new); `vite build`
+  OK. Live wp-load round-trip — 38/38 real assertions pass: schema/index migrated; create+validation
+  (rejects short/spaced username, short pw, bad email, duplicate); prompt(20)+automation(7) seeds;
+  authenticate (correct/wrong/unknown/empty); **DoS guard** (300k-char pw rejected in <0.05s, no bcrypt);
+  **cookie forgery** — tampered uid, tampered expiry, bogus sig, and correctly-signed-but-expired all
+  rejected; per-user resolution; a valid gate cookie for a WP-mirrored user resolves to null (no
+  passwordHash); list inclusion; set_password (old pw dies, new works, refuses WP user); delete (refuses
+  WP user, row gone). Only injection-surface raw query (`platform_users()`) has no user input.
+  Privilege-escalation regression suite 6/6: create forces role=user; `is_admin()` false for a
+  role='admin' platform row; WP admin still `is_admin`; evil platform admin can't see another user's brand.
+- **Deliverable:** hub zip rebuilt → `~/Desktop/power-creatives-1.7.0.zip` (top-level `power-creatives/`,
+  dist only). **NEEDS: hub reinstall** (DB migration adds columns). No connector change. No commit.
+
 ## 2026-06-30 — Always-visible "Download connector" button (connector update path) [/task]
 - **Root cause of the recurring failure (now proven):** the version-reporting showed the connected
   site is on connector **v1.4.0** — it has NEVER been updated this session. The hub can't push a

@@ -74,6 +74,8 @@ class PCM_Schema
         $sql = "CREATE TABLE {$prefix}users (
             id int(11) NOT NULL AUTO_INCREMENT,
             openId varchar(256) NOT NULL,
+            username varchar(191) DEFAULT NULL,
+            passwordHash varchar(255) DEFAULT NULL,
             name varchar(256) DEFAULT NULL,
             email varchar(256) DEFAULT NULL,
             role varchar(50) DEFAULT 'user' NOT NULL,
@@ -84,7 +86,8 @@ class PCM_Schema
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             lastSignedIn datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
-            KEY idx_openId (openId)
+            KEY idx_openId (openId),
+            UNIQUE KEY idx_username (username)
         ) $charset_collate;";
         dbDelta($sql);
 

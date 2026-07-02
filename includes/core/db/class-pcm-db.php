@@ -183,6 +183,92 @@ class PCM_DB
         );
     }
 
+    /**
+     * Get a platform user by their login username (case-insensitive).
+     *
+     * @param string $username Login username.
+     * @return object|null User row or null.
+     */
+    public static function get_user_by_username(string $username): ?object
+    {
+        global $wpdb;
+        $username = trim($username);
+        if ($username === '') {
+            return null;
+        }
+        $table = self::t('users');
+        return $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM {$table} WHERE username = %s", $username)
+        );
+    }
+
+    /**
+     * Get a PCM user by id.
+     *
+     * @param int $id PCM user id.
+     * @return object|null
+     */
+    public static function get_user_by_id(int $id): ?object
+    {
+        global $wpdb;
+        $table = self::t('users');
+        return $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id));
+    }
+
+    /**
+     * Create a platform-native (non-WP) user with a login username + bcrypt password.
+     * openId is 'pcm_local_<username>' so it never collides with WP-mapped users.
+     *
+     * @param array $data { username, password, name?, email?, role? }
+     * @return int|false New user id, or false on failure/duplicate username.
+     */
+    public static function create_platform_user(array $data): int|false
+    {
+        global $wpdb;
+        $table    = self::t('users');
+        $username = trim((string) ($data['username'] ?? ''));
+        $password = (string) ($data['password'] ?? '');
+        if ($username === '' || $password === '') {
+            return false;
+        }
+        if (self::get_user_by_username($username)) {
+            return false; // duplicate
+        }
+        $role = in_array(($data['role'] ?? 'user'), array('admin', 'user'), true) ? $data['role'] : 'user';
+        $wpdb->insert($table, array(
+            'openId'       => 'pcm_local_' . $username,
+            'username'     => $username,
+            'passwordHash' => password_hash($password, PASSWORD_BCRYPT),
+            'name'         => $data['name'] ?? $username,
+            'email'        => $data['email'] ?? '',
+            'role'         => $role,
+        ));
+        $id = (int) $wpdb->insert_id;
+        return $id ?: false;
+    }
+
+    /**
+     * Set (reset) a platform user's password. Returns true on success.
+     *
+     * @param int    $id       PCM user id.
+     * @param string $password New plain password.
+     * @return bool
+     */
+    public static function set_user_password(int $id, string $password): bool
+    {
+        global $wpdb;
+        if ($password === '') {
+            return false;
+        }
+        $table = self::t('users');
+        $rows  = $wpdb->update(
+            $table,
+            array('passwordHash' => password_hash($password, PASSWORD_BCRYPT), 'updatedAt' => current_time('mysql')),
+            array('id' => $id)
+        );
+        return $rows !== false;
+    }
+
     // =========================================================================
     // INTEGRATIONS
     // =========================================================================

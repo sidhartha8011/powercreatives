@@ -385,8 +385,8 @@ class PCM_SEOHub_Service
 <?php
 /**
  * Plugin Name: Power Creatives Connector
- * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance + any custom field, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
- * Version: 2.1.6
+ * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance + any custom field, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
+ * Version: 2.1.7
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -874,6 +874,186 @@ class PCM_Conn_Builder_Manager {
         }
         return $node;
     }
+
+    // ── Headings (H1–H6) — the SEO table's expandable heading editor ──────────────────────────
+    // Meta tag keys page builders use to store a heading's level (Elementor 'header_size',
+    // Bricks 'tag', generic 'html_tag'/'tag'/'size'). Used to read + rewrite builder-field headings.
+    private static $heading_tag_keys = array('header_size', 'html_tag', 'tag', 'size', 'heading_tag', 'title_tag');
+    // Keys that carry a heading's TEXT inside a builder heading widget.
+    private static $heading_text_keys = array('title', 'heading', 'heading_title', 'text', 'title_text');
+
+    /** List every heading (H1–H6) on a post for the hub: <hN> in post_content + inline <hN> inside
+     *  builder data, PLUS builder heading widgets whose text+level live in separate meta fields
+     *  (Elementor/Bricks). Returns [{index,level,text,html,source,elId}] in document order. */
+    public function scan_headings($post_id) {
+        $out = array();
+        $source_keys = array();
+        foreach ($this->detect($post_id) as $h) {
+            foreach ((array) $h->source_keys() as $k) { $source_keys[] = (string) $k; }
+        }
+        $meta_based = !empty($source_keys);
+
+        if (!$meta_based) {
+            self::collect_headings_html((string) get_post_field('post_content', $post_id), $out, 'content', '');
+        }
+        global $wpdb;
+        if ($meta_based) {
+            $ph   = implode(',', array_fill(0, count($source_keys), '%s'));
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key IN ($ph)", (int) $post_id, ...$source_keys));
+        } else {
+            $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", (int) $post_id));
+        }
+        foreach ((array) $rows as $row) {
+            $raw = (string) $row->meta_value;
+            $val = maybe_unserialize($raw);
+            if (is_string($val) && $val !== '' && ($val[0] === '[' || $val[0] === '{')) {
+                $j = json_decode($val, true);
+                if (is_array($j)) { $val = $j; }
+            }
+            self::collect_headings($val, $out);
+        }
+        // Drop a post_content heading that merely duplicates a builder heading (same tag+text) — a
+        // builder renders its heading into the body too; keep the editable builder copy.
+        $builder_keys = array();
+        foreach ($out as $h) {
+            if (($h['source'] ?? '') !== 'content' && (string) $h['text'] !== '') {
+                $builder_keys[$h['level'] . '|' . $h['text']] = 1;
+            }
+        }
+        $result = array();
+        foreach ($out as $h) {
+            if ((string) $h['text'] === '') { continue; }
+            if (($h['source'] ?? '') === 'content' && isset($builder_keys[$h['level'] . '|' . $h['text']])) { continue; }
+            $h['index'] = count($result);
+            $result[] = $h;
+        }
+        return $result;
+    }
+    /** Parse literal <h1>..<h6> tags out of an HTML string into the heading list. */
+    private static function collect_headings_html($html, &$out, $source, $el_id) {
+        if (!is_string($html) || stripos($html, '<h') === false) { return; }
+        if (preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>#is', $html, $m, PREG_SET_ORDER)) {
+            foreach ($m as $mm) {
+                $text = trim(wp_strip_all_tags($mm[3]));
+                if ($text === '') { continue; }
+                $out[] = array('level' => (int) $mm[1], 'text' => $text, 'html' => $mm[0], 'source' => $source, 'elId' => $el_id, 'field' => '', 'tagKey' => '', 'textKey' => '');
+            }
+        }
+    }
+    /** Recursively pull headings out of decoded builder data: heading WIDGETS (a text field paired
+     *  with an h1–h6 tag field) and inline <hN> HTML inside string values. */
+    private static function collect_headings($val, &$out, $el_id = '') {
+        if (is_array($val)) {
+            if (isset($val['id'], $val['elType']) && is_string($val['id'])) { $el_id = $val['id']; }
+            // Builder heading WIDGET: a text key + a tag key holding h1–h6.
+            $tag = ''; $tag_key = '';
+            foreach (self::$heading_tag_keys as $tk) {
+                if (isset($val[$tk]) && is_string($val[$tk]) && preg_match('/^h([1-6])$/i', trim($val[$tk]))) { $tag = strtolower(trim($val[$tk])); $tag_key = $tk; break; }
+            }
+            if ($tag !== '') {
+                foreach (self::$heading_text_keys as $xk) {
+                    if (!empty($val[$xk]) && is_string($val[$xk])) {
+                        $text = trim(wp_strip_all_tags($val[$xk]));
+                        if ($text !== '') {
+                            $out[] = array('level' => (int) substr($tag, 1), 'text' => $text, 'html' => '', 'source' => 'builder', 'elId' => $el_id, 'field' => 'widget', 'tagKey' => $tag_key, 'textKey' => $xk);
+                        }
+                        break;
+                    }
+                }
+            }
+            foreach ($val as $k => $v) {
+                if (is_array($v) || is_object($v)) { self::collect_headings($v, $out, $el_id); }
+                elseif (is_string($v) && stripos($v, '<h') !== false) { self::collect_headings_html($v, $out, 'builder', $el_id); }
+            }
+            return;
+        }
+        if (is_object($val)) { foreach (get_object_vars($val) as $v) { self::collect_headings($v, $out, $el_id); } return; }
+        if (is_string($val)) { self::collect_headings_html($val, $out, 'builder', $el_id); }
+    }
+    /** Rewrite a builder-FIELD heading widget (Elementor/Bricks): inside element $el_id, set the text
+     *  field (matching $old_text) to $new_text and the tag field to h$new_level. Returns a report. */
+    public function replace_heading_field($post_id, $el_id, $old_text, $new_text, $new_level, $text_key, $tag_key) {
+        $report = array('replaced' => 0, 'where' => array(), 'builders' => array(), 'steps' => array(), 'verified' => false);
+        $el_id = (string) $el_id; $old_text = (string) $old_text;
+        $new_text = sanitize_text_field((string) $new_text);
+        $new_level = max(1, min(6, (int) $new_level));
+        if ($el_id === '' || $old_text === '') { return $report; }
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
+        foreach ((array) $rows as $row) {
+            $raw = (string) $row->meta_value;
+            if (strpos($raw, $el_id) === false) { continue; }
+            $val = maybe_unserialize($raw); $is_json = false;
+            if (is_string($val) && $val !== '' && ($val[0] === '[' || $val[0] === '{')) {
+                $j = json_decode($val, true);
+                if (is_array($j)) { $val = $j; $is_json = true; }
+            }
+            if (!is_array($val) && !is_object($val)) { continue; }
+            $cnt = 0; $newVal = self::set_heading_in_element($val, $el_id, $old_text, $new_text, 'h' . $new_level, (string) $text_key, (string) $tag_key, false, $cnt);
+            if ($cnt > 0) {
+                $store = $is_json ? wp_json_encode($newVal) : (is_scalar($newVal) ? (string) $newVal : maybe_serialize($newVal));
+                $wpdb->update($wpdb->postmeta, array('meta_value' => $store), array('meta_id' => (int) $row->meta_id));
+                wp_cache_delete($post_id, 'post_meta');
+                $report['replaced'] += $cnt; $report['where'][] = (string) $row->meta_key;
+            }
+        }
+        foreach ($this->detect($post_id) as $h) {
+            try { $h->regenerate($post_id); $report['builders'][] = $h->label(); }
+            catch (\Throwable $e) {}
+        }
+        pcm_conn_purge_caches($post_id);
+        $report['verified'] = $report['replaced'] > 0;
+        $report['where'] = array_values(array_unique($report['where']));
+        return $report;
+    }
+    /** Recursively set a heading widget's text + tag inside the target element. Matches the text field
+     *  by value (=== $old_text) among the known text keys, and updates the tag field to $new_tag. */
+    private static function set_heading_in_element($node, $target, $old_text, $new_text, $new_tag, $text_key, $tag_key, $inside, &$count) {
+        if (is_array($node)) {
+            $here = $inside || (isset($node['id']) && (string) $node['id'] === (string) $target);
+            if ($here) {
+                $keys = ($text_key !== '') ? array($text_key) : self::$heading_text_keys;
+                foreach ($keys as $xk) {
+                    if (isset($node[$xk]) && is_string($node[$xk]) && trim(wp_strip_all_tags($node[$xk])) === $old_text) {
+                        $node[$xk] = $new_text;
+                        $tkeys = ($tag_key !== '') ? array($tag_key) : self::$heading_tag_keys;
+                        foreach ($tkeys as $tk) {
+                            if (isset($node[$tk]) && is_string($node[$tk]) && preg_match('/^h[1-6]$/i', trim($node[$tk]))) { $node[$tk] = $new_tag; break; }
+                        }
+                        $count++;
+                        return $node;
+                    }
+                }
+            }
+            foreach ($node as $k => $v) {
+                if (is_array($v) || is_object($v)) { $node[$k] = self::set_heading_in_element($v, $target, $old_text, $new_text, $new_tag, $text_key, $tag_key, $here, $count); }
+            }
+            return $node;
+        }
+        if (is_object($node)) {
+            $here = $inside || (isset($node->id) && (string) $node->id === (string) $target);
+            if ($here) {
+                $keys = ($text_key !== '') ? array($text_key) : self::$heading_text_keys;
+                foreach ($keys as $xk) {
+                    if (isset($node->$xk) && is_string($node->$xk) && trim(wp_strip_all_tags($node->$xk)) === $old_text) {
+                        $node->$xk = $new_text;
+                        $tkeys = ($tag_key !== '') ? array($tag_key) : self::$heading_tag_keys;
+                        foreach ($tkeys as $tk) {
+                            if (isset($node->$tk) && is_string($node->$tk) && preg_match('/^h[1-6]$/i', trim($node->$tk))) { $node->$tk = $new_tag; break; }
+                        }
+                        $count++;
+                        return $node;
+                    }
+                }
+            }
+            foreach (get_object_vars($node) as $k => $v) {
+                if (is_array($v) || is_object($v)) { $node->$k = self::set_heading_in_element($v, $target, $old_text, $new_text, $new_tag, $text_key, $tag_key, $here, $count); }
+            }
+            return $node;
+        }
+        return $node;
+    }
 }
 function pcm_conn_builder_manager() {
     static $mgr = null;
@@ -1001,6 +1181,38 @@ add_action('rest_api_init', function () {
             $pid = absint($req->get_param('post_id'));
             if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
             return new WP_REST_Response(array('links' => pcm_conn_builder_manager()->scan_links($pid)), 200);
+        },
+    ));
+    // Builder-aware heading scan: every H1–H6 on the post (post_content + inline <hN> in builder
+    // data + builder heading widgets whose text+level live in separate meta fields).
+    register_rest_route('pcm-conn/v1', '/scan-headings', array(
+        'methods' => 'GET',
+        'permission_callback' => function () { return current_user_can('edit_posts'); },
+        'callback' => function ($req) {
+            $pid = absint($req->get_param('post_id'));
+            if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            return new WP_REST_Response(array('headings' => pcm_conn_builder_manager()->scan_headings($pid)), 200);
+        },
+    ));
+    // Builder-aware heading edit for builder-FIELD headings (Elementor/Bricks heading widgets store
+    // text + level in separate meta fields — post_content replace can't reach them). Content-stored
+    // and inline-HTML headings are edited by the hub via /replace-url (oldHtml → newHtml) instead.
+    register_rest_route('pcm-conn/v1', '/replace-heading', array(
+        'methods' => 'POST',
+        'permission_callback' => $perm,
+        'callback' => function ($req) {
+            $p       = $req->get_json_params();
+            $pid     = is_array($p) && isset($p['post_id']) ? absint($p['post_id']) : 0;
+            $el_id   = (is_array($p) && isset($p['elId'])) ? (string) $p['elId'] : '';
+            $old_t   = (is_array($p) && isset($p['oldText'])) ? (string) $p['oldText'] : '';
+            $new_t   = (is_array($p) && isset($p['newText'])) ? (string) $p['newText'] : '';
+            $level   = (is_array($p) && isset($p['newLevel'])) ? absint($p['newLevel']) : 0;
+            $text_key = (is_array($p) && isset($p['textKey'])) ? (string) $p['textKey'] : '';
+            $tag_key  = (is_array($p) && isset($p['tagKey'])) ? (string) $p['tagKey'] : '';
+            if (!$pid || $el_id === '' || $old_t === '' || $level < 1 || $level > 6) { return new WP_REST_Response(array('replaced' => 0, 'error' => 'bad_params'), 400); }
+            if (!get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            if (!current_user_can('edit_post', $pid)) { return new WP_REST_Response(array('error' => 'forbidden'), 403); }
+            return new WP_REST_Response(pcm_conn_builder_manager()->replace_heading_field($pid, $el_id, $old_t, ($new_t !== '' ? $new_t : $old_t), $level, $text_key, $tag_key), 200);
         },
     ));
 });

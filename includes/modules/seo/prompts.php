@@ -41,6 +41,17 @@ return array(
             . "Requirements:\n- Maximum 60 characters\n- Include primary keyword naturally\n- Better search intent alignment\n- Do NOT use quotation marks in the output\n- Output ONLY the meta title text — no markdown, headings, character counts, labels, or commentary",
     ),
 
+    // ── Heading (H1–H6) — used by the SEO table's expandable heading editor ──
+    'heading' => array(
+        'max'      => 80,
+        'generate' => "Write a single SEO-optimized heading for a section of this page.\n\n"
+            . "Page Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nBusiness: {{business.name}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- Concise and descriptive (ideally under 70 characters)\n- Include a relevant keyword naturally when it fits\n- Match search intent for the section\n- Plain text only — no HTML tags, no markdown, no quotation marks\n- Output ONLY the heading text, nothing else",
+        'optimize' => "Optimize the following page heading for SEO and readability, keeping its original meaning and section topic.\n\n"
+            . "Current Heading: {{current_value}}\nPage Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nBusiness: {{business.name}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- Keep it concise (ideally under 70 characters)\n- Improve clarity, keyword relevance, and search intent — do NOT change what the section is about\n- Plain text only — no HTML tags, no markdown, no quotation marks\n- Output ONLY the heading text, nothing else",
+    ),
+
     // ── Meta description ──
     'meta_description' => array(
         'max'      => 220,

@@ -122,27 +122,24 @@ class PCM_Shortcode
             $reject('locked');
         }
 
-        $hash = (string) PCM_Settings::get('shortcode_password_hash', '');
+        $username = isset($_POST['pcm_username']) ? trim((string) wp_unslash($_POST['pcm_username'])) : '';
         $password = isset($_POST['pcm_password']) ? (string) wp_unslash($_POST['pcm_password']) : '';
 
-        // FIX (DoS): cap password length BEFORE password_verify(). bcrypt is CPU-bound
-        // and runs in time proportional to input length. Without this cap, an attacker
-        // could send a 10 MB "password" and pin a CPU core for several seconds per
-        // request. 256 chars is well above any realistic legit password length.
-        if (strlen($password) > 256) {
-            $reject('invalid');
-        }
-
-        if ($hash === '' || $password === '' || !password_verify($password, $hash)) {
+        // Per-user login: verify the username + password against the platform users an
+        // admin created in the Users module (no WordPress account needed). Length caps
+        // and constant-time hashing live in PCM_Gate_Auth::authenticate() — bcrypt is
+        // CPU-bound, so oversized input is capped there before password_verify() runs.
+        $user = PCM_Gate_Auth::authenticate($username, $password);
+        if (!$user) {
             if ($rate_limit_enabled) {
                 set_transient($ip_key, $attempts + 1, self::RATE_LIMIT_WINDOW);
             }
             $reject('invalid');
         }
 
-        // Success — clear rate limit, set cookie, redirect clean
+        // Success — clear rate limit, set the per-user cookie, redirect clean
         delete_transient($ip_key);
-        PCM_Gate_Auth::set_cookie();
+        PCM_Gate_Auth::set_cookie((int) $user->id);
         wp_safe_redirect($redirect_url);
         exit;
     }
@@ -270,7 +267,6 @@ class PCM_Shortcode
     private function render_login_form(string $mode = 'fullscreen'): string
     {
         $err = isset($_GET['pcm_err']) ? sanitize_key((string) $_GET['pcm_err']) : '';
-        $no_password_set = (string) PCM_Settings::get('shortcode_password_hash', '') === '';
 
         $nonce = wp_create_nonce(self::NONCE_ACTION);
         // FIX (security): HMAC-sign the form timestamp so bots can't forge it.
@@ -280,10 +276,8 @@ class PCM_Shortcode
         $action_url = esc_url($this->current_url());
 
         $error_html = '';
-        if ($no_password_set) {
-            $error_html = '<p class="pcm-msg pcm-msg-warn">' . esc_html__('No password has been set yet. Configure it in WordPress Admin → Power Creatives → Shortcode.', 'power-creatives') . '</p>';
-        } elseif ($err === 'invalid') {
-            $error_html = '<p class="pcm-msg pcm-msg-err">' . esc_html__('Incorrect password.', 'power-creatives') . '</p>';
+        if ($err === 'invalid') {
+            $error_html = '<p class="pcm-msg pcm-msg-err">' . esc_html__('Incorrect username or password.', 'power-creatives') . '</p>';
         } elseif ($err === 'locked') {
             $error_html = '<p class="pcm-msg pcm-msg-err">' . esc_html__('Too many attempts. Try again in 15 minutes.', 'power-creatives') . '</p>';
         }
@@ -341,11 +335,13 @@ class PCM_Shortcode
             <div class="pcm-glow pcm-glow-3" aria-hidden="true"></div>
             <div class="pcm-gate-card">
                 <h1 class="pcm-gate-h">Sign in</h1>
-                <p class="pcm-gate-sub">Enter the access password to continue</p>
+                <p class="pcm-gate-sub">Enter the username and password you were given</p>
                 <?php echo $error_html; // already escaped above ?>
                 <form class="pcm-gate-form" method="post" action="<?php echo $action_url; ?>" autocomplete="off">
-                    <label class="pcm-gate-label" for="pcm-password">Password</label>
-                    <input id="pcm-password" class="pcm-gate-input" type="password" name="pcm_password" placeholder="••••••••" autocomplete="current-password" required autofocus <?php echo $no_password_set ? 'disabled' : ''; ?> />
+                    <label class="pcm-gate-label" for="pcm-username">Username</label>
+                    <input id="pcm-username" class="pcm-gate-input" type="text" name="pcm_username" placeholder="username" autocomplete="username" maxlength="191" required autofocus />
+                    <label class="pcm-gate-label" for="pcm-password" style="margin-top:16px;">Password</label>
+                    <input id="pcm-password" class="pcm-gate-input" type="password" name="pcm_password" placeholder="••••••••" autocomplete="current-password" required />
                     <div class="pcm-hp" aria-hidden="true">
                         <label for="pcm-cw">Company website</label>
                         <input type="text" id="pcm-cw" name="company_website" tabindex="-1" autocomplete="off" />
@@ -354,7 +350,7 @@ class PCM_Shortcode
                     <input type="hidden" name="pcm_form_ts_sig" value="<?php echo esc_attr($form_ts_sig); ?>" />
                     <input type="hidden" name="pcm_login_submit" value="1" />
                     <?php wp_nonce_field(self::NONCE_ACTION); ?>
-                    <button type="submit" class="pcm-gate-btn" <?php echo $no_password_set ? 'disabled' : ''; ?>>Continue</button>
+                    <button type="submit" class="pcm-gate-btn">Continue</button>
                 </form>
             </div>
         </div>
@@ -469,8 +465,8 @@ class PCM_Shortcode
 
         // Two contexts produce two user shapes:
         //  - WP-logged-in user → identifies as that WP user (admin or otherwise)
-        //  - Gate-authed visitor → identifies as the shared workspace user, so
-        //    the React app shows consistent identity across all visitors.
+        //  - Gate-authed visitor → identifies as the specific PLATFORM user their
+        //    login cookie names, so the React app shows that user's own identity.
         if (is_user_logged_in()) {
             $wp_user = wp_get_current_user();
             $user_payload = array(
@@ -486,31 +482,30 @@ class PCM_Shortcode
                 'brandsByModule' => PCM_Admin::brands_by_module_for_current_user(),
             );
         } else {
-            // FIX: previously we sent hardcoded id=0, which could break any frontend
-            // code path that does `if (!user.id) return null` or filters records by
-            // user.id. Now we resolve to the SHARED workspace PCM user's real ID, so
-            // the React app has a consistent identity that matches what the REST
-            // layer sees (PCM_REST_Base::get_current_pcm_user() also returns the
-            // shared user for gate-authed visitors). Falls back to 0 only if the
-            // shared user couldn't be created (e.g. DB write failure).
-            $shared_id = 0;
-            if (class_exists('PCM_Gate_Auth') && PCM_Gate_Auth::is_authenticated()) {
-                $shared = PCM_Gate_Auth::get_shared_pcm_user();
-                if ($shared && isset($shared->id)) {
-                    $shared_id = (int) $shared->id;
-                }
-            }
+            // Gate-authed visitor → resolve the specific platform user their cookie
+            // identifies, so the React app's identity matches what the REST layer
+            // scopes to (PCM_REST_Base::get_current_pcm_user() returns the same row).
+            $gate_user = (class_exists('PCM_Gate_Auth') && PCM_Gate_Auth::is_authenticated())
+                ? PCM_Gate_Auth::get_gate_user()
+                : null;
             $user_payload = array(
-                'id' => $shared_id,
-                'name' => __('Shortcode User', 'power-creatives'),
-                'email' => '',
+                'id' => $gate_user ? (int) $gate_user->id : 0,
+                'name' => $gate_user && !empty($gate_user->name)
+                    ? (string) $gate_user->name
+                    : __('Platform User', 'power-creatives'),
+                'email' => $gate_user && !empty($gate_user->email) ? (string) $gate_user->email : '',
                 'role' => 'user',
                 'avatarUrl' => '',
                 'isLoggedIn' => $is_team_member,
-                // Gate visitors operate in the shared workspace — unrestricted
-                // (matches the REST layer, which bypasses module grants for them).
-                'allowedModules' => null,
-                'brandsByModule' => null,
+                // Same restriction model as a non-admin WP user: only the modules
+                // and brands granted via assigned deliveries are visible/usable
+                // (the REST permission callback enforces the same grants).
+                'allowedModules' => $gate_user && class_exists('PCM_Access')
+                    ? PCM_Access::granted_module_ids((int) $gate_user->id)
+                    : array(),
+                'brandsByModule' => $gate_user && class_exists('PCM_Access')
+                    ? PCM_Access::brands_by_module((int) $gate_user->id)
+                    : array(),
             );
         }
 

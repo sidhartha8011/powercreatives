@@ -488,6 +488,143 @@ class PCM_SEO_Service
         return $this->get_post_links($post_id);
     }
 
+    // =====================================================================
+    // HEADINGS (H1–H6) — the SEO table's expandable heading editor
+    // =====================================================================
+
+    /** Parse every <h1>..<h6> out of an HTML string, in document order. */
+    public static function parse_heading_details(string $content): array
+    {
+        if ($content === '' || !preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>#is', $content, $m, PREG_SET_ORDER)) {
+            return array();
+        }
+        $out = array();
+        foreach ($m as $mm) {
+            $text = trim(wp_strip_all_tags($mm[3]));
+            if ($text === '') { continue; } // skip empty/spacer headings
+            $out[] = array(
+                'level'  => (int) $mm[1],
+                'text'   => $text,
+                'html'   => $mm[0],
+                'source' => 'content',
+                'elId'   => '',
+                'field'  => '',
+                'tagKey' => '',
+                'textKey' => '',
+            );
+        }
+        return $out;
+    }
+
+    /** Rebuild a heading's HTML with a new tag level and/or new inner text, preserving attributes. */
+    private static function rebuild_heading_html(string $old_html, int $old_level, int $new_level, ?string $new_text): string
+    {
+        $html = $old_html;
+        if ($new_level !== $old_level && $new_level >= 1 && $new_level <= 6) {
+            $html = preg_replace('/^<h[1-6]/i', '<h' . $new_level, $html, 1);
+            $html = preg_replace('/<\/h[1-6]>(\s*)$/i', '</h' . $new_level . '>$1', $html, 1);
+        }
+        if ($new_text !== null) {
+            $safe = wp_kses_post($new_text);
+            // Callback keeps $-sequences in the replacement literal.
+            $html = preg_replace_callback('/(<h[1-6][^>]*>)(.*)(<\/h[1-6]>)/is', static fn($m) => $m[1] . $safe . $m[3], $html, 1);
+        }
+        return (string) $html;
+    }
+
+    /** Local post's headings (parsed from post_content), indexed for editing. */
+    public function get_post_headings(int $post_id): array
+    {
+        $post    = get_post($post_id);
+        $content = $post ? (string) $post->post_content : '';
+        $list    = self::parse_heading_details($content);
+        return array_values(array_map(static function ($h, $i) {
+            $h['index']    = (int) $i;
+            $h['id']       = (int) $i;
+            $h['editable'] = true; // local content headings live in post_content → editable
+            return $h;
+        }, $list, array_keys($list)));
+    }
+
+    /**
+     * Edit a local heading: change its text and/or tag level in post_content (occurrence-aware),
+     * propagate to any content-based builder meta, purge caches, re-scan. Returns the heading list.
+     */
+    public function update_post_heading(int $post_id, int $index, ?string $text, ?int $level)
+    {
+        $headings = $this->get_post_headings($post_id);
+        if (!isset($headings[$index])) {
+            return new WP_Error('pcm_seo_heading_not_found', __('Heading not found — re-open and try again.', 'power-creatives'), array('status' => 404));
+        }
+        $post = get_post($post_id);
+        if (!$post) {
+            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
+        }
+        $old_html  = (string) $headings[$index]['html'];
+        $old_level = (int) $headings[$index]['level'];
+        $new_level = ($level !== null) ? max(1, min(6, $level)) : $old_level;
+        $new_html  = self::rebuild_heading_html($old_html, $old_level, $new_level, $text);
+        if ($new_html === $old_html) {
+            return $this->get_post_headings($post_id); // no-op
+        }
+
+        $content = (string) $post->post_content;
+        $pos     = self::nth_link_pos($content, $headings, $index); // html-generic occurrence finder
+        if ($pos === null) {
+            return new WP_Error('pcm_seo_heading_stale', __('The page changed — re-open and try again.', 'power-creatives'), array('status' => 409));
+        }
+        $content = substr_replace($content, $new_html, $pos, strlen($old_html));
+        wp_update_post(array('ID' => $post_id, 'post_content' => $content));
+
+        // Content-based page builders (Divi/WPBakery shortcodes, etc.) keep the heading HTML in meta
+        // too — replace it there, serialization-safe (incl. the JSON-slash-escaped variant), so the
+        // live page reflects the edit. (Field-based builders — Elementor heading widget — store text
+        // and level in separate meta fields; those are edited on the remote via the connector.)
+        self::replace_url_in_meta($post_id, $old_html, $new_html);
+        self::purge_post_caches($post_id);
+
+        return $this->get_post_headings($post_id);
+    }
+
+    /** Shared AI runner for a prompt section (resolve override → substitute → invoke → sanitize). */
+    private static function run_prompt_section(string $section, string $mode, array $vars, int $max, ?string $model, ?int $user_id, ?string $provider, ?int $template_id)
+    {
+        $prompts = self::field_prompts();
+        if (empty($prompts[$section][$mode])) {
+            return new WP_Error('pcm_seo_no_prompt', __('No prompt configured for this field.', 'power-creatives'), array('status' => 500));
+        }
+        $default = (string) $prompts[$section][$mode];
+        $tpl     = self::resolve_prompt($section . '_' . $mode, $default, $user_id, $template_id);
+        $prompt  = self::substitute_vars($tpl, $vars);
+        if (!class_exists('PCM_LLM')) {
+            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
+        }
+        try {
+            $opts = array('max_tokens' => $max);
+            if (!empty($model))    { $opts['model'] = $model; }
+            if (!empty($provider)) { $opts['provider'] = $provider; }
+            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $value  = self::sanitize_ai_output((string) ($result['content'] ?? ''));
+            if ($value === '') {
+                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
+            }
+            return $value;
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
+    }
+
+    /** AI-optimize a single heading's text (NOT saved). Returns { value }. */
+    public function optimize_heading(int $post_id, string $text, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
+    {
+        $vars = $this->build_field_vars($post_id, $brand_id);
+        $vars['current_value'] = $text;
+        $mode = ($text !== '') ? 'optimize' : 'generate';
+        $max  = (int) (self::field_prompts()['heading']['max'] ?? 80);
+        $val  = self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
+        return ($val instanceof WP_Error) ? $val : array('value' => $val);
+    }
+
     /** Count internal vs external <a href> links in content. */
     private static function count_links(string $content, string $site_url): array
     {
@@ -2197,6 +2334,144 @@ class PCM_SEO_Service
         } catch (\Throwable $e) {
             return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
         }
+    }
+
+    // =====================================================================
+    // REMOTE HEADINGS (connected sites, via the connector)
+    // =====================================================================
+
+    /** Every H1–H6 on a connected post — builder-aware via the connector's /scan-headings
+     *  (v2.1.7+), falling back to a post-body-only parse of content.raw on older connectors. */
+    public static function remote_get_headings(object $site, int $post_id, string $type): array
+    {
+        self::ensure_sites_service();
+        $scan = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/scan-headings', array('post_id' => $post_id));
+        if (!is_wp_error($scan) && (int) ($scan['status'] ?? 0) < 300 && is_array($scan['body']['headings'] ?? null)) {
+            $out = array(); $i = 0;
+            foreach ($scan['body']['headings'] as $h) {
+                $text = trim((string) ($h['text'] ?? ''));
+                if ($text === '') { continue; }
+                $out[] = array(
+                    'index'    => $i,
+                    'id'       => $i,
+                    'level'    => max(1, min(6, (int) ($h['level'] ?? 2))),
+                    'text'     => $text,
+                    'html'     => (string) ($h['html'] ?? ''),
+                    'source'   => (string) ($h['source'] ?? 'content'),
+                    'elId'     => (string) ($h['elId'] ?? ''),
+                    'field'    => (string) ($h['field'] ?? ''),
+                    'tagKey'   => (string) ($h['tagKey'] ?? ''),
+                    'textKey'  => (string) ($h['textKey'] ?? ''),
+                    'editable' => true,
+                );
+                $i++;
+            }
+            return $out;
+        }
+
+        // Fallback: parse the post body only (older / missing connector).
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content'));
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return array();
+        }
+        $raw      = (string) ($res['body']['content']['raw'] ?? '');
+        $editable = ($raw !== '');
+        $content  = $editable ? $raw : (string) ($res['body']['content']['rendered'] ?? '');
+        $list     = self::parse_heading_details($content);
+        return array_values(array_map(static function ($h, $i) use ($editable) {
+            $h['index']    = (int) $i;
+            $h['id']       = (int) $i;
+            $h['editable'] = $editable;
+            return $h;
+        }, $list, array_keys($list)));
+    }
+
+    /** Edit a connected post's heading (text and/or level) via the connector: builder-FIELD headings
+     *  (Elementor/Bricks widgets) through /replace-heading, content/inline-HTML headings through the
+     *  builder-aware /replace-url (oldHtml → newHtml). Returns the refreshed heading list. */
+    public static function remote_update_heading(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level)
+    {
+        self::ensure_sites_service();
+        $headings = self::remote_get_headings($site, $post_id, $type);
+        if (!isset($headings[$index])) {
+            return new WP_Error('pcm_seo_heading_not_found', __('Heading not found — re-open and try again.', 'power-creatives'), array('status' => 404));
+        }
+        $h = $headings[$index];
+        if (empty($h['editable'])) {
+            return new WP_Error('pcm_seo_no_raw', __('This page’s content isn’t editable through the API (e.g. a page-builder layout on an older connector). Update the connector, or edit this heading in the page builder.', 'power-creatives'), array('status' => 422));
+        }
+        $old_level = (int) $h['level'];
+        $new_level = ($level !== null) ? max(1, min(6, $level)) : $old_level;
+        $new_text  = $text; // null = keep
+
+        // Builder-FIELD heading (text + level in separate meta fields) → connector /replace-heading.
+        if ((string) ($h['field'] ?? '') === 'widget') {
+            $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-heading', array(), array(
+                'post_id'  => $post_id,
+                'elId'     => (string) $h['elId'],
+                'oldText'  => (string) $h['text'],
+                'newText'  => ($new_text !== null ? $new_text : (string) $h['text']),
+                'newLevel' => $new_level,
+                'textKey'  => (string) ($h['textKey'] ?? ''),
+                'tagKey'   => (string) ($h['tagKey'] ?? ''),
+            ), 60);
+            if (is_wp_error($rep)) {
+                return new WP_Error('pcm_seo_remote_heading', $rep->get_error_message(), array('status' => 502));
+            }
+            if ((int) ($rep['status'] ?? 0) === 404) {
+                return new WP_Error('pcm_seo_connector_outdated', __('This site needs Power Creatives connector v2.1.7+ to edit headings. Re-download it from Sites → Download connector and reinstall on the connected site.', 'power-creatives'), array('status' => 409));
+            }
+            if ((int) ($rep['status'] ?? 0) >= 300) {
+                return new WP_Error('pcm_seo_remote_heading', sprintf(__('The connector rejected the heading edit (HTTP %d).', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
+            }
+            if ((int) ($rep['body']['replaced'] ?? 0) === 0) {
+                return new WP_Error('pcm_seo_heading_not_found', __('That heading wasn’t found in the builder data — re-open and try again, or edit it in the page builder.', 'power-creatives'), array('status' => 409));
+            }
+            return self::remote_get_headings($site, $post_id, $type);
+        }
+
+        // Content / inline-HTML heading → builder-aware URL-style replace of the whole element HTML.
+        $old_html = (string) $h['html'];
+        if ($old_html === '') {
+            return new WP_Error('pcm_seo_heading_not_editable', __('This heading has no editable source markup — edit it in the page builder on the site.', 'power-creatives'), array('status' => 422));
+        }
+        $new_html = self::rebuild_heading_html($old_html, $old_level, $new_level, $new_text);
+        if ($new_html === $old_html) {
+            return self::remote_get_headings($site, $post_id, $type);
+        }
+        $body = array('post_id' => $post_id, 'old' => $old_html, 'new' => $new_html);
+        if ((string) ($h['elId'] ?? '') !== '') { $body['elId'] = (string) $h['elId']; }
+        $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-url', array(), $body, 60);
+        if (is_wp_error($rep)) {
+            $err = $rep->get_error_message();
+            $msg = (stripos($err, 'timed out') !== false || stripos($err, 'timeout') !== false || stripos($err, 'cURL error 28') !== false)
+                ? __('The connector took too long (large page) — the change likely applied; re-open and clear the page/CDN cache.', 'power-creatives')
+                : sprintf(__('Could not reach the connector to edit the heading (%s).', 'power-creatives'), $err);
+            return new WP_Error('pcm_seo_remote_heading', $msg, array('status' => 502));
+        }
+        if ((int) ($rep['status'] ?? 0) >= 300) {
+            return new WP_Error('pcm_seo_remote_heading', sprintf(__('The connector rejected the heading edit (HTTP %d) — check its app-password user can edit, and that the connector is v2.1.7+.', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
+        }
+        if ((int) ($rep['body']['replaced'] ?? 0) === 0) {
+            return new WP_Error('pcm_seo_heading_not_found', __('That heading wasn’t found in the page content or any builder field — it may be hardcoded in the theme or a template. Edit it on the site.', 'power-creatives'), array('status' => 409));
+        }
+        return self::remote_get_headings($site, $post_id, $type);
+    }
+
+    /** AI-optimize a connected post's heading text (NOT saved). Returns { value }. */
+    public static function remote_optimize_heading(object $site, int $post_id, string $type, string $text, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
+    {
+        self::ensure_sites_service();
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'id,title,slug,link,author,meta'));
+        $row   = (!is_wp_error($res) && is_array($res['body'] ?? null)) ? self::remote_row($res['body'], $type, $site) : array();
+        $vars  = self::remote_field_vars($site, $row);
+        $vars['current_value'] = $text;
+        $mode  = ($text !== '') ? 'optimize' : 'generate';
+        $max   = (int) (self::field_prompts()['heading']['max'] ?? 80);
+        $val   = self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
+        return ($val instanceof WP_Error) ? $val : array('value' => $val);
     }
 
     /**

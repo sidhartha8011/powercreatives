@@ -50,6 +50,9 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/content/(?P<id>\d+)/links', 'get_links'),
             array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)', 'update_link'),
             array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)/remove', 'remove_link'),
+            array('GET',  '/seo/content/(?P<id>\d+)/headings', 'get_headings'),
+            array('POST', '/seo/content/(?P<id>\d+)/headings/(?P<idx>\d+)', 'update_heading'),
+            array('POST', '/seo/content/(?P<id>\d+)/headings/(?P<idx>\d+)/optimize', 'optimize_heading'),
             array('GET',  '/seo/content/(?P<id>\d+)/body',     'get_body'),
             array('POST', '/seo/content/(?P<id>\d+)/body',     'save_body'),
             array('POST', '/seo/content/(?P<id>\d+)/optimize', 'optimize_body'),
@@ -74,6 +77,9 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links', 'remote_get_links', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)', 'remote_update_link', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/remove', 'remote_remove_link', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings', 'remote_get_headings', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)', 'remote_update_heading', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)/optimize', 'remote_optimize_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/featured', 'remote_set_featured', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/preview', 'remote_preview', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_get',   array(), 'manage_options'),
@@ -324,6 +330,58 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success(array('links' => $result));
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/headings — a connected post's H1–H6 outline. */
+    public function remote_get_headings(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
+        return $this->success(array('headings' => PCM_SEO_Service::remote_get_headings($site, absint($request->get_param('post')), $type)));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/headings/{idx} — edit a connected post's heading. */
+    public function remote_update_heading(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $text   = array_key_exists('text', $params) ? wp_kses_post((string) $params['text']) : null;
+        $level  = array_key_exists('level', $params) ? absint($params['level']) : null;
+        $result = PCM_SEO_Service::remote_update_heading($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $text, $level);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('headings' => $result));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/headings/{idx}/optimize — AI-optimize a remote heading. */
+    public function remote_optimize_heading(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params   = $request->get_json_params() ?: array();
+        $type     = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $text     = sanitize_text_field((string) ($params['text'] ?? ''));
+        $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+        $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
+        $result = PCM_SEO_Service::remote_optimize_heading($site, absint($request->get_param('post')), $type, $text, $model, (int) $user->id, $provider, $template_id ?: null);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** POST /seo/sites/{id}/content/{post}/duplicate — clone a connected site's
@@ -693,6 +751,60 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success(array('links' => $result));
+    }
+
+    /** GET /seo/content/{id}/headings — the post's H1–H6 outline for the expandable editor. */
+    public function get_headings(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        return $this->success(array('headings' => $this->service->get_post_headings($id)));
+    }
+
+    /** POST /seo/content/{id}/headings/{idx} — change a heading's text and/or tag level. */
+    public function update_heading(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $params = $request->get_json_params() ?: array();
+        $text   = array_key_exists('text', $params) ? wp_kses_post((string) $params['text']) : null;
+        $level  = array_key_exists('level', $params) ? absint($params['level']) : null;
+        $result = $this->service->update_post_heading($id, absint($request->get_param('idx')), $text, $level);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('headings' => $result));
+    }
+
+    /** POST /seo/content/{id}/headings/{idx}/optimize — AI-optimize a heading's text (not saved). */
+    public function optimize_heading(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $params   = $request->get_json_params() ?: array();
+        $text     = sanitize_text_field((string) ($params['text'] ?? ''));
+        $brand_id = isset($params['brandId']) && $params['brandId'] ? absint($params['brandId']) : null;
+        $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+        $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
+        $user     = $this->get_current_pcm_user();
+        $result   = $this->service->optimize_heading($id, $text, $brand_id, $model, $user ? (int) $user->id : null, $provider, $template_id);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     // =====================================================================

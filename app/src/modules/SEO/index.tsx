@@ -9,12 +9,12 @@
  */
 
 import {
-  useMemo, useState, useCallback, useEffect, useRef,
+  useMemo, useState, useCallback, useEffect, useRef, Fragment,
   type KeyboardEvent, type PointerEvent as ReactPointerEvent,
   type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes, type TableHTMLAttributes,
 } from 'react';
 import {
-  Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, ChevronDown, RefreshCw, Copy,
+  Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, ChevronDown, ChevronRight, RefreshCw, Copy,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
   Image as ImageIcon, Link2, Calendar, TrendingUp, Eye, Unlink,
 } from 'lucide-react';
@@ -54,6 +54,7 @@ import { BusinessPanel } from './BusinessPanel';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { LinksPopup, type LinkKind } from './LinksPopup';
+import { HeadingRows } from './HeadingsPanel';
 import { SEO_TABLE_GRID } from './seo-table';
 import { SEO_TEXT_FIELDS, type SeoRow } from './types';
 
@@ -354,6 +355,18 @@ export function SEOModule() {
   const sites: { id: number; name?: string; url?: string }[] = Array.isArray(sitesRaw) ? sitesRaw : [];
   const [siteId, setSiteId] = useState<number | 'local'>('local');
   const isLocal = siteId === 'local';
+  // Expandable heading editor: which page rows have their H1–H6 outline open.
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  const toggleExpanded = useCallback((id: number) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+  // Collapse all open heading panels when switching between local/remote sites (row
+  // ids aren't comparable across scopes).
+  useEffect(() => { setExpandedRows(new Set()); }, [siteId]);
   const activeSite = isLocal ? null : sites.find((s) => Number(s.id) === siteId) ?? null;
   // Remote site (Phase 1): read + inline-edit its SEO via the connector proxy.
   // Generation/scanning/creation stay local-only and are gated on isLocal below.
@@ -814,6 +827,18 @@ export function SEOModule() {
         return (
           <TableCell key={key}>
             <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => toggleExpanded(row.id)}
+                title={expandedRows.has(row.id) ? 'Hide headings' : 'Show heading structure'}
+                aria-label={expandedRows.has(row.id) ? 'Hide headings' : 'Show heading structure'}
+                aria-expanded={expandedRows.has(row.id)}
+                className="shrink-0 text-muted-foreground/60 hover:text-foreground"
+              >
+                {expandedRows.has(row.id)
+                  ? <ChevronDown className="h-3.5 w-3.5" />
+                  : <ChevronRight className="h-3.5 w-3.5" />}
+              </button>
               <div className="min-w-0 flex-1">
                 <EditableCell
                   value={row.title}
@@ -1321,30 +1346,41 @@ export function SEOModule() {
             </TableHeader>
             <TableBody>
               {sortedData.map((row, idx) => (
-                <TableRow
-                  key={row.id}
-                  onMouseEnter={() => setHoveredId(row.id)}
-                  onMouseLeave={() => setHoveredId((cur) => (cur === row.id ? null : cur))}
-                  className={`group ${selected.has(row.id) ? 'bg-accent/60' : 'hover:bg-muted/60'}`}
-                >
-                  <TableCell className="px-2 text-center">
-                    {/* Airtable-style: row number by default; checkbox on hover or when
-                        selected. Hover is tracked in JS (see hoveredId) because Tailwind v4
-                        gates `group-hover:` behind `@media (hover: hover)`. */}
-                    {selected.has(row.id) || hoveredId === row.id ? (
-                      <span className="inline-flex items-center justify-center">
-                        <Checkbox
-                          checked={selected.has(row.id)}
-                          onCheckedChange={() => toggleOne(row.id)}
-                          aria-label={`Select ${row.title}`}
-                        />
-                      </span>
-                    ) : (
-                      <span className="text-[11px] tabular-nums text-muted-foreground">{idx + 1}</span>
-                    )}
-                  </TableCell>
-                  {orderedCols.map((key) => renderCell(key, row))}
-                </TableRow>
+                <Fragment key={row.id}>
+                  <TableRow
+                    onMouseEnter={() => setHoveredId(row.id)}
+                    onMouseLeave={() => setHoveredId((cur) => (cur === row.id ? null : cur))}
+                    className={`group ${selected.has(row.id) ? 'bg-accent/60' : 'hover:bg-muted/60'}`}
+                  >
+                    <TableCell className="px-2 text-center">
+                      {/* Airtable-style: row number by default; checkbox on hover or when
+                          selected. Hover is tracked in JS (see hoveredId) because Tailwind v4
+                          gates `group-hover:` behind `@media (hover: hover)`. */}
+                      {selected.has(row.id) || hoveredId === row.id ? (
+                        <span className="inline-flex items-center justify-center">
+                          <Checkbox
+                            checked={selected.has(row.id)}
+                            onCheckedChange={() => toggleOne(row.id)}
+                            aria-label={`Select ${row.title}`}
+                          />
+                        </span>
+                      ) : (
+                        <span className="text-[11px] tabular-nums text-muted-foreground">{idx + 1}</span>
+                      )}
+                    </TableCell>
+                    {orderedCols.map((key) => renderCell(key, row))}
+                  </TableRow>
+                  {expandedRows.has(row.id) && (
+                    <HeadingRows
+                      postId={row.id}
+                      type={row.type === 'page' ? 'page' : 'post'}
+                      siteId={siteId}
+                      model={genModelId || undefined}
+                      provider={genProvider}
+                      orderedCols={orderedCols}
+                    />
+                  )}
+                </Fragment>
               ))}
             </TableBody>
           </Table>

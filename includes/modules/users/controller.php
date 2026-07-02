@@ -3,12 +3,17 @@
  * Users REST Controller — admin-only user management.
  *
  * Routes (all require manage_options; nonce enforced by PCM_REST_Base):
- *   GET /users                      List every WP user mirrored as a PCM user,
+ *   GET  /users                     List every WP user mirrored as a PCM user
+ *                                   plus platform (username+password) users,
  *                                   with live access level + assigned deliveries.
- *   PUT /users/{id}/deliveries      Replace a user's delivery assignments.
+ *   POST /users                     Create a platform login user (username+password).
+ *   PUT  /users/{id}/password       Reset a platform user's password.
+ *   DELETE /users/{id}              Delete a platform user.
+ *   PUT  /users/{id}/deliveries     Replace a user's delivery assignments.
  *
  * Access level mirrors WordPress: administrators (manage_options) → 'admin',
- * everyone else → 'user'. The plugin never writes WP roles.
+ * everyone else → 'user'. The plugin never writes WP roles. Platform users are
+ * the accounts a visitor uses at the [power_creatives] shortcode gate.
  *
  * @package PowerCreatives
  * @since   1.18.0
@@ -31,12 +36,55 @@ class PCM_REST_Users extends PCM_REST_Base
     protected function routes(): array
     {
         // 'manage_options:strict' — real WP admins only. These routes expose the
-        // WP user directory (names + emails), so the shared-password shortcode
-        // gate must NOT grant access.
+        // user directory and MINT login credentials, so the per-user shortcode
+        // gate must NOT grant access (a gate-authed visitor is never a WP admin).
         return array(
-            array('GET', '/users',                              'list_items',       array(), 'manage_options:strict'),
-            array('PUT', '/users/(?P<id>\d+)/deliveries',       'set_deliveries',   array(), 'manage_options:strict'),
+            array('GET',    '/users',                           'list_items',       array(), 'manage_options:strict'),
+            array('POST',   '/users',                           'create_item',      array(), 'manage_options:strict'),
+            array('PUT',    '/users/(?P<id>\d+)/password',      'set_password',     array(), 'manage_options:strict'),
+            array('DELETE', '/users/(?P<id>\d+)',               'delete_item',      array(), 'manage_options:strict'),
+            array('PUT',    '/users/(?P<id>\d+)/deliveries',    'set_deliveries',   array(), 'manage_options:strict'),
         );
+    }
+
+    /** POST /users — create a platform login user (username + password). */
+    public function create_item(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $params = $request->get_json_params() ?: array();
+        $result = $this->service->create_user(array(
+            'username' => (string) ($params['username'] ?? ''),
+            'password' => (string) ($params['password'] ?? ''),
+            'name'     => (string) ($params['name'] ?? ''),
+            'email'    => (string) ($params['email'] ?? ''),
+            'role'     => (string) ($params['role'] ?? 'user'),
+        ));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** PUT /users/{id}/password — reset a platform user's password. */
+    public function set_password(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_id = absint($request->get_param('id'));
+        $params = $request->get_json_params() ?: array();
+        $result = $this->service->set_password($pcm_id, (string) ($params['password'] ?? ''));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('updated' => true));
+    }
+
+    /** DELETE /users/{id} — delete a platform user. */
+    public function delete_item(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_id = absint($request->get_param('id'));
+        $result = $this->service->delete_user($pcm_id);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('deleted' => true));
     }
 
     /** GET /users — all WP users with plugin level + assignments. */

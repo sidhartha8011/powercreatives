@@ -20,6 +20,11 @@ class AutomationEmailHandlerTest extends TestCase
         WP_Mock::passthruFunction('esc_html');
         WP_Mock::userFunction('is_email')->andReturnUsing(fn($e) => (bool) filter_var($e, FILTER_VALIDATE_EMAIL));
         WP_Mock::userFunction('__')->andReturnUsing(fn($s) => $s);
+        // The Brevo channel reads the per-module from-sender via PCM_Settings::get()
+        // → get_option(). Return an empty option so all settings fall to defaults and
+        // the handler's explicit fromEmail/fromName inputs win. (Without this the test
+        // only passed by borrowing a get_option mock leaked from an earlier test.)
+        WP_Mock::userFunction('get_option')->andReturn(array());
         // nl2br is a native PHP function — used as-is (not mocked).
     }
 

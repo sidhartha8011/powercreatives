@@ -209,15 +209,23 @@ class SeoIntegrationTest extends TestCase
         WP_Mock::userFunction('apply_filters')->andReturnUsing(fn($hook, $value) => $value);
         $defaults = PCM_SEO_Service::get_default_prompts();
 
-        // These keys MUST mirror PCM_REST_Prompts::get_default_sections('seo').
-        // If they drift, the Prompt Editor renders blank/orphaned tabs.
+        // The SEO prompt sections shipped by get_default_prompts(). SEO prompts are
+        // now managed as Templates (module=seo) — deregistered from the Prompt Editor,
+        // so get_default_sections('seo') is intentionally empty. This guards the
+        // shipped Template section set (drift here = a section ships with no default).
         $expected = array(
             'page_title_generate', 'page_title_optimize',
             'meta_title_generate', 'meta_title_optimize',
             'meta_description_generate', 'meta_description_optimize',
             'meta_keywords_generate',
+            'heading_generate', 'heading_optimize',
             'primary_keyword_generate', 'primary_keyword_optimize',
             'content_optimize',
+            'robots_generate',
+            'site_schema_generate',
+            'site_tagline_generate',
+            'site_title_generate',
+            'slug_generate', 'slug_optimize',
         );
         $actual = array_keys($defaults);
         sort($expected);
@@ -238,11 +246,24 @@ class SeoIntegrationTest extends TestCase
 
     public function test_resolve_prompt_prefers_active_db_override(): void
     {
+        // resolve_prompt (user > 0) now routes through the Templates system: it
+        // seeds the SYSTEM default templates, looks for a matching Template, and
+        // only then falls back to a legacy Settings→Prompts→SEO override. Report
+        // every section as already-seeded (so no inserts fire) and no Template
+        // match, so the legacy override is the value under test.
+        WP_Mock::userFunction('apply_filters')->andReturnUsing(fn($hook, $value) => $value);
+        $seeded = array_map(
+            fn($s) => json_encode(array('type' => $s)),
+            array_keys(PCM_SEO_Service::get_default_prompts())
+        );
+
         global $wpdb;
         $wpdb = \Mockery::mock();
         $wpdb->prefix = 'wp_';
-        $wpdb->shouldReceive('prepare')->once()->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->once()->with('SQL')->andReturn('MY CUSTOM PROMPT');
+        $wpdb->shouldReceive('get_col')->andReturn($seeded);        // seed: all present → no inserts
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_results')->andReturn(array());    // no Template for this user
+        $wpdb->shouldReceive('get_var')->andReturn('MY CUSTOM PROMPT'); // legacy override wins
 
         $this->assertSame(
             'MY CUSTOM PROMPT',
@@ -252,13 +273,21 @@ class SeoIntegrationTest extends TestCase
 
     public function test_resolve_prompt_ignores_blank_override(): void
     {
-        // An empty/absent override row must fall back to the default — never
-        // send a blank prompt to the model.
+        // An empty/absent override row (and no Template) must fall back to the
+        // shipped default — never send a blank prompt to the model.
+        WP_Mock::userFunction('apply_filters')->andReturnUsing(fn($hook, $value) => $value);
+        $seeded = array_map(
+            fn($s) => json_encode(array('type' => $s)),
+            array_keys(PCM_SEO_Service::get_default_prompts())
+        );
+
         global $wpdb;
         $wpdb = \Mockery::mock();
         $wpdb->prefix = 'wp_';
+        $wpdb->shouldReceive('get_col')->andReturn($seeded);        // seed: all present → no inserts
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn(null);
+        $wpdb->shouldReceive('get_results')->andReturn(array());    // no Template for this user
+        $wpdb->shouldReceive('get_var')->andReturn(null);           // no legacy override either
 
         $this->assertSame(
             'DEFAULT',
@@ -404,7 +433,7 @@ class SeoIntegrationTest extends TestCase
         $wpdb->prefix = 'wp_';
         $wpdb->shouldReceive('prepare')->once()->andReturn('SQL');
         $wpdb->shouldReceive('get_results')->once()->with('SQL')->andReturn(array(
-            (object) array('id' => '3', 'name' => 'Newest', 'config' => '{"columns":{"title":true}}'),
+            (object) array('id' => '3', 'name' => 'Newest', 'config' => '{"columns":{"title":true}}', 'isDefault' => '0'),
         ));
 
         $svc   = new PCM_SEO_Service();
@@ -414,6 +443,7 @@ class SeoIntegrationTest extends TestCase
         $this->assertSame(3, $views[0]['id']);
         $this->assertSame('Newest', $views[0]['name']);
         $this->assertSame(array('columns' => array('title' => true)), $views[0]['config']);
+        $this->assertFalse($views[0]['isDefault']);
     }
 
     public function test_delete_view_is_user_scoped(): void
