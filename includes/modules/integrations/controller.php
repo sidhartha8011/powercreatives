@@ -39,6 +39,8 @@ class PCM_REST_Integrations extends PCM_REST_Base
                 array('GET', '/integrations/providers', 'list_providers'),
                 array('GET', '/integrations/providers/details', 'provider_details'),
                 array('GET', '/integrations/brevo/senders', 'brevo_senders'),
+                array('GET', '/integrations/proranktracker/urls', 'prt_urls'),
+                array('GET', '/integrations/proranktracker/ranks', 'prt_ranks'),
 
             // Validation
                 array('POST', '/integrations/validate', 'validate_api_key'),
@@ -92,6 +94,109 @@ class PCM_REST_Integrations extends PCM_REST_Base
             );
         }
         return $this->success($senders);
+    }
+
+    /**
+     * GET /integrations/proranktracker/urls — list the tracked sites (URLs)
+     * from the user's ProRankTracker account. Used by the integration card's
+     * live-test panel to prove the connection works with real account data.
+     * Returns array of { id, url, business_name }. Error payload if no key.
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function prt_urls(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        try {
+            $key = $this->get_provider_api_key('proranktracker', (int) $pcm_user->id);
+        } catch (\RuntimeException $e) {
+            return $this->error('No active ProRankTracker integration found.', 400);
+        }
+
+        $resp = wp_remote_get('https://api.proranktracker.com/v3/util/urls', array(
+            'headers' => array('X-TOKEN' => $key, 'Accept' => 'application/json'),
+            'timeout' => 20,
+        ));
+        if (is_wp_error($resp)) {
+            return $this->error('ProRankTracker request failed: ' . $resp->get_error_message(), 502);
+        }
+
+        $body = json_decode((string) wp_remote_retrieve_body($resp), true);
+        if (($body['result'] ?? '') !== 'success') {
+            return $this->error('ProRankTracker error: ' . ($body['error_message'] ?? $body['error'] ?? 'Unknown'), 502);
+        }
+
+        $urls = array();
+        foreach ((array) ($body['data'] ?? array()) as $u) {
+            $urls[] = array(
+                'id'            => (string) ($u['id'] ?? ''),
+                'url'           => esc_url_raw((string) ($u['url'] ?? '')),
+                'business_name' => sanitize_text_field((string) ($u['business_name'] ?? '')),
+            );
+        }
+        return $this->success($urls);
+    }
+
+    /**
+     * GET /integrations/proranktracker/ranks?urlId=<id> — current rankings of
+     * one tracked site (PRT "URL View", no history). Returns the site's terms
+     * with current/yesterday/week/month ranks and search volumes.
+     *
+     * @param WP_REST_Request $request Request with urlId.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function prt_ranks(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $url_id = absint($request->get_param('urlId'));
+        if ($url_id === 0) {
+            return $this->error('urlId is required.');
+        }
+
+        try {
+            $key = $this->get_provider_api_key('proranktracker', (int) $pcm_user->id);
+        } catch (\RuntimeException $e) {
+            return $this->error('No active ProRankTracker integration found.', 400);
+        }
+
+        $resp = wp_remote_get('https://api.proranktracker.com/v3/urls/' . $url_id, array(
+            'headers' => array('X-TOKEN' => $key, 'Accept' => 'application/json'),
+            'timeout' => 20,
+        ));
+        if (is_wp_error($resp)) {
+            return $this->error('ProRankTracker request failed: ' . $resp->get_error_message(), 502);
+        }
+
+        $body = json_decode((string) wp_remote_retrieve_body($resp), true);
+        if (($body['result'] ?? '') !== 'success') {
+            return $this->error('ProRankTracker error: ' . ($body['error_message'] ?? $body['error'] ?? 'Unknown'), 502);
+        }
+
+        $data  = (array) ($body['data'] ?? array());
+        $terms = array();
+        foreach ((array) ($data['terms'] ?? array()) as $t) {
+            $terms[] = array(
+                'term'         => sanitize_text_field((string) ($t['name'] ?? '')),
+                'engine'       => sanitize_text_field((string) ($t['engine'] ?? '')),
+                'termType'     => sanitize_text_field((string) ($t['term_type'] ?? '')),
+                'rank'         => (int) ($t['rank'] ?? 0),
+                'yesterday'    => (int) ($t['yesterdayrank'] ?? 0),
+                'weekAgo'      => (int) ($t['weekagorank'] ?? 0),
+                'monthAgo'     => (int) ($t['monthagorank'] ?? 0),
+                'topRank'      => (int) ($t['top_rank'] ?? 0),
+                'matchedUrl'   => esc_url_raw((string) ($t['matchedurl'] ?? '')),
+                'localVolume'  => (int) ($t['localmonthlysearches'] ?? 0),
+                'globalVolume' => (int) ($t['globalmonthlysearches'] ?? 0),
+            );
+        }
+
+        return $this->success(array(
+            'id'      => (string) ($data['id'] ?? ''),
+            'url'     => esc_url_raw((string) ($data['url'] ?? '')),
+            'topRank' => (int) ($data['toprank'] ?? 0),
+            'terms'   => $terms,
+        ));
     }
 
     /**
