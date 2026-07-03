@@ -41,6 +41,7 @@ class PCM_REST_Integrations extends PCM_REST_Base
                 array('GET', '/integrations/brevo/senders', 'brevo_senders'),
                 array('GET', '/integrations/proranktracker/urls', 'prt_urls'),
                 array('GET', '/integrations/proranktracker/ranks', 'prt_ranks'),
+                array('GET', '/integrations/proranktracker/history', 'prt_history'),
 
             // Validation
                 array('POST', '/integrations/validate', 'validate_api_key'),
@@ -196,6 +197,86 @@ class PCM_REST_Integrations extends PCM_REST_Base
             'url'     => esc_url_raw((string) ($data['url'] ?? '')),
             'topRank' => (int) ($data['toprank'] ?? 0),
             'terms'   => $terms,
+        ));
+    }
+
+    /**
+     * GET /integrations/proranktracker/history?urlId=<id>&days=<30|90|180> —
+     * day-by-day rank history of one tracked site (PRT "URL History" view).
+     * Each term carries its currently ranking URL (matchedUrl) plus a
+     * rankhistory series of { date, rank } points for trend rendering.
+     *
+     * @param WP_REST_Request $request Request with urlId + days.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function prt_history(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $url_id = absint($request->get_param('urlId'));
+        if ($url_id === 0) {
+            return $this->error('urlId is required.');
+        }
+
+        // Whitelisted windows: 1 / 3 / 6 months
+        $days = absint($request->get_param('days'));
+        if (!in_array($days, array(30, 90, 180), true)) {
+            $days = 30;
+        }
+
+        try {
+            $key = $this->get_provider_api_key('proranktracker', (int) $pcm_user->id);
+        } catch (\RuntimeException $e) {
+            return $this->error('No active ProRankTracker integration found.', 400);
+        }
+
+        $from = gmdate('Y-m-d', strtotime("-{$days} days"));
+        $to   = gmdate('Y-m-d');
+
+        $resp = wp_remote_get(
+            add_query_arg(
+                array('from' => $from, 'to' => $to),
+                'https://api.proranktracker.com/v3/urls/history/' . $url_id
+            ),
+            array(
+                'headers' => array('X-TOKEN' => $key, 'Accept' => 'application/json'),
+                'timeout' => 30,
+            )
+        );
+        if (is_wp_error($resp)) {
+            return $this->error('ProRankTracker request failed: ' . $resp->get_error_message(), 502);
+        }
+
+        $body = json_decode((string) wp_remote_retrieve_body($resp), true);
+        if (($body['result'] ?? '') !== 'success') {
+            return $this->error('ProRankTracker error: ' . ($body['error_message'] ?? $body['error'] ?? 'Unknown'), 502);
+        }
+
+        $data  = (array) ($body['data'] ?? array());
+        $terms = array();
+        foreach ((array) ($data['terms'] ?? array()) as $t) {
+            $history = array();
+            foreach ((array) ($t['rankhistory'] ?? array()) as $h) {
+                $history[] = array(
+                    'date' => sanitize_text_field((string) ($h['checked'] ?? '')),
+                    'rank' => (int) ($h['rank'] ?? 0),
+                );
+            }
+            $terms[] = array(
+                'term'       => sanitize_text_field((string) ($t['name'] ?? '')),
+                'engine'     => sanitize_text_field((string) ($t['engine'] ?? '')),
+                'rank'       => (int) ($t['rank'] ?? 0),
+                'topRank'    => (int) ($t['top_rank'] ?? 0),
+                'matchedUrl' => esc_url_raw((string) ($t['matchedurl'] ?? '')),
+                'history'    => $history,
+            );
+        }
+
+        return $this->success(array(
+            'id'    => (string) ($data['id'] ?? ''),
+            'url'   => esc_url_raw((string) ($data['url'] ?? '')),
+            'from'  => $from,
+            'to'    => $to,
+            'terms' => $terms,
         ));
     }
 

@@ -32,6 +32,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "integrations.brevoSenders": { endpoint: "integrations/brevo/senders", method: "GET" },
     "integrations.prtUrls": { endpoint: "integrations/proranktracker/urls", method: "GET" },
     "integrations.prtRanks": { endpoint: "integrations/proranktracker/ranks", method: "GET" },
+    "integrations.prtHistory": { endpoint: "integrations/proranktracker/history", method: "GET" },
     "integrations.validateApiKey": { endpoint: "integrations/validate", method: "POST" },
     "integrations.create": { endpoint: "integrations", method: "POST" },
     "integrations.update": {
