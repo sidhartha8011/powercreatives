@@ -192,6 +192,17 @@ class PCM_Providers
             // Custom capabilities flag — not an AI provider, but an SEO data provider
             'supportsSeo' => true,
         ),
+        'proranktracker' => array(
+            'id'          => 'proranktracker',
+            'name'        => 'ProRankTracker',
+            'apiKeyUrl'   => 'https://app.proranktracker.com/api-doc',
+            'isBuiltIn'   => false,
+            // ProRankTracker provides rank-tracking data (URL/term rankings,
+            // history, SERP dashboards) — not AI generation models.
+            'knownModels' => array(),
+            // Custom capabilities flag — an SEO data provider like Ahrefs
+            'supportsSeo' => true,
+        ),
         'brevo' => array(
             'id'          => 'brevo',
             'name'        => 'Brevo (Email)',
@@ -323,6 +334,7 @@ class PCM_Providers
             'fal'       => 'https://api.fal.ai/v1/models',
             'ahrefs'    => 'https://api.ahrefs.com/mcp/mcp',
             'brevo'     => 'https://api.brevo.com/v3/account',
+            'proranktracker' => 'https://api.proranktracker.com/v3/user/quota',
         );
 
         // Built-in providers don't need validation
@@ -380,6 +392,11 @@ class PCM_Providers
         // --- Brevo: GET /v3/account with the api-key header ---
         if ('brevo' === $provider_id) {
             return self::validate_brevo_key($api_key);
+        }
+
+        // --- ProRankTracker: GET /v3/user/quota with the X-TOKEN header ---
+        if ('proranktracker' === $provider_id) {
+            return self::validate_proranktracker_key($api_key);
         }
 
         // Provider-specific auth headers
@@ -718,6 +735,72 @@ class PCM_Providers
                 'text'   => false,
                 'vision' => false,
                 'email'  => true,
+            ),
+            'models' => array(),
+        );
+    }
+
+    /**
+     * Validate a ProRankTracker API token using GET /v3/user/quota.
+     *
+     * ProRankTracker authenticates with a Personal Access Token in the
+     * `X-TOKEN` header (not Bearer). The quota endpoint is free, has no
+     * side effects, and returns {"result":"success"} with a valid token;
+     * 401/403 (or "result":"error") indicates an invalid token. PRT has
+     * no AI models, so a valid token reports the `seo` capability only.
+     *
+     * @param string $api_key ProRankTracker Personal Access Token.
+     * @return array Validation result.
+     */
+    private static function validate_proranktracker_key(string $api_key): array
+    {
+        $response = wp_remote_get('https://api.proranktracker.com/v3/user/quota', array(
+            'headers' => array(
+                'X-TOKEN' => $api_key,
+                'Accept'  => 'application/json',
+            ),
+            'timeout' => 15,
+        ));
+
+        if (is_wp_error($response)) {
+            return array(
+                'valid'        => false,
+                'error'        => 'Connection failed: ' . $response->get_error_message(),
+                'capabilities' => array('image' => false, 'video' => false, 'text' => false, 'vision' => false),
+                'models'       => array(),
+            );
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if ($code === 401 || $code === 403) {
+            return array(
+                'valid'        => false,
+                'error'        => 'Invalid ProRankTracker token — check your token in the API section at https://app.proranktracker.com',
+                'capabilities' => array('image' => false, 'video' => false, 'text' => false, 'vision' => false),
+                'models'       => array(),
+            );
+        }
+
+        // PRT signals failures in the JSON body too: {"result":"error", ...}
+        if ($code < 200 || $code >= 300 || ($body['result'] ?? '') !== 'success') {
+            return array(
+                'valid'        => false,
+                'error'        => 'ProRankTracker token validation failed (HTTP ' . $code . '): ' . ($body['error_message'] ?? 'Unknown error'),
+                'capabilities' => array('image' => false, 'video' => false, 'text' => false, 'vision' => false),
+                'models'       => array(),
+            );
+        }
+
+        return array(
+            'valid'        => true,
+            'capabilities' => array(
+                'image'  => false,
+                'video'  => false,
+                'text'   => false,
+                'vision' => false,
+                'seo'    => true, // PRT provides rank-tracking data, not AI generation
             ),
             'models' => array(),
         );
