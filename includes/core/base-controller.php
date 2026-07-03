@@ -60,12 +60,20 @@ abstract class PCM_REST_Base
             $args = $route_def[3] ?? array(); // Optional: validation args
             $permission = $route_def[4] ?? $this->default_capability; // WP capability
 
-            // 'manage_options:strict' = real WP admin ONLY (no shortcode-gate
-            // bypass). Used by endpoints that expose cross-user data (e.g. the
-            // WP user directory) which a shared-password gate visitor must not see.
-            $permission_callback = ($permission === 'manage_options:strict')
-                ? $this->make_strict_admin_callback()
-                : $this->make_permission_callback($permission);
+            // Capability tiers beyond the default:
+            //  - 'manage_options:strict'  = real WP admin ONLY (no gate bypass) —
+            //    infrastructure/credential routes (connected-site management).
+            //  - 'manage_options:coadmin' = WP admin OR a platform ADMIN (a gate
+            //    user with role='admin') — workspace administration a co-admin may
+            //    do (managing platform users, assigning deliveries). Still never
+            //    reachable by a normal platform user.
+            if ($permission === 'manage_options:strict') {
+                $permission_callback = $this->make_strict_admin_callback();
+            } elseif ($permission === 'manage_options:coadmin') {
+                $permission_callback = $this->make_coadmin_callback();
+            } else {
+                $permission_callback = $this->make_permission_callback($permission);
+            }
 
             register_rest_route(
                 $this->namespace,
@@ -171,6 +179,11 @@ abstract class PCM_REST_Base
                         array('status' => 403)
                     );
                 }
+                // A platform ADMIN bypasses per-module/brand scoping — like a WP admin,
+                // they get workspace-wide access to review/manage everyone's work.
+                if (PCM_Access::is_admin((int) $gate_user->id)) {
+                    return true;
+                }
                 if (!empty($this->module_grant_keys)) {
                     $granted = PCM_Access::granted_module_ids((int) $gate_user->id);
                     if (empty(array_intersect($this->module_grant_keys, $granted))) {
@@ -262,6 +275,46 @@ abstract class PCM_REST_Base
                 );
             }
             if (current_user_can('manage_options')) {
+                return true;
+            }
+            return new WP_Error(
+                'pcm_forbidden',
+                __('Administrator access required.', 'power-creatives'),
+                array('status' => 403)
+            );
+        };
+    }
+
+    /**
+     * Permission callback for WORKSPACE administration — a real WP admin OR a
+     * platform admin (a gate-login user whose PCM role is 'admin'). Lets multiple
+     * admins manage platform users + assign deliveries, while a normal platform
+     * user (role='user') is still refused. Never grants WP-level access: platform
+     * admins can only manage OTHER platform users, never WP accounts.
+     *
+     * @return callable
+     */
+    protected function make_coadmin_callback(): callable
+    {
+        return function (WP_REST_Request $request) {
+            $nonce = $request->get_header('X-WP-Nonce');
+            if (!$nonce || !wp_verify_nonce($nonce, 'wp_rest')) {
+                return new WP_Error(
+                    'pcm_invalid_nonce',
+                    __('Security check failed.', 'power-creatives'),
+                    array('status' => 403)
+                );
+            }
+            if (current_user_can('manage_options')) {
+                return true;
+            }
+            // Platform admin: a gate-authed visitor whose PCM role is 'admin'.
+            if (
+                class_exists('PCM_Gate_Auth')
+                && PCM_Gate_Auth::is_authenticated()
+                && ($gate_user = PCM_Gate_Auth::get_gate_user())
+                && PCM_Access::is_admin((int) $gate_user->id)
+            ) {
                 return true;
             }
             return new WP_Error(

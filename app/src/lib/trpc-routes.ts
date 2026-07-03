@@ -852,6 +852,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "PUT",
         transform: (input: any) => ({ url: `users/${input.pcmId}/password`, body: { password: input.password } }),
     },
+    "users.setRole": {
+        endpoint: "users",
+        method: "PUT",
+        transform: (input: any) => ({ url: `users/${input.pcmId}/role`, body: { role: input.role } }),
+    },
     "users.delete": {
         endpoint: "users",
         method: "DELETE",

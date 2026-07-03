@@ -1,5 +1,39 @@
 # Session Log
 
+## 2026-07-03 — Platform admin roles (multi-admin co-admin) [/task]
+- **Ask:** create platform users as admin OR normal user, so multiple admins can assign + review the
+  work of users. (User chose "Full co-admin".) This DELIBERATELY reverses today's earlier hardening that
+  forced platform users to role='user' — now re-enabled as an explicit, admin-gated choice.
+- **Model:** a platform user with role='admin' is a co-admin — team-wide visibility (all brands /
+  deliveries / approvals), can assign deliveries, and can create/edit/delete/reset + promote other
+  platform users. Normal users stay scoped to their assigned deliveries. Connected-site (seohub)
+  management stays WP-owner-only.
+- **Changes:**
+  - `class-pcm-access.php` `is_admin()` — trusts role='admin' again (dropped the passwordHash guard);
+    safe because role is now only settable via admin-gated writes.
+  - `base-controller.php` — new `manage_options:coadmin` tier (WP admin OR platform admin) via
+    `make_coadmin_callback()`; Source 2 gate grant early-returns for a platform admin (bypasses
+    module/brand scoping, like a WP admin). `:strict` (seohub) unchanged = WP-owner only.
+  - `users/controller.php` — the 5 user routes moved `:strict` → `:coadmin`; new `PUT /users/{id}/role`.
+  - `users/service.php` — `create_user` accepts role again (whitelist); new `set_role()` (whitelist +
+    rejects WP-mirrored rows); `set_assignments()` lets an admin assign ANY delivery + manage the full set.
+  - `class-pcm-shortcode.php` — `get_js_config` sends a platform admin's real role + null (unrestricted)
+    modules/brands so the SPA shows them the admin UI.
+  - Frontend: role selector in Add-user; inline Admin/User dropdown per platform user (`users.setRole`);
+    Sidebar logout distinguishes platform admin (isLoggedIn=false → reload) from WP admin (→ wp-admin).
+- **Security:** independent adversarial audit (security-auditor subagent) — **clean, no vulnerabilities**.
+  Traced the FULL users-table `role` write-inventory across all modules: only 4 sanctioned writers, each
+  capability-derived (WP users) or whitelisted behind admin-gated routes; NO login-time/upsert/webhook
+  path writes a gate user's role. Normal user → 403 everywhere; platform admin can't touch WP accounts or
+  seohub :strict; new queries are `$wpdb->prepare`. Added `PlatformRoleInvariantTest` (a tripwire: fails
+  if any file outside the 4-file allowlist writes users-table role, or if the sanctioned writers drop
+  their whitelist / the gate-auth layer starts writing role).
+- **Verified:** `php -l` clean (5 files); live co-admin permission-matrix 15/15 (is_admin, team-wide vs
+  scoped data, coadmin routes 200/403, promote/demote, seohub :strict blocked); `tsc` 56 = baseline;
+  `vite build` OK; PHPUnit **111/111** (3× for the flaky-order guard). Zip rebuilt →
+  `~/Desktop/power-creatives.zip` (top-level `powerplatform/`). NEEDS hub plugin update; no DB change
+  beyond v1.33.0, no connector change. No commit.
+
 ## 2026-07-03 — SEO heading editor: flatten the H1–H6 tag chip to fit the cell [/task]
 - **Ask:** the tag "boxes" (H2/H3 dropdown) rendered as tall, rounded, floating pills — make them match
   the cell size and look flush.

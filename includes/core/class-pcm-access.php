@@ -257,22 +257,20 @@ class PCM_Access
             global $wpdb;
             $users = PCM_Schema::table('users');
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $row = $wpdb->get_row($wpdb->prepare(
-                "SELECT role, passwordHash FROM {$users} WHERE id = %d",
+            $role = $wpdb->get_var($wpdb->prepare(
+                "SELECT role FROM {$users} WHERE id = %d",
                 $user_id
             ));
-            // A platform (gate-login) user — one with its own passwordHash — is
-            // NEVER a plugin admin. is_admin() mirrors WP manage_options, and a
-            // platform user has no WordPress account, so their stored role must
-            // not grant admin oversight. Without this guard a platform user
-            // minted with role='admin' would gain team-wide read access to every
-            // workspace's brands/deliveries/approvals, because the role-sync in
-            // get_current_pcm_user() only runs for WP logins and never corrects a
-            // gate user's stored role. (passwordHash is set only by
-            // create_platform_user(); WP-mirrored rows never have one.)
-            $is_admin = $row
-                && ((string) $row->role) === 'admin'
-                && empty($row->passwordHash);
+            // Admin status is driven by the stored role, for BOTH kinds of user:
+            //  - WP users: get_current_pcm_user() reconciles their role to their
+            //    live `manage_options` capability on every request, so it stays honest.
+            //  - Platform (gate-login) users: role is set ONLY by the admin-gated
+            //    Users routes (create_user / set_role) — a normal user can never set
+            //    their own role — so a stored 'admin' is a deliberate grant by an
+            //    existing admin (multi-admin / co-admin support). Trusting it here is
+            //    intentional: a platform admin gets the same team-wide oversight
+            //    (all brands/deliveries/approvals) a WP admin has.
+            $is_admin = ((string) $role) === 'admin';
             self::$memo[$key] = array($is_admin);
         }
         return self::$memo[$key][0];

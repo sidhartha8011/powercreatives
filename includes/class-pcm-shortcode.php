@@ -488,24 +488,27 @@ class PCM_Shortcode
             $gate_user = (class_exists('PCM_Gate_Auth') && PCM_Gate_Auth::is_authenticated())
                 ? PCM_Gate_Auth::get_gate_user()
                 : null;
+            // A platform admin (role='admin') runs the SPA as an admin: their real
+            // role drives the admin UI (Users module etc.) and they get unrestricted
+            // module/brand access — matching what the REST layer grants them.
+            $gate_is_admin = $gate_user && class_exists('PCM_Access') && PCM_Access::is_admin((int) $gate_user->id);
             $user_payload = array(
                 'id' => $gate_user ? (int) $gate_user->id : 0,
                 'name' => $gate_user && !empty($gate_user->name)
                     ? (string) $gate_user->name
                     : __('Platform User', 'power-creatives'),
                 'email' => $gate_user && !empty($gate_user->email) ? (string) $gate_user->email : '',
-                'role' => 'user',
+                'role' => $gate_is_admin ? 'admin' : 'user',
                 'avatarUrl' => '',
                 'isLoggedIn' => $is_team_member,
-                // Same restriction model as a non-admin WP user: only the modules
-                // and brands granted via assigned deliveries are visible/usable
-                // (the REST permission callback enforces the same grants).
-                'allowedModules' => $gate_user && class_exists('PCM_Access')
+                // Non-admin: only the modules + brands granted via assigned deliveries
+                // (REST enforces the same). Admin: null = unrestricted (workspace-wide).
+                'allowedModules' => ($gate_user && !$gate_is_admin && class_exists('PCM_Access'))
                     ? PCM_Access::granted_module_ids((int) $gate_user->id)
-                    : array(),
-                'brandsByModule' => $gate_user && class_exists('PCM_Access')
+                    : ($gate_is_admin ? null : array()),
+                'brandsByModule' => ($gate_user && !$gate_is_admin && class_exists('PCM_Access'))
                     ? PCM_Access::brands_by_module((int) $gate_user->id)
-                    : array(),
+                    : ($gate_is_admin ? null : array()),
             );
         }
 

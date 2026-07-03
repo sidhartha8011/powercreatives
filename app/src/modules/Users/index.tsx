@@ -23,6 +23,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
@@ -78,6 +81,20 @@ export function UsersModule() {
   const handleDelete = (u: ManagedUser) => {
     if (!window.confirm(`Delete platform user “${u.name}” (${u.username})? This cannot be undone.`)) return;
     deleteMutation.mutate({ pcmId: u.pcmId });
+  };
+
+  const roleMutation = trpc.users.setRole.useMutation({
+    onSuccess: (_d, vars: any) => {
+      toast.success(`Access level updated to ${vars.role === 'admin' ? 'Admin' : 'User'}.`);
+      refetch();
+    },
+    onError: (err: any) => toast.error(err.message ?? 'Failed to update access level'),
+  });
+
+  const changeRole = (u: ManagedUser, role: 'admin' | 'user') => {
+    if (role === u.role) return;
+    if (role === 'admin' && !window.confirm(`Make “${u.name}” an admin? Admins can see and manage every user's work, assign deliveries, and create other users.`)) return;
+    roleMutation.mutate({ pcmId: u.pcmId, role });
   };
 
   return (
@@ -141,9 +158,25 @@ export function UsersModule() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={u.role === 'admin' ? 'default' : 'secondary'}>
-                      {u.role === 'admin' ? 'Admin' : 'User'}
-                    </Badge>
+                    {u.isPlatformUser ? (
+                      <Select
+                        value={u.role}
+                        onValueChange={(v) => changeRole(u, v as 'admin' | 'user')}
+                        disabled={roleMutation.isLoading}
+                      >
+                        <SelectTrigger className="h-7 w-[104px] text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="user">User</SelectItem>
+                          <SelectItem value="admin">Admin</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Badge variant={u.role === 'admin' ? 'default' : 'secondary'}>
+                        {u.role === 'admin' ? 'Admin' : 'User'}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>
                     {u.assignedDeliveryIds.length === 0 ? (
@@ -237,6 +270,7 @@ function AddUserDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState<'admin' | 'user'>('user');
 
   const createMutation = trpc.users.create.useMutation({
     onSuccess: () => {
@@ -309,6 +343,18 @@ function AddUserDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
               <p className="text-xs text-destructive">Password must be at least 8 characters.</p>
             )}
           </div>
+          <div className="space-y-1">
+            <Label htmlFor="new-role">Access level</Label>
+            <Select value={role} onValueChange={(v) => setRole(v as 'admin' | 'user')}>
+              <SelectTrigger id="new-role">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="user">User — works in their own assigned deliveries</SelectItem>
+                <SelectItem value="admin">Admin — reviews everyone &amp; manages users</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <DialogFooter>
@@ -318,7 +364,7 @@ function AddUserDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <Button
             className="gap-2"
             disabled={!canSubmit}
-            onClick={() => createMutation.mutate({ username, name, email, password })}
+            onClick={() => createMutation.mutate({ username, name, email, password, role })}
           >
             {createMutation.isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
             Create user

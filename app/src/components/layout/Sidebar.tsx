@@ -91,6 +91,8 @@ interface PcmUser {
   email: string;
   role: string;
   avatarUrl: string;
+  /** True only for a real WP-logged-in team member (not a gate/platform user). */
+  isLoggedIn?: boolean;
   /** Per-delivery module grants; null/undefined = unrestricted (admins). */
   allowedModules?: string[] | null;
 }
@@ -120,13 +122,14 @@ function getInitial(name: string): string {
 function handleLogout(): void {
   // Clear the shortcode gate cookie
   document.cookie = 'pcm_shortcode_auth=; path=/; max-age=0';
-  // Redirect to the current page (triggers gate login) or wp-admin
   const user = getPcmUser();
-  if (user.role === 'admin') {
-    // Admin: go back to wp-admin
+  // Only a real WP-logged-in admin goes back to wp-admin. A platform admin (or
+  // any gate user) has no WP session — reload to show the gate login form. Use
+  // isLoggedIn (WP session) to tell them apart, since a platform admin also has
+  // role === 'admin'.
+  if (user.role === 'admin' && user.isLoggedIn) {
     window.location.href = '/wp-admin/';
   } else {
-    // Shortcode gate: reload to show login form
     window.location.reload();
   }
 }

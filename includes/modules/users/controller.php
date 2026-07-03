@@ -35,15 +35,17 @@ class PCM_REST_Users extends PCM_REST_Base
 
     protected function routes(): array
     {
-        // 'manage_options:strict' — real WP admins only. These routes expose the
-        // user directory and MINT login credentials, so the per-user shortcode
-        // gate must NOT grant access (a gate-authed visitor is never a WP admin).
+        // 'manage_options:coadmin' — a real WP admin OR a platform admin (a
+        // gate-login user with role='admin'). Lets multiple admins manage platform
+        // users + assign deliveries; a normal platform user is still refused, and
+        // these routes only ever touch platform users (never WP accounts).
         return array(
-            array('GET',    '/users',                           'list_items',       array(), 'manage_options:strict'),
-            array('POST',   '/users',                           'create_item',      array(), 'manage_options:strict'),
-            array('PUT',    '/users/(?P<id>\d+)/password',      'set_password',     array(), 'manage_options:strict'),
-            array('DELETE', '/users/(?P<id>\d+)',               'delete_item',      array(), 'manage_options:strict'),
-            array('PUT',    '/users/(?P<id>\d+)/deliveries',    'set_deliveries',   array(), 'manage_options:strict'),
+            array('GET',    '/users',                           'list_items',       array(), 'manage_options:coadmin'),
+            array('POST',   '/users',                           'create_item',      array(), 'manage_options:coadmin'),
+            array('PUT',    '/users/(?P<id>\d+)/password',      'set_password',     array(), 'manage_options:coadmin'),
+            array('PUT',    '/users/(?P<id>\d+)/role',          'set_role',         array(), 'manage_options:coadmin'),
+            array('DELETE', '/users/(?P<id>\d+)',               'delete_item',      array(), 'manage_options:coadmin'),
+            array('PUT',    '/users/(?P<id>\d+)/deliveries',    'set_deliveries',   array(), 'manage_options:coadmin'),
         );
     }
 
@@ -74,6 +76,18 @@ class PCM_REST_Users extends PCM_REST_Base
             return $result;
         }
         return $this->success(array('updated' => true));
+    }
+
+    /** PUT /users/{id}/role — change a platform user's access level (admin|user). */
+    public function set_role(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_id = absint($request->get_param('id'));
+        $params = $request->get_json_params() ?: array();
+        $result = $this->service->set_role($pcm_id, (string) ($params['role'] ?? ''));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('updated' => true, 'role' => $result));
     }
 
     /** DELETE /users/{id} — delete a platform user. */

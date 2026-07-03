@@ -102,12 +102,11 @@ class PCM_Users_Service
         $password = (string) ($data['password'] ?? '');
         $name     = sanitize_text_field((string) ($data['name'] ?? ''));
         $email    = trim((string) ($data['email'] ?? ''));
-        // Platform users are ALWAYS 'user'. The 'admin' level mirrors WP
-        // manage_options (team-wide oversight) and must never be granted to a
-        // passwordless gate account — a client login is a self-scoped workspace,
-        // never a plugin admin. (Defence-in-depth: PCM_Access::is_admin() also
-        // refuses to treat any user with a passwordHash as admin.)
-        $role     = 'user';
+        // Access level, set deliberately by the admin creating the account.
+        // 'admin' = a co-admin with workspace-wide oversight (review + manage other
+        // users + assign deliveries); 'user' = a self-scoped workspace user. Only
+        // the admin-gated Users routes reach this, so a normal user can never set it.
+        $role     = in_array(($data['role'] ?? 'user'), array('admin', 'user'), true) ? (string) $data['role'] : 'user';
 
         // Username: 3–191 chars, lowercase letters/digits/._- only (a stable,
         // URL-safe handle — also keeps the derived openId 'pcm_local_<username>' clean).
@@ -171,6 +170,44 @@ class PCM_Users_Service
             return new WP_Error('pcm_password_failed', __('Could not update the password.', 'power-creatives'), array('status' => 500));
         }
         return true;
+    }
+
+    /**
+     * Change a platform user's access level ('admin' | 'user'). WP-mirrored users
+     * are rejected — their role mirrors their live WordPress capability and is
+     * managed in WordPress, not here.
+     *
+     * @param int    $pcm_id Target PCM user id.
+     * @param string $role   'admin' or 'user'.
+     * @return string|WP_Error The applied role, or an error.
+     */
+    public function set_role(int $pcm_id, string $role): string|WP_Error
+    {
+        $role = in_array($role, array('admin', 'user'), true) ? $role : '';
+        if ($role === '') {
+            return new WP_Error('pcm_invalid_role', __('Role must be “admin” or “user”.', 'power-creatives'), array('status' => 400));
+        }
+        $user = PCM_DB::get_user_by_id($pcm_id);
+        if (!$user || empty($user->username)) {
+            return new WP_Error('pcm_not_platform_user', __('Only platform users’ roles can be changed here.', 'power-creatives'), array('status' => 404));
+        }
+        global $wpdb;
+        $table = PCM_Schema::table('users');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $ok = $wpdb->update(
+            $table,
+            array('role' => $role, 'updatedAt' => current_time('mysql')),
+            array('id' => $pcm_id),
+            array('%s', '%s'),
+            array('%d')
+        );
+        if ($ok === false) {
+            return new WP_Error('pcm_role_failed', __('Could not update the role.', 'power-creatives'), array('status' => 500));
+        }
+        if (class_exists('PCM_Access')) {
+            PCM_Access::reset_memo(); // the is_admin memo may be stale for this user
+        }
+        return $role;
     }
 
     /**
@@ -254,17 +291,28 @@ class PCM_Users_Service
             return new WP_Error('pcm_user_not_found', __('User not found.', 'power-creatives'), array('status' => 404));
         }
 
-        // Every requested delivery must be OWNED by the calling admin.
+        // A workspace admin (WP admin or platform admin) may assign ANY existing
+        // delivery and manage the assignee's FULL assignment set. A non-admin owner
+        // is limited to their own deliveries (legacy per-owner scoping).
+        $is_admin         = class_exists('PCM_Access') && PCM_Access::is_admin($admin_id);
         $deliveries_table = PCM_Schema::table('deliveries');
         if (!empty($delivery_ids)) {
             $placeholders = implode(',', array_fill(0, count($delivery_ids), '%d'));
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-            $owned = $wpdb->get_col($wpdb->prepare(
-                "SELECT id FROM {$deliveries_table} WHERE userId = %d AND id IN ({$placeholders})",
-                $admin_id,
-                ...$delivery_ids
-            ));
-            if (count($owned) !== count($delivery_ids)) {
+            if ($is_admin) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+                $valid = $wpdb->get_col($wpdb->prepare(
+                    "SELECT id FROM {$deliveries_table} WHERE id IN ({$placeholders})",
+                    ...$delivery_ids
+                ));
+            } else {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+                $valid = $wpdb->get_col($wpdb->prepare(
+                    "SELECT id FROM {$deliveries_table} WHERE userId = %d AND id IN ({$placeholders})",
+                    $admin_id,
+                    ...$delivery_ids
+                ));
+            }
+            if (count($valid) !== count($delivery_ids)) {
                 return new WP_Error(
                     'pcm_delivery_not_owned',
                     __('One or more deliveries do not exist or are not yours to assign.', 'power-creatives'),
@@ -273,19 +321,27 @@ class PCM_Users_Service
             }
         }
 
-        // Replace the set: remove assignments (for the admin's deliveries) not
-        // in the new list, insert missing ones. Assignments made by OTHER
-        // admins on their own deliveries are left untouched.
+        // Reconcile against the assignee's current set: for an admin that's EVERY
+        // assignment (full management); for a non-admin, only their own deliveries'
+        // assignments (leaving other admins' assignments untouched).
         $assignments_table = PCM_Schema::table('delivery_assignments');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $current = $wpdb->get_col($wpdb->prepare(
-            "SELECT a.deliveryId
-             FROM {$assignments_table} a
-             INNER JOIN {$deliveries_table} d ON d.id = a.deliveryId
-             WHERE a.userId = %d AND d.userId = %d",
-            $assignee_id,
-            $admin_id
-        ));
+        if ($is_admin) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $current = $wpdb->get_col($wpdb->prepare(
+                "SELECT deliveryId FROM {$assignments_table} WHERE userId = %d",
+                $assignee_id
+            ));
+        } else {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $current = $wpdb->get_col($wpdb->prepare(
+                "SELECT a.deliveryId
+                 FROM {$assignments_table} a
+                 INNER JOIN {$deliveries_table} d ON d.id = a.deliveryId
+                 WHERE a.userId = %d AND d.userId = %d",
+                $assignee_id,
+                $admin_id
+            ));
+        }
         $current = array_map('intval', $current ?: array());
 
         foreach (array_diff($current, $delivery_ids) as $remove_id) {
