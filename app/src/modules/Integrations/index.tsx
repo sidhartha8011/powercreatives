@@ -54,6 +54,7 @@ import {
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { trpc } from '@/lib/trpc';
+import { PrtLiveTestSection } from './PrtLiveTestSection';
 
 // ============================================
 // Types (local to this module)
@@ -837,6 +838,11 @@ export function IntegrationsModule() {
                             </DialogFooter>
                           </DialogContent>
                         </Dialog>
+                      )}
+
+                      {/* ProRankTracker live connection test */}
+                      {integration.provider === 'proranktracker' && integration.isActive && (
+                        <PrtLiveTestSection />
                       )}
                     </div>
                   </div>
