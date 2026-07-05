@@ -5172,3 +5172,43 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - ⚠ DEPLOY: connected Brizy sites must REINSTALL the connector (v2.2.0) — the hub zip doesn't push it. The
   Brizy recompile branch needs the live site to fully verify (Brizy API is version-sensitive); the base64
   scan+replace core is proven. Could not drive the user's provided Brizy test site from here.
+
+## 2026-07-05 — Build installable plugin zip (powerplatform/) + fix vendor classmap
+- Regenerated both gitignored artifacts, then packaged. Windows box lacks composer/rsync/zip → used the
+  established workarounds (npm + GNU tar staging + Windows bsdtar for the zip).
+- vendor/ (composer install equivalent): composer.json require = php only + classmap of includes/, so a
+  classmap autoloader IS the whole vendor. Regenerated vendor/composer/autoload_classmap.php with a
+  TOKENIZER-based generator (scratchpad gen_vendor2.php) instead of the prior grep approach. FIX: the old map
+  had 105 entries including 9 PCM_Conn_* classes that live INSIDE the connector heredoc string (not real hub
+  classes); the tokenizer correctly excludes them → 96 real classes, all files present, autoload.php loads OK.
+- app/dist: fresh `npm run build` (vite.config.wp.ts) → index-writer.js (4.6MB) + index.css + chunks/browser.js.
+- Zip: GNU tar copy with excludes (.git/.github/.claude/.agents/node_modules/app/node_modules/app/src/tests/
+  .DS_Store/.vscode) into $STAGE/powerplatform/, then `System32\tar.exe --format=zip` → forward-slash paths.
+- Output: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.36 MB, 478 entries). Verified: top-level
+  folder is ONLY `powerplatform`; contains powerplatform/{power-creatives.php, vendor/autoload.php,
+  vendor/composer/autoload_classmap.php, app/dist/index-writer.js}; 0 backslash paths; no node_modules/app/src/
+  tests/.claude leaked. Not committed (vendor/ + app/dist/ are gitignored anyway).
+
+## 2026-07-05 — SEO Headings: re-scan on every accordion open (fix stale/read-only on reopen)
+- Feedback (20260703, Elementor site eelementor.profitmedia.pro): "headings read-only on some pages not all —
+  maybe update every time the user opens the page (accordion) so the headers are always loaded" + "some
+  headings not editable while others work".
+- Root-cause trace: HeadingRows mounts on expand / unmounts on collapse (SEO/index.tsx:1373 conditional
+  render), but the global React Query staleTime is 30s (main.tsx:21) → re-opening a page within 30s served
+  CACHED headings instead of re-scanning. And a `/scan-headings` timeout on a large page silently falls back
+  (seo/service.php remote_get_headings) to parsing `content.raw`, which is EMPTY for Elementor pages →
+  editable=false (read-only) for that fetch, while classic pages (non-empty raw) stay editable = exactly "read
+  only on SOME pages". Re-opening (fresh scan) recovers it.
+- Fix (SEO/HeadingsPanel.tsx): both getHeadings + remoteGetHeadings queries now use
+  `{ staleTime: 0, refetchOnMount: 'always' }` → a fresh heading scan runs every time a page accordion is
+  opened (the user's explicit suggestion). Recovers transient scan-timeout read-only + stale-after-site-edit.
+- NOT a code gap: the connector's heading key lists already cover Elementor's Heading widget (title +
+  header_size → robust /replace-heading path). Persistent read-only on Elementor pages = the connector on that
+  site is OLDER than the scan-headings build → hub uses the raw-content fallback (Elementor raw is empty). Real
+  fix there = reinstall connector v2.2.0 on eelementor.profitmedia.pro (same deploy step as the Brizy fix).
+- Possible follow-up (needs the live site): inline-HTML headings (Text-Editor widgets, field='') edit via
+  /replace-url on old_html; if the heading carries attributes, the raw builder JSON escapes quotes (\") which
+  the replace search (handles /→\/ but not "→\") won't match → 409 "not found". Left untouched (unconfirmed +
+  connector-side).
+- Verified: npm run check → 56 (baseline, 0 in HeadingsPanel); npm run build clean. Frontend-only, app/dist
+  rebuilt.
