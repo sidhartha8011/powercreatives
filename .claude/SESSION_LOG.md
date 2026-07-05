@@ -5083,3 +5083,92 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   emit the enriched tokens, so advertising them there would mislead.
 - Verified live: PCM_Automation_Triggers::all() → extIDs ✅ on all five, setComment ✅ on comment_added.
   php -l clean; hub zip rebuilt (backend-only, no connector change).
+
+## 2026-07-05 — Approvals Custom Card editor: paint-on-image + typography feedback fixes
+- Feedback image (20260701) on the Custom Card editor: (1) text "much bigger and bloaty… should be small
+  and clean like before"; (2) can't reliably paint on a pasted image — #1 painting doesn't stay when text is
+  added and the image moves, #2 pasting an image below a painted one stretches the paint.
+- ROOT CAUSE of #1 (typography): the editor used `prose prose-sm`, but @tailwindcss/typography is NOT loaded
+  in this Tailwind v4 build (no `.prose`/`65ch` rules ship — the only "prose" in the bundle is the custom
+  `.pcm-notion-prose`; no tailwind.config, no `@plugin`). So the classes were inert and content rendered at
+  unstyled browser defaults (h1≈32px, loose margins) = "bigger and bloaty". Same latent issue exists in
+  AIChatBox/OptimizeModal (not flagged, simple content). Writer's editor already sidesteps this with an
+  explicit `#pcm-root .writer-editor` type block.
+- FIX typography (user chose "body text font"): added `#pcm-root .pcm-card-editor` compact type scale to
+  app/src/index.css (13px base, em-scaled headings 1.5/1.3/1.12/1em, tight margins, restored list markers),
+  scoped under #pcm-root to beat the global :where() reset; swapped the editor content class from
+  `prose prose-sm max-w-none` → `pcm-card-editor max-w-none` in CustomCardEditor.tsx.
+- FIX painting #1/#2 (per-image annotation baked into the image): images are now annotatable IN PLACE —
+  double-click an image, or select it + click Annotate, opens ImageAnnotator on that image; onInsert replaces
+  the node at its position (tr.setNodeMarkup) instead of inserting a duplicate. The annotator flattens strokes
+  INTO the image at natural resolution, so the paint moves + scales with the image and never stretches. Also
+  stopped the whole-card draw overlay from stretching: `absolute inset-0 h-full w-full` → `inset-x-0 top-0
+  w-full` (natural height, top-aligned). Annotate button tooltip updated to explain the new flow.
+- Files: app/src/modules/Approvals/components/CustomCardEditor.tsx, app/src/index.css.
+- Verified: npm run check → 56 errors (baseline, 0 in CustomCardEditor); npm run build clean; grep confirms 19
+  `.pcm-card-editor` rules shipped in dist/index.css and no stale `annotateUrl`/`prose prose-sm`/`h-full
+  w-full` refs remain. NOTE: frontend-only — the app/dist bundle must ship (rebuilt). The review-side
+  whole-card overlay (CreativeAssetCard ~594) still uses height:100%; left untouched to avoid grid-layout
+  risk — per-image baked paint is immune there regardless.
+
+## 2026-07-05 — Client review: Approve button inside the opened document (article/custom peek)
+- Feedback image: when a client OPENS a Custom document card (the Notion-style ArticleViewerDialog), there
+  is no Approve button — the requested approval action only existed on the grid card's pcm-card-actions bar.
+- Fix (CreativeAssetCard.tsx): ArticleViewerDialog now takes isApproved/isSubmitted/onApprove and renders a
+  `.pcm-notion-actions` bar with an Approve pill BELOW the content (after .pcm-notion-prose, inside
+  .pcm-notion-col). Wired to the same handleToggleApprove the grid uses (toggle + isSubmitted lock); button
+  flips to green "Approved" via isApproved. Applies to both custom and article peek views.
+- CSS (client-review.css): added `.pcm-notion-actions` + `.pcm-notion-approve` (dark→green pill mirroring the
+  grid). Colors are INLINED, not var(--ink)/var(--approve): the dialog portals to <body>, outside the
+  .pcm-client-review token scope — same reason the existing notion modal defines its own --pcm-notion-ink.
+- Verified: npm run check → 56 (baseline, 0 in CreativeAssetCard); npm run build clean; grep confirms the six
+  `.pcm-notion-approve/-actions` rules shipped in dist/index.css. Frontend-only — app/dist rebuilt.
+
+## 2026-07-05 — Custom Card editor: quality pass (toolbar declutter, paint UX, selection-only popup)
+- Feedback image (5 items on the Approvals CustomCardEditor):
+  1. Three image-add icons → keep ONE. Merged Insert image + Add images into a single "Insert image"
+     button; it inserts at selection.to (never replaces a selected range/image, multi-select stacks).
+     Dropped appendImages + the ImagePlus icon.
+  2. Clicking the (active) brush should de-activate paint. Added toggleDraw — the Brush button now toggles;
+     stopping keeps the drawing (strokes save live via onOverlayChange, same as Done).
+  3. Paint options should follow the scroll. CardDrawLayer's toolbar changed from `absolute top-2` to a
+     `sticky top-2` wrapper (click-through wrapper, interactive bar) so it stays visible on tall cards.
+  4. Popup only on text selection. Added `selectionOnly?: boolean` to WriterBubbleMenu (default OFF — Writer
+     canvas unchanged); its shouldShow now returns true only for non-empty, non-node selections when set.
+     CustomCardEditor passes `selectionOnly`.
+  5. Remove dual settings — top bar = image + paint only. Stripped Bold/Italic/H2/H3/bullet/ordered buttons
+     and the "Select text…" hint from the top toolbar; it now holds just Insert image + Annotate + Draw. All
+     text formatting is via the contextual bubble menu (on selection).
+- Files: app/src/modules/Approvals/components/CustomCardEditor.tsx, CardDrawLayer.tsx,
+  app/src/modules/Writer/components/WriterBubbleMenu.tsx.
+- Verified: npm run check → 56 (unchanged baseline; the lone WriterBubbleMenu error is the pre-existing
+  `tippyOptions` type mismatch, just shifted by added lines — 0 new, 0 in CustomCardEditor/CardDrawLayer);
+  npm run build clean; grep confirms no stale appendImages/ImagePlus/Info/formatting refs remain. Frontend-only,
+  app/dist rebuilt.
+
+## 2026-07-05 — Connector: Brizy (base64 builder data) link scan + edit — v2.1.7 → 2.2.0
+- Feedback (20260703): links/edits work on Elementor but NOT Brizy "and others". Root cause: Brizy stores its
+  page as BASE64-encoded `editor_data` (JSON) + `compiled_html` in post meta. Elementor's `_elementor_data` is
+  PLAIN JSON, so both the connector scan (collect_links) and replace (pcm_conn_replace_in over raw meta) see
+  the URLs; Brizy's are base64 → the scan found nothing (fell back to empty post_content → hub showed 0 links)
+  and the replace prefilter `strpos($raw,$url)` skipped Brizy's metas entirely.
+- Fix (includes/modules/seohub/service.php, connector generator):
+  * `pcm_conn_replace_in` — base64 fallback: when a string leaf isn't matched plainly AND is a pure-base64
+    blob whose valid-UTF-8 decode contains a search term, decode→replace→re-encode (new `pcm_conn_replace_b64`).
+    Never corrupts (guarded on a real hit + `preg_match('//u')`). Handles JSON `\/`-escaped + plain forms.
+  * `pcm_conn_meta_may_contain` — replace-loop prefilter now passes metas that contain the URL plainly OR
+    inside a base64 blob (previously Brizy metas were `continue`d before replacement ran).
+  * `collect_links` (scan) — decodes pure-base64 leaves: JSON → recurse (url fields), HTML → existing inline
+    `<a href>` extraction. Surfaces Brizy links from its base64 compiled HTML.
+  * `PCM_Conn_B_Brizy` handler — detect (Brizy plugin + brizy-post/brizy_post_uid meta); NO source_keys
+    (content-based → scans all meta so base64 collect_links finds links); regenerate forces a recompile via
+    `Brizy_Editor_Post::set_needs_compile(true)->save()` (guarded). Registered in the manager.
+  * Version 2.1.7 → 2.2.0 + description. Brizy links carry no elId → hub uses the GLOBAL replace path (no
+    element-scoped Brizy work needed). Existing builders unaffected (base64 is a strict fallback).
+- Verified: `php -l` clean on generator + extracted connector (1029 lines). Stateful unit test (scratchpad
+  brizy_test.php) with a simulated Brizy post (base64 editor_data + compiled_html): Brizy detected ✅;
+  scan_links found the link (anchor "Get started", old URL, source=builder) from the base64 compiled HTML ✅;
+  replace_links rewrote the URL in BOTH blobs, re-encoded + persisted (replaced=2, old gone, new present) ✅.
+- ⚠ DEPLOY: connected Brizy sites must REINSTALL the connector (v2.2.0) — the hub zip doesn't push it. The
+  Brizy recompile branch needs the live site to fully verify (Brizy API is version-sensitive); the base64
+  scan+replace core is proven. Could not drive the user's provided Brizy test site from here.

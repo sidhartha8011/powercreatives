@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
-import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Image as ImageIcon, ImagePlus, PenLine, Brush, Info } from 'lucide-react';
+import { Image as ImageIcon, PenLine, Brush } from 'lucide-react';
 
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
 import { WriterBubbleMenu } from '@/modules/Writer/components/WriterBubbleMenu';
@@ -57,8 +57,9 @@ function ToolbarButton({ onClick, active, title, children }: {
 }
 
 export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange }: CustomCardEditorProps) {
-  // Image to annotate (set after the user picks one via the media library).
-  const [annotateUrl, setAnnotateUrl] = useState<string | null>(null);
+  // Image to annotate. `pos` is the document position of an EXISTING image (paint bakes back
+  // into it in place); `pos: null` means a freshly picked image that gets inserted at the cursor.
+  const [annotate, setAnnotate] = useState<{ url: string; pos: number | null } | null>(null);
   // Whole-card draw layer.
   const [drawing, setDrawing] = useState(false);
   const [drawDims, setDrawDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -94,7 +95,20 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     content: content || '<p></p>',
     editable: true,
     editorProps: {
-      attributes: { class: 'outline-none prose prose-sm max-w-none min-h-[460px] focus:outline-none' },
+      // `pcm-card-editor` carries the compact document typography (index.css). NOTE: the
+      // Tailwind `prose` classes used before were inert — the typography plugin isn't loaded,
+      // so content rendered at unstyled browser defaults (oversized, bloaty).
+      attributes: { class: 'pcm-card-editor outline-none max-w-none min-h-[460px] focus:outline-none' },
+      // Double-click an image to paint directly ON it. Strokes are flattened INTO the image
+      // (ImageAnnotator), so the annotation stays attached and scales with the image — it never
+      // stretches or drifts when the layout reflows, unlike the whole-card draw overlay.
+      handleDoubleClickOn: (_view, _pos, node, nodePos) => {
+        if (node.type.name === 'image' && node.attrs?.src) {
+          setAnnotate({ url: String(node.attrs.src), pos: nodePos });
+          return true;
+        }
+        return false;
+      },
     },
     onUpdate: ({ editor }: { editor: Editor }) => onChange(editor.getHTML()),
   });
@@ -131,19 +145,26 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   // Insert all picked images in ONE transaction (as a fragment). Inserting block images one
   // at a time makes each replace the previous (atom NodeSelection), so only one would survive.
   const insertImage = () => pickImages(
-    (images) => editor?.chain().focus()
-      .insertContent(images.map((img) => ({ type: 'image', attrs: { src: img.url, alt: img.alt } })))
-      .run(),
+    (images) => {
+      if (!editor) return;
+      const nodes = images.map((img) => ({ type: 'image', attrs: { src: img.url, alt: img.alt } }));
+      // Insert at the END of the current selection so a highlighted range or a selected image is
+      // never replaced — repeated inserts (multi-select) keep stacking images in order.
+      editor.chain().focus().insertContentAt(editor.state.selection.to, nodes).run();
+    },
     true,
   );
-  // "Add images" — always APPENDS at the end of the document, so it never replaces a selected
-  // image. Repeated clicks keep stacking images (array-like), regardless of cursor position.
-  const appendImages = () => pickImages((images) => {
-    if (!editor) return;
-    const nodes = images.map((img) => ({ type: 'image', attrs: { src: img.url, alt: img.alt } }));
-    editor.chain().focus().insertContentAt(editor.state.doc.content.size, nodes).run();
-  }, true);
-  const annotateImage = () => pickImages((images) => setAnnotateUrl(images[0].url));
+  // Annotate an image: if one is already selected in the editor, paint on THAT image in place
+  // (strokes bake into it, so they stay attached and never stretch); otherwise pick one from the
+  // media library and insert the annotated copy at the cursor.
+  const annotateImage = () => {
+    const sel = editor?.state.selection as { node?: { type: { name: string }; attrs: { src?: string } }; from: number } | undefined;
+    if (sel?.node?.type?.name === 'image' && sel.node.attrs?.src) {
+      setAnnotate({ url: String(sel.node.attrs.src), pos: sel.from });
+      return;
+    }
+    pickImages((images) => setAnnotate({ url: images[0].url, pos: null }));
+  };
 
   // Snapshot the content box size, then open the whole-card draw layer over it.
   const startDraw = () => {
@@ -152,44 +173,32 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     overlayBeforeDraw.current = overlay ?? null;
     setDrawing(true);
   };
+  // Toggle paint mode. Clicking the active Brush button de-activates paint, keeping whatever was
+  // drawn (strokes are saved live via onOverlayChange, so this is the same as pressing "Done").
+  const toggleDraw = () => { if (drawing) setDrawing(false); else startDraw(); };
 
   if (!editor) return null;
 
   return (
     <div className="rounded-lg border border-border bg-card">
-      {/* Formatting toolbar — drives the shared Tiptap commands (not a new editor). */}
+      {/* Top settings bar — IMAGE + PAINT tools only. All text formatting lives in the
+          contextual bubble menu, which appears when the user selects text. */}
       <div className="flex flex-wrap items-center gap-1 border-b border-border p-1.5">
-        <ToolbarButton title="Bold" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><Bold className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title="Italic" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic className="h-4 w-4" /></ToolbarButton>
-        <span className="mx-1 h-5 w-px bg-border" />
-        <ToolbarButton title="Heading 2" active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title="Heading 3" active={editor.isActive('heading', { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><Heading3 className="h-4 w-4" /></ToolbarButton>
-        <span className="mx-1 h-5 w-px bg-border" />
-        <ToolbarButton title="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title="Numbered list" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered className="h-4 w-4" /></ToolbarButton>
-        <span className="mx-1 h-5 w-px bg-border" />
         <ToolbarButton title="Insert image" onClick={insertImage}><ImageIcon className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title="Add images (append — keeps the existing ones)" onClick={appendImages}><ImagePlus className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title="Annotate an image" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title="Draw on the whole card" active={drawing} onClick={startDraw}><Brush className="h-4 w-4" /></ToolbarButton>
-        {/* The floating formatting toolbar is contextual — it hides while typing.
-            Tell users how to bring it back (select text, or click an empty line). */}
-        <span className="ml-auto flex items-center gap-1.5 pr-1 text-[11px] text-muted-foreground" title="The floating toolbar appears when you select text or place the cursor on an empty line.">
-          <Info className="h-3.5 w-3.5 shrink-0" />
-          Select text (or click an empty line) to open the formatting toolbar
-        </span>
+        <ToolbarButton title="Annotate an image — select an image (or double-click it) to paint directly on it" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
+        <ToolbarButton title={drawing ? 'Stop drawing' : 'Draw on the whole card'} active={drawing} onClick={toggleDraw}><Brush className="h-4 w-4" /></ToolbarButton>
       </div>
       <div className="max-h-[72vh] overflow-y-auto p-4">
         {/* Positioned wrapper so the draw layer + overlay align with the content. */}
         <div ref={contentBoxRef} className="relative">
           <EditorContent editor={editor} />
-          {/* Floating formatting toolbar — the same contextual bubble menu as the Writer
-              canvas (appears on selection / empty paragraph). Image button reuses the
-              multi-select picker; drawing mode hides it to avoid overlapping the canvas. */}
-          {!drawing && <WriterBubbleMenu editor={editor} onOpenImagePicker={insertImage} />}
+          {/* Floating formatting toolbar — the same contextual bubble menu as the Writer canvas,
+              but `selectionOnly` so it appears ONLY when the user selects text (never on empty
+              lines). Image button reuses the picker; drawing mode hides it to avoid overlap. */}
+          {!drawing && <WriterBubbleMenu editor={editor} onOpenImagePicker={insertImage} selectionOnly />}
           {/* Saved draw layer, shown on top of the content while not actively drawing. */}
           {overlay && !drawing && (
-            <img src={overlay} alt="" aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" />
+            <img src={overlay} alt="" aria-hidden className="pointer-events-none absolute inset-x-0 top-0 w-full" />
           )}
           {/* Active whole-card draw layer. */}
           {drawing && (
@@ -207,12 +216,24 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
 
       {/* Annotation: draw on the picked image, then insert the flattened PNG. */}
       <ImageAnnotator
-        open={!!annotateUrl}
-        imageUrl={annotateUrl}
-        onCancel={() => setAnnotateUrl(null)}
+        open={!!annotate}
+        imageUrl={annotate?.url ?? null}
+        onCancel={() => setAnnotate(null)}
         onInsert={(dataUrl) => {
-          editor.chain().focus().setImage({ src: dataUrl, alt: 'Annotated image' }).run();
-          setAnnotateUrl(null);
+          const pos = annotate?.pos ?? null;
+          if (pos != null) {
+            // Replace the annotated image IN PLACE (same document position) so the baked-in
+            // strokes stay attached to that image — no duplicate inserted at the cursor.
+            editor.chain().focus().command(({ tr }) => {
+              const node = tr.doc.nodeAt(pos);
+              if (!node || node.type.name !== 'image') return false;
+              tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: dataUrl, alt: 'Annotated image' });
+              return true;
+            }).run();
+          } else {
+            editor.chain().focus().setImage({ src: dataUrl, alt: 'Annotated image' }).run();
+          }
+          setAnnotate(null);
         }}
       />
     </div>

@@ -45,13 +45,19 @@ export interface CreativeAsset {
 }
 
 /** Read-only article viewer using the full shared Tiptap extension set */
-function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overlay, onClose }: {
+function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overlay, isApproved, isSubmitted, onApprove, onClose }: {
   content: string;
   title: string;
   metaTitle?: string;
   metaDescription?: string;
   /** Persistent freehand draw layer rendered on top of the content (custom cards). */
   overlay?: string;
+  /** Current approval state — drives the in-dialog Approve button label/colour. */
+  isApproved: boolean;
+  /** When submitted (locked lane), approval is disabled — mirrors the grid card. */
+  isSubmitted?: boolean;
+  /** Toggle approval for this asset (same action as the grid card's Approve). */
+  onApprove: () => void;
   onClose: () => void;
 }) {
   const editor = useEditor({
@@ -134,6 +140,20 @@ function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overl
                   style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
                 />
               )}
+            </div>
+
+            {/* Approve action below the content — lets the client sign off from the opened
+                document, not only from the grid card. Same toggle + lock behaviour. */}
+            <div className="pcm-notion-actions">
+              <button
+                type="button"
+                disabled={isSubmitted}
+                className={`pcm-notion-approve ${isApproved ? 'is-approved' : ''}`}
+                onClick={onApprove}
+              >
+                <CheckCircle2 style={{ width: 15, height: 15 }} />
+                {isApproved ? 'Approved' : 'Approve'}
+              </button>
             </div>
           </div>
         </div>
@@ -698,6 +718,9 @@ export function CreativeAssetCard({
           metaTitle={asset.metaTitle}
           metaDescription={asset.metaDescription}
           overlay={type === 'custom' ? asset.overlay : undefined}
+          isApproved={isApproved}
+          isSubmitted={isSubmitted}
+          onApprove={handleToggleApprove}
           onClose={() => setShowArticleViewer(false)}
         />
       )}

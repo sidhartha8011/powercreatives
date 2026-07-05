@@ -21,7 +21,7 @@ _Last updated: 2026-07-03 · NEWEST (2026-07-03, uncommitted): **SEO table headi
 | Name / slug / text-domain | Power Creatives / `power-creatives` |
 | Main file | `power-creatives.php` |
 | Version (`PCM_VERSION`) | **1.7.0** |
-| DB version (`PCM_DB_VERSION`) | **1.32.0** (separate from plugin version. 1.28.0 `deliveries.seoSiteId`; **1.29.0** `projects.deliveryId` (Brand→Delivery→Project, additive + backfill `class-pcm-schema.php:1033`); **1.30.0** seeded a "email client review link on share" automation; **1.31.0** removes that rule — it double-sent vs the built-in dispatch path — idempotent, `class-pcm-activator.php:282`; **1.32.0** adds `externalId varchar(191)` to brands/deliveries/projects — backs the webhook `brandExtID`/`deliveryExtID`/`projectExtID` tokens, additive via dbDelta) |
+| DB version (`PCM_DB_VERSION`) | **1.32.0** (separate from plugin version. 1.28.0 `deliveries.seoSiteId`; **1.29.0** `projects.deliveryId` (Brand→Delivery→Project, additive + backfill `class-pcm-schema.php:1033`); **1.30.0** seeded a "email client review link on share" automation; **1.31.0** removes that rule — it double-sent vs the built-in dispatch path — idempotent, `class-pcm-activator.php:282`; **1.32.0** adds `externalId varchar(191)` to brands/deliveries/projects — backs the webhook `brandExtID`/`deliveryExtID`/`projectExtID` tokens, additive via dbDelta; **1.33.0** — further additive dbDelta since the last map edit, no explicit activator gate ≤1.31 so verify exact columns against `PCM_Schema` if needed) |
 | Requires WP / PHP | 6.4+ / 8.1+ |
 | Const prefix | `PCM_` |
 | Composer package | `antigravity/power-creatives` (type `wordpress-plugin`) |
@@ -885,10 +885,24 @@ The HMAC handshake / `register_ping` / per-tenant connector / "Pending connectio
 above is **legacy and frontend-orphaned** (kept in the backend, unused by the UI). The live
 flow is a **one-paste pairing code**, which sidesteps the public-hub requirement entirely:
 - **Connector = `PCM_SEOHub_Service::connector_php_simple()`** (generic, no handshake), now
-  **v2.0.0 — universal builder-aware link replacement**: pluggable handler architecture inside the
-  connector — `PCM_Conn_Builder_Handler` interface + `PCM_Conn_B_{Elementor,Bricks,Divi,WPBakery,
-  Oxygen,Breakdance}` (detect() via builder meta/content signals + regenerate() its CSS/cache) +
+  **v2.2.0 (was v2.0.0 = universal builder-aware link replacement)**: pluggable handler architecture
+  inside the connector — `PCM_Conn_Builder_Handler` interface + `PCM_Conn_B_{Elementor,Bricks,Divi,
+  WPBakery,Oxygen,Breakdance,Brizy}` (detect() via builder meta/content signals + regenerate() its CSS/cache) +
   `PCM_Conn_Builder_Manager` (register/detect/replace_links) + `pcm_conn_builder_manager()` registry.
+  **2.2.0 = BASE64-aware scan + replace (Brizy).** Brizy stores its page as base64-encoded `editor_data`
+  (JSON) + `compiled_html` in post meta, invisible to the plain string pass — so links neither scanned nor
+  edited. Fix: `pcm_conn_replace_in` decodes a pure-base64 leaf, replaces inside, re-encodes (only on a
+  real, valid-UTF-8 hit — never corrupts); `pcm_conn_meta_may_contain` gates the replace-loop prefilter on
+  plain-OR-base64 presence (else Brizy metas were skipped); `collect_links` decodes base64 leaves to recover
+  `<a href>` (compiled HTML) / `url` fields (editor JSON). `PCM_Conn_B_Brizy` has no source_keys (content-based
+  scan of all meta) + regenerate() forces a Brizy recompile via `Brizy_Editor_Post::set_needs_compile(true)`.
+  Existing builders unaffected (base64 path is a strict fallback + pure-base64 guard). Brizy links carry no
+  elId → hub uses the GLOBAL replace path.
+  2.1.x added connector routes **`/replace-anchor`** (edit a link's anchor text, incl. builder widget
+  labels + Elementor `el_id`), **`/scan-links`**, **`/scan-headings`** + **`/replace-heading`** (H1–H6
+  scan/edit, builder-widget text+level), used by the hub's `remote_replace_anchor` /
+  `remote_scan_headings` / `remote_update_heading` and the SEO **Headings** editor (`SEO/HeadingsPanel.tsx`
+  + `/seo/{content,sites/{id}/content/{post}}/headings[…]` routes).
   `POST /pcm-conn/v1/replace-url` {post_id, old, new | replacements{}} → manager replaces the URL in
   post_content AND **every custom field** (serialization-safe via `pcm_conn_replace_in` recursion over
   strings/arrays/objects + `update_metadata_by_mid(wp_slash())`, matching plain + JSON `\/` forms) →

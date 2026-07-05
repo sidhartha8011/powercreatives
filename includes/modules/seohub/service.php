@@ -385,8 +385,8 @@ class PCM_SEOHub_Service
 <?php
 /**
  * Plugin Name: Power Creatives Connector
- * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance + any custom field, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
- * Version: 2.1.7
+ * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
+ * Version: 2.2.0
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -445,10 +445,45 @@ function pcm_conn_purge_caches($post_id) {
 // Recursively replace strings inside a meta value (which may be a JSON string, a PHP-serialized
 // array, or nested objects — page builders use all three). Counts replacements via $count.
 function pcm_conn_replace_in($val, $search, $replace, &$count) {
-    if (is_string($val)) { $c = 0; $out = str_replace($search, $replace, $val, $c); $count += $c; return $out; }
+    if (is_string($val)) {
+        $c = 0; $out = str_replace($search, $replace, $val, $c); $count += $c;
+        // Builders like Brizy store their page (editor_data) and compiled HTML BASE64-encoded, so a
+        // plain string pass can't see the URLs. If nothing matched and this is a base64 blob whose
+        // DECODED form carries a search term, replace inside and re-encode. Guarded on a real hit +
+        // a valid-UTF-8 decode, so ordinary base64-ish strings (and binary blobs) are never altered.
+        if ($c === 0) { $out = pcm_conn_replace_b64($out, $search, $replace, $count); }
+        return $out;
+    }
     if (is_array($val))  { foreach ($val as $k => $v) { $val[$k] = pcm_conn_replace_in($v, $search, $replace, $count); } return $val; }
     if (is_object($val)) { foreach (get_object_vars($val) as $k => $v) { $val->$k = pcm_conn_replace_in($v, $search, $replace, $count); } return $val; }
     return $val;
+}
+/** Decode a base64 blob, replace inside, re-encode — only when it cleanly decodes to UTF-8 text
+ *  that actually contains a search term. Returns the input unchanged otherwise (never corrupts). */
+function pcm_conn_replace_b64($val, $search, $replace, &$count) {
+    if (strlen($val) < 24 || !preg_match('/^[A-Za-z0-9+\/]+={0,2}$/', $val)) { return $val; }
+    $dec = base64_decode($val, true);
+    if ($dec === false || $dec === '' || !preg_match('//u', $dec)) { return $val; }
+    $hit = false;
+    foreach ($search as $s) { if ($s !== '' && strpos($dec, $s) !== false) { $hit = true; break; } }
+    if (!$hit) { return $val; }
+    $c = 0; $ndec = str_replace($search, $replace, $dec, $c);
+    if ($c === 0) { return $val; }
+    $count += $c;
+    return base64_encode($ndec);
+}
+/** True if a search term appears in $raw directly, OR inside a base64-encoded blob within it — so
+ *  the replace pass isn't skipped for builders (Brizy) that store their data base64-encoded. */
+function pcm_conn_meta_may_contain($raw, $search) {
+    foreach ($search as $s) { if ($s !== '' && strpos($raw, $s) !== false) { return true; } }
+    if (preg_match_all('/[A-Za-z0-9+\/]{32,}={0,2}/', $raw, $m)) {
+        foreach ($m[0] as $blob) {
+            $dec = base64_decode($blob, true);
+            if ($dec === false || $dec === '') { continue; }
+            foreach ($search as $s) { if ($s !== '' && strpos($dec, $s) !== false) { return true; } }
+        }
+    }
+    return false;
 }
 
 // ── Universal builder-aware link replacement ────────────────────────────────────────────────
@@ -526,6 +561,30 @@ class PCM_Conn_B_Breakdance extends PCM_Conn_Builder_Base {
         if (function_exists('__breakdance_clearCachedCssForPost')) { try { __breakdance_clearCachedCssForPost($post_id); } catch (\Throwable $e) {} }
     }
 }
+class PCM_Conn_B_Brizy extends PCM_Conn_Builder_Base {
+    public function key() { return 'brizy'; }
+    public function label() { return 'Brizy'; }
+    // No source_keys → treated as CONTENT-based, so scan_links walks post_content + ALL meta and the
+    // base64-aware collect_links surfaces links from Brizy's base64 compiled HTML / editor JSON.
+    public function detect($post_id) {
+        return (class_exists('Brizy_Editor_Post') || defined('BRIZY_VERSION'))
+            && (get_post_meta($post_id, 'brizy_post_uid', true) !== ''
+                || $this->meta_has($post_id, 'brizy-post') || $this->meta_has($post_id, 'brizy'));
+    }
+    public function regenerate($post_id) {
+        // The URL swap itself is handled generically (editor_data + compiled HTML are base64, so
+        // pcm_conn_replace_in decodes/replaces/re-encodes them). Here we force Brizy to recompile its
+        // static HTML from the updated editor data via its own API — encoding-safe across versions.
+        if (!class_exists('Brizy_Editor_Post')) { return; }
+        try {
+            $post = get_post($post_id);
+            if (!$post) { return; }
+            $bp = Brizy_Editor_Post::get($post);
+            if (is_object($bp) && method_exists($bp, 'set_needs_compile')) { $bp->set_needs_compile(true); }
+            if (is_object($bp) && method_exists($bp, 'save')) { $bp->save(); }
+        } catch (\Throwable $e) {}
+    }
+}
 class PCM_Conn_Builder_Manager {
     private $handlers = array();
     public function register($h) { $this->handlers[] = $h; return $this; }
@@ -555,9 +614,10 @@ class PCM_Conn_Builder_Manager {
         // 2. EVERY custom field — serialization-safe (JSON strings, PHP-serialized arrays, objects).
         $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
         foreach ((array) $rows as $row) {
-            $raw = (string) $row->meta_value; $hit = false;
-            foreach ($search as $s) { if ($s !== '' && strpos($raw, $s) !== false) { $hit = true; break; } }
-            if (!$hit) { continue; }
+            $raw = (string) $row->meta_value;
+            // Skip metas that can't hold the URL — directly OR base64-encoded (Brizy editor_data /
+            // compiled HTML). Without the encoded check, Brizy's metas were skipped and never edited.
+            if (!pcm_conn_meta_may_contain($raw, $search)) { continue; }
             $cnt = 0; $newVal = pcm_conn_replace_in(maybe_unserialize($raw), $search, $replace, $cnt);
             if ($cnt > 0) {
                 // Write the exact value via $wpdb — update_metadata_by_mid()'s slashing differs by WP
@@ -827,6 +887,21 @@ class PCM_Conn_Builder_Manager {
         if (is_object($val)) { foreach (get_object_vars($val) as $v) { self::collect_links($v, $out, $label, $el_id); } return; }
         if (is_string($val) && stripos($val, '<a ') !== false && preg_match_all('#<a\s[^>]*href=(["\'])(.*?)\1[^>]*>(.*?)</a>#is', $val, $m, PREG_SET_ORDER)) {
             foreach ($m as $mm) { if (preg_match('#^https?://#i', $mm[2])) { $out[] = array('anchor' => trim(wp_strip_all_tags($mm[3])), 'to' => $mm[2], 'html' => $mm[0], 'source' => 'builder', 'elId' => $el_id); } }
+            return;
+        }
+        // Builders like Brizy keep their page as a BASE64-encoded blob (compiled HTML + editor JSON),
+        // so links are invisible to the plain scan. Decode and recurse: HTML → inline <a> extraction
+        // above; JSON → normal array walk (url fields). Guarded on a clean UTF-8 decode.
+        if (is_string($val) && strlen($val) >= 24 && preg_match('/^[A-Za-z0-9+\/]+={0,2}$/', $val)) {
+            $dec = base64_decode($val, true);
+            if ($dec !== false && $dec !== '' && preg_match('//u', $dec)) {
+                $t = ltrim($dec);
+                if ($t !== '' && ($t[0] === '{' || $t[0] === '[')) {
+                    $j = json_decode($dec, true);
+                    if (is_array($j)) { self::collect_links($j, $out, $label, $el_id); return; }
+                }
+                if (stripos($dec, '<a ') !== false) { self::collect_links($dec, $out, $label, $el_id); }
+            }
         }
     }
     /** Best label among a node's bespoke string fields: keys containing text/title/label/name
@@ -1060,7 +1135,8 @@ function pcm_conn_builder_manager() {
     if ($mgr === null) {
         $mgr = new PCM_Conn_Builder_Manager();
         $mgr->register(new PCM_Conn_B_Elementor())->register(new PCM_Conn_B_Bricks())->register(new PCM_Conn_B_Divi())
-            ->register(new PCM_Conn_B_WPBakery())->register(new PCM_Conn_B_Oxygen())->register(new PCM_Conn_B_Breakdance());
+            ->register(new PCM_Conn_B_WPBakery())->register(new PCM_Conn_B_Oxygen())->register(new PCM_Conn_B_Breakdance())
+            ->register(new PCM_Conn_B_Brizy());
     }
     return $mgr;
 }

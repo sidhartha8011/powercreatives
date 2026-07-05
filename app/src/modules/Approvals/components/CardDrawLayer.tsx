@@ -116,8 +116,11 @@ export function CardDrawLayer({ width, height, initial, onChange, onDone, onCanc
 
   return (
     <div className="absolute inset-0 z-20">
-      {/* Floating toolbar */}
-      <div className="absolute left-1/2 top-2 z-10 flex -translate-x-1/2 flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-neutral-900/95 px-2 py-1.5 shadow-lg">
+      {/* Toolbar — STICKY so the paint options follow the page as the user scrolls a tall card.
+          The wrapper is click-through (pointer-events-none) so drawing works anywhere; only the
+          bar itself is interactive. */}
+      <div className="pointer-events-none sticky top-2 z-30 flex justify-center">
+        <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-neutral-900/95 px-2 py-1.5 shadow-lg">
         {COLORS.map((c) => (
           <button
             key={c}
@@ -147,6 +150,7 @@ export function CardDrawLayer({ width, height, initial, onChange, onDone, onCanc
         <span className="mx-0.5 h-4 w-px bg-white/15" />
         <button type="button" onClick={onCancel} title="Cancel" className="flex h-6 items-center gap-1 rounded px-2 text-xs text-white/80 hover:bg-white/10"><X className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={onDone} title="Done" className="flex h-6 items-center gap-1 rounded bg-blue-600 px-2 text-xs font-medium text-white hover:bg-blue-700"><Check className="h-3.5 w-3.5" /> Done</button>
+        </div>
       </div>
       <canvas
         ref={canvasRef}

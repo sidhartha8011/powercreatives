@@ -35,6 +35,13 @@ import React, { useCallback, useState } from 'react';
 interface WriterBubbleMenuProps {
   editor: Editor;
   onOpenImagePicker: () => void;
+  /**
+   * When true, the menu appears ONLY on a non-empty TEXT selection — not on empty
+   * paragraphs and not on node selections (e.g. a clicked image). The Writer canvas
+   * leaves this off (default) so the menu also pops on empty lines for quick formatting;
+   * the Approvals custom-card editor turns it on so the popup is strictly selection-driven.
+   */
+  selectionOnly?: boolean;
 }
 
 /** Shared button style — active state uses design system accent */
@@ -75,20 +82,24 @@ function Divider() {
 
 const iconSize = 'h-[15px] w-[15px]';
 
-export function WriterBubbleMenu({ editor, onOpenImagePicker }: WriterBubbleMenuProps) {
+export function WriterBubbleMenu({ editor, onOpenImagePicker, selectionOnly = false }: WriterBubbleMenuProps) {
   const [showLinkInput, setShowLinkInput] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
 
   // ── Custom shouldShow Logic ──
-  // Shows when there's a text selection OR when cursor is on an empty paragraph
+  // Shows on a text selection, and (unless selectionOnly) also on an empty paragraph.
   const shouldShow = useCallback(({ editor: currentEditor, state }: { editor: Editor, state: any }) => {
     const { selection } = state;
     const { empty } = selection;
 
-    // 1. Text selection (not empty)
+    // 1. Text selection (not empty). In selectionOnly mode, exclude node selections
+    //    (e.g. a clicked image) so the popup is strictly text-selection driven.
     if (!empty) {
-      return true;
+      return selectionOnly ? !selection.node : true;
     }
+
+    // In selectionOnly mode nothing else triggers the popup.
+    if (selectionOnly) return false;
 
     // 2. Empty paragraph
     const { $from } = selection;
@@ -99,7 +110,7 @@ export function WriterBubbleMenu({ editor, onOpenImagePicker }: WriterBubbleMenu
     }
 
     return false;
-  }, []);
+  }, [selectionOnly]);
 
   // ── Link handling ──
   const handleSetLink = useCallback(() => {
