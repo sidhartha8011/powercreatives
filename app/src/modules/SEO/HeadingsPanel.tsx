@@ -58,13 +58,18 @@ export function HeadingRows({
 }) {
   const isLocal = siteId === 'local';
 
+  // Re-scan the page's headings EVERY time its accordion is opened (HeadingRows mounts on
+  // expand, unmounts on collapse). Without this the global 30s staleTime serves cached headings
+  // on re-open, so a page edited/re-scanned recently — or one whose first scan came back partial
+  // or read-only — would show stale data. `refetchOnMount: 'always'` forces a fresh scan per open
+  // so the headings (and their editable flags) are always current.
   const localQuery = trpc.seo.getHeadings.useQuery(
     { id: postId },
-    { enabled: isLocal },
+    { enabled: isLocal, staleTime: 0, refetchOnMount: 'always' },
   );
   const remoteQuery = trpc.seo.remoteGetHeadings.useQuery(
     { siteId: siteId as number, postId, type },
-    { enabled: !isLocal },
+    { enabled: !isLocal, staleTime: 0, refetchOnMount: 'always' },
   );
   const query = isLocal ? localQuery : remoteQuery;
 
