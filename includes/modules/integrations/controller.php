@@ -42,6 +42,8 @@ class PCM_REST_Integrations extends PCM_REST_Base
                 array('GET', '/integrations/proranktracker/urls', 'prt_urls'),
                 array('GET', '/integrations/proranktracker/ranks', 'prt_ranks'),
                 array('GET', '/integrations/proranktracker/history', 'prt_history'),
+                array('GET', '/integrations/gsc/properties', 'gsc_properties'),
+                array('POST', '/integrations/gsc/stats', 'gsc_stats'),
 
             // Validation
                 array('POST', '/integrations/validate', 'validate_api_key'),
@@ -137,6 +139,85 @@ class PCM_REST_Integrations extends PCM_REST_Base
             );
         }
         return $this->success($urls);
+    }
+
+    /**
+     * GET /integrations/gsc/properties — the GSC properties the connected service
+     * account can read. Used by the SEO table for a clear "add the account to your
+     * property" error and by the Integrations card for troubleshooting.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function gsc_properties(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        try {
+            $key = $this->get_provider_api_key('gsc', (int) $pcm_user->id);
+        } catch (\RuntimeException $e) {
+            return $this->error('No active Google Search Console integration found.', 400);
+        }
+        $props = PCM_GSC::list_properties($key);
+        if (is_wp_error($props)) {
+            return $this->error($props->get_error_message(), 502);
+        }
+        $creds = PCM_GSC::parse_credentials($key);
+        return $this->success(array(
+            'properties'   => $props,
+            'accountEmail' => is_wp_error($creds) ? '' : $creds['email'],
+        ));
+    }
+
+    /**
+     * POST /integrations/gsc/stats {site?, days?} — per-page Search Console stats
+     * (clicks / impressions / CTR / avg position / top queries) for the property
+     * matching `site` (empty = this WordPress site). Powers the SEO table's
+     * Traffic / Impressions / CTR / Position / Top Queries columns.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function gsc_stats(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        try {
+            $key = $this->get_provider_api_key('gsc', (int) $pcm_user->id);
+        } catch (\RuntimeException $e) {
+            return $this->error('No active Google Search Console integration found — add one on the Integrations page.', 400);
+        }
+        $p    = $request->get_json_params();
+        $site = is_array($p) ? trim((string) ($p['site'] ?? '')) : '';
+        $days = is_array($p) ? (int) ($p['days'] ?? 28) : 28;
+        if ($site === '') {
+            $site = home_url('/');
+        }
+
+        $props = PCM_GSC::list_properties($key);
+        if (is_wp_error($props)) {
+            return $this->error($props->get_error_message(), 502);
+        }
+        $property = PCM_GSC::match_property($props, $site);
+        if ($property === '') {
+            $creds = PCM_GSC::parse_credentials($key);
+            $email = is_wp_error($creds) ? 'the service account' : $creds['email'];
+            $have  = empty($props) ? 'none' : implode(', ', $props);
+            return $this->error(sprintf(
+                'The service account has no access to a Search Console property for %s. In GSC → Settings → Users and permissions, add %s as a user on that property. Properties it can currently read: %s.',
+                $site,
+                $email,
+                $have
+            ), 404);
+        }
+
+        $stats = PCM_GSC::page_stats($key, $property, max(1, min(180, $days)));
+        if (is_wp_error($stats)) {
+            return $this->error($stats->get_error_message(), 502);
+        }
+        return $this->success(array(
+            'property' => $property,
+            'range'    => $stats['range'],
+            'pages'    => $stats['pages'], // keyed by normalized URL (host+path, no www/trailing slash)
+        ));
     }
 
     /**

@@ -45,6 +45,7 @@ require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-prompt-placeholders.php';
 
 // ── Core: Provider metadata & image utilities ──
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-providers.php';
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-gsc.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-image-utils.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-website-scraper.php';
 

@@ -564,7 +564,7 @@ export function IntegrationsModule() {
                         <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                         <Input
                           type="password"
-                          placeholder="Enter your API key"
+                          placeholder={selectedProvider === 'gsc' ? 'Paste the FULL service-account JSON key file here' : 'Enter your API key'}
                           value={apiKey}
                           onChange={(e) => {
                             setApiKey(e.target.value);
@@ -587,6 +587,16 @@ export function IntegrationsModule() {
                       >
                         Get API key <ExternalLink className="w-3 h-3" />
                       </a>
+                    )}
+                    {/* GSC uses a Google Cloud service account, not a classic API key —
+                        spell out the 3 one-time steps so setup doesn't need a manual. */}
+                    {selectedProvider === 'gsc' && (
+                      <div className="rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground space-y-1">
+                        <p className="font-medium text-foreground">One-time setup (~5 min):</p>
+                        <p>1. In Google Cloud → IAM → Service Accounts: create an account, then Keys → Add key → JSON. Enable the "Google Search Console API" for the project.</p>
+                        <p>2. Open the downloaded .json file and paste its ENTIRE contents into the field above, then Validate.</p>
+                        <p>3. In Search Console → Settings → Users and permissions: add the service account's email (client_email in the JSON) as a user on each property you want stats for.</p>
+                      </div>
                     )}
                   </div>
                 )}

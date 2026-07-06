@@ -17,6 +17,7 @@ import {
   Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, ChevronDown, ChevronRight, RefreshCw, Copy,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
   Image as ImageIcon, Link2, Calendar, TrendingUp, Eye, Unlink,
+  MousePointerClick, Crosshair, Search as SearchIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -256,7 +257,12 @@ const TOGGLE_COLUMNS: { key: string; label: string }[] = [
   { key: 'externalLinks', label: 'External Links' },
   { key: 'brokenLinks', label: 'Broken Links' },
   { key: 'date', label: 'Date' },
+  // Google Search Console block — filled by the "GSC stats" pull (last 28 days).
   { key: 'traffic', label: 'Traffic' },
+  { key: 'impressions', label: 'Impressions' },
+  { key: 'ctr', label: 'CTR' },
+  { key: 'position', label: 'Position' },
+  { key: 'gscKeywords', label: 'Top Queries' },
   { key: 'author', label: 'Author' },
   { key: 'actions', label: 'Actions' },
 ];
@@ -288,6 +294,7 @@ const HEAD_ICONS: Record<string, LucideIcon> = {
   type: FileText, title: Type, status: CircleDot, schema: Braces, author: User,
   slug: Link2, featuredImage: ImageIcon, supportingKeyword: KeyRound,
   date: Calendar, traffic: TrendingUp,
+  impressions: Eye, ctr: MousePointerClick, position: Crosshair, gscKeywords: SearchIcon,
   internalLinks: Link2, externalLinks: ExternalLink, brokenLinks: Unlink, ...FIELD_ICONS,
 };
 /** Default px width per column (seeds the spreadsheet layout on first use). */
@@ -295,6 +302,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   type: 90, title: 240, slug: 160, featuredImage: 72, status: 120,
   metaTitle: 200, metaDescription: 260, primaryKeyword: 150, metaKeywords: 180,
   supportingKeyword: 150, schema: 150, date: 120, traffic: 90, author: 120,
+  impressions: 110, ctr: 80, position: 95, gscKeywords: 220,
   internalLinks: 110, externalLinks: 110, brokenLinks: 110,
   actions: 100,
 };
@@ -384,6 +392,40 @@ export function SEOModule() {
   // effective saveCell (works remote); duplicate stays local-only.
   const bulkDelete = isLocal ? localBulkDelete : remote.deleteRows;
   const bulkDuplicate = isLocal ? localBulkDuplicate : remote.bulkDuplicate;
+
+  // ── Google Search Console stats (Traffic / Impressions / CTR / Position / Top Queries) ──
+  // Pulled on demand via the "GSC stats" button — one property-wide query (last 28 days),
+  // results keyed by normalized page URL and matched to rows via their permalink. Works for
+  // the local site ('' → home_url on the backend) and connected sites (their URL).
+  const [gscPages, setGscPages] = useState<Record<string, { clicks: number; impressions: number; ctr: number; position: number; keywords: string[] }>>({});
+  const [gscRange, setGscRange] = useState<{ start: string; end: string } | null>(null);
+  const [gscPulling, setGscPulling] = useState(false);
+  const gscStatsMutation = trpc.integrations.gscStats.useMutation();
+  // Mirrors PCM_GSC::norm_url — lowercase host, no www, no trailing slash.
+  const normGscUrl = useCallback((url: string) => {
+    try {
+      const u = new URL(url);
+      return u.hostname.toLowerCase().replace(/^www\./, '') + u.pathname.replace(/\/+$/, '');
+    } catch { return ''; }
+  }, []);
+  const handlePullGsc = useCallback(async () => {
+    if (gscPulling) return;
+    setGscPulling(true);
+    try {
+      const data: any = await gscStatsMutation.mutateAsync({ site: isLocal ? '' : (activeSite?.url ?? ''), days: 28 });
+      const pages = data?.pages && typeof data.pages === 'object' ? data.pages : {};
+      setGscPages(pages);
+      setGscRange(data?.range ?? null);
+      const n = Object.keys(pages).length;
+      toast.success(`Search Console: stats for ${n} page${n === 1 ? '' : 's'} — ${String(data?.property ?? '')}`);
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Could not pull Search Console stats');
+    } finally {
+      setGscPulling(false);
+    }
+  }, [gscPulling, gscStatsMutation, isLocal, activeSite]);
+  // Stats belong to one property — drop them when the user switches site tabs.
+  useEffect(() => { setGscPages({}); setGscRange(null); }, [siteId]);
   // Per-column filters (funnel icon in each column header).
   const filterDefs = useMemo(() => buildFilterDefs(options), [options]);
   const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters<SeoRow>();
@@ -939,10 +981,35 @@ export function SEOModule() {
           </TableCell>
         );
       case 'traffic':
-        // Placeholder — real data arrives with the Google Search Console connector.
+      case 'impressions':
+      case 'ctr':
+      case 'position':
+      case 'gscKeywords': {
+        // Google Search Console block — filled by the "GSC stats" pull.
+        const g = gscPages[normGscUrl(row.permalink ?? '')];
+        const hint = gscRange
+          ? `Search Console, ${gscRange.start} → ${gscRange.end}`
+          : 'Click "GSC stats" to pull Search Console data';
+        if (!g) {
+          return <TableCell key={key} className="text-center text-xs text-muted-foreground" title={hint}>—</TableCell>;
+        }
+        if (key === 'gscKeywords') {
+          const kw = g.keywords.join(', ');
+          return (
+            <TableCell key={key} className="text-xs text-muted-foreground truncate" title={kw ? `Top queries (${hint}): ${kw}` : hint}>
+              {kw || '—'}
+            </TableCell>
+          );
+        }
+        const value =
+          key === 'traffic' ? g.clicks.toLocaleString()
+          : key === 'impressions' ? g.impressions.toLocaleString()
+          : key === 'ctr' ? `${g.ctr}%`
+          : g.position.toFixed(1);
         return (
-          <TableCell key={key} className="text-center text-xs text-muted-foreground" title="Search traffic — connect Google Search Console (coming soon)">—</TableCell>
+          <TableCell key={key} className="text-center text-xs tabular-nums" title={hint}>{value}</TableCell>
         );
+      }
       case 'internalLinks':
       case 'externalLinks':
       case 'brokenLinks': {
@@ -1149,6 +1216,15 @@ export function SEOModule() {
             disabled={busy || scanningAll || sortedData.length === 0}
           >
             {scanningAll ? 'Scanning…' : 'Scan links'}
+          </PillButton>
+          {/* Pulls clicks / impressions / CTR / position / top queries (last 28 days). */}
+          <PillButton
+            variant="active"
+            icon={gscPulling ? <Loader2 className="animate-spin" /> : <TrendingUp />}
+            onClick={handlePullGsc}
+            disabled={busy || gscPulling}
+          >
+            {gscPulling ? 'Pulling…' : 'GSC stats'}
           </PillButton>
           <PillButton variant="active" icon={<Plus />} onClick={() => handleCreate('post')} disabled={busy}>
             Post

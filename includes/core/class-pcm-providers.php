@@ -203,6 +203,17 @@ class PCM_Providers
             // Custom capabilities flag — an SEO data provider like Ahrefs
             'supportsSeo' => true,
         ),
+        'gsc' => array(
+            'id'          => 'gsc',
+            'name'        => 'Google Search Console',
+            'apiKeyUrl'   => 'https://console.cloud.google.com/iam-admin/serviceaccounts',
+            'isBuiltIn'   => false,
+            // GSC supplies search-performance data (clicks/impressions/CTR/position/queries)
+            // for the SEO table — not AI models. The "API key" is a service-account JSON file.
+            'knownModels' => array(),
+            // Custom capabilities flag — an SEO data provider like Ahrefs/ProRankTracker
+            'supportsSeo' => true,
+        ),
         'brevo' => array(
             'id'          => 'brevo',
             'name'        => 'Brevo (Email)',
@@ -397,6 +408,11 @@ class PCM_Providers
         // --- ProRankTracker: GET /v3/user/quota with the X-TOKEN header ---
         if ('proranktracker' === $provider_id) {
             return self::validate_proranktracker_key($api_key);
+        }
+
+        // --- Google Search Console: the "key" is a service-account JSON file ---
+        if ('gsc' === $provider_id) {
+            return self::validate_gsc_key($api_key);
         }
 
         // Provider-specific auth headers
@@ -803,6 +819,33 @@ class PCM_Providers
                 'seo'    => true, // PRT provides rank-tracking data, not AI generation
             ),
             'models' => array(),
+        );
+    }
+
+    /**
+     * Validate a Google Search Console service-account JSON: parse it, then mint a REAL
+     * access token (proves the private key signs and Google accepts the account). Property
+     * access is checked later per pull — a fresh service account with zero properties is
+     * still a valid credential.
+     *
+     * @param string $api_key The full service-account JSON file contents.
+     * @return array Validation result.
+     */
+    private static function validate_gsc_key(string $api_key): array
+    {
+        $no_caps = array('image' => false, 'video' => false, 'text' => false, 'vision' => false);
+        $creds   = PCM_GSC::parse_credentials($api_key);
+        if (is_wp_error($creds)) {
+            return array('valid' => false, 'error' => $creds->get_error_message(), 'capabilities' => $no_caps, 'models' => array());
+        }
+        $token = PCM_GSC::access_token($api_key);
+        if (is_wp_error($token)) {
+            return array('valid' => false, 'error' => $token->get_error_message(), 'capabilities' => $no_caps, 'models' => array());
+        }
+        return array(
+            'valid'        => true,
+            'capabilities' => array_merge($no_caps, array('seo' => true)), // search data, not AI generation
+            'models'       => array(),
         );
     }
 

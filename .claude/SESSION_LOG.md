@@ -5239,3 +5239,121 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   connector-side).
 - Verified: npm run check → 56 (baseline, 0 in HeadingsPanel); npm run build clean. Frontend-only, app/dist
   rebuilt.
+
+## 2026-07-06 — Rebuild installable plugin zip (powerplatform/) — includes 2.2.1 + headings refetch
+- Same packaging as before (composer/rsync/zip absent → tokenizer classmap gen + GNU tar staging + Windows
+  bsdtar zip). Now on committed branch feat/seo-suite-port (connector 2.2.1, ProRankTracker, headings refetch).
+- vendor/: regenerated vendor/composer/autoload_classmap.php via scratchpad gen_vendor2.php (tokenizer) → 96
+  classes, all files present, autoload.php loads OK. (PRT is a provider method + frontend, not a new PHP class.)
+- app/dist: fresh npm run build → index-writer.js (4.6MB) + index.css + chunks/browser.js.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.37 MB, 478 entries). Verified: top-level
+  folder ONLY `powerplatform`; contains powerplatform/{power-creatives.php, vendor/autoload.php,
+  vendor/composer/autoload_classmap.php, app/dist/index-writer.js}; 0 backslash paths; no node_modules/app/src/
+  tests/.claude/.git-dir leaked (root .gitignore file is included, as the exclude list only drops the .git DIR).
+  Not committed.
+
+## 2026-07-06 — Connector 2.2.2: element-scoped heading/link edits didn't apply (Elementor & co.)
+- Feedback: in the SEO table, changing H1/H2… on Brizy/Elementor connected sites doesn't reflect on the site.
+- Root cause: `replace_link_in_element` (seohub/service.php) — the connector method used whenever a heading/
+  link carries an `el_id` (Elementor inline headings in Text-Editor widgets, etc.) — had a raw-string
+  pre-filter `if (strpos($raw,$old)===false && strpos($raw,$oe)===false) continue;`. Builder data JSON-escapes
+  the stored form: quotes as `\"`, slashes as `\/`, non-ASCII as `\uXXXX`. `$oe` only covered the slash
+  variant, so a heading with attributes (`class="…"`) or Swedish text (å/ä/ö) never matched the raw string →
+  the meta was skipped → replaced=0 → the edit silently didn't apply. (The team's 2.2.1 added a JSON-escaped
+  needle to the GLOBAL `replace_links`, but missed this ELEMENT-SCOPED method.)
+- Fix: removed the `$old`-in-raw pre-filter. The `el_id` pre-filter already narrows to the right meta, and the
+  actual replacement runs on the DECODED structure in `replace_in_element` (literal quotes/slashes/unicode →
+  matches). `replace_anchor_in_element` already guarded on el_id only, so it was correct.
+- Bumped connector 2.2.1 → 2.2.2.
+- Verified: php -l clean (generator + extracted connector). Stateful unit test (scratchpad heading_test.php):
+  (1) Elementor inline heading with class attr + Swedish text — raw has `\"ttl\"` + `å` and NOT the
+  unescaped old_html (so the old prefilter WOULD have skipped) → now replaced=1, editor field = new HTML ✅;
+  (2) Elementor heading WIDGET (replace_heading_field) text+level regression ✅; (3) Brizy inline heading in
+  base64 editor+compiled (global replace_links) regression, both blobs rewritten ✅. 3/3 pass.
+- ⚠ DEPLOY: connected sites must REINSTALL the connector (v2.2.2). Connector-only change (no hub/frontend).
+
+## 2026-07-06 — Rebuild plugin zip (includes connector 2.2.2 generator)
+- Same packaging (tokenizer classmap gen + GNU tar staging + Windows bsdtar zip). vendor/ regen → 96 classes,
+  all present, autoload OK. Fresh npm run build → index-writer.js (4.6MB).
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.37 MB, 478 entries). Verified: top-level
+  ONLY `powerplatform`; power-creatives.php + vendor/autoload.php + app/dist/index-writer.js present; 0
+  backslash paths; 0 real dir leaks; **connector generator inside the zip = Version 2.2.2** (so Sites →
+  Download connector serves the element-scoped heading-edit fix). Not committed.
+
+## 2026-07-06 — (guidance, no code) Beginner walkthrough: reinstall connector v2.2.2 on connected sites
+- No code change. Produced a step-by-step, beginner-friendly guide for deploying the 2.2.2 connector fix.
+- Confirmed the actual flow from code: hub Sites → "Download connector" hits `GET /seohub/connector-download`
+  (controller.php:110) which streams a ZIP (`pcm-connector.zip`, application/zip) containing
+  `pcm-connector/pcm-connector.php` (the generated connector). It's a SEPARATE plugin on each connected site;
+  updating = that site's wp-admin → Plugins → Add New → Upload Plugin → the zip → "Replace current with
+  uploaded" → Activate. Connection (app password) persists — no re-pasting the connection code. Verify via
+  Plugins list showing "Power Creatives Connector" v2.2.2. Guide covers eelementor + the Brizy site + a
+  cache-refresh troubleshooting note.
+
+## 2026-07-06 — (diagnosis, no code) Brizy heading edit not reflecting on page
+- User edited a Brizy heading ("din tandläkare övik" → "…övik 3") on brizy.profitmedia.pro; table shows new,
+  live page shows old, "even after reinstalling the connector".
+- Key finding: the 2.2.2 fix was ELEMENT-SCOPED (`replace_link_in_element`) = Elementor inline headings only.
+  Brizy headings have el_id='' (collect_headings sets el_id only on id+elType = Elementor/Bricks), so Brizy
+  goes through the GLOBAL `replace_links` path — 2.2.2 changed NOTHING for Brizy. So the reinstall couldn't fix
+  the Brizy case.
+- Likely Brizy mechanism: Brizy keeps TWO copies — structured editor_data + compiled_html (served). Our
+  HTML-string replace updates whichever copy old_html matches; the scan reads the compiled copy (table shows
+  new). But `PCM_Conn_B_Brizy::regenerate` forces `set_needs_compile(true)->save()` → Brizy recompiles
+  compiled_html FROM editor_data on next view. Because Brizy's editor_data stores the heading in a different
+  markup than the compiled HTML the scan's old_html came from, editor_data often isn't updated → recompile
+  reverts the live page to old. (Plus possible page/CDN cache on top.)
+- No code change yet — the correct fix (a Brizy-specific STRUCTURAL heading edit on editor_data, then
+  recompile) needs the page's actual Brizy data / connector version + a cache-clear test to disambiguate
+  cache-vs-structural. Asked the user for: (1) connector version on the Brizy site, (2) whether clearing
+  Brizy/page/CDN cache makes it reflect. Also told them to test the same edit on the Elementor tab (2.2.2
+  should work there).
+
+## 2026-07-06 — (guidance, no code) Brizy diagnosis — walked user through option-1 checks
+- User chose the diagnostic path. Gave beginner steps to gather the two disambiguating facts: (1) the
+  connector version shown on brizy.profitmedia.pro → Plugins → "Power Creatives Connector"; (2) whether the
+  heading reflects after checking in an incognito window + clearing Brizy compiled cache / cache plugin /
+  Cloudflare. Awaiting their answers to decide: cache-purge fix vs a Brizy structural heading editor.
+
+## 2026-07-06 — Connector 2.2.3: Brizy heading edits didn't reflect on the live page (recompile fix)
+- Confirmed with user: Brizy site connector = 2.2.2 (current), incognito (no browser cache) still shows OLD
+  heading, SEO table shows NEW. → DB/editor data updated, but Brizy serves a CACHED compiled-HTML copy that
+  wasn't regenerated.
+- Root cause: `PCM_Conn_B_Brizy::regenerate` only tried Brizy's PHP API
+  (`Brizy_Editor_Post::get()->set_needs_compile()->save()`), whose signature/method names vary by Brizy
+  version and silently no-op (caught by try/catch) → no recompile → live page keeps old compiled HTML. (Also
+  noted honestly: 2.2.2 was ELEMENT-SCOPED = Elementor only; Brizy uses the GLOBAL path, so the 2.2.2 reinstall
+  changed nothing for Brizy.)
+- Fix: added a recursive raw-meta fallback `brizy_set_needs_compile` — after the API attempt, walk the
+  `brizy-post`/`brizy` meta and flip any `needs_compile`/`needsCompile` flag to true directly, so Brizy's
+  frontend rebuilds the served HTML from the (already-updated) editor data on next view. Sets ONLY the flag —
+  never touches editor_data and never blanks the compiled cache (avoids blank-page risk). Bumped 2.2.2 → 2.2.3.
+- Verified: php -l clean (generator + extracted connector). Unit test (scratchpad brizy_recompile_test.php):
+  flat needs_compile flips true ✅, editor_data untouched ✅, compiled_html untouched ✅, nested needsCompile
+  flips true ✅. 4/4.
+- ⚠ DEPLOY: reinstall connector v2.2.3 on the Brizy site. If it STILL shows old after that, the remaining
+  suspect is a server/CDN page cache (e.g. Cloudflare without the CF plugin) that pcm_conn_purge_caches can't
+  reach — purge that manually. Could not drive the live Brizy site to confirm end-to-end.
+
+## 2026-07-06 — /build: Google Search Console integration + SEO-table search stats
+- Requirement: GSC integration (like the PRT one) → pull traffic/position/impressions/CTR/keywords per page
+  into the SEO module table, with a pull action. Auth decision (asked once): SERVICE-ACCOUNT JSON pasted as
+  the integration "API key" (fits the PRT/Brevo paste-a-key pattern; no OAuth app/redirects; zero new deps).
+- Backend: NEW `includes/core/class-pcm-gsc.php` (PCM_GSC) — parse_credentials, RS256 JWT via openssl
+  (build_jwt), access_token (transient-cached 55min), list_properties, match_property (domain property
+  preferred, www-insensitive prefix fallback), norm_url, page_stats (2 Search Analytics calls: [page] metrics
+  + [page,query] top-5 queries, 28-day window ending 2 days back). Registered in power-creatives.php.
+  `class-pcm-providers.php`: 'gsc' provider def + validate_gsc_key (parses JSON, mints a REAL token).
+  `integrations/controller.php`: GET /integrations/gsc/properties + POST /integrations/gsc/stats (property
+  auto-match from site URL; 404 error message names the SA email + properties it CAN read).
+- Frontend: trpc-routes gscProperties/gscStats. SEO/index.tsx — traffic placeholder now real GSC clicks; new
+  toggle columns impressions/ctr/position/gscKeywords (+icons/widths); "GSC stats" PillButton next to Scan
+  links pulls once per property and fills cells by matching row.permalink (normalized like the backend);
+  stats cleared on site-tab switch; cells show the date range as tooltip. Integrations card: GSC-specific
+  placeholder + 3-step setup help box (create SA + JSON key, paste whole file, add SA email as GSC user).
+- Verified: php -l clean (4 files); PCM_GSC unit test 20/20 (JWT signature VERIFIES against a generated RSA
+  keypair via openssl_verify; payload iss/scope/aud/exp; token cached — no 2nd HTTP call; property matching;
+  URL normalization; stats mapping incl. ctr→%, position rounding, top-queries cap at 5 with Swedish chars
+  intact; API 403 → clear error). tsc → 56 (baseline, 0 in touched files); vite build clean.
+- Worked inline (sequential feature; no subagents needed). Not committed. NOTE for next zip: vendor classmap
+  must be regenerated (new PCM_GSC class) — gen_vendor2.php does it as part of the build recipe.

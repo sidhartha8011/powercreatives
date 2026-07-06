@@ -386,7 +386,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
- * Version: 2.2.1
+ * Version: 2.2.3
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -572,17 +572,58 @@ class PCM_Conn_B_Brizy extends PCM_Conn_Builder_Base {
                 || $this->meta_has($post_id, 'brizy-post') || $this->meta_has($post_id, 'brizy'));
     }
     public function regenerate($post_id) {
-        // The URL swap itself is handled generically (editor_data + compiled HTML are base64, so
-        // pcm_conn_replace_in decodes/replaces/re-encodes them). Here we force Brizy to recompile its
-        // static HTML from the updated editor data via its own API — encoding-safe across versions.
-        if (!class_exists('Brizy_Editor_Post')) { return; }
-        try {
-            $post = get_post($post_id);
-            if (!$post) { return; }
-            $bp = Brizy_Editor_Post::get($post);
-            if (is_object($bp) && method_exists($bp, 'set_needs_compile')) { $bp->set_needs_compile(true); }
-            if (is_object($bp) && method_exists($bp, 'save')) { $bp->save(); }
-        } catch (\Throwable $e) {}
+        // The heading/URL swap itself is generic (editor_data + compiled HTML are base64, decoded/
+        // replaced/re-encoded by pcm_conn_replace_in). Brizy still serves a CACHED "compiled HTML"
+        // copy, so it must be told to rebuild it from the (updated) editor data — otherwise the live
+        // page keeps showing the old text even though the DB is correct.
+        // (1) Try Brizy's PHP API.
+        if (class_exists('Brizy_Editor_Post')) {
+            try {
+                $post = get_post($post_id);
+                if ($post) {
+                    $bp = Brizy_Editor_Post::get($post);
+                    if (is_object($bp) && method_exists($bp, 'set_needs_compile')) { $bp->set_needs_compile(true); }
+                    if (is_object($bp) && method_exists($bp, 'save')) { $bp->save(); }
+                }
+            } catch (\Throwable $e) {}
+        }
+        // (2) Reliable fallback — the API above varies by Brizy version and can silently no-op, so
+        // ALSO flip Brizy's own `needs_compile` flag straight in its meta. Brizy then rebuilds the
+        // served HTML from the updated editor data on the next view. We ONLY set the recompile flag
+        // (never touch editor_data or blank the compiled cache — that could blank the page), so it's
+        // safe even if the structure differs.
+        foreach (array('brizy-post', 'brizy') as $mk) {
+            $val = get_post_meta($post_id, $mk, true);
+            if (!is_array($val) && !is_object($val)) { continue; }
+            $changed = false;
+            $val = self::brizy_set_needs_compile($val, $changed);
+            if ($changed) { update_post_meta($post_id, $mk, $val); }
+        }
+    }
+    /** Recursively set any `needs_compile`-style flag in Brizy's stored data to true, so the frontend
+     *  rebuilds the served HTML from the (updated) editor data. Touches nothing else. */
+    private static function brizy_set_needs_compile($node, &$changed) {
+        if (is_array($node)) {
+            foreach ($node as $k => $v) {
+                if (is_string($k) && preg_match('/needs_?compile/i', $k)) {
+                    if ($v !== true && $v !== 1 && $v !== '1') { $node[$k] = true; $changed = true; }
+                } elseif (is_array($v) || is_object($v)) {
+                    $node[$k] = self::brizy_set_needs_compile($v, $changed);
+                }
+            }
+            return $node;
+        }
+        if (is_object($node)) {
+            foreach (get_object_vars($node) as $k => $v) {
+                if (is_string($k) && preg_match('/needs_?compile/i', $k)) {
+                    if ($v !== true && $v !== 1 && $v !== '1') { $node->$k = true; $changed = true; }
+                } elseif (is_array($v) || is_object($v)) {
+                    $node->$k = self::brizy_set_needs_compile($v, $changed);
+                }
+            }
+            return $node;
+        }
+        return $node;
     }
 }
 class PCM_Conn_Builder_Manager {
@@ -661,12 +702,15 @@ class PCM_Conn_Builder_Manager {
         $el_id = (string) $el_id; $old = (string) $old; $new = (string) $new;
         if ($el_id === '' || $old === '' || $new === '' || $old === $new) { return $report; }
         global $wpdb;
-        $oe = str_replace('/', '\\/', $old); // escaped-slash variant, in case a meta is a raw JSON string
         $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
         foreach ((array) $rows as $row) {
             $raw = (string) $row->meta_value;
             if (strpos($raw, $el_id) === false) { continue; }                       // element not in this meta
-            if (strpos($raw, $old) === false && strpos($raw, $oe) === false) { continue; }
+            // NB: do NOT pre-filter on $old being present in the RAW meta. Builder data JSON-escapes the
+            // stored form (quotes as \", slashes as \/, non-ASCII as \uXXXX), so a heading like
+            // <h2 class="x">Så här…</h2> never strpos-matches the raw string and the edit would be silently
+            // skipped. The el_id already narrows to the right meta; the real match runs on the DECODED
+            // structure in replace_in_element (where quotes/slashes/unicode are back to their literal form).
             $val = maybe_unserialize($raw); $is_json = false;
             if (is_string($val) && $val !== '' && ($val[0] === '[' || $val[0] === '{')) {
                 $j = json_decode($val, true);
