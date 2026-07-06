@@ -601,42 +601,49 @@ export function IntegrationsModule() {
                   </Select>
                 </div>
 
-                {/* API Key Input (non-Manus) */}
+                {/* Credential input (non-Manus). GSC authenticates via "Connect with Google"
+                    (OAuth) only — it has NO API key, so the key field/Validate/link are hidden
+                    for it and just the connect box below is shown. */}
                 {selectedProvider && selectedProvider !== 'manus' && (
                   <div className="space-y-2">
-                    <Label>API Key</Label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                        <Input
-                          type="password"
-                          placeholder={selectedProvider === 'gsc' ? 'Paste the FULL service-account JSON key file here' : 'Enter your API key'}
-                          value={apiKey}
-                          onChange={(e) => {
-                            setApiKey(e.target.value);
-                            setValidationResult(null);
-                            setHasValidated(false);
-                          }}
-                          className="pl-10"
-                        />
-                      </div>
-                      <Button variant="outline" onClick={handleValidateApiKey} disabled={isValidating || !apiKey.trim()}>
-                        {isValidating ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Validate'}
-                      </Button>
-                    </div>
-                    {selectedProviderData?.apiKeyUrl && (
-                      <a
-                        href={selectedProviderData.apiKeyUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-                      >
-                        Get API key <ExternalLink className="w-3 h-3" />
-                      </a>
+                    {selectedProvider !== 'gsc' && (
+                      <>
+                        <Label>API Key</Label>
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input
+                              type="password"
+                              placeholder="Enter your API key"
+                              value={apiKey}
+                              onChange={(e) => {
+                                setApiKey(e.target.value);
+                                setValidationResult(null);
+                                setHasValidated(false);
+                              }}
+                              className="pl-10"
+                            />
+                          </div>
+                          <Button variant="outline" onClick={handleValidateApiKey} disabled={isValidating || !apiKey.trim()}>
+                            {isValidating ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Validate'}
+                          </Button>
+                        </div>
+                        {selectedProviderData?.apiKeyUrl && (
+                          <a
+                            href={selectedProviderData.apiKeyUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+                          >
+                            Get API key <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </>
                     )}
-                    {/* GSC: preferred = "Connect with Google" (one agency login covers every
-                        property that account can see — no per-property setup). The service-account
-                        JSON paste in the field above stays as the headless alternative. */}
+                    {/* GSC connects via "Connect with Google" (OAuth) only — one agency login
+                        covers every property that account can see, no per-property setup and no
+                        API key. (A service-account credential is still accepted by the backend,
+                        but there's no key field in this card for it.) */}
                     {selectedProvider === 'gsc' && (
                       <div className="rounded-lg border border-border bg-card overflow-hidden">
                         {/* Header */}
@@ -665,7 +672,11 @@ export function IntegrationsModule() {
                               <span className="font-medium text-foreground">Create an OAuth client</span> (one time) — Google Cloud →
                               APIs &amp; Services → Credentials → Create credentials → OAuth client ID, type{' '}
                               <span className="font-medium text-foreground">Web application</span>. Also enable the
-                              “Google Search Console API” for the project.
+                              “Google Search Console API” for the project.{' '}
+                              <span className="font-medium text-amber-600 dark:text-amber-500">
+                                Important: on the OAuth consent screen, click “Publish app” (status “In production”, no
+                                verification needed) — left in “Testing”, Google kills the connection every 7 days.
+                              </span>
                             </p>
                           </div>
 
@@ -739,12 +750,6 @@ export function IntegrationsModule() {
                               </Button>
                             </div>
                           </div>
-
-                          {/* Fallback note */}
-                          <p className="border-t border-border pt-3 text-[11px] leading-relaxed text-muted-foreground">
-                            Prefer a headless setup? Paste a <span className="font-medium text-foreground">service-account JSON key</span>{' '}
-                            in the API-key field above instead, then add its email as a user on each Search Console property.
-                          </p>
                         </div>
                       </div>
                     )}

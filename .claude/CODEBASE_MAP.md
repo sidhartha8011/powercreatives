@@ -315,7 +315,16 @@ uses `pcm/v1` + the path in `routes()`.
   transient, not cookies) → `PCM_GSC::exchange_code` → upserts the user's gsc integration with apiKey JSON
   `{type:'oauth', client_id, client_secret, refresh_token}` → bounces back with `?pcm_gsc=connected|error`
   (hash-safe). `PCM_GSC::access_token` branches: oauth → refresh-token grant; service_account → JWT. All
-  downstream (list_properties/page_stats/validate) credential-agnostic. **brevo** = transactional email (HTTP API, not SMTP) used by
+  downstream (list_properties/page_stats/validate) credential-agnostic.
+  **Data-quality (aligned to the client's GSC-pipeline doc):** `page_stats` uses a 3-DAY lag +
+  `dataState:'final'` (fresher data is partial and shifts), PAGINATES via `sa_rows()` (rowLimit 25000 +
+  startRow, ≤4 pages/call, later-page errors degrade to partial); `api()` retries once (0.7s) on
+  429/quota/5xx; `access_token` returns a SPECIFIC `pcm_gsc_invalid_grant` error naming the fix (consent
+  screen left in "Testing" kills refresh tokens every 7 days → "Publish app" + reconnect) — the card's step 1
+  warns about publishing too. ⚠ THE CONSENT SCREEN MUST BE PUBLISHED (In production; no verification needed).
+  NOT built (different scope, offer as follow-up): the doc's warehoused ETL (daily cron, 16-month backfill,
+  fact table keyed site/date/query/page/country/device, property-diff + zero-row alerting).
+  **brevo** = transactional email (HTTP API, not SMTP) used by
   the Automations email channel/action; validated via `GET /v3/account` (`api-key` header).
   **proranktracker** (PRT) = SERP rank tracking (commits `5a38adb`/`d329728`/`7b43ac5`): integration
   provider + token validation, a live-test panel on the Integrations card (`Integrations/PrtLiveTestSection.tsx`),

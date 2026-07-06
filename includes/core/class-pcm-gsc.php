@@ -119,6 +119,12 @@ class PCM_GSC
         $tok  = (string) ($body['access_token'] ?? '');
         if ($tok === '') {
             $why = (string) ($body['error_description'] ?? $body['error'] ?? 'unknown error');
+            // The one failure that MUST be loud and specific: a dead refresh token (invalid_grant).
+            // Most common cause: the OAuth consent screen was left in "Testing" mode — Google then
+            // expires refresh tokens every 7 days. Also: access revoked, or the OAuth client deleted.
+            if ($is_oauth && stripos((string) ($body['error'] ?? ''), 'invalid_grant') !== false) {
+                return new WP_Error('pcm_gsc_invalid_grant', __('Google revoked this connection (invalid_grant). Most common cause: the OAuth consent screen is still in "Testing" mode, which kills the connection every 7 days — in Google Cloud → OAuth consent screen, click "Publish app" (no verification needed), then reconnect via "Connect with Google" on the Integrations page.', 'power-creatives'));
+            }
             $msg = $is_oauth
                 ? sprintf(__('Google rejected the connection (%s). Reconnect via "Connect with Google" on the Integrations page.', 'power-creatives'), $why)
                 : sprintf(__('Google rejected the service-account key (%s). Re-download the JSON key and paste it again.', 'power-creatives'), $why);
@@ -191,6 +197,13 @@ class PCM_GSC
             $args['body'] = (string) wp_json_encode($body);
         }
         $resp = wp_remote_request(self::API_BASE . $path, $args);
+        // Quotas: ~1,200 queries/min per project + per-site limits. One short retry on
+        // 429/quota/5xx smooths multi-property pulls without hanging the web request.
+        $code = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+        if (is_wp_error($resp) || $code === 429 || $code >= 500) {
+            usleep(700000); // 0.7s
+            $resp = wp_remote_request(self::API_BASE . $path, $args);
+        }
         if (is_wp_error($resp)) {
             return new WP_Error('pcm_gsc_http', $resp->get_error_message());
         }
@@ -251,27 +264,52 @@ class PCM_GSC
     }
 
     /**
+     * Paginated Search Analytics query: rowLimit 25000 + startRow until a short batch
+     * (Google's documented pagination), capped at $max_pages to bound an interactive
+     * request. Returns all rows, or WP_Error from the FIRST call (later pages degrade
+     * gracefully to what was already fetched).
+     */
+    private static function sa_rows(string $json, string $path, array $body, int $max_pages = 4): array|WP_Error
+    {
+        $limit = 25000;
+        $rows  = array();
+        for ($page = 0; $page < $max_pages; $page++) {
+            $resp = self::api($json, 'POST', $path, array_merge($body, array(
+                'rowLimit' => $limit,
+                'startRow' => $page * $limit,
+            )));
+            if (is_wp_error($resp)) {
+                return $page === 0 ? $resp : $rows; // partial > nothing on later pages
+            }
+            $batch = (array) ($resp['rows'] ?? array());
+            $rows  = array_merge($rows, $batch);
+            if (count($batch) < $limit) {
+                break;
+            }
+        }
+        return $rows;
+    }
+
+    /**
      * Per-page search stats for the last $days days:
      * [norm_url => ['clicks'=>int,'impressions'=>int,'ctr'=>float,'position'=>float,'keywords'=>string[]]]
-     * Two API calls: dimensions=[page] for the metrics, dimensions=[page,query] for top queries.
+     * Two paginated queries: dimensions=[page] for the metrics, dimensions=[page,query] for top
+     * queries. Uses a 3-DAY lag + dataState=final — GSC finalizes data ~2-3 days late, and pulling
+     * fresher than that returns partial numbers that silently shift.
      */
     public static function page_stats(string $json, string $property, int $days = 28): array|WP_Error
     {
-        $end   = gmdate('Y-m-d', time() - 2 * DAY_IN_SECONDS); // GSC data lags ~2 days
-        $start = gmdate('Y-m-d', time() - (2 + max(1, $days)) * DAY_IN_SECONDS);
+        $end   = gmdate('Y-m-d', time() - 3 * DAY_IN_SECONDS);
+        $start = gmdate('Y-m-d', time() - (3 + max(1, $days)) * DAY_IN_SECONDS);
         $path  = '/sites/' . rawurlencode($property) . '/searchAnalytics/query';
+        $base  = array('startDate' => $start, 'endDate' => $end, 'dataState' => 'final');
 
-        $pages = self::api($json, 'POST', $path, array(
-            'startDate'  => $start,
-            'endDate'    => $end,
-            'dimensions' => array('page'),
-            'rowLimit'   => 5000,
-        ));
-        if (is_wp_error($pages)) {
-            return $pages;
+        $page_rows = self::sa_rows($json, $path, $base + array('dimensions' => array('page')));
+        if (is_wp_error($page_rows)) {
+            return $page_rows;
         }
         $out = array();
-        foreach ((array) ($pages['rows'] ?? array()) as $r) {
+        foreach ($page_rows as $r) {
             $u = self::norm_url((string) ($r['keys'][0] ?? ''));
             if ($u === '') {
                 continue;
@@ -286,14 +324,9 @@ class PCM_GSC
         }
 
         // Top queries per page (rows arrive ordered by clicks desc; keep the first 5 per page).
-        $queries = self::api($json, 'POST', $path, array(
-            'startDate'  => $start,
-            'endDate'    => $end,
-            'dimensions' => array('page', 'query'),
-            'rowLimit'   => 5000,
-        ));
-        if (!is_wp_error($queries)) { // metrics still useful if the query call fails
-            foreach ((array) ($queries['rows'] ?? array()) as $r) {
+        $query_rows = self::sa_rows($json, $path, $base + array('dimensions' => array('page', 'query')));
+        if (!is_wp_error($query_rows)) { // metrics still useful if the query call fails
+            foreach ($query_rows as $r) {
                 $u = self::norm_url((string) ($r['keys'][0] ?? ''));
                 $q = (string) ($r['keys'][1] ?? '');
                 if ($u === '' || $q === '' || !isset($out[$u]) || count($out[$u]['keywords']) >= 5) {

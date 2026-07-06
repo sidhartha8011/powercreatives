@@ -5445,3 +5445,57 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   top-level ONLY powerplatform; required files present (incl. class-pcm-gsc.php); classmap 97/0 missing;
   0 backslash paths; 0 dir leaks; the NEW UI is in the zipped bundle (grep "Redirecting to Google" in
   dist/index-writer.js inside the zip = 1). Not committed.
+
+## 2026-07-06 — GSC hardening per the client's pipeline doc (Integrations.pdf) — better-flow adjudication
+- Compared the doc's flow vs ours item by item; implemented where the doc wins, kept ours where it wins:
+  * KEPT ours: in-plugin "Connect with Google" Web-app OAuth (doc uses a Desktop client + local Python
+    script — needless for a product with a web UI; the doc's route still works by pasting the
+    {type:oauth,…} JSON as the key). KEPT: on-demand pull scoped to the SEO table (doc's dimensions incl.
+    country/device are warehouse-shaped).
+  * DOC wins, implemented (class-pcm-gsc.php): (1) 3-day lag + dataState:'final' (was 2-day, no dataState —
+    partial numbers); (2) real pagination via new sa_rows() — rowLimit 25000 + startRow loop, ≤4 pages,
+    first-page errors propagate / later pages degrade to partial (was a single 5k call = silent truncation);
+    (3) api() retries once (0.7s) on 429/quota/5xx; (4) invalid_grant now a SPECIFIC pcm_gsc_invalid_grant
+    error telling the user the "Testing"-mode 7-day cause + "Publish app" + reconnect (the doc's "one thing
+    that must be loud").
+  * DOC wins, implemented (Integrations card): step 1 now warns in amber that the OAuth consent screen MUST
+    be published ("In production", no verification) or Google kills the connection every 7 days.
+  * NOT built (explicitly out of scope, flagged to user): the doc's full ETL warehouse (daily cron, 16-month
+    backfill, fact table, property-diff/zero-row alerting) — different product scope, needs a real decision.
+- Verified: php -l clean; NEW gsc_pipeline_test.php 6/6 (dataState/rowLimit/startRow body asserts, 3-day end
+  date, 25001-row pagination merge, invalid_grant code+message, 429 retried once → success incl. call count);
+  regressions gsc_test.php 20/20 + gsc_oauth_test.php 11/11; tsc 56 baseline (0 in Integrations); build clean.
+- Not committed; no zip built this task (say "zip build" to package).
+
+## 2026-07-06 — Rebuild plugin zip (includes GSC pipeline-doc hardening)
+- Standard recipe. classmap 97/0 missing, autoload OK; fresh vite build; connector generator 2.2.3 unchanged.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.38 MB, 479 entries). Verified: top-level
+  ONLY powerplatform; required files present; 0 backslash paths; 0 dir leaks; hardening confirmed INSIDE the
+  zip (class-pcm-gsc.php has sa_rows/dataState/invalid_grant refs = 8; dist bundle has the "Publish app"
+  consent-screen warning = 1). Not committed.
+
+## 2026-07-06 — (answer + micro-UI) "Is the API key still required?" → No; labeled the field optional for GSC
+- Answered: with "Connect with Google" NO key is entered anywhere (Client ID+Secret in the connect box, then
+  sign-in; the integration saves itself via the OAuth callback). The AIza… API key is never used in any flow.
+  The API-key field on the GSC card only serves the service-account JSON alternative.
+- Micro-fix (Integrations/index.tsx): for provider=gsc the field label now reads "Service-account JSON
+  (optional — not needed if you use 'Connect with Google' below)" instead of a required-looking "API Key".
+  Other providers unchanged.
+- Verified: tsc 56 baseline (0 in Integrations); build clean. In dist but NOT yet zipped — next "zip build"
+  picks it up.
+
+## 2026-07-06 — Remove the API-key field for GSC (OAuth-only card)
+- Task "remove the api key field" scoped to GSC (other providers genuinely need a key — removing globally
+  would break OpenAI/Anthropic/PRT/Brevo). Integrations/index.tsx: the API-key Label + password Input +
+  Validate button + "Get API key" link are now gated `selectedProvider !== 'gsc'`, so GSC shows ONLY the
+  "Connect with Google" box. Reverted my prior gsc-specific label/placeholder (field no longer renders for
+  gsc). Removed the now-orphaned "paste service-account JSON in the field above" fallback note + updated the
+  box comment. Footer "Add Integration" stays disabled for GSC (correct — the integration is created by the
+  OAuth callback, not that button). Backend service-account support untouched (just no UI field on the card).
+- Verified: grep "field above" = 0; tsc 56 baseline (0 in Integrations); vite build clean.
+- In dist, NOT yet zipped — next "zip build" packages it.
+
+## 2026-07-06 — Rebuild plugin zip (GSC OAuth-only card / API-key field removed for GSC)
+- Standard recipe. classmap 97/0 missing, autoload OK; fresh vite build; connector generator 2.2.3 unchanged.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.38 MB, 479 entries). Verified: top-level
+  ONLY powerplatform; required files present; 0 backslash paths; 0 dir leaks. Not committed.
