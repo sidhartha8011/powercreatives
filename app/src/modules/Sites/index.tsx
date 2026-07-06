@@ -95,12 +95,15 @@ export function SitesModule() {
   }, []);
 
   // Surface the automatic Search Console provisioning outcome (runs on add + on "GSC" retry).
+  // hasData === false means the property is connected but Google has no stats for it yet (new
+  // properties take a few days) — say so explicitly, or the user sees "✓" then an empty table.
   const reportGsc = (gsc: any) => {
     if (!gsc) return;
+    const noDataYet = gsc.hasData === false ? ' Site is added — no data yet (new properties can take a few days to show stats).' : '';
     if (gsc.alreadyExists) {
-      toast.success(`Already in Search Console — connected to ${gsc.property} ✓ (no duplicate created)`);
+      toast.success(`Already in Search Console — connected to ${gsc.property} ✓ (no duplicate created).${noDataYet}`);
     } else if (gsc.verified) {
-      toast.success('Verified in Google Search Console ✓');
+      toast.success(`Verified in Google Search Console ✓.${noDataYet}`);
     } else if (gsc.error) {
       (gsc.attempted ? toast.warning : toast.info)(`Search Console: ${gsc.error}`);
     }
@@ -425,7 +428,7 @@ export function SitesModule() {
                     Detected indexed domain (auto): <strong>{gscPreview.canonical}</strong>
                   </div>
                 )}
-                <LabeledInput label="Indexed domain" placeholder="https://www.example.com" value={gscTargetUrl} onChange={setGscTargetUrl} />
+                <LabeledInput label="Indexed domain" placeholder="https://www.example.com" value={gscTargetUrl} onChange={setGscTargetUrl} className="bg-white" />
                 {gscPreview?.error && <div className="text-xs" style={{ color: '#dc2626' }}>{gscPreview.error}</div>}
               </>
             )}
@@ -446,11 +449,11 @@ export function SitesModule() {
 }
 
 /** Small labeled input to keep the connection dialogs tidy. */
-function LabeledInput({ label, value, onChange, placeholder, type }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string }) {
+function LabeledInput({ label, value, onChange, placeholder, type, className }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; className?: string }) {
   return (
     <div>
       <label style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>{label}</label>
-      <Input type={type} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
+      <Input type={type} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} className={className} />
     </div>
   );
 }

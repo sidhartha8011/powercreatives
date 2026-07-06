@@ -430,7 +430,10 @@ export function SEOModule() {
       // Reporting it turns "sometimes nothing shows" into a clear message (data vs URL-match issue).
       const matched = rows.reduce((c, r) => (pages[normGscUrl(r.permalink ?? '')] ? c + 1 : c), 0);
       if (returned === 0) {
-        toast.info(`Search Console had no data for ${property} in this date range.`);
+        // Connected-but-empty is NORMAL for a freshly added property — say so instead of
+        // sounding like an error. Real Google errors surface via the catch below with
+        // Google's actual message.
+        toast.info(`Search Console: ${property} is connected, but has no data yet for this date range — new sites can take a few days to show stats.`);
       } else if (matched === 0) {
         toast.warning(`Search Console returned ${returned} page${returned === 1 ? '' : 's'}, but none matched this table’s URLs (${property}). Those pages may not be posts/pages listed here, or the site address differs.`);
       } else {

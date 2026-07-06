@@ -5792,3 +5792,43 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Rebuilt power-creatives.zip fresh (same tree as the prior GSC reuse/confirm-domain build).
 - Verified 2.40MB/479 entries, top-level only `powerplatform`, 0 backslash, 0 leaks; root PHP + autoload +
   dist present. Not committed.
+
+## 2026-07-07 — (explanation only, no code change) walked through the GSC step-0/1/2 UI flow
+- Explained how the "Verify in GSC" feature works end-to-end: GSC button → openGsc → step-1 preview
+  (POST /sites/{id}/gsc-preview: detect_canonical + list/match properties) → step-0 dialog (guidance +
+  auto-filled editable "Indexed domain" input + reuse note) → step-2 verify (POST /sites/{id}/gsc-verify
+  {targetUrl}: reuse existing property if match, else add typed variant). No files changed.
+
+## 2026-07-07 — clear "no data yet" messaging (add-site + SEO-table GSC pull)
+- A freshly verified GSC property is empty for a few days; the user saw "Verified ✓" then an empty
+  table / a "had no data" toast that read like an error. Three-part fix:
+  (1) sites/service.php: gsc_provision now sets report.hasData (new private gsc_has_data() — 28-day
+      page_stats probe; true/false, null when the probe itself fails so the UI stays silent) on BOTH
+      the reuse path and the fresh-verify path.
+  (2) Sites/index.tsx reportGsc: when hasData===false appends "Site is added — no data yet (new
+      properties can take a few days to show stats)." to the verified/alreadyExists success toasts.
+  (3) SEO/index.tsx handlePullGsc returned===0 toast reworded: "{property} is connected, but has no
+      data yet for this date range — new sites can take a few days to show stats."
+  Real Google/API errors keep flowing through untouched (backend passes get_error_message(), frontend
+  catch shows e.message) — the "valuable http response" case was already handled.
+- Verified: php -l clean; tsc 56 baseline, 0 in edited files; gsc_provision2_test.php extended to 16/16
+  (hasData false/true/null on reuse; regression intact). Not committed; needs zip rebuild to ship.
+
+## 2026-07-07 — white input in the "Verify in GSC" dialog
+- The Indexed-domain input rendered grey (shared Input default variant = bg-background token) on the
+  white dialog. LabeledInput (Sites/index.tsx) gained an optional className passthrough to Input; the
+  GSC dialog's input now passes bg-white (tailwind-merge in cn() overrides the variant's bg-background).
+  Other LabeledInput call sites unchanged.
+- Verified: tsc 56 baseline, 0 in Sites/index.tsx. Not committed; needs zip rebuild to ship.
+
+## 2026-07-07 — zip build (no-data-yet messaging + white GSC input)
+- Rebuilt power-creatives.zip with the hasData probe/toasts + bg-white Indexed-domain input.
+- Verified 2.40MB/479 entries, top-level only `powerplatform`, 0 backslash, 0 leaks; all four fixes
+  confirmed inside bundle (gsc_has_data ×3 in service.php; both toasts + className:"bg-white" in dist).
+  Not committed.
+
+## 2026-07-07 — (report only, no code change) 13-hour work summary
+- Compiled a point-wise summary of the session's work from SESSION_LOG (GSC pipeline: guide, Clicks
+  rename+sort/filter, non-ASCII fix, Pos split, auto-verify, 411/401 fixes, no-data fix, reuse+indexed-
+  domain popup, token-check hardening, no-data-yet messaging; PRT: host match + keyword parity; connector
+  2.4.0 self-update; white GSC input; ~10 verified zip builds). No files changed.

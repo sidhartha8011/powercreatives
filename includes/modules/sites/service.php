@@ -330,6 +330,7 @@ class PCM_Sites_Service
                 $report['alreadyExists'] = true;
                 $report['property']      = $matches[0];
                 $report['verified']      = true;
+                $report['hasData']       = self::gsc_has_data($key, $matches[0]);
                 return $report;
             }
         }
@@ -387,7 +388,33 @@ class PCM_Sites_Service
             return $report;
         }
         $report['verified'] = true;
+        // Tell the UI whether the property actually HAS Search Analytics data yet — a freshly
+        // registered property is verified but empty for a few days, and without this flag the
+        // user sees "Verified ✓" then an empty SEO table and assumes something broke.
+        $report['hasData'] = self::gsc_has_data($key, rtrim($url, '/') . '/');
         return $report;
+    }
+
+    /**
+     * Does this GSC property have ANY Search Analytics data in the last 28 days? Best-effort
+     * probe for user messaging only: null when the check itself fails (quota, transient error)
+     * so callers can stay silent instead of guessing.
+     *
+     * @param string $key      GSC credential JSON.
+     * @param string $property Property id (url-prefix with trailing slash, or sc-domain:host).
+     * @return bool|null True/false, or null when undeterminable.
+     */
+    private static function gsc_has_data(string $key, string $property): ?bool
+    {
+        try {
+            $s = PCM_GSC::page_stats($key, $property, 28);
+        } catch (\Throwable $e) {
+            return null;
+        }
+        if (is_wp_error($s)) {
+            return null;
+        }
+        return !empty($s['pages']);
     }
 
     /**
