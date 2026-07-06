@@ -57,6 +57,7 @@ import {
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { trpc, getConfig } from '@/lib/trpc';
+import { GscSetupGuide } from './GscSetupGuide';
 import { PrtLiveTestSection } from './PrtLiveTestSection';
 
 // ============================================
@@ -645,6 +646,9 @@ export function IntegrationsModule() {
                         API key. (A service-account credential is still accepted by the backend,
                         but there's no key field in this card for it.) */}
                     {selectedProvider === 'gsc' && (
+                      <div className="space-y-3">
+                      {/* Setup guide first — button reveals the Notion-style GCP instructions. */}
+                      <GscSetupGuide />
                       <div className="rounded-lg border border-border bg-card overflow-hidden">
                         {/* Header */}
                         <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-3">
@@ -751,6 +755,7 @@ export function IntegrationsModule() {
                             </div>
                           </div>
                         </div>
+                      </div>
                       </div>
                     )}
                   </div>

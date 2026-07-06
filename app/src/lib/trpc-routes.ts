@@ -33,6 +33,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "integrations.prtUrls": { endpoint: "integrations/proranktracker/urls", method: "GET" },
     "integrations.prtRanks": { endpoint: "integrations/proranktracker/ranks", method: "GET" },
     "integrations.prtHistory": { endpoint: "integrations/proranktracker/history", method: "GET" },
+    "integrations.prtPageRanks": { endpoint: "integrations/proranktracker/page-ranks", method: "POST" },
     "integrations.gscProperties": { endpoint: "integrations/gsc/properties", method: "GET" },
     "integrations.gscStats": { endpoint: "integrations/gsc/stats", method: "POST" },
     "integrations.gscOauthStart": { endpoint: "integrations/gsc/oauth-start", method: "POST" },
@@ -260,6 +261,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "sites",
         method: "DELETE",
         transform: (input: any) => ({ url: `sites/${input.id}` }),
+    },
+    "sites.gscVerify": {
+        endpoint: "sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `sites/${input.id}/gsc-verify` }),
     },
     "sites.test": {
         endpoint: "sites",

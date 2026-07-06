@@ -301,8 +301,17 @@ uses `pcm/v1` + the path in `routes()`.
   Routes: `GET /integrations/gsc/properties`, `POST /integrations/gsc/stats {site?, days?}` → per-page
   clicks/impressions/CTR/position/top-5-queries keyed by normalized URL (host+path, no www/trailing slash),
   property auto-matched from the site URL (domain property preferred). SEO table: "GSC stats" button fills
-  the Traffic/Impressions/CTR/Position/Top Queries columns by matching rows' `permalink`; works for the
-  local tab ('' → home_url) and connected-site tabs (their URL). The SA email must be added as a user on
+  the Clicks (key still `traffic`)/Impressions/CTR/Position/Top Queries (`gscKeywords`) columns by matching
+  rows' `permalink`; works for the local tab ('' → home_url) and connected-site tabs (their URL). These 5
+  columns are SORTABLE (accessors close over `gscPages`, no-data→null sorts last) and FILTERABLE (defs built
+  inline in `SEO/index.tsx` — numeric cols "No data/Zero/Has value", position "Top 3/4–10/Beyond 10", queries
+  free-text — merged into `filterDefs`, since the data isn't on the row so `seoFilters.buildFilterDefs` can't
+  see it). **URL matching:** `PCM_GSC::norm_url` + the frontend `normGscUrl` MUST stay byte-identical — they
+  now percent-DECODE the path + Unicode-lowercase (host+path, no www/trailing slash) so non-ASCII slugs match
+  (GSC returns `/tandv%C3%A5rd`, a permalink may be raw `/tandvård` w/ different hex case → all collapse to
+  one key). This was the "GSC stats sometimes works" bug (ASCII pages matched, Swedish å/ä/ö pages didn't).
+  The pull toast reports MATCHED-of-returned (`filled 12 of 17`), warns when returned>0 but matched=0, infos
+  on 0 returned — so a URL-mismatch vs no-data is visible, not silent. The SA email must be added as a user on
   each GSC property (the card shows the 3-step setup). NB: a plain Google **API key** (`AIza…`) can NOT drive
   the Search Console API (it needs a principal — OAuth/service account); `parse_credentials` detects a pasted
   API key and returns a precise "you need a service account" error rather than "bad JSON".
@@ -324,12 +333,39 @@ uses `pcm/v1` + the path in `routes()`.
   warns about publishing too. ⚠ THE CONSENT SCREEN MUST BE PUBLISHED (In production; no verification needed).
   NOT built (different scope, offer as follow-up): the doc's warehoused ETL (daily cron, 16-month backfill,
   fact table keyed site/date/query/page/country/device, property-diff + zero-row alerting).
+  **Add-site auto-verify (n8n-flow port):** adding a connected site auto-provisions it in GSC —
+  `PCM_Sites_Service::gsc_provision` (sites/service.php): add property (`PCM_GSC::add_property`, PUT
+  sites/{url}) → META token (`verification_token`, Site Verification API, content extracted from the returned
+  `<meta>` tag) → push to connector (`POST /pcm-conn/v1/site {gscToken}` → option `pcm_conn_gsc_token`,
+  rendered in wp_head; **connector 2.3.0**; older connectors detected via the echo-back and reported) →
+  `verify_property` (POST webResource?verificationMethod=META). Best-effort on `create_site` (report in the
+  create response under `gsc`) + retry route `POST /sites/{id}/gsc-verify` (tRPC `sites.gscVerify`, "GSC"
+  button per site row, toasts via `reportGsc`). ⚠ SCOPE widened to `webmasters + siteverification` —
+  connections made under readonly must RECONNECT (403 → `pcm_gsc_scope` error says so); the GCP project also
+  needs the "Site Verification API" enabled (setup guide step 2 updated). Verify can fail behind a stale page
+  cache — the error says to clear + retry.
+  **UI:** the GSC card has NO api-key field (OAuth-only; gated `selectedProvider!=='gsc'`); it shows a
+  toggle button → Notion-styled collapsible **`Integrations/GscSetupGuide.tsx`** reproducing the client PDF's
+  "Search Console API Setup (from GCP)" steps 1–6 verbatim (+ one blue callout: choose *Web application* not
+  *Desktop app* for the in-plugin flow). Valid-key panel shows a single "SEO data" chip for `supportsSeo`
+  providers instead of 4 crossed-out AI modality chips.
   **brevo** = transactional email (HTTP API, not SMTP) used by
   the Automations email channel/action; validated via `GET /v3/account` (`api-key` header).
   **proranktracker** (PRT) = SERP rank tracking (commits `5a38adb`/`d329728`/`7b43ac5`): integration
   provider + token validation, a live-test panel on the Integrations card (`Integrations/PrtLiveTestSection.tsx`),
   and an SEO-table **PRT ranking-URL column** with 1/3/6-month history + trend sparklines. NB: this
   Integrations/PRT feature is only lightly mapped — verify routes against `integrations/controller.php`.
+  **SEO table "Pos (PRT)" column** (alongside "Pos (GSC)"): new `POST /integrations/proranktracker/page-ranks
+  {site?}` (`prt_page_ranks`) auto-matches the PRT project to the site by host, fetches its terms, returns
+  `{project, ranks:{<lowercased keyword> → {rank, matchedUrl, engine}}}` (best/lowest rank if a term repeats
+  per engine). tRPC `integrations.prtPageRanks`. SEO/index.tsx: "PRT ranks" toolbar button fills `prtPosition`
+  by matching each row's **Primary Keyword** (normKw = trim+toLowerCase, parity with backend mb_strtolower);
+  sortable (rank asc = best; not-tracked/0 → null last) + filterable (Not tracked/Not ranking/Top 3/4–10/
+  Beyond 10). PRT is treated as MORE accurate than GSC’s avg position, so both columns coexist. NB:
+  `prt_page_ranks` host matching is SCHEME-TOLERANT (PRT tracked URLs may lack https:// — parse_url then
+  yields no host; falls back to text before the first / or ?); its 404 lists the hosts PRT DOES track.
+  `PCM_GSC::api()` sends an EMPTY body on bodyless PUT/POST — Google 411s otherwise (the "Search Console:
+  HTTP 411" bug on add_property).
 - Per-user API keys stored in the **`wp_pcm_integrations` table** (`apiKey` column),
   retrieved via `PCM_REST_Base::get_provider_api_key($provider, $user_id)`.
 - Global `forge_api_key` / `forge_api_url` live in the `pcm_settings` option (empty by default).
@@ -918,7 +954,7 @@ The HMAC handshake / `register_ping` / per-tenant connector / "Pending connectio
 above is **legacy and frontend-orphaned** (kept in the backend, unused by the UI). The live
 flow is a **one-paste pairing code**, which sidesteps the public-hub requirement entirely:
 - **Connector = `PCM_SEOHub_Service::connector_php_simple()`** (generic, no handshake), now
-  **v2.2.3 (was v2.0.0 = universal builder-aware link replacement)**: pluggable handler architecture
+  **v2.3.0 (was v2.0.0 = universal builder-aware link replacement)**: pluggable handler architecture
   inside the connector — `PCM_Conn_Builder_Handler` interface + `PCM_Conn_B_{Elementor,Bricks,Divi,
   WPBakery,Oxygen,Breakdance,Brizy}` (detect() via builder meta/content signals + regenerate() its CSS/cache) +
   `PCM_Conn_Builder_Manager` (register/detect/replace_links) + `pcm_conn_builder_manager()` registry.

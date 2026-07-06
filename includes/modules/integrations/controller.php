@@ -42,6 +42,7 @@ class PCM_REST_Integrations extends PCM_REST_Base
                 array('GET', '/integrations/proranktracker/urls', 'prt_urls'),
                 array('GET', '/integrations/proranktracker/ranks', 'prt_ranks'),
                 array('GET', '/integrations/proranktracker/history', 'prt_history'),
+                array('POST', '/integrations/proranktracker/page-ranks', 'prt_page_ranks'),
                 array('GET', '/integrations/gsc/properties', 'gsc_properties'),
                 array('POST', '/integrations/gsc/stats', 'gsc_stats'),
                 array('POST', '/integrations/gsc/oauth-start', 'gsc_oauth_start'),
@@ -396,6 +397,109 @@ class PCM_REST_Integrations extends PCM_REST_Base
             'url'     => esc_url_raw((string) ($data['url'] ?? '')),
             'topRank' => (int) ($data['toprank'] ?? 0),
             'terms'   => $terms,
+        ));
+    }
+
+    /**
+     * POST /integrations/proranktracker/page-ranks {site?} — the PRT rank of each tracked KEYWORD
+     * for the ProRankTracker project matching `site` (empty = this WordPress site). Powers the SEO
+     * table's "Pos (PRT)" column, which shows the current rank of each row's Primary Keyword.
+     * Auto-matches the PRT project by host (like GSC), then returns a keyword→rank map.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function prt_page_ranks(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        try {
+            $key = $this->get_provider_api_key('proranktracker', (int) $pcm_user->id);
+        } catch (\RuntimeException $e) {
+            return $this->error('No active ProRankTracker integration found — add one on the Integrations page.', 400);
+        }
+        $p    = $request->get_json_params();
+        $site = is_array($p) ? trim((string) ($p['site'] ?? '')) : '';
+        if ($site === '') {
+            $site = home_url('/');
+        }
+        // Host extractor tolerant of PRT's tracked-URL formats: with or without a scheme
+        // ("https://x.se/", "x.se", "www.x.se/path"). parse_url() returns NO host for
+        // scheme-less strings, which made every project "not found" — fall back to the
+        // text before the first / or ?, then strip www and lowercase.
+        $host_of = static function (string $u): string {
+            $h = (string) (wp_parse_url($u, PHP_URL_HOST) ?: '');
+            if ($h === '') {
+                $bare = preg_replace('#^[a-z][a-z0-9+.-]*://#i', '', trim($u));
+                $h    = (string) preg_split('#[/?\#]#', $bare)[0];
+            }
+            return preg_replace('/^www\./', '', strtolower($h));
+        };
+        $site_host = $host_of($site);
+
+        // 1. List PRT projects, match one to the site by host.
+        $resp = wp_remote_get('https://api.proranktracker.com/v3/util/urls', array(
+            'headers' => array('X-TOKEN' => $key, 'Accept' => 'application/json'),
+            'timeout' => 20,
+        ));
+        if (is_wp_error($resp)) {
+            return $this->error('ProRankTracker request failed: ' . $resp->get_error_message(), 502);
+        }
+        $body = json_decode((string) wp_remote_retrieve_body($resp), true);
+        if (($body['result'] ?? '') !== 'success') {
+            return $this->error('ProRankTracker error: ' . ($body['error_message'] ?? $body['error'] ?? 'Unknown'), 502);
+        }
+        $match_id = '';
+        $match_url = '';
+        $tracked = array(); // hosts PRT does track — for an actionable error message
+        foreach ((array) ($body['data'] ?? array()) as $u) {
+            $uh = $host_of((string) ($u['url'] ?? ''));
+            if ($uh !== '') {
+                $tracked[] = $uh;
+            }
+            if ($uh !== '' && $uh === $site_host) {
+                $match_id  = (string) ($u['id'] ?? '');
+                $match_url = (string) ($u['url'] ?? '');
+                break;
+            }
+        }
+        if ($match_id === '') {
+            $have = empty($tracked) ? 'none' : implode(', ', array_unique($tracked));
+            return $this->error(sprintf('No ProRankTracker project found for %s — add the site in ProRankTracker. Projects it currently tracks: %s.', $site_host, $have), 404);
+        }
+
+        // 2. Fetch that project's terms → keyword→rank map (best/lowest rank if a term repeats per engine).
+        $r2 = wp_remote_get('https://api.proranktracker.com/v3/urls/' . rawurlencode($match_id), array(
+            'headers' => array('X-TOKEN' => $key, 'Accept' => 'application/json'),
+            'timeout' => 20,
+        ));
+        if (is_wp_error($r2)) {
+            return $this->error('ProRankTracker request failed: ' . $r2->get_error_message(), 502);
+        }
+        $b2 = json_decode((string) wp_remote_retrieve_body($r2), true);
+        if (($b2['result'] ?? '') !== 'success') {
+            return $this->error('ProRankTracker error: ' . ($b2['error_message'] ?? $b2['error'] ?? 'Unknown'), 502);
+        }
+        $ranks = array();
+        foreach ((array) (($b2['data'] ?? array())['terms'] ?? array()) as $t) {
+            $term = trim((string) ($t['name'] ?? ''));
+            if ($term === '') {
+                continue;
+            }
+            $k    = function_exists('mb_strtolower') ? mb_strtolower($term, 'UTF-8') : strtolower($term);
+            $rank = (int) ($t['rank'] ?? 0);
+            // Keep the strongest (lowest, >0) rank when a keyword is tracked on several engines.
+            $existing = $ranks[$k]['rank'] ?? null;
+            if ($existing === null || ($rank > 0 && ($existing === 0 || $rank < $existing))) {
+                $ranks[$k] = array(
+                    'rank'       => $rank,
+                    'matchedUrl' => esc_url_raw((string) ($t['matchedurl'] ?? '')),
+                    'engine'     => sanitize_text_field((string) ($t['engine'] ?? '')),
+                );
+            }
+        }
+        return $this->success(array(
+            'project' => $match_url !== '' ? $match_url : $match_id,
+            'ranks'   => $ranks, // keyed by lowercased keyword
         ));
     }
 

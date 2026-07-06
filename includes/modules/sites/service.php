@@ -280,4 +280,87 @@ class PCM_Sites_Service
             'siteId'  => (int)$site->id,
         );
     }
+
+    /**
+     * Auto-provision the site in Google Search Console (mirrors the client's n8n flow):
+     *   1. add the property (PUT sites/{url} — lands "unverified")
+     *   2. mint a META verification token (Site Verification API)
+     *   3. push the token to the site's connector (POST /pcm-conn/v1/site {gscToken} →
+     *      rendered as <meta name="google-site-verification"> in wp_head, connector 2.3.0+)
+     *   4. ask Google to verify (it fetches the page and checks the tag)
+     * Best-effort: every failure returns a report with the failed step + a human reason,
+     * never an exception — adding a site must succeed even when GSC can't be provisioned.
+     *
+     * @param object $site    Connected-site row (url + credentials).
+     * @param int    $user_id PCM user owning the gsc integration.
+     * @return array{attempted:bool, added:bool, tokenPushed:bool, verified:bool, step?:string, error?:string}
+     */
+    public static function gsc_provision(object $site, int $user_id): array
+    {
+        $report = array('attempted' => false, 'added' => false, 'tokenPushed' => false, 'verified' => false);
+
+        // The user's active GSC integration (OAuth connection or service-account JSON).
+        $key = '';
+        foreach (PCM_DB::get_user_integrations($user_id) as $row) {
+            if (($row->provider ?? '') === 'gsc' && (int) ($row->isActive ?? 0) === 1) {
+                $key = (string) $row->apiKey;
+                break;
+            }
+        }
+        if ($key === '') {
+            $report['step']  = 'integration';
+            $report['error'] = __('No active Google Search Console connection — connect one on the Integrations page, then use "Verify in GSC".', 'power-creatives');
+            return $report;
+        }
+        $report['attempted'] = true;
+
+        // 1. Add the property.
+        $added = PCM_GSC::add_property($key, (string) $site->url);
+        if (is_wp_error($added)) {
+            $report['step']  = 'add';
+            $report['error'] = $added->get_error_message();
+            return $report;
+        }
+        $report['added'] = true;
+
+        // 2. Mint the META token.
+        $token = PCM_GSC::verification_token($key, (string) $site->url);
+        if (is_wp_error($token)) {
+            $report['step']  = 'token';
+            $report['error'] = $token->get_error_message();
+            return $report;
+        }
+
+        // 3. Push it to the connector, and confirm the connector actually stored it — an older
+        //    connector (<2.3.0) ignores gscToken silently, which would make step 4 fail cryptically.
+        $push = self::remote_rest($site, 'POST', '/pcm-conn/v1/site', array(), array('gscToken' => $token));
+        if (is_wp_error($push) || (int) ($push['status'] ?? 0) >= 300) {
+            $report['step']  = 'push';
+            $report['error'] = is_wp_error($push)
+                ? sprintf(__('Could not reach the site’s connector (%s).', 'power-creatives'), $push->get_error_message())
+                : sprintf(__('The site’s connector rejected the verification token (HTTP %d).', 'power-creatives'), (int) ($push['status'] ?? 0));
+            return $report;
+        }
+        if ((string) ($push['body']['gscToken'] ?? '') !== $token) {
+            $report['step']  = 'push';
+            $report['error'] = __('The site’s connector is older than v2.3.0 and can’t store the verification token — reinstall the connector on the site (Sites → Download connector), then use "Verify in GSC".', 'power-creatives');
+            return $report;
+        }
+        $report['tokenPushed'] = true;
+
+        // 4. Verify. Google fetches the homepage NOW — a stale page cache can hide the fresh
+        //    meta tag; the error below tells the user to clear caches and retry in that case.
+        $verified = PCM_GSC::verify_property($key, (string) $site->url);
+        if (is_wp_error($verified)) {
+            $report['step']  = 'verify';
+            $report['error'] = sprintf(
+                /* translators: %s: Google's error */
+                __('Google could not verify the site yet (%s). If the site caches pages, clear its cache so the new meta tag is visible, then retry "Verify in GSC".', 'power-creatives'),
+                $verified->get_error_message()
+            );
+            return $report;
+        }
+        $report['verified'] = true;
+        return $report;
+    }
 }

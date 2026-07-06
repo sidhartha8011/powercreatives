@@ -11,7 +11,7 @@
 
 import { useState, useCallback, useMemo, type ChangeEvent } from 'react';
 import {
-  Globe, Plus, Trash2, RefreshCw, ExternalLink, Loader2,
+  Globe, Plus, Trash2, RefreshCw, ExternalLink, Loader2, ShieldCheck,
   KeyRound, Puzzle, Download, Search, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -76,6 +76,7 @@ export function SitesModule() {
   // ── Dialog + form state ──
   const [addStep, setAddStep] = useState<AddStep>(null);
   const [testingId, setTestingId] = useState<number | null>(null);
+  const [gscVerifyingId, setGscVerifyingId] = useState<number | null>(null);
 
   const [formName, setFormName] = useState('');
   const [formUrl, setFormUrl] = useState('');
@@ -90,9 +91,23 @@ export function SitesModule() {
     setPasteCode('');
   }, []);
 
+  // Surface the automatic Search Console provisioning outcome (runs on add + on "GSC" retry).
+  const reportGsc = (gsc: any) => {
+    if (!gsc) return;
+    if (gsc.verified) {
+      toast.success('Verified in Google Search Console ✓');
+    } else if (gsc.error) {
+      (gsc.attempted ? toast.warning : toast.info)(`Search Console: ${gsc.error}`);
+    }
+  };
   const createMutation = trpc.sites.create.useMutation({
-    onSuccess: () => { toast.success('Site added'); closeAll(); refetch(); },
+    onSuccess: (r: any) => { toast.success('Site added'); reportGsc(r?.gsc); closeAll(); refetch(); },
     onError: (e: any) => toast.error(e.message ?? 'Failed to add site'),
+  }) as any;
+  const gscVerifyMutation = trpc.sites.gscVerify.useMutation({
+    onSuccess: (r: any) => reportGsc(r),
+    onError: (e: any) => toast.error(e.message ?? 'Search Console verification failed'),
+    onSettled: () => setGscVerifyingId(null),
   }) as any;
   const deleteMutation = trpc.sites.delete.useMutation({
     onSuccess: () => { toast.success('Site removed'); refetch(); },
@@ -193,13 +208,17 @@ export function SitesModule() {
           <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>
             {testingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Test
           </Button>
+          {/* Retry Search Console provisioning (add property → token → connector → verify). */}
+          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" title="Register + verify this site in Google Search Console" disabled={gscVerifyingId === site.id} onClick={() => { setGscVerifyingId(site.id); gscVerifyMutation.mutate({ id: site.id }); }}>
+            {gscVerifyingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} GSC
+          </Button>
           <Button variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate({ id: site.id })}>
             <Trash2 className="w-3.5 h-3.5" />
           </Button>
         </div>
       ),
     },
-  ], [colors, testingId, testMutation, deleteMutation]);
+  ], [colors, testingId, testMutation, deleteMutation, gscVerifyingId, gscVerifyMutation]);
   const search = readSearch(list.filterState);
   const statusValue = readStatus(list.filterState);
   const statusOptions = useMemo(

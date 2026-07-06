@@ -17,7 +17,7 @@ import {
   Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, ChevronDown, ChevronRight, RefreshCw, Copy,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
   Image as ImageIcon, Link2, Calendar, TrendingUp, Eye, Unlink,
-  MousePointerClick, Crosshair, Search as SearchIcon,
+  MousePointerClick, Crosshair, Search as SearchIcon, Target,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -45,7 +45,7 @@ import { useViews, type SeoView } from './hooks/useViews';
 import { useColumnLayout } from '@/hooks/useColumnLayout';
 import { ColumnHead } from '@/components/ui/column-head';
 import { ViewsToolbar } from './ViewsToolbar';
-import { buildFilterDefs } from './seoFilters';
+import { buildFilterDefs, type FilterDef, type FilterOption } from './seoFilters';
 import { AIReadinessPanel } from './AIReadinessPanel';
 import { RemoteAIReadinessPanel } from './RemoteAIReadinessPanel';
 import { LlmInfoSection } from './LlmInfoEditor';
@@ -258,10 +258,11 @@ const TOGGLE_COLUMNS: { key: string; label: string }[] = [
   { key: 'brokenLinks', label: 'Broken Links' },
   { key: 'date', label: 'Date' },
   // Google Search Console block — filled by the "GSC stats" pull (last 28 days).
-  { key: 'traffic', label: 'Traffic' },
+  { key: 'traffic', label: 'Clicks' },
   { key: 'impressions', label: 'Impressions' },
   { key: 'ctr', label: 'CTR' },
-  { key: 'position', label: 'Position' },
+  { key: 'position', label: 'Pos (GSC)' },
+  { key: 'prtPosition', label: 'Pos (PRT)' },
   { key: 'gscKeywords', label: 'Top Queries' },
   { key: 'author', label: 'Author' },
   { key: 'actions', label: 'Actions' },
@@ -280,7 +281,8 @@ type SeoSortKey =
   | 'slug' | 'supportingKeyword' | 'featuredImage'
   | 'internalLinks' | 'externalLinks' | 'brokenLinks'
   | 'metaTitle' | 'metaDescription' | 'primaryKeyword' | 'metaKeywords'
-  | 'author' | 'schema';
+  | 'author' | 'schema'
+  | 'traffic' | 'impressions' | 'ctr' | 'position' | 'prtPosition' | 'gscKeywords';
 /** Columns that support click-to-sort. */
 const SORTABLE_KEYS = new Set<string>([
   'type', 'title', 'status', 'date',
@@ -288,13 +290,14 @@ const SORTABLE_KEYS = new Set<string>([
   'internalLinks', 'externalLinks', 'brokenLinks',
   'metaTitle', 'metaDescription', 'primaryKeyword', 'metaKeywords',
   'author', 'schema',
+  'traffic', 'impressions', 'ctr', 'position', 'prtPosition', 'gscKeywords',
 ]);
 /** Leading header icon per column. */
 const HEAD_ICONS: Record<string, LucideIcon> = {
   type: FileText, title: Type, status: CircleDot, schema: Braces, author: User,
   slug: Link2, featuredImage: ImageIcon, supportingKeyword: KeyRound,
   date: Calendar, traffic: TrendingUp,
-  impressions: Eye, ctr: MousePointerClick, position: Crosshair, gscKeywords: SearchIcon,
+  impressions: Eye, ctr: MousePointerClick, position: Crosshair, prtPosition: Target, gscKeywords: SearchIcon,
   internalLinks: Link2, externalLinks: ExternalLink, brokenLinks: Unlink, ...FIELD_ICONS,
 };
 /** Default px width per column (seeds the spreadsheet layout on first use). */
@@ -302,7 +305,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   type: 90, title: 240, slug: 160, featuredImage: 72, status: 120,
   metaTitle: 200, metaDescription: 260, primaryKeyword: 150, metaKeywords: 180,
   supportingKeyword: 150, schema: 150, date: 120, traffic: 90, author: 120,
-  impressions: 110, ctr: 80, position: 95, gscKeywords: 220,
+  impressions: 110, ctr: 80, position: 95, prtPosition: 95, gscKeywords: 220,
   internalLinks: 110, externalLinks: 110, brokenLinks: 110,
   actions: 100,
 };
@@ -401,11 +404,16 @@ export function SEOModule() {
   const [gscRange, setGscRange] = useState<{ start: string; end: string } | null>(null);
   const [gscPulling, setGscPulling] = useState(false);
   const gscStatsMutation = trpc.integrations.gscStats.useMutation();
-  // Mirrors PCM_GSC::norm_url — lowercase host, no www, no trailing slash.
+  // Mirrors PCM_GSC::norm_url — strip protocol/www/trailing slash, PERCENT-DECODE the path, and
+  // lowercase. Decoding + lowercasing is what lets non-ASCII slugs (Swedish å/ä/ö) match: GSC
+  // returns `/tandv%C3%A5rd` while a permalink may be raw `/tandvård` with different hex case.
   const normGscUrl = useCallback((url: string) => {
     try {
       const u = new URL(url);
-      return u.hostname.toLowerCase().replace(/^www\./, '') + u.pathname.replace(/\/+$/, '');
+      const host = u.hostname.replace(/^www\./, '');
+      let path = u.pathname;
+      try { path = decodeURIComponent(path); } catch { /* leave as-is on malformed % */ }
+      return (host + path.replace(/\/+$/, '')).toLowerCase();
     } catch { return ''; }
   }, []);
   const handlePullGsc = useCallback(async () => {
@@ -416,18 +424,144 @@ export function SEOModule() {
       const pages = data?.pages && typeof data.pages === 'object' ? data.pages : {};
       setGscPages(pages);
       setGscRange(data?.range ?? null);
-      const n = Object.keys(pages).length;
-      toast.success(`Search Console: stats for ${n} page${n === 1 ? '' : 's'} — ${String(data?.property ?? '')}`);
+      const property = String(data?.property ?? '');
+      const returned = Object.keys(pages).length;
+      // How many CURRENT rows actually matched a returned page — this is what fills the columns.
+      // Reporting it turns "sometimes nothing shows" into a clear message (data vs URL-match issue).
+      const matched = rows.reduce((c, r) => (pages[normGscUrl(r.permalink ?? '')] ? c + 1 : c), 0);
+      if (returned === 0) {
+        toast.info(`Search Console had no data for ${property} in this date range.`);
+      } else if (matched === 0) {
+        toast.warning(`Search Console returned ${returned} page${returned === 1 ? '' : 's'}, but none matched this table’s URLs (${property}). Those pages may not be posts/pages listed here, or the site address differs.`);
+      } else {
+        toast.success(`Search Console: filled ${matched} of ${returned} page${returned === 1 ? '' : 's'} — ${property}`);
+      }
     } catch (e: any) {
       toast.error(e?.message ?? 'Could not pull Search Console stats');
     } finally {
       setGscPulling(false);
     }
-  }, [gscPulling, gscStatsMutation, isLocal, activeSite]);
+  }, [gscPulling, gscStatsMutation, isLocal, activeSite, rows, normGscUrl]);
+
+  // ── ProRankTracker ranks ("Pos (PRT)" column) — the rank of each row's PRIMARY KEYWORD in the
+  // PRT project auto-matched to this site. PRT is more accurate than GSC's average position, so the
+  // two live side-by-side. Pulled on demand via the "PRT ranks" button; keyed by lowercased keyword.
+  const [prtRanks, setPrtRanks] = useState<Record<string, { rank: number; matchedUrl: string; engine: string }>>({});
+  const [prtPulling, setPrtPulling] = useState(false);
+  const prtPageRanksMutation = trpc.integrations.prtPageRanks.useMutation();
+  const normKw = useCallback((s: string) => s.trim().toLowerCase(), []);
+  const handlePullPrt = useCallback(async () => {
+    if (prtPulling) return;
+    setPrtPulling(true);
+    try {
+      const data: any = await prtPageRanksMutation.mutateAsync({ site: isLocal ? '' : (activeSite?.url ?? '') });
+      const ranks = data?.ranks && typeof data.ranks === 'object' ? data.ranks : {};
+      setPrtRanks(ranks);
+      const project = String(data?.project ?? '');
+      const tracked = Object.keys(ranks).length;
+      // How many rows have a Primary Keyword that PRT tracks — that's what fills "Pos (PRT)".
+      const matched = rows.reduce((c, r) => (r.primaryKeyword && ranks[normKw(r.primaryKeyword)] ? c + 1 : c), 0);
+      if (tracked === 0) {
+        toast.info(`ProRankTracker: no tracked keywords for ${project}.`);
+      } else if (matched === 0) {
+        toast.warning(`ProRankTracker tracks ${tracked} keyword${tracked === 1 ? '' : 's'} for ${project}, but none match a Primary Keyword in this table. Set each row’s Primary KW to a tracked term.`);
+      } else {
+        toast.success(`ProRankTracker: filled ${matched} row${matched === 1 ? '' : 's'} from ${tracked} tracked keyword${tracked === 1 ? '' : 's'} — ${project}`);
+      }
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Could not pull ProRankTracker ranks');
+    } finally {
+      setPrtPulling(false);
+    }
+  }, [prtPulling, prtPageRanksMutation, isLocal, activeSite, rows, normKw]);
+  useEffect(() => { setPrtRanks({}); }, [siteId]);
   // Stats belong to one property — drop them when the user switches site tabs.
   useEffect(() => { setGscPages({}); setGscRange(null); }, [siteId]);
+  // GSC filter defs — built here (not in buildFilterDefs) because the data lives in gscPages,
+  // not on the row. Numeric columns get "No data / Zero / Has value" choices; position gets
+  // SEO-meaningful rank buckets; Top Queries is a free-text "contains".
+  const gscFilterDefs = useMemo(() => {
+    const stat = (r: SeoRow) => gscPages[normGscUrl(r.permalink ?? '')];
+    const numOpts: FilterOption[] = [
+      { value: 'nodata', label: 'No GSC data' },
+      { value: 'zero', label: 'Zero' },
+      { value: 'has', label: 'Has value' },
+    ];
+    const numMatch = (pick: (g: { clicks: number; impressions: number; ctr: number; position: number }) => number) =>
+      (r: SeoRow, v: string): boolean => {
+        const g = stat(r);
+        if (v === 'nodata') return !g;
+        if (!g) return false;
+        if (v === 'zero') return pick(g) === 0;
+        if (v === 'has') return pick(g) > 0;
+        return true;
+      };
+    return {
+      traffic: { key: 'traffic', kind: 'choice', options: numOpts, match: numMatch((g) => g.clicks) },
+      impressions: { key: 'impressions', kind: 'choice', options: numOpts, match: numMatch((g) => g.impressions) },
+      ctr: { key: 'ctr', kind: 'choice', options: numOpts, match: numMatch((g) => g.ctr) },
+      position: {
+        key: 'position',
+        kind: 'choice',
+        options: [
+          { value: 'nodata', label: 'No GSC data' },
+          { value: 'top3', label: 'Top 3 (≤3)' },
+          { value: 'top10', label: '4–10' },
+          { value: 'beyond', label: 'Beyond 10' },
+        ],
+        match: (r: SeoRow, v: string): boolean => {
+          const g = stat(r);
+          if (v === 'nodata') return !g;
+          if (!g) return false;
+          const p = g.position;
+          if (v === 'top3') return p > 0 && p <= 3;
+          if (v === 'top10') return p > 3 && p <= 10;
+          if (v === 'beyond') return p > 10;
+          return true;
+        },
+      },
+      gscKeywords: {
+        key: 'gscKeywords',
+        kind: 'text',
+        match: (r: SeoRow, v: string): boolean => {
+          const g = stat(r);
+          return !!g && g.keywords.join(' ').toLowerCase().includes(v.toLowerCase());
+        },
+      },
+    } as Record<string, FilterDef>;
+  }, [gscPages, normGscUrl]);
+  // PRT filter def — rank of the row's primary keyword (data in prtRanks, not on the row).
+  const prtFilterDefs = useMemo(() => {
+    const rankOf = (r: SeoRow): number | null => {
+      const p = r.primaryKeyword ? prtRanks[normKw(r.primaryKeyword)] : undefined;
+      return p ? p.rank : null; // null = not tracked; 0 = tracked but not ranking
+    };
+    return {
+      prtPosition: {
+        key: 'prtPosition',
+        kind: 'choice',
+        options: [
+          { value: 'untracked', label: 'Not tracked' },
+          { value: 'unranked', label: 'Not ranking' },
+          { value: 'top3', label: 'Top 3 (≤3)' },
+          { value: 'top10', label: '4–10' },
+          { value: 'beyond', label: 'Beyond 10' },
+        ],
+        match: (r: SeoRow, v: string): boolean => {
+          const rank = rankOf(r);
+          if (v === 'untracked') return rank == null;
+          if (rank == null) return false;
+          if (v === 'unranked') return rank === 0;
+          if (v === 'top3') return rank > 0 && rank <= 3;
+          if (v === 'top10') return rank > 3 && rank <= 10;
+          if (v === 'beyond') return rank > 10;
+          return true;
+        },
+      },
+    } as Record<string, FilterDef>;
+  }, [prtRanks, normKw]);
   // Per-column filters (funnel icon in each column header).
-  const filterDefs = useMemo(() => buildFilterDefs(options), [options]);
+  const filterDefs = useMemo(() => ({ ...buildFilterDefs(options), ...gscFilterDefs, ...prtFilterDefs }), [options, gscFilterDefs, prtFilterDefs]);
   const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters<SeoRow>();
   // Column visibility (Columns menu) — missing/true = visible, false = hidden.
   const [cols, setCols] = useState<Record<string, boolean>>(
@@ -656,6 +790,14 @@ export function SEOModule() {
         metaKeywords: (r) => r.metaKeywords.toLowerCase(),
         author: (r) => r.author.toLowerCase(),
         schema: (r) => (r.schemaTypes ?? []).join(',').toLowerCase(),
+        // GSC columns read the pulled stats map; no-data rows return null → always sort last.
+        traffic: (r) => gscPages[normGscUrl(r.permalink ?? '')]?.clicks ?? null,
+        impressions: (r) => gscPages[normGscUrl(r.permalink ?? '')]?.impressions ?? null,
+        ctr: (r) => gscPages[normGscUrl(r.permalink ?? '')]?.ctr ?? null,
+        position: (r) => { const g = gscPages[normGscUrl(r.permalink ?? '')]; return g ? g.position : null; },
+        gscKeywords: (r) => { const g = gscPages[normGscUrl(r.permalink ?? '')]; return g ? g.keywords.join(', ').toLowerCase() : null; },
+        // PRT rank of the row's primary keyword; not-tracked / rank 0 (not ranking) → null → sorts last.
+        prtPosition: (r) => { const p = r.primaryKeyword ? prtRanks[normKw(r.primaryKeyword)] : undefined; return p && p.rank > 0 ? p.rank : null; },
       },
     },
   );
@@ -1010,6 +1152,23 @@ export function SEOModule() {
           <TableCell key={key} className="text-center text-xs tabular-nums" title={hint}>{value}</TableCell>
         );
       }
+      case 'prtPosition': {
+        // ProRankTracker rank of the row's PRIMARY KEYWORD (filled by the "PRT ranks" pull).
+        const kw = row.primaryKeyword?.trim();
+        if (!kw) {
+          return <TableCell key={key} className="text-center text-xs text-muted-foreground/60" title="Set a Primary Keyword to track its ProRankTracker rank">—</TableCell>;
+        }
+        const p = prtRanks[normKw(kw)];
+        if (!p) {
+          return <TableCell key={key} className="text-center text-xs text-muted-foreground" title={`"${kw}" — click "PRT ranks" to pull ProRankTracker (or this keyword isn't tracked there)`}>—</TableCell>;
+        }
+        if (p.rank <= 0) {
+          return <TableCell key={key} className="text-center text-xs text-muted-foreground" title={`"${kw}" — tracked but not ranking (ProRankTracker${p.engine ? `, ${p.engine}` : ''})`}>—</TableCell>;
+        }
+        return (
+          <TableCell key={key} className="text-center text-xs font-medium tabular-nums" title={`"${kw}" ranks #${p.rank} (ProRankTracker${p.engine ? `, ${p.engine}` : ''})${p.matchedUrl ? ` → ${p.matchedUrl}` : ''}`}>{p.rank}</TableCell>
+        );
+      }
       case 'internalLinks':
       case 'externalLinks':
       case 'brokenLinks': {
@@ -1225,6 +1384,15 @@ export function SEOModule() {
             disabled={busy || gscPulling}
           >
             {gscPulling ? 'Pulling…' : 'GSC stats'}
+          </PillButton>
+          {/* Pulls ProRankTracker rank of each row's Primary Keyword → "Pos (PRT)" column. */}
+          <PillButton
+            variant="active"
+            icon={prtPulling ? <Loader2 className="animate-spin" /> : <Target />}
+            onClick={handlePullPrt}
+            disabled={busy || prtPulling}
+          >
+            {prtPulling ? 'Pulling…' : 'PRT ranks'}
           </PillButton>
           <PillButton variant="active" icon={<Plus />} onClick={() => handleCreate('post')} disabled={busy}>
             Post

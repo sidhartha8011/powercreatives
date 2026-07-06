@@ -5499,3 +5499,176 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Standard recipe. classmap 97/0 missing, autoload OK; fresh vite build; connector generator 2.2.3 unchanged.
 - Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.38 MB, 479 entries). Verified: top-level
   ONLY powerplatform; required files present; 0 backslash paths; 0 dir leaks. Not committed.
+
+## 2026-07-06 — GSC popup: Notion-style setup guide behind a button (from Integrations.pdf)
+- New component app/src/modules/Integrations/GscSetupGuide.tsx — a toggle button ("Google Cloud setup guide")
+  that reveals a Notion-styled, collapsible instructions panel reproducing the PDF's "Search Console API Setup
+  (from GCP)" section VERBATIM (intro + Before-you-start checklist + Steps 1–6 + the "Why this matters" /
+  verification callouts). Notion aesthetics: readable card column, section headings, circular step-number
+  badges, inline <Code> chips, tinted Callout boxes (gray/amber/blue), dividers, external-link affordances.
+  Hidden by default; button-first per the request.
+- One added annotation (clearly marked, blue "Connecting through this plugin?" callout at Step 5): choose
+  Web application (not the doc's Desktop app) + use the redirect URI from the Connect box — otherwise the
+  Desktop client the doc describes can't drive our OAuth button. Reproduced only the GCP-setup section, not
+  the developer/Python-pipeline half (that's work the plugin already does — would be misleading in a connect
+  popup); can add on request.
+- Wired into Integrations/index.tsx GSC block: <GscSetupGuide/> placed FIRST, above the "Connect with Google"
+  box (wrapped both in a space-y-3 div; import added).
+- Verified: tsc 56 baseline (0 in Integrations/GscSetupGuide); vite build clean (confirms JSX balanced).
+  In dist, NOT yet zipped.
+
+## 2026-07-06 — SEO table: rename Traffic→Clicks + sort/filter on the GSC columns
+- SEO/index.tsx: (1) TOGGLE_COLUMNS `traffic` label 'Traffic'→'Clicks' (column KEY kept 'traffic' so gscPages
+  mapping / renderCell / saved layouts are untouched). (2) Sorting: added 'traffic'/'impressions'/'ctr'/
+  'position'/'gscKeywords' to SeoSortKey + SORTABLE_KEYS, and 5 accessors in useSortableTable that read the
+  gscPages map (via normGscUrl(permalink)); no-data returns null → always sorts last; position asc = best rank
+  first. accessors are inline (new each render) so sortedData re-runs and reflects freshly-pulled stats. (3)
+  Filtering: new inline `gscFilterDefs` useMemo (over gscPages) — Clicks/Impressions/CTR = choice
+  "No data/Zero/Has value"; Position = choice "Top 3 (≤3)/4–10/Beyond 10/No data"; Top Queries = text
+  contains — merged into filterDefs ({...buildFilterDefs(options), ...gscFilterDefs}); built inline because the
+  data isn't on the row. Header sort arrows + filter funnels appear automatically (renderHeader already gates
+  on SORTABLE_KEYS + filterDefs[key]). Imported FilterDef/FilterOption types from seoFilters.
+- Verified: tsc → 56 (baseline, 0 in SEO/index); vite build clean. In dist, NOT yet zipped.
+
+## 2026-07-06 — Rebuild plugin zip (GSC setup guide + Clicks rename + GSC sort/filter)
+- Standard recipe. classmap 97/0 missing, autoload OK; fresh vite build; connector generator 2.2.3 unchanged.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.38 MB, 479 entries). Verified: top-level
+  ONLY powerplatform; required files present; 0 backslash paths; 0 dir leaks. Not committed.
+
+## 2026-07-06 — Fix "GSC stats sometimes works" — non-ASCII slug URL-match failure
+- Symptom: on a Swedish connected site (knallenstandvard.se) the pull toast said success ("17 pages") but
+  columns often stayed "—", intermittently. Root cause: URL-key mismatch for non-ASCII slugs. GSC returns
+  page URLs percent-ENCODED (`/tandv%C3%A5rd`); the row permalink may be raw UTF-8 (`/tandvård`) with
+  different hex case; norm_url lowercased only the HOST and never decoded the path → different keys → those
+  rows never matched. ASCII-slug pages matched fine → "sometimes works".
+- Fix (must stay byte-identical on both sides):
+  * PCM_GSC::norm_url (class-pcm-gsc.php): host lowercased+de-www'd, path rtrim'd, then rawurldecode(host+path)
+    + mb_strtolower — so %C3%A5 / %c3%a5 / raw å and any case all collapse to one key.
+  * frontend normGscUrl (SEO/index.tsx): mirror — new URL → strip www, decodeURIComponent(pathname), strip
+    trailing slash, toLowerCase.
+  * Diagnostic: the pull toast now reports MATCHED-of-returned ("filled 12 of 17 — <property>"); warns when
+    returned>0 but matched=0 ("none matched this table's URLs…"); info on 0 returned. Turns the silent
+    "nothing shows" into a clear data-vs-match signal. (added rows + normGscUrl to the callback deps).
+- Verified: NEW gsc_norm_test.php — 7/7 PHP + 6/6 JS parity (encoded/raw/www/mixed-case/home/ascii all equal
+  across PHP norm_url and the JS normGscUrl). GSC regressions gsc_test.php 20/20 + gsc_pipeline_test.php 6/6.
+  tsc 56 baseline (0 in SEO/index); vite build clean. In dist, NOT yet zipped.
+
+## 2026-07-06 — Rebuild plugin zip (GSC non-ASCII URL-match fix)
+- Standard recipe. classmap 97/0 missing, autoload OK; fresh vite build; connector generator 2.2.3 unchanged.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.38 MB, 479 entries). Verified: top-level
+  ONLY powerplatform; required files present; 0 backslash paths; 0 dir leaks; the fix is inside the zip
+  (class-pcm-gsc.php norm_url uses rawurldecode = 1). Not committed.
+
+## 2026-07-06 — SEO table: split Position into "Pos (GSC)" + "Pos (PRT)" (per Primary Keyword)
+- Requirement: two position columns — Pos (GSC) = existing GSC avg position (renamed), Pos (PRT) = the
+  ProRankTracker rank of the row's PRIMARY KEYWORD (PRT is more accurate; both coexist).
+- Backend: NEW `POST /integrations/proranktracker/page-ranks {site?}` (`prt_page_ranks` in
+  integrations/controller.php) — reuses the PRT API pattern: list projects (v3/util/urls) → auto-match by
+  host (strip www, lowercase) → fetch project terms (v3/urls/{id}) → build {project, ranks:{lc-keyword →
+  {rank, matchedUrl, engine}}}, keeping the best/lowest >0 rank when a term repeats per engine; not-ranking
+  kept as 0; clear 404 when no project matches the site. tRPC integrations.prtPageRanks.
+- Frontend (SEO/index.tsx): `position` label 'Position'→'Pos (GSC)'; NEW `prtPosition` column 'Pos (PRT)'
+  (icon Target, width 95). State prtRanks + "PRT ranks" pull button next to "GSC stats"; on pull, toast
+  reports filled/tracked/matched (info on 0 tracked, warning when tracked but none match a Primary KW).
+  renderCell prtPosition: no primary KW → faint —; not tracked → — (hint to pull); rank 0 → — "not ranking";
+  rank>0 → number with title "#rank (engine) → matchedUrl". Sort accessor (rank>0 else null→last), filter def
+  (Not tracked/Not ranking/Top 3/4–10/Beyond 10) merged into filterDefs; added to SeoSortKey + SORTABLE_KEYS.
+  Cleared on site-tab switch. normKw (trim+toLowerCase) matches backend mb_strtolower key.
+- Verified: php -l clean; standalone algorithm test — host auto-match ✓, empty-skip + case-folded best-rank
+  dedup (2 keys, rank 4 kept over 7) ✓, not-ranking→0 ✓; backend mb_strtolower == frontend JS toLowerCase for
+  "Tandläkare Övik" → both `tandläkare övik` (key parity) ✓. tsc 56 baseline (0 in touched); vite build clean.
+  In dist, NOT yet zipped.
+
+## 2026-07-06 — Rebuild plugin zip (Pos GSC / Pos PRT split)
+- Standard recipe. classmap 97/0 missing, autoload OK; fresh vite build; connector generator 2.2.3 unchanged.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.39 MB, 479 entries). Verified: top-level
+  ONLY powerplatform; required files present; 0 backslash paths; 0 dir leaks; new endpoint inside the zip
+  (integrations/controller.php prt_page_ranks = 2 refs). Not committed.
+
+## 2026-07-06 — Add-site GSC auto-verification (port of the client's n8n flow) — connector 2.3.0
+- Analysed the n8n workflow (get_sites → add_site PUT → get_verification_token → verify_site) and ported it
+  natively: as soon as a connected site is added, the hub registers + verifies it in Google Search Console.
+  Our advantage over n8n: the connector runs ON the site, so the META verification tag is pushed + served
+  automatically (n8n needs a separate mechanism for that step).
+- PCM_GSC (class-pcm-gsc.php): SCOPE widened readonly → `webmasters + siteverification` (needed for PUT
+  sites/{url} + Site Verification API; older connections 403 → new `pcm_gsc_scope` error says "reconnect");
+  api() now accepts absolute URLs (Site Verification base differs); NEW add_property (PUT, trailing-slash
+  property id, rawurlencoded), verification_token (POST …/token, method META, extracts the content value out
+  of the full `<meta>` tag Google returns), verify_property (POST …/webResource?verificationMethod=META).
+- Connector 2.2.3 → 2.3.0 (seohub/service.php): `POST /pcm-conn/v1/site` now accepts `gscToken` (option
+  pcm_conn_gsc_token, sanitize_text_field) + echoes it in the read payload; wp_head renders
+  `<meta name="google-site-verification" content="…">` (esc_attr, priority 1).
+- Hub flow: PCM_Sites_Service::gsc_provision(site, userId) — integration lookup (PCM_DB, provider gsc,
+  active) → add → token → connector push (echo-back verified; older connector → precise "reinstall connector
+  v2.3.0" error) → verify (cache-aware error text). Wired best-effort in create_site (never blocks site
+  creation; report under `gsc` in the response) + retry route POST /sites/{id}/gsc-verify.
+- Frontend: tRPC sites.gscVerify (transform like sites.test); Sites/index.tsx — create toast now reports the
+  GSC outcome (verified ✓ / warning with step error / info when no GSC connection), per-row "GSC" button
+  (ShieldCheck) retries provisioning with the same toasts. GscSetupGuide step 2: also enable the "Site
+  Verification API".
+- Verified: php -l ×4 + extracted connector clean; NEW gsc_provision_test.php 6/6 (PUT method + encoded
+  trailing-slash URL, META token body + tag-content extraction, verify query+body, 403 → pcm_gsc_scope with
+  reconnect text); regressions 20/20 + 11/11 + 6/6 + 7/7 (scope assertions updated to the widened string);
+  tsc 56 baseline (0 in touched); vite build clean.
+- ⚠ DEPLOY: hub zip rebuild needed; NEW sites get the 2.3.0 connector automatically via Download connector;
+  existing GSC connections must RECONNECT (Connect with Google) to grant the new scopes. Not committed.
+
+## 2026-07-06 — Rebuild plugin zip (add-site GSC auto-verify + connector 2.3.0)
+- Standard recipe. classmap 97/0 missing, autoload OK; fresh vite build.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.39 MB, 479 entries). Verified: top-level
+  ONLY powerplatform; required files present; 0 backslash paths; 0 dir leaks; feature confirmed inside the zip
+  (sites/service.php gsc_provision; connector generator Version 2.3.0). Not committed.
+
+## 2026-07-06 — Fix "Search Console: HTTP 411" + PRT "No project found" (scheme-less tracked URLs)
+- Two errors from the user's screenshots (Sites GSC button + SEO "PRT ranks" on This Site):
+  1. HTTP 411 (Length Required): `PCM_GSC::add_property` PUTs with NO body → WP sends no Content-Length →
+     Google refuses. Fix in `PCM_GSC::api()`: bodyless non-GET requests now send `body => ''`
+     (Content-Length: 0). Asserted by unit test (PUT args carry empty body).
+  2. PRT "No ProRankTracker project found": `prt_page_ranks` matched projects by
+     `wp_parse_url($url, PHP_URL_HOST)` — PRT tracked URLs can be SCHEME-LESS ("knallenstandvard.se"),
+     where parse_url returns NO host → every project unmatched. Fix: `$host_of()` helper falls back to the
+     text before the first / ? # after stripping any scheme; www-stripped + lowercased; applied to both
+     sides. The 404 error now also LISTS the hosts PRT does track (actionable: user sees the mismatch).
+     NB: on the "This Site" tab (the hub itself, create.widgetify.co) the message is CORRECT behavior —
+     the hub isn't a PRT project; the listed tracked hosts now make that obvious.
+- Verified: php -l ×2 clean; 411 test PASS (empty body present on PUT); host-match tests 4/4 (with scheme,
+  scheme-less, www+path, mixed-case+query); GSC regressions 20/20+11/11+6/6+7/7+6/6. PHP-only — no frontend
+  rebuild. Not zipped yet.
+
+## 2026-07-06 — Rebuild plugin zip (HTTP 411 fix + PRT scheme-tolerant host match)
+- Standard recipe. classmap 97/0 missing, autoload OK; fresh vite build; connector generator 2.3.0 unchanged.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.39 MB, 479 entries). Verified: top-level
+  ONLY powerplatform; required files present; 0 backslash paths; 0 dir leaks; both fixes confirmed inside the
+  zip (class-pcm-gsc.php 411 comment = 1 ref; integrations/controller.php host_of = 3 refs). Not committed.
+
+## 2026-07-06 — /build: HTTP 411 hardened (explicit Content-Length) + GSC first-click failure (401 refresh-retry)
+- User reports 411 persists on the Sites GSC button + "GSC stats needs two clicks before data appears".
+- 411 root cause deepened: the earlier `body => ''` fix is insufficient — WP's curl transport SKIPS the
+  Content-Length header for empty payloads, so Google still 411s. Fix: bodyless non-GET requests now ALSO set
+  an explicit `Content-Length: 0` header in PCM_GSC::api().
+- Double-click diagnosis: renderCell is unmemoized + mutateAsync resolves the raw body (both verified by
+  reading), so it's not a render bug. The matching mechanism is FIRST-USE AUTH FLAKE: click 1 runs on a
+  just-minted token (or a token revoked mid-cache) and a 401 was NOT retried → request fails; click 2 succeeds
+  (token cached/replaced). Fix: `access_token($json, $fresh)` can force-remint (delete transient), and api()
+  now on 401 force-refreshes the token ONCE and retries with the new Bearer. Persistent 401 still errors after
+  one retry (no loop).
+- Verified: php -l clean; NEW gsc_retry_test.php 6/6 (Content-Length: 0 header on bodyless PUT; 401 → re-mint
+  → retry with NEW bearer → success in exactly 4 HTTP calls; new token cached; persistent 401 errors cleanly);
+  regressions 20/20+11/11+6/6+7/7+6/6. Zip rebuilt (2.39MB, 479 entries, both fixes grep-confirmed inside).
+  Worked inline (small, sequential). Not committed.
+
+## 2026-07-06 — Rebuild plugin zip (411 Content-Length + 401 refresh-retry fixes)
+- Standard recipe (re-run at user request; identical content to the /build's 20:36 zip). classmap 97/0,
+  autoload OK; fresh vite build; connector 2.3.0. Zip: power-creatives.zip (2.39 MB, 479 entries) — top-level
+  ONLY powerplatform, 0 backslash paths, 0 dir leaks, both fixes at class-pcm-gsc.php:213 (Content-Length: 0)
+  + :232 (401 → access_token fresh retry). Not committed.
+
+## 2026-07-06 — (guidance, no code) pcm_gsc_scope error on Sites GSC button = expected reconnect step
+- The 411 fix landed (error changed from HTTP 411 → Google's own "insufficient permissions" = pcm_gsc_scope,
+  the designed message). Not a bug: the stored OAuth connection predates the scope widening (readonly-only
+  token cannot PUT sites / call Site Verification — Google-side enforcement, not bypassable in code).
+- Walked the user through the one-time migration: (1) enable "Site Verification API" in the GCP project;
+  (2) Integrations → Connect with Google again (same client ID/secret; prompt=consent shows the new
+  permissions; upsert replaces the old connection automatically); (3) retry the Sites GSC button — next
+  failure modes (old connector <2.3.0 / page cache) each have their own actionable message. Read-only GSC
+  stats unaffected throughout.

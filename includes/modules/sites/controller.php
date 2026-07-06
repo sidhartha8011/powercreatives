@@ -37,6 +37,7 @@ class PCM_REST_Sites extends PCM_REST_Base
             array('DELETE', '/sites/(?P<id>\d+)',              'delete_site'),
             array('POST',   '/sites/(?P<id>\d+)/publish',      'publish_article'),
             array('POST',   '/sites/(?P<id>\d+)/test',         'test_connection'),
+            array('POST',   '/sites/(?P<id>\d+)/gsc-verify',   'gsc_verify_site'),
         );
     }
 
@@ -105,10 +106,41 @@ class PCM_REST_Sites extends PCM_REST_Base
         }
 
         $site = PCM_DB::get_site($site_id, (int)$pcm_user->id);
+
+        // As soon as a site is added, try to register + verify it in Google Search Console
+        // (add property → META token → push to connector → verify). Best-effort by design:
+        // the site is saved regardless, and the report tells the UI what happened.
+        $gsc = array('attempted' => false, 'verified' => false, 'error' => null);
+        try {
+            $gsc = PCM_Sites_Service::gsc_provision($site, (int)$pcm_user->id);
+        } catch (\Throwable $e) {
+            $gsc['error'] = $e->getMessage();
+        }
+
         $safe = (array)$site;
         $safe['appPassword'] = '••••••••';
+        $safe['gsc'] = $gsc;
 
         return $this->success($safe, 201);
+    }
+
+    /**
+     * POST /sites/<id>/gsc-verify — retry Google Search Console provisioning for a site
+     * (add property → META token → connector push → verify). Used after fixing whatever
+     * blocked the automatic attempt at add time (no GSC connection, old connector, cache…).
+     *
+     * @param WP_REST_Request $request Request with id.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function gsc_verify_site(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int)$pcm_user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        require_once __DIR__ . '/service.php';
+        return $this->success(PCM_Sites_Service::gsc_provision($site, (int)$pcm_user->id));
     }
 
     /**

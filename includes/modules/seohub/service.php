@@ -386,7 +386,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
- * Version: 2.2.3
+ * Version: 2.3.0
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -1263,8 +1263,9 @@ add_action('rest_api_init', function () {
     $perm = function () { return current_user_can('manage_options'); };
     $read = function () {
         return array(
-            'robots' => (string) get_option('pcm_conn_robots', ''),
-            'jsonld' => (string) get_option('pcm_conn_jsonld', ''),
+            'robots'   => (string) get_option('pcm_conn_robots', ''),
+            'jsonld'   => (string) get_option('pcm_conn_jsonld', ''),
+            'gscToken' => (string) get_option('pcm_conn_gsc_token', ''),
         );
     };
     register_rest_route('pcm-conn/v1', '/site', array(
@@ -1273,6 +1274,9 @@ add_action('rest_api_init', function () {
             $p = $req->get_json_params();
             if (is_array($p) && array_key_exists('robots', $p)) { update_option('pcm_conn_robots', (string) $p['robots']); }
             if (is_array($p) && array_key_exists('jsonld', $p)) { update_option('pcm_conn_jsonld', (string) $p['jsonld']); }
+            // Google Search Console META verification token (content value only) — rendered in
+            // wp_head so the hub's add-site auto-verify flow can complete against Google.
+            if (is_array($p) && array_key_exists('gscToken', $p)) { update_option('pcm_conn_gsc_token', sanitize_text_field((string) $p['gscToken'])); }
             return call_user_func($read);
         }),
     ));
@@ -1376,6 +1380,12 @@ add_action('wp_head', function () {
     if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) { return; }
     echo "\n" . '<script type="application/ld+json">' . wp_json_encode($decoded) . '</script>' . "\n";
 }, 20);
+// Google Search Console META site-verification tag (token pushed by the hub via POST /site).
+add_action('wp_head', function () {
+    $tok = trim((string) get_option('pcm_conn_gsc_token', ''));
+    if ($tok === '') { return; }
+    echo '<meta name="google-site-verification" content="' . esc_attr($tok) . '" />' . "\n";
+}, 1);
 
 // --- Hub-managed AI Readiness: store + serve a virtual /llms.txt index. ---
 add_action('rest_api_init', function () {

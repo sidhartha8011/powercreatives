@@ -18,9 +18,14 @@ if (!defined('ABSPATH')) {
 
 class PCM_GSC
 {
-    private const SCOPE     = 'https://www.googleapis.com/auth/webmasters.readonly';
+    // Full webmasters (read + add properties) AND site verification — required for the
+    // add-site auto-verify flow (PUT sites/{url} + Site Verification API). Connections made
+    // before this scope widening hold readonly-only tokens; write calls then 403 and the
+    // methods below surface a clear "reconnect with Google" error.
+    private const SCOPE     = 'https://www.googleapis.com/auth/webmasters https://www.googleapis.com/auth/siteverification';
     private const TOKEN_URL = 'https://oauth2.googleapis.com/token';
     private const API_BASE  = 'https://www.googleapis.com/webmasters/v3';
+    private const VERIFY_API = 'https://www.googleapis.com/siteVerification/v1';
 
     /** Parse + sanity-check the pasted service-account JSON. */
     public static function parse_credentials(string $json): array|WP_Error
@@ -81,8 +86,9 @@ class PCM_GSC
     }
 
     /** Access token for the stored credential — service account (JWT grant) or OAuth
-     *  connection (refresh-token grant). Cached ~55 min in a transient either way. */
-    public static function access_token(string $json): string|WP_Error
+     *  connection (refresh-token grant). Cached ~55 min in a transient either way.
+     *  $fresh discards the cached token and mints a new one (401-recovery path). */
+    public static function access_token(string $json, bool $fresh = false): string|WP_Error
     {
         $creds = self::parse_credentials($json);
         if (is_wp_error($creds)) {
@@ -90,7 +96,10 @@ class PCM_GSC
         }
         $is_oauth  = (($creds['type'] ?? '') === 'oauth');
         $cache_key = 'pcm_gsc_tok_' . md5($is_oauth ? $creds['refresh_token'] : $creds['email']);
-        $cached    = get_transient($cache_key);
+        if ($fresh) {
+            delete_transient($cache_key);
+        }
+        $cached = $fresh ? false : get_transient($cache_key);
         if (is_string($cached) && $cached !== '') {
             return $cached;
         }
@@ -195,14 +204,36 @@ class PCM_GSC
         );
         if ($body !== null) {
             $args['body'] = (string) wp_json_encode($body);
+        } elseif ($method !== 'GET') {
+            // Bodyless PUT/POST (e.g. add_property) MUST still send Content-Length: 0 —
+            // Google answers "HTTP 411 Length Required" otherwise. An empty body alone is
+            // NOT enough: WP's curl transport skips the header for empty payloads, so set
+            // it explicitly.
+            $args['body'] = '';
+            $args['headers']['Content-Length'] = '0';
         }
-        $resp = wp_remote_request(self::API_BASE . $path, $args);
+        // $path is normally relative to the Search Console API; the Site Verification API
+        // lives on another base, so absolute https:// paths pass through untouched.
+        $url = str_starts_with($path, 'https://') ? $path : self::API_BASE . $path;
+        $resp = wp_remote_request($url, $args);
         // Quotas: ~1,200 queries/min per project + per-site limits. One short retry on
         // 429/quota/5xx smooths multi-property pulls without hanging the web request.
         $code = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
         if (is_wp_error($resp) || $code === 429 || $code >= 500) {
             usleep(700000); // 0.7s
-            $resp = wp_remote_request(self::API_BASE . $path, $args);
+            $resp = wp_remote_request($url, $args);
+            $code = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+        }
+        // 401 on a just-minted token happens (first use of a fresh credential) and a cached
+        // token can be revoked server-side before our 55-min transient lapses. Both self-heal
+        // the same way: force-refresh the token ONCE and retry — this is why a pull could fail
+        // on the first click and succeed on the second.
+        if ($code === 401) {
+            $tok = self::access_token($json, true);
+            if (!is_wp_error($tok)) {
+                $args['headers']['Authorization'] = 'Bearer ' . $tok;
+                $resp = wp_remote_request($url, $args);
+            }
         }
         if (is_wp_error($resp)) {
             return new WP_Error('pcm_gsc_http', $resp->get_error_message());
@@ -255,12 +286,19 @@ class PCM_GSC
         return '';
     }
 
-    /** Normalize a page URL for map lookups: lowercase host, no trailing slash, no protocol. */
+    /**
+     * Normalize a page URL for map lookups so the SEO table's row permalinks and GSC's returned
+     * page URLs collapse to the same key regardless of: protocol, www, trailing slash, letter case,
+     * AND percent-encoding. The last one matters for non-ASCII slugs (Swedish å/ä/ö etc.): GSC
+     * returns `/tandv%C3%A5rd`, a permalink may be raw `/tandvård`, with mixed hex case — all must
+     * match. Host lowercased; path percent-decoded then Unicode-lowercased; trailing slash dropped.
+     */
     public static function norm_url(string $url): string
     {
-        $host = strtolower((string) (wp_parse_url($url, PHP_URL_HOST) ?: ''));
-        $path = (string) (wp_parse_url($url, PHP_URL_PATH) ?? '/');
-        return preg_replace('/^www\./', '', $host) . rtrim($path, '/');
+        $host = preg_replace('/^www\./', '', strtolower((string) (wp_parse_url($url, PHP_URL_HOST) ?: '')));
+        $path = rtrim((string) (wp_parse_url($url, PHP_URL_PATH) ?? '/'), '/');
+        $key  = rawurldecode($host . $path);
+        return function_exists('mb_strtolower') ? mb_strtolower($key, 'UTF-8') : strtolower($key);
     }
 
     /**
@@ -336,5 +374,67 @@ class PCM_GSC
             }
         }
         return array('range' => array('start' => $start, 'end' => $end), 'pages' => $out);
+    }
+
+    // ── Add-site auto-verification (mirrors the n8n flow: add_site → token → verify) ────────
+
+    /** Rewrap a 403 as a clear "the connection lacks the new write scopes" instruction. */
+    private static function scope_error(WP_Error $e): WP_Error
+    {
+        $status = is_array($e->get_error_data()) ? (int) ($e->get_error_data()['status'] ?? 0) : 0;
+        if ($status === 403) {
+            return new WP_Error('pcm_gsc_scope', __('Google refused (insufficient permissions). The Google connection predates site-verification support — reconnect via "Connect with Google" on the Integrations page to grant the new permissions, then retry. (Also make sure the "Site Verification API" is enabled in the Google Cloud project.)', 'power-creatives'));
+        }
+        return $e;
+    }
+
+    /** URL-prefix property identifier: the site URL with a trailing slash. */
+    private static function property_id(string $site_url): string
+    {
+        return rtrim($site_url, '/') . '/';
+    }
+
+    /** Add the site as a Search Console property (idempotent; lands "unverified"). */
+    public static function add_property(string $json, string $site_url): bool|WP_Error
+    {
+        $r = self::api($json, 'PUT', '/sites/' . rawurlencode(self::property_id($site_url)));
+        if (is_wp_error($r)) {
+            return self::scope_error($r);
+        }
+        return true;
+    }
+
+    /** Mint a META verification token for the site (rendered by the connector in wp_head). */
+    public static function verification_token(string $json, string $site_url): string|WP_Error
+    {
+        $r = self::api($json, 'POST', self::VERIFY_API . '/token', array(
+            'site'               => array('identifier' => self::property_id($site_url), 'type' => 'SITE'),
+            'verificationMethod' => 'META',
+        ));
+        if (is_wp_error($r)) {
+            return self::scope_error($r);
+        }
+        $token = (string) ($r['token'] ?? '');
+        if ($token === '') {
+            return new WP_Error('pcm_gsc_verify', __('Google did not return a verification token.', 'power-creatives'));
+        }
+        // For META the API returns the whole `<meta … content="XYZ" />` tag — keep only the
+        // content value so the connector can render the tag itself with proper escaping.
+        if (stripos($token, '<meta') !== false && preg_match('/content=["\']([^"\']+)["\']/i', $token, $m)) {
+            $token = $m[1];
+        }
+        return $token;
+    }
+
+    /** Ask Google to verify the site (it fetches the page and checks the META token). */
+    public static function verify_property(string $json, string $site_url): bool|WP_Error
+    {
+        $r = self::api($json, 'POST', self::VERIFY_API . '/webResource?verificationMethod=META', array(
+            'site' => array('identifier' => self::property_id($site_url), 'type' => 'SITE'),
+        ));
+        if (is_wp_error($r)) {
+            return self::scope_error($r);
+        }
+        return true;
     }
 }
