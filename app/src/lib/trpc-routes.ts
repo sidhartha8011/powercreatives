@@ -265,8 +265,14 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "sites.gscVerify": {
         endpoint: "sites",
         method: "POST",
-        transform: (input: any) => ({ url: `sites/${input.id}/gsc-verify` }),
+        transform: (input: any) => ({ url: `sites/${input.id}/gsc-verify`, body: { targetUrl: input.targetUrl ?? "" } }),
     },
+    "sites.gscPreview": {
+        endpoint: "sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `sites/${input.id}/gsc-preview` }),
+    },
+    "sites.updateConnectors": { endpoint: "sites/update-connectors", method: "POST" },
     "sites.test": {
         endpoint: "sites",
         method: "POST",

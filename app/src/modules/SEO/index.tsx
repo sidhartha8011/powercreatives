@@ -449,7 +449,11 @@ export function SEOModule() {
   const [prtRanks, setPrtRanks] = useState<Record<string, { rank: number; matchedUrl: string; engine: string }>>({});
   const [prtPulling, setPrtPulling] = useState(false);
   const prtPageRanksMutation = trpc.integrations.prtPageRanks.useMutation();
-  const normKw = useCallback((s: string) => s.trim().toLowerCase(), []);
+  // Keyword key for matching a row's Primary KW to a PRT-tracked term. Collapse ALL runs of
+  // whitespace (incl. non-breaking spaces from copy-paste — JS \s matches U+00A0) to one space,
+  // then trim + lowercase. MUST stay byte-identical to the backend's key in prt_page_ranks so
+  // "best  shoes" / "best shoes" / "Best Shoes" all match the same tracked term.
+  const normKw = useCallback((s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase(), []);
   const handlePullPrt = useCallback(async () => {
     if (prtPulling) return;
     setPrtPulling(true);

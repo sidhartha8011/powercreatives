@@ -33,7 +33,46 @@ class PCM_REST_SEOHub extends PCM_REST_Base
             array('GET',    '/seohub/connector-download',          'download_connector_generic', array(), 'manage_options:strict'),
             // Public — HMAC-verified inside the handler.
             array('POST',   '/seohub/connector/hello',            'connector_hello',  array(), 'public'),
+            // Public — the connector's WP-native self-update fetches these (no auth; the connector
+            // code isn't secret). manifest.sha256 always matches the package (shared cached artifact).
+            array('GET',    '/seohub/connector-manifest',         'connector_manifest', array(), 'public'),
+            array('GET',    '/seohub/connector-package',          'connector_package',  array(), 'public'),
         );
+    }
+
+    /** GET /seohub/connector-manifest — the update descriptor WordPress polls on connected sites. */
+    public function connector_manifest(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $a = PCM_SEOHub_Service::connector_artifact();
+        if (isset($a['error'])) {
+            return $this->error((string) $a['error'], 500, 'pcm_seohub_manifest');
+        }
+        return new WP_REST_Response(array(
+            'version'      => (string) $a['version'],
+            'package'      => rest_url('pcm/v1/seohub/connector-package'),
+            'sha256'       => (string) $a['sha256'],
+            'requires'     => '5.9',
+            'tested'       => get_bloginfo('version'),
+            'requires_php' => '7.4',
+            'url'          => home_url('/'),
+        ), 200);
+    }
+
+    /** GET /seohub/connector-package — the connector zip, byte-identical to the manifest's sha256. */
+    public function connector_package(WP_REST_Request $request): void
+    {
+        $a = PCM_SEOHub_Service::connector_artifact();
+        if (isset($a['error'])) {
+            status_header(500);
+            echo esc_html((string) $a['error']);
+            exit;
+        }
+        nocache_headers();
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="pcm-connector.zip"');
+        header('Content-Length: ' . strlen((string) $a['zip']));
+        echo $a['zip']; // phpcs:ignore WordPress.Security.EscapeOutput -- binary zip
+        exit;
     }
 
     /** GET /seohub/sites — list managed sites (secrets redacted). */

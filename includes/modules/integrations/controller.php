@@ -315,8 +315,8 @@ class PCM_REST_Integrations extends PCM_REST_Base
         if (is_wp_error($props)) {
             return $this->error($props->get_error_message(), 502);
         }
-        $property = PCM_GSC::match_property($props, $site);
-        if ($property === '') {
+        $candidates = PCM_GSC::match_properties($props, $site);
+        if (empty($candidates)) {
             $creds = PCM_GSC::parse_credentials($key);
             $email = is_wp_error($creds) ? 'the service account' : $creds['email'];
             $have  = empty($props) ? 'none' : implode(', ', $props);
@@ -328,9 +328,20 @@ class PCM_REST_Integrations extends PCM_REST_Base
             ), 404);
         }
 
-        $stats = PCM_GSC::page_stats($key, $property, max(1, min(180, $days)));
-        if (is_wp_error($stats)) {
-            return $this->error($stats->get_error_message(), 502);
+        // Try each matching property (≤3) and use the FIRST that returns data — a site can have
+        // both www + non-www (and sc-domain) properties, and one may be empty (e.g. a www prefix
+        // the add-site auto-verify just created). This is why it "worked before, now shows no data".
+        $days  = max(1, min(180, $days));
+        $stats = null;
+        $property = $candidates[0];
+        foreach (array_slice($candidates, 0, 3) as $prop) {
+            $s = PCM_GSC::page_stats($key, $prop, $days);
+            if (is_wp_error($s)) { $stats = $stats ?? $s; continue; } // remember the error, try next
+            if (!empty($s['pages'])) { $property = $prop; $stats = $s; break; } // data — use it
+            if ($stats === null || is_wp_error($stats)) { $property = $prop; $stats = $s; } // keep an empty ok-result as fallback
+        }
+        if (is_wp_error($stats) || $stats === null) {
+            return $this->error(is_wp_error($stats) ? $stats->get_error_message() : 'Search Console returned no result.', 502);
         }
         return $this->success(array(
             'property' => $property,
@@ -485,7 +496,12 @@ class PCM_REST_Integrations extends PCM_REST_Base
             if ($term === '') {
                 continue;
             }
-            $k    = function_exists('mb_strtolower') ? mb_strtolower($term, 'UTF-8') : strtolower($term);
+            // Collapse whitespace (incl. non-breaking space U+00A0, which PCRE \s skips) to one
+            // space, then trim + lowercase. Keeps parity with the frontend's normKw so a row's
+            // Primary KW matches the tracked term despite copy-paste spacing/case differences.
+            $norm = str_replace("\xC2\xA0", ' ', $term);
+            $norm = trim((string) preg_replace('/\s+/', ' ', $norm));
+            $k    = function_exists('mb_strtolower') ? mb_strtolower($norm, 'UTF-8') : strtolower($norm);
             $rank = (int) ($t['rank'] ?? 0);
             // Keep the strongest (lowest, >0) rank when a keyword is tracked on several engines.
             $existing = $ranks[$k]['rank'] ?? null;

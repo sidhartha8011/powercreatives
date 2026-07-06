@@ -378,17 +378,120 @@ class PCM_SEOHub_Service
         return array('path' => $zip_path);
     }
 
-    /** The generic connector plugin source (pairing-code only; no handshake). */
+    /**
+     * The connector version + package for the self-update system. Cached in an option keyed by a
+     * hash of the connector SOURCE, so the manifest's sha256 ALWAYS matches the served package
+     * byte-for-byte (a mismatch would make every auto-update fail the hash check). Both the
+     * manifest and package endpoints read this one artifact.
+     *
+     * @return array{version:string, sha256:string, zip:string}|array{error:string}
+     */
+    public static function connector_artifact(): array
+    {
+        $php = self::connector_php_simple(); // fully baked (hub URL + version)
+        $ver = preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
+        $sig = md5($php);
+        $cache = get_option('pcm_seohub_conn_pkg', array());
+        if (is_array($cache) && ($cache['sig'] ?? '') === $sig && !empty($cache['zip_b64'])) {
+            return array('version' => $ver, 'sha256' => (string) $cache['sha256'], 'zip' => (string) base64_decode((string) $cache['zip_b64']));
+        }
+        if (!class_exists('ZipArchive')) {
+            return array('error' => 'ZipArchive PHP extension is required to build the connector package.');
+        }
+        $tmp = wp_tempnam('pcm-conn-pkg');
+        $zip = new ZipArchive();
+        if ($zip->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            return array('error' => 'Could not create the connector package.');
+        }
+        $zip->addFromString('pcm-connector/pcm-connector.php', $php);
+        $zip->close();
+        $bytes = (string) file_get_contents($tmp);
+        @unlink($tmp);
+        $sha = hash('sha256', $bytes);
+        update_option('pcm_seohub_conn_pkg', array('sig' => $sig, 'sha256' => $sha, 'zip_b64' => base64_encode($bytes)), false);
+        return array('version' => $ver, 'sha256' => $sha, 'zip' => $bytes);
+    }
+
+    /** The generic connector plugin source (pairing-code only; no handshake), with the self-update
+     *  placeholders baked to this hub's manifest URL + host + the header version. */
     private static function connector_php_simple(): string
+    {
+        $php = self::connector_php_simple_raw();
+        $manifest = rest_url('pcm/v1/seohub/connector-manifest');
+        $scheme   = (string) (wp_parse_url($manifest, PHP_URL_SCHEME) ?: 'https');
+        $host     = (string) (wp_parse_url($manifest, PHP_URL_HOST) ?: wp_parse_url(home_url('/'), PHP_URL_HOST));
+        $version  = preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
+        return strtr($php, array(
+            '__PCM_CONN_MANIFEST_URL__' => $manifest,
+            '__PCM_CONN_UPDATE_URI__'   => $scheme . '://' . $host . '/pcm-connector',
+            '__PCM_CONN_UPDATE_HOST__'  => $host,
+            '__PCM_CONN_VERSION__'      => $version,
+        ));
+    }
+
+    /** Raw connector source with self-update placeholders (baked by connector_php_simple()). */
+    private static function connector_php_simple_raw(): string
     {
         return <<<'PHP'
 <?php
 /**
  * Plugin Name: Power Creatives Connector
- * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
- * Version: 2.3.0
+ * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
+ * Version: 2.4.0
+ * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
+
+// ── Self-update (WordPress-native) ───────────────────────────────────────────────────────────
+// The HUB is the update server: it serves a manifest + the connector zip. WordPress polls the
+// manifest twice daily — and on demand via /update-now below — verifies the package sha256, then
+// auto-installs. So a connector fix on the hub reaches every connected site with NO manual
+// reinstall. (Bootstrap: a site must run a build that already contains THIS block once; from then
+// on it updates itself.) Baked at generation time: version, manifest URL, and the hub host.
+if (!defined('PCM_CONN_VERSION'))  { define('PCM_CONN_VERSION', '__PCM_CONN_VERSION__'); }
+if (!defined('PCM_CONN_MANIFEST')) { define('PCM_CONN_MANIFEST', '__PCM_CONN_MANIFEST_URL__'); }
+if (!defined('PCM_CONN_HOST'))     { define('PCM_CONN_HOST', '__PCM_CONN_UPDATE_HOST__'); }
+if (!defined('PCM_CONN_FILE'))     { define('PCM_CONN_FILE', plugin_basename(__FILE__)); }
+
+// 1. Point WordPress at the hub's manifest. The filter name is update_plugins_<Update-URI host>.
+add_filter('update_plugins___PCM_CONN_UPDATE_HOST__', function ($update, $plugin_data, $plugin_file) {
+    if ($plugin_file !== PCM_CONN_FILE) { return $update; }
+    $res = wp_remote_get(PCM_CONN_MANIFEST, array('timeout' => 10));
+    if (is_wp_error($res) || (int) wp_remote_retrieve_response_code($res) !== 200) { return $update; }
+    $info = json_decode((string) wp_remote_retrieve_body($res), true);
+    if (!is_array($info) || empty($info['version']) || empty($info['package'])) { return $update; }
+    if (version_compare((string) $info['version'], (string) ($plugin_data['Version'] ?? '0'), '<=')) { return $update; }
+    update_option('pcm_conn_expected_sha256', isset($info['sha256']) ? (string) $info['sha256'] : '', false);
+    return array(
+        'slug'         => 'pcm-connector',
+        'plugin'       => PCM_CONN_FILE,
+        'version'      => (string) $info['version'],
+        'url'          => isset($info['url']) ? (string) $info['url'] : '',
+        'package'      => (string) $info['package'],
+        'requires'     => isset($info['requires']) ? (string) $info['requires'] : '',
+        'requires_php' => isset($info['requires_php']) ? (string) $info['requires_php'] : '',
+    );
+}, 10, 3);
+
+// 2. Verify the downloaded zip's sha256 before install (supply-chain protection). Never skipped.
+add_filter('upgrader_pre_download', function ($reply, $package, $upgrader) {
+    if (strpos((string) $package, PCM_CONN_HOST) === false) { return $reply; } // not our package
+    if (!function_exists('download_url')) { require_once ABSPATH . 'wp-admin/includes/file.php'; }
+    $file = download_url((string) $package, 300);
+    if (is_wp_error($file)) { return $file; }
+    $expected = (string) get_option('pcm_conn_expected_sha256', '');
+    if ($expected !== '' && !hash_equals($expected, (string) hash_file('sha256', $file))) {
+        @unlink($file);
+        return new WP_Error('pcm_conn_bad_hash', 'Connector update package hash mismatch — refusing to install.');
+    }
+    return $file; // WordPress installs from this verified local file
+}, 10, 3);
+
+// 3. Auto-update THIS plugin without human clicks.
+add_filter('auto_update_plugin', function ($update, $item) {
+    if (isset($item->plugin) && $item->plugin === PCM_CONN_FILE) { return true; }
+    return $update;
+}, 10, 2);
 
 // Let the hub authenticate FRONT-END page loads via the Application Password, so its
 // authenticated page preview renders the WP admin bar. WordPress normally limits
@@ -1279,6 +1382,32 @@ add_action('rest_api_init', function () {
             if (is_array($p) && array_key_exists('gscToken', $p)) { update_option('pcm_conn_gsc_token', sanitize_text_field((string) $p['gscToken'])); }
             return call_user_func($read);
         }),
+    ));
+    // Instant self-update: the hub POSTs here to force an update NOW (bypassing WP's twice-daily
+    // poll). Same admin/app-password auth as every other route — the hub already holds that key,
+    // so no separate per-site secret is needed. Runs a fresh update check, then upgrades if newer.
+    register_rest_route('pcm-conn/v1', '/update-now', array(
+        'methods' => 'POST',
+        'permission_callback' => $perm,
+        'callback' => function () {
+            require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/misc.php';
+            delete_site_transient('update_plugins'); // bust the 12h cache
+            wp_update_plugins();                      // re-check (runs the manifest filter above)
+            $u = get_site_transient('update_plugins');
+            if (empty($u->response[PCM_CONN_FILE])) {
+                return array('status' => 'up-to-date', 'version' => PCM_CONN_VERSION);
+            }
+            $to = (string) ($u->response[PCM_CONN_FILE]->new_version ?? '');
+            $upgrader = new Plugin_Upgrader(new Automatic_Upgrader_Skin());
+            $result   = $upgrader->upgrade(PCM_CONN_FILE);
+            if (is_wp_error($result)) { return new WP_Error('pcm_conn_update', $result->get_error_message(), array('status' => 500)); }
+            if ($result !== true)     { return new WP_Error('pcm_conn_update', 'Upgrade did not complete.', array('status' => 500)); }
+            // The OLD code answers this request; the new version is on disk now.
+            return array('status' => 'updated', 'from' => PCM_CONN_VERSION, 'to' => $to);
+        },
     ));
     // Builder-aware URL replacement: replace a link's target across post_content AND any page
     // builder's data (Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/…), regenerate that

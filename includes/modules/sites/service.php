@@ -295,9 +295,13 @@ class PCM_Sites_Service
      * @param int    $user_id PCM user owning the gsc integration.
      * @return array{attempted:bool, added:bool, tokenPushed:bool, verified:bool, step?:string, error?:string}
      */
-    public static function gsc_provision(object $site, int $user_id): array
+    public static function gsc_provision(object $site, int $user_id, string $target_url = ''): array
     {
         $report = array('attempted' => false, 'added' => false, 'tokenPushed' => false, 'verified' => false);
+        // Domain variant to register/verify. Defaults to the site URL, but the "Verify in GSC" dialog
+        // lets the user pick the actually-indexed variant (www vs non-www) so we don't create a second,
+        // empty property next to the one Google already has data for.
+        $url = trim($target_url) !== '' ? trim($target_url) : (string) $site->url;
 
         // The user's active GSC integration (OAuth connection or service-account JSON).
         $key = '';
@@ -314,8 +318,24 @@ class PCM_Sites_Service
         }
         $report['attempted'] = true;
 
-        // 1. Add the property.
-        $added = PCM_GSC::add_property($key, (string) $site->url);
+        // 0. Is the site ALREADY a property this GSC account can see (any www/non-www/sc-domain
+        //    variant)? If so, REUSE it — adding the other variant would create an empty duplicate
+        //    that steals the SEO row and reports "no data". A listed property is already verified
+        //    (list_properties drops siteUnverifiedUser), so provisioning is done.
+        $existing = PCM_GSC::list_properties($key);
+        if (!is_wp_error($existing)) {
+            $matches = PCM_GSC::match_properties($existing, $url);
+            if (!empty($matches)) {
+                $report['added']         = true;
+                $report['alreadyExists'] = true;
+                $report['property']      = $matches[0];
+                $report['verified']      = true;
+                return $report;
+            }
+        }
+
+        // 1. Add the property (the chosen variant).
+        $added = PCM_GSC::add_property($key, $url);
         if (is_wp_error($added)) {
             $report['step']  = 'add';
             $report['error'] = $added->get_error_message();
@@ -324,7 +344,7 @@ class PCM_Sites_Service
         $report['added'] = true;
 
         // 2. Mint the META token.
-        $token = PCM_GSC::verification_token($key, (string) $site->url);
+        $token = PCM_GSC::verification_token($key, $url);
         if (is_wp_error($token)) {
             $report['step']  = 'token';
             $report['error'] = $token->get_error_message();
@@ -341,7 +361,13 @@ class PCM_Sites_Service
                 : sprintf(__('The site’s connector rejected the verification token (HTTP %d).', 'power-creatives'), (int) ($push['status'] ?? 0));
             return $report;
         }
-        if ((string) ($push['body']['gscToken'] ?? '') !== $token) {
+        // The connector stores the token via sanitize_text_field and echoes back the STORED value,
+        // so compare against the same-sanitized, trimmed token — not the raw one. Otherwise a fresh
+        // connector that stored the token perfectly well could be mislabeled "too old" over a stray
+        // space. An EMPTY/missing echo still means the connector genuinely can't store it (predates
+        // v2.3.0) → the reinstall guidance below is the correct remedy.
+        $echoed = trim((string) ($push['body']['gscToken'] ?? ''));
+        if ($echoed === '' || $echoed !== trim((string) sanitize_text_field($token))) {
             $report['step']  = 'push';
             $report['error'] = __('The site’s connector is older than v2.3.0 and can’t store the verification token — reinstall the connector on the site (Sites → Download connector), then use "Verify in GSC".', 'power-creatives');
             return $report;
@@ -350,7 +376,7 @@ class PCM_Sites_Service
 
         // 4. Verify. Google fetches the homepage NOW — a stale page cache can hide the fresh
         //    meta tag; the error below tells the user to clear caches and retry in that case.
-        $verified = PCM_GSC::verify_property($key, (string) $site->url);
+        $verified = PCM_GSC::verify_property($key, $url);
         if (is_wp_error($verified)) {
             $report['step']  = 'verify';
             $report['error'] = sprintf(
@@ -362,5 +388,123 @@ class PCM_Sites_Service
         }
         $report['verified'] = true;
         return $report;
+    }
+
+    /**
+     * Best-effort automated detection of the "indexed" domain variant: follow the homepage's
+     * redirects and return the FINAL scheme://host it settles on. Most sites 301 one of www /
+     * non-www to the other — the destination is the canonical host Google indexes, which replaces
+     * the user's manual "Google the domain and hover the result" step. Returns '' if it can't tell.
+     *
+     * @param string $url The site URL to probe.
+     * @return string Canonical "scheme://host" (lowercased host), or '' on failure.
+     */
+    public static function detect_canonical(string $url): string
+    {
+        $current = trim($url);
+        if ($current === '') {
+            return '';
+        }
+        if (!preg_match('#^https?://#i', $current)) {
+            $current = 'https://' . ltrim($current, '/');
+        }
+        for ($hop = 0; $hop < 5; $hop++) {
+            $args = array('redirection' => 0, 'timeout' => 10, 'sslverify' => true);
+            $r    = wp_remote_head($current, $args);
+            if (is_wp_error($r)) {
+                // Some servers reject HEAD — try one GET before giving up.
+                $r = wp_remote_get($current, $args);
+                if (is_wp_error($r)) {
+                    return '';
+                }
+            }
+            $code = (int) wp_remote_retrieve_response_code($r);
+            if ($code >= 300 && $code < 400) {
+                $loc = trim((string) wp_remote_retrieve_header($r, 'location'));
+                if ($loc === '') {
+                    break;
+                }
+                if (!preg_match('#^https?://#i', $loc)) {
+                    // Resolve a relative/absolute-path Location against the current URL's host.
+                    $base   = wp_parse_url($current);
+                    $scheme = $base['scheme'] ?? 'https';
+                    $hostp  = ($base['host'] ?? '') . (isset($base['port']) ? ':' . $base['port'] : '');
+                    $loc    = $scheme . '://' . $hostp . '/' . ltrim($loc, '/');
+                }
+                $current = $loc;
+                continue;
+            }
+            break; // 2xx / other → settled on the final URL.
+        }
+        $p = wp_parse_url($current);
+        if (empty($p['host'])) {
+            return '';
+        }
+        return ($p['scheme'] ?? 'https') . '://' . strtolower((string) $p['host']);
+    }
+
+    /**
+     * Data for the "Verify in GSC" dialog: which existing GSC properties already cover this site
+     * (so we reuse instead of duplicating), plus the auto-detected canonical domain to pre-fill the
+     * input. Best-effort — every field degrades to empty so the dialog still opens.
+     *
+     * @param object $site    Site row.
+     * @param int    $user_id Owner id.
+     * @return array{siteUrl:string,existing:array,suggested:string,canonical:string,accountEmail:string,error:string}
+     */
+    public static function gsc_preview(object $site, int $user_id): array
+    {
+        $out = array(
+            'siteUrl'      => (string) $site->url,
+            'existing'     => array(),
+            'suggested'    => (string) $site->url,
+            'canonical'    => '',
+            'accountEmail' => '',
+            'error'        => '',
+        );
+        $key = '';
+        foreach (PCM_DB::get_user_integrations($user_id) as $row) {
+            if (($row->provider ?? '') === 'gsc' && (int) ($row->isActive ?? 0) === 1) {
+                $key = (string) $row->apiKey;
+                break;
+            }
+        }
+        if ($key === '') {
+            $out['error'] = __('No active Google Search Console connection — connect one on the Integrations page first.', 'power-creatives');
+            return $out;
+        }
+
+        // 1. Auto-detect the canonical (indexed) variant by following the homepage redirect.
+        $canonical         = self::detect_canonical((string) $site->url);
+        $out['canonical']  = $canonical;
+
+        // 2. Pull every property this account can see and keep the ones covering this site.
+        $props = PCM_GSC::list_properties($key);
+        if (is_wp_error($props)) {
+            $out['error'] = $props->get_error_message();
+        } else {
+            $out['existing'] = PCM_GSC::match_properties($props, (string) $site->url);
+            $creds = PCM_GSC::parse_credentials($key);
+            if (!is_wp_error($creds)) {
+                $out['accountEmail'] = (string) ($creds['email'] ?? '');
+            }
+        }
+
+        // Suggest, best-first: an existing url-prefix property to REUSE, else the detected canonical,
+        // else the site URL as stored. (An existing sc-domain match still triggers reuse in
+        // gsc_provision regardless of the input, so we prefer a real URL for the editable field.)
+        $url_prefix = '';
+        foreach ($out['existing'] as $e) {
+            if (stripos((string) $e, 'sc-domain:') !== 0) {
+                $url_prefix = rtrim((string) $e, '/');
+                break;
+            }
+        }
+        if ($url_prefix !== '') {
+            $out['suggested'] = $url_prefix;
+        } elseif ($canonical !== '') {
+            $out['suggested'] = $canonical;
+        }
+        return $out;
     }
 }

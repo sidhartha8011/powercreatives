@@ -270,20 +270,37 @@ class PCM_GSC
      */
     public static function match_property(array $properties, string $site_url): string
     {
+        $all = self::match_properties($properties, $site_url);
+        return $all[0] ?? '';
+    }
+
+    /**
+     * ALL GSC properties covering $site_url, ranked best-first:
+     *   1. sc-domain:host  (covers every protocol/subdomain — one property, all data)
+     *   2. url-prefix whose host EXACTLY matches the site's host
+     *   3. url-prefix whose host matches www-insensitively (the other www/non-www variant)
+     * The caller tries them in order and uses the first that actually returns data — so a
+     * freshly-added but EMPTY property (e.g. a www prefix created by the add-site auto-verify,
+     * while the traffic lives under the non-www / sc-domain property) no longer wins and yields
+     * "no data". Returns [] when nothing matches.
+     */
+    public static function match_properties(array $properties, string $site_url): array
+    {
         $host = strtolower((string) (wp_parse_url($site_url, PHP_URL_HOST) ?: $site_url));
         $bare = preg_replace('/^www\./', '', $host);
-        foreach ($properties as $p) { // domain property first — the broadest match
-            if (stripos($p, 'sc-domain:') === 0 && strtolower(substr($p, 10)) === $bare) {
-                return $p;
-            }
-        }
+        $domain = array();
+        $exact  = array();
+        $other  = array();
         foreach ($properties as $p) {
-            $ph = strtolower((string) (wp_parse_url($p, PHP_URL_HOST) ?: ''));
-            if ($ph !== '' && preg_replace('/^www\./', '', $ph) === $bare) {
-                return $p;
+            if (stripos($p, 'sc-domain:') === 0) {
+                if (strtolower(substr($p, 10)) === $bare) { $domain[] = $p; }
+                continue;
             }
+            $ph = strtolower((string) (wp_parse_url($p, PHP_URL_HOST) ?: ''));
+            if ($ph === '' || preg_replace('/^www\./', '', $ph) !== $bare) { continue; }
+            if ($ph === $host) { $exact[] = $p; } else { $other[] = $p; }
         }
-        return '';
+        return array_values(array_unique(array_merge($domain, $exact, $other)));
     }
 
     /**
@@ -332,15 +349,16 @@ class PCM_GSC
      * Per-page search stats for the last $days days:
      * [norm_url => ['clicks'=>int,'impressions'=>int,'ctr'=>float,'position'=>float,'keywords'=>string[]]]
      * Two paginated queries: dimensions=[page] for the metrics, dimensions=[page,query] for top
-     * queries. Uses a 3-DAY lag + dataState=final — GSC finalizes data ~2-3 days late, and pulling
-     * fresher than that returns partial numbers that silently shift.
+     * queries. 2-DAY lag + dataState=all: this is an INTERACTIVE view (not a warehouse), so it
+     * mirrors what the GSC UI shows — including the freshest ~2 days — rather than waiting for
+     * finalized data, which can leave a low-traffic recent window looking empty.
      */
     public static function page_stats(string $json, string $property, int $days = 28): array|WP_Error
     {
-        $end   = gmdate('Y-m-d', time() - 3 * DAY_IN_SECONDS);
-        $start = gmdate('Y-m-d', time() - (3 + max(1, $days)) * DAY_IN_SECONDS);
+        $end   = gmdate('Y-m-d', time() - 2 * DAY_IN_SECONDS);
+        $start = gmdate('Y-m-d', time() - (2 + max(1, $days)) * DAY_IN_SECONDS);
         $path  = '/sites/' . rawurlencode($property) . '/searchAnalytics/query';
-        $base  = array('startDate' => $start, 'endDate' => $end, 'dataState' => 'final');
+        $base  = array('startDate' => $start, 'endDate' => $end, 'dataState' => 'all');
 
         $page_rows = self::sa_rows($json, $path, $base + array('dimensions' => array('page')));
         if (is_wp_error($page_rows)) {

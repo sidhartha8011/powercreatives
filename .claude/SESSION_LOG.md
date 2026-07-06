@@ -5672,3 +5672,123 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   permissions; upsert replaces the old connection automatically); (3) retry the Sites GSC button — next
   failure modes (old connector <2.3.0 / page cache) each have their own actionable message. Read-only GSC
   stats unaffected throughout.
+
+## 2026-07-06 — Self-updating connector (WP-native auto-update + instant push) — connector 2.4.0
+- Ported the user's "self-updating plugin + bulk push" spec, ADAPTED to our reality: the HUB is the update
+  server (it already generates+serves the connector), the connector is a generated single-file plugin in
+  pcm-connector/, and we reuse the EXISTING app-password hub→connector channel for the push (no per-site HMAC
+  secret to distribute to a generic connector).
+- Connector (seohub/service.php heredoc), bumped 2.3.0 → 2.4.0 + `Update URI` header: added (1)
+  update_plugins_<hub-host> filter → fetches the hub manifest, compares versions, stashes expected sha256;
+  (2) upgrader_pre_download → verifies sha256 (never skipped); (3) auto_update_plugin → true for this plugin;
+  (4) POST /pcm-conn/v1/update-now (app-password auth) → delete_site_transient + wp_update_plugins +
+  Plugin_Upgrader->upgrade. Placeholders (__PCM_CONN_MANIFEST_URL__/UPDATE_URI/UPDATE_HOST/VERSION) baked at
+  generation via strtr in connector_php_simple() (host/URL from rest_url(), version parsed from the header).
+- Hub: connector_artifact() builds+caches the zip keyed by md5(source) so manifest.sha256 == served package
+  BYTE-FOR-BYTE; public routes GET /seohub/connector-manifest (JSON: version/package/sha256/requires…) + GET
+  /seohub/connector-package (the zip). Sites: POST /sites/update-connectors loops get_user_sites →
+  /update-now via remote_rest (404 → "reinstall once, then it self-updates" message). tRPC
+  sites.updateConnectors + "Update connectors" toolbar button (per-site result toasts).
+- Verified: php -l gen+ctrl+sites clean; baked connector (placeholders → 0 leftover) lints, filter name =
+  update_plugins_create.widgetify.co, /update-now present, header 2.4.0; artifact invariants 3/3
+  (manifest.sha256 === sha256(package bytes); 2nd call cache-hit → no drift; identical sha256) + zip inner
+  folder = pcm-connector/ (updates in place, no duplicate); GSC regressions 20/20+6/6+6/6; tsc 56 baseline (0
+  in touched); vite build clean. Zip rebuilt (2.39MB, 479, connector 2.4.0 inside).
+- ⚠ BOOTSTRAP: existing 2.3.0 connectors lack the self-update code → they will NOT auto-update to 2.4.0;
+  reinstall the 2.4.0 connector ONCE per site (Download connector), and every future connector release then
+  rolls out automatically (≤12h) or instantly via "Update connectors". The hub must be publicly reachable at
+  its rest_url host for sites to fetch the manifest/package. Not committed.
+
+## 2026-07-06 — Fix GSC "no data in this date range" (empty auto-created property + strict dataState)
+- Regression: GSC stats returned 0 for https://www.knallenstandvard.se/ (worked before — a prior pull got 17
+  pages). Cause: match_property returns ONE property and stops; the add-site auto-verify now REGISTERS the
+  site URL as a GSC property, so a www url-prefix can exist EMPTY while the traffic lives under the non-www /
+  sc-domain property — and the matcher picked the empty one.
+- Fix: NEW PCM_GSC::match_properties() returns ALL matching properties ranked (sc-domain → exact-host prefix →
+  other www/non-www variant); gsc_stats now iterates ≤3 candidates and uses the FIRST that returns data (keeps
+  an empty ok-result only as last resort). match_property (singular) kept as [0] for back-compat.
+- Also relaxed page_stats: dataState 'final' → 'all' + lag 3-day → 2-day. This is an INTERACTIVE view (mirror
+  the GSC UI incl. the freshest ~2 days), not the doc's warehouse pull, so a thin recent window no longer
+  reads empty. Fixed a copy-paste "ProRankTracker" → "Search Console" in the empty-result error.
+- Verified: php -l ×2 clean; match_properties 4/4 (www+non-www both candidates; sc-domain ranked first; no
+  match → empty; singular returns top); pipeline test updated to all/2-day; regressions 20/20+6/6+7/7+6/6+6/6+
+  11/11 (56 total). PHP-only, no frontend change. Zip rebuilt (2.39MB, 479, fix confirmed inside). Not
+  committed.
+
+## 2026-07-06 — zip build
+- Rebuilt power-creatives.zip fresh (gen_vendor2 classmap → 97 classes → app build → tar --format=zip).
+- Verified: 2.39MB, 479 entries, top-level only `powerplatform`, 0 backslash paths, 0 leaks; connector v2.4.0;
+  GSC match_properties fix present inside bundle. Not committed.
+
+## 2026-07-06 — PRT "only one row fills" — diagnosis + keyword-match robustness
+- Not a bug in the broadcast sense: "Pos (PRT)" is a PER-ROW lookup keyed on each row's OWN Primary
+  Keyword. The scan returns every tracked keyword for the matched PRT project (integrations/controller.php
+  prt_page_ranks → keyword→rank map); each row fills only if its Primary KW equals a tracked term. One
+  filled row = only one row's Primary KW is tracked in PRT (toast already reports "filled N of M tracked").
+- Real gap fixed: exact-match was brittle on whitespace/case. Tightened normalization on BOTH sides to
+  stay byte-identical — collapse all whitespace runs incl. non-breaking space (U+00A0) → one space, trim,
+  lowercase. Frontend SEO/index.tsx normKw (`replace(/\s+/g,' ').trim().toLowerCase()`); backend
+  prt_page_ranks key (`str_replace nbsp` + `preg_replace('/\s+/',' ')` + mb_strtolower). Can only add
+  correct matches, never merges distinct keywords.
+- Verified: php -l clean; new prt_norm_test.php parity suite 8/8 (both sides identical for case/double-
+  space/tab/nbsp/pad/non-ASCII; distinct keywords stay distinct); tsc still 56 baseline, 0 in SEO/index.tsx.
+- To fill MORE rows: set each row's Primary KW to a term tracked in the PRT project. Not committed;
+  needs a zip rebuild + reupload to take effect.
+
+## 2026-07-06 — zip build (PRT keyword-match fix)
+- Rebuilt power-creatives.zip with the PRT normKw parity fix. 97-class classmap, app rebuilt.
+- Verified 2.39MB/479 entries, top-level only `powerplatform`, 0 backslash, 0 leaks; both fix halves
+  confirmed inside bundle (backend parity comment in controller.php; `/\s+/g," ").trim().toLowerCase()`
+  normKw in dist index-writer.js). Not committed.
+
+## 2026-07-06 — GSC "connector older than v2.3.0" message — diagnosis + hardened check
+- Investigated the Sites → GSC "connector is older than v2.3.0 / can't store the verification token"
+  message (sites/service.php gsc_provision step 3). It fires only when the connector returns HTTP 200
+  from POST /pcm-conn/v1/site but its echoed `gscToken` doesn't match. For a REAL Google META token
+  (clean base64url), the check is correct: an empty/missing echo = connector predates 2.3.0 gscToken
+  storage → reinstall is the right remedy. So for knallenstandvard.se the message is EXPECTED (site
+  runs an old connector), NOT a bug.
+- Found one latent fragility though: the connector stores the token via sanitize_text_field and echoes
+  the SANITIZED value, while the hub compared the raw token with strict !== — a token with surrounding
+  whitespace would FALSE-POSITIVE a perfectly-good fresh connector. Hardened the comparison to compare
+  the trimmed echo against trim(sanitize_text_field($token)); empty echo still errors (old-connector
+  detection preserved).
+- Verified: php -l clean; gsc_token_check_test.php 4/4 (new+clean→no error, old→error, new+spaced→no
+  error [fixed], empty→error). Minimal diff, not committed. Primary user remedy: reinstall the 2.4.0
+  connector on the site, then "Verify in GSC".
+
+## 2026-07-06 — zip build (GSC token-check hardening)
+- Rebuilt power-creatives.zip with the gsc_provision token-echo hardening. 97-class classmap, app rebuilt.
+- Verified 2.39MB/479 entries, top-level only `powerplatform`, 0 backslash, 0 leaks; hardened check
+  (`trim((string) sanitize_text_field($token))`) confirmed inside bundled sites/service.php. Not committed.
+
+## 2026-07-06 — GSC add-site: reuse existing property + confirm indexed domain (root-cause fix)
+- The duplicate/no-data mess came from gsc_provision blindly PUTting the site URL as a NEW property.
+  Now it FIRST lists the account's properties and match_properties($url); on ANY match (www/non-www/
+  sc-domain) it REUSES that property (report.alreadyExists+property+verified, no add). No match → adds
+  the chosen variant as before. gsc_provision gained a 3rd arg $targetUrl (the confirmed domain).
+- Automated indexed-domain detection replaces "Google it & hover": new PCM_Sites_Service::detect_canonical()
+  follows the homepage 301 chain (HEAD, GET fallback, ≤5 hops, relative-Location resolve) and returns the
+  final scheme://host — the canonical variant Google indexes. New gsc_preview() returns {existing[],
+  suggested,canonical,accountEmail} for the dialog.
+- Routes: + POST /sites/{id}/gsc-preview (gsc_preview); POST /sites/{id}/gsc-verify now reads optional
+  {targetUrl}. tRPC: + sites.gscPreview; sites.gscVerify now sends body.targetUrl.
+- Frontend Sites: the row "GSC" button now opens a step-0 dialog (guidance + auto-detected editable
+  "Indexed domain" input + green "already in Search Console → will reuse, no duplicate" note), Verify posts
+  {id,targetUrl}. reportGsc handles alreadyExists. Removed the old one-click gscVerifyingId path.
+- Verified: php -l ×2 clean; NEW gsc_provision2_test.php 13/13 (reuse www/non-www/sc-domain; no-match→add
+  with chosen url; detect_canonical follows non-www→www; preview suggest=existing/canonical fallback;
+  no-integration guard); 56 GSC regressions still green; tsc 56 baseline, 0 in edited files. Not committed;
+  needs a zip rebuild to ship.
+
+## 2026-07-06 — zip build (GSC reuse + confirm-indexed-domain)
+- Rebuilt power-creatives.zip with the gsc_provision reuse-first + detect_canonical + gsc_preview +
+  step-0 dialog feature. 97-class classmap, app rebuilt (dist 4.67MB).
+- Verified 2.40MB/479 entries, top-level only `powerplatform`, 0 backslash, 0 leaks; feature confirmed
+  inside bundle (service.php detect_canonical/alreadyExists/gsc_preview ×4; controller gsc-preview route;
+  dist "Indexed domain" dialog). Not committed.
+
+## 2026-07-06 — zip build (rebuild, no code change)
+- Rebuilt power-creatives.zip fresh (same tree as the prior GSC reuse/confirm-domain build).
+- Verified 2.40MB/479 entries, top-level only `powerplatform`, 0 backslash, 0 leaks; root PHP + autoload +
+  dist present. Not committed.

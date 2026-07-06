@@ -76,7 +76,10 @@ export function SitesModule() {
   // ── Dialog + form state ──
   const [addStep, setAddStep] = useState<AddStep>(null);
   const [testingId, setTestingId] = useState<number | null>(null);
-  const [gscVerifyingId, setGscVerifyingId] = useState<number | null>(null);
+  // "Verify in GSC" dialog: the site being verified + the editable indexed-domain + the preview data.
+  const [gscSite, setGscSite] = useState<Site | null>(null);
+  const [gscTargetUrl, setGscTargetUrl] = useState('');
+  const [gscPreview, setGscPreview] = useState<any>(null);
 
   const [formName, setFormName] = useState('');
   const [formUrl, setFormUrl] = useState('');
@@ -94,20 +97,44 @@ export function SitesModule() {
   // Surface the automatic Search Console provisioning outcome (runs on add + on "GSC" retry).
   const reportGsc = (gsc: any) => {
     if (!gsc) return;
-    if (gsc.verified) {
+    if (gsc.alreadyExists) {
+      toast.success(`Already in Search Console — connected to ${gsc.property} ✓ (no duplicate created)`);
+    } else if (gsc.verified) {
       toast.success('Verified in Google Search Console ✓');
     } else if (gsc.error) {
       (gsc.attempted ? toast.warning : toast.info)(`Search Console: ${gsc.error}`);
     }
   };
+  const closeGsc = useCallback(() => { setGscSite(null); setGscPreview(null); setGscTargetUrl(''); }, []);
   const createMutation = trpc.sites.create.useMutation({
     onSuccess: (r: any) => { toast.success('Site added'); reportGsc(r?.gsc); closeAll(); refetch(); },
     onError: (e: any) => toast.error(e.message ?? 'Failed to add site'),
   }) as any;
+  // Step 1: pull the GSC properties + auto-detect the indexed domain, then open the dialog.
+  const gscPreviewMutation = trpc.sites.gscPreview.useMutation({
+    onSuccess: (r: any) => { setGscPreview(r); if (r?.suggested) setGscTargetUrl(r.suggested); },
+    onError: () => setGscPreview({ error: 'Could not reach Search Console — you can still enter the domain manually.' }),
+  }) as any;
   const gscVerifyMutation = trpc.sites.gscVerify.useMutation({
-    onSuccess: (r: any) => reportGsc(r),
+    onSuccess: (r: any) => { reportGsc(r); closeGsc(); refetch(); },
     onError: (e: any) => toast.error(e.message ?? 'Search Console verification failed'),
-    onSettled: () => setGscVerifyingId(null),
+  }) as any;
+  const openGsc = useCallback((site: Site) => {
+    setGscSite(site); setGscTargetUrl(site.url); setGscPreview(null);
+    gscPreviewMutation.mutate({ id: site.id });
+  }, [gscPreviewMutation]);
+  const updateConnectorsMutation = trpc.sites.updateConnectors.useMutation({
+    onSuccess: (r: any) => {
+      const rows: any[] = Array.isArray(r?.results) ? r.results : [];
+      const updated = rows.filter((x) => x.status === 'updated').length;
+      const current = rows.filter((x) => x.status === 'up-to-date').length;
+      const failed = rows.filter((x) => x.status === 'error');
+      if (updated) toast.success(`Connectors updated on ${updated} site${updated === 1 ? '' : 's'}${current ? `, ${current} already current` : ''}.`);
+      else if (current) toast.success(`All ${current} connector${current === 1 ? ' is' : 's are'} already up to date.`);
+      failed.forEach((x) => toast.warning(`${x.name}: ${x.message}`));
+      refetch();
+    },
+    onError: (e: any) => toast.error(e.message ?? 'Could not push connector updates'),
   }) as any;
   const deleteMutation = trpc.sites.delete.useMutation({
     onSuccess: () => { toast.success('Site removed'); refetch(); },
@@ -208,9 +235,9 @@ export function SitesModule() {
           <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>
             {testingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Test
           </Button>
-          {/* Retry Search Console provisioning (add property → token → connector → verify). */}
-          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" title="Register + verify this site in Google Search Console" disabled={gscVerifyingId === site.id} onClick={() => { setGscVerifyingId(site.id); gscVerifyMutation.mutate({ id: site.id }); }}>
-            {gscVerifyingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} GSC
+          {/* Open the "Verify in GSC" dialog: confirm the indexed domain, reuse existing property. */}
+          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" title="Register + verify this site in Google Search Console" disabled={gscPreviewMutation.isPending && gscSite?.id === site.id} onClick={() => openGsc(site)}>
+            {gscPreviewMutation.isPending && gscSite?.id === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} GSC
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate({ id: site.id })}>
             <Trash2 className="w-3.5 h-3.5" />
@@ -218,7 +245,7 @@ export function SitesModule() {
         </div>
       ),
     },
-  ], [colors, testingId, testMutation, deleteMutation, gscVerifyingId, gscVerifyMutation]);
+  ], [colors, testingId, testMutation, deleteMutation, openGsc, gscPreviewMutation.isPending, gscSite]);
   const search = readSearch(list.filterState);
   const statusValue = readStatus(list.filterState);
   const statusOptions = useMemo(
@@ -249,9 +276,19 @@ export function SitesModule() {
           <Button
             variant="outline"
             onClick={downloadGenericConnector}
-            title="Download the latest connector plugin (v2.0.0). To UPDATE an already-connected site, install this over the old one: on the site → Plugins → Add New → Upload Plugin → Replace current with uploaded → Activate."
+            title="Download the latest connector plugin. To UPDATE an already-connected site, install this over the old one: on the site → Plugins → Add New → Upload Plugin → Replace current with uploaded → Activate. (Connectors v2.4.0+ then self-update automatically.)"
           >
             <Download className="w-4 h-4" /> Download connector
+          </Button>
+        )}
+        {isAdmin && (
+          <Button
+            variant="outline"
+            onClick={() => updateConnectorsMutation.mutate({})}
+            disabled={updateConnectorsMutation.isPending}
+            title="Force every connected site's connector to self-update to the latest version now (v2.4.0+ connectors only)."
+          >
+            {updateConnectorsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Update connectors
           </Button>
         )}
         <Button onClick={openAdd}><Plus className="w-4 h-4" /> Add Site</Button>
@@ -356,6 +393,50 @@ export function SitesModule() {
             <Button variant="outline" onClick={closeAll}>Cancel</Button>
             <Button onClick={handleCreate} disabled={createMutation.isPending}>
               {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add Site
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Step 0: confirm the indexed domain before we register/verify in Search Console. */}
+      <Dialog open={!!gscSite} onOpenChange={(o) => { if (!o) closeGsc(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Verify in Google Search Console</DialogTitle>
+            <DialogDescription>
+              Confirm the domain Google actually indexed. If it’s wrong, change it to the indexed variant.
+              Tip: search the domain on Google and hover a result to see which variant (www or non-www) it serves.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {gscPreviewMutation.isPending ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Checking Search Console…
+              </div>
+            ) : (
+              <>
+                {Array.isArray(gscPreview?.existing) && gscPreview.existing.length > 0 && (
+                  <div className="rounded-md border px-3 py-2 text-xs" style={{ borderColor: '#16a34a', color: '#15803d', background: '#f0fdf4' }}>
+                    Already in Search Console: <strong>{gscPreview.existing.join(', ')}</strong>. Verifying connects to it — no duplicate is created.
+                  </div>
+                )}
+                {gscPreview?.canonical && (
+                  <div className="text-xs text-muted-foreground">
+                    Detected indexed domain (auto): <strong>{gscPreview.canonical}</strong>
+                  </div>
+                )}
+                <LabeledInput label="Indexed domain" placeholder="https://www.example.com" value={gscTargetUrl} onChange={setGscTargetUrl} />
+                {gscPreview?.error && <div className="text-xs" style={{ color: '#dc2626' }}>{gscPreview.error}</div>}
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeGsc}>Cancel</Button>
+            <Button
+              onClick={() => gscSite && gscVerifyMutation.mutate({ id: gscSite.id, targetUrl: gscTargetUrl })}
+              disabled={gscVerifyMutation.isPending || gscPreviewMutation.isPending || !gscTargetUrl.trim()}
+            >
+              {gscVerifyMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />} Verify in GSC
             </Button>
           </DialogFooter>
         </DialogContent>

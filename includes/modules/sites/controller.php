@@ -38,7 +38,42 @@ class PCM_REST_Sites extends PCM_REST_Base
             array('POST',   '/sites/(?P<id>\d+)/publish',      'publish_article'),
             array('POST',   '/sites/(?P<id>\d+)/test',         'test_connection'),
             array('POST',   '/sites/(?P<id>\d+)/gsc-verify',   'gsc_verify_site'),
+            array('POST',   '/sites/(?P<id>\d+)/gsc-preview',  'gsc_preview'),
+            array('POST',   '/sites/update-connectors',        'update_connectors'),
         );
+    }
+
+    /**
+     * POST /sites/update-connectors — force every connected site's connector to self-update NOW
+     * (the "emergency push": bypasses WordPress's twice-daily poll). Calls each site's
+     * /pcm-conn/v1/update-now over the existing app-password channel. Best-effort per site;
+     * returns a per-site result list.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function update_connectors(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        require_once __DIR__ . '/service.php';
+        $results = array();
+        foreach (PCM_DB::get_user_sites((int)$pcm_user->id) as $site) {
+            $r = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/update-now', array(), array(), 120);
+            if (is_wp_error($r)) {
+                $results[] = array('id' => (int)$site->id, 'name' => (string)$site->name, 'status' => 'error', 'message' => $r->get_error_message());
+                continue;
+            }
+            $code = (int) ($r['status'] ?? 0);
+            $body = is_array($r['body'] ?? null) ? $r['body'] : array();
+            if ($code === 404) {
+                $results[] = array('id' => (int)$site->id, 'name' => (string)$site->name, 'status' => 'error', 'message' => 'This site’s connector predates self-update (no /update-now). Reinstall the connector once (Download connector), then it self-updates from here on.');
+            } elseif ($code >= 300) {
+                $results[] = array('id' => (int)$site->id, 'name' => (string)$site->name, 'status' => 'error', 'message' => (string) ($body['message'] ?? ('HTTP ' . $code)));
+            } else {
+                $results[] = array('id' => (int)$site->id, 'name' => (string)$site->name, 'status' => (string) ($body['status'] ?? 'ok'), 'from' => (string) ($body['from'] ?? ''), 'to' => (string) ($body['to'] ?? ''));
+            }
+        }
+        return $this->success(array('results' => $results));
     }
 
     /**
@@ -140,7 +175,30 @@ class PCM_REST_Sites extends PCM_REST_Base
             return $this->not_found('Site');
         }
         require_once __DIR__ . '/service.php';
-        return $this->success(PCM_Sites_Service::gsc_provision($site, (int)$pcm_user->id));
+        // Optional targetUrl = the domain variant the user confirmed in the GSC dialog (www vs
+        // non-www). Empty → gsc_provision defaults to the stored site URL.
+        $p      = $request->get_json_params();
+        $target = is_array($p) ? trim((string) ($p['targetUrl'] ?? '')) : '';
+        return $this->success(PCM_Sites_Service::gsc_provision($site, (int)$pcm_user->id, $target));
+    }
+
+    /**
+     * POST /sites/<id>/gsc-preview — data for the "Verify in GSC" dialog: existing GSC properties
+     * that already cover this site (reuse, don't duplicate) + the auto-detected canonical/indexed
+     * domain to pre-fill the input. Read-only; performs outbound GSC + homepage-redirect probes.
+     *
+     * @param WP_REST_Request $request Request with id.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function gsc_preview(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int)$pcm_user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        require_once __DIR__ . '/service.php';
+        return $this->success(PCM_Sites_Service::gsc_preview($site, (int)$pcm_user->id));
     }
 
     /**
