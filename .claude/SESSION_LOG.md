@@ -1,5 +1,32 @@
 # Session Log
 
+## 2026-07-06 — SEO heading editor: make it work on Brizy (base64 builder data) [/task]
+- **Ask:** "will it work on brizy" — the heading editor on a Brizy page-builder site.
+- **Answer (verified): not until this fix.** Brizy stores its editor JSON + compiled HTML BASE64-encoded.
+  The recent merge (`e628978`) made the LINK scan/replace base64-aware + added a Brizy builder handler,
+  but my heading scan (`collect_headings`, written earlier) had no base64 handling, so Brizy headings
+  never appeared. A local simulation of Brizy storage proved it: read found nothing; and even once found,
+  the write updated the compiled-HTML blob but NOT the editor-JSON blob (heading HTML there is
+  quote-escaped — `class=\"...\"` — and the replace only had a slash-escaped variant), so a Brizy
+  recompile would revert the edit.
+- **Fix (connector `seohub/service.php`, 2.2.0 → 2.2.1):**
+  1. `collect_headings` is now base64-aware — mirrors `collect_links`: a base64 string decodes → JSON
+     recurse or inline `<hN>` extraction (clean-UTF-8 guarded).
+  2. De-dupe elId-less builder headings (Brizy stores each heading in BOTH compiled + editor metas) so
+     it lists once; elId'd widget headings stay distinct.
+  3. `replace_links` gained a fully JSON-escaped needle variant (escapes `"` + `/`) so a heading with
+     class attributes matches inside a base64(JSON) blob. For a bare URL this equals the existing
+     slash variant → skipped, so LINK behaviour is unchanged.
+- **Verified (local Brizy-storage simulation): 9/9** — read finds the heading (deduped to one), write
+  updates BOTH the compiled-HTML and editor-JSON base64 blobs, re-scan reflects the edit. Regression:
+  content H1–H6 (2/2) + Elementor widget-field headings (4/4) still work. `php -l` clean; `tsc` 56 =
+  baseline; `vite build` OK (also picks up the merged PRT + seo-tab frontend); PHPUnit 111/111 (3×).
+- **Caveat still true:** a heading hardcoded in the theme template (not in Brizy's data) stays "edit on
+  the site." And Brizy heading editing needs the **2.2.1 connector reinstalled** on the Brizy site
+  (older connectors: headings just won't list — graceful).
+- **Specialists:** inline (connector-internal change; verified by simulation). Zip rebuilt →
+  `~/Desktop/power-creatives.zip`. No commit.
+
 ## 2026-07-03 — Platform admin roles (multi-admin co-admin) [/task]
 - **Ask:** create platform users as admin OR normal user, so multiple admins can assign + review the
   work of users. (User chose "Full co-admin".) This DELIBERATELY reverses today's earlier hardening that

@@ -386,7 +386,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, with cache regeneration + verification), flushes page caches on edit, and shows a one-paste connection code.
- * Version: 2.2.0
+ * Version: 2.2.1
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -605,6 +605,12 @@ class PCM_Conn_Builder_Manager {
             $olds[] = $old; $search[] = $old; $replace[] = $new;
             $oe = str_replace('/', '\\/', $old);
             if ($oe !== $old) { $search[] = $oe; $replace[] = str_replace('/', '\\/', $new); }
+            // Fully JSON-string-escaped variant (escapes " and / and unicode) — needed when the
+            // needle is HTML with attributes ('<h2 class="x">…</h2>') living inside a JSON blob,
+            // e.g. a heading in Brizy's base64 editor data. For a bare URL this equals $oe, so it's
+            // skipped (links unaffected); it only adds a variant when quotes are present.
+            $oj = trim((string) json_encode($old), '"'); $nj = trim((string) json_encode($new), '"');
+            if ($oj !== $old && $oj !== $oe) { $search[] = $oj; $replace[] = $nj; }
         }
         if (empty($search)) { return $report; }
         global $wpdb;
@@ -988,8 +994,11 @@ class PCM_Conn_Builder_Manager {
             }
             self::collect_headings($val, $out);
         }
-        // Drop a post_content heading that merely duplicates a builder heading (same tag+text) — a
-        // builder renders its heading into the body too; keep the editable builder copy.
+        // De-dupe: a builder renders each heading into post_content AND, for base64 builders (Brizy),
+        // into BOTH its editor-JSON and compiled-HTML metas — so the same heading is captured several
+        // times. Drop (a) a post_content heading that duplicates a builder heading, and (b) repeat
+        // builder copies that carry no element id (Brizy's compiled/source pair). Keep every elId'd
+        // heading distinct — those are separate on-page elements (e.g. two identical Elementor widgets).
         $builder_keys = array();
         foreach ($out as $h) {
             if (($h['source'] ?? '') !== 'content' && (string) $h['text'] !== '') {
@@ -997,9 +1006,15 @@ class PCM_Conn_Builder_Manager {
             }
         }
         $result = array();
+        $seen_builder = array();
         foreach ($out as $h) {
             if ((string) $h['text'] === '') { continue; }
-            if (($h['source'] ?? '') === 'content' && isset($builder_keys[$h['level'] . '|' . $h['text']])) { continue; }
+            $key = $h['level'] . '|' . $h['text'];
+            if (($h['source'] ?? '') === 'content' && isset($builder_keys[$key])) { continue; }
+            if (($h['source'] ?? '') !== 'content' && (string) ($h['elId'] ?? '') === '') {
+                if (isset($seen_builder[$key])) { continue; }
+                $seen_builder[$key] = 1;
+            }
             $h['index'] = count($result);
             $result[] = $h;
         }
@@ -1037,14 +1052,28 @@ class PCM_Conn_Builder_Manager {
                     }
                 }
             }
-            foreach ($val as $k => $v) {
-                if (is_array($v) || is_object($v)) { self::collect_headings($v, $out, $el_id); }
-                elseif (is_string($v) && stripos($v, '<h') !== false) { self::collect_headings_html($v, $out, 'builder', $el_id); }
-            }
+            foreach ($val as $v) { self::collect_headings($v, $out, $el_id); }
             return;
         }
         if (is_object($val)) { foreach (get_object_vars($val) as $v) { self::collect_headings($v, $out, $el_id); } return; }
-        if (is_string($val)) { self::collect_headings_html($val, $out, 'builder', $el_id); }
+        if (is_string($val)) {
+            if (stripos($val, '<h') !== false) { self::collect_headings_html($val, $out, 'builder', $el_id); return; }
+            // Builders like Brizy keep their page (editor JSON + compiled HTML) as a BASE64 blob, so
+            // headings are invisible to the plain scan. Decode and recurse — mirrors collect_links():
+            // JSON → array walk; HTML → inline <hN> extraction. Guarded on a clean UTF-8 decode so
+            // ordinary base64-ish / binary strings are never misread.
+            if (strlen($val) >= 24 && preg_match('/^[A-Za-z0-9+\/]+={0,2}$/', $val)) {
+                $dec = base64_decode($val, true);
+                if ($dec !== false && $dec !== '' && preg_match('//u', $dec)) {
+                    $t = ltrim($dec);
+                    if ($t !== '' && ($t[0] === '{' || $t[0] === '[')) {
+                        $j = json_decode($dec, true);
+                        if (is_array($j)) { self::collect_headings($j, $out, $el_id); return; }
+                    }
+                    if (stripos($dec, '<h') !== false) { self::collect_headings_html($dec, $out, 'builder', $el_id); }
+                }
+            }
+        }
     }
     /** Rewrite a builder-FIELD heading widget (Elementor/Bricks): inside element $el_id, set the text
      *  field (matching $old_text) to $new_text and the tag field to h$new_level. Returns a report. */
