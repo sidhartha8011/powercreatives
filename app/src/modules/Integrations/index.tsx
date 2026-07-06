@@ -50,10 +50,13 @@ import {
   ChevronDown,
   ChevronRight,
   Music,
+  Copy,
+  LogIn,
+  TrendingUp,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { trpc } from '@/lib/trpc';
+import { trpc, getConfig } from '@/lib/trpc';
 import { PrtLiveTestSection } from './PrtLiveTestSection';
 
 // ============================================
@@ -137,6 +140,49 @@ export function IntegrationsModule() {
   const resyncMutation = trpc.models.resync.useMutation();
   const addCustomKieModelMutation = trpc.models.addCustomKieModel.useMutation();
   const trpcUtils = trpc.useUtils();
+
+  // ── GSC "Connect with Google" (OAuth) — one agency login covers every property that
+  // account can see; the alternative service-account JSON paste stays available above. ──
+  const gscOauthStartMutation = trpc.integrations.gscOauthStart.useMutation();
+  const [gscClientId, setGscClientId] = useState('');
+  const [gscClientSecret, setGscClientSecret] = useState('');
+  const [gscConnecting, setGscConnecting] = useState(false);
+  const handleGscConnect = async () => {
+    if (!gscClientId.trim() || !gscClientSecret.trim()) {
+      toast.error('Enter the OAuth Client ID and Client Secret first.');
+      return;
+    }
+    setGscConnecting(true);
+    try {
+      const data: any = await gscOauthStartMutation.mutateAsync({
+        clientId: gscClientId.trim(),
+        clientSecret: gscClientSecret.trim(),
+        returnUrl: window.location.href,
+      });
+      if (data?.url) window.location.href = data.url; // off to Google's consent screen
+      else throw new Error('No authorization URL returned');
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Could not start the Google connection');
+      setGscConnecting(false);
+    }
+  };
+  // Back from Google: the callback bounced us here with ?pcm_gsc=connected|error.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const flag = params.get('pcm_gsc');
+    if (!flag) return;
+    if (flag === 'connected') {
+      toast.success('Google Search Console connected — the SEO table can now pull stats.');
+      trpcUtils.integrations.list.invalidate();
+    } else {
+      toast.error(`Google connection failed: ${params.get('pcm_gsc_msg') || 'unknown error'}`);
+    }
+    params.delete('pcm_gsc');
+    params.delete('pcm_gsc_msg');
+    const qs = params.toString();
+    window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const integrations = integrationsQuery.data ?? [];
   const providers: ProviderInfo[] = providersQuery.data ?? [];
@@ -588,14 +634,118 @@ export function IntegrationsModule() {
                         Get API key <ExternalLink className="w-3 h-3" />
                       </a>
                     )}
-                    {/* GSC uses a Google Cloud service account, not a classic API key —
-                        spell out the 3 one-time steps so setup doesn't need a manual. */}
+                    {/* GSC: preferred = "Connect with Google" (one agency login covers every
+                        property that account can see — no per-property setup). The service-account
+                        JSON paste in the field above stays as the headless alternative. */}
                     {selectedProvider === 'gsc' && (
-                      <div className="rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground space-y-1">
-                        <p className="font-medium text-foreground">One-time setup (~5 min):</p>
-                        <p>1. In Google Cloud → IAM → Service Accounts: create an account, then Keys → Add key → JSON. Enable the "Google Search Console API" for the project.</p>
-                        <p>2. Open the downloaded .json file and paste its ENTIRE contents into the field above, then Validate.</p>
-                        <p>3. In Search Console → Settings → Users and permissions: add the service account's email (client_email in the JSON) as a user on each property you want stats for.</p>
+                      <div className="rounded-lg border border-border bg-card overflow-hidden">
+                        {/* Header */}
+                        <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-3">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                            <LogIn className="w-4 h-4 text-primary" />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold">Connect with Google</span>
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
+                                Recommended
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              One login — every Search Console property your Google account can see, including future ones.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4 px-4 py-4">
+                          {/* Step 1 */}
+                          <div className="flex gap-3">
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">1</span>
+                            <p className="text-xs leading-relaxed text-muted-foreground">
+                              <span className="font-medium text-foreground">Create an OAuth client</span> (one time) — Google Cloud →
+                              APIs &amp; Services → Credentials → Create credentials → OAuth client ID, type{' '}
+                              <span className="font-medium text-foreground">Web application</span>. Also enable the
+                              “Google Search Console API” for the project.
+                            </p>
+                          </div>
+
+                          {/* Step 2 — redirect URI with copy */}
+                          <div className="flex gap-3">
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">2</span>
+                            <div className="min-w-0 flex-1 space-y-1.5">
+                              <p className="text-xs leading-relaxed text-muted-foreground">
+                                <span className="font-medium text-foreground">Add this redirect URI</span> to the OAuth client:
+                              </p>
+                              <div className="flex items-stretch gap-1.5">
+                                <code className="min-w-0 flex-1 select-all break-all rounded-md border border-border bg-muted/50 px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-foreground/80">
+                                  {`${getConfig().restUrl}integrations/gsc/oauth-callback`}
+                                </code>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-auto shrink-0 px-2.5"
+                                  title="Copy redirect URI"
+                                  onClick={() => {
+                                    navigator.clipboard?.writeText(`${getConfig().restUrl}integrations/gsc/oauth-callback`)
+                                      .then(() => toast.success('Redirect URI copied'))
+                                      .catch(() => toast.error('Could not copy — select the text manually'));
+                                  }}
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Step 3 — credentials + connect */}
+                          <div className="flex gap-3">
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">3</span>
+                            <div className="min-w-0 flex-1 space-y-2.5">
+                              <p className="text-xs leading-relaxed text-muted-foreground">
+                                <span className="font-medium text-foreground">Paste the client credentials</span> and sign in with the
+                                Google account that already has Search Console access to your sites:
+                              </p>
+                              <div className="grid gap-2.5 sm:grid-cols-2">
+                                <div className="space-y-1">
+                                  <Label className="text-[11px] text-muted-foreground">Client ID</Label>
+                                  <Input
+                                    className="h-8 text-xs"
+                                    placeholder="…apps.googleusercontent.com"
+                                    value={gscClientId}
+                                    onChange={(e) => setGscClientId(e.target.value)}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[11px] text-muted-foreground">Client Secret</Label>
+                                  <Input
+                                    className="h-8 text-xs"
+                                    type="password"
+                                    placeholder="GOCSPX-…"
+                                    value={gscClientSecret}
+                                    onChange={(e) => setGscClientSecret(e.target.value)}
+                                  />
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                className="w-full sm:w-auto"
+                                onClick={handleGscConnect}
+                                disabled={gscConnecting || !gscClientId.trim() || !gscClientSecret.trim()}
+                              >
+                                {gscConnecting
+                                  ? <><Loader2 className="mr-1.5 w-4 h-4 animate-spin" /> Redirecting to Google…</>
+                                  : <><LogIn className="mr-1.5 w-4 h-4" /> Connect with Google</>}
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Fallback note */}
+                          <p className="border-t border-border pt-3 text-[11px] leading-relaxed text-muted-foreground">
+                            Prefer a headless setup? Paste a <span className="font-medium text-foreground">service-account JSON key</span>{' '}
+                            in the API-key field above instead, then add its email as a user on each Search Console property.
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -641,7 +791,21 @@ export function IntegrationsModule() {
 
                     {validationResult.valid && (
                       <>
-                        {/* Capabilities */}
+                        {/* Capabilities. SEO data providers (GSC/ProRankTracker/Ahrefs) have no AI
+                            modalities — four crossed-out chips read as "broken", so show what the
+                            key actually unlocks instead. */}
+                        {(validationResult.capabilities as Record<string, boolean>).seo ? (
+                          <div className="space-y-2 mb-1.5">
+                            <Label className="text-sm">Detected Capabilities</Label>
+                            <div className="flex gap-3 flex-wrap">
+                              <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-100 dark:bg-emerald-900/30">
+                                <Check className="w-4 h-4 text-emerald-600" />
+                                <TrendingUp className="w-4 h-4" />
+                                <span className="text-sm">SEO data (search stats — no AI models)</span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
                         <div className="space-y-2 mb-4">
                           <Label className="text-sm">Detected Capabilities</Label>
                           <div className="flex gap-3 flex-wrap">
@@ -667,6 +831,7 @@ export function IntegrationsModule() {
                             })}
                           </div>
                         </div>
+                        )}
 
                         {/* Available Models */}
                         {validationResult.models.length > 0 && (

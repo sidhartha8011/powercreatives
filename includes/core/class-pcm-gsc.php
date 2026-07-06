@@ -25,16 +25,33 @@ class PCM_GSC
     /** Parse + sanity-check the pasted service-account JSON. */
     public static function parse_credentials(string $json): array|WP_Error
     {
-        $data = json_decode(trim($json), true);
+        $trimmed = trim($json);
+        // Common mistake: pasting a Google API key (AIza…). The Search Console API does NOT accept
+        // API keys — it needs a service account (or OAuth). Say so precisely instead of "bad JSON".
+        if (preg_match('/^AIza[0-9A-Za-z_\-]{35}$/', $trimmed)) {
+            return new WP_Error('pcm_gsc_api_key', __('That looks like a Google API key, but Search Console can’t be accessed with an API key — it needs a SERVICE ACCOUNT. In Google Cloud → IAM → Service Accounts, create a service account, add a JSON key (Keys → Add key → JSON), and paste that whole JSON file here. Then add the account’s email as a user on your Search Console property.', 'power-creatives'));
+        }
+        $data = json_decode($trimmed, true);
         if (!is_array($data)) {
             return new WP_Error('pcm_gsc_bad_json', __('That is not valid JSON — paste the FULL service-account key file (starts with {"type":"service_account"…).', 'power-creatives'));
+        }
+        // OAuth credential (stored by the "Connect with Google" flow): one agency Google login
+        // grants every property that account can already see — no per-property service-account setup.
+        if (($data['type'] ?? '') === 'oauth' || isset($data['refresh_token'])) {
+            $cid = (string) ($data['client_id'] ?? '');
+            $sec = (string) ($data['client_secret'] ?? '');
+            $rt  = (string) ($data['refresh_token'] ?? '');
+            if ($cid === '' || $sec === '' || $rt === '') {
+                return new WP_Error('pcm_gsc_bad_json', __('The Google connection is incomplete (missing client_id/client_secret/refresh_token) — reconnect via "Connect with Google" on the Integrations page.', 'power-creatives'));
+            }
+            return array('type' => 'oauth', 'email' => __('your connected Google account', 'power-creatives'), 'client_id' => $cid, 'client_secret' => $sec, 'refresh_token' => $rt);
         }
         $email = (string) ($data['client_email'] ?? '');
         $key   = (string) ($data['private_key'] ?? '');
         if (($data['type'] ?? '') !== 'service_account' || $email === '' || $key === '') {
             return new WP_Error('pcm_gsc_bad_json', __('The JSON is missing service-account fields (type/client_email/private_key). Download the key from Google Cloud → IAM → Service Accounts → Keys.', 'power-creatives'));
         }
-        return array('email' => $email, 'private_key' => $key);
+        return array('type' => 'service_account', 'email' => $email, 'private_key' => $key);
     }
 
     /** Base64url per RFC 7515. */
@@ -63,29 +80,38 @@ class PCM_GSC
         return $input . '.' . self::b64url($sig);
     }
 
-    /** Access token for the service account (cached ~55 min in a transient). */
+    /** Access token for the stored credential — service account (JWT grant) or OAuth
+     *  connection (refresh-token grant). Cached ~55 min in a transient either way. */
     public static function access_token(string $json): string|WP_Error
     {
         $creds = self::parse_credentials($json);
         if (is_wp_error($creds)) {
             return $creds;
         }
-        $cache_key = 'pcm_gsc_tok_' . md5($creds['email']);
+        $is_oauth  = (($creds['type'] ?? '') === 'oauth');
+        $cache_key = 'pcm_gsc_tok_' . md5($is_oauth ? $creds['refresh_token'] : $creds['email']);
         $cached    = get_transient($cache_key);
         if (is_string($cached) && $cached !== '') {
             return $cached;
         }
-        $jwt = self::build_jwt($creds['email'], $creds['private_key'], time());
-        if (is_wp_error($jwt)) {
-            return $jwt;
-        }
-        $resp = wp_remote_post(self::TOKEN_URL, array(
-            'timeout' => 20,
-            'body'    => array(
+        if ($is_oauth) {
+            $post = array(
+                'grant_type'    => 'refresh_token',
+                'refresh_token' => $creds['refresh_token'],
+                'client_id'     => $creds['client_id'],
+                'client_secret' => $creds['client_secret'],
+            );
+        } else {
+            $jwt = self::build_jwt($creds['email'], $creds['private_key'], time());
+            if (is_wp_error($jwt)) {
+                return $jwt;
+            }
+            $post = array(
                 'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
                 'assertion'  => $jwt,
-            ),
-        ));
+            );
+        }
+        $resp = wp_remote_post(self::TOKEN_URL, array('timeout' => 20, 'body' => $post));
         if (is_wp_error($resp)) {
             return new WP_Error('pcm_gsc_token', sprintf(__('Could not reach Google to authenticate (%s).', 'power-creatives'), $resp->get_error_message()));
         }
@@ -93,10 +119,60 @@ class PCM_GSC
         $tok  = (string) ($body['access_token'] ?? '');
         if ($tok === '') {
             $why = (string) ($body['error_description'] ?? $body['error'] ?? 'unknown error');
-            return new WP_Error('pcm_gsc_token', sprintf(__('Google rejected the service-account key (%s). Re-download the JSON key and paste it again.', 'power-creatives'), $why));
+            $msg = $is_oauth
+                ? sprintf(__('Google rejected the connection (%s). Reconnect via "Connect with Google" on the Integrations page.', 'power-creatives'), $why)
+                : sprintf(__('Google rejected the service-account key (%s). Re-download the JSON key and paste it again.', 'power-creatives'), $why);
+            return new WP_Error('pcm_gsc_token', $msg);
         }
         set_transient($cache_key, $tok, 55 * MINUTE_IN_SECONDS);
         return $tok;
+    }
+
+    // ── "Connect with Google" (OAuth authorization-code flow) ──────────────────────────────
+
+    /** The redirect URI to register on the Google OAuth client (Web application type). */
+    public static function redirect_uri(): string
+    {
+        return rest_url('pcm/v1/integrations/gsc/oauth-callback');
+    }
+
+    /** Google consent-screen URL. `access_type=offline&prompt=consent` forces a refresh token. */
+    public static function authorize_url(string $client_id, string $state): string
+    {
+        return 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query(array(
+            'client_id'     => $client_id,
+            'redirect_uri'  => self::redirect_uri(),
+            'response_type' => 'code',
+            'scope'         => self::SCOPE,
+            'access_type'   => 'offline',
+            'prompt'        => 'consent',
+            'state'         => $state,
+        ));
+    }
+
+    /** Exchange the callback `code` for tokens. Returns ['refresh_token'=>, 'access_token'=>]. */
+    public static function exchange_code(string $client_id, string $client_secret, string $code): array|WP_Error
+    {
+        $resp = wp_remote_post(self::TOKEN_URL, array(
+            'timeout' => 20,
+            'body'    => array(
+                'grant_type'    => 'authorization_code',
+                'code'          => $code,
+                'client_id'     => $client_id,
+                'client_secret' => $client_secret,
+                'redirect_uri'  => self::redirect_uri(),
+            ),
+        ));
+        if (is_wp_error($resp)) {
+            return new WP_Error('pcm_gsc_oauth', sprintf(__('Could not reach Google to finish the connection (%s).', 'power-creatives'), $resp->get_error_message()));
+        }
+        $body = json_decode((string) wp_remote_retrieve_body($resp), true);
+        $rt   = (string) ($body['refresh_token'] ?? '');
+        if ($rt === '') {
+            $why = (string) ($body['error_description'] ?? $body['error'] ?? 'no refresh token returned');
+            return new WP_Error('pcm_gsc_oauth', sprintf(__('Google did not complete the connection (%s).', 'power-creatives'), $why));
+        }
+        return array('refresh_token' => $rt, 'access_token' => (string) ($body['access_token'] ?? ''));
     }
 
     /** Authenticated GET/POST against the Search Console API. */

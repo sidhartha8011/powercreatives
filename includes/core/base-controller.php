@@ -71,6 +71,12 @@ abstract class PCM_REST_Base
                 $permission_callback = $this->make_strict_admin_callback();
             } elseif ($permission === 'manage_options:coadmin') {
                 $permission_callback = $this->make_coadmin_callback();
+            } elseif ($permission === 'public') {
+                // Public tier — for routes an EXTERNAL service must reach by browser redirect
+                // (e.g. the Google OAuth callback, which arrives without a REST nonce/cookie auth).
+                // Handlers on this tier MUST authenticate by their own means (single-use server-side
+                // state tokens) — never trust request params alone.
+                $permission_callback = '__return_true';
             } else {
                 $permission_callback = $this->make_permission_callback($permission);
             }

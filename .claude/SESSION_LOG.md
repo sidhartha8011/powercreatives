@@ -5357,3 +5357,91 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   intact; API 403 → clear error). tsc → 56 (baseline, 0 in touched files); vite build clean.
 - Worked inline (sequential feature; no subagents needed). Not committed. NOTE for next zip: vendor classmap
   must be regenerated (new PCM_GSC class) — gen_vendor2.php does it as part of the build recipe.
+
+## 2026-07-06 — Rebuild plugin zip (includes GSC integration + PCM_GSC in classmap)
+- Standard packaging (tokenizer classmap gen + GNU tar staging + Windows bsdtar zip). vendor/ regen → 97
+  classes (was 96 — now includes the new PCM_GSC), all present, autoload OK. Fresh npm run build →
+  index-writer.js (4.62MB). Connector generator in bundle = 2.2.3.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.37 MB, 479 entries). Verified: top-level
+  ONLY `powerplatform`; power-creatives.php + vendor/autoload.php + vendor/composer/autoload_classmap.php +
+  app/dist/index-writer.js + includes/core/class-pcm-gsc.php all present; 0 backslash paths; 0 real dir leaks;
+  PCM_GSC present in the zipped classmap (autoloads on activation). Not committed.
+
+## 2026-07-06 — GSC: reject API keys with a precise error (Search Console needs a service account)
+- User supplied a Google API key (AIza…) and asked to wire GSC to it. Hard constraint: the Search Console
+  Search Analytics API does NOT accept API keys — it authenticates a principal (OAuth or service account),
+  so an API key always 401s ("API keys are not supported by this API"). Did NOT build an API-key auth path
+  (would be known-broken) and did NOT hardcode the key.
+- Minimal change: `PCM_GSC::parse_credentials` now detects a pasted API key (`/^AIza[0-9A-Za-z_\-]{35}$/`) and
+  returns a targeted error explaining a service account is required + how to create one, instead of the
+  generic "bad JSON". Real service-account JSON still parses; other garbage still → bad_json.
+- Verified: php -l clean; targeted test — the exact key pasted → `pcm_gsc_api_key` error ✅, real SA JSON
+  parses ✅, garbage → `pcm_gsc_bad_json` ✅. PHP-only (flows through the existing Validate endpoint) → no
+  frontend rebuild. Not committed. Told the user to create a SERVICE ACCOUNT (not an API key) and to
+  restrict/delete the pasted key.
+
+## 2026-07-06 — (guidance, no code) GSC "key" is again an AIza… API key → service-account conversion walkthrough
+- User asked to "do something" with their GSC key; confirmed via question it's an AIza… API key. No code path
+  exists that can make an API key work with the Search Console API (Google rejects them — needs a principal).
+  The validator already returns the precise service-account error for this paste (added earlier today).
+- Deliverable: click-by-click conversion guide using their EXISTING Google Cloud project (where the API key
+  lives): enable Search Console API → IAM → create service account (no roles) → Keys → JSON download → add
+  the client_email as a Restricted user on each GSC property → paste whole JSON into Integrations → Validate
+  → SEO table "GSC stats". Reminded again to delete/restrict the exposed AIza key.
+
+## 2026-07-06 — (diagnosis, no code) Proved live that the GSC API rejects the user's API key
+- User pushed back: "it IS the API key for the GCP project with GSC access". Settled it with evidence: called
+  `GET https://www.googleapis.com/webmasters/v3/sites?key=AIza…` (their key) — Google returned HTTP 401
+  "API keys are not supported by this API. Expected OAuth2 access token or other authentication credentials
+  that assert a principal" (reason CREDENTIALS_MISSING, service searchconsole.googleapis.com). Definitive:
+  the rejection is Google-side and project-independent — API keys assert no principal; GSC data is private.
+- No code change (validator already handles the paste). Remaining user path: service account in the SAME
+  project (IAM → SA → JSON key → add client_email as GSC property user → paste JSON → Validate). Reminded
+  again to delete/restrict the exposed key.
+
+## 2026-07-06 — GSC: "Connect with Google" OAuth flow (no per-property service accounts)
+- User rejected the service-account path ("we are not manually adding service accounts to each project").
+  Better architecture shipped: OAuth authorization-code flow — ONE agency Google login grants every GSC
+  property that account already has access to (agencies are already users on client properties). One-time
+  cost: creating a single Web-application OAuth client in GCP (ID+secret) — Google's floor without a hosted
+  auth proxy.
+- Backend: base-controller.php gained a `'public'` permission tier (Google's redirect carries no REST nonce;
+  handler self-authenticates). PCM_GSC: parse_credentials accepts `{type:'oauth', client_id, client_secret,
+  refresh_token}`; access_token branches (oauth → refresh_token grant, SA → JWT), cache keyed per credential;
+  new authorize_url (offline+consent, scope webmasters.readonly), exchange_code, redirect_uri (rest_url).
+  integrations/controller.php: POST /integrations/gsc/oauth-start (stores clientId/secret/userId/returnUrl in
+  a single-use 10-min `state` transient; wp_validate_redirect on returnUrl) + PUBLIC GET
+  /integrations/gsc/oauth-callback (state lookup+delete → exchange_code → upsert gsc integration row
+  [PCM_DB get_user_integrations/update_by_id/create_integration] → hash-safe bounce with
+  ?pcm_gsc=connected|error).
+- Frontend: trpc route integrations.gscOauthStart. Integrations card (GSC selected): Client ID + Secret
+  inputs, copyable redirect URI (getConfig().restUrl), "Connect with Google" button → window.location to the
+  consent URL; on return, useEffect reads ?pcm_gsc → success/error toast + integrations.list invalidate +
+  history.replaceState cleanup. SA JSON paste retained as documented fallback.
+- Verified: php -l ×3 clean; NEW gsc_oauth_test.php 11/11 (oauth parse, refresh grant body + caching,
+  authorize_url params incl. redirect_uri, exchange_code posts code/secret/redirect + returns refresh_token,
+  missing refresh_token → error, list_properties works end-to-end on an oauth credential with Bearer token);
+  gsc_test.php SA regression 20/20; tsc 56 (baseline, 0 in touched); vite build clean.
+- Not committed. Deploy = hub zip rebuild (no new PHP class → classmap unchanged at 97; no connector change).
+
+## 2026-07-06 — Rebuild plugin zip (includes GSC OAuth "Connect with Google")
+- Standard recipe. vendor classmap 97 (PCM_GSC in), all files present, autoload OK; fresh vite build
+  (index-writer.js 4.63MB); connector generator 2.2.3 unchanged.
+- Zip: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.38 MB, 479 entries). Verified: top-level
+  ONLY powerplatform; required files + class-pcm-gsc.php + base-controller.php present; 0 backslash paths;
+  0 dir leaks; zipped integrations/controller.php contains the gsc_oauth flow (7 refs). Not committed.
+
+## 2026-07-06 — Integrations UI polish (GSC card + capabilities) + zip rebuild
+- UI (Integrations/index.tsx): (1) GSC "Connect with Google" box redesigned from a text wall into a stepped
+  card — header w/ icon + "Recommended" pill + one-line value prop; numbered steps 1-2-3 (create OAuth
+  client / add redirect URI / paste credentials); redirect URI row gained a COPY button (clipboard + toast);
+  Client ID + Secret now labeled inputs in a 2-col grid; full-width Connect button w/ LogIn icon +
+  "Redirecting to Google…" state, disabled until both fields are filled; muted service-account fallback note
+  under a divider. (2) "Detected Capabilities" panel: SEO data providers (capabilities.seo=true — GSC/PRT)
+  now show ONE green "SEO data (search stats — no AI models)" chip instead of four crossed-out AI chips
+  (Image/Video/Text/Vision) that read as "broken". AI providers unchanged.
+- Verified: tsc → 56 (baseline, 0 in Integrations); vite build clean.
+- Zip rebuilt: C:/Users/sanky/Desktop/powercreatives/power-creatives.zip (2.38 MB, 479 entries). Verified:
+  top-level ONLY powerplatform; required files present (incl. class-pcm-gsc.php); classmap 97/0 missing;
+  0 backslash paths; 0 dir leaks; the NEW UI is in the zipped bundle (grep "Redirecting to Google" in
+  dist/index-writer.js inside the zip = 1). Not committed.

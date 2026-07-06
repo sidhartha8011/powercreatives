@@ -35,6 +35,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "integrations.prtHistory": { endpoint: "integrations/proranktracker/history", method: "GET" },
     "integrations.gscProperties": { endpoint: "integrations/gsc/properties", method: "GET" },
     "integrations.gscStats": { endpoint: "integrations/gsc/stats", method: "POST" },
+    "integrations.gscOauthStart": { endpoint: "integrations/gsc/oauth-start", method: "POST" },
     "integrations.validateApiKey": { endpoint: "integrations/validate", method: "POST" },
     "integrations.create": { endpoint: "integrations", method: "POST" },
     "integrations.update": {

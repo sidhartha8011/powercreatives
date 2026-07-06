@@ -44,6 +44,10 @@ class PCM_REST_Integrations extends PCM_REST_Base
                 array('GET', '/integrations/proranktracker/history', 'prt_history'),
                 array('GET', '/integrations/gsc/properties', 'gsc_properties'),
                 array('POST', '/integrations/gsc/stats', 'gsc_stats'),
+                array('POST', '/integrations/gsc/oauth-start', 'gsc_oauth_start'),
+                // Public: Google's browser redirect carries no REST nonce. The handler authenticates
+                // itself via the single-use server-side `state` transient minted by oauth-start.
+                array('GET', '/integrations/gsc/oauth-callback', 'gsc_oauth_callback', array(), 'public'),
 
             // Validation
                 array('POST', '/integrations/validate', 'validate_api_key'),
@@ -139,6 +143,120 @@ class PCM_REST_Integrations extends PCM_REST_Base
             );
         }
         return $this->success($urls);
+    }
+
+    /**
+     * POST /integrations/gsc/oauth-start {clientId, clientSecret, returnUrl} — begin the
+     * "Connect with Google" flow. Stores the client credentials + the caller's identity in a
+     * single-use `state` transient (10 min), and returns Google's consent URL to redirect to.
+     * One agency Google login then grants every GSC property that account can already see —
+     * no per-property service-account setup.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function gsc_oauth_start(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $p         = $request->get_json_params();
+        $client_id = is_array($p) ? trim((string) ($p['clientId'] ?? '')) : '';
+        $secret    = is_array($p) ? trim((string) ($p['clientSecret'] ?? '')) : '';
+        $return    = is_array($p) ? (string) ($p['returnUrl'] ?? '') : '';
+        if ($client_id === '' || $secret === '') {
+            return $this->error('Client ID and Client Secret are required — create a "Web application" OAuth client in Google Cloud → APIs & Services → Credentials.', 400);
+        }
+        // Only redirect back to THIS install's admin (never an arbitrary URL from the request).
+        $return = wp_validate_redirect($return, admin_url('admin.php?page=power-creatives'));
+
+        $state = wp_generate_password(32, false, false);
+        set_transient('pcm_gsc_oauth_' . $state, array(
+            'user_id'       => (int) $pcm_user->id,
+            'client_id'     => $client_id,
+            'client_secret' => $secret,
+            'return_url'    => $return,
+        ), 10 * MINUTE_IN_SECONDS);
+
+        return $this->success(array(
+            'url'         => PCM_GSC::authorize_url($client_id, $state),
+            'redirectUri' => PCM_GSC::redirect_uri(),
+        ));
+    }
+
+    /**
+     * GET /integrations/gsc/oauth-callback?code&state — Google's browser redirect. PUBLIC
+     * route: authenticated by the single-use `state` transient (attacker can't mint one, and
+     * the auth code is useless without our stored client_secret). Exchanges the code for a
+     * refresh token, upserts the user's `gsc` integration, then bounces back to the app.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return void Redirects and exits.
+     */
+    public function gsc_oauth_callback(WP_REST_Request $request): void
+    {
+        $state = sanitize_text_field((string) $request->get_param('state'));
+        $ctx   = $state !== '' ? get_transient('pcm_gsc_oauth_' . $state) : false;
+        if ($state !== '') {
+            delete_transient('pcm_gsc_oauth_' . $state); // single use, success or not
+        }
+        // No context → expired/forged state; nowhere trustworthy to bounce to, so keep it plain.
+        if (!is_array($ctx) || empty($ctx['user_id'])) {
+            wp_die(esc_html__('This Google sign-in link expired or was already used — go back to Integrations and click "Connect with Google" again.', 'power-creatives'));
+        }
+
+        // The return URL may carry an SPA hash (#/integrations) — insert query params BEFORE it.
+        $bounce = static function (string $url, array $args): string {
+            $hash = '';
+            if (false !== ($pos = strpos($url, '#'))) {
+                $hash = substr($url, $pos);
+                $url  = substr($url, 0, $pos);
+            }
+            return add_query_arg(array_map('rawurlencode', $args), $url) . $hash;
+        };
+        $return = (string) $ctx['return_url'];
+
+        $google_error = sanitize_text_field((string) $request->get_param('error'));
+        $code         = (string) $request->get_param('code');
+        if ($google_error !== '' || $code === '') {
+            wp_safe_redirect($bounce($return, array('pcm_gsc' => 'error', 'pcm_gsc_msg' => $google_error !== '' ? $google_error : 'no_code')));
+            exit;
+        }
+
+        $tokens = PCM_GSC::exchange_code((string) $ctx['client_id'], (string) $ctx['client_secret'], $code);
+        if (is_wp_error($tokens)) {
+            wp_safe_redirect($bounce($return, array('pcm_gsc' => 'error', 'pcm_gsc_msg' => $tokens->get_error_message())));
+            exit;
+        }
+
+        // Upsert the gsc integration for the user who started the flow.
+        $api_key = (string) wp_json_encode(array(
+            'type'          => 'oauth',
+            'client_id'     => (string) $ctx['client_id'],
+            'client_secret' => (string) $ctx['client_secret'],
+            'refresh_token' => (string) $tokens['refresh_token'],
+        ));
+        $user_id  = (int) $ctx['user_id'];
+        $existing = null;
+        foreach (PCM_DB::get_user_integrations($user_id) as $row) {
+            if (($row->provider ?? '') === 'gsc') {
+                $existing = $row;
+                break;
+            }
+        }
+        if ($existing) {
+            PCM_DB::update_by_id('integrations', (int) $existing->id, $user_id, array('apiKey' => $api_key, 'isActive' => 1));
+        } else {
+            PCM_DB::create_integration(array(
+                'userId'   => $user_id,
+                'provider' => 'gsc',
+                'label'    => 'Google Search Console',
+                'apiKey'   => $api_key,
+                'type'     => 'text',
+                'isActive' => 1,
+            ));
+        }
+
+        wp_safe_redirect($bounce($return, array('pcm_gsc' => 'connected')));
+        exit;
     }
 
     /**
