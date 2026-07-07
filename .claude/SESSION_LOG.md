@@ -6000,3 +6000,5 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Verified: chip merge path node-checked (text-card-body survives Badge cn, text-xs/
   font-medium evicted, leading-none kept); tsc 56 = baseline; build OK.
   BEFORE 81540a7 → AFTER (this commit).
+
+## 2026-07-07 — label token 12px → 10px (user-specified; one @theme line, all metadata follows: table headers, meta line, counts, timestamps)
