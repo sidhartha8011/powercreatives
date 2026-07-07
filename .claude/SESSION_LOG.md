@@ -6065,3 +6065,14 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   per-delivery filter is client-side) + new isLoading on the hook.
 - Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
   user. BEFORE 7bd82eb → AFTER 33b6169.
+
+## 2026-07-07 — Deliveries table: card-parity columns + softer chrome [deliveries-table-columns-chrome]
+- Columns → Delivery | Status | Type | Brand | Modules | ID | Updated (card property
+  order; Client column removed — field/filter/search untouched).
+- New InlineModulesCell = the card's multiToggle (chips + checkbox dropdown) with the
+  table's optimistic+revert contract; sortable by grant count. ID = externalId inline
+  text. Sub-rows realigned to the 7-col grid (spacer before ✕, colSpan 7).
+- Chrome: shadow-none + rounded-lg via wrapperClassName on the Deliveries instance
+  ONLY (global DataTable default untouched; user said "for this table").
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
+  user. BEFORE 85177bb → AFTER d520a1b.
