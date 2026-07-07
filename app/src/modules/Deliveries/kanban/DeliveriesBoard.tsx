@@ -21,7 +21,7 @@ import {
   useState,
   type ChangeEvent,
 } from 'react';
-import { Package, Plus, Search, SquareKanban, Table2, X } from 'lucide-react';
+import { Package, Plus, RotateCcw, Search, SquareKanban, Table2, X } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -50,7 +50,7 @@ import {
 } from '@/components/shared/Kanban';
 import { EmptyState } from '@/components/shared/EmptyState';
 
-import { DeliveriesTable } from '../table/DeliveriesTable';
+import { DELIVERIES_LAYOUT_KEY, DeliveriesTable } from '../table/DeliveriesTable';
 import { DeliveryCard } from './DeliveryCard';
 import { deliveryColumns } from './deliveryColumns';
 import { deliveryFilters } from './deliveryFilters';
@@ -187,6 +187,18 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
     }
   }, []);
 
+  // Reset column layout = clear the stored layout + remount the table so
+  // useColumnLayout reloads its defaults (that IS the semantic of "reset").
+  const [tableEpoch, setTableEpoch] = useState(0);
+  const resetColumns = useCallback(() => {
+    try {
+      localStorage.removeItem(DELIVERIES_LAYOUT_KEY);
+    } catch {
+      // Storage unavailable — remount still restores in-memory defaults.
+    }
+    setTableEpoch((epoch) => epoch + 1);
+  }, []);
+
   // ─── Delete confirmation flow ────────────────────────────────
   const [pendingDelete, setPendingDelete] = useState<Delivery | null>(null);
 
@@ -304,6 +316,19 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
               </SelectContent>
             </Select>
           )}
+          {/* Table view: restore default column order + widths. */}
+          {view === 'table' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetColumns}
+              className="h-9 px-2 text-slate-500"
+              title="Reset column order and widths"
+              aria-label="Reset column order and widths"
+            >
+              <RotateCcw className="w-4 h-4" aria-hidden="true" />
+            </Button>
+          )}
           {/* Kanban ⇄ Table — same segmented chrome as Projects' grid/list toggle. */}
           <div
             className="flex items-center gap-0.5 rounded-md bg-slate-100 p-0.5"
@@ -363,8 +388,10 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
           )}
           {view === 'table' ? (
             <DeliveriesTable
+              key={tableEpoch}
               items={listState.filteredItems}
               onEdit={onEdit}
+              onRequestDelete={requestDelete}
             />
           ) : (
             <KanbanBoard<Delivery>

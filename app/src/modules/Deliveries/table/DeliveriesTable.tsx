@@ -22,9 +22,10 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, Maximize2, Plus, X } from 'lucide-react';
+import { ChevronDown, Maximize2, Plus, Trash2, X } from 'lucide-react';
 
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
+import type { FilterDef } from '@/hooks/useColumnFilters';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -54,6 +55,9 @@ import { deliveryColumns, type DeliveryColumn } from '../kanban/deliveryColumns'
 import { useDeliveries, type UpdateDeliveryInput } from '../hooks/useDeliveries';
 import { useTypePresets } from '../hooks/useTypePresets';
 import { DELIVERY_STATUSES, GRANTABLE_MODULES, type Delivery, type DeliveryStatus } from '../types';
+
+/** Column layout storage — exported so the board's Reset button can clear it. */
+export const DELIVERIES_LAYOUT_KEY = 'pcm:deliveries:col-layout:v1';
 
 /** Lane declarations by status id — the pills borrow the Kanban accents. */
 const STATUS_LANES: Partial<Record<DeliveryStatus, DeliveryColumn>> = Object.fromEntries(
@@ -310,6 +314,26 @@ function InlineModulesCell({
   );
 }
 
+/** Read-only module chips — the non-admin rendering of the Modules cell. */
+function ModulesChips({ values }: { values: string[] }) {
+  const selected = GRANTABLE_MODULES.filter((o) => values.includes(o.id));
+  if (selected.length === 0) return <span className="px-1 text-muted-foreground">None</span>;
+  return (
+    <span className="flex min-w-0 items-center gap-1 px-1">
+      {selected.slice(0, 2).map((o) => (
+        <Badge key={o.id} variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
+          {o.label}
+        </Badge>
+      ))}
+      {selected.length > 2 && (
+        <Badge variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
+          +{selected.length - 2}
+        </Badge>
+      )}
+    </span>
+  );
+}
+
 /** The delivery's lead among its assignees (role='lead'; single by contract). */
 function leadOf(d: Delivery): { id: number; name: string } | null {
   const lead = d.assignees?.find((a) => a.role === 'lead');
@@ -520,9 +544,11 @@ export interface DeliveriesTableProps {
   items: ReadonlyArray<Delivery>;
   /** Open the delivery card — via the name cell's open affordance. */
   onEdit: (delivery: Delivery) => void;
+  /** Ask the board for its delete-confirm flow (same dialog as the Kanban). */
+  onRequestDelete: (delivery: Delivery) => void;
 }
 
-export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
+export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTableProps) {
   // Warm the shared project/site caches at table mount so expanding a row is
   // instant client-side filtering, not a first-expand network wait (the
   // sub-row hook reads these exact query keys).
@@ -560,13 +586,17 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
         sortAccessor: (d) => d.name.toLowerCase(),
         cell: (d) => (
           <div className="flex items-center gap-1">
-            <InlineTextCell
-              value={d.name}
-              required
-              ariaLabel={`Name of ${d.name}`}
-              className="font-medium"
-              onSave={(next) => patch(d.id, { name: next })}
-            />
+            {isAdmin ? (
+              <InlineTextCell
+                value={d.name}
+                required
+                ariaLabel={`Name of ${d.name}`}
+                className="font-medium"
+                onSave={(next) => patch(d.id, { name: next })}
+              />
+            ) : (
+              <span className="block min-w-0 flex-1 truncate px-1 font-medium">{d.name}</span>
+            )}
             {/* Always visible (group-hover is a no-op on coarse pointers) — quiet at rest. */}
             <Button
               type="button"
@@ -579,6 +609,19 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
             >
               <Maximize2 className="h-3.5 w-3.5" />
             </Button>
+            {isAdmin && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 shrink-0 p-0 text-muted-foreground/40 hover:text-destructive"
+                title="Delete delivery"
+                aria-label={`Delete ${d.name}`}
+                onClick={() => onRequestDelete(d)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         ),
       },
@@ -588,25 +631,39 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
         width: 120,
         // Pipeline order (lane order), not alphabetical.
         sortAccessor: (d) => DELIVERY_STATUSES.indexOf(d.status),
-        cell: (d) => (
-          <InlineSelectCell
-            value={d.status}
-            options={DELIVERY_STATUSES.map((s) => ({
-              value: s,
-              label: STATUS_LANES[s]?.label ?? s,
-            }))}
-            ariaLabel={`Status of ${d.name}`}
-            renderValue={(v) => <StatusPill status={(v ?? d.status) as DeliveryStatus} />}
-            onSave={(v) => patch(d.id, { status: v as DeliveryStatus })}
-          />
-        ),
+        cell: (d) =>
+          isAdmin ? (
+            <InlineSelectCell
+              value={d.status}
+              options={DELIVERY_STATUSES.map((s) => ({
+                value: s,
+                label: STATUS_LANES[s]?.label ?? s,
+              }))}
+              ariaLabel={`Status of ${d.name}`}
+              renderValue={(v) => <StatusPill status={(v ?? d.status) as DeliveryStatus} />}
+              onSave={(v) => patch(d.id, { status: v as DeliveryStatus })}
+            />
+          ) : (
+            <span className="px-1">
+              <StatusPill status={d.status} />
+            </span>
+          ),
       },
       {
         key: 'type',
         header: 'Type',
         width: 130,
         sortAccessor: (d) => (d.type ? (typePresets[d.type]?.label ?? d.type).toLowerCase() : null),
-        cell: (d) => (
+        cell: (d) =>
+          !isAdmin ? (
+            <span className="px-1">
+              {d.type ? (
+                <TypePill typeKey={d.type} label={typePresets[d.type]?.label ?? d.type} />
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </span>
+          ) : (
           <InlineSelectCell
             value={d.type ?? null}
             options={typeOptions}
@@ -636,15 +693,22 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
         width: 150,
         sortAccessor: (d) =>
           d.brandId != null ? brandLabel.get(String(Number(d.brandId)))?.toLowerCase() ?? null : null,
-        cell: (d) => (
-          <InlineSelectCell
-            value={d.brandId != null ? String(Number(d.brandId)) : null}
-            options={brandOptions}
-            noneLabel="No brand"
-            ariaLabel={`Brand of ${d.name}`}
-            onSave={(v) => patch(d.id, { brandId: v != null ? Number(v) : null })}
-          />
-        ),
+        cell: (d) =>
+          isAdmin ? (
+            <InlineSelectCell
+              value={d.brandId != null ? String(Number(d.brandId)) : null}
+              options={brandOptions}
+              noneLabel="No brand"
+              ariaLabel={`Brand of ${d.name}`}
+              onSave={(v) => patch(d.id, { brandId: v != null ? Number(v) : null })}
+            />
+          ) : (
+            <span className="block truncate px-1">
+              {(d.brandId != null && brandLabel.get(String(Number(d.brandId)))) || (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </span>
+          ),
       },
       {
         key: 'modules',
@@ -652,13 +716,16 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
         width: 170,
         // Sortable by how much access the delivery grants.
         sortAccessor: (d) => (Array.isArray(d.modules) ? d.modules.length : 0),
-        cell: (d) => (
-          <InlineModulesCell
-            values={Array.isArray(d.modules) ? d.modules : []}
-            ariaLabel={`Modules of ${d.name}`}
-            onSave={(next) => patch(d.id, { modules: next })}
-          />
-        ),
+        cell: (d) =>
+          isAdmin ? (
+            <InlineModulesCell
+              values={Array.isArray(d.modules) ? d.modules : []}
+              ariaLabel={`Modules of ${d.name}`}
+              onSave={(next) => patch(d.id, { modules: next })}
+            />
+          ) : (
+            <ModulesChips values={Array.isArray(d.modules) ? d.modules : []} />
+          ),
       },
       {
         key: 'lead',
@@ -679,14 +746,19 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
         header: 'ID',
         width: 110,
         sortAccessor: (d) => d.externalId?.toLowerCase() ?? null,
-        cell: (d) => (
-          <InlineTextCell
-            value={d.externalId ?? ''}
-            placeholder="—"
-            ariaLabel={`External ID of ${d.name}`}
-            onSave={(next) => patch(d.id, { externalId: next.length > 0 ? next : null })}
-          />
-        ),
+        cell: (d) =>
+          isAdmin ? (
+            <InlineTextCell
+              value={d.externalId ?? ''}
+              placeholder="—"
+              ariaLabel={`External ID of ${d.name}`}
+              onSave={(next) => patch(d.id, { externalId: next.length > 0 ? next : null })}
+            />
+          ) : (
+            <span className="block truncate px-1">
+              {d.externalId || <span className="text-muted-foreground">—</span>}
+            </span>
+          ),
       },
       {
         key: 'updated',
@@ -697,7 +769,50 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps — patch/onEdit are stable enough per render
-    [brandOptions, brandLabel, typeOptions, typePresets, onEdit, isAdmin, refetch]
+    [brandOptions, brandLabel, typeOptions, typePresets, onEdit, onRequestDelete, isAdmin, refetch]
+  );
+
+  // Per-column header filters (the SEO table's filter dot) — text search for
+  // free-text columns, option lists for enum-ish ones. Brand matches by id
+  // (options carry the names); Lead searches every assignee name.
+  const filterDefs = useMemo<Record<string, FilterDef<Delivery>>>(
+    () => ({
+      name: {
+        key: 'name',
+        kind: 'text',
+        match: (d, v) => d.name.toLowerCase().includes(v.toLowerCase()),
+      },
+      status: {
+        key: 'status',
+        kind: 'choice',
+        options: DELIVERY_STATUSES.map((s) => ({ value: s, label: STATUS_LANES[s]?.label ?? s })),
+        match: (d, v) => d.status === v,
+      },
+      type: {
+        key: 'type',
+        kind: 'choice',
+        options: typeOptions,
+        match: (d, v) => (d.type ?? '') === v,
+      },
+      brand: {
+        key: 'brand',
+        kind: 'choice',
+        options: brandOptions,
+        match: (d, v) => String(d.brandId != null ? Number(d.brandId) : '') === v,
+      },
+      lead: {
+        key: 'lead',
+        kind: 'text',
+        match: (d, v) =>
+          (d.assignees ?? []).some((a) => a.name.toLowerCase().includes(v.toLowerCase())),
+      },
+      externalId: {
+        key: 'externalId',
+        kind: 'text',
+        match: (d, v) => (d.externalId ?? '').toLowerCase().includes(v.toLowerCase()),
+      },
+    }),
+    [typeOptions, brandOptions]
   );
 
   return (
@@ -710,8 +825,9 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       renderSubRows={(d) => <ProjectSubRows delivery={d} />}
       emptyMessage="No deliveries match your filters."
       // SEO-style column layout: drag headers to reorder, drag edges to
-      // resize; persisted per browser.
-      layoutKey="pcm:deliveries:col-layout:v1"
+      // resize; persisted per browser. Header filter dots per filterDefs.
+      layoutKey={DELIVERIES_LAYOUT_KEY}
+      filterDefs={filterDefs}
       // Deliveries-scoped chrome: hairline border does the separation (no
       // shadow), slightly rounder corners, light-gray header band so the
       // header reads as distinct from the white body rows. Global DataTable

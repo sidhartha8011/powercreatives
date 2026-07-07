@@ -40,6 +40,7 @@ import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ColumnHead } from '@/components/ui/column-head';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
+import { useColumnFilters, type FilterDef } from '@/hooks/useColumnFilters';
 import { useColumnLayout } from '@/hooks/useColumnLayout';
 import { useSortableTable, type SortDirection } from '@/hooks/useSortableTable';
 
@@ -118,6 +119,13 @@ export interface DataTableProps<T> {
    * the user chooses.
    */
   layoutKey?: string;
+  /**
+   * Per-column header filters (the SEO table's filter dot → search box /
+   * option list). Keyed by column key; requires `layoutKey` (filters render
+   * in the ColumnHead header path). Rows failing any active filter are
+   * hidden before sorting.
+   */
+  filterDefs?: Record<string, FilterDef<T>>;
 }
 
 export function DataTable<T>({
@@ -133,6 +141,7 @@ export function DataTable<T>({
   renderSubRows,
   rowCanExpand,
   layoutKey,
+  filterDefs,
 }: DataTableProps<T>) {
   const expandable = renderSubRows != null;
   const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(new Set());
@@ -192,7 +201,14 @@ export function DataTable<T>({
 
   const firstSortable = columns.find((c) => c.sortAccessor)?.key ?? '';
 
-  const { sortKey, sortDir, toggleSort, sortedData } = useSortableTable<T, string>(data, {
+  // Per-column filters run before sorting; without filterDefs this is a no-op.
+  const filters = useColumnFilters<T>();
+  const filteredData = useMemo(
+    () => (filterDefs ? filters.apply(data, filterDefs) : data),
+    [data, filterDefs, filters.apply]
+  );
+
+  const { sortKey, sortDir, toggleSort, sortedData } = useSortableTable<T, string>(filteredData, {
     defaultKey: defaultSortKey ?? firstSortable,
     defaultDir: defaultSortDir,
     accessors,
@@ -226,6 +242,15 @@ export function DataTable<T>({
                   sort={
                     c.sortAccessor
                       ? { active: sortKey === c.key, dir: sortDir, onToggle: () => toggleSort(c.key) }
+                      : undefined
+                  }
+                  filter={
+                    filterDefs?.[c.key]
+                      ? {
+                          def: filterDefs[c.key],
+                          value: filters.values[c.key] ?? '',
+                          onChange: (v) => filters.setFilter(c.key, v),
+                        }
                       : undefined
                   }
                   draggable
