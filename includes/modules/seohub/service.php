@@ -398,6 +398,14 @@ class PCM_SEOHub_Service
         if (!class_exists('ZipArchive')) {
             return array('error' => 'ZipArchive PHP extension is required to build the connector package.');
         }
+        // wp_tempnam() lives in wp-admin/includes/file.php, which is NOT loaded in a REST
+        // request — and the manifest/package routes connected sites poll ARE REST. Without this
+        // require, a poll that misses the package cache (i.e. right after every connector version
+        // bump) fatals with a 500, so WordPress never sees the update and the site can't
+        // auto-update. Load the file on demand so the build works in any context.
+        if (!function_exists('wp_tempnam')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
         $tmp = wp_tempnam('pcm-conn-pkg');
         $zip = new ZipArchive();
         if ($zip->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
@@ -437,7 +445,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.6.2
+ * Version: 2.6.3
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1104,11 +1112,22 @@ class PCM_Conn_Builder_Manager {
     }
 
     // ── Headings (H1–H6) — the SEO table's expandable heading editor ──────────────────────────
-    // Meta tag keys page builders use to store a heading's level (Elementor 'header_size',
+    // Meta tag keys page builders use to store a heading's level (Elementor 'header_size'/'title_size',
     // Bricks 'tag', generic 'html_tag'/'tag'/'size'). Used to read + rewrite builder-field headings.
-    private static $heading_tag_keys = array('header_size', 'html_tag', 'tag', 'size', 'heading_tag', 'title_tag');
+    private static $heading_tag_keys = array('header_size', 'html_tag', 'tag', 'size', 'heading_tag', 'title_tag', 'title_size');
     // Keys that carry a heading's TEXT inside a builder heading widget.
     private static $heading_text_keys = array('title', 'heading', 'heading_title', 'text', 'title_text');
+    // Elementor stores ONLY non-default widget settings, so a heading-bearing widget left at its
+    // DEFAULT tag has no tag key at all and was silently missed. Detect those by widgetType and fall
+    // back to the widget's default level + the key that would store it (for retagging).
+    // widgetType => [default_tag, size_key].
+    private static $heading_widget_defaults = array(
+        'heading'        => array('h2', 'header_size'), // Elementor Heading widget
+        'icon-box'       => array('h3', 'title_size'),
+        'image-box'      => array('h3', 'title_size'),
+        'call-to-action' => array('h2', 'title_tag'),
+        'price-table'    => array('h3', 'heading_tag'),
+    );
 
     /** List every heading (H1–H6) on a post for the hub: <hN> in post_content + inline <hN> inside
      *  builder data, PLUS builder heading widgets whose text+level live in separate meta fields
@@ -1241,13 +1260,20 @@ class PCM_Conn_Builder_Manager {
     }
     /** Recursively pull headings out of decoded builder data: heading WIDGETS (a text field paired
      *  with an h1–h6 tag field) and inline <hN> HTML inside string values. */
-    private static function collect_headings($val, &$out, $el_id = '') {
+    private static function collect_headings($val, &$out, $el_id = '', $widget_type = '') {
         if (is_array($val)) {
             if (isset($val['id'], $val['elType']) && is_string($val['id'])) { $el_id = $val['id']; }
-            // Builder heading WIDGET: a text key + a tag key holding h1–h6.
+            if (isset($val['widgetType']) && is_string($val['widgetType'])) { $widget_type = $val['widgetType']; }
+            // Builder heading WIDGET: a text key + the tag. Prefer an explicit h1–h6 tag key; if none
+            // is present (Elementor omits a default tag) fall back to the widget's known default so a
+            // heading left at the default level is still detected.
             $tag = ''; $tag_key = '';
             foreach (self::$heading_tag_keys as $tk) {
                 if (isset($val[$tk]) && is_string($val[$tk]) && preg_match('/^h([1-6])$/i', trim($val[$tk]))) { $tag = strtolower(trim($val[$tk])); $tag_key = $tk; break; }
+            }
+            if ($tag === '' && isset(self::$heading_widget_defaults[$widget_type])) {
+                $tag     = self::$heading_widget_defaults[$widget_type][0];
+                $tag_key = self::$heading_widget_defaults[$widget_type][1];
             }
             if ($tag !== '') {
                 foreach (self::$heading_text_keys as $xk) {
@@ -1260,10 +1286,10 @@ class PCM_Conn_Builder_Manager {
                     }
                 }
             }
-            foreach ($val as $v) { self::collect_headings($v, $out, $el_id); }
+            foreach ($val as $v) { self::collect_headings($v, $out, $el_id, $widget_type); }
             return;
         }
-        if (is_object($val)) { foreach (get_object_vars($val) as $v) { self::collect_headings($v, $out, $el_id); } return; }
+        if (is_object($val)) { foreach (get_object_vars($val) as $v) { self::collect_headings($v, $out, $el_id, $widget_type); } return; }
         if (is_string($val)) {
             if (stripos($val, '<h') !== false) { self::collect_headings_html($val, $out, 'builder', $el_id); return; }
             // Builders like Brizy keep their page (editor JSON + compiled HTML) as a BASE64 blob, so
@@ -1276,7 +1302,7 @@ class PCM_Conn_Builder_Manager {
                     $t = ltrim($dec);
                     if ($t !== '' && ($t[0] === '{' || $t[0] === '[')) {
                         $j = json_decode($dec, true);
-                        if (is_array($j)) { self::collect_headings($j, $out, $el_id); return; }
+                        if (is_array($j)) { self::collect_headings($j, $out, $el_id, $widget_type); return; }
                     }
                     if (stripos($dec, '<h') !== false) { self::collect_headings_html($dec, $out, 'builder', $el_id); }
                 }
@@ -1329,9 +1355,14 @@ class PCM_Conn_Builder_Manager {
                 foreach ($keys as $xk) {
                     if (isset($node[$xk]) && is_string($node[$xk]) && trim(wp_strip_all_tags($node[$xk])) === $old_text) {
                         $node[$xk] = $new_text;
-                        $tkeys = ($tag_key !== '') ? array($tag_key) : self::$heading_tag_keys;
-                        foreach ($tkeys as $tk) {
-                            if (isset($node[$tk]) && is_string($node[$tk]) && preg_match('/^h[1-6]$/i', trim($node[$tk]))) { $node[$tk] = $new_tag; break; }
+                        if ($tag_key !== '') {
+                            // Explicit tag key (incl. a defaulted widget whose tag was omitted) — set it
+                            // even if absent so retagging a default-level heading persists.
+                            $node[$tag_key] = $new_tag;
+                        } else {
+                            foreach (self::$heading_tag_keys as $tk) {
+                                if (isset($node[$tk]) && is_string($node[$tk]) && preg_match('/^h[1-6]$/i', trim($node[$tk]))) { $node[$tk] = $new_tag; break; }
+                            }
                         }
                         $count++;
                         return $node;
@@ -1350,9 +1381,12 @@ class PCM_Conn_Builder_Manager {
                 foreach ($keys as $xk) {
                     if (isset($node->$xk) && is_string($node->$xk) && trim(wp_strip_all_tags($node->$xk)) === $old_text) {
                         $node->$xk = $new_text;
-                        $tkeys = ($tag_key !== '') ? array($tag_key) : self::$heading_tag_keys;
-                        foreach ($tkeys as $tk) {
-                            if (isset($node->$tk) && is_string($node->$tk) && preg_match('/^h[1-6]$/i', trim($node->$tk))) { $node->$tk = $new_tag; break; }
+                        if ($tag_key !== '') {
+                            $node->$tag_key = $new_tag; // set even if absent (defaulted heading)
+                        } else {
+                            foreach (self::$heading_tag_keys as $tk) {
+                                if (isset($node->$tk) && is_string($node->$tk) && preg_match('/^h[1-6]$/i', trim($node->$tk))) { $node->$tk = $new_tag; break; }
+                            }
                         }
                         $count++;
                         return $node;
