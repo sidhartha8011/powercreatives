@@ -436,8 +436,8 @@ class PCM_SEOHub_Service
 <?php
 /**
  * Plugin Name: Power Creatives Connector
- * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.4.0
+ * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
+ * Version: 2.5.0
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1167,6 +1167,67 @@ class PCM_Conn_Builder_Manager {
         }
         return $result;
     }
+    /** Headings that live in SHARED sources rendered on many pages but NOT stored in the page
+     *  itself — Elementor Theme Builder templates (header/footer/single/archive… = elementor_library
+     *  posts) and Gutenberg reusable blocks (wp_block). Each is tagged with the OWNING post id
+     *  (`sourcePostId`) so the hub routes the edit to that template/block, plus a human `sourceLabel`
+     *  + `source` ('template'|'block') so the UI can warn it changes every page using that source.
+     *  These are DB-backed and editable; headings truly hardcoded in theme PHP are not returned
+     *  (they never reach here → stay read-only on the hub). */
+    public function scan_template_headings() {
+        $out = array();
+        // Only site-wide Elementor LOCATION templates (header/footer/single/archive/…), keyed by TYPE.
+        // Anything not in this allow-list — saved sections/pages/popups/global kit, OR an empty/unknown
+        // type — is skipped (those don't render site-wide as their own heading source).
+        $labels = array(
+            'header' => 'Header template', 'footer' => 'Footer template',
+            'single' => 'Single template', 'single-post' => 'Single Post template',
+            'single-page' => 'Single Page template', 'archive' => 'Archive template',
+            'loop-item' => 'Loop Item template', 'error-404' => '404 template',
+            'search-results' => 'Search Results template',
+        );
+        if (post_type_exists('elementor_library')) {
+            $tpls = get_posts(array('post_type' => 'elementor_library', 'post_status' => 'publish', 'numberposts' => 100, 'fields' => 'ids', 'suppress_filters' => true));
+            foreach ((array) $tpls as $tid) {
+                $ttype = (string) get_post_meta($tid, '_elementor_template_type', true);
+                if ($ttype === '') { // older/imported saves store the type only in the taxonomy term
+                    $terms = function_exists('get_the_terms') ? get_the_terms($tid, 'elementor_library_type') : false;
+                    if (is_array($terms) && !empty($terms)) { $ttype = (string) $terms[0]->slug; }
+                }
+                if (!isset($labels[$ttype])) { continue; } // not a site-wide location template
+                $data = get_post_meta($tid, '_elementor_data', true);
+                $val  = is_string($data) ? json_decode($data, true) : $data;
+                if (!is_array($val)) { continue; }
+                $before = count($out);
+                self::collect_headings($val, $out);
+                $label = $labels[$ttype] . ': ' . get_the_title($tid);
+                for ($i = $before, $n = count($out); $i < $n; $i++) {
+                    $out[$i]['source']       = 'template';
+                    $out[$i]['sourcePostId'] = (int) $tid;
+                    $out[$i]['sourceType']   = $ttype;
+                    $out[$i]['sourceLabel']  = $label;
+                }
+            }
+        }
+        // Gutenberg reusable blocks (wp_block) — one block can appear on many pages.
+        if (post_type_exists('wp_block')) {
+            $blocks = get_posts(array('post_type' => 'wp_block', 'post_status' => 'publish', 'numberposts' => 200, 'fields' => 'ids', 'suppress_filters' => true));
+            foreach ((array) $blocks as $bid) {
+                $before = count($out);
+                self::collect_headings_html((string) get_post_field('post_content', $bid), $out, 'block', '');
+                $label = 'Reusable block: ' . get_the_title($bid);
+                for ($i = $before, $n = count($out); $i < $n; $i++) {
+                    $out[$i]['source']       = 'block';
+                    $out[$i]['sourcePostId'] = (int) $bid;
+                    $out[$i]['sourceType']   = 'wp_block';
+                    $out[$i]['sourceLabel']  = $label;
+                }
+            }
+        }
+        $res = array();
+        foreach ($out as $h) { if ((string) ($h['text'] ?? '') !== '') { $res[] = $h; } }
+        return $res;
+    }
     /** Parse literal <h1>..<h6> tags out of an HTML string into the heading list. */
     private static function collect_headings_html($html, &$out, $source, $el_id) {
         if (!is_string($html) || stripos($html, '<h') === false) { return; }
@@ -1473,7 +1534,22 @@ add_action('rest_api_init', function () {
         'callback' => function ($req) {
             $pid = absint($req->get_param('post_id'));
             if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
-            return new WP_REST_Response(array('headings' => pcm_conn_builder_manager()->scan_headings($pid)), 200);
+            $mgr = pcm_conn_builder_manager();
+            // Page's own headings first, then shared template/block headings (each tagged with its own
+            // sourcePostId so the hub can route edits there). A reusable block inlined into the page is
+            // captured by BOTH scans — drop the shared copy when the page already has that heading
+            // (keep the page copy so its edit stays local); key by level|text. Re-index the result.
+            $page   = $mgr->scan_headings($pid);
+            $shared = $mgr->scan_template_headings();
+            $page_keys = array();
+            foreach ($page as $ph) { $page_keys[$ph['level'] . '|' . $ph['text']] = 1; }
+            $headings = $page;
+            foreach ($shared as $sh) {
+                if (isset($page_keys[$sh['level'] . '|' . $sh['text']])) { continue; }
+                $headings[] = $sh;
+            }
+            foreach ($headings as $i => $unused) { $headings[$i]['index'] = $i; }
+            return new WP_REST_Response(array('headings' => $headings), 200);
         },
     ));
     // Builder-aware heading edit for builder-FIELD headings (Elementor/Bricks heading widgets store

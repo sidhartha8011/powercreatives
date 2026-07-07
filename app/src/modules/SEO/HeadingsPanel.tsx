@@ -13,7 +13,7 @@
  */
 
 import { Fragment, useEffect, useState, type KeyboardEvent } from 'react';
-import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight } from 'lucide-react';
+import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight, Lock, LayoutTemplate } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -32,7 +32,22 @@ export interface HeadingItem {
   elId: string;
   field: string;
   editable: boolean;
+  /** Set for headings that live in a SHARED source (Elementor Theme Builder template or reusable
+   *  block) rendered on many pages — `sourceLabel` names it; editing changes every page using it. */
+  sourceLabel?: string;
+  sourcePostId?: number;
 }
+
+/** Default reason shown on a heading that can't be edited from here (mirrors the read-only
+ *  copy in the Links editor). Applies when the scan flags a heading non-editable up front. */
+const THEME_READONLY_REASON =
+  'Read-only — this heading lives in your theme or a page template, not the editable page content. Edit it on the site.';
+
+/** WP error codes that mean the heading genuinely has no editable source on the site (theme /
+ *  template hardcoded, or no editable markup) — the row should flip to read-only, not retry. */
+const HARDCODED_CODES = new Set(['pcm_seo_heading_not_found', 'pcm_seo_heading_not_editable']);
+/** WP error code meaning the page changed since the scan — a fresh re-scan fixes it. */
+const STALE_CODE = 'pcm_seo_heading_stale';
 
 /** Tag-chip accents per level (H1 → H6) — border + text on the table's card bg. */
 const TAG_STYLE: Record<number, string> = {
@@ -86,6 +101,9 @@ export function HeadingRows({
 
   const [busyIndex, setBusyIndex] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<Record<number, string>>({});
+  // Headings discovered read-only at SAVE time (theme/template-hardcoded) → keep them flagged
+  // for this session so the row shows the lock + reason instead of looking editable again.
+  const [readOnlyReason, setReadOnlyReason] = useState<Record<number, string>>({});
 
   const saveHeading = async (index: number, patch: { text?: string; level?: number }) => {
     setBusyIndex(index);
@@ -96,7 +114,20 @@ export function HeadingRows({
       const list = (data as any)?.headings;
       if (Array.isArray(list)) setHeadings(list as HeadingItem[]);
     } catch (e: any) {
-      toast.error(e?.message ?? 'Could not update the heading');
+      const code: string | undefined = e?.code;
+      const message: string = e?.message ?? 'Could not update the heading';
+      if (code === STALE_CODE) {
+        // The page changed on the site since the scan — offer a one-click re-scan.
+        toast.error('This page changed on the site since it was scanned. Re-scan to load the current headings.', {
+          action: { label: 'Re-scan', onClick: () => { void query.refetch(); } },
+        });
+      } else if (code && HARDCODED_CODES.has(code)) {
+        // Genuinely not editable from here — flip the row to read-only with the server's reason.
+        setReadOnlyReason((r) => ({ ...r, [index]: message }));
+        toast.error(message);
+      } else {
+        toast.error(message);
+      }
     } finally {
       setBusyIndex(null);
     }
@@ -159,6 +190,9 @@ export function HeadingRows({
       {headings.map((h) => {
         const busy = busyIndex === h.index;
         const suggestion = suggestions[h.index];
+        const reason = readOnlyReason[h.index];
+        const readOnly = !h.editable || reason != null;
+        const roTitle = reason ?? THEME_READONLY_REASON;
         return (
           <TableRow key={h.index} className="bg-muted/30 hover:bg-muted/50">
             <TableCell className="px-2 text-center">
@@ -173,7 +207,7 @@ export function HeadingRows({
                   {/* Indent: 18px aligns with the page title text (chevron 14px + gap 4px),
                       then 14px per heading level below H1. */}
                   <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${18 + (h.level - 1) * 14}px` }}>
-                    {h.editable && suggestion == null ? (
+                    {!readOnly && suggestion == null ? (
                       <Select value={String(h.level)} onValueChange={(v) => saveHeading(h.index, { level: Number(v) })} disabled={busy}>
                         <SelectTrigger
                           className={`!h-5 w-auto min-w-[40px] shrink-0 rounded-[3px] border px-1 py-0 text-[10px] font-semibold leading-none justify-center gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[h.level] ?? TAG_STYLE[2]}`}
@@ -192,6 +226,17 @@ export function HeadingRows({
                         {`H${h.level}`}
                       </span>
                     )}
+                    {/* Shared-source badge: this heading lives in a template/reusable block used by many
+                        pages — editing it changes them all. Tooltip spells out the cross-page effect. */}
+                    {h.sourceLabel ? (
+                      <span
+                        className="inline-flex h-5 max-w-[150px] shrink-0 items-center gap-0.5 rounded-[3px] border border-amber-500/40 bg-amber-500/10 px-1 text-[10px] font-medium text-amber-600"
+                        title={`Shared source — editing this heading changes it on EVERY page that uses it. Lives in: ${h.sourceLabel}.`}
+                      >
+                        <LayoutTemplate className="h-2.5 w-2.5 shrink-0" />
+                        <span className="truncate">{h.sourceLabel}</span>
+                      </span>
+                    ) : null}
                     <div className="flex-1 min-w-0">
                       {suggestion != null ? (
                         /* Same staged-suggestion UI as every other cell (EditableCell). */
@@ -209,7 +254,7 @@ export function HeadingRows({
                             </button>
                           </div>
                         </div>
-                      ) : h.editable ? (
+                      ) : !readOnly ? (
                         <HeadingText
                           value={h.text}
                           busy={busy}
@@ -217,7 +262,12 @@ export function HeadingRows({
                           onOptimize={() => optimize(h)}
                         />
                       ) : (
-                        <span className="block truncate text-xs text-muted-foreground" title={h.text}>{h.text}</span>
+                        /* Read-only: heading isn't in editable content — theme/template-hardcoded.
+                           Lock + reason tooltip mirrors the Links editor's read-only affordance. */
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground" title={roTitle}>
+                          <Lock className="w-3 h-3 shrink-0 opacity-60" />
+                          <span className="truncate">{h.text}</span>
+                        </span>
                       )}
                     </div>
                   </div>

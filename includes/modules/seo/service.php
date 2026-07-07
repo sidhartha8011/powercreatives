@@ -2362,6 +2362,12 @@ class PCM_SEO_Service
                     'field'    => (string) ($h['field'] ?? ''),
                     'tagKey'   => (string) ($h['tagKey'] ?? ''),
                     'textKey'  => (string) ($h['textKey'] ?? ''),
+                    // Shared-source headings (Elementor Theme Builder templates / reusable blocks):
+                    // the OWNING post id the edit must target, + a label so the UI can warn it
+                    // changes every page using that source. 0 / '' for a page's own headings.
+                    'sourcePostId' => (int) ($h['sourcePostId'] ?? 0),
+                    'sourceType'   => (string) ($h['sourceType'] ?? ''),
+                    'sourceLabel'  => (string) ($h['sourceLabel'] ?? ''),
                     'editable' => true,
                 );
                 $i++;
@@ -2390,6 +2396,15 @@ class PCM_SEO_Service
     /** Edit a connected post's heading (text and/or level) via the connector: builder-FIELD headings
      *  (Elementor/Bricks widgets) through /replace-heading, content/inline-HTML headings through the
      *  builder-aware /replace-url (oldHtml → newHtml). Returns the refreshed heading list. */
+    /** Which post an edit must write to: a shared-source heading (Elementor Theme Builder template /
+     *  reusable block) targets its OWNING post (`sourcePostId`); a page's own heading targets the page.
+     *  Pure — unit-tested. */
+    public static function heading_target_post_id(array $h, int $page_post_id): int
+    {
+        $src = (int) ($h['sourcePostId'] ?? 0);
+        return $src > 0 ? $src : $page_post_id;
+    }
+
     public static function remote_update_heading(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level)
     {
         self::ensure_sites_service();
@@ -2398,6 +2413,8 @@ class PCM_SEO_Service
             return new WP_Error('pcm_seo_heading_not_found', __('Heading not found — re-open and try again.', 'power-creatives'), array('status' => 404));
         }
         $h = $headings[$index];
+        // Shared-source headings (template / reusable block) edit their owning post, not the page.
+        $target_pid = self::heading_target_post_id($h, $post_id);
         if (empty($h['editable'])) {
             return new WP_Error('pcm_seo_no_raw', __('This page’s content isn’t editable through the API (e.g. a page-builder layout on an older connector). Update the connector, or edit this heading in the page builder.', 'power-creatives'), array('status' => 422));
         }
@@ -2408,7 +2425,7 @@ class PCM_SEO_Service
         // Builder-FIELD heading (text + level in separate meta fields) → connector /replace-heading.
         if ((string) ($h['field'] ?? '') === 'widget') {
             $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-heading', array(), array(
-                'post_id'  => $post_id,
+                'post_id'  => $target_pid,
                 'elId'     => (string) $h['elId'],
                 'oldText'  => (string) $h['text'],
                 'newText'  => ($new_text !== null ? $new_text : (string) $h['text']),
@@ -2440,7 +2457,7 @@ class PCM_SEO_Service
         if ($new_html === $old_html) {
             return self::remote_get_headings($site, $post_id, $type);
         }
-        $body = array('post_id' => $post_id, 'old' => $old_html, 'new' => $new_html);
+        $body = array('post_id' => $target_pid, 'old' => $old_html, 'new' => $new_html);
         if ((string) ($h['elId'] ?? '') !== '') { $body['elId'] = (string) $h['elId']; }
         $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-url', array(), $body, 60);
         if (is_wp_error($rep)) {
