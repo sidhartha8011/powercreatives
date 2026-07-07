@@ -5908,3 +5908,56 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - **Adversarial review** (`comprehensive-review-code-reviewer`): cleared the security question (routing to a template id still hits `current_user_can('edit_post',$pid)` on the remote → no priv-esc). Found + I FIXED 3: (1 High) merged list wasn't de-duped across sources (inlined reusable block showed twice) → added the page-vs-shared de-dupe; (2 Med) empty `_elementor_template_type` slipped my skip test → switched to a type ALLOW-list + taxonomy fallback; (3 Low) `numberposts=>50` silent cap → raised to 100 (templates) / 200 (blocks).
 - **Verified:** both hub files + the EXTRACTED connector nowdoc body + the test file all `php -l` clean (before AND after the review fixes); tsc **56 = baseline, 0 in touched files**; vite build clean, badge copy in the bundle. **PHPUnit NOT run here** (no composer/phpunit on this Windows box — run `composer test` in CI). **NOT live-verified** — needs a real Elementor Theme Builder site + connector 2.5.0 self-update; that's the remaining gap.
 - **Specialists:** `comprehensive-review-code-reviewer` (adversarial PHP review, 3 findings all fixed); implemented inline given the bespoke nowdoc-embedded connector. **Map** updated under *SEO Hub → Headings*. **No commit** — user reviews the diff first.
+
+## 2026-07-07 — /onboard: map re-verified + gap-filled (self-update docs)
+- Map is fresh (also edited today by the Mac session — read-only heading UX note). Spot-checked vs code:
+  sites routes (incl. gsc-preview/gsc-verify/update-connectors), connector v2.4.0, PCM_VERSION 1.7.0 all
+  match. ONE gap found: the 2.4.0 SELF-UPDATE system had zero map coverage — added a connector-detail block
+  (Update URI + update_plugins filter → PUBLIC /seohub/connector-manifest + /connector-package sha256 feed,
+  option-cached artifact, /pcm-conn/v1/update-now instant push via POST /sites/update-connectors, one-time
+  reinstall caveat, gscToken host) + the two PUBLIC routes in the seohub surfaces row + today's hasData/
+  white-input NEWEST note. .claude/ only; no code touched.
+
+## 2026-07-07 — zip build
+- Rebuilt power-creatives.zip fresh; tree now also carries the Mac session's 07-07 heading-UX work
+  (dist 4.67MB). Verified 2.40MB/479 entries, top-level only `powerplatform`, 0 backslash, 0 leaks;
+  hasData probe + no-data-yet toast confirmed inside. Not committed.
+
+## 2026-07-07 — pull from feat/seo-suite-port (connector 2.5.0 merged in)
+- Fetched + fast-forwarded to cf716fb "edit shared-template + reusable-block headings (connector 2.5.0)"
+  (the only incoming commit; 6 files). Local uncommitted .claude doc edits were stashed around the pull;
+  SESSION_LOG.md popped with an append-append conflict — resolved keep-both (upstream 2.5.0 entry, then the
+  local onboard + zip-build entries), stash dropped. CODEBASE_MAP merged clean; fixed the one stale line the
+  merge produced (connector bullet "now v2.4.0" → v2.5.0 to match the tree).
+- Verified: 0 conflict markers; connector Version 2.5.0 in seohub/service.php; scan_template_headings +
+  heading_target_post_id present; php -l clean on both incoming PHP files; tsc 56 baseline. Working tree
+  has only the two .claude files modified (uncommitted, per rule). NOTE: the hub zip must be REBUILT so
+  connected 2.4.0 connectors self-update to 2.5.0.
+
+## 2026-07-07 — /build: theme-hardcoded headings now editable (render-time overrides, connector 2.6.0)
+- Requirement: "some headings not editable because hardcoded — make everything dynamic" + the PDF's items.
+  PDF audit: core heading editor / AI-optimize / H1-H6 dropdown / re-scan-on-open / template+block editing
+  (2.5.0) all already shipped — the ONE remaining gap was true theme-PHP headings (no DB source at all).
+- Built the render-time override layer, connector 2.5.0 → 2.6.0 (3 files):
+  (1) seohub/service.php connector nowdoc — /scan-headings now loopback-fetches the RENDERED page and
+      appends headings absent from all DB sources (source 'rendered'/'override', labeled for the badge);
+      new POST /pcm-conn/v1/override-heading stores {original→new} text+level pairs in option
+      pcm_conn_heading_overrides (re-edit matches current value + updates in place; revert-to-original
+      deletes; 200 cap; purges caches); template_redirect prio-1 output buffer rewrites matching <hN>
+      site-wide (visible-text match, attrs kept, esc_html'd new text, PCRE-failure passthrough).
+  (2) seo/service.php — remote_update_heading new first branch: source rendered|override → the new route;
+      404 → "needs connector 2.6.0, push via Update connectors" guidance.
+  (3) Frontend: zero changes needed — the existing sourceLabel badge/tooltip covers the new sources.
+- Verified: php -l hub ×2 + extracted 1378-line connector clean; NEW override_test.php 20/20 (create →
+  render rewrite incl. attrs/inner-markup/multiples → re-edit in place → revert deletes → scan tags
+  rendered/override, no DB dupes → param guards); connector regressions heading 3/3, brizy 4/4,
+  brizy_recompile 4/4; tsc 56 baseline; zip rebuilt (2.40MB/479, 0 leaks, Version 2.6.0 + override refs
+  confirmed inside). Map updated (connector bullet v2.6.0 + override paragraph). Not committed.
+- Worked inline (bespoke nowdoc connector); no subagents. Rollout: upload the zip → connectors ≥2.4.0
+  self-update to 2.6.0 (or push via Sites → Update connectors); then re-open a page's headings and edit
+  the previously read-only rows.
+
+## 2026-07-07 — zip build (connector 2.6.0 render-time overrides)
+- Rebuilt power-creatives.zip fresh (same tree as the /build). Verified 2.40MB/479 entries, top-level only
+  `powerplatform`, 0 backslash, 0 leaks; connector Version 2.6.0 + override layer (8 refs) + hub routing
+  branch confirmed inside. Not committed.

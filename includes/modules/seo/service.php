@@ -2422,6 +2422,28 @@ class PCM_SEO_Service
         $new_level = ($level !== null) ? max(1, min(6, $level)) : $old_level;
         $new_text  = $text; // null = keep
 
+        // RENDERED-ONLY heading (theme PHP / nav menu / widget title — no DB source anywhere):
+        // stored as a render-time override on the connector, applied site-wide at output time.
+        if (in_array((string) ($h['source'] ?? ''), array('rendered', 'override'), true)) {
+            $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/override-heading', array(), array(
+                'post_id'  => $post_id,
+                'oldText'  => (string) $h['text'],
+                'oldLevel' => $old_level,
+                'newText'  => ($new_text !== null ? $new_text : (string) $h['text']),
+                'newLevel' => $new_level,
+            ), 60);
+            if (is_wp_error($rep)) {
+                return new WP_Error('pcm_seo_remote_heading', $rep->get_error_message(), array('status' => 502));
+            }
+            if ((int) ($rep['status'] ?? 0) === 404) {
+                return new WP_Error('pcm_seo_connector_outdated', __('This site needs connector v2.6.0+ to edit theme-hardcoded headings — push it via Sites → "Update connectors" (or reinstall once), then retry.', 'power-creatives'), array('status' => 409));
+            }
+            if ((int) ($rep['status'] ?? 0) >= 300 || (int) ($rep['body']['replaced'] ?? 0) === 0) {
+                return new WP_Error('pcm_seo_remote_heading', sprintf(__('The connector rejected the heading override (HTTP %d).', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
+            }
+            return self::remote_get_headings($site, $post_id, $type);
+        }
+
         // Builder-FIELD heading (text + level in separate meta fields) → connector /replace-heading.
         if ((string) ($h['field'] ?? '') === 'widget') {
             $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-heading', array(), array(

@@ -437,7 +437,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.5.0
+ * Version: 2.6.0
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1548,6 +1548,39 @@ add_action('rest_api_init', function () {
                 if (isset($page_keys[$sh['level'] . '|' . $sh['text']])) { continue; }
                 $headings[] = $sh;
             }
+            // Headings that exist ONLY in the RENDERED page (theme PHP, menus, widget titles — no DB
+            // source anywhere) become editable through the render-time override layer (see
+            // /override-heading below). Loopback-fetch the live page; overrides already apply on that
+            // request, so an overridden heading shows its CURRENT text and stays re-editable. If the
+            // host blocks loopback requests this scan is skipped and behaviour is unchanged.
+            $seen_all = array();
+            foreach ($headings as $hh) { $seen_all[$hh['level'] . '|' . $hh['text']] = 1; }
+            $ovr  = function_exists('pcm_conn_heading_overrides') ? pcm_conn_heading_overrides() : array();
+            $resp = wp_remote_get(get_permalink($pid), array('timeout' => 8, 'sslverify' => apply_filters('https_local_ssl_verify', false)));
+            if (!is_wp_error($resp) && (int) wp_remote_retrieve_response_code($resp) === 200) {
+                $live = (string) wp_remote_retrieve_body($resp);
+                if (preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>#is', $live, $mm, PREG_SET_ORDER)) {
+                    foreach ($mm as $hm) {
+                        $lvl = (int) $hm[1];
+                        $txt = trim(wp_strip_all_tags($hm[3]));
+                        $key = $lvl . '|' . $txt;
+                        if ($txt === '' || isset($seen_all[$key])) { continue; }
+                        $seen_all[$key] = 1;
+                        $is_ovr = false;
+                        foreach ($ovr as $o) {
+                            if ((int) ($o['newLevel'] ?? 0) === $lvl && (string) ($o['newText'] ?? '') === $txt) { $is_ovr = true; break; }
+                        }
+                        $headings[] = array(
+                            'level' => $lvl, 'text' => $txt, 'html' => $hm[0],
+                            'source' => $is_ovr ? 'override' : 'rendered',
+                            'elId' => '', 'field' => '', 'tagKey' => '', 'textKey' => '',
+                            'sourcePostId' => 0,
+                            'sourceType'   => $is_ovr ? 'override' : 'rendered',
+                            'sourceLabel'  => $is_ovr ? 'Site-wide override (render-time)' : 'Theme / hardcoded (render-time override)',
+                        );
+                    }
+                }
+            }
             foreach ($headings as $i => $unused) { $headings[$i]['index'] = $i; }
             return new WP_REST_Response(array('headings' => $headings), 200);
         },
@@ -1590,6 +1623,85 @@ add_action('wp_head', function () {
     $tok = trim((string) get_option('pcm_conn_gsc_token', ''));
     if ($tok === '') { return; }
     echo '<meta name="google-site-verification" content="' . esc_attr($tok) . '" />' . "\n";
+}, 1);
+
+// --- Render-time heading overrides: edit headings that have NO database source (hardcoded in
+// theme PHP, nav menus, widget titles). The hub stores {original → new} text+level pairs and every
+// frontend render rewrites matching <hN> elements in the output buffer. Site-wide BY DESIGN — a
+// theme heading renders identically on every page, so the edit follows it everywhere (the hub UI
+// badge warns about the scope). Entries are keyed by the ORIGINAL text so repeated edits update in
+// place, and an edit back to the original value deletes its entry (clean revert, no dead rules).
+function pcm_conn_heading_overrides() {
+    $o = get_option('pcm_conn_heading_overrides', array());
+    return is_array($o) ? array_values(array_filter($o, 'is_array')) : array();
+}
+add_action('rest_api_init', function () {
+    register_rest_route('pcm-conn/v1', '/override-heading', array(
+        'methods' => 'POST',
+        'permission_callback' => function () { return current_user_can('manage_options'); },
+        'callback' => function ($req) {
+            $p     = $req->get_json_params();
+            $old_t = is_array($p) ? trim((string) ($p['oldText'] ?? '')) : '';
+            $new_t = is_array($p) ? trim((string) ($p['newText'] ?? '')) : '';
+            $old_l = is_array($p) ? absint($p['oldLevel'] ?? 0) : 0;
+            $new_l = is_array($p) ? absint($p['newLevel'] ?? 0) : 0;
+            if ($old_t === '' || $old_l < 1 || $old_l > 6 || $new_l < 1 || $new_l > 6) {
+                return new WP_REST_Response(array('replaced' => 0, 'error' => 'bad_params'), 400);
+            }
+            if ($new_t === '') { $new_t = $old_t; }
+            $list = pcm_conn_heading_overrides();
+            $done = false;
+            foreach ($list as $i => $o) {
+                // Re-edit of an already-overridden heading: the incoming "old" is that entry's
+                // CURRENT value (what the user sees). Keep the original match, update the target.
+                if ((string) ($o['newText'] ?? '') === $old_t && (int) ($o['newLevel'] ?? 0) === $old_l) {
+                    $list[$i]['newText'] = $new_t; $list[$i]['newLevel'] = $new_l; $done = true; break;
+                }
+                // Same ORIGINAL edited again (stale scan / cached page raced the last edit).
+                if ((string) ($o['oldText'] ?? '') === $old_t && (int) ($o['oldLevel'] ?? 0) === $old_l) {
+                    $list[$i]['newText'] = $new_t; $list[$i]['newLevel'] = $new_l; $done = true; break;
+                }
+            }
+            if (!$done) {
+                $list[] = array('oldText' => $old_t, 'oldLevel' => $old_l, 'newText' => $new_t, 'newLevel' => $new_l);
+            }
+            // An override whose target equals its original is a no-op → drop (revert support).
+            $list = array_values(array_filter($list, function ($o) {
+                return (string) ($o['oldText'] ?? '') !== (string) ($o['newText'] ?? '')
+                    || (int) ($o['oldLevel'] ?? 0) !== (int) ($o['newLevel'] ?? 0);
+            }));
+            if (count($list) > 200) { $list = array_slice($list, -200); } // runaway-list backstop
+            update_option('pcm_conn_heading_overrides', $list, true);
+            $pid = is_array($p) ? absint($p['post_id'] ?? 0) : 0;
+            if ($pid) { pcm_conn_purge_caches($pid); }
+            return new WP_REST_Response(array('replaced' => 1, 'via' => 'override', 'count' => count($list)), 200);
+        },
+    ));
+});
+add_action('template_redirect', function () {
+    if (is_admin() || is_feed() || (defined('REST_REQUEST') && REST_REQUEST)) { return; }
+    $list = pcm_conn_heading_overrides();
+    if (empty($list)) { return; }
+    ob_start(function ($html) use ($list) {
+        foreach ($list as $o) {
+            $ol = max(1, min(6, (int) ($o['oldLevel'] ?? 0)));
+            $nl = max(1, min(6, (int) ($o['newLevel'] ?? 0)));
+            $ot = (string) ($o['oldText'] ?? '');
+            $nt = (string) ($o['newText'] ?? '');
+            if ($ot === '') { continue; }
+            $out = preg_replace_callback(
+                '#<h' . $ol . '(\s[^>]*)?>(.*?)</h' . $ol . '>#is',
+                function ($m) use ($nl, $ot, $nt) {
+                    // Match on the VISIBLE text (inner markup stripped) so attributes/spans don't block it.
+                    if (trim(wp_strip_all_tags($m[2])) !== $ot) { return $m[0]; }
+                    return '<h' . $nl . (isset($m[1]) ? $m[1] : '') . '>' . esc_html($nt) . '</h' . $nl . '>';
+                },
+                $html
+            );
+            if (is_string($out)) { $html = $out; } // PCRE failure → leave the page untouched
+        }
+        return $html;
+    });
 }, 1);
 
 // --- Hub-managed AI Readiness: store + serve a virtual /llms.txt index. ---
