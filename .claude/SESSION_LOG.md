@@ -6016,3 +6016,33 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   articles tab — flagged for the user instead of faking a link.
 - Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live click-through
   pending user. BEFORE 3865b22 → AFTER (this commit).
+
+## 2026-07-07 — global DataTable gains accordion rows [datatable-expandable-rows]
+- ui/data-table.tsx: new `renderExpanded(row)` + `rowCanExpand(row)` props — chevron
+  column prepended (36px, stopPropagation so row-click still edits), expanded content
+  renders in a full-width `data-subrow` <tr>. Fragment pattern from Keywords/SEO.
+- GRID_CLASS cell selectors rescoped from descendant (`[&_td]`) to direct-child
+  (`[&>tbody>tr:not([data-subrow])>td]`): with the Tailwind `important` flag, the old
+  descendant selectors would have beaten the cell classes of any table NESTED inside
+  an expanded row (specificity (0,1,1) vs (0,1,0), both !important). Sub-rows are
+  exempt entirely — nested tables style themselves. Existing consumers (Sites)
+  pixel-identical: same elements matched, same winners.
+- Verified: tsc 56 = baseline, 0 in file; vite build OK. BEFORE e1614bd → AFTER bad8bc5.
+
+## 2026-07-07 — Deliveries table view + Kanban⇄Table toggle [deliveries-table-view]
+- DeliveryDialog's ProjectsSection EXTRACTED to Deliveries/DeliveryProjects.tsx
+  (useDeliveryProjects hook + AddProjectMenu + DeliveryProjectsBody) — one source now
+  feeds the delivery card AND the new table's accordion rows. Dialog is glue only;
+  markup/behavior moved verbatim (site select, jump cells, hover-✕, dashed empty state).
+- NEW Deliveries/table/DeliveriesTable.tsx on the global DataTable: Delivery | Client |
+  Brand | Type | Status | Updated, all header-sortable (status sorts in lane order;
+  pills reuse deliveryColumns lane accents — one palette, two views). Row click = open
+  delivery card (same as Kanban card click); chevron expands to DeliveryProjectsBody.
+  Default sort: Updated desc (mirrors the board's 'Recently updated').
+- DeliveriesBoard: SquareKanban/Table2 segmented toggle (Projects' grid/list chrome),
+  persisted to localStorage `pcm:deliveries:view`; the sort dropdown renders in Kanban
+  view only (table headers own sorting); both views consume the SAME
+  listState.filteredItems, so search/client filters apply identically.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
+  user (expand row, jump cells from accordion, toggle persistence, card regression).
+  BEFORE d291884 → AFTER 7d9f711.
