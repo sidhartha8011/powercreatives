@@ -41,6 +41,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
+import { CARD_TABLE_CELL, CARD_TABLE_HEAD, CARD_TABLE_ROW, CARD_TABLE_WRAPPER } from './tableRecipe';
+
 export interface SelectOption {
   value: string;
   label: string;
@@ -91,21 +93,21 @@ const NONE = '__none__';
 
 export function PropertyTable({ properties }: { properties: PropertyDef[] }) {
   return (
-    <div className="rounded-md border">
+    <div className={CARD_TABLE_WRAPPER}>
       <Table>
         <TableHeader>
-          <TableRow>
+          <TableRow className={CARD_TABLE_ROW}>
             {properties.map((p) => (
-              <TableHead key={p.key} className="text-xs" style={p.width ? { width: p.width } : undefined}>
+              <TableHead key={p.key} className={CARD_TABLE_HEAD} style={p.width ? { width: p.width } : undefined}>
                 {p.label}
               </TableHead>
             ))}
           </TableRow>
         </TableHeader>
         <TableBody>
-          <TableRow className="hover:bg-transparent">
+          <TableRow className={CARD_TABLE_ROW}>
             {properties.map((p) => (
-              <TableCell key={p.key} className="p-1 align-middle">
+              <TableCell key={p.key} className={CARD_TABLE_CELL}>
                 <PropertyCell def={p} />
               </TableCell>
             ))}

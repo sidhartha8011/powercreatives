@@ -20,10 +20,12 @@ export interface EntityCardTitleProps {
   onSave: (next: string) => void;
   /** Transient save indicator (consumer flashes this true for ~1.5s). */
   saved?: boolean;
+  /** Muted 12px meta-line above the title, e.g. "Edited 2h ago". */
+  meta?: string;
   autoFocus?: boolean;
 }
 
-export function EntityCardTitle({ value, placeholder, onSave, saved = false, autoFocus = false }: EntityCardTitleProps) {
+export function EntityCardTitle({ value, placeholder, onSave, saved = false, meta, autoFocus = false }: EntityCardTitleProps) {
   const [draft, setDraft] = useState(value);
 
   // Follow external changes (e.g. the card opens on another entity).
@@ -39,29 +41,32 @@ export function EntityCardTitle({ value, placeholder, onSave, saved = false, aut
   };
 
   return (
-    <div className="mb-8 flex items-center gap-3">
-      <Input
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault(); // commit, never submit a surrounding form
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
-        placeholder={placeholder}
-        aria-label={placeholder}
-        autoFocus={autoFocus}
-        maxLength={256}
-        className="h-auto rounded-md border-none bg-transparent px-1.5 py-1 !text-2xl font-bold tracking-tight shadow-none cursor-text hover:bg-slate-50 focus-visible:ring-1"
-      />
-      <span
-        aria-live="polite"
-        className={`flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground transition-opacity duration-300 ${saved ? 'opacity-100' : 'opacity-0'}`}
-      >
-        <Check className="h-3 w-3" /> Saved
-      </span>
+    <div className="mb-6">
+      {meta && <p className="mb-1 px-1.5 text-xs text-muted-foreground">{meta}</p>}
+      <div className="flex items-center gap-3">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault(); // commit, never submit a surrounding form
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          placeholder={placeholder}
+          aria-label={placeholder}
+          autoFocus={autoFocus}
+          maxLength={256}
+          className="h-auto rounded-md border-none bg-transparent px-1.5 py-1 !text-[32px] font-bold leading-tight tracking-tight shadow-none cursor-text hover:bg-slate-50 focus-visible:ring-1"
+        />
+        <span
+          aria-live="polite"
+          className={`flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground transition-opacity duration-300 ${saved ? 'opacity-100' : 'opacity-0'}`}
+        >
+          <Check className="h-3 w-3" /> Saved
+        </span>
+      </div>
     </div>
   );
 }

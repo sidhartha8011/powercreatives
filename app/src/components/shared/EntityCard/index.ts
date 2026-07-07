@@ -10,3 +10,5 @@ export { EntityCard } from './EntityCard';
 export { EntityCardTitle } from './EntityCardTitle';
 export { EntityCardSection } from './EntityCardSection';
 export { PropertyTable, type PropertyDef, type SelectOption, type ToggleOption } from './PropertyTable';
+export { CARD_TABLE_WRAPPER, CARD_TABLE_HEAD, CARD_TABLE_ROW, CARD_TABLE_CELL } from './tableRecipe';
+export { relTime } from './relTime';

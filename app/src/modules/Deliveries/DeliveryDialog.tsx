@@ -23,10 +23,15 @@ import { Plus, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
+  CARD_TABLE_CELL,
+  CARD_TABLE_HEAD,
+  CARD_TABLE_ROW,
+  CARD_TABLE_WRAPPER,
   EntityCard,
   EntityCardSection,
   EntityCardTitle,
   PropertyTable,
+  relTime,
   type PropertyDef,
 } from '@/components/shared/EntityCard';
 import { Button } from '@/components/ui/button';
@@ -283,6 +288,7 @@ export function DeliveryDialog({
       <EntityCardTitle
         value={name}
         placeholder="Untitled delivery"
+        meta={isEdit && delivery?.updatedAt ? `Edited ${relTime(delivery.updatedAt)}` : undefined}
         autoFocus={!isEdit}
         saved={saved}
         onSave={(next) => {
@@ -438,20 +444,20 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
           }
         />
       ) : (
-        <div className="rounded-md border">
+        <div className={CARD_TABLE_WRAPPER}>
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead className="text-xs">Project</TableHead>
-                <TableHead className="text-xs">Connected</TableHead>
-                <TableHead className="w-10" />
+              <TableRow className={CARD_TABLE_ROW}>
+                <TableHead className={CARD_TABLE_HEAD}>Project</TableHead>
+                <TableHead className={CARD_TABLE_HEAD}>Connected</TableHead>
+                <TableHead className={`${CARD_TABLE_HEAD} w-10`} />
               </TableRow>
             </TableHeader>
             <TableBody>
               {inDelivery.map((p) => (
-                <TableRow key={p.id} className="group">
-                  <TableCell className="text-sm font-medium">{p.name}</TableCell>
-                  <TableCell className="p-1">
+                <TableRow key={p.id} className={`group ${CARD_TABLE_ROW}`}>
+                  <TableCell className={`${CARD_TABLE_CELL} px-3 font-medium`}>{p.name}</TableCell>
+                  <TableCell className={CARD_TABLE_CELL}>
                     <div className="flex items-center gap-3">
                       <Select
                         value={p.siteId != null ? String(p.siteId) : 'none'}
@@ -474,7 +480,7 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
                       <span className="shrink-0 text-xs text-muted-foreground">{p.assetCount} media</span>
                     </div>
                   </TableCell>
-                  <TableCell className="p-1 text-right">
+                  <TableCell className={`${CARD_TABLE_CELL} text-right`}>
                     {/* Revealed on row hover — quiet at rest. */}
                     <Button
                       type="button"
@@ -496,19 +502,6 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
       )}
     </EntityCardSection>
   );
-}
-
-/** "2h ago" style relative time; full timestamp lives in the title attr. */
-function relTime(mysqlDate: string): string {
-  const then = new Date(mysqlDate.replace(' ', 'T')).getTime();
-  if (Number.isNaN(then)) return '';
-  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
 }
 
 /** How many log entries show before the "Show all" expander. */

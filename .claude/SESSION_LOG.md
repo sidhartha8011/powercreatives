@@ -5892,3 +5892,16 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   time (full timestamp on hover), max 10 + "Show all (N)", input is the empty state.
 - Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pending user.
   BEFORE 2f8db8e → AFTER (this commit); needs zip rebuild to ship.
+
+## 2026-07-07 — entity card v3 (Notion-reference geometry + feather-light table recipe)
+- EntityCard shell: fixed h-[88vh] (stately even when short), ~880px wide, rounded-xl,
+  p-0 with a centered max-w-[640px] content column (px-8 pt-14 pb-16) — whitespace frames
+  everything. EntityCardTitle: 32px, + optional meta prop ("Edited 2h ago" muted line
+  above). Section spacing 24→32px.
+- NEW shared tableRecipe.ts (CARD_TABLE_WRAPPER/HEAD/ROW/CELL): bg-slate-50 header (never
+  bold), hairline slate-200 borders incl. verticals, 36px rows, 13px text. Applied to the
+  PropertyTable AND the delivery projects table. relTime moved to the primitive
+  (relTime.ts) — used by the meta line + log entries.
+- DeliveryDialog: passes meta from updatedAt; projects table restyled via recipe.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pending user.
+  BEFORE 3ebee88 → AFTER (this commit); needs zip rebuild to ship.

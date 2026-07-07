@@ -2,8 +2,10 @@
  * EntityCard — shared Notion-style detail-card shell.
  *
  * Domain-agnostic on purpose (same philosophy as the shared Kanban
- * primitive): a wide white Dialog with ONE scroll context, 32px padding and
- * no footer. Modules compose it with <EntityCardTitle>, <PropertyTable> and
+ * primitive). Geometry does the design work: a tall fixed-height white card
+ * (88vh — stately even when content is short) with ONE scroll context and a
+ * single centered content column (~640px) framed by generous whitespace.
+ * Modules compose it with <EntityCardTitle>, <PropertyTable> and
  * <EntityCardSection>; all data, mutations and domain sections stay inside
  * the consuming module.
  */
@@ -31,11 +33,14 @@ export interface EntityCardProps {
 export function EntityCard({ open, onClose, ariaTitle, ariaDescription, children }: EntityCardProps) {
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      {/* One scroll context for the whole card — inner tables never scroll. */}
-      <DialogContent className="sm:max-w-5xl bg-white max-h-[90vh] overflow-y-auto p-8 block">
+      {/* Fixed height + one scroll context — inner tables never scroll. */}
+      <DialogContent className="block h-[88vh] overflow-y-auto rounded-xl bg-white p-0 sm:max-w-[880px]">
         <DialogTitle className="sr-only">{ariaTitle}</DialogTitle>
         {ariaDescription && <DialogDescription className="sr-only">{ariaDescription}</DialogDescription>}
-        {children}
+        {/* The whitespace IS the design: narrow centered column, big top padding. */}
+        <div className="mx-auto max-w-[640px] px-8 pb-16 pt-14">
+          {children}
+        </div>
       </DialogContent>
     </Dialog>
   );
