@@ -28,6 +28,7 @@ import type { BrandAsset } from '@shared/brandTypes';
 import { getBrandLogo } from '@shared/brandAssetResolver';
 import type { GeneratedAsset } from '@/types';
 import { useApp } from '@/contexts/AppContext';
+import { trpc } from '@/lib/trpc';
 
 // Hooks
 import { useImageGeneration } from './hooks/useImageGeneration';
@@ -46,10 +47,31 @@ import { SendToApprovalSetDialog } from '@/components/shared/SendToApprovalSetDi
 // ============================================================================
 
 export function ImageModule() {
-  const { navigateToVideoWithImage } = useApp();
+  const { navigateToVideoWithImage, consumePendingCreate, state: appState } = useApp();
 
   // ── Shared state ──
   const [contextData, setContextData] = useState<ContextData>(createEmptyContextData);
+
+  // Create-from-delivery handover (one-shot): land with the brand pre-selected
+  // and the target project threaded through brand.projectId — the exact prop
+  // path the save flow already reads — so output is born correctly mapped.
+  const utils = trpc.useUtils();
+  useEffect(() => {
+    const ctx = consumePendingCreate('image');
+    if (!ctx || ctx.brandId == null) return;
+    void utils.client.brands.getById
+      .query({ id: ctx.brandId })
+      .then((fresh: any) => {
+        if (!fresh) return;
+        setContextData((prev) => ({
+          ...prev,
+          brandId: ctx.brandId as number,
+          brand: { ...fresh, projectId: ctx.projectId },
+        }));
+      })
+      .catch(() => toast.error('Could not pre-select the brand for this delivery'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appState.pendingCreate]);
   const [sessionReferenceImages, setSessionReferenceImages] = useState<SessionReferenceImage[]>([]);
   const [productBrief, setProductBrief] = useState('');
 

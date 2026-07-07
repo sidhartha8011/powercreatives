@@ -94,7 +94,7 @@ interface GenerationStatus {
 
 export function VideoModule() {
   const { settings } = useSettings();
-  const { setActiveModule, consumePendingVideoData, state: appState } = useApp();
+  const { setActiveModule, consumePendingVideoData, consumePendingCreate, state: appState } = useApp();
 
   // tRPC mutations & queries
   const enhancePromptMutation = trpc.video.enhancePrompt.useMutation();
@@ -133,6 +133,27 @@ export function VideoModule() {
 
   // Brand Context — shared ContextPanel (single source of truth)
   const [contextData, setContextData] = useState<ContextData>(createEmptyContextData);
+
+  // Create-from-delivery handover (one-shot): land with the brand
+  // pre-selected; the target project rides along on brand.projectId for save
+  // paths that read it.
+  const createUtils = trpc.useUtils();
+  useEffect(() => {
+    const ctx = consumePendingCreate('video');
+    if (!ctx || ctx.brandId == null) return;
+    void createUtils.client.brands.getById
+      .query({ id: ctx.brandId })
+      .then((fresh: any) => {
+        if (!fresh) return;
+        setContextData((prev) => ({
+          ...prev,
+          brandId: ctx.brandId as number,
+          brand: { ...fresh, projectId: ctx.projectId },
+        }));
+      })
+      .catch(() => toast.error('Could not pre-select the brand for this delivery'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appState.pendingCreate]);
 
   // Audio/Text Options
   const [generateAudio, setGenerateAudio] = useState(false);

@@ -20,7 +20,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { PenLine } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
-import { useSettings } from '@/contexts/AppContext';
+import { toast } from 'sonner';
+import { useApp, useSettings } from '@/contexts/AppContext';
 import {
   ModeListBox,
   GroupedAnglesList,
@@ -237,6 +238,27 @@ export function CopyModule() {
       // Silently fail — brand was saved, but refresh failed. Not critical.
     }
   }, [utils]);
+
+  // Create-from-delivery handover (one-shot): land with the brand
+  // pre-selected; the target project rides along on brand.projectId for save
+  // paths that read it.
+  const { consumePendingCreate, state: appState } = useApp();
+  useEffect(() => {
+    const ctx = consumePendingCreate('copy');
+    if (!ctx || ctx.brandId == null) return;
+    void utils.client.brands.getById
+      .query({ id: ctx.brandId })
+      .then((fresh: any) => {
+        if (!fresh) return;
+        setContextData((prev) => ({
+          ...prev,
+          brandId: ctx.brandId as number,
+          brand: { ...fresh, projectId: ctx.projectId },
+        }));
+      })
+      .catch(() => toast.error('Could not pre-select the brand for this delivery'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appState.pendingCreate]);
 
   /**
    * Handle template selection/clearing.
