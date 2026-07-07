@@ -13,6 +13,9 @@
  * Filtering stays in the consumer (each screen has its own filter bar): pass the
  * already-filtered rows as `data`.
  *
+ * Accordion rows: pass `renderExpanded` (and optionally `rowCanExpand`) to get a
+ * chevron column + a full-width sub-row per expanded row.
+ *
  * Example:
  *   const columns: DataTableColumn<Site>[] = [
  *     { key: 'name', header: 'Name', sortAccessor: (s) => s.name.toLowerCase(),
@@ -23,21 +26,27 @@
  *   <DataTable columns={columns} data={filtered} rowKey={(s) => s.id} />
  */
 
-import { useMemo, type ReactNode, type CSSProperties } from 'react';
+import { Fragment, useMemo, useState, type ReactNode, type CSSProperties } from 'react';
+import { ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import { useSortableTable, type SortDirection } from '@/hooks/useSortableTable';
 
 /** Spreadsheet styling shared by every DataTable (matches the SEO table's look:
- *  table-fixed grid, gridlines on every cell, sticky bg-card header, compact rows). */
+ *  table-fixed grid, gridlines on every cell, sticky bg-card header, compact rows).
+ *  Cell selectors are scoped to the table's DIRECT rows (not `[&_td]`) so content
+ *  rendered inside an expanded sub-row — including nested tables — never inherits
+ *  the outer grid's borders/heights. Sub-rows (`data-subrow`) opt out entirely. */
 const GRID_CLASS =
   'table-fixed w-full border-collapse text-xs bg-card ' +
-  '[&_th]:border [&_th]:border-border/60 [&_td]:border [&_td]:border-border/60 ' +
-  '[&_th]:px-2 [&_th]:h-9 [&_th]:font-normal [&_th]:text-foreground/80 ' +
-  '[&_td]:px-2 [&_td]:h-9 [&_td]:py-0 [&_td]:align-middle ' +
-  '[&_td]:whitespace-nowrap [&_td]:overflow-hidden ' +
-  '[&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-card';
+  '[&>thead>tr>th]:border [&>thead>tr>th]:border-border/60 ' +
+  '[&>tbody>tr:not([data-subrow])>td]:border [&>tbody>tr:not([data-subrow])>td]:border-border/60 ' +
+  '[&>thead>tr>th]:px-2 [&>thead>tr>th]:h-9 [&>thead>tr>th]:font-normal [&>thead>tr>th]:text-foreground/80 ' +
+  '[&>tbody>tr:not([data-subrow])>td]:px-2 [&>tbody>tr:not([data-subrow])>td]:h-9 ' +
+  '[&>tbody>tr:not([data-subrow])>td]:py-0 [&>tbody>tr:not([data-subrow])>td]:align-middle ' +
+  '[&>tbody>tr:not([data-subrow])>td]:whitespace-nowrap [&>tbody>tr:not([data-subrow])>td]:overflow-hidden ' +
+  '[&>thead>tr>th]:sticky [&>thead>tr>th]:top-0 [&>thead>tr>th]:z-20 [&>thead>tr>th]:bg-card';
 
 export interface DataTableColumn<T> {
   /** Stable column id — also the sort key. */
@@ -78,6 +87,15 @@ export interface DataTableProps<T> {
   wrapperClassName?: string;
   /** Extra className merged onto the <table>. */
   className?: string;
+  /**
+   * Accordion rows: when set, a narrow chevron column is prepended and this
+   * renders in a full-width sub-row under the expanded row. Sub-row content is
+   * exempt from the grid cell styling (borders/heights), so nested tables
+   * style themselves freely.
+   */
+  renderExpanded?: (row: T) => ReactNode;
+  /** Whether a row can expand (default: every row, when renderExpanded is set). */
+  rowCanExpand?: (row: T) => boolean;
 }
 
 export function DataTable<T>({
@@ -90,7 +108,20 @@ export function DataTable<T>({
   emptyMessage = 'No results.',
   wrapperClassName,
   className,
+  renderExpanded,
+  rowCanExpand,
 }: DataTableProps<T>) {
+  const expandable = renderExpanded != null;
+  const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(new Set());
+  const toggleExpanded = (key: string | number) => {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   const accessors = useMemo(() => {
     const acc: Record<string, (row: T) => string | number | null> = {};
     for (const c of columns) if (c.sortAccessor) acc[c.key] = c.sortAccessor;
@@ -108,11 +139,14 @@ export function DataTable<T>({
   const widthStyle = (w?: number | string): CSSProperties | undefined =>
     w == null ? undefined : { width: w };
 
+  const colCount = columns.length + (expandable ? 1 : 0);
+
   return (
     <div className={cn('rounded-md border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)] bg-card', wrapperClassName)}>
       <table className={cn(GRID_CLASS, className)}>
         <thead>
           <tr>
+            {expandable && <th style={{ width: 36 }} aria-label="Expand" />}
             {columns.map((c) =>
               c.sortAccessor ? (
                 <SortableTableHead
@@ -136,24 +170,58 @@ export function DataTable<T>({
         <tbody>
           {sortedData.length === 0 ? (
             <tr>
-              <td colSpan={columns.length} className="text-center text-muted-foreground">
+              <td colSpan={colCount} className="text-center text-muted-foreground">
                 {emptyMessage}
               </td>
             </tr>
           ) : (
-            sortedData.map((row) => (
-              <tr
-                key={rowKey(row)}
-                className={cn('hover:bg-muted/60', onRowClick && 'cursor-pointer')}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
-              >
-                {columns.map((c) => (
-                  <td key={c.key} className={cn(c.className, c.cellClassName)}>
-                    {c.cell(row)}
-                  </td>
-                ))}
-              </tr>
-            ))
+            sortedData.map((row) => {
+              const key = rowKey(row);
+              const canExpand = expandable && (rowCanExpand ? rowCanExpand(row) : true);
+              const isExpanded = canExpand && expandedKeys.has(key);
+              return (
+                <Fragment key={key}>
+                  <tr
+                    className={cn('hover:bg-muted/60', onRowClick && 'cursor-pointer')}
+                    onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  >
+                    {expandable && (
+                      <td className="text-center">
+                        {canExpand && (
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            aria-label={isExpanded ? 'Collapse row' : 'Expand row'}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                            onClick={(e) => {
+                              // The row itself may navigate/edit — the chevron only expands.
+                              e.stopPropagation();
+                              toggleExpanded(key);
+                            }}
+                          >
+                            <ChevronRight
+                              className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')}
+                            />
+                          </button>
+                        )}
+                      </td>
+                    )}
+                    {columns.map((c) => (
+                      <td key={c.key} className={cn(c.className, c.cellClassName)}>
+                        {c.cell(row)}
+                      </td>
+                    ))}
+                  </tr>
+                  {isExpanded && (
+                    <tr data-subrow>
+                      <td colSpan={colCount} className="border-b border-border/60 bg-muted/20">
+                        {renderExpanded(row)}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })
           )}
         </tbody>
       </table>
