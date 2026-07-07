@@ -71,6 +71,19 @@ function StatusPill({ status }: { status: DeliveryStatus }) {
   );
 }
 
+/**
+ * Neutral tag pill for Type — same anatomy as StatusPill, one quiet color for
+ * every type (types are admin-defined presets with no color in the data; a
+ * per-type color would be a preset-schema addition, not a guess here).
+ */
+function TypePill({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] leading-none font-medium text-slate-700">
+      {label}
+    </span>
+  );
+}
+
 /** Sentinel for the "none" option in in-place selects. */
 const NONE_VALUE = '__none__';
 
@@ -317,8 +330,33 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
     </Button>
   );
 
+  // Whisper-gray band + 10px label ink: reads as a section header, one level
+  // quieter than the main bg-slate-50 header band. Labels match each
+  // column's content indent so header and value ink align optically.
+  const subHead = 'bg-slate-50/60 text-[10px] font-medium text-muted-foreground';
+
   return (
     <>
+      <tr aria-hidden="true">
+        <td className={subHead} />
+        <td className={subHead}>
+          <span className="block pl-4">Project</span>
+        </td>
+        <td className={subHead}>
+          <span className="block pl-1">Site</span>
+        </td>
+        <td className={subHead}>
+          <span className="block pl-2">Images</span>
+        </td>
+        <td className={subHead}>
+          <span className="block pl-2">Copy</span>
+        </td>
+        <td className={subHead}>
+          <span className="block pl-2">Videos</span>
+        </td>
+        <td className={subHead} />
+        <td className={subHead} />
+      </tr>
       {inDelivery.map((p) => (
         <tr key={`project-${p.id}`}>
           <td />
@@ -472,6 +510,13 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
             options={typeOptions}
             noneLabel="No type"
             ariaLabel={`Type of ${d.name}`}
+            renderValue={(v) =>
+              v ? (
+                <TypePill label={typePresets[v]?.label ?? v} />
+              ) : (
+                <span className="text-muted-foreground">No type</span>
+              )
+            }
             onSave={(v) => {
               // Type applies the central preset — same semantics as the card.
               const presetModules = v && typePresets[v] ? [...typePresets[v].modules] : null;
@@ -547,8 +592,11 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       renderSubRows={(d) => <ProjectSubRows delivery={d} />}
       emptyMessage="No deliveries match your filters."
       // Deliveries-scoped chrome: hairline border does the separation (no
-      // shadow), slightly rounder corners. Global DataTable default untouched.
+      // shadow), slightly rounder corners, light-gray header band so the
+      // header reads as distinct from the white body rows. Global DataTable
+      // default untouched.
       wrapperClassName="shadow-none rounded-lg"
+      className="[&>thead>tr>th]:bg-slate-50"
     />
   );
 }
