@@ -22,10 +22,19 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Maximize2, Plus, X } from 'lucide-react';
+import { ChevronDown, Maximize2, Plus, X } from 'lucide-react';
 
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -42,7 +51,7 @@ import { AddProjectMenu, useDeliveryProjects } from '../DeliveryProjects';
 import { deliveryColumns, type DeliveryColumn } from '../kanban/deliveryColumns';
 import { useDeliveries, type UpdateDeliveryInput } from '../hooks/useDeliveries';
 import { useTypePresets } from '../hooks/useTypePresets';
-import { DELIVERY_STATUSES, type Delivery, type DeliveryStatus } from '../types';
+import { DELIVERY_STATUSES, GRANTABLE_MODULES, type Delivery, type DeliveryStatus } from '../types';
 
 /** Lane declarations by status id — the pills borrow the Kanban accents. */
 const STATUS_LANES: Partial<Record<DeliveryStatus, DeliveryColumn>> = Object.fromEntries(
@@ -194,11 +203,83 @@ function InlineSelectCell({
 }
 
 /**
+ * Borderless in-place multi-toggle — the card's Modules control (chips +
+ * checkbox dropdown), with the table's optimistic-revert save contract.
+ */
+function InlineModulesCell({
+  values,
+  ariaLabel,
+  onSave,
+}: {
+  values: string[];
+  ariaLabel: string;
+  onSave: (next: string[]) => Promise<unknown>;
+}) {
+  const [current, setCurrent] = useState<string[]>(values);
+  useEffect(() => {
+    setCurrent(values);
+  }, [values]);
+
+  const toggle = (id: string) => {
+    const prev = current;
+    const next = prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id];
+    setCurrent(next);
+    onSave(next).catch(() => setCurrent(prev));
+  };
+
+  const selected = GRANTABLE_MODULES.filter((o) => current.includes(o.id));
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          aria-label={ariaLabel}
+          className="h-7 w-full justify-between gap-1 rounded px-1 text-xs font-normal hover:bg-slate-50"
+        >
+          {/* Chips, not a sentence — same 2-chips-then-overflow rule as the card. */}
+          <span className="flex min-w-0 items-center gap-1">
+            {selected.length === 0 && <span className="text-muted-foreground">None</span>}
+            {selected.slice(0, 2).map((o) => (
+              <Badge key={o.id} variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
+                {o.label}
+              </Badge>
+            ))}
+            {selected.length > 2 && (
+              <Badge variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
+                +{selected.length - 2}
+              </Badge>
+            )}
+          </span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuLabel className="text-xs">Module access (Ads includes Copy + Image)</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {GRANTABLE_MODULES.map((o) => (
+          <DropdownMenuCheckboxItem
+            key={o.id}
+            className="text-xs"
+            checked={current.includes(o.id)}
+            onCheckedChange={() => toggle(o.id)}
+            onSelect={(e) => e.preventDefault()}
+          >
+            {o.label}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
  * Accordion content: the delivery's projects as native rows of the parent
  * grid. Cell mapping under the delivery columns: chevron (empty) | project
- * name (indented) | site select | Images | Copy | Videos | ✕ — the labeled
- * jump buttons self-describe, so no second header row. Trailing row = the
- * same AddProjectMenu the delivery card has.
+ * name (indented) | site select | Images | Copy | Videos | spacer | ✕ — the
+ * labeled jump buttons self-describe, so no second header row. Trailing row =
+ * the same AddProjectMenu the delivery card has.
  */
 function ProjectSubRows({ delivery }: { delivery: Delivery }) {
   const { navigateToProjectTab } = useApp();
@@ -217,7 +298,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
     return (
       <tr>
         <td />
-        <td colSpan={6} className="text-muted-foreground">
+        <td colSpan={7} className="text-muted-foreground">
           Loading projects…
         </td>
       </tr>
@@ -258,6 +339,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
           <td>{jumpCell(p.id, 'Images', 'media')}</td>
           <td>{jumpCell(p.id, 'Copy', 'copy')}</td>
           <td>{jumpCell(p.id, 'Videos', 'media')}</td>
+          <td />
           <td className="text-right">
             <Button
               type="button"
@@ -275,7 +357,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
       ))}
       <tr>
         <td />
-        <td colSpan={6}>
+        <td colSpan={7}>
           <AddProjectMenu
             available={available}
             onAssign={(id, name) => void assignProject(id, name)}
@@ -362,30 +444,21 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
         ),
       },
       {
-        key: 'client',
-        header: 'Client',
-        sortAccessor: (d) => d.clientName?.toLowerCase() ?? null,
-        cell: (d) => (
-          <InlineTextCell
-            value={d.clientName ?? ''}
-            placeholder="—"
-            ariaLabel={`Client of ${d.name}`}
-            onSave={(next) => patch(d.id, { clientName: next.length > 0 ? next : null })}
-          />
-        ),
-      },
-      {
-        key: 'brand',
-        header: 'Brand',
-        sortAccessor: (d) =>
-          d.brandId != null ? brandLabel.get(String(Number(d.brandId)))?.toLowerCase() ?? null : null,
+        key: 'status',
+        header: 'Status',
+        width: 120,
+        // Pipeline order (lane order), not alphabetical.
+        sortAccessor: (d) => DELIVERY_STATUSES.indexOf(d.status),
         cell: (d) => (
           <InlineSelectCell
-            value={d.brandId != null ? String(Number(d.brandId)) : null}
-            options={brandOptions}
-            noneLabel="No brand"
-            ariaLabel={`Brand of ${d.name}`}
-            onSave={(v) => patch(d.id, { brandId: v != null ? Number(v) : null })}
+            value={d.status}
+            options={DELIVERY_STATUSES.map((s) => ({
+              value: s,
+              label: STATUS_LANES[s]?.label ?? s,
+            }))}
+            ariaLabel={`Status of ${d.name}`}
+            renderValue={(v) => <StatusPill status={(v ?? d.status) as DeliveryStatus} />}
+            onSave={(v) => patch(d.id, { status: v as DeliveryStatus })}
           />
         ),
       },
@@ -411,21 +484,44 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
         ),
       },
       {
-        key: 'status',
-        header: 'Status',
-        width: 120,
-        // Pipeline order (lane order), not alphabetical.
-        sortAccessor: (d) => DELIVERY_STATUSES.indexOf(d.status),
+        key: 'brand',
+        header: 'Brand',
+        sortAccessor: (d) =>
+          d.brandId != null ? brandLabel.get(String(Number(d.brandId)))?.toLowerCase() ?? null : null,
         cell: (d) => (
           <InlineSelectCell
-            value={d.status}
-            options={DELIVERY_STATUSES.map((s) => ({
-              value: s,
-              label: STATUS_LANES[s]?.label ?? s,
-            }))}
-            ariaLabel={`Status of ${d.name}`}
-            renderValue={(v) => <StatusPill status={(v ?? d.status) as DeliveryStatus} />}
-            onSave={(v) => patch(d.id, { status: v as DeliveryStatus })}
+            value={d.brandId != null ? String(Number(d.brandId)) : null}
+            options={brandOptions}
+            noneLabel="No brand"
+            ariaLabel={`Brand of ${d.name}`}
+            onSave={(v) => patch(d.id, { brandId: v != null ? Number(v) : null })}
+          />
+        ),
+      },
+      {
+        key: 'modules',
+        header: 'Modules',
+        // Sortable by how much access the delivery grants.
+        sortAccessor: (d) => (Array.isArray(d.modules) ? d.modules.length : 0),
+        cell: (d) => (
+          <InlineModulesCell
+            values={Array.isArray(d.modules) ? d.modules : []}
+            ariaLabel={`Modules of ${d.name}`}
+            onSave={(next) => patch(d.id, { modules: next })}
+          />
+        ),
+      },
+      {
+        key: 'externalId',
+        header: 'ID',
+        width: 110,
+        sortAccessor: (d) => d.externalId?.toLowerCase() ?? null,
+        cell: (d) => (
+          <InlineTextCell
+            value={d.externalId ?? ''}
+            placeholder="—"
+            ariaLabel={`External ID of ${d.name}`}
+            onSave={(next) => patch(d.id, { externalId: next.length > 0 ? next : null })}
           />
         ),
       },
@@ -450,6 +546,9 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       defaultSortDir="desc"
       renderSubRows={(d) => <ProjectSubRows delivery={d} />}
       emptyMessage="No deliveries match your filters."
+      // Deliveries-scoped chrome: hairline border does the separation (no
+      // shadow), slightly rounder corners. Global DataTable default untouched.
+      wrapperClassName="shadow-none rounded-lg"
     />
   );
 }
