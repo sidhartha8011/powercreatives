@@ -235,7 +235,10 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "strategy.generate": {
         endpoint: "strategies",
         method: "POST",
-        transform: (input: any) => ({ url: `strategies/${input.id}/generate` }),
+        transform: (input: any) => ({
+            url: `strategies/${input.id}/generate`,
+            body: input.itemId ? { itemId: input.itemId } : {},
+        }),
     },
 
     // ── Writer ──

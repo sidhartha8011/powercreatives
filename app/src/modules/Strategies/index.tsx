@@ -9,9 +9,9 @@
  * Data source: trpc.strategy.list / trpc.strategy.get
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import {
-  Layers, ChevronRight, ChevronDown, Play, Trash2,
+  Layers, ChevronRight, ChevronDown, Play, Trash2, Zap, RefreshCw,
   CheckCircle2, Clock, AlertCircle, Loader2, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -77,13 +77,19 @@ function StatusBadge({ status }: { status: string }) {
 export function StrategiesModule() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [generatingItemId, setGeneratingItemId] = useState<number | null>(null);
+  const [bulkStrategyId, setBulkStrategyId] = useState<number | null>(null);
+  const [retryItemId, setRetryItemId] = useState<number | null>(null);
+  // During a "Generate All" run, per-item toasts/refetch are suppressed so the loop
+  // isn't noisy — a single summary toast + one refetch fire at the end instead.
+  const bulkModeRef = useRef(false);
 
   // Data fetching via tRPC proxy (uses established apiFetch + react-query)
   const { data: strategies = [], isLoading, refetch } = trpc.strategy.list.useQuery() as any;
 
   // Mutations
   const generateMutation = trpc.strategy.generate.useMutation({
-    onSuccess: (_data: any, variables: any) => {
+    onSuccess: (_data: any) => {
+      if (bulkModeRef.current) return; // bulk run reports its own summary
       if (_data?.complete) {
         toast.success('All items have been generated!');
       } else {
@@ -91,7 +97,10 @@ export function StrategiesModule() {
       }
       refetch();
     },
-    onError: (err: any) => toast.error(err.message ?? 'Generation failed'),
+    onError: (err: any) => {
+      if (bulkModeRef.current) return;
+      toast.error(err.message ?? 'Generation failed');
+    },
     onSettled: () => setGeneratingItemId(null),
   }) as any;
 
@@ -114,6 +123,48 @@ export function StrategiesModule() {
   const handleGenerate = useCallback((strategyId: number) => {
     setGeneratingItemId(strategyId);
     generateMutation.mutate({ id: strategyId });
+  }, [generateMutation]);
+
+  // Generate EVERY remaining pending item, one at a time. Each call advances the
+  // next pending item (completed → or error → both reduce the pending set), so the
+  // loop terminates; the totalItems+1 cap is a belt-and-braces runaway guard.
+  const handleGenerateAll = useCallback(async (strategy: Strategy) => {
+    setBulkStrategyId(strategy.id);
+    bulkModeRef.current = true;
+    let ok = 0;
+    let fail = 0;
+    try {
+      for (let i = 0; i < Number(strategy.totalItems) + 1; i++) {
+        try {
+          const res: any = await generateMutation.mutateAsync({ id: strategy.id });
+          if (res?.complete) break;
+          ok++;
+        } catch {
+          fail++; // item is marked 'error' server-side; continue to the next pending
+        }
+      }
+    } finally {
+      bulkModeRef.current = false;
+      setBulkStrategyId(null);
+      refetch();
+      if (fail > 0) {
+        toast.error(`Generated ${ok}, ${fail} failed — retry the failed item(s).`);
+      } else {
+        toast.success(ok > 0 ? `Generated ${ok} article${ok === 1 ? '' : 's'}` : 'Nothing left to generate');
+      }
+    }
+  }, [generateMutation, refetch]);
+
+  // Retry / regenerate a single item (e.g. one that errored).
+  const handleRetry = useCallback(async (strategyId: number, itemId: number) => {
+    setRetryItemId(itemId);
+    try {
+      await generateMutation.mutateAsync({ id: strategyId, itemId });
+    } catch {
+      // error toast already surfaced by the mutation's onError
+    } finally {
+      setRetryItemId(null);
+    }
   }, [generateMutation]);
 
   // Delete strategy
@@ -212,10 +263,25 @@ export function StrategiesModule() {
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  {strategy.status !== 'completed' && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      disabled={bulkStrategyId === strategy.id || generatingItemId === strategy.id}
+                      onClick={() => handleGenerateAll(strategy)}
+                    >
+                      {bulkStrategyId === strategy.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Zap className="w-3.5 h-3.5" />
+                      )}
+                      Generate All
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={strategy.status === 'completed' || generatingItemId === strategy.id}
+                    disabled={strategy.status === 'completed' || generatingItemId === strategy.id || bulkStrategyId === strategy.id}
                     onClick={() => handleGenerate(strategy.id)}
                   >
                     {generatingItemId === strategy.id ? (
@@ -273,6 +339,24 @@ export function StrategiesModule() {
                         <Button variant="ghost" size="sm" className="shrink-0">
                           <FileText className="w-3.5 h-3.5" />
                           View
+                        </Button>
+                      )}
+
+                      {/* Retry a failed item */}
+                      {item.status === 'error' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0"
+                          disabled={retryItemId === item.id || bulkStrategyId === strategy.id}
+                          onClick={() => handleRetry(strategy.id, item.id)}
+                        >
+                          {retryItemId === item.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          )}
+                          Retry
                         </Button>
                       )}
 

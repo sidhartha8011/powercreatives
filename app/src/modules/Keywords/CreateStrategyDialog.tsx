@@ -18,6 +18,9 @@ import { Loader2 } from 'lucide-react';
 export interface StrategyPayload {
   name: string;
   templateId: number;
+  /** LLM the articles are generated with. Empty → backend default (Gemini 2.5 Flash). */
+  model?: string;
+  provider?: string;
   structure: string;
   hierarchyMode: string;
   parentTargetUrl?: string;
@@ -49,6 +52,7 @@ export function CreateStrategyDialog({
 }: CreateStrategyDialogProps) {
   const [name, setName] = useState(selectedKeywords?.[0] || '');
   const [templateId, setTemplateId] = useState<string>('');
+  const [modelId, setModelId] = useState<string>('');
   const [structure, setStructure] = useState('individual');
 
   const [hierarchyMode, setHierarchyMode] = useState('standalone');
@@ -69,6 +73,7 @@ export function CreateStrategyDialog({
     if (open) {
       setName(selectedKeywords?.[0] || '');
       setTemplateId('');
+      setModelId('');
       setStructure('individual');
       setHierarchyMode('standalone');
       setParentTargetType('custom');
@@ -85,15 +90,22 @@ export function CreateStrategyDialog({
   }, [open]);
 
   const { data: templates, isLoading: templatesLoading } = trpc.templates.list.useQuery({ module: 'writer' });
+  const { data: genModels = [], isLoading: modelsLoading } = trpc.models.getForGeneration.useQuery(
+    { type: 'text' },
+    { staleTime: 30_000 },
+  );
 
   const handleSave = () => {
     if (!templateId) return;
 
     const finalName = name.trim() ? name.trim() : defaultName;
-    
+    const selectedModel = (genModels as any[]).find((m) => m.modelId === modelId);
+
     onSave({
       name: finalName,
       templateId: parseInt(templateId, 10),
+      model: modelId || undefined,
+      provider: selectedModel?.provider || undefined,
       structure,
       hierarchyMode,
       parentTargetUrl: hierarchyMode === 'children_only' ? parentTargetUrl : undefined,
@@ -163,6 +175,31 @@ export function CreateStrategyDialog({
                  </SelectContent>
                </Select>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>AI Model</Label>
+            <Select value={modelId} onValueChange={setModelId}>
+              <SelectTrigger className="w-full bg-background">
+                <SelectValue placeholder={modelsLoading ? 'Loading models…' : 'Default (Gemini 2.5 Flash)'} />
+              </SelectTrigger>
+              <SelectContent>
+                {(genModels as any[]).length > 0 ? (
+                  (genModels as any[]).map((m) => (
+                    <SelectItem key={m.modelId} value={m.modelId}>
+                      {(m.customName || m.originalName || m.modelId)} ({m.provider})
+                    </SelectItem>
+                  ))
+                ) : (
+                  <div className="p-2 text-sm text-muted-foreground text-center">
+                    No text models registered — add one in Settings → Models.
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-[0.8rem] text-muted-foreground">
+              Which model writes each article. Leave unset to use the default.
+            </p>
           </div>
 
           <div className="space-y-4">

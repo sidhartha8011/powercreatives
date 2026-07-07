@@ -83,6 +83,39 @@ class PCM_REST_Strategy extends PCM_REST_Base
         }
 
         try {
+            // Persisted generation config. `model`/`provider` drive which LLM each
+            // item is generated with (empty → the service falls back to a default);
+            // the remaining fields are captured from the create dialog so they're no
+            // longer silently dropped (structure/interlink/schedule/approval are
+            // stored for the features that consume them — see docs/modules/strategy).
+            // Whitelist + coerce the nested config objects — never persist raw
+            // user input, even though these fields aren't consumed yet.
+            $interlinks = null;
+            if (is_array($params['interlinksConfig'] ?? null)) {
+                $interlinks = array(
+                    'mode'     => sanitize_text_field($params['interlinksConfig']['mode'] ?? ''),
+                    'quantity' => absint($params['interlinksConfig']['quantity'] ?? 0),
+                );
+            }
+            $schedule = null;
+            if (is_array($params['scheduleConfig'] ?? null)) {
+                $schedule = array(
+                    'frequency' => sanitize_text_field($params['scheduleConfig']['frequency'] ?? ''),
+                    'startDate' => sanitize_text_field($params['scheduleConfig']['startDate'] ?? ''),
+                );
+            }
+
+            $config = array(
+                'model'            => sanitize_text_field($params['model'] ?? ''),
+                'provider'         => sanitize_text_field($params['provider'] ?? ''),
+                'structure'        => sanitize_text_field($params['structure'] ?? 'individual'),
+                'approvalMode'     => sanitize_text_field($params['approvalMode'] ?? 'none'),
+                'parentTargetUrl'  => !empty($params['parentTargetUrl']) ? esc_url_raw($params['parentTargetUrl']) : '',
+                'parentKeyword'    => sanitize_text_field($params['parentKeyword'] ?? ''),
+                'interlinksConfig' => $interlinks,
+                'scheduleConfig'   => $schedule,
+            );
+
             // Delegate to the service layer for orchestration
             require_once __DIR__ . '/service.php';
             $strategy = PCM_Strategy_Service::create_from_keywords(
@@ -94,7 +127,7 @@ class PCM_REST_Strategy extends PCM_REST_Base
                 array(
                     'hierarchyMode'  => sanitize_text_field($params['hierarchyMode'] ?? 'standalone'),
                     'publishingMode' => sanitize_text_field($params['publishingMode'] ?? 'draft'),
-                    'config'         => $params['config'] ?? null,
+                    'config'         => $config,
                 )
             );
 
@@ -190,9 +223,14 @@ class PCM_REST_Strategy extends PCM_REST_Base
             return $this->not_found('Strategy');
         }
 
+        // Optional: (re)generate a SPECIFIC item (retry a failed one / regenerate).
+        // Omitted → generate the next pending item.
+        $params  = $request->get_json_params();
+        $item_id = (is_array($params) && !empty($params['itemId'])) ? (int)$params['itemId'] : null;
+
         try {
             require_once __DIR__ . '/service.php';
-            $result = PCM_Strategy_Service::generate_next_item($strategy, (int)$pcm_user->id);
+            $result = PCM_Strategy_Service::generate_next_item($strategy, (int)$pcm_user->id, $item_id);
 
             if (!$result) {
                 return $this->success(array(
