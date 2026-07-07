@@ -270,7 +270,7 @@ export function SitesModule() {
   return (
     <div className="h-full flex flex-col overflow-auto">
       {/* Header */}
-      <div className="flex items-center gap-2 mb-1 shrink-0">
+      <div className="flex items-center gap-2 mb-6 shrink-0">
         <Globe className="w-5 h-5" style={{ color: colors.primary }} />
         <h1 style={{ fontSize: typography.title, fontWeight: typography.bold, color: colors.text }}>Sites</h1>
         <Badge variant="secondary" className="ml-1">{sites.length} connected</Badge>
@@ -308,7 +308,7 @@ export function SitesModule() {
       ) : (
         <>
           {/* Filter bar — instant search + status (shared Kanban filter engine) */}
-          <div className="flex flex-wrap items-center gap-3 mb-4 bg-white p-2 rounded-lg border border-slate-200/80">
+          <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-2 rounded-lg border border-slate-200/80">
             <div className="relative flex-1 min-w-[200px] max-w-[220px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input value={search} onChange={onSearch} placeholder="Search sites…" className="h-9 pl-9 text-xs bg-slate-50" />
