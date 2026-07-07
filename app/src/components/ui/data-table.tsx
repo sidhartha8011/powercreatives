@@ -13,8 +13,9 @@
  * Filtering stays in the consumer (each screen has its own filter bar): pass the
  * already-filtered rows as `data`.
  *
- * Accordion rows: pass `renderExpanded` (and optionally `rowCanExpand`) to get a
- * chevron column + a full-width sub-row per expanded row.
+ * Accordion rows: pass `renderSubRows` (and optionally `rowCanExpand`) to get a
+ * chevron column; the expanded content renders as NATIVE sibling <tr> rows of
+ * the same table — same gridlines, same rhythm — never an embedded table.
  *
  * Example:
  *   const columns: DataTableColumn<Site>[] = [
@@ -88,13 +89,16 @@ export interface DataTableProps<T> {
   /** Extra className merged onto the <table>. */
   className?: string;
   /**
-   * Accordion rows: when set, a narrow chevron column is prepended and this
-   * renders in a full-width sub-row under the expanded row. Sub-row content is
-   * exempt from the grid cell styling (borders/heights), so nested tables
-   * style themselves freely.
+   * Accordion rows: when set, a narrow chevron column is prepended and the
+   * returned `<tr>` elements render as native siblings directly under the
+   * expanded row — they inherit the grid cell styling (borders, heights), so
+   * expanded content reads as extra rows of the SAME table. Remember the
+   * chevron column: sub-rows have `columns.length + 1` cells to fill (or an
+   * empty leading `<td>` + `colSpan`). A `<tr data-subrow>` opts a row out of
+   * the grid cell styling entirely (escape hatch for panel-style content).
    */
-  renderExpanded?: (row: T) => ReactNode;
-  /** Whether a row can expand (default: every row, when renderExpanded is set). */
+  renderSubRows?: (row: T) => ReactNode;
+  /** Whether a row can expand (default: every row, when renderSubRows is set). */
   rowCanExpand?: (row: T) => boolean;
 }
 
@@ -108,10 +112,10 @@ export function DataTable<T>({
   emptyMessage = 'No results.',
   wrapperClassName,
   className,
-  renderExpanded,
+  renderSubRows,
   rowCanExpand,
 }: DataTableProps<T>) {
-  const expandable = renderExpanded != null;
+  const expandable = renderSubRows != null;
   const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(new Set());
   const toggleExpanded = (key: string | number) => {
     setExpandedKeys((prev) => {
@@ -212,13 +216,7 @@ export function DataTable<T>({
                       </td>
                     ))}
                   </tr>
-                  {isExpanded && (
-                    <tr data-subrow>
-                      <td colSpan={colCount} className="border-b border-border/60 bg-muted/20">
-                        {renderExpanded(row)}
-                      </td>
-                    </tr>
-                  )}
+                  {isExpanded && renderSubRows(row)}
                 </Fragment>
               );
             })

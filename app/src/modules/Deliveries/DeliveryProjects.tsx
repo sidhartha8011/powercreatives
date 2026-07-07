@@ -75,12 +75,17 @@ export interface DeliveryProjectsState {
   setProjectSite: (project: { id: number; name: string }, siteId: number | null) => Promise<void>;
   /** True while a site connect/disconnect is in flight. */
   sitePending: boolean;
+  /** True while the project/site queries are still fetching for the first
+   *  time — consumers must show a loading state, never "no projects". */
+  isLoading: boolean;
 }
 
 /** Data + mutations for one delivery's project list. */
 export function useDeliveryProjects(delivery: Delivery): DeliveryProjectsState {
-  const { data: projectsRaw, refetch: refetchProjects } = trpc.assets.getProjects.useQuery();
-  const { data: sitesRaw } = trpc.sites.list.useQuery();
+  const projectsQuery = trpc.assets.getProjects.useQuery();
+  const sitesQuery = trpc.sites.list.useQuery();
+  const { data: projectsRaw, refetch: refetchProjects } = projectsQuery;
+  const { data: sitesRaw } = sitesQuery;
 
   // Number()-normalize ids — wpdb returns strings.
   const projects: DeliveryProject[] = Array.isArray(projectsRaw)
@@ -140,6 +145,7 @@ export function useDeliveryProjects(delivery: Delivery): DeliveryProjectsState {
     unassignProject,
     setProjectSite,
     sitePending: Boolean(setSiteMutation.isPending),
+    isLoading: Boolean(projectsQuery.isLoading || sitesQuery.isLoading),
   };
 }
 
