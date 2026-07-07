@@ -208,6 +208,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `deliveries/${input.id}/logs`, body: { note: input.note } }),
     },
+    "deliveries.setLead": {
+        endpoint: "deliveries",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `deliveries/${input.id}/lead`, body: { userId: input.userId } }),
+    },
 
     // ── Strategy ──
     "strategy.create": { endpoint: "strategies", method: "POST" },

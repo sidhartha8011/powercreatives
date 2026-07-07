@@ -24,9 +24,10 @@ export interface Delivery {
   modules?: string[];
   /** Optional external identifier — used for webhook/automation mapping. */
   externalId?: string | null;
-  /** Assigned team members (read-only enrichment on the list route; assigning
-   *  itself lives in the Users module). */
-  assignees?: { id: number; name: string }[];
+  /** Assigned team members (enriched on the list route). role: 'lead' marks
+   *  the delivery's single lead (set via PATCH /deliveries/{id}/lead); every
+   *  other assignment is 'member' (managed in the Users module). */
+  assignees?: { id: number; name: string; role?: string }[];
   createdAt: string;
   updatedAt: string;
 }

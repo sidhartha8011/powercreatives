@@ -60,6 +60,10 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             // Writes are admin-only; team members only view assigned deliveries.
             array('POST',   '/deliveries',                    'create_item', array(), 'manage_options'),
             array('PATCH',  '/deliveries/(?P<id>\\d+)',       'update_item', array(), 'manage_options'),
+            // Lead = the delivery's single primary assignee (assignment row
+            // with role='lead' → module access + notifications come from the
+            // existing assignment mechanics, nothing parallel).
+            array('PATCH',  '/deliveries/(?P<id>\\d+)/lead',  'set_lead',    array(), 'manage_options'),
             array('DELETE', '/deliveries/(?P<id>\\d+)',       'delete_item', array(), 'manage_options'),
         );
     }
@@ -103,7 +107,7 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             $users_table  = PCM_Schema::table('users');
             // phpcs:ignore WordPress.DB.PreparedSQL -- placeholders built from %d only.
             $assignment_rows = $wpdb->get_results($wpdb->prepare(
-                "SELECT a.deliveryId, u.id AS userId, u.name
+                "SELECT a.deliveryId, a.role, u.id AS userId, u.name
                  FROM $assign_table a
                  INNER JOIN $users_table u ON u.id = a.userId
                  WHERE a.deliveryId IN ($placeholders)
@@ -115,6 +119,7 @@ class PCM_REST_Deliveries extends PCM_REST_Base
                 $by_delivery[(int) $assignment->deliveryId][] = array(
                     'id'   => (int) $assignment->userId,
                     'name' => (string) $assignment->name,
+                    'role' => (string) ($assignment->role ?: 'member'),
                 );
             }
             foreach ($items as &$item) {
@@ -365,6 +370,120 @@ class PCM_REST_Deliveries extends PCM_REST_Base
 
         $row = PCM_DB::get_delivery_by_id($id, $user->id);
         return $this->success($this->service->format_delivery($row));
+    }
+
+    /**
+     * PATCH /deliveries/<id>/lead — Set (or clear) the delivery's lead.
+     *
+     * Body: { userId: number | null }
+     *
+     * The lead IS an assignment (delivery_assignments row, role='lead'), so
+     * the existing access mechanics apply untouched: PCM_Access grants the
+     * lead view+use of the delivery + linked brand/project and unlocks the
+     * delivery's `modules` list; notification visibility follows the granted
+     * brand. A previous lead is DEMOTED to member, never removed — access is
+     * only ever revoked explicitly (Users module).
+     */
+    public function set_lead(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        global $wpdb;
+
+        $user = $this->get_current_pcm_user();
+        $id   = absint($request->get_param('id'));
+
+        $existing = PCM_DB::get_delivery_by_id($id, $user->id);
+        if (!$existing) {
+            return $this->not_found('Delivery');
+        }
+        // Same owner rule as update_item: assigned users can view, not edit.
+        if ((int) $existing->userId !== (int) $user->id) {
+            return $this->error('You can view this delivery but not edit it.', 403, 'pcm_forbidden');
+        }
+
+        $params  = $request->get_json_params() ?: array();
+        $lead_id = isset($params['userId']) && $params['userId'] !== null && $params['userId'] !== ''
+            ? absint($params['userId'])
+            : null;
+
+        $assign_table = PCM_Schema::table('delivery_assignments');
+        $users_table  = PCM_Schema::table('users');
+
+        if ($lead_id !== null) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $target = $wpdb->get_row($wpdb->prepare(
+                "SELECT id FROM $users_table WHERE id = %d",
+                $lead_id
+            ));
+            if (!$target) {
+                return $this->not_found('User');
+            }
+        }
+
+        // Demote the current lead (role change only — grants ignore role, so
+        // no cache invalidation is needed for a demotion).
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->query($wpdb->prepare(
+            "UPDATE $assign_table SET role = 'member' WHERE deliveryId = %d AND role = 'lead'",
+            $id
+        ));
+
+        if ($lead_id !== null) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $assignment = $wpdb->get_row($wpdb->prepare(
+                "SELECT id FROM $assign_table WHERE deliveryId = %d AND userId = %d",
+                $id,
+                $lead_id
+            ));
+            if ($assignment) {
+                // Already on the team — promote in place, grants unchanged.
+                $wpdb->update(
+                    $assign_table,
+                    array('role' => 'lead'),
+                    array('id' => (int) $assignment->id),
+                    array('%s'),
+                    array('%d')
+                );
+            } else {
+                // New assignment — this is the moment access is granted, so
+                // it needs the same invalidation tail the Users module uses.
+                $wpdb->insert(
+                    $assign_table,
+                    array(
+                        'deliveryId' => $id,
+                        'userId'     => $lead_id,
+                        'assignedBy' => (int) $user->id,
+                        'role'       => 'lead',
+                        'createdAt'  => current_time('mysql'),
+                    ),
+                    array('%d', '%d', '%d', '%s', '%s')
+                );
+                PCM_DB::invalidate('deliveries', $lead_id);
+                PCM_DB::invalidate('brands', $lead_id);
+                if (class_exists('PCM_Access')) {
+                    PCM_Access::reset_memo();
+                }
+            }
+        }
+
+        // Fresh assignee list so the frontend can update the row in place.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT a.userId AS id, a.role, u.name
+             FROM $assign_table a
+             INNER JOIN $users_table u ON u.id = a.userId
+             WHERE a.deliveryId = %d
+             ORDER BY u.name ASC",
+            $id
+        ));
+        $assignees = array_map(static function (object $row): array {
+            return array(
+                'id'   => (int) $row->id,
+                'name' => (string) $row->name,
+                'role' => (string) ($row->role ?: 'member'),
+            );
+        }, $rows ?: array());
+
+        return $this->success(array('assignees' => $assignees));
     }
 
     /** DELETE /deliveries/<id> — Delete a delivery. */

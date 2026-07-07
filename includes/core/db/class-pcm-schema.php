@@ -523,11 +523,15 @@ class PCM_Schema
         // assignee). The assignee gains VIEW + USE access to the delivery and
         // its linked brand/project (reads become "owned OR granted" via
         // PCM_Access; writes stay owner-scoped).
+        // role (v1.36.0): 'lead' marks the delivery's single lead; every other
+        // assignment is 'member'. Access/grants ignore role — a lead is just
+        // an assignment with a badge, so PCM_Access needs no changes.
         $sql = "CREATE TABLE {$prefix}delivery_assignments (
             id int(11) NOT NULL AUTO_INCREMENT,
             deliveryId int(11) NOT NULL,
             userId int(11) NOT NULL,
             assignedBy int(11) NOT NULL,
+            role varchar(20) DEFAULT 'member' NOT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY uniq_delivery_user (deliveryId,userId),

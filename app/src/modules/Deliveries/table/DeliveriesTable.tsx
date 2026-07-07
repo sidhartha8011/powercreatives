@@ -45,6 +45,8 @@ import {
 import { relTime } from '@/components/shared/EntityCard';
 import { cn } from '@/lib/utils';
 import { trpc } from '@/lib/trpc';
+import { getIsAdmin } from '@/lib/pcmConfig';
+import { toast } from 'sonner';
 import { useApp } from '@/contexts/AppContext';
 
 import { AddProjectMenu, useDeliveryProjects, type DeliveryProject } from '../DeliveryProjects';
@@ -308,6 +310,66 @@ function InlineModulesCell({
   );
 }
 
+/** The delivery's lead among its assignees (role='lead'; single by contract). */
+function leadOf(d: Delivery): { id: number; name: string } | null {
+  const lead = d.assignees?.find((a) => a.role === 'lead');
+  return lead ? { id: lead.id, name: lead.name } : null;
+}
+
+/** Tooltip listing the non-lead team members, if any. */
+function teamTitle(d: Delivery): string | undefined {
+  const others = (d.assignees ?? []).filter((a) => a.role !== 'lead');
+  return others.length > 0 ? `Team: ${others.map((o) => o.name).join(', ')}` : undefined;
+}
+
+/**
+ * Editable Lead select — mounted ONLY for admins (GET /users is admin-only;
+ * non-admins get the read-only name instead). Picking a user assigns them as
+ * the delivery's lead via PATCH /deliveries/{id}/lead: a new assignee gains
+ * the delivery's module access + notifications through the existing
+ * assignment mechanics; a previous lead is demoted to member, never removed.
+ */
+function LeadSelect({ delivery, onSaved }: { delivery: Delivery; onSaved: () => void }) {
+  const { data: usersRaw } = trpc.users.list.useQuery();
+  const users = useMemo(() => {
+    if (!Array.isArray(usersRaw)) return [] as { value: string; label: string }[];
+    return (usersRaw as any[]).map((u) => ({
+      value: String(Number(u.id)),
+      label: String(u.name || u.username || `User #${u.id}`),
+    }));
+  }, [usersRaw]);
+
+  const setLeadMutation = trpc.deliveries.setLead.useMutation() as any;
+  const lead = leadOf(delivery);
+
+  return (
+    <InlineSelectCell
+      value={lead ? String(lead.id) : null}
+      options={users}
+      noneLabel="No lead"
+      ariaLabel={`Lead of ${delivery.name}`}
+      renderValue={(v) =>
+        v ? (
+          <span className="truncate" title={teamTitle(delivery)}>
+            {users.find((u) => u.value === v)?.label ?? lead?.name ?? ''}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )
+      }
+      onSave={async (v) => {
+        try {
+          await setLeadMutation.mutateAsync({ id: delivery.id, userId: v != null ? Number(v) : null });
+          onSaved();
+        } catch (e: any) {
+          toast.error(e?.message || 'Failed to set the lead');
+          throw e; // InlineSelectCell reverts on rethrow
+        }
+      }}
+    />
+  );
+}
+
 /**
  * Accordion content: the delivery's projects as native rows of the parent
  * grid. Cell mapping is POSITIONAL (independent of the parent's column order):
@@ -467,7 +529,8 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
   trpc.assets.getProjects.useQuery();
   trpc.sites.list.useQuery();
 
-  const { updateDelivery } = useDeliveries();
+  const isAdmin = getIsAdmin();
+  const { updateDelivery, refetch } = useDeliveries();
   const patch = (id: number, input: Omit<UpdateDeliveryInput, 'id'>) =>
     updateDelivery({ id, ...input });
 
@@ -598,19 +661,17 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
         ),
       },
       {
-        key: 'assignee',
-        header: 'Assignee',
+        key: 'lead',
+        header: 'Lead',
         width: 160,
-        // Read-only: assignments live in the Users module (per-user delivery
-        // sets, admin-only) — this surfaces who works the delivery.
-        sortAccessor: (d) => d.assignees?.[0]?.name.toLowerCase() ?? null,
+        sortAccessor: (d) => leadOf(d)?.name.toLowerCase() ?? null,
         cell: (d) =>
-          d.assignees && d.assignees.length > 0 ? (
-            <span className="block truncate" title={d.assignees.map((a) => a.name).join(', ')}>
-              {d.assignees.map((a) => a.name).join(', ')}
-            </span>
+          isAdmin ? (
+            <LeadSelect delivery={d} onSaved={refetch} />
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="block truncate" title={teamTitle(d)}>
+              {leadOf(d)?.name ?? <span className="text-muted-foreground">—</span>}
+            </span>
           ),
       },
       {
@@ -636,7 +697,7 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps — patch/onEdit are stable enough per render
-    [brandOptions, brandLabel, typeOptions, typePresets, onEdit]
+    [brandOptions, brandLabel, typeOptions, typePresets, onEdit, isAdmin, refetch]
   );
 
   return (
