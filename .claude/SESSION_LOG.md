@@ -6107,3 +6107,18 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   PUT /users/{id}/deliveries shape).
 - Verified: tsc 56 = baseline, build OK. Live pass pending user.
   BEFOREs 039399a (PHP) / 754a08c (TS) → AFTERs 80475a7 / dd614ef.
+
+## 2026-07-07 — delivery Lead + table polish items 2–6 [delivery-lead + deliveries-table-polish]
+- Lead = delivery_assignments row with new role='lead' (DB 1.36.0, additive) →
+  access/grants/notifications reuse the assignment mechanics wholesale. New
+  PATCH /deliveries/{id}/lead (owner-checked; demote-not-remove; insert runs the
+  Users-module invalidation tail). Assignee column → editable Lead select
+  (users.list mounts admin-only); role added to list enrichment.
+- Polish: non-admin cells read-only (sub-rows stay editable — ownership-scoped
+  server-side); trash-in-name-cell → Board's confirm dialog; DataTable gains
+  filterDefs prop wiring the EXISTING ColumnHead/useColumnFilters header
+  filters (user's "searchable dropdowns" satisfied with zero new features);
+  Reset-columns button (clear storage + remount).
+- Verified: php -l, tsc 56 = baseline, build OK. Live pass pending user.
+  BEFOREs dec9928 / 292d4c2 → AFTERs 23cffef / d8af260. Comms/email relay
+  feature ON HOLD per user (consult delivered in chat).
