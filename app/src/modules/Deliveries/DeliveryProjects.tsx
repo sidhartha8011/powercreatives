@@ -62,6 +62,10 @@ export interface DeliveryProject {
   deliveryId: number | null;
   siteId: number | null;
   assetCount: number;
+  /** Per-type counts (assets.type split + copy_results) — table count cells. */
+  imageCount: number;
+  videoCount: number;
+  copyCount: number;
 }
 
 export interface DeliveryProjectsState {
@@ -73,6 +77,9 @@ export interface DeliveryProjectsState {
   assignProject: (projectId: number, name: string) => Promise<void>;
   unassignProject: (projectId: number, name: string) => Promise<void>;
   setProjectSite: (project: { id: number; name: string }, siteId: number | null) => Promise<void>;
+  /** Rename the actual project (assets.renameProject). Rethrows on failure so
+   *  inline editors can revert their draft. */
+  renameProject: (projectId: number, name: string) => Promise<void>;
   /** True while a site connect/disconnect is in flight. */
   sitePending: boolean;
   /** True while the project/site queries are still fetching for the first
@@ -95,6 +102,9 @@ export function useDeliveryProjects(delivery: Delivery): DeliveryProjectsState {
         deliveryId: p.deliveryId != null ? Number(p.deliveryId) : null,
         siteId: p.siteId != null ? Number(p.siteId) : null,
         assetCount: Number(p.assetCount ?? 0),
+        imageCount: Number(p.imageCount ?? 0),
+        videoCount: Number(p.videoCount ?? 0),
+        copyCount: Number(p.copyCount ?? 0),
       }))
     : [];
   const sites: { id: number; name: string }[] = Array.isArray(sitesRaw)
@@ -106,6 +116,7 @@ export function useDeliveryProjects(delivery: Delivery): DeliveryProjectsState {
 
   const setDeliveryMutation = trpc.assets.setProjectDelivery.useMutation() as any;
   const setSiteMutation = trpc.assets.setProjectSite.useMutation() as any;
+  const renameMutation = trpc.assets.renameProject.useMutation() as any;
 
   const assignProject = async (projectId: number, name: string) => {
     try {
@@ -137,6 +148,16 @@ export function useDeliveryProjects(delivery: Delivery): DeliveryProjectsState {
     }
   };
 
+  const renameProject = async (projectId: number, name: string) => {
+    try {
+      await renameMutation.mutateAsync({ id: projectId, name });
+      refetchProjects();
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to rename the project');
+      throw e; // rethrow so inline editors revert their draft
+    }
+  };
+
   return {
     inDelivery,
     available,
@@ -144,6 +165,7 @@ export function useDeliveryProjects(delivery: Delivery): DeliveryProjectsState {
     assignProject,
     unassignProject,
     setProjectSite,
+    renameProject,
     sitePending: Boolean(setSiteMutation.isPending),
     isLoading: Boolean(projectsQuery.isLoading || sitesQuery.isLoading),
   };

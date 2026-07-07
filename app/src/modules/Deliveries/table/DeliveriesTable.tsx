@@ -47,7 +47,7 @@ import { cn } from '@/lib/utils';
 import { trpc } from '@/lib/trpc';
 import { useApp } from '@/contexts/AppContext';
 
-import { AddProjectMenu, useDeliveryProjects } from '../DeliveryProjects';
+import { AddProjectMenu, useDeliveryProjects, type DeliveryProject } from '../DeliveryProjects';
 import { deliveryColumns, type DeliveryColumn } from '../kanban/deliveryColumns';
 import { useDeliveries, type UpdateDeliveryInput } from '../hooks/useDeliveries';
 import { useTypePresets } from '../hooks/useTypePresets';
@@ -72,13 +72,34 @@ function StatusPill({ status }: { status: DeliveryStatus }) {
 }
 
 /**
- * Neutral tag pill for Type — same anatomy as StatusPill, one quiet color for
- * every type (types are admin-defined presets with no color in the data; a
- * per-type color would be a preset-schema addition, not a guess here).
+ * Predefined tag palette for Type pills — soft backgrounds + readable ink,
+ * the same family as the Kanban lane accents. A type KEY hashes to a stable
+ * slot, so a given type always wears the same color across sessions and
+ * label renames (admin-defined presets carry no color of their own).
  */
-function TypePill({ label }: { label: string }) {
+const TYPE_PALETTE: ReadonlyArray<{ bg: string; text: string }> = [
+  { bg: '#e0f2fe', text: '#075985' }, // sky
+  { bg: '#fef3c7', text: '#92400e' }, // amber
+  { bg: '#dcfce7', text: '#166534' }, // green
+  { bg: '#fae8ff', text: '#86198f' }, // fuchsia
+  { bg: '#ffe4e6', text: '#9f1239' }, // rose
+  { bg: '#e0e7ff', text: '#3730a3' }, // indigo
+  { bg: '#f1f5f9', text: '#334155' }, // slate
+];
+
+function typeColors(typeKey: string): { bg: string; text: string } {
+  let h = 0;
+  for (let i = 0; i < typeKey.length; i++) h = (h * 31 + typeKey.charCodeAt(i)) >>> 0;
+  return TYPE_PALETTE[h % TYPE_PALETTE.length];
+}
+
+function TypePill({ typeKey, label }: { typeKey: string; label: string }) {
+  const colors = typeColors(typeKey);
   return (
-    <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] leading-none font-medium text-slate-700">
+    <span
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-none font-medium"
+      style={{ background: colors.bg, color: colors.text }}
+    >
       {label}
     </span>
   );
@@ -289,10 +310,11 @@ function InlineModulesCell({
 
 /**
  * Accordion content: the delivery's projects as native rows of the parent
- * grid. Cell mapping under the delivery columns: chevron (empty) | project
- * name (indented) | site select | Images | Copy | Videos | spacer | ✕ — the
- * labeled jump buttons self-describe, so no second header row. Trailing row =
- * the same AddProjectMenu the delivery card has.
+ * grid. Cell mapping is POSITIONAL (independent of the parent's column order):
+ * chevron (empty) | project name (indented, inline-renames the real project) |
+ * site select | Images | Copy | Videos counts | spacers | ✕. The sub-header
+ * row above labels these cells. Trailing row = the same AddProjectMenu the
+ * delivery card has.
  */
 function ProjectSubRows({ delivery }: { delivery: Delivery }) {
   const { navigateToProjectTab } = useApp();
@@ -303,6 +325,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
     assignProject,
     unassignProject,
     setProjectSite,
+    renameProject,
     sitePending,
     isLoading,
   } = useDeliveryProjects(delivery);
@@ -311,22 +334,26 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
     return (
       <tr>
         <td />
-        <td colSpan={7} className="text-muted-foreground">
+        <td colSpan={8} className="text-muted-foreground">
           Loading projects…
         </td>
       </tr>
     );
   }
 
-  const jumpCell = (projectId: number, label: string, tab: 'media' | 'copy') => (
+  // Count cell: the sub-header labels the column, so the cell is just the
+  // number — clickable, jumps straight into the project on that tab.
+  const countCell = (p: DeliveryProject, count: number, label: string, tab: 'media' | 'copy') => (
     <Button
       type="button"
       variant="ghost"
       size="sm"
-      className="h-7 px-2 text-xs text-muted-foreground hover:text-primary"
-      onClick={() => navigateToProjectTab({ projectId, tab })}
+      className={`h-7 px-2 text-xs tabular-nums hover:text-primary ${count === 0 ? 'text-muted-foreground/50' : ''}`}
+      title={`Open ${label.toLowerCase()} in ${p.name}`}
+      aria-label={`${count} ${label.toLowerCase()} in ${p.name} — open`}
+      onClick={() => navigateToProjectTab({ projectId: p.id, tab })}
     >
-      {label}
+      {count}
     </Button>
   );
 
@@ -356,13 +383,22 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
         </td>
         <td className={subHead} />
         <td className={subHead} />
+        <td className={subHead} />
       </tr>
       {inDelivery.map((p) => (
         <tr key={`project-${p.id}`}>
           <td />
           <td>
-            {/* Indent = hierarchy; same row anatomy as the parent otherwise. */}
-            <span className="block truncate pl-4">{p.name}</span>
+            {/* Indent = hierarchy; edits rename the ACTUAL project (card
+                auto-save contract — revert on failure via rethrow). */}
+            <div className="pl-3">
+              <InlineTextCell
+                value={p.name}
+                required
+                ariaLabel={`Name of project ${p.name}`}
+                onSave={(next) => renameProject(p.id, next)}
+              />
+            </div>
           </td>
           <td>
             <InlineSelectCell
@@ -374,9 +410,10 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
               onSave={(v) => setProjectSite(p, v != null ? Number(v) : null)}
             />
           </td>
-          <td>{jumpCell(p.id, 'Images', 'media')}</td>
-          <td>{jumpCell(p.id, 'Copy', 'copy')}</td>
-          <td>{jumpCell(p.id, 'Videos', 'media')}</td>
+          <td>{countCell(p, p.imageCount, 'Images', 'media')}</td>
+          <td>{countCell(p, p.copyCount, 'Copy', 'copy')}</td>
+          <td>{countCell(p, p.videoCount, 'Videos', 'media')}</td>
+          <td />
           <td />
           <td className="text-right">
             <Button
@@ -395,7 +432,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
       ))}
       <tr>
         <td />
-        <td colSpan={7}>
+        <td colSpan={8}>
           <AddProjectMenu
             available={available}
             onAssign={(id, name) => void assignProject(id, name)}
@@ -456,6 +493,7 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       {
         key: 'name',
         header: 'Delivery',
+        width: 220,
         sortAccessor: (d) => d.name.toLowerCase(),
         cell: (d) => (
           <div className="flex items-center gap-1">
@@ -503,6 +541,7 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       {
         key: 'type',
         header: 'Type',
+        width: 130,
         sortAccessor: (d) => (d.type ? (typePresets[d.type]?.label ?? d.type).toLowerCase() : null),
         cell: (d) => (
           <InlineSelectCell
@@ -512,7 +551,7 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
             ariaLabel={`Type of ${d.name}`}
             renderValue={(v) =>
               v ? (
-                <TypePill label={typePresets[v]?.label ?? v} />
+                <TypePill typeKey={v} label={typePresets[v]?.label ?? v} />
               ) : (
                 <span className="text-muted-foreground">No type</span>
               )
@@ -531,6 +570,7 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       {
         key: 'brand',
         header: 'Brand',
+        width: 150,
         sortAccessor: (d) =>
           d.brandId != null ? brandLabel.get(String(Number(d.brandId)))?.toLowerCase() ?? null : null,
         cell: (d) => (
@@ -546,6 +586,7 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       {
         key: 'modules',
         header: 'Modules',
+        width: 170,
         // Sortable by how much access the delivery grants.
         sortAccessor: (d) => (Array.isArray(d.modules) ? d.modules.length : 0),
         cell: (d) => (
@@ -555,6 +596,22 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
             onSave={(next) => patch(d.id, { modules: next })}
           />
         ),
+      },
+      {
+        key: 'assignee',
+        header: 'Assignee',
+        width: 160,
+        // Read-only: assignments live in the Users module (per-user delivery
+        // sets, admin-only) — this surfaces who works the delivery.
+        sortAccessor: (d) => d.assignees?.[0]?.name.toLowerCase() ?? null,
+        cell: (d) =>
+          d.assignees && d.assignees.length > 0 ? (
+            <span className="block truncate" title={d.assignees.map((a) => a.name).join(', ')}>
+              {d.assignees.map((a) => a.name).join(', ')}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
       },
       {
         key: 'externalId',
@@ -591,6 +648,9 @@ export function DeliveriesTable({ items, onEdit }: DeliveriesTableProps) {
       defaultSortDir="desc"
       renderSubRows={(d) => <ProjectSubRows delivery={d} />}
       emptyMessage="No deliveries match your filters."
+      // SEO-style column layout: drag headers to reorder, drag edges to
+      // resize; persisted per browser.
+      layoutKey="pcm:deliveries:col-layout:v1"
       // Deliveries-scoped chrome: hairline border does the separation (no
       // shadow), slightly rounder corners, light-gray header band so the
       // header reads as distinct from the white body rows. Global DataTable

@@ -24,6 +24,9 @@ export interface Delivery {
   modules?: string[];
   /** Optional external identifier — used for webhook/automation mapping. */
   externalId?: string | null;
+  /** Assigned team members (read-only enrichment on the list route; assigning
+   *  itself lives in the Users module). */
+  assignees?: { id: number; name: string }[];
   createdAt: string;
   updatedAt: string;
 }
