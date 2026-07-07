@@ -5872,3 +5872,23 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   select removed from the card (stored values untouched, grants unaffected).
 - Verified: php -l ×4 clean; tsc 56 = baseline, 0 in touched files; vite build OK. Live
   click-through pending user. BEFORE dcfc93c → AFTER (this commit); needs zip rebuild to ship.
+
+## 2026-07-07 — shared EntityCard primitive + delivery card UX v2
+- NEW components/shared/EntityCard/ (domain-agnostic, Kanban-primitive philosophy):
+  EntityCard (white 5xl Dialog shell, ONE scroll context, 32px padding, no footer),
+  EntityCardTitle (inline-editable, hover affordance, Enter=commit, empty=restore,
+  transient "Saved ✓" whisper), PropertyTable (declarative PropertyDef[]: text/select/
+  multiToggle, text-at-rest hover-reveal cells, fixed widths, muted empty labels, status
+  dots, chips-not-sentences for multiToggle), EntityCardSection (11px uppercase whisper
+  headers + action slot, enforced 24/8px spacing).
+- DeliveryDialog re-expressed through the primitive (reference consumer): 6 PropertyDefs
+  (Status w/ Kanban-colored dots | Client | Type→preset | Module access chips+popover |
+  Brand | External ID); auto-saves are SILENT (success toast removed from
+  useDeliveries.updateDelivery — errors still toast) with optimistic apply + revert on
+  failure; edit mode has NO footer (Esc/✕); create mode keeps single Create button.
+- Projects section: hover-revealed ✕, borderless site select, quiet "N media" text,
+  empty state = the add action (dashed ghost button opens the same AddProjectMenu).
+- Log section: composer input with in-field send button (Enter submits), author · relative
+  time (full timestamp on hover), max 10 + "Show all (N)", input is the empty state.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pending user.
+  BEFORE 2f8db8e → AFTER (this commit); needs zip rebuild to ship.

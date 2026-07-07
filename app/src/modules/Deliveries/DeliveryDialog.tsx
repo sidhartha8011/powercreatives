@@ -1,45 +1,37 @@
 /**
- * DeliveryDialog — Notion-style card for creating + editing a delivery.
+ * DeliveryDialog — the delivery detail card, built on the shared EntityCard
+ * primitive (reference consumer).
  *
- * One wide card, three parts:
- *   1. Title (the delivery name) + a PROPERTIES TABLE — one header row, one
- *      row of inline-editable cells (Status | Client | Type | Module access |
- *      Brand | External ID). In edit mode every cell auto-saves on change/blur;
- *      in create mode the cells fill local state and a Create button submits.
- *      Picking a Type applies its module preset; the "Module access" cell opens
- *      a popover of toggles for per-delivery custom overrides.
- *   2. PROJECTS TABLE (edit mode) — every project belonging to this delivery
- *      (projects.deliveryId), each with its Site ↔ Project connection dropdown
- *      (projects.siteId — same link the Sites table and Projects module edit)
- *      and a media count. "+ Add project" assigns a project to this delivery;
- *      ✕ unassigns it. Changes apply immediately via the assets endpoints that
- *      own the projects table.
- *   3. WORK LOG (edit mode) — append-only "what was done" notes
- *      (pcm_delivery_logs), newest first.
+ * Composition:
+ *   <EntityCard>                       ← shell: white, 5xl, one scroll, no footer
+ *     <EntityCardTitle>                ← name, edited in place, "Saved ✓" whisper
+ *     <PropertyTable>                  ← Status | Client | Type | Module access |
+ *                                        Brand | External ID (declarative defs)
+ *     <ProjectsSection> <LogSection>   ← Deliveries-owned domain sections
  *
- * Retired here (v1.35.0): the "SEO module — site" select (deliveries.seoSiteId
- * was write-only, nothing read it) and the single "Project" access-grant select
- * (the projects table shows the relationship; stored projectId values are
- * untouched and grants keep working).
+ * Edit mode auto-saves per field, silently (errors toast AND restore the
+ * previous value — the card never shows unsaved state as saved). Create mode
+ * fills the same cells locally and submits with one button.
+ *
+ * Type drives the module preset; the Module access cell is the custom
+ * override. Retired earlier (v1.35.0): seoSiteId + the single Project
+ * access-grant select.
  */
 
-import { useEffect, useState, type FormEvent } from 'react';
-import { ChevronDown, Loader2, Plus, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { Badge } from '@/components/ui/badge';
+import {
+  EntityCard,
+  EntityCardSection,
+  EntityCardTitle,
+  PropertyTable,
+  type PropertyDef,
+} from '@/components/shared/EntityCard';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -79,12 +71,19 @@ const STATUS_LABELS: Record<DeliveryStatus, string> = {
   completed: 'Completed',
 };
 
+/** Status dot colors — matches the Kanban lane semantics. */
+const STATUS_DOTS: Record<DeliveryStatus, string> = {
+  active: '#16a34a',
+  paused: '#d97706',
+  completed: '#94a3b8',
+};
+
 export interface DeliveryDialogProps {
   /** Open state — controlled by the parent (useDeliveries hook). */
   open: boolean;
   /** Existing delivery in edit mode; null in create mode. */
   delivery: Delivery | null;
-  /** Called when the dialog wants to close (overlay click, X, Cancel). */
+  /** Called when the dialog wants to close (overlay click, X, Esc). */
   onClose: () => void;
   /** Create handler. Resolves on server ack so the dialog can close. */
   onCreate: (data: {
@@ -109,16 +108,6 @@ export interface DeliveryDialogProps {
   }) => Promise<unknown>;
 }
 
-/** Compact summary for the Module access cell: "Ads, SEO +2" / "None". */
-function moduleSummary(ids: string[]): string {
-  if (ids.length === 0) return 'None';
-  const labels = ids
-    .map((id) => GRANTABLE_MODULES.find((m) => m.id === id)?.label ?? id);
-  return labels.length <= 2
-    ? labels.join(', ')
-    : `${labels.slice(0, 2).join(', ')} +${labels.length - 2}`;
-}
-
 export function DeliveryDialog({
   open,
   delivery,
@@ -132,20 +121,27 @@ export function DeliveryDialog({
   const [clientName, setClientName] = useState('');
   const [externalId, setExternalId] = useState('');
   const [status, setStatus] = useState<DeliveryStatus>('active');
-  // '' = none. Picking a type applies the central preset's modules
-  // (Settings → Delivery Types); the Module access cell stays editable.
   const [type, setType] = useState('');
   const { presets: typePresets } = useTypePresets();
   const [brandId, setBrandId] = useState('');
   const [modules, setModules] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
+  // Transient "Saved ✓" whisper next to the title (spec: silent saves).
+  const [saved, setSaved] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashSaved = () => {
+    setSaved(true);
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setSaved(false), 1500);
+  };
+
   const { data: brandsRaw } = trpc.brands.list.useQuery();
   const brands: { id: number; name: string }[] = Array.isArray(brandsRaw)
     ? brandsRaw.map((b: any) => ({ id: Number(b.id), name: b.name }))
     : [];
 
-  // Sync form to the supplied delivery whenever the dialog opens.
+  // Sync form state whenever the card opens (both modes reset here).
   useEffect(() => {
     if (!open) return;
     if (delivery) {
@@ -165,69 +161,96 @@ export function DeliveryDialog({
       setBrandId('');
       setModules([]);
     }
+    setSaved(false);
     setSubmitting(false);
   }, [open, delivery]);
 
-  // ── Auto-save (edit mode): each cell persists itself on change/blur. ──
-  const saveField = (patch: Record<string, unknown>) => {
+  /**
+   * Auto-save one field (edit mode): apply optimistically, whisper "Saved ✓"
+   * on ack, RESTORE the previous state on failure — the card never displays
+   * unsaved state as saved. Errors toast via the useDeliveries hook.
+   */
+  const persist = (patch: Record<string, unknown>, apply: () => void, revert: () => void) => {
+    apply();
     if (!isEdit || !delivery) return;
-    void onUpdate({ id: delivery.id, ...patch });
+    onUpdate({ id: delivery.id, ...patch }).then(flashSaved).catch(revert);
   };
 
-  const handleStatusChange = (v: string) => {
-    const next = v as DeliveryStatus;
-    setStatus(next);
-    saveField({ status: next });
+  const handleTypeChange = (next: string | null) => {
+    const cleaned = next ?? '';
+    const prevType = type;
+    const prevModules = modules;
+    // Type applies the central preset; the Module access cell is the override.
+    const presetModules = cleaned && typePresets[cleaned] ? [...typePresets[cleaned].modules] : null;
+    persist(
+      { type: cleaned || null, ...(presetModules ? { modules: presetModules } : {}) },
+      () => { setType(cleaned); if (presetModules) setModules(presetModules); },
+      () => { setType(prevType); setModules(prevModules); },
+    );
   };
 
-  const handleTypeChange = (next: string) => {
-    const cleaned = next === 'none' ? '' : next;
-    setType(cleaned);
-    // Type drives the module preset; custom tweaks happen in the Module access cell.
-    const presetModules = cleaned && typePresets[cleaned] ? [...typePresets[cleaned].modules] : modules;
-    if (cleaned && typePresets[cleaned]) setModules(presetModules);
-    saveField({ type: cleaned || null, ...(cleaned && typePresets[cleaned] ? { modules: presetModules } : {}) });
-  };
+  // ── Declarative property row (spec: fixed widths, no jitter). ──
+  const properties: PropertyDef[] = [
+    {
+      control: 'select', key: 'status', label: 'Status', width: '12%',
+      value: status,
+      noneLabel: '—',
+      options: DELIVERY_STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s], dot: STATUS_DOTS[s] })),
+      onSave: (v) => {
+        if (!v) return; // status is never empty
+        const prev = status;
+        persist({ status: v as DeliveryStatus }, () => setStatus(v as DeliveryStatus), () => setStatus(prev));
+      },
+    },
+    {
+      control: 'text', key: 'client', label: 'Client', width: '22%',
+      value: clientName, placeholder: 'Empty',
+      onSave: (v) => {
+        const prev = clientName;
+        persist({ clientName: v.length > 0 ? v : null }, () => setClientName(v), () => setClientName(prev));
+      },
+    },
+    {
+      control: 'select', key: 'type', label: 'Type', width: '16%',
+      value: type || null,
+      noneLabel: 'No type',
+      options: Object.entries(typePresets).map(([id, preset]) => ({ value: id, label: preset.label })),
+      onSave: handleTypeChange,
+    },
+    {
+      control: 'multiToggle', key: 'modules', label: 'Module access', width: '18%',
+      values: modules,
+      options: GRANTABLE_MODULES.map((m) => ({ id: m.id, label: m.label })),
+      popoverLabel: 'Module access (Ads includes Copy + Image)',
+      onSave: (next) => {
+        const prev = modules;
+        persist({ modules: next }, () => setModules(next), () => setModules(prev));
+      },
+    },
+    {
+      control: 'select', key: 'brand', label: 'Brand', width: '16%',
+      value: brandId || null,
+      noneLabel: 'No brand',
+      options: brands.map((b) => ({ value: String(b.id), label: b.name })),
+      onSave: (v) => {
+        const prev = brandId;
+        persist({ brandId: v ? Number(v) : null }, () => setBrandId(v ?? ''), () => setBrandId(prev));
+      },
+    },
+    {
+      control: 'text', key: 'externalId', label: 'External ID', width: '16%',
+      value: externalId, placeholder: 'Empty',
+      onSave: (v) => {
+        const prev = externalId;
+        persist({ externalId: v.length > 0 ? v : null }, () => setExternalId(v), () => setExternalId(prev));
+      },
+    },
+  ];
 
-  const handleBrandChange = (v: string) => {
-    const cleaned = v === 'none' ? '' : v;
-    setBrandId(cleaned);
-    saveField({ brandId: cleaned ? Number(cleaned) : null });
-  };
-
-  const toggleModule = (id: string) => {
-    const next = modules.includes(id) ? modules.filter((m) => m !== id) : [...modules, id];
-    setModules(next);
-    saveField({ modules: next });
-  };
-
-  const handleNameBlur = () => {
-    if (!isEdit || !delivery) return;
-    const trimmed = name.trim();
-    if (trimmed.length === 0) {
-      setName(delivery.name); // name is required — restore instead of saving empty
-      return;
-    }
-    if (trimmed !== delivery.name) saveField({ name: trimmed });
-  };
-
-  const handleClientBlur = () => {
-    if (!isEdit || !delivery) return;
-    const trimmed = clientName.trim();
-    if (trimmed !== (delivery.clientName ?? '')) saveField({ clientName: trimmed.length > 0 ? trimmed : null });
-  };
-
-  const handleExternalIdBlur = () => {
-    if (!isEdit || !delivery) return;
-    const trimmed = externalId.trim();
-    if (trimmed !== (delivery.externalId ?? '')) saveField({ externalId: trimmed.length > 0 ? trimmed : null });
-  };
-
-  // ── Create mode: classic submit. ──
+  // ── Create mode: same cells, local state only, one primary action. ──
   const canSubmit = name.trim().length > 0 && !submitting;
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (isEdit || !canSubmit) return;
+  const handleCreate = async () => {
+    if (!canSubmit) return;
     setSubmitting(true);
     try {
       const trimmedClient = clientName.trim();
@@ -243,163 +266,89 @@ export function DeliveryDialog({
       });
       onClose();
     } catch {
-      // Errors surface as toasts via the hook — keep the dialog open.
+      // Errors surface as toasts via the hook — keep the card open.
       setSubmitting(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="sm:max-w-5xl bg-white max-h-[90vh] overflow-y-auto">
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
-            <DialogTitle className="sr-only">
-              {isEdit ? 'Edit delivery' : 'New delivery'}
-            </DialogTitle>
-            <DialogDescription className="sr-only">
-              {isEdit
-                ? 'Delivery card — every field saves automatically.'
-                : 'Create a delivery to organize continual-fulfilment work for a client.'}
-            </DialogDescription>
-            {/* Title = the delivery name, edited in place like a document title. */}
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={handleNameBlur}
-              placeholder="Delivery name…"
-              autoFocus={!isEdit}
-              maxLength={256}
-              required
-              className="border-none shadow-none px-0 !text-2xl font-bold tracking-tight focus-visible:ring-0 bg-transparent"
-            />
-          </DialogHeader>
+    <EntityCard
+      open={open}
+      onClose={onClose}
+      ariaTitle={isEdit ? 'Edit delivery' : 'New delivery'}
+      ariaDescription={isEdit
+        ? 'Delivery card — every field saves automatically.'
+        : 'Create a delivery to organize continual-fulfilment work for a client.'}
+    >
+      <EntityCardTitle
+        value={name}
+        placeholder="Untitled delivery"
+        autoFocus={!isEdit}
+        saved={saved}
+        onSave={(next) => {
+          const prev = name;
+          if (isEdit) {
+            persist({ name: next }, () => setName(next), () => setName(prev));
+          } else {
+            setName(next);
+          }
+        }}
+      />
 
-          {/* ── Properties table: one header row, one row of editable cells. ── */}
-          <div className="rounded-md border mt-2">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Status</TableHead>
-                  <TableHead className="text-xs">Client</TableHead>
-                  <TableHead className="text-xs">Type</TableHead>
-                  <TableHead className="text-xs">Module access</TableHead>
-                  <TableHead className="text-xs">Brand</TableHead>
-                  <TableHead className="text-xs">External ID</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell className="p-1.5">
-                    <Select value={status} onValueChange={handleStatusChange}>
-                      <SelectTrigger className="h-8 w-full text-xs border-none shadow-none"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {DELIVERY_STATUSES.map((s) => (
-                          <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell className="p-1.5">
-                    <Input
-                      value={clientName}
-                      onChange={(e) => setClientName(e.target.value)}
-                      onBlur={handleClientBlur}
-                      placeholder="Client name"
-                      maxLength={256}
-                      className="h-8 text-xs border-none shadow-none focus-visible:ring-1"
-                    />
-                  </TableCell>
-                  <TableCell className="p-1.5">
-                    <Select value={type || 'none'} onValueChange={handleTypeChange}>
-                      <SelectTrigger className="h-8 w-full text-xs border-none shadow-none"><SelectValue placeholder="No type" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No type</SelectItem>
-                        {Object.entries(typePresets).map(([id, preset]) => (
-                          <SelectItem key={id} value={id}>{preset.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell className="p-1.5">
-                    {/* Summary cell; click for the custom-override toggles. */}
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button type="button" variant="ghost" size="sm" className="h-8 w-full justify-between gap-1 text-xs font-normal">
-                          <span className="truncate">{moduleSummary(modules)}</span>
-                          <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start" className="w-56">
-                        <DropdownMenuLabel className="text-xs">
-                          Module access (Ads includes Copy + Image)
-                        </DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        {GRANTABLE_MODULES.map((m) => (
-                          <DropdownMenuCheckboxItem
-                            key={m.id}
-                            className="text-xs"
-                            checked={modules.includes(m.id)}
-                            onCheckedChange={() => toggleModule(m.id)}
-                            onSelect={(e) => e.preventDefault()}
-                          >
-                            {m.label}
-                          </DropdownMenuCheckboxItem>
-                        ))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                  <TableCell className="p-1.5">
-                    <Select value={brandId || 'none'} onValueChange={handleBrandChange}>
-                      <SelectTrigger className="h-8 w-full text-xs border-none shadow-none"><SelectValue placeholder="No brand" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No brand</SelectItem>
-                        {brands.map((b) => (
-                          <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell className="p-1.5">
-                    <Input
-                      value={externalId}
-                      onChange={(e) => setExternalId(e.target.value)}
-                      onBlur={handleExternalIdBlur}
-                      placeholder="e.g. Airtable ID"
-                      maxLength={256}
-                      className="h-8 text-xs border-none shadow-none focus-visible:ring-1"
-                    />
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
+      <PropertyTable properties={properties} />
 
-          {/* ── Projects + Log: live sections, edit mode only. ── */}
-          {isEdit && delivery && <ProjectsSection delivery={delivery} />}
-          {isEdit && delivery && <LogSection delivery={delivery} />}
+      {isEdit && delivery && <ProjectsSection delivery={delivery} />}
+      {isEdit && delivery && <LogSection delivery={delivery} />}
 
-          <DialogFooter className="mt-4">
-            {isEdit ? (
-              <Button type="button" variant="outline" onClick={onClose}>Done</Button>
-            ) : (
-              <>
-                <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
-                <Button type="submit" disabled={!canSubmit}>
-                  {submitting ? 'Creating…' : 'Create delivery'}
-                </Button>
-              </>
+      {!isEdit && (
+        <div className="mt-6 flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
+          <Button type="button" onClick={() => void handleCreate()} disabled={!canSubmit}>
+            {submitting ? 'Creating…' : 'Create delivery'}
+          </Button>
+        </div>
+      )}
+    </EntityCard>
+  );
+}
+
+/** Shared "assign a project" menu — used by the header action AND the empty state. */
+function AddProjectMenu({
+  available,
+  onAssign,
+  trigger,
+}: {
+  available: { id: number; name: string; deliveryId: number | null }[];
+  onAssign: (projectId: number, name: string) => void;
+  trigger: React.ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel className="text-xs">Assign a project to this delivery</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {available.length === 0 && (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">No unassigned projects</div>
+        )}
+        {available.map((p) => (
+          <DropdownMenuItem key={p.id} className="text-xs" onSelect={() => onAssign(p.id, p.name)}>
+            <span className="truncate">{p.name}</span>
+            {p.deliveryId !== null && (
+              <span className="ml-auto pl-2 text-[10px] text-muted-foreground shrink-0">in another delivery</span>
             )}
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
 /**
- * Projects in this delivery — table of projects with projects.deliveryId =
- * this delivery, each with its Site ↔ Project connection. Mounted only while
- * the card is open in edit mode, so the queries only run when needed.
+ * Projects in this delivery — projects.deliveryId = this delivery, each with
+ * its Site ↔ Project connection (projects.siteId — the same link the Sites
+ * table and Projects module edit). Row actions reveal on hover; the empty
+ * state IS the add action. Mounted only while the card is open in edit mode.
  */
 function ProjectsSection({ delivery }: { delivery: Delivery }) {
   const { data: projectsRaw, refetch: refetchProjects } = trpc.assets.getProjects.useQuery();
@@ -457,37 +406,37 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
   };
 
   return (
-    <div className="mt-5">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-semibold">Projects in this delivery</h3>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-xs">
-              <Plus className="w-3.5 h-3.5" /> Add project
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuLabel className="text-xs">Assign a project to this delivery</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {available.length === 0 && (
-              <div className="px-2 py-1.5 text-xs text-muted-foreground">No unassigned projects</div>
-            )}
-            {available.map((p) => (
-              <DropdownMenuItem key={p.id} className="text-xs" onSelect={() => void assignProject(p.id, p.name)}>
-                <span className="truncate">{p.name}</span>
-                {p.deliveryId !== null && (
-                  <span className="ml-auto pl-2 text-[10px] text-muted-foreground shrink-0">in another delivery</span>
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
+    <EntityCardSection
+      title="Projects"
+      action={
+        inDelivery.length > 0 ? (
+          <AddProjectMenu
+            available={available}
+            onAssign={(id, name) => void assignProject(id, name)}
+            trigger={
+              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 text-xs text-muted-foreground">
+                <Plus className="h-3.5 w-3.5" /> Add project
+              </Button>
+            }
+          />
+        ) : undefined
+      }
+    >
       {inDelivery.length === 0 ? (
-        <p className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-          No projects in this delivery yet — use “Add project”.
-        </p>
+        // The empty state IS the action — one click, same menu.
+        <AddProjectMenu
+          available={available}
+          onAssign={(id, name) => void assignProject(id, name)}
+          trigger={
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-auto w-full justify-center gap-1 rounded-md border border-dashed px-3 py-4 text-xs text-muted-foreground"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add a project to this delivery
+            </Button>
+          }
+        />
       ) : (
         <div className="rounded-md border">
           <Table>
@@ -500,40 +449,43 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
             </TableHeader>
             <TableBody>
               {inDelivery.map((p) => (
-                <TableRow key={p.id}>
+                <TableRow key={p.id} className="group">
                   <TableCell className="text-sm font-medium">{p.name}</TableCell>
-                  <TableCell className="p-1.5">
-                    <div className="flex items-center gap-2">
+                  <TableCell className="p-1">
+                    <div className="flex items-center gap-3">
                       <Select
                         value={p.siteId != null ? String(p.siteId) : 'none'}
                         onValueChange={(v) => void setProjectSite(p, v === 'none' ? null : Number(v))}
                         disabled={setSiteMutation.isPending}
                       >
-                        <SelectTrigger className="h-8 w-[190px] text-xs">
+                        <SelectTrigger
+                          aria-label={`Site for ${p.name}`}
+                          className={`h-8 w-[190px] rounded border-none bg-transparent px-2 text-xs shadow-none hover:bg-slate-50 focus-visible:ring-1 ${p.siteId == null ? 'text-muted-foreground' : ''}`}
+                        >
                           <SelectValue placeholder="Not connected" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="none">Not connected</SelectItem>
+                          <SelectItem value="none" className="text-muted-foreground">Not connected</SelectItem>
                           {sites.map((s) => (
                             <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      <Badge variant="outline" className="text-[10px] shrink-0">
-                        {p.assetCount} media
-                      </Badge>
+                      <span className="shrink-0 text-xs text-muted-foreground">{p.assetCount} media</span>
                     </div>
                   </TableCell>
-                  <TableCell className="p-1.5 text-right">
+                  <TableCell className="p-1 text-right">
+                    {/* Revealed on row hover — quiet at rest. */}
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                      className="h-7 w-7 p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
                       title="Remove from this delivery"
+                      aria-label={`Remove ${p.name} from this delivery`}
                       onClick={() => void unassignProject(p.id, p.name)}
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <X className="h-3.5 w-3.5" />
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -542,16 +494,34 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
           </Table>
         </div>
       )}
-    </div>
+    </EntityCardSection>
   );
 }
 
+/** "2h ago" style relative time; full timestamp lives in the title attr. */
+function relTime(mysqlDate: string): string {
+  const then = new Date(mysqlDate.replace(' ', 'T')).getTime();
+  if (Number.isNaN(then)) return '';
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+/** How many log entries show before the "Show all" expander. */
+const LOG_PREVIEW_COUNT = 10;
+
 /**
- * Work log — append-only "what was done" entries (pcm_delivery_logs),
- * newest first. Mounted only while the card is open in edit mode.
+ * Work log — append-only "what was done" entries (pcm_delivery_logs), newest
+ * first. The composer input is the empty state; Enter or the send affordance
+ * submits. Mounted only while the card is open in edit mode.
  */
 function LogSection({ delivery }: { delivery: Delivery }) {
   const [note, setNote] = useState('');
+  const [showAll, setShowAll] = useState(false);
   const { data: logsRaw, refetch } = trpc.deliveries.logs.useQuery({ id: Number(delivery.id) });
   const logs: { id: number; note: string; userName: string; createdAt: string }[] = Array.isArray(logsRaw)
     ? (logsRaw as any[]).map((l) => ({
@@ -561,6 +531,7 @@ function LogSection({ delivery }: { delivery: Delivery }) {
         createdAt: String(l.createdAt ?? ''),
       }))
     : [];
+  const visible = showAll ? logs : logs.slice(0, LOG_PREVIEW_COUNT);
 
   const addMutation = trpc.deliveries.addLog.useMutation() as any;
   const addEntry = async () => {
@@ -576,40 +547,63 @@ function LogSection({ delivery }: { delivery: Delivery }) {
   };
 
   return (
-    <div className="mt-5">
-      <h3 className="text-sm font-semibold mb-2">Log</h3>
-      <div className="flex items-center gap-2 mb-3">
+    <EntityCardSection title="Log">
+      {/* Composer — the input IS the empty state. */}
+      <div className="relative mb-3">
         <Input
           value={note}
           onChange={(e) => setNote(e.target.value)}
           placeholder="Write what was done…"
+          aria-label="Write what was done"
           maxLength={2000}
-          className="h-9 text-xs"
+          className="h-9 pr-10 text-xs"
           onKeyDown={(e) => {
+            // Enter and ⌘/Ctrl+Enter both submit; never the surrounding form.
             if (e.key === 'Enter') {
-              e.preventDefault(); // don't submit the surrounding form
+              e.preventDefault();
               void addEntry();
             }
           }}
         />
-        <Button type="button" size="sm" className="h-9 shrink-0" disabled={addMutation.isPending || !note.trim()} onClick={() => void addEntry()}>
-          {addMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-label="Add log entry"
+          className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 p-0 text-muted-foreground disabled:opacity-30"
+          disabled={addMutation.isPending || !note.trim()}
+          onClick={() => void addEntry()}
+        >
+          <Send className="h-3.5 w-3.5" />
         </Button>
       </div>
-      {logs.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No log entries yet.</p>
-      ) : (
+
+      {visible.length > 0 && (
         <ul className="space-y-2">
-          {logs.map((l) => (
+          {visible.map((l) => (
             <li key={l.id} className="rounded-md border px-3 py-2">
-              <p className="text-sm whitespace-pre-wrap">{l.note}</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {l.userName} — {l.createdAt ? new Date(l.createdAt.replace(' ', 'T')).toLocaleString() : ''}
+              <p className="whitespace-pre-wrap text-sm">{l.note}</p>
+              <p
+                className="mt-1 text-[11px] text-muted-foreground"
+                title={l.createdAt ? new Date(l.createdAt.replace(' ', 'T')).toLocaleString() : undefined}
+              >
+                {l.userName} · {relTime(l.createdAt)}
               </p>
             </li>
           ))}
         </ul>
       )}
-    </div>
+      {!showAll && logs.length > LOG_PREVIEW_COUNT && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-2 h-7 text-xs text-muted-foreground"
+          onClick={() => setShowAll(true)}
+        >
+          Show all ({logs.length})
+        </Button>
+      )}
+    </EntityCardSection>
   );
 }

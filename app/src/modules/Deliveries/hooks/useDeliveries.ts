@@ -154,12 +154,14 @@ export function useDeliveries(): UseDeliveriesResult {
   );
 
   const updateDelivery = useCallback(
+    // Silent on success — the card auto-saves per field and shows its own
+    // transient "Saved ✓" whisper; a toast per blurred field is spam.
+    // Errors still toast (and the card restores the previous value).
     (input: UpdateDeliveryInput): Promise<Delivery> =>
       updateMutation
         .mutateAsync(input)
         .then((updated: unknown) => {
           void invalidateList();
-          toast.success('Delivery updated');
           return updated as Delivery;
         })
         .catch((err: unknown) => {
