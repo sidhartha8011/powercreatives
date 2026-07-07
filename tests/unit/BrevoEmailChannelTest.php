@@ -21,6 +21,11 @@ class BrevoEmailChannelTest extends TestCase
         WP_Mock::userFunction('is_email')->andReturnUsing(
             fn($e) => (bool) filter_var($e, FILTER_VALIDATE_EMAIL)
         );
+        // The Brevo channel reads the per-module from-sender via PCM_Settings::get()
+        // → get_option(). Return an empty option so settings fall to defaults; without
+        // this the test only passed by borrowing a get_option mock leaked from another
+        // test, so it errored intermittently depending on test order.
+        WP_Mock::userFunction('get_option')->andReturn(array());
     }
 
     /** Build a mocked $wpdb that returns a given Brevo key. */
