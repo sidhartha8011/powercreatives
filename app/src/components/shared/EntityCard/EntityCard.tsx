@@ -19,6 +19,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
+import { CARD_SPACE } from './cardTokens';
+
 export interface EntityCardProps {
   open: boolean;
   /** Called when the card wants to close (overlay click, ✕, Esc). */
@@ -37,8 +39,8 @@ export function EntityCard({ open, onClose, ariaTitle, ariaDescription, children
       <DialogContent className="block h-[88vh] overflow-y-auto rounded-xl bg-white p-0 sm:max-w-[880px]">
         <DialogTitle className="sr-only">{ariaTitle}</DialogTitle>
         {ariaDescription && <DialogDescription className="sr-only">{ariaDescription}</DialogDescription>}
-        {/* The whitespace IS the design: narrow centered column, big top padding. */}
-        <div className="mx-auto max-w-[640px] px-8 pb-16 pt-14">
+        {/* The whitespace IS the design: one centered column, geometry from CARD_SPACE. */}
+        <div className={CARD_SPACE.COLUMN}>
           {children}
         </div>
       </DialogContent>

@@ -13,6 +13,8 @@ import { Check } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 
+import { CARD_SPACE, CARD_TYPE } from './cardTokens';
+
 export interface EntityCardTitleProps {
   value: string;
   placeholder: string;
@@ -41,8 +43,8 @@ export function EntityCardTitle({ value, placeholder, onSave, saved = false, met
   };
 
   return (
-    <div className="mb-6">
-      {meta && <p className="mb-1 px-1.5 text-xs text-muted-foreground">{meta}</p>}
+    <div className={CARD_SPACE.TITLE_GAP}>
+      {meta && <p className={`mb-1 px-1.5 ${CARD_TYPE.LABEL}`}>{meta}</p>}
       <div className="flex items-center gap-3">
         <Input
           value={draft}
@@ -58,11 +60,11 @@ export function EntityCardTitle({ value, placeholder, onSave, saved = false, met
           aria-label={placeholder}
           autoFocus={autoFocus}
           maxLength={256}
-          className="h-auto rounded-md border-none bg-transparent px-1.5 py-1 !text-[32px] font-bold leading-tight tracking-tight shadow-none cursor-text hover:bg-slate-50 focus-visible:ring-1"
+          className={`h-auto rounded-md border-none bg-transparent px-1.5 py-1 shadow-none cursor-text hover:bg-slate-50 focus-visible:ring-1 ${CARD_TYPE.TITLE}`}
         />
         <span
           aria-live="polite"
-          className={`flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground transition-opacity duration-300 ${saved ? 'opacity-100' : 'opacity-0'}`}
+          className={`flex shrink-0 items-center gap-1 transition-opacity duration-300 ${CARD_TYPE.LABEL} ${saved ? 'opacity-100' : 'opacity-0'}`}
         >
           <Check className="h-3 w-3" /> Saved
         </span>

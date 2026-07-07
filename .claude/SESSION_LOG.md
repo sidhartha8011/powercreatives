@@ -5905,3 +5905,22 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - DeliveryDialog: passes meta from updatedAt; projects table restyled via recipe.
 - Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pending user.
   BEFORE 3ebee88 → AFTER (this commit); needs zip rebuild to ship.
+
+## 2026-07-07 — card tokens (root typography + spacing + WP-bleed fix)
+- NEW EntityCard/cardTokens.ts: CARD_TYPE (TITLE 32/bold w/ literal !-marks vs Input's
+  md:text-sm; BODY 13/400/foreground; LABEL 12/400/muted; SECTION 11/600/uppercase) — every
+  role sets size+ink+weight+line-height explicitly, so WP-admin's global input/select CSS
+  (reachable via the Radix portal into wp-admin body) has zero unspecified properties to
+  fill = bleed closed at the root. CARD_SPACE (COLUMN max-w-760/px-4/pt-10/pb-14 — tighter
+  per Notion ref; TITLE_GAP/SECTION_GAP/SECTION_HEADER_GAP). Contract documented in-file:
+  no raw text/spacing classes inside cards.
+- Sweep: tableRecipe HEAD=LABEL CELL=BODY; EntityCard/Title/Section/PropertyTable and the
+  delivery card sections consume roles only. Kills: 10px chips (→LABEL), 13px-medium
+  project names beside 12px selects (→BODY everywhere), 14px log notes (→BODY), 11px
+  timestamps (→LABEL), placeholder=body-size/label-ink. Floating dropdown menus keep the
+  app's standard menu styling (not card surface).
+- Fixed mid-implementation: runtime-built "!"-classes would be invisible to Tailwind JIT —
+  the !-marks moved into the literal token string instead.
+- Item 6 (global dialog bg-card) NOT included — awaiting explicit user go.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pending user.
+  BEFORE dd630d1 → AFTER (this commit); needs zip rebuild to ship.

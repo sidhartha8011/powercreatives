@@ -27,6 +27,7 @@ import {
   CARD_TABLE_HEAD,
   CARD_TABLE_ROW,
   CARD_TABLE_WRAPPER,
+  CARD_TYPE,
   EntityCard,
   EntityCardSection,
   EntityCardTitle,
@@ -420,7 +421,7 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
             available={available}
             onAssign={(id, name) => void assignProject(id, name)}
             trigger={
-              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 text-xs text-muted-foreground">
+              <Button type="button" variant="ghost" size="sm" className={`h-7 gap-1 ${CARD_TYPE.LABEL}`}>
                 <Plus className="h-3.5 w-3.5" /> Add project
               </Button>
             }
@@ -437,7 +438,7 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
             <Button
               type="button"
               variant="ghost"
-              className="h-auto w-full justify-center gap-1 rounded-md border border-dashed px-3 py-4 text-xs text-muted-foreground"
+              className={`h-auto w-full justify-center gap-1 rounded-md border border-dashed px-3 py-4 ${CARD_TYPE.LABEL}`}
             >
               <Plus className="h-3.5 w-3.5" /> Add a project to this delivery
             </Button>
@@ -456,7 +457,8 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
             <TableBody>
               {inDelivery.map((p) => (
                 <TableRow key={p.id} className={`group ${CARD_TABLE_ROW}`}>
-                  <TableCell className={`${CARD_TABLE_CELL} px-3 font-medium`}>{p.name}</TableCell>
+                  {/* Names earn emphasis from position, not weight — BODY like every value. */}
+                  <TableCell className={`${CARD_TABLE_CELL} px-3`}>{p.name}</TableCell>
                   <TableCell className={CARD_TABLE_CELL}>
                     <div className="flex items-center gap-3">
                       <Select
@@ -466,7 +468,7 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
                       >
                         <SelectTrigger
                           aria-label={`Site for ${p.name}`}
-                          className={`h-8 w-[190px] rounded border-none bg-transparent px-2 text-xs shadow-none hover:bg-slate-50 focus-visible:ring-1 ${p.siteId == null ? 'text-muted-foreground' : ''}`}
+                          className={`h-8 w-[190px] rounded border-none bg-transparent px-2 shadow-none hover:bg-slate-50 focus-visible:ring-1 ${CARD_TYPE.BODY} ${p.siteId == null ? 'text-muted-foreground' : ''}`}
                         >
                           <SelectValue placeholder="Not connected" />
                         </SelectTrigger>
@@ -477,7 +479,7 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
                           ))}
                         </SelectContent>
                       </Select>
-                      <span className="shrink-0 text-xs text-muted-foreground">{p.assetCount} media</span>
+                      <span className={`shrink-0 ${CARD_TYPE.LABEL}`}>{p.assetCount} media</span>
                     </div>
                   </TableCell>
                   <TableCell className={`${CARD_TABLE_CELL} text-right`}>
@@ -549,7 +551,7 @@ function LogSection({ delivery }: { delivery: Delivery }) {
           placeholder="Write what was done…"
           aria-label="Write what was done"
           maxLength={2000}
-          className="h-9 pr-10 text-xs"
+          className={`h-9 pr-10 ${CARD_TYPE.BODY}`}
           onKeyDown={(e) => {
             // Enter and ⌘/Ctrl+Enter both submit; never the surrounding form.
             if (e.key === 'Enter') {
@@ -575,9 +577,9 @@ function LogSection({ delivery }: { delivery: Delivery }) {
         <ul className="space-y-2">
           {visible.map((l) => (
             <li key={l.id} className="rounded-md border px-3 py-2">
-              <p className="whitespace-pre-wrap text-sm">{l.note}</p>
+              <p className={`whitespace-pre-wrap ${CARD_TYPE.BODY}`}>{l.note}</p>
               <p
-                className="mt-1 text-[11px] text-muted-foreground"
+                className={`mt-1 ${CARD_TYPE.LABEL}`}
                 title={l.createdAt ? new Date(l.createdAt.replace(' ', 'T')).toLocaleString() : undefined}
               >
                 {l.userName} · {relTime(l.createdAt)}
@@ -591,7 +593,7 @@ function LogSection({ delivery }: { delivery: Delivery }) {
           type="button"
           variant="ghost"
           size="sm"
-          className="mt-2 h-7 text-xs text-muted-foreground"
+          className={`mt-2 h-7 ${CARD_TYPE.LABEL}`}
           onClick={() => setShowAll(true)}
         >
           Show all ({logs.length})

@@ -41,6 +41,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
+import { CARD_TYPE } from './cardTokens';
 import { CARD_TABLE_CELL, CARD_TABLE_HEAD, CARD_TABLE_ROW, CARD_TABLE_WRAPPER } from './tableRecipe';
 
 export interface SelectOption {
@@ -139,7 +140,8 @@ function TextCell({ def }: { def: Extract<PropertyDef, { control: 'text' }> }) {
       placeholder={def.placeholder ?? 'Empty'}
       aria-label={def.label}
       maxLength={256}
-      className="h-8 rounded border-none bg-transparent px-2 text-xs shadow-none cursor-text hover:bg-slate-50 focus-visible:ring-1 placeholder:text-muted-foreground"
+      // Placeholder = body size, label ink (absence changes ink, never size).
+      className={`h-8 rounded border-none bg-transparent px-2 shadow-none cursor-text hover:bg-slate-50 focus-visible:ring-1 placeholder:text-muted-foreground ${CARD_TYPE.BODY}`}
     />
   );
 }
@@ -152,7 +154,7 @@ function SelectCell({ def }: { def: Extract<PropertyDef, { control: 'select' }> 
     >
       <SelectTrigger
         aria-label={def.label}
-        className={`h-8 w-full rounded border-none bg-transparent px-2 text-xs shadow-none hover:bg-slate-50 focus-visible:ring-1 ${def.value == null ? 'text-muted-foreground' : ''}`}
+        className={`h-8 w-full rounded border-none bg-transparent px-2 shadow-none hover:bg-slate-50 focus-visible:ring-1 ${CARD_TYPE.BODY} ${def.value == null ? 'text-muted-foreground' : ''}`}
       >
         <SelectValue />
       </SelectTrigger>
@@ -185,16 +187,16 @@ function MultiToggleCell({ def }: { def: Extract<PropertyDef, { control: 'multiT
           type="button"
           variant="ghost"
           aria-label={def.label}
-          className="h-8 w-full justify-between gap-1 rounded px-2 text-xs font-normal hover:bg-slate-50"
+          className={`h-8 w-full justify-between gap-1 rounded px-2 hover:bg-slate-50 ${CARD_TYPE.BODY}`}
         >
-          {/* Chips, not a sentence — scannable at a glance. */}
+          {/* Chips, not a sentence — compact metadata, so they wear LABEL. */}
           <span className="flex min-w-0 items-center gap-1">
             {selected.length === 0 && <span className="text-muted-foreground">None</span>}
             {selected.slice(0, 2).map((o) => (
-              <Badge key={o.id} variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">{o.label}</Badge>
+              <Badge key={o.id} variant="secondary" className={`px-1.5 py-0 ${CARD_TYPE.LABEL}`}>{o.label}</Badge>
             ))}
             {selected.length > 2 && (
-              <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">+{selected.length - 2}</Badge>
+              <Badge variant="secondary" className={`px-1.5 py-0 ${CARD_TYPE.LABEL}`}>+{selected.length - 2}</Badge>
             )}
           </span>
           <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />

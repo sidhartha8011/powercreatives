@@ -8,6 +8,8 @@
 
 import type { ReactNode } from 'react';
 
+import { CARD_SPACE, CARD_TYPE } from './cardTokens';
+
 export interface EntityCardSectionProps {
   title: string;
   /** Optional right-aligned header action (e.g. a ghost "+ Add" button). */
@@ -17,9 +19,9 @@ export interface EntityCardSectionProps {
 
 export function EntityCardSection({ title, action, children }: EntityCardSectionProps) {
   return (
-    <section className="mt-8">
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</h3>
+    <section className={CARD_SPACE.SECTION_GAP}>
+      <div className={`flex items-center justify-between ${CARD_SPACE.SECTION_HEADER_GAP}`}>
+        <h3 className={CARD_TYPE.SECTION}>{title}</h3>
         {action}
       </div>
       {children}
