@@ -5832,3 +5832,33 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   rename+sort/filter, non-ASCII fix, Pos split, auto-verify, 411/401 fixes, no-data fix, reuse+indexed-
   domain popup, token-check hardening, no-data-yet messaging; PRT: host match + keyword parity; connector
   2.4.0 self-update; white GSC input; ~10 verified zip builds). No files changed.
+
+## 2026-07-02 — Commit + push the /llm-info/ + keyword-detection work
+- **Task:** push the code (user explicitly authorized the commit).
+- **State:** on `feat/seo-suite-port` (active dev branch, not default `image-features`); 0 ahead/0 behind
+  origin before commit; `app/dist/` gitignored (no build artifacts committed); no pre-commit hooks.
+- **Committed `a38f3cd`** (8 files, +435/-23): trpc-routes.ts, SEO/LlmInfoEditor.tsx, SEO/index.tsx,
+  seo/controller.php, seo/service.php, tests/unit/SeoIntegrationTest.php + .claude map/log. Message:
+  "feat(seo): surface /llm-info/ in AI Readiness + auto-detect site keywords".
+- **Pushed:** `c2228e5..a38f3cd feat/seo-suite-port` → origin; branch in sync.
+- **Verified before push:** (prior turns) `npm run check` 56 baseline (none in touched files), `npm run
+  build` clean, PHP `php -l` clean on service/controller/test, `top_keywords` proven on real code via
+  reflection harness. No new deps. No version bump.
+
+## 2026-07-07 — "I made a pull, changes not reflecting" — diagnosed + fixed
+- **Root cause:** the `git pull` had **silently aborted**. Working copy was `[behind 18]` /
+  0-ahead on `feat/seo-suite-port`, so a pull should fast-forward — BUT `.claude/SESSION_LOG.md`
+  had 12 uncommitted local lines AND all 18 incoming commits also touch that file, so git refused
+  ("local changes would be overwritten by merge"). Nothing landed.
+- **Fix:** `git stash push .claude/SESSION_LOG.md` → `git merge --ff-only origin/feat/seo-suite-port`
+  (18 commits, now at `9bb8ad5`, in sync with origin) → `git stash pop` → resolved the SESSION_LOG
+  append-conflict by keeping both blocks (upstream history + the local 2026-07-02 entry). Staged, not committed.
+- **Then made it actually reflect:** pulled changes were mostly frontend (new `Logs`, SEO `HeadingsPanel`,
+  `PrtLiveTestSection`, `GscSetupGuide`, `EmailSendersSection`); `app/dist/` was still the 07-02 build.
+  Ran `cd app && npm run build` (vite, 2120 modules, fresh bundle 13:52). Told user to **hard-refresh (Ctrl+F5)**
+  (fixed-filename bundle).
+- **Verified:** junction `powercreatives.local` → OneDrive copy confirmed (no two-clones trap; both sites junctioned).
+  Bundle contains pulled UI (PrtLiveTest/GscSetupGuide/EmailSenders as literals; HeadingsPanel imported in SEO/index.tsx,
+  identifier minified). Live REST: `pcm/v1` registered, `/brands` + `/automations/logs` → 403 (loaded+guarded, not 404).
+- **Map updated:** added the "pulled but nothing changed → dirty committed SESSION_LOG.md blocks FF pull" gotcha
+  to the Local WordPress section (recurs every session). **Specialists:** none — git/build diagnosis, no code edited. No commit.

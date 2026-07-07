@@ -91,6 +91,13 @@ There is **no PHP linter configured** (no `phpcs.xml`); follow WPCS conventions 
 > them. **Frontend
 > bundle has FIXED filenames (`index-writer.js`/`index.css`, no content hash) — after a
 > rebuild you MUST hard-refresh (Ctrl+F5) the browser** or WP serves the cached bundle.
+> ⚠️ **"I pulled but nothing changed" (seen 2026-07-07):** `.claude/SESSION_LOG.md` is a
+> *committed* file that nearly every session also edits locally — so an uncommitted local
+> SESSION_LOG edit makes `git pull` **abort** ("Your local changes … would be overwritten")
+> since incoming commits touch the same file, and the pull silently never happens (`git status`
+> shows `[behind N]`). Fix: `git stash push .claude/SESSION_LOG.md` → `git merge --ff-only
+> origin/<branch>` → `git stash pop` (resolve the append-conflict by keeping both blocks).
+> THEN rebuild (`cd app && npm run build`) — pulled TS does NOT rebuild `app/dist/` — and hard-refresh.
 > Build env on PATH only after refreshing it from the registry in a new shell
 > (`$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User')`).
 > **Auth-free smoke test (confirmed):** `GET http://power-creatives.local/wp-json/` →
