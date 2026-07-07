@@ -961,7 +961,7 @@ The HMAC handshake / `register_ping` / per-tenant connector / "Pending connectio
 above is **legacy and frontend-orphaned** (kept in the backend, unused by the UI). The live
 flow is a **one-paste pairing code**, which sidesteps the public-hub requirement entirely:
 - **Connector = `PCM_SEOHub_Service::connector_php_simple()`** (generic, no handshake), now
-  **v2.6.0 (was v2.0.0 = universal builder-aware link replacement)**: pluggable handler architecture
+  **v2.6.2 (was v2.0.0 = universal builder-aware link replacement)**: pluggable handler architecture
   inside the connector — `PCM_Conn_Builder_Handler` interface + `PCM_Conn_B_{Elementor,Bricks,Divi,
   WPBakery,Oxygen,Breakdance,Brizy}` (detect() via builder meta/content signals + regenerate() its CSS/cache) +
   `PCM_Conn_Builder_Manager` (register/detect/replace_links) + `pcm_conn_builder_manager()` registry.
@@ -1043,6 +1043,30 @@ flow is a **one-paste pairing code**, which sidesteps the public-hub requirement
   headings render identically everywhere; the badge tooltip warns). PCRE failure → page passes through
   untouched. Verified: override_test.php 20/20 (lifecycle create→render→re-edit→revert, scan tagging,
   guards) + heading/brizy connector regressions 3/4/4.
+  **"Only a few headings listed" fix (2026-07-07, connector 2.6.0 → 2.6.1):** the builder scan only sees
+  headings STORED in the builder data (widgets + inline HTML). It misses theme-rendered H1 titles, Elementor
+  accordion/tab/FAQ titles (repeater fields rendered as `<hN>`), global-widget + shortcode headings — hence
+  "there are more headers but only a few show". The 2.6.0 rendered-page loopback already backstops these; 2.6.1
+  HARDENS that loopback so it actually succeeds on production hosts: real browser UA (WAFs/security plugins
+  serve a near-empty challenge page to unknown agents), `?pcm_hscan=<time>` cache-bust (skip a stale full-page
+  cache), `redirection=3`, timeout 8→20s, and scans only the `<body>` (drops `<head>` noise). So whatever the
+  builder scan misses now appears as a `rendered` row (editable via the override layer). Verified:
+  heading_scan_route_test.php 9/9 (2-heading builder page whose live HTML adds a theme H1 + 3 FAQ H3 → all 6
+  returned, no dupes, head noise excluded, UA/cache-bust/redirect asserted).
+  **Brizy/other-builder heading edits ("that heading wasn't found…") fix (2026-07-07, connector 2.6.1 → 2.6.2):**
+  Elementor headings are WIDGETS (text+tag in known meta keys → `/replace-heading` edits the field). Brizy/Divi/
+  others store the heading as a STRUCTURED node (plain text + separate tag) and REGENERATE compiled HTML, so the
+  `/replace-url` string-swap of `<hN>…</hN>` finds nothing → `replaced=0` → the old "not found, hardcoded" error.
+  Fix = universal fallback: `PCM_SEO_Service::remote_update_heading` now, when the widget OR content path returns
+  `replaced=0` (or the heading has no stored markup), calls new `remote_apply_heading_override()` → the connector's
+  `/override-heading` render-time layer, which rewrites the visible heading regardless of storage (Elementor's
+  successful widget/content edits are unaffected — no fallback fires). To avoid showing the stale stored text AND
+  the overridden text as two rows, `/scan-headings` now APPLIES active overrides to the scanned builder/content
+  headings (match on the override's ORIGINAL level|text → collapse to the new value, retag `source:'override'`,
+  clear html/field so re-edits route back through the override). Connector 2.6.1 → 2.6.2. Verified:
+  hub_heading_fallback_test.php 5/5 (Brizy replaced=0 → falls back to /override-heading with original oldText +
+  new text/level; Elementor widget success takes NO fallback) + brizy_override_test.php 6/6 (edit → live page
+  renders new text → scan shows ONE 'override' row, no stale dupe) + override_test 20/20 + regressions.
   `POST /pcm-conn/v1/replace-url` {post_id, old, new | replacements{}} → manager replaces the URL in
   post_content AND **every custom field** (serialization-safe via `pcm_conn_replace_in` recursion over
   strings/arrays/objects + `update_metadata_by_mid(wp_slash())`, matching plain + JSON `\/` forms) →

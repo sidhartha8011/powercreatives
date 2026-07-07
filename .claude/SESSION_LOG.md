@@ -5961,3 +5961,47 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Rebuilt power-creatives.zip fresh (same tree as the /build). Verified 2.40MB/479 entries, top-level only
   `powerplatform`, 0 backslash, 0 leaks; connector Version 2.6.0 + override layer (8 refs) + hub routing
   branch confirmed inside. Not committed.
+
+## 2026-07-07 — Fix "SEO table lists only a few of a page's headings" (connector 2.6.0 → 2.6.1)
+- Diagnosed by empirical scan test: the builder scan (scan_headings) is COMPLETE for what's stored in
+  builder data — heading widgets + inline <hN>, incl. repeats + nested containers (proved 9/9 on a realistic
+  Elementor fixture). What it MISSES is headings not in the builder data at all: theme-rendered H1 page
+  titles, Elementor accordion/tab/FAQ titles (repeater fields output as <hN>), global-widget + shortcode
+  headings. That's the "more headers exist but only a few show" report.
+- The 2.6.0 rendered-page loopback backstop already catches these, but silently fails on real hosts. HARDENED
+  it (seohub/service.php /scan-headings): real browser UA (WAFs serve unknown agents a near-empty challenge
+  page → would still look "a few"), ?pcm_hscan=<time> cache-bust, redirection=3, timeout 8→20s, and scan only
+  the <body> (drop <head> noise). Connector 2.6.0 → 2.6.1.
+- Verified: php -l hub + extracted connector clean; NEW heading_scan_route_test.php 9/9 (2-heading builder
+  page whose LIVE html adds a theme H1 + 3 FAQ H3 → all 6 returned, builder dupes collapsed, <head> excluded,
+  UA/cache-bust/redirect/timeout asserted); regressions override 20/20, heading 3/3, brizy 4/4, recompile 4/4;
+  heading_scan_diag confirmed base scan returns all 9 of a repeat/nested fixture. Zip rebuilt (2.40MB/479, 0
+  leaks, Version 2.6.1 + pcm_hscan inside). Map updated. Not committed.
+- ROLLOUT NOTE: this only helps once the site runs 2.6.1 — the "few headings" a user sees today is the
+  PRE-2.6.x builder-only scan. Upload zip → push via Sites → Update connectors (or self-update) → re-open the
+  page's headings; the previously-missing ones appear as "rendered" rows (editable via the override layer).
+
+## 2026-07-07 — zip build (connector 2.6.1 heading-scan loopback hardening)
+- Rebuilt power-creatives.zip fresh. Verified 2.40MB/479 entries, top-level only `powerplatform`, 0 backslash,
+  0 leaks; connector Version 2.6.1 + pcm_hscan loopback hardening confirmed inside. Not committed.
+
+## 2026-07-07 — Fix "that heading wasn't found" on Brizy & other builders (connector 2.6.1 → 2.6.2)
+- Diagnosed empirically (brizy_heading_diag): Elementor headings are WIDGETS (text+tag in known meta keys →
+  /replace-heading edits the field, works). Brizy/Divi/etc store the heading as a STRUCTURED node (plain text +
+  separate tag) and regenerate compiled HTML, so /replace-url's <hN>…</hN> string-swap matches nothing →
+  replaced=0 → the "not found / hardcoded" error the user saw.
+- Fix = universal fallback via the render-time override layer (built earlier this session):
+  (1) seo/service.php: new remote_apply_heading_override() helper; remote_update_heading now falls back to it
+      whenever the widget path OR content path returns replaced=0, or a heading has no stored markup — instead
+      of erroring. Elementor's successful edits never trigger the fallback.
+  (2) seohub/service.php connector /scan-headings: APPLIES active overrides to scanned builder/content headings
+      (match override's ORIGINAL level|text → collapse to new value, retag source='override', clear html/field)
+      so an overridden Brizy heading shows ONE current-text row (re-editable), not stale-stored + overridden.
+      Connector 2.6.1 → 2.6.2.
+- Verified: php -l hub+seo+extracted connector clean; NEW hub_heading_fallback_test.php 5/5 (Brizy replaced=0 →
+  /override-heading with original oldText + new text/level; Elementor widget success = no fallback); NEW
+  brizy_override_test.php 6/6 (edit → live renders new → scan = one 'override' row, no dupe); override_test 20/20,
+  heading_scan_route 9/9, heading 3/3, brizy 4/4, recompile 4/4; tsc 56 baseline. Zip rebuilt (2.40MB/479, 0
+  leaks, Version 2.6.2 + hub fallback ×5 inside). Map bullet + heading section updated. Not committed.
+- NOTE: override is SITE-WIDE by text (a heading with the same text on multiple pages changes on all) and is a
+  render-time patch (storage keeps the original; survives Brizy recompiles). Needs connector 2.6.2 on the site.

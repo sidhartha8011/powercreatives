@@ -437,7 +437,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.6.0
+ * Version: 2.6.2
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1548,6 +1548,29 @@ add_action('rest_api_init', function () {
                 if (isset($page_keys[$sh['level'] . '|' . $sh['text']])) { continue; }
                 $headings[] = $sh;
             }
+            $ovr = function_exists('pcm_conn_heading_overrides') ? pcm_conn_heading_overrides() : array();
+            // Apply active render-time overrides to the SCANNED (builder/content) headings. A heading
+            // edited via the override layer (e.g. a Brizy heading whose stored form the string-replace
+            // couldn't reach) still shows its ORIGINAL text in the builder data — collapse it to the
+            // overridden value here so it appears ONCE with the current text (tagged 'override', still
+            // editable), instead of the stale stored text here + the overridden text from the rendered
+            // scan below. Match on the override's ORIGINAL (level|text); re-index-safe.
+            if (!empty($ovr)) {
+                foreach ($headings as $i => $hh) {
+                    foreach ($ovr as $o) {
+                        if ((int) ($o['oldLevel'] ?? 0) === (int) $hh['level'] && (string) ($o['oldText'] ?? '') === (string) $hh['text']) {
+                            $headings[$i]['text']        = (string) $o['newText'];
+                            $headings[$i]['level']       = (int) $o['newLevel'];
+                            $headings[$i]['html']        = '';   // stored markup no longer matches; edits route via override
+                            $headings[$i]['field']       = '';
+                            $headings[$i]['source']      = 'override';
+                            $headings[$i]['sourceType']  = 'override';
+                            $headings[$i]['sourceLabel'] = 'Site-wide override (render-time)';
+                            break;
+                        }
+                    }
+                }
+            }
             // Headings that exist ONLY in the RENDERED page (theme PHP, menus, widget titles — no DB
             // source anywhere) become editable through the render-time override layer (see
             // /override-heading below). Loopback-fetch the live page; overrides already apply on that
@@ -1555,10 +1578,24 @@ add_action('rest_api_init', function () {
             // host blocks loopback requests this scan is skipped and behaviour is unchanged.
             $seen_all = array();
             foreach ($headings as $hh) { $seen_all[$hh['level'] . '|' . $hh['text']] = 1; }
-            $ovr  = function_exists('pcm_conn_heading_overrides') ? pcm_conn_heading_overrides() : array();
-            $resp = wp_remote_get(get_permalink($pid), array('timeout' => 8, 'sslverify' => apply_filters('https_local_ssl_verify', false)));
+            // Hardened loopback: a real browser UA (security plugins/WAFs serve a near-empty
+            // challenge page to unknown agents → the scan would see "only a few"), a cache-busting
+            // query arg (skip a stale full-page cache that predates recent edits), redirect follow,
+            // and a longer timeout for heavy builder pages. Add ?pcm_hscan so page caches treat it
+            // as a distinct URL; strip nothing else. `blocking` GET so we actually read the body.
+            $scan_url = add_query_arg('pcm_hscan', (string) time(), get_permalink($pid));
+            $resp = wp_remote_get($scan_url, array(
+                'timeout'     => 20,
+                'redirection' => 3,
+                'sslverify'   => apply_filters('https_local_ssl_verify', false),
+                'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreativesConnector/2.6; +heading-scan)',
+                'headers'     => array('Accept' => 'text/html', 'Cache-Control' => 'no-cache'),
+            ));
             if (!is_wp_error($resp) && (int) wp_remote_retrieve_response_code($resp) === 200) {
                 $live = (string) wp_remote_retrieve_body($resp);
+                // Only scan the <body> (drop <head>: <title>, OG/twitter meta, JSON-LD headline
+                // strings never contain <hN>, but a defensive trim keeps the match set page-visible).
+                if (($bpos = stripos($live, '<body')) !== false) { $live = substr($live, $bpos); }
                 if (preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>#is', $live, $mm, PREG_SET_ORDER)) {
                     foreach ($mm as $hm) {
                         $lvl = (int) $hm[1];
