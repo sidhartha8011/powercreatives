@@ -1,5 +1,20 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
+
+/**
+ * tailwind-merge must be TAUGHT our custom @theme utilities: unknown `text-*`
+ * classes are classified as COLORS, so e.g. `text-card-body text-foreground`
+ * would have its size class silently stripped as a "conflicting color".
+ * Every custom `--text-*` token added in index.css @theme MUST be registered
+ * here, or cn() will eat it.
+ */
+const twMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      "font-size": [{ text: ["card-title", "card-body", "card-label", "card-section"] }],
+    },
+  },
+});
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

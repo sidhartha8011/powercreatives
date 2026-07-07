@@ -5968,3 +5968,15 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   5-step plan, opportunistic-only for the 1096 inline classes).
 - Verified: 4 semantic utilities byte-checked in dist; tsc 56 = baseline identical set;
   vite build OK. BEFORE 0e583f2 → AFTER (this commit).
+
+## 2026-07-07 — twmerge-token-config (header size stripped by cn())
+- Root cause of the messed-up table headers after the semantic tokens: tailwind-merge
+  classifies UNKNOWN text-* classes as colors → in 'text-card-label ... text-muted-
+  foreground' it stripped the size class as a "conflicting color". Everything routed
+  through cn() (TableHead/TableCell/Input/Select) lost its size; plain-string usages
+  (log entries, section h3) kept it — hence the partial breakage.
+- FIX: lib/utils.ts — cn() now uses extendTailwindMerge registering text-card-title/
+  -body/-label/-section in the font-size group. Contract in-file: every future
+  --text-* @theme token MUST be registered there or cn() eats it.
+- Proven by node repro (HEAD/INPUT/TITLE paths: token survives, text-sm evicted, colors
+  intact); tsc 56 = baseline identical; build OK. BEFORE 6ca3d68 → AFTER (this commit).
