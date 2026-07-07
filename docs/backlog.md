@@ -40,3 +40,21 @@
 - [x] Aliniera och unifiera Ads-modulens copywriting och bildgenerering (AI Enhance, Angles-slider och orchestrator hook). [2026-05-23]
 - [x] Konvertera SVG-logotyper till PNG vid lagring (Imagick rasterisering). AI-bildmodeller kan inte bearbeta SVG-vektorfiler. Automatisk konvertering vid uppladdning och URL-hämtning + v1.7.0 databas-migration för befintliga SVG-tillgångar. [2026-05-23]
 - [x] Fixa saknad `role`-parameter i referensbilds-sparning. Fetch Brand och ReferenceImageSelector skickade inte `role: 'reference'` till backend, vilket gjorde att alla referensbilder tyst avvisades med 400 "Asset role is required." [2026-05-23]
+
+## Typography spaghetti cleanup (added 2026-07-07)
+Fonts are set in 8 systems (~1,265 declarations): wp-admin CSS (81, neutralized by the
+`@import "tailwindcss" important` flag), index.css (39 font-size rules + legacy
+`font-family !important` hacks now redundant), 38 ui-primitive defaults, 1,096 inline
+`text-*` classes, design-tokens.ts, CSS modules, cardTokens.ts. Cleanup, in order:
+1. App-wide semantic type tokens in `@theme` (index.css) — names describe roles, values
+   live in exactly one place (card tokens already do this pattern).
+2. index.css: delete redundant font-family !important hacks; fold the 39 font-size rules
+   into @theme tokens or delete.
+3. ui primitives (Input/Select/Button/Badge/DropdownMenu/Table) consume theme tokens
+   instead of hardcoded text-sm/text-xs.
+4. The 1,096 inline classes: opportunistic only — convert when a file is touched anyway,
+   NEVER as a big sweep.
+5. Lock: lint rule banning raw px text classes outside token files + screenshot test on
+   the delivery card + one Kanban board.
+Safe stopping point after every step. Context: CHANGELOG-20260707-0645 (layer war),
+SESSION_LOG 2026-07-07 entries.
