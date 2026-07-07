@@ -6076,3 +6076,16 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   ONLY (global DataTable default untouched; user said "for this table").
 - Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
   user. BEFORE 85177bb → AFTER d520a1b.
+
+## 2026-07-07 — header bands + popover chrome + Type pill [table-header-band-popover-chrome-type-pill]
+- GLOBAL popover chrome: SelectContent + DropdownMenuContent/SubContent shadow-md/lg
+  → shadow-sm, border → border-slate-300 (border-over-shadow; user approved global).
+- Deliveries header = bg-slate-50 band (className prop, tailwind-merge beats the
+  grid's bg-card); expanded projects get a whisper sub-header row (slate-50/60,
+  10px muted labels, indents match column content; aria-hidden — controls carry
+  their own labels).
+- Type renders as neutral TypePill (slate-100/700) in cell + trigger. Per-type
+  COLORS deliberately not invented — would need a `color` field on the Delivery
+  Types preset schema (Settings → Delivery Types) if the user wants it later.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
+  user. BEFORE d5acde6 → AFTER f9af943.
