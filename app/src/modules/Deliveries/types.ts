@@ -20,8 +20,6 @@ export interface Delivery {
   /** Linked brand/project — assigning this delivery grants access to both. */
   brandId?: number | null;
   projectId?: number | null;
-  /** SEO module — the connected site (Sites/SEO tab) chosen for this delivery. */
-  seoSiteId?: number | null;
   /** Module grants for assignees (frontend nav ids, e.g. 'copy', 'ads'). */
   modules?: string[];
   /** Optional external identifier — used for webhook/automation mapping. */

@@ -37,7 +37,6 @@ export interface CreateDeliveryInput {
   type?: string | null;
   brandId?: number | null;
   projectId?: number | null;
-  seoSiteId?: number | null;
   modules?: string[];
   externalId?: string | null;
 }
@@ -50,7 +49,6 @@ export interface UpdateDeliveryInput {
   type?: string | null;
   brandId?: number | null;
   projectId?: number | null;
-  seoSiteId?: number | null;
   modules?: string[];
   externalId?: string | null;
 }

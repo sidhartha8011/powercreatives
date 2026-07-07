@@ -473,6 +473,9 @@ class PCM_Schema
         // by FK in their own payloads — Deliveries never tracks back.
         // brandId/projectId (v1.18.0) link the delivery to the client's brand
         // and project so assigning the delivery grants view+use access to both.
+        // seoSiteId — DEPRECATED v1.35.0: write-only field no module ever read.
+        // Do not wire it up again; site resolution derives live via
+        // PCM_Hierarchy (delivery → its projects → projects.siteId).
         $sql = "CREATE TABLE {$prefix}deliveries (
             id int(11) NOT NULL AUTO_INCREMENT,
             userId int(11) NOT NULL,
@@ -529,6 +532,22 @@ class PCM_Schema
             PRIMARY KEY  (id),
             UNIQUE KEY uniq_delivery_user (deliveryId,userId),
             KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // ── Delivery logs (v1.35.0) ──
+        // Free-text work log per delivery ("what was done") shown in the
+        // delivery card. Owned by the Deliveries module; append-only notes,
+        // one row per entry, author = pcm user id.
+        $sql = "CREATE TABLE {$prefix}delivery_logs (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            deliveryId int(11) NOT NULL,
+            userId int(11) NOT NULL,
+            note text NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_deliveryId (deliveryId),
+            KEY idx_createdAt (createdAt)
         ) $charset_collate;";
         dbDelta($sql);
 

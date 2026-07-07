@@ -5853,3 +5853,22 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   baseline); vite build OK (dist 4.68MB). PHP suite NOT run locally (no composer/vendor on
   this machine — runs in CI). Live 3-surface click-through pending user. Committed
   (BEFORE 7273726 → AFTER); needs a zip rebuild to ship.
+
+## 2026-07-07 — delivery card redesign (Notion-style) + work log + seoSiteId retirement
+- DeliveryDialog rebuilt as a wide card (sm:max-w-3xl): title = inline-editable name; ONE
+  properties table (Status | Client | Type | Module access | Brand | External ID) — every
+  cell is its control, auto-saved per change/blur in edit mode (create mode keeps a submit
+  button). Type applies the module preset; Module access cell = popover of toggles.
+- Projects section (edit mode): table of projects with deliveryId = this delivery; per row a
+  Site connect/disconnect select (assets.setProjectSite) + media-count badge; "+ Add project"
+  / ✕ assign/unassign via assets.setProjectDelivery. Sections are subcomponents so their
+  queries only run while the card is open.
+- NEW work log: pcm_delivery_logs table (deliveryId, userId, note, createdAt; DB 1.34.0 →
+  1.35.0) + GET/POST /deliveries/{id}/logs (append-only, owner-scoped via get_delivery_by_id,
+  userName joined from pcm_users) + trpc deliveries.logs/addLog + Log section in the card.
+- seoSiteId RETIRED (write-only, zero readers — verified by grep): controller no longer
+  accepts it, service no longer returns it, UI select removed, schema comment marks the
+  column deprecated (column kept — additive-only migrations). Single "Project" access-grant
+  select removed from the card (stored values untouched, grants unaffected).
+- Verified: php -l ×4 clean; tsc 56 = baseline, 0 in touched files; vite build OK. Live
+  click-through pending user. BEFORE dcfc93c → AFTER (this commit); needs zip rebuild to ship.

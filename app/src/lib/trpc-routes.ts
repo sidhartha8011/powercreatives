@@ -198,6 +198,16 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "DELETE",
         transform: (input: any) => ({ url: `deliveries/${input.id}` }),
     },
+    "deliveries.logs": {
+        endpoint: "deliveries",
+        method: "GET",
+        transform: (input: any) => ({ url: `deliveries/${input.id}/logs` }),
+    },
+    "deliveries.addLog": {
+        endpoint: "deliveries",
+        method: "POST",
+        transform: (input: any) => ({ url: `deliveries/${input.id}/logs`, body: { note: input.note } }),
+    },
 
     // ── Strategy ──
     "strategy.create": { endpoint: "strategies", method: "POST" },

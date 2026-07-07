@@ -53,6 +53,10 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             array('GET',    '/deliveries/type-presets',       'get_type_presets', array(), 'manage_options'),
             array('GET',    '/deliveries',                    'list_items'),
             array('GET',    '/deliveries/(?P<id>\\d+)',       'get_by_id'),
+            // Work log — append-only "what was done" notes on the delivery
+            // card. Team members can read and add; entries are never edited.
+            array('GET',    '/deliveries/(?P<id>\\d+)/logs',  'list_logs'),
+            array('POST',   '/deliveries/(?P<id>\\d+)/logs',  'add_log'),
             // Writes are admin-only; team members only view assigned deliveries.
             array('POST',   '/deliveries',                    'create_item', array(), 'manage_options'),
             array('PATCH',  '/deliveries/(?P<id>\\d+)',       'update_item', array(), 'manage_options'),
@@ -97,6 +101,80 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         }
 
         return $this->success($this->service->format_delivery($row));
+    }
+
+    // =========================================================================
+    // WORK LOG
+    // =========================================================================
+
+    /** GET /deliveries/<id>/logs — Work-log entries, newest first. */
+    public function list_logs(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        global $wpdb;
+        $user = $this->get_current_pcm_user();
+        $id   = absint($request->get_param('id'));
+
+        if (!PCM_DB::get_delivery_by_id($id, (int) $user->id)) {
+            return $this->not_found('Delivery');
+        }
+
+        $logs  = PCM_Schema::table('delivery_logs');
+        $users = PCM_Schema::table('users');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT l.id, l.userId, l.note, l.createdAt, u.name AS userName, u.username
+             FROM {$logs} l LEFT JOIN {$users} u ON u.id = l.userId
+             WHERE l.deliveryId = %d ORDER BY l.createdAt DESC, l.id DESC",
+            $id
+        ));
+
+        return $this->success(array_map(static function ($row) {
+            return array(
+                'id'        => (int) $row->id,
+                'userId'    => (int) $row->userId,
+                'note'      => (string) $row->note,
+                'createdAt' => $row->createdAt,
+                'userName'  => $row->userName ?: ($row->username ?: __('Unknown user', 'power-creatives')),
+            );
+        }, $rows));
+    }
+
+    /** POST /deliveries/<id>/logs — Append a work-log entry. Body: { note }. */
+    public function add_log(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        global $wpdb;
+        $user = $this->get_current_pcm_user();
+        $id   = absint($request->get_param('id'));
+
+        if (!PCM_DB::get_delivery_by_id($id, (int) $user->id)) {
+            return $this->not_found('Delivery');
+        }
+
+        $note = sanitize_textarea_field((string) ($request->get_param('note') ?? ''));
+        if ('' === trim($note)) {
+            return $this->error(__('Log note cannot be empty.', 'power-creatives'));
+        }
+
+        $now = current_time('mysql');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->insert(PCM_Schema::table('delivery_logs'), array(
+            'deliveryId' => $id,
+            'userId'     => (int) $user->id,
+            'note'       => $note,
+            'createdAt'  => $now,
+        ));
+
+        if (!$wpdb->insert_id) {
+            return $this->error(__('Failed to save the log entry.', 'power-creatives'), 500);
+        }
+
+        return $this->success(array(
+            'id'        => (int) $wpdb->insert_id,
+            'userId'    => (int) $user->id,
+            'note'      => $note,
+            'createdAt' => $now,
+            'userName'  => $user->name ?: ($user->username ?? ''),
+        ), 201);
     }
 
     // =========================================================================
@@ -312,17 +390,9 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             }
         }
 
-        // SEO module — a connected site (Sites/SEO tab) scoped to this caller.
-        if (array_key_exists('seoSiteId', $params)) {
-            $site_id = absint($params['seoSiteId'] ?? 0);
-            if ($site_id === 0) {
-                $out['seoSiteId'] = null;
-            } elseif (PCM_DB::get_site($site_id, $user_id)) {
-                $out['seoSiteId'] = $site_id;
-            } else {
-                return $this->error('Site not found.', 404, 'pcm_site_not_found');
-            }
-        }
+        // seoSiteId — DEPRECATED v1.35.0: intentionally no longer accepted.
+        // It was a write-only field no module ever read; site resolution
+        // derives live via PCM_Hierarchy (delivery → projects → siteId).
 
         return $out;
     }
