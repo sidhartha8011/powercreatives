@@ -86,12 +86,56 @@ abstract class PCM_REST_Base
                 $path,
                 array(
                 'methods' => $method,
-                'callback' => array($this, $callback),
+                'callback' => $this->guard_callback($callback),
                 'permission_callback' => $permission_callback,
                 'args' => $args,
             )
             );
         }
+    }
+
+    /**
+     * Wrap a controller method so an uncaught PHP Throwable becomes a structured
+     * JSON error instead of a bare HTTP 500 with a non-JSON body.
+     *
+     * WordPress does NOT catch Errors/Exceptions thrown from a REST callback — a
+     * version-mismatch fatal on the live site (e.g. `Call to undefined method`
+     * after a partial update, or a PHP 8.x type error) propagates as a raw 500
+     * whose body isn't the usual `{code, message}` JSON. The SPA then shows an
+     * opaque "API error: 500" with no reason, which is undebuggable for the user.
+     * Catching Throwable here preserves the real message + logs the trace, so the
+     * admin sees WHAT failed (and support can act) instead of a dead end. Returned
+     * WP_Error values from handlers are unaffected — only *thrown* faults are caught.
+     *
+     * @param string $method Controller method name.
+     * @return callable
+     */
+    private function guard_callback(string $method): callable
+    {
+        return function (WP_REST_Request $request) use ($method) {
+            try {
+                return $this->{$method}($request);
+            } catch (\Throwable $e) {
+                error_log(sprintf(
+                    '[power-creatives] Unhandled %s in %s::%s — %s at %s:%d',
+                    get_class($e),
+                    static::class,
+                    $method,
+                    $e->getMessage(),
+                    $e->getFile(),
+                    (int) $e->getLine()
+                ));
+                return $this->error(
+                    sprintf(
+                        /* translators: %s: the underlying PHP error message. */
+                        __('The server hit an unexpected error: %s', 'power-creatives'),
+                        $e->getMessage()
+                    ),
+                    500,
+                    'pcm_internal_error'
+                );
+            }
+        };
     }
 
     /**
