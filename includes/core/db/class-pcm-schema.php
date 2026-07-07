@@ -113,6 +113,10 @@ class PCM_Schema
         // Anything attached to a project derives its delivery + brand LIVE from this chain
         // (see PCM_Hierarchy) — never stored/hardcoded — so reassigning the project's delivery
         // (or that delivery's brand) moves everything that belongs to the project with it.
+        // siteId (v1.34.0): FK to the {$prefix}sites table (WP connection credentials) —
+        // NULL = not connected. NOT the SEO Hub tenant site (that is deliveries.seoSiteId).
+        // N:1 on purpose: many projects may connect to the same site. Read the link only via
+        // PCM_Hierarchy::site_for_project() / projects_for_site().
         $sql = "CREATE TABLE {$prefix}projects (
             id int(11) NOT NULL AUTO_INCREMENT,
             userId int(11) NOT NULL,
@@ -120,13 +124,15 @@ class PCM_Schema
             description text DEFAULT NULL,
             status varchar(50) DEFAULT 'active' NOT NULL,
             deliveryId int(11) DEFAULT NULL,
+            siteId int(11) DEFAULT NULL,
             settings text DEFAULT NULL,
             externalId varchar(191) DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
             KEY idx_userId (userId),
-            KEY idx_deliveryId (deliveryId)
+            KEY idx_deliveryId (deliveryId),
+            KEY idx_siteId (siteId)
         ) $charset_collate;";
         dbDelta($sql);
 
@@ -467,6 +473,9 @@ class PCM_Schema
         // by FK in their own payloads — Deliveries never tracks back.
         // brandId/projectId (v1.18.0) link the delivery to the client's brand
         // and project so assigning the delivery grants view+use access to both.
+        // seoSiteId — DEPRECATED v1.35.0: write-only field no module ever read.
+        // Do not wire it up again; site resolution derives live via
+        // PCM_Hierarchy (delivery → its projects → projects.siteId).
         $sql = "CREATE TABLE {$prefix}deliveries (
             id int(11) NOT NULL AUTO_INCREMENT,
             userId int(11) NOT NULL,
@@ -514,15 +523,35 @@ class PCM_Schema
         // assignee). The assignee gains VIEW + USE access to the delivery and
         // its linked brand/project (reads become "owned OR granted" via
         // PCM_Access; writes stay owner-scoped).
+        // role (v1.36.0): 'lead' marks the delivery's single lead; every other
+        // assignment is 'member'. Access/grants ignore role — a lead is just
+        // an assignment with a badge, so PCM_Access needs no changes.
         $sql = "CREATE TABLE {$prefix}delivery_assignments (
             id int(11) NOT NULL AUTO_INCREMENT,
             deliveryId int(11) NOT NULL,
             userId int(11) NOT NULL,
             assignedBy int(11) NOT NULL,
+            role varchar(20) DEFAULT 'member' NOT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY uniq_delivery_user (deliveryId,userId),
             KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // ── Delivery logs (v1.35.0) ──
+        // Free-text work log per delivery ("what was done") shown in the
+        // delivery card. Owned by the Deliveries module; append-only notes,
+        // one row per entry, author = pcm user id.
+        $sql = "CREATE TABLE {$prefix}delivery_logs (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            deliveryId int(11) NOT NULL,
+            userId int(11) NOT NULL,
+            note text NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_deliveryId (deliveryId),
+            KEY idx_createdAt (createdAt)
         ) $charset_collate;";
         dbDelta($sql);
 

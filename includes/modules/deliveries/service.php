@@ -146,7 +146,6 @@ class PCM_Deliveries_Service
             'type'       => isset($row->type) && $row->type !== null && $row->type !== '' ? (string) $row->type : null,
             'brandId'    => isset($row->brandId) && $row->brandId !== null ? (int) $row->brandId : null,
             'projectId'  => isset($row->projectId) && $row->projectId !== null ? (int) $row->projectId : null,
-            'seoSiteId'  => isset($row->seoSiteId) && $row->seoSiteId !== null ? (int) $row->seoSiteId : null,
             'modules'    => self::decode_modules($row->modules ?? null),
             'externalId' => $row->externalId ?? '',
             'createdAt'  => $row->createdAt,

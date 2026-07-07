@@ -40,3 +40,82 @@
 - [x] Aliniera och unifiera Ads-modulens copywriting och bildgenerering (AI Enhance, Angles-slider och orchestrator hook). [2026-05-23]
 - [x] Konvertera SVG-logotyper till PNG vid lagring (Imagick rasterisering). AI-bildmodeller kan inte bearbeta SVG-vektorfiler. Automatisk konvertering vid uppladdning och URL-hämtning + v1.7.0 databas-migration för befintliga SVG-tillgångar. [2026-05-23]
 - [x] Fixa saknad `role`-parameter i referensbilds-sparning. Fetch Brand och ReferenceImageSelector skickade inte `role: 'reference'` till backend, vilket gjorde att alla referensbilder tyst avvisades med 400 "Asset role is required." [2026-05-23]
+
+## Autonomy roadmap (added 2026-07-07 — agreed with owner, ordered by agency leverage)
+Goal: AI produces → client approves per change → platform executes and serves
+autonomously → feedback returns machine-readable. Dependency order 1→4; each item
+was specced in detail in the 2026-07-07 session (SESSION_LOG + chat).
+
+- [ ] 1. **Approval-pipeline rails** (difficulty ~4–5/10, ~5 pairs). SEO "hold edits
+  for approval" toggle → staged changes stored in a NEW `seo_staged_changes` table
+  (site, post, column, before, after, status staged→pending→approved/rejected→
+  applied/failed; reject = MARKED, never discarded). "Send for approval" hands over a
+  generic envelope `{type, tags:{siteId,projectId,deliveryId,brandId}, items per page}`.
+  Approvals module gains an ASSET-TYPE ADAPTER REGISTRY (no hardcoding either way —
+  same registry pattern as automations): adapter = {type, toSnapshotItems, renderer,
+  onItemApproved}. New Before/After card: one card per PAGE, one row per changed
+  column. Apply-on-approve handler registered on the EXISTING
+  `approvals.asset_approved` trigger (fires on the approve transition, runs under the
+  set owner's identity — verified in service.php:1163); executes via existing
+  save_cell/remote_save_cell; rows marked applied/failed; value-drift default =
+  apply + keep recorded before-value as audit. Site resolves from project via
+  PCM_Hierarchy::site_for_project.
+- [ ] 2. **Per-change client comments.** Stable changeId per row inside a card;
+  comments optionally carry assetId+changeId → feedback machine-mapped to the exact
+  change (the AI-revision-loop data contract). Small; extends rails.
+- [ ] 3. **Dynamic optimization layer + licensing (connector).** Render-time output
+  buffer in the connector serving approved changes in final HTML — builder-agnostic
+  (NO per-builder tailoring; that problem belongs only to source-edits). V1 routing:
+  PARAGRAPHS dynamic; headings + reachable links keep the proven source-edit path
+  (2.2.x) — engine designed heading/link-capable so migration later is a routing
+  change; `editable:false` rendered-only links = first legitimate dynamic consumer
+  (closes a real gap). Text-tolerant matching; failed match serves original + FLAGS
+  (no silent fallback). On/off switches per change / per page / per site (kill
+  switch); three-state indicator original/optimized/STALE (source drifted → serving
+  original, flagged). Rules pushed to + stored ON the connector (site independent of
+  platform uptime); daily license heartbeat, grace window (~14d) then rules
+  auto-deactivate to originals (fail-closed-and-harmless); immediate deactivate on
+  explicit revoke; hub-side license/revoke surface. AI-crawler rationale: AI bots
+  (GPTBot/ClaudeBot/PerplexityBot) do NOT execute JS — server-side serving is the
+  only dynamic optimization they can see (JS-pixel products can't match this).
+- [ ] 4. **AI page optimizer.** Bulk action "Generate optimized page content": AI
+  reads page + top-3 SERP competitors + structure/interlink gaps → per-paragraph +
+  per-heading before/after (old = light gray, new = black) through the SAME envelope/
+  adapter pipeline (second producer type `contentRevision`); send-time choice of one
+  card per page or per change; review-only until a content-apply path exists (new
+  interlinks ride paragraph rewrites). Needs 1 (and 3 for auto-apply).
+- [ ] 5. **SEO SERP-check row action.** Opens live Google search for the row's
+  primary keyword in a NEW TAB (Google cannot be iframed — X-Frame-Options; in-app
+  SERPs would need a SERP API, e.g. the existing PRT integration). Minutes of work;
+  was dropped from the 2026-07-07 batch per owner (no SEO table changes then).
+- [ ] 6. **Delivery health fishbone.** Per-delivery health provider registry in the
+  deliveries module (consumer modules register evaluators per delivery TYPE);
+  `health:{status: green|yellow|red|unknown, reason}` on the list; UNKNOWN renders
+  neutral "Not tracked" — never fake green. Gray-dot socket only; per-type evaluators
+  (SEO/ads/web) are separate approvals. Deferred 2026-07-07.
+- [ ] 7. **Email relay / comms-in-platform (ON HOLD per owner).** Brevo Inbound
+  Parsing → webhook → conversations/messages tables linked to brand/delivery;
+  replies out via Brevo from a shared address (threading via Message-ID/References);
+  assignable conversations; notifications via automations engine. Helpdesk-scale
+  build — buy-vs-build (Front/Missive) decision first; if built, start with a
+  read-only inbound proof on the delivery card.
+- [ ] 8. **Articles ↔ Projects linking decision** — until decided, the delivery
+  card/table Articles column stays an honest "—" (articles link to sites only).
+
+## Typography spaghetti cleanup (added 2026-07-07)
+Fonts are set in 8 systems (~1,265 declarations): wp-admin CSS (81, neutralized by the
+`@import "tailwindcss" important` flag), index.css (39 font-size rules + legacy
+`font-family !important` hacks now redundant), 38 ui-primitive defaults, 1,096 inline
+`text-*` classes, design-tokens.ts, CSS modules, cardTokens.ts. Cleanup, in order:
+1. App-wide semantic type tokens in `@theme` (index.css) — names describe roles, values
+   live in exactly one place (card tokens already do this pattern).
+2. index.css: delete redundant font-family !important hacks; fold the 39 font-size rules
+   into @theme tokens or delete.
+3. ui primitives (Input/Select/Button/Badge/DropdownMenu/Table) consume theme tokens
+   instead of hardcoded text-sm/text-xs.
+4. The 1,096 inline classes: opportunistic only — convert when a file is touched anyway,
+   NEVER as a big sweep.
+5. Lock: lint rule banning raw px text classes outside token files + screenshot test on
+   the delivery card + one Kanban board.
+Safe stopping point after every step. Context: CHANGELOG-20260707-0645 (layer war),
+SESSION_LOG 2026-07-07 entries.

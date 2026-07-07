@@ -31,9 +31,12 @@ function uid(): string {
 interface CreateCustomSetDialogProps {
   open: boolean;
   onClose: () => void;
+  /** Create-from-delivery preset: pre-selects brand/project/delivery in the
+   *  share step (the user can still change them). */
+  preset?: { brandId: number | null; projectId: number; deliveryId: number };
 }
 
-export function CreateCustomSetDialog({ open, onClose }: CreateCustomSetDialogProps) {
+export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSetDialogProps) {
   const [step, setStep] = useState<'author' | 'send'>('author');
   const [content, setContent] = useState('<p></p>');
   const [overlay, setOverlay] = useState<string | null>(null);
@@ -67,6 +70,9 @@ export function CreateCustomSetDialog({ open, onClose }: CreateCustomSetDialogPr
         projects={projects}
         defaultName="Custom document"
         itemSummary="1 custom document"
+        brandId={preset?.brandId}
+        projectId={preset?.projectId}
+        defaultDeliveryId={preset?.deliveryId}
       />
     );
   }

@@ -62,6 +62,7 @@ class PCM_REST_Assets extends PCM_REST_Base
                 array('PATCH', '/assets/projects/(?P<id>\d+)', 'rename_project'),
                 array('POST', '/assets/projects/(?P<id>\d+)/duplicate', 'duplicate_project'),
                 array('PATCH', '/assets/projects/(?P<id>\d+)/delivery', 'set_project_delivery'),
+                array('PATCH', '/assets/projects/(?P<id>\d+)/site', 'set_project_site'),
         );
     }
 
@@ -369,7 +370,7 @@ class PCM_REST_Assets extends PCM_REST_Base
         $scope = PCM_Access::scope_clause('userId', 'id', (int) $user->id, PCM_Access::granted_project_ids((int) $user->id));
         // phpcs:ignore WordPress.DB.PreparedSQL -- clause built from %d placeholders only.
         $results = $wpdb->get_results($wpdb->prepare(
-            "SELECT id, name, description, status, settings, deliveryId, externalId, createdAt FROM $table WHERE {$scope['sql']} ORDER BY name ASC",
+            "SELECT id, name, description, status, settings, deliveryId, siteId, externalId, createdAt FROM $table WHERE {$scope['sql']} ORDER BY name ASC",
             ...$scope['params']
         ));
 
@@ -384,21 +385,39 @@ class PCM_REST_Assets extends PCM_REST_Base
         // Use a safe session increase for group_concat to avoid clipping long URLs
         $wpdb->query("SET SESSION group_concat_max_len = 100000");
 
-        // Single query to get counts and URLs
-        $query = "SELECT projectId, COUNT(id) as assetCount, GROUP_CONCAT(url ORDER BY createdAt DESC SEPARATOR '|') as urls FROM $asset_table WHERE projectId IN ($placeholders) GROUP BY projectId";
+        // Single query to get counts and URLs. Per-type counts feed the
+        // Deliveries table's project rows (assets.type is 'image' | 'video').
+        $query = "SELECT projectId, COUNT(id) as assetCount,
+            SUM(CASE WHEN type = 'image' THEN 1 ELSE 0 END) as imageCount,
+            SUM(CASE WHEN type = 'video' THEN 1 ELSE 0 END) as videoCount,
+            GROUP_CONCAT(url ORDER BY createdAt DESC SEPARATOR '|') as urls FROM $asset_table WHERE projectId IN ($placeholders) GROUP BY projectId";
         $asset_data = $wpdb->get_results($wpdb->prepare($query, ...$project_ids));
-        
+
         // Map data by projectId
         $asset_map = array();
         foreach ($asset_data as $data) {
             $asset_map[(int)$data->projectId] = array(
                 'count' => (int)$data->assetCount,
+                'imageCount' => (int)$data->imageCount,
+                'videoCount' => (int)$data->videoCount,
                 'urls' => $data->urls ? explode('|', $data->urls) : array(),
             );
         }
 
-        $projects = array_map(function ($row) use ($asset_map, $include_thumbnails) {
-            $mapped_data = $asset_map[(int)$row->id] ?? array('count' => 0, 'urls' => array());
+        // Copy results are their own table — one batch count per project.
+        $copy_table = PCM_Schema::table('copy_results');
+        // phpcs:ignore WordPress.DB.PreparedSQL -- placeholders built from %d only.
+        $copy_rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT projectId, COUNT(id) AS copyCount FROM $copy_table WHERE projectId IN ($placeholders) GROUP BY projectId",
+            ...$project_ids
+        ));
+        $copy_map = array();
+        foreach ($copy_rows as $copy_row) {
+            $copy_map[(int)$copy_row->projectId] = (int)$copy_row->copyCount;
+        }
+
+        $projects = array_map(function ($row) use ($asset_map, $copy_map, $include_thumbnails) {
+            $mapped_data = $asset_map[(int)$row->id] ?? array('count' => 0, 'imageCount' => 0, 'videoCount' => 0, 'urls' => array());
             $settings = json_decode($row->settings ?? '{}', true) ?: array();
             
             // Limit to 4 images if requested
@@ -416,9 +435,14 @@ class PCM_REST_Assets extends PCM_REST_Base
             'status' => $row->status,
             'type' => $settings['type'] ?? 'general',
             'assetCount' => $mapped_data['count'],
+            'imageCount' => $mapped_data['imageCount'] ?? 0,
+            'videoCount' => $mapped_data['videoCount'] ?? 0,
+            'copyCount' => $copy_map[(int)$row->id] ?? 0,
             'images' => $images,
             // Brand → Delivery → Project: deliveryId is stored; brandId is derived live.
             'deliveryId' => !empty($row->deliveryId) ? (int) $row->deliveryId : null,
+            // Connected site (projects.siteId) — the {prefix}sites WP-connection table, not SEO Hub.
+            'siteId' => !empty($row->siteId) ? (int) $row->siteId : null,
             'brandId' => class_exists('PCM_Hierarchy') ? PCM_Hierarchy::brand_for_project((int) $row->id) : null,
             'externalId' => $row->externalId ?? '',
             'createdAt' => $row->createdAt,
@@ -509,6 +533,43 @@ class PCM_REST_Assets extends PCM_REST_Base
 
         $chain = PCM_Hierarchy::for_project($id);
         return $this->success(array('id' => $id, 'deliveryId' => $chain['deliveryId'], 'brandId' => $chain['brandId']));
+    }
+
+    /**
+     * Connect (or disconnect) the Site a project is linked to (`projects.siteId` → the
+     * {prefix}sites WP-connection table, NOT a SEO Hub tenant site). N:1 by design — several
+     * projects may connect to the same site; connecting one project never affects another.
+     * Reads of the link go through PCM_Hierarchy::site_for_project()/projects_for_site().
+     * Body: { siteId: int|null } — null disconnects.
+     *
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response|WP_Error
+     */
+    public function set_project_site(WP_REST_Request $request)
+    {
+        global $wpdb;
+        $user    = $this->get_current_pcm_user();
+        $table   = PCM_Schema::table('projects');
+        $id      = absint($request->get_param('id'));
+        $params  = $request->get_json_params() ?: array();
+        $site_id = isset($params['siteId']) && $params['siteId'] !== null ? absint($params['siteId']) : null;
+
+        // The project must be the caller's (owned or granted).
+        $scope = PCM_Access::scope_clause('userId', 'id', (int) $user->id, PCM_Access::granted_project_ids((int) $user->id));
+        // phpcs:ignore WordPress.DB.PreparedSQL, WordPress.DB.DirectDatabaseQuery
+        $owns = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE id = %d AND {$scope['sql']}", $id, ...$scope['params']));
+        if (!$owns) {
+            return $this->not_found('Project');
+        }
+        // The site (if set) must belong to the caller.
+        if ($site_id !== null && !PCM_DB::get_site($site_id, (int) $user->id)) {
+            return $this->not_found('Site');
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update($table, array('siteId' => $site_id, 'updatedAt' => current_time('mysql')), array('id' => $id));
+
+        return $this->success(array('id' => $id, 'siteId' => $site_id));
     }
 
     /**

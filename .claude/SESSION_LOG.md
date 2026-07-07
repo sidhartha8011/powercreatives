@@ -6005,3 +6005,306 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   leaks, Version 2.6.2 + hub fallback ×5 inside). Map bullet + heading section updated. Not committed.
 - NOTE: override is SITE-WIDE by text (a heading with the same text on multiple pages changes on all) and is a
   render-time patch (storage keeps the original; survives Brizy recompiles). Needs connector 2.6.2 on the site.
+## 2026-07-07 — Site ↔ Project connection (projects.siteId, 3 control surfaces)
+- New indexed `siteId` column on projects (schema comment: FK to {prefix}sites WP-connection
+  table, NOT SEO Hub's deliveries.seoSiteId; N:1 — many projects may share one site). DB
+  1.33.0 → 1.34.0 (additive dbDelta, no migrate_*). Sites module backend untouched.
+- PCM_Hierarchy: + site_for_project() (forward, null when unset) and projects_for_site()
+  (reverse lookup, always a list of full chains). All cross-module reads go through these.
+- assets/controller.php: + PATCH /assets/projects/{id}/site {siteId:int|null} (mirrors
+  set_project_delivery: PCM_Access scope + PCM_DB::get_site ownership check → 404);
+  get_projects now selects/returns siteId.
+- Frontend (one mutation assets.setProjectSite drives all three surfaces): Sites table
+  + "Project(s)" dropdown column (checkbox list, N:1-safe, "other site" hint); Projects
+  detail + "Site" select next to Delivery; DeliveryDialog (edit mode) + "Connected
+  projects — site per project" section (projects with deliveryId = this delivery, each
+  with an instant-apply Site select).
+- Tests: NEW tests/unit/HierarchySiteLinkTest.php (6 tests: int cast, null unset, id
+  guards, empty reverse lookup, multi-chain shared site).
+- Verified: php -l ×5 clean; tsc — errors only in untouched files (Templates/Writer/Home
+  baseline); vite build OK (dist 4.68MB). PHP suite NOT run locally (no composer/vendor on
+  this machine — runs in CI). Live 3-surface click-through pending user. Committed
+  (BEFORE 7273726 → AFTER); needs a zip rebuild to ship.
+
+## 2026-07-07 — delivery card redesign (Notion-style) + work log + seoSiteId retirement
+- DeliveryDialog rebuilt as a wide card (sm:max-w-3xl): title = inline-editable name; ONE
+  properties table (Status | Client | Type | Module access | Brand | External ID) — every
+  cell is its control, auto-saved per change/blur in edit mode (create mode keeps a submit
+  button). Type applies the module preset; Module access cell = popover of toggles.
+- Projects section (edit mode): table of projects with deliveryId = this delivery; per row a
+  Site connect/disconnect select (assets.setProjectSite) + media-count badge; "+ Add project"
+  / ✕ assign/unassign via assets.setProjectDelivery. Sections are subcomponents so their
+  queries only run while the card is open.
+- NEW work log: pcm_delivery_logs table (deliveryId, userId, note, createdAt; DB 1.34.0 →
+  1.35.0) + GET/POST /deliveries/{id}/logs (append-only, owner-scoped via get_delivery_by_id,
+  userName joined from pcm_users) + trpc deliveries.logs/addLog + Log section in the card.
+- seoSiteId RETIRED (write-only, zero readers — verified by grep): controller no longer
+  accepts it, service no longer returns it, UI select removed, schema comment marks the
+  column deprecated (column kept — additive-only migrations). Single "Project" access-grant
+  select removed from the card (stored values untouched, grants unaffected).
+- Verified: php -l ×4 clean; tsc 56 = baseline, 0 in touched files; vite build OK. Live
+  click-through pending user. BEFORE dcfc93c → AFTER (this commit); needs zip rebuild to ship.
+
+## 2026-07-07 — shared EntityCard primitive + delivery card UX v2
+- NEW components/shared/EntityCard/ (domain-agnostic, Kanban-primitive philosophy):
+  EntityCard (white 5xl Dialog shell, ONE scroll context, 32px padding, no footer),
+  EntityCardTitle (inline-editable, hover affordance, Enter=commit, empty=restore,
+  transient "Saved ✓" whisper), PropertyTable (declarative PropertyDef[]: text/select/
+  multiToggle, text-at-rest hover-reveal cells, fixed widths, muted empty labels, status
+  dots, chips-not-sentences for multiToggle), EntityCardSection (11px uppercase whisper
+  headers + action slot, enforced 24/8px spacing).
+- DeliveryDialog re-expressed through the primitive (reference consumer): 6 PropertyDefs
+  (Status w/ Kanban-colored dots | Client | Type→preset | Module access chips+popover |
+  Brand | External ID); auto-saves are SILENT (success toast removed from
+  useDeliveries.updateDelivery — errors still toast) with optimistic apply + revert on
+  failure; edit mode has NO footer (Esc/✕); create mode keeps single Create button.
+- Projects section: hover-revealed ✕, borderless site select, quiet "N media" text,
+  empty state = the add action (dashed ghost button opens the same AddProjectMenu).
+- Log section: composer input with in-field send button (Enter submits), author · relative
+  time (full timestamp on hover), max 10 + "Show all (N)", input is the empty state.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pending user.
+  BEFORE 2f8db8e → AFTER (this commit); needs zip rebuild to ship.
+
+## 2026-07-07 — entity card v3 (Notion-reference geometry + feather-light table recipe)
+- EntityCard shell: fixed h-[88vh] (stately even when short), ~880px wide, rounded-xl,
+  p-0 with a centered max-w-[640px] content column (px-8 pt-14 pb-16) — whitespace frames
+  everything. EntityCardTitle: 32px, + optional meta prop ("Edited 2h ago" muted line
+  above). Section spacing 24→32px.
+- NEW shared tableRecipe.ts (CARD_TABLE_WRAPPER/HEAD/ROW/CELL): bg-slate-50 header (never
+  bold), hairline slate-200 borders incl. verticals, 36px rows, 13px text. Applied to the
+  PropertyTable AND the delivery projects table. relTime moved to the primitive
+  (relTime.ts) — used by the meta line + log entries.
+- DeliveryDialog: passes meta from updatedAt; projects table restyled via recipe.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pending user.
+  BEFORE 3ebee88 → AFTER (this commit); needs zip rebuild to ship.
+
+## 2026-07-07 — card tokens (root typography + spacing + WP-bleed fix)
+- NEW EntityCard/cardTokens.ts: CARD_TYPE (TITLE 32/bold w/ literal !-marks vs Input's
+  md:text-sm; BODY 13/400/foreground; LABEL 12/400/muted; SECTION 11/600/uppercase) — every
+  role sets size+ink+weight+line-height explicitly, so WP-admin's global input/select CSS
+  (reachable via the Radix portal into wp-admin body) has zero unspecified properties to
+  fill = bleed closed at the root. CARD_SPACE (COLUMN max-w-760/px-4/pt-10/pb-14 — tighter
+  per Notion ref; TITLE_GAP/SECTION_GAP/SECTION_HEADER_GAP). Contract documented in-file:
+  no raw text/spacing classes inside cards.
+- Sweep: tableRecipe HEAD=LABEL CELL=BODY; EntityCard/Title/Section/PropertyTable and the
+  delivery card sections consume roles only. Kills: 10px chips (→LABEL), 13px-medium
+  project names beside 12px selects (→BODY everywhere), 14px log notes (→BODY), 11px
+  timestamps (→LABEL), placeholder=body-size/label-ink. Floating dropdown menus keep the
+  app's standard menu styling (not card surface).
+- Fixed mid-implementation: runtime-built "!"-classes would be invisible to Tailwind JIT —
+  the !-marks moved into the literal token string instead.
+- Item 6 (global dialog bg-card) NOT included — awaiting explicit user go.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pending user.
+  BEFORE dd630d1 → AFTER (this commit); needs zip rebuild to ship.
+
+## 2026-07-07 — wp-css-layer root fix (@import tailwindcss important)
+- ROOT CAUSE of the small-title/14px-inputs regressions, fully proven: Tailwind v4 emits
+  utilities inside @layer; wp-admin's UNLAYERED forms.css `input{font-size:14px}` (line 13)
+  beats ANY layered utility on the same property (layers always lose to unlayered CSS).
+  The card's earlier ! marks were load-bearing armor against WP, not a tw-merge fix; plain
+  inputs "looked right" only because WP's 14px == text-sm. Evidence chain: user's DOM paste
+  (class on element), node repro of cva+twMerge (merge correct), dist CSS (rules present,
+  @layer confirmed), forms.css:13 (the winning WP rule).
+- FIX: reverted a3c4db6 (git reset --hard ee6a7e2), then on a clean base:
+  (1) index.css `@import "tailwindcss" important;` — every utility !important, beats all
+      unlayered wp-admin CSS incl. portals (2192 !important in dist; rationale + inline-
+      style trade-off documented at the import);
+  (2) re-applied Input/Textarea `text-base md:text-sm` → `text-sm` (the responsive class
+      is emitted after base utilities so even !important text-[13px] would lose to
+      !important md:text-sm at desktop);
+  (3) CARD_TYPE.TITLE keeps its ! marks (harmless double-important).
+- Verified in compiled dist/index.css (byte-exact): .text-\[13px\]{font-size:13px!important},
+  .\!text-\[32px\]{32px!important}, .text-sm !important; WP enqueues this exact file w/
+  filemtime cache-bust. tsc 56 = baseline, IDENTICAL error set. vite build OK.
+- NOTE (debug honesty): two of my greps mis-read dist CSS this session (unescaped brackets
+  → false "0"; later a broken node regex → false "NOT FOUND"). Byte-exact single-quoted
+  grep -F is the reliable form. The earlier md:text-sm-only theory (a3c4db6) was WRONG —
+  reverted.
+- REMAINING USER VERIFICATION: title 32px, Empty/log inputs 13px, and DRAG A KANBAN CARD
+  (deliveries/approvals) — !important utilities could in theory fight dnd inline styles.
+  BEFORE b35214c → AFTER (this commit).
+
+## 2026-07-07 — card semantic type tokens (body 11px) + backlog: typography cleanup
+- index.css @theme: NEW --text-card-title/-body/-label/-section tokens (32/11/12/11px +
+  line-heights) — the ONLY place card px values live. Generates clean semantic utilities
+  (.text-card-body{font-size:11px!important} — verified in dist) instead of bracket-soup
+  arbitrary classes.
+- cardTokens.ts: roles now reference text-card-* (no px in TS); TITLE's redundant ! marks
+  and its disproven md:text-sm comment removed; contract updated (resize = edit @theme
+  vars, never add px classes).
+- BODY 13px → 11px per the user's own DevTools test ("Paused"/tables/log input were too
+  big at 13; 11 confirmed good). Root of the "worse after the flag" mystery: the 13px
+  design never actually applied until the important flag made it win — the liked smaller
+  size had been the cascade accident.
+- docs/backlog.md: NEW "Typography spaghetti cleanup" item (8 systems/1265 declarations,
+  5-step plan, opportunistic-only for the 1096 inline classes).
+- Verified: 4 semantic utilities byte-checked in dist; tsc 56 = baseline identical set;
+  vite build OK. BEFORE 0e583f2 → AFTER (this commit).
+
+## 2026-07-07 — twmerge-token-config (header size stripped by cn())
+- Root cause of the messed-up table headers after the semantic tokens: tailwind-merge
+  classifies UNKNOWN text-* classes as colors → in 'text-card-label ... text-muted-
+  foreground' it stripped the size class as a "conflicting color". Everything routed
+  through cn() (TableHead/TableCell/Input/Select) lost its size; plain-string usages
+  (log entries, section h3) kept it — hence the partial breakage.
+- FIX: lib/utils.ts — cn() now uses extendTailwindMerge registering text-card-title/
+  -body/-label/-section in the font-size group. Contract in-file: every future
+  --text-* @theme token MUST be registered there or cn() eats it.
+- Proven by node repro (HEAD/INPUT/TITLE paths: token survives, text-sm evicted, colors
+  intact); tsc 56 = baseline identical; build OK. BEFORE 6ca3d68 → AFTER (this commit).
+
+## 2026-07-07 — chip role (pills get leading-none)
+- CARD_TYPE.CHIP = 'text-card-label leading-none font-normal' (+ py-0.5 on the two chip
+  Badges in PropertyTable). Chips regressed tall because the twMerge fix made LABEL's
+  reading line-height (1.5) finally apply to py-0 pills — pill height must come from
+  padding, never the line box. leading-none sets --tw-leading → cleanly overrides the
+  token's var(--tw-leading, 1.5). Verified: .leading-none{line-height:1!important} in
+  dist; chip merge path node-checked; tsc 56 = baseline identical; build OK.
+- Card text elements now FULLY declared (title 32 / body 11 / label 12 / section 11 /
+  chip 12+lh1) — nothing inherits by accident. BEFORE cb5f8a6 → AFTER (this commit).
+
+## 2026-07-07 — chip derives from BODY (no own size, ever)
+- CARD_TYPE.CHIP = `${BODY} leading-none` — a chip is a row value like its siblings
+  (Status/Type/Brand all wear BODY); its ONLY pill-specific trait is leading-none
+  (height from padding, not line box). Replaces the 12px guess (user: chips looked
+  ~9-10px before; root principle per user: reuse the same, never individual hardcoded
+  values). If body ever resizes, chips follow automatically.
+- Verified: chip merge path node-checked (text-card-body survives Badge cn, text-xs/
+  font-medium evicted, leading-none kept); tsc 56 = baseline; build OK.
+  BEFORE 81540a7 → AFTER (this commit).
+
+## 2026-07-07 — label token 12px → 10px (user-specified; one @theme line, all metadata follows: table headers, meta line, counts, timestamps)
+
+## 2026-07-07 — delivery card columns (Client removed, per-type project nav)
+- Properties: Client column REMOVED (clientName state/payload dropped from the card;
+  backend field untouched); order now Status | Type | Brand | Modules | ID.
+- Projects table: Site is its own column; + per-type nav cells Images/Copy/Videos —
+  click jumps STRAIGHT into that project on the matching detail tab and closes the card.
+  Mechanism: new AppContext PendingProjectNav + navigateToProjectTab/consumePendingProjectNav
+  (exact one-shot pattern of navigateToApprovalsWithSet); ProjectsModule consumes it once
+  projects are loaded (setSelectedProject + setDetailTab). Videos → media tab (videos are
+  assets on the media tab). Articles column intentionally DISABLED ("—", tooltip): articles
+  have no project relation in the data model (articles.siteId only) and Projects has no
+  articles tab — flagged for the user instead of faking a link.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live click-through
+  pending user. BEFORE 3865b22 → AFTER (this commit).
+
+## 2026-07-07 — global DataTable gains accordion rows [datatable-expandable-rows]
+- ui/data-table.tsx: new `renderExpanded(row)` + `rowCanExpand(row)` props — chevron
+  column prepended (36px, stopPropagation so row-click still edits), expanded content
+  renders in a full-width `data-subrow` <tr>. Fragment pattern from Keywords/SEO.
+- GRID_CLASS cell selectors rescoped from descendant (`[&_td]`) to direct-child
+  (`[&>tbody>tr:not([data-subrow])>td]`): with the Tailwind `important` flag, the old
+  descendant selectors would have beaten the cell classes of any table NESTED inside
+  an expanded row (specificity (0,1,1) vs (0,1,0), both !important). Sub-rows are
+  exempt entirely — nested tables style themselves. Existing consumers (Sites)
+  pixel-identical: same elements matched, same winners.
+- Verified: tsc 56 = baseline, 0 in file; vite build OK. BEFORE e1614bd → AFTER bad8bc5.
+
+## 2026-07-07 — Deliveries table view + Kanban⇄Table toggle [deliveries-table-view]
+- DeliveryDialog's ProjectsSection EXTRACTED to Deliveries/DeliveryProjects.tsx
+  (useDeliveryProjects hook + AddProjectMenu + DeliveryProjectsBody) — one source now
+  feeds the delivery card AND the new table's accordion rows. Dialog is glue only;
+  markup/behavior moved verbatim (site select, jump cells, hover-✕, dashed empty state).
+- NEW Deliveries/table/DeliveriesTable.tsx on the global DataTable: Delivery | Client |
+  Brand | Type | Status | Updated, all header-sortable (status sorts in lane order;
+  pills reuse deliveryColumns lane accents — one palette, two views). Row click = open
+  delivery card (same as Kanban card click); chevron expands to DeliveryProjectsBody.
+  Default sort: Updated desc (mirrors the board's 'Recently updated').
+- DeliveriesBoard: SquareKanban/Table2 segmented toggle (Projects' grid/list chrome),
+  persisted to localStorage `pcm:deliveries:view`; the sort dropdown renders in Kanban
+  view only (table headers own sorting); both views consume the SAME
+  listState.filteredItems, so search/client filters apply identically.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
+  user (expand row, jump cells from accordion, toggle persistence, card regression).
+  BEFORE d291884 → AFTER 7d9f711.
+
+## 2026-07-07 — Deliveries table: inline edit + native sub-rows + expand-lag fix [datatable-subrows-api + deliveries-inline-edit-subrows]
+- DataTable `renderExpanded` → `renderSubRows`: expanded content is now real sibling
+  <tr>s inheriting the grid (user: "extra row, not a separate table"); data-subrow
+  stays as the panel escape hatch. One atomic commit with the consumer (a split pair
+  would not build in between).
+- DeliveriesTable: every cell in-place editable with the card's auto-save contract
+  (optimistic + revert-on-failure via useDeliveries.updateDelivery; Type applies the
+  central preset like the card; Status trigger renders the lane pill). Row click
+  removed — card opens via always-visible Maximize2 on the name cell (group-hover is
+  a coarse-pointer no-op). Updated column read-only.
+- ProjectSubRows: grid-native project rows (indent, site select, Images/Copy/Videos
+  jumps, ✕ unassign, trailing AddProjectMenu row, explicit loading row).
+- LAG ROOT CAUSE: the old expanded panel mounted its queries lazily on first expand
+  (network wait) and useDeliveryProjects rendered the load gap as the empty state.
+  Fix: warm assets.getProjects + sites.list at table mount (queries are global,
+  per-delivery filter is client-side) + new isLoading on the hook.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
+  user. BEFORE 7bd82eb → AFTER 33b6169.
+
+## 2026-07-07 — Deliveries table: card-parity columns + softer chrome [deliveries-table-columns-chrome]
+- Columns → Delivery | Status | Type | Brand | Modules | ID | Updated (card property
+  order; Client column removed — field/filter/search untouched).
+- New InlineModulesCell = the card's multiToggle (chips + checkbox dropdown) with the
+  table's optimistic+revert contract; sortable by grant count. ID = externalId inline
+  text. Sub-rows realigned to the 7-col grid (spacer before ✕, colSpan 7).
+- Chrome: shadow-none + rounded-lg via wrapperClassName on the Deliveries instance
+  ONLY (global DataTable default untouched; user said "for this table").
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
+  user. BEFORE 85177bb → AFTER d520a1b.
+
+## 2026-07-07 — header bands + popover chrome + Type pill [table-header-band-popover-chrome-type-pill]
+- GLOBAL popover chrome: SelectContent + DropdownMenuContent/SubContent shadow-md/lg
+  → shadow-sm, border → border-slate-300 (border-over-shadow; user approved global).
+- Deliveries header = bg-slate-50 band (className prop, tailwind-merge beats the
+  grid's bg-card); expanded projects get a whisper sub-header row (slate-50/60,
+  10px muted labels, indents match column content; aria-hidden — controls carry
+  their own labels).
+- Type renders as neutral TypePill (slate-100/700) in cell + trigger. Per-type
+  COLORS deliberately not invented — would need a `color` field on the Delivery
+  Types preset schema (Settings → Delivery Types) if the user wants it later.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
+  user. BEFORE d5acde6 → AFTER f9af943.
+
+## 2026-07-07 — Deliveries table v2 [projects-counts-delivery-assignees + deliveries-table-v2]
+- BACKEND: get_projects → imageCount/videoCount (SUM CASE on assets.type) +
+  copyCount (copy_results batch); deliveries list_items → assignees [{id,name}]
+  (delivery_assignments JOIN pcm_users, one batch query). Additive, php -l clean.
+- DataTable gains OPT-IN layoutKey → SEO-style drag-reorder + drag-resize via the
+  shared useColumnLayout/ColumnHead (colgroup + fixed chevron col; hook always
+  called, persists only with a key; Sites' legacy path untouched).
+- Sub-rows: project name inline-renames the REAL project (new renameProject on
+  useDeliveryProjects → assets.renameProject, rethrow → draft revert);
+  Images/Copy/Videos cells = clickable counts (muted at 0). Positional mapping
+  documented (sub-band keeps its own labeled order under any parent column order).
+- TypePill: 7-slot predefined palette, stable hash by type KEY (color survives
+  label renames; no preset-schema change). Assignee column read-only after Modules
+  (assign via Users module — per-delivery editing would fight the user-centric
+  PUT /users/{id}/deliveries shape).
+- Verified: tsc 56 = baseline, build OK. Live pass pending user.
+  BEFOREs 039399a (PHP) / 754a08c (TS) → AFTERs 80475a7 / dd614ef.
+
+## 2026-07-07 — delivery Lead + table polish items 2–6 [delivery-lead + deliveries-table-polish]
+- Lead = delivery_assignments row with new role='lead' (DB 1.36.0, additive) →
+  access/grants/notifications reuse the assignment mechanics wholesale. New
+  PATCH /deliveries/{id}/lead (owner-checked; demote-not-remove; insert runs the
+  Users-module invalidation tail). Assignee column → editable Lead select
+  (users.list mounts admin-only); role added to list enrichment.
+- Polish: non-admin cells read-only (sub-rows stay editable — ownership-scoped
+  server-side); trash-in-name-cell → Board's confirm dialog; DataTable gains
+  filterDefs prop wiring the EXISTING ColumnHead/useColumnFilters header
+  filters (user's "searchable dropdowns" satisfied with zero new features);
+  Reset-columns button (clear storage + remount).
+- Verified: php -l, tsc 56 = baseline, build OK. Live pass pending user.
+  BEFOREs dec9928 / 292d4c2 → AFTERs 23cffef / d8af260. Comms/email relay
+  feature ON HOLD per user (consult delivered in chat).
+
+## 2026-07-07 — create-from-delivery "+" flow [create-from-delivery-seam + consumers]
+- Generic one-shot PendingCreateContext (module-checked consume) in AppContext;
+  "+" on delivery sub-row count cells opens Image/Copy/Video/Approvals with
+  brand/delivery/project pre-selected. NEW Approvals count cell per project
+  (frontend join on approvals.listSets — boundary respected), warmed at mount.
+- Consumers: Image/Copy/Video set ContextPanel brand (project rides on
+  brand.projectId — the prop path Image save already reads; toast on fetch
+  fail). Approvals opens CreateCustomSetDialog with preset → SendToApprovalSet
+  Dialog (new defaultDeliveryId prop; brandId/projectId existed).
+- SEO SERP-check action DROPPED per user mid-batch (no SEO table changes for
+  now) — remains on the roadmap list, unbuilt.
+- Verified: tsc 56 = baseline (0 new), build OK. Live pass pending user.
+  BEFOREs 3e2d0c7 / 4276d1c → AFTERs 758c74a / ae2852e.

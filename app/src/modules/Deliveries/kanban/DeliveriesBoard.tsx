@@ -21,7 +21,7 @@ import {
   useState,
   type ChangeEvent,
 } from 'react';
-import { Package, Plus, Search, X } from 'lucide-react';
+import { Package, Plus, RotateCcw, Search, SquareKanban, Table2, X } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -50,6 +50,7 @@ import {
 } from '@/components/shared/Kanban';
 import { EmptyState } from '@/components/shared/EmptyState';
 
+import { DELIVERIES_LAYOUT_KEY, DeliveriesTable } from '../table/DeliveriesTable';
 import { DeliveryCard } from './DeliveryCard';
 import { deliveryColumns } from './deliveryColumns';
 import { deliveryFilters } from './deliveryFilters';
@@ -65,6 +66,18 @@ import {
 const ALL_VALUE = '__all__';
 /** Sentinel for "no explicit sort". */
 const NO_SORT_VALUE = '__none__';
+
+/** Kanban ⇄ Table — persisted per browser, like the SEO column layout. */
+type DeliveriesView = 'kanban' | 'table';
+const VIEW_STORAGE_KEY = 'pcm:deliveries:view';
+
+function readStoredView(): DeliveriesView {
+  try {
+    return localStorage.getItem(VIEW_STORAGE_KEY) === 'table' ? 'table' : 'kanban';
+  } catch {
+    return 'kanban';
+  }
+}
 
 function isDeliveryStatus(value: string): value is DeliveryStatus {
   return (DELIVERY_STATUSES as ReadonlyArray<string>).includes(value);
@@ -161,6 +174,30 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
   );
 
   const getColumnId = useCallback((d: Delivery) => d.status, []);
+
+  // ─── Kanban ⇄ Table view toggle ──────────────────────────────
+  const [view, setView] = useState<DeliveriesView>(readStoredView);
+
+  const switchView = useCallback((next: DeliveriesView) => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, next);
+    } catch {
+      // Storage unavailable (private mode) — the toggle still works in-session.
+    }
+  }, []);
+
+  // Reset column layout = clear the stored layout + remount the table so
+  // useColumnLayout reloads its defaults (that IS the semantic of "reset").
+  const [tableEpoch, setTableEpoch] = useState(0);
+  const resetColumns = useCallback(() => {
+    try {
+      localStorage.removeItem(DELIVERIES_LAYOUT_KEY);
+    } catch {
+      // Storage unavailable — remount still restores in-memory defaults.
+    }
+    setTableEpoch((epoch) => epoch + 1);
+  }, []);
 
   // ─── Delete confirmation flow ────────────────────────────────
   const [pendingDelete, setPendingDelete] = useState<Delivery | null>(null);
@@ -262,19 +299,63 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
             Showing {listState.filteredItems.length} deliver
             {listState.filteredItems.length === 1 ? 'y' : 'ies'}
           </div>
-          <Select value={sortValue} onValueChange={handleSortChange}>
-            <SelectTrigger className="w-[170px] h-9 bg-white" aria-label="Sort">
-              <SelectValue placeholder="Sort" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_SORT_VALUE}>No sort</SelectItem>
-              {deliverySorts.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* Sort dropdown drives the Kanban only — in table view the column
+              headers own sorting (two competing sort systems would fight). */}
+          {view === 'kanban' && (
+            <Select value={sortValue} onValueChange={handleSortChange}>
+              <SelectTrigger className="w-[170px] h-9 bg-white" aria-label="Sort">
+                <SelectValue placeholder="Sort" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_SORT_VALUE}>No sort</SelectItem>
+                {deliverySorts.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {/* Table view: restore default column order + widths. */}
+          {view === 'table' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetColumns}
+              className="h-9 px-2 text-slate-500"
+              title="Reset column order and widths"
+              aria-label="Reset column order and widths"
+            >
+              <RotateCcw className="w-4 h-4" aria-hidden="true" />
+            </Button>
+          )}
+          {/* Kanban ⇄ Table — same segmented chrome as Projects' grid/list toggle. */}
+          <div
+            className="flex items-center gap-0.5 rounded-md bg-slate-100 p-0.5"
+            role="group"
+            aria-label="Board view"
+          >
+            <button
+              type="button"
+              title="Kanban view"
+              aria-label="Kanban view"
+              aria-pressed={view === 'kanban'}
+              onClick={() => switchView('kanban')}
+              className={`p-1.5 rounded-sm transition-all ${view === 'kanban' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <SquareKanban className="w-4 h-4" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              title="Table view"
+              aria-label="Table view"
+              aria-pressed={view === 'table'}
+              onClick={() => switchView('table')}
+              className={`p-1.5 rounded-sm transition-all ${view === 'table' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Table2 className="w-4 h-4" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -305,16 +386,25 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
               </button>
             </div>
           )}
-          <KanbanBoard<Delivery>
-            columns={deliveryColumns}
-            items={listState.filteredItems}
-            getColumnId={getColumnId}
-            renderCard={renderCard}
-            onItemMove={handleMove}
-            isLoading={isLoading}
-            error={error}
-            ariaLabel="Deliveries pipeline"
-          />
+          {view === 'table' ? (
+            <DeliveriesTable
+              key={tableEpoch}
+              items={listState.filteredItems}
+              onEdit={onEdit}
+              onRequestDelete={requestDelete}
+            />
+          ) : (
+            <KanbanBoard<Delivery>
+              columns={deliveryColumns}
+              items={listState.filteredItems}
+              getColumnId={getColumnId}
+              renderCard={renderCard}
+              onItemMove={handleMove}
+              isLoading={isLoading}
+              error={error}
+              ariaLabel="Deliveries pipeline"
+            />
+          )}
         </div>
       )}
 

@@ -106,6 +106,11 @@ interface SendToApprovalSetDialogProps {
    * (Copy/Image flows) to keep the existing prop-driven behaviour.
    */
   projects?: { id: number; name: string }[];
+  /**
+   * Explicit delivery preselection (e.g. the create-from-delivery "+" flow).
+   * Wins over the brand-matched delivery guess; the user can still change it.
+   */
+  defaultDeliveryId?: number | null;
 }
 
 export function SendToApprovalSetDialog({
@@ -122,6 +127,7 @@ export function SendToApprovalSetDialog({
   brandClientEmail,
   itemSummary,
   projects,
+  defaultDeliveryId,
 }: SendToApprovalSetDialogProps) {
   const [setName, setSetName] = useState('');
   const [shareableLink, setShareableLink] = useState('');
@@ -165,11 +171,16 @@ export function SendToApprovalSetDialog({
       setMode('create');
       setTargetSet(null);
       setProjectSel(projectId != null ? String(projectId) : '');
-      // Pre-pick the delivery linked to the current brand, when there is one.
-      const brandDelivery = brandId
-        ? deliveries.find((d) => d.brandId === Number(brandId))
-        : undefined;
-      setDeliveryId(brandDelivery ? String(brandDelivery.id) : '');
+      // Explicit delivery preset (create-from-delivery flow) wins; otherwise
+      // pre-pick the delivery linked to the current brand, when there is one.
+      if (defaultDeliveryId != null) {
+        setDeliveryId(String(defaultDeliveryId));
+      } else {
+        const brandDelivery = brandId
+          ? deliveries.find((d) => d.brandId === Number(brandId))
+          : undefined;
+        setDeliveryId(brandDelivery ? String(brandDelivery.id) : '');
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);

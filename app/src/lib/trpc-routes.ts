@@ -198,6 +198,21 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "DELETE",
         transform: (input: any) => ({ url: `deliveries/${input.id}` }),
     },
+    "deliveries.logs": {
+        endpoint: "deliveries",
+        method: "GET",
+        transform: (input: any) => ({ url: `deliveries/${input.id}/logs` }),
+    },
+    "deliveries.addLog": {
+        endpoint: "deliveries",
+        method: "POST",
+        transform: (input: any) => ({ url: `deliveries/${input.id}/logs`, body: { note: input.note } }),
+    },
+    "deliveries.setLead": {
+        endpoint: "deliveries",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `deliveries/${input.id}/lead`, body: { userId: input.userId } }),
+    },
 
     // ── Strategy ──
     "strategy.create": { endpoint: "strategies", method: "POST" },
@@ -652,6 +667,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "assets/projects",
         method: "PATCH",
         transform: (input: any) => ({ url: `assets/projects/${input.id}/delivery`, body: { deliveryId: input.deliveryId } }),
+    },
+    "assets.setProjectSite": {
+        endpoint: "assets/projects",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `assets/projects/${input.id}/site`, body: { siteId: input.siteId } }),
     },
 
     // ── Copy ──

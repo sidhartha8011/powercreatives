@@ -12,7 +12,7 @@
 import { useState, useCallback, useMemo, type ChangeEvent } from 'react';
 import {
   Globe, Plus, Trash2, RefreshCw, ExternalLink, Loader2, ShieldCheck,
-  KeyRound, Puzzle, Download, Search, X,
+  KeyRound, Puzzle, Download, Search, X, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -27,6 +27,10 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { useListState, textFilter, searchableSelect, type FilterState } from '@/components/shared/Kanban';
 import { colors, typography } from '@/components/shared/design-tokens';
@@ -43,6 +47,15 @@ interface Site {
   connectMethod?: string;
   lastSyncAt?: string;
   createdAt: string;
+}
+
+/** Minimal project shape for the Project(s) connection column. The link itself lives on
+ *  the projects table (`projects.siteId`, N:1 — several projects may connect to one site);
+ *  this module only renders it and calls the assets endpoint that owns it. */
+interface ProjectRef {
+  id: number;
+  name: string;
+  siteId: number | null;
 }
 
 type AddStep = null | 'choose' | 'password';
@@ -72,6 +85,18 @@ export function SitesModule() {
   // ── Data ──
   const { data: sitesRaw, isLoading, refetch } = trpc.sites.list.useQuery() as any;
   const sites: Site[] = Array.isArray(sitesRaw) ? sitesRaw : [];
+
+  // Projects, for the Project(s) connection column. Ids are Number()-normalized (wpdb
+  // returns strings); the connection is read from each project's siteId.
+  const { data: projectsRaw, refetch: refetchProjects } = trpc.assets.getProjects.useQuery() as any;
+  const projects: ProjectRef[] = useMemo(
+    () => (Array.isArray(projectsRaw) ? projectsRaw : []).map((p: any) => ({
+      id: Number(p.id),
+      name: String(p.name ?? ''),
+      siteId: p.siteId != null ? Number(p.siteId) : null,
+    })),
+    [projectsRaw],
+  );
 
   // ── Dialog + form state ──
   const [addStep, setAddStep] = useState<AddStep>(null);
@@ -148,6 +173,22 @@ export function SitesModule() {
     onError: (e: any) => toast.error(e.message ?? 'Connection test failed'),
     onSettled: () => setTestingId(null),
   }) as any;
+  // Connect/disconnect a project ↔ this site. Same endpoint as the Projects and Deliveries
+  // controls — the link lives only in projects.siteId, so all surfaces stay in sync.
+  const setProjectSiteMutation = trpc.assets.setProjectSite.useMutation({
+    onError: (e: any) => toast.error(e.message ?? 'Could not update the connection'),
+  }) as any;
+  const toggleProjectSite = useCallback((project: ProjectRef, site: Site, connect: boolean) => {
+    setProjectSiteMutation.mutate(
+      { id: project.id, siteId: connect ? Number(site.id) : null },
+      {
+        onSuccess: () => {
+          toast.success(connect ? `“${project.name}” connected to ${site.name}` : `“${project.name}” disconnected`);
+          refetchProjects();
+        },
+      },
+    );
+  }, [setProjectSiteMutation, refetchProjects]);
 
   // ── Handlers ──
   const openAdd = useCallback(() => setAddStep(isAdmin ? 'choose' : 'password'), [isAdmin]);
@@ -191,7 +232,7 @@ export function SitesModule() {
   // Column config for the global <DataTable>.
   const columns = useMemo<DataTableColumn<Site>[]>(() => [
     {
-      key: 'name', header: 'Name', width: '20%', sortAccessor: (s) => s.name.toLowerCase(),
+      key: 'name', header: 'Name', width: '18%', sortAccessor: (s) => s.name.toLowerCase(),
       cell: (site) => (
         <div className="flex items-center gap-2 min-w-0">
           <Globe className="w-4 h-4 shrink-0" style={{ color: colors.primary }} />
@@ -200,7 +241,7 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'url', header: 'URL', width: '24%', sortAccessor: (s) => s.url.toLowerCase(),
+      key: 'url', header: 'URL', width: '20%', sortAccessor: (s) => s.url.toLowerCase(),
       cell: (site) => (
         <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-[260px] items-center gap-1 text-primary hover:underline">
           <span className="truncate">{site.url}</span><ExternalLink className="w-3 h-3 shrink-0" />
@@ -208,11 +249,57 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'username', header: 'User', width: '13%', sortAccessor: (s) => s.username.toLowerCase(),
+      // Connect/disconnect projects right from the row. Checked = connected to THIS site;
+      // N:1, so several projects can be checked and toggling one never touches the others.
+      key: 'projects', header: 'Project(s)', width: '15%',
+      // Number() both sides — wpdb returns ids as strings; a strict === on mixed types
+      // would never match and the checkmarks would never render.
+      sortAccessor: (s) => projects.filter((p) => p.siteId === Number(s.id)).map((p) => p.name.toLowerCase()).join(', '),
+      cell: (site) => {
+        const siteId = Number(site.id);
+        const connected = projects.filter((p) => p.siteId === siteId);
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 max-w-full gap-1 text-xs font-normal">
+                <span className="truncate">
+                  {connected.length === 0 ? 'Not connected' : connected.map((p) => p.name).join(', ')}
+                </span>
+                <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64">
+              <DropdownMenuLabel className="text-xs">Connected projects</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {projects.length === 0 && (
+                <div className="px-2 py-1.5 text-xs text-muted-foreground">No projects yet</div>
+              )}
+              {projects.map((p) => (
+                <DropdownMenuCheckboxItem
+                  key={p.id}
+                  className="text-xs"
+                  checked={p.siteId === siteId}
+                  disabled={setProjectSiteMutation.isPending}
+                  onCheckedChange={(checked) => toggleProjectSite(p, site, checked === true)}
+                  onSelect={(e) => e.preventDefault()}
+                >
+                  <span className="truncate">{p.name}</span>
+                  {p.siteId !== null && p.siteId !== siteId && (
+                    <span className="ml-auto pl-2 text-[10px] text-muted-foreground shrink-0">connected to another site</span>
+                  )}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
+    {
+      key: 'username', header: 'User', width: '10%', sortAccessor: (s) => s.username.toLowerCase(),
       className: 'text-muted-foreground', cell: (site) => site.username,
     },
     {
-      key: 'method', header: 'Method', width: '13%',
+      key: 'method', header: 'Method', width: '10%',
       sortAccessor: (s) => (s.connectMethod === 'connector' ? 'plugin' : 'password'),
       cell: (site) => (
         <Badge variant="outline" className="gap-1 text-[10px]">
@@ -221,13 +308,13 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'status', header: 'Status', width: '10%', sortAccessor: (s) => s.status,
+      key: 'status', header: 'Status', width: '8%', sortAccessor: (s) => s.status,
       cell: (site) => (
         <span className={`capitalize ${site.status === 'active' ? 'text-muted-foreground' : 'font-medium text-destructive'}`}>{site.status}</span>
       ),
     },
     {
-      key: 'createdAt', header: 'Added', width: '10%', sortAccessor: (s) => new Date(s.createdAt).getTime(),
+      key: 'createdAt', header: 'Added', width: '9%', sortAccessor: (s) => new Date(s.createdAt).getTime(),
       className: 'text-muted-foreground',
       cell: (site) => (site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'),
     },
@@ -248,7 +335,7 @@ export function SitesModule() {
         </div>
       ),
     },
-  ], [colors, testingId, testMutation, deleteMutation, openGsc, gscPreviewMutation.isPending, gscSite]);
+  ], [colors, testingId, testMutation, deleteMutation, openGsc, gscPreviewMutation.isPending, gscSite, projects, toggleProjectSite, setProjectSiteMutation.isPending]);
   const search = readSearch(list.filterState);
   const statusValue = readStatus(list.filterState);
   const statusOptions = useMemo(
@@ -270,7 +357,7 @@ export function SitesModule() {
   return (
     <div className="h-full flex flex-col overflow-auto">
       {/* Header */}
-      <div className="flex items-center gap-2 mb-1 shrink-0">
+      <div className="flex items-center gap-2 mb-6 shrink-0">
         <Globe className="w-5 h-5" style={{ color: colors.primary }} />
         <h1 style={{ fontSize: typography.title, fontWeight: typography.bold, color: colors.text }}>Sites</h1>
         <Badge variant="secondary" className="ml-1">{sites.length} connected</Badge>
@@ -296,13 +383,7 @@ export function SitesModule() {
         )}
         <Button onClick={openAdd}><Plus className="w-4 h-4" /> Add Site</Button>
       </div>
-      <p className="text-xs text-muted-foreground mb-4 max-w-3xl">
-        Connect your other WordPress sites to publish to them.{' '}
-        {isAdmin
-          ? 'Install our connector plugin and paste the code it shows, or add one with an Application Password. '
-            + 'Already connected? Page-builder link editing needs connector v2.0.0+. The connector is a SEPARATE plugin that lives ON the connected site — reinstalling Power Creatives here will NOT update it. Use “Download connector”, then install the zip ON that site (its wp-admin → Plugins → Add New → Upload Plugin → “Replace current with uploaded” → Activate); its version should then read 2.0.0 under Plugins.'
-          : 'Add one with its URL and an Application Password.'}
-      </p>
+
 
       {/* Unified list */}
       {sites.length === 0 ? (
@@ -314,13 +395,13 @@ export function SitesModule() {
       ) : (
         <>
           {/* Filter bar — instant search + status (shared Kanban filter engine) */}
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <Input value={search} onChange={onSearch} placeholder="Search sites…" className="h-9 w-[220px] pl-8 text-xs" />
+          <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-2 rounded-lg border border-slate-200/80">
+            <div className="relative flex-1 min-w-[200px] max-w-[220px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input value={search} onChange={onSearch} placeholder="Search sites…" className="h-9 pl-9 text-xs bg-slate-50" />
             </div>
             <Select value={statusValue} onValueChange={onStatus}>
-              <SelectTrigger className="h-9 w-[150px] text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectTrigger className="h-9 w-[150px] text-xs bg-slate-50"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL_STATUS} className="text-xs">All statuses</SelectItem>
                 {statusOptions.map((s) => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
@@ -341,6 +422,7 @@ export function SitesModule() {
             rowKey={(s) => s.id}
             defaultSortKey="name"
             emptyMessage="No sites match your filters."
+            wrapperClassName="shadow-none"
           />
         </>
       )}

@@ -53,9 +53,17 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             array('GET',    '/deliveries/type-presets',       'get_type_presets', array(), 'manage_options'),
             array('GET',    '/deliveries',                    'list_items'),
             array('GET',    '/deliveries/(?P<id>\\d+)',       'get_by_id'),
+            // Work log — append-only "what was done" notes on the delivery
+            // card. Team members can read and add; entries are never edited.
+            array('GET',    '/deliveries/(?P<id>\\d+)/logs',  'list_logs'),
+            array('POST',   '/deliveries/(?P<id>\\d+)/logs',  'add_log'),
             // Writes are admin-only; team members only view assigned deliveries.
             array('POST',   '/deliveries',                    'create_item', array(), 'manage_options'),
             array('PATCH',  '/deliveries/(?P<id>\\d+)',       'update_item', array(), 'manage_options'),
+            // Lead = the delivery's single primary assignee (assignment row
+            // with role='lead' → module access + notifications come from the
+            // existing assignment mechanics, nothing parallel).
+            array('PATCH',  '/deliveries/(?P<id>\\d+)/lead',  'set_lead',    array(), 'manage_options'),
             array('DELETE', '/deliveries/(?P<id>\\d+)',       'delete_item', array(), 'manage_options'),
         );
     }
@@ -83,7 +91,44 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         $user = $this->get_current_pcm_user();
         $rows = PCM_DB::get_user_deliveries($user->id);
 
-        return $this->success(array_map(array($this->service, 'format_delivery'), $rows));
+        $items = array_map(array($this->service, 'format_delivery'), $rows);
+
+        // Batch-attach assignees ({id, name} per delivery) from
+        // delivery_assignments — read-only enrichment for list surfaces (the
+        // Deliveries table's Assignee column). Assigning itself stays in the
+        // Users module (PUT /users/{id}/deliveries).
+        if (!empty($items)) {
+            global $wpdb;
+            $ids = array_map(static function (array $item): int {
+                return (int) $item['id'];
+            }, $items);
+            $placeholders = implode(',', array_fill(0, count($ids), '%d'));
+            $assign_table = PCM_Schema::table('delivery_assignments');
+            $users_table  = PCM_Schema::table('users');
+            // phpcs:ignore WordPress.DB.PreparedSQL -- placeholders built from %d only.
+            $assignment_rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT a.deliveryId, a.role, u.id AS userId, u.name
+                 FROM $assign_table a
+                 INNER JOIN $users_table u ON u.id = a.userId
+                 WHERE a.deliveryId IN ($placeholders)
+                 ORDER BY u.name ASC",
+                ...$ids
+            ));
+            $by_delivery = array();
+            foreach ($assignment_rows as $assignment) {
+                $by_delivery[(int) $assignment->deliveryId][] = array(
+                    'id'   => (int) $assignment->userId,
+                    'name' => (string) $assignment->name,
+                    'role' => (string) ($assignment->role ?: 'member'),
+                );
+            }
+            foreach ($items as &$item) {
+                $item['assignees'] = $by_delivery[(int) $item['id']] ?? array();
+            }
+            unset($item);
+        }
+
+        return $this->success($items);
     }
 
     /** GET /deliveries/<id> — Get a single delivery by ID. */
@@ -97,6 +142,80 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         }
 
         return $this->success($this->service->format_delivery($row));
+    }
+
+    // =========================================================================
+    // WORK LOG
+    // =========================================================================
+
+    /** GET /deliveries/<id>/logs — Work-log entries, newest first. */
+    public function list_logs(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        global $wpdb;
+        $user = $this->get_current_pcm_user();
+        $id   = absint($request->get_param('id'));
+
+        if (!PCM_DB::get_delivery_by_id($id, (int) $user->id)) {
+            return $this->not_found('Delivery');
+        }
+
+        $logs  = PCM_Schema::table('delivery_logs');
+        $users = PCM_Schema::table('users');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT l.id, l.userId, l.note, l.createdAt, u.name AS userName, u.username
+             FROM {$logs} l LEFT JOIN {$users} u ON u.id = l.userId
+             WHERE l.deliveryId = %d ORDER BY l.createdAt DESC, l.id DESC",
+            $id
+        ));
+
+        return $this->success(array_map(static function ($row) {
+            return array(
+                'id'        => (int) $row->id,
+                'userId'    => (int) $row->userId,
+                'note'      => (string) $row->note,
+                'createdAt' => $row->createdAt,
+                'userName'  => $row->userName ?: ($row->username ?: __('Unknown user', 'power-creatives')),
+            );
+        }, $rows));
+    }
+
+    /** POST /deliveries/<id>/logs — Append a work-log entry. Body: { note }. */
+    public function add_log(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        global $wpdb;
+        $user = $this->get_current_pcm_user();
+        $id   = absint($request->get_param('id'));
+
+        if (!PCM_DB::get_delivery_by_id($id, (int) $user->id)) {
+            return $this->not_found('Delivery');
+        }
+
+        $note = sanitize_textarea_field((string) ($request->get_param('note') ?? ''));
+        if ('' === trim($note)) {
+            return $this->error(__('Log note cannot be empty.', 'power-creatives'));
+        }
+
+        $now = current_time('mysql');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->insert(PCM_Schema::table('delivery_logs'), array(
+            'deliveryId' => $id,
+            'userId'     => (int) $user->id,
+            'note'       => $note,
+            'createdAt'  => $now,
+        ));
+
+        if (!$wpdb->insert_id) {
+            return $this->error(__('Failed to save the log entry.', 'power-creatives'), 500);
+        }
+
+        return $this->success(array(
+            'id'        => (int) $wpdb->insert_id,
+            'userId'    => (int) $user->id,
+            'note'      => $note,
+            'createdAt' => $now,
+            'userName'  => $user->name ?: ($user->username ?? ''),
+        ), 201);
     }
 
     // =========================================================================
@@ -253,6 +372,120 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         return $this->success($this->service->format_delivery($row));
     }
 
+    /**
+     * PATCH /deliveries/<id>/lead — Set (or clear) the delivery's lead.
+     *
+     * Body: { userId: number | null }
+     *
+     * The lead IS an assignment (delivery_assignments row, role='lead'), so
+     * the existing access mechanics apply untouched: PCM_Access grants the
+     * lead view+use of the delivery + linked brand/project and unlocks the
+     * delivery's `modules` list; notification visibility follows the granted
+     * brand. A previous lead is DEMOTED to member, never removed — access is
+     * only ever revoked explicitly (Users module).
+     */
+    public function set_lead(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        global $wpdb;
+
+        $user = $this->get_current_pcm_user();
+        $id   = absint($request->get_param('id'));
+
+        $existing = PCM_DB::get_delivery_by_id($id, $user->id);
+        if (!$existing) {
+            return $this->not_found('Delivery');
+        }
+        // Same owner rule as update_item: assigned users can view, not edit.
+        if ((int) $existing->userId !== (int) $user->id) {
+            return $this->error('You can view this delivery but not edit it.', 403, 'pcm_forbidden');
+        }
+
+        $params  = $request->get_json_params() ?: array();
+        $lead_id = isset($params['userId']) && $params['userId'] !== null && $params['userId'] !== ''
+            ? absint($params['userId'])
+            : null;
+
+        $assign_table = PCM_Schema::table('delivery_assignments');
+        $users_table  = PCM_Schema::table('users');
+
+        if ($lead_id !== null) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $target = $wpdb->get_row($wpdb->prepare(
+                "SELECT id FROM $users_table WHERE id = %d",
+                $lead_id
+            ));
+            if (!$target) {
+                return $this->not_found('User');
+            }
+        }
+
+        // Demote the current lead (role change only — grants ignore role, so
+        // no cache invalidation is needed for a demotion).
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->query($wpdb->prepare(
+            "UPDATE $assign_table SET role = 'member' WHERE deliveryId = %d AND role = 'lead'",
+            $id
+        ));
+
+        if ($lead_id !== null) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $assignment = $wpdb->get_row($wpdb->prepare(
+                "SELECT id FROM $assign_table WHERE deliveryId = %d AND userId = %d",
+                $id,
+                $lead_id
+            ));
+            if ($assignment) {
+                // Already on the team — promote in place, grants unchanged.
+                $wpdb->update(
+                    $assign_table,
+                    array('role' => 'lead'),
+                    array('id' => (int) $assignment->id),
+                    array('%s'),
+                    array('%d')
+                );
+            } else {
+                // New assignment — this is the moment access is granted, so
+                // it needs the same invalidation tail the Users module uses.
+                $wpdb->insert(
+                    $assign_table,
+                    array(
+                        'deliveryId' => $id,
+                        'userId'     => $lead_id,
+                        'assignedBy' => (int) $user->id,
+                        'role'       => 'lead',
+                        'createdAt'  => current_time('mysql'),
+                    ),
+                    array('%d', '%d', '%d', '%s', '%s')
+                );
+                PCM_DB::invalidate('deliveries', $lead_id);
+                PCM_DB::invalidate('brands', $lead_id);
+                if (class_exists('PCM_Access')) {
+                    PCM_Access::reset_memo();
+                }
+            }
+        }
+
+        // Fresh assignee list so the frontend can update the row in place.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT a.userId AS id, a.role, u.name
+             FROM $assign_table a
+             INNER JOIN $users_table u ON u.id = a.userId
+             WHERE a.deliveryId = %d
+             ORDER BY u.name ASC",
+            $id
+        ));
+        $assignees = array_map(static function (object $row): array {
+            return array(
+                'id'   => (int) $row->id,
+                'name' => (string) $row->name,
+                'role' => (string) ($row->role ?: 'member'),
+            );
+        }, $rows ?: array());
+
+        return $this->success(array('assignees' => $assignees));
+    }
+
     /** DELETE /deliveries/<id> — Delete a delivery. */
     public function delete_item(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
@@ -312,17 +545,9 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             }
         }
 
-        // SEO module — a connected site (Sites/SEO tab) scoped to this caller.
-        if (array_key_exists('seoSiteId', $params)) {
-            $site_id = absint($params['seoSiteId'] ?? 0);
-            if ($site_id === 0) {
-                $out['seoSiteId'] = null;
-            } elseif (PCM_DB::get_site($site_id, $user_id)) {
-                $out['seoSiteId'] = $site_id;
-            } else {
-                return $this->error('Site not found.', 404, 'pcm_site_not_found');
-            }
-        }
+        // seoSiteId — DEPRECATED v1.35.0: intentionally no longer accepted.
+        // It was a write-only field no module ever read; site resolution
+        // derives live via PCM_Hierarchy (delivery → projects → siteId).
 
         return $out;
     }

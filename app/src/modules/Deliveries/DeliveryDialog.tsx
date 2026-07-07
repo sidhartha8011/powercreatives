@@ -1,42 +1,41 @@
 /**
- * DeliveryDialog — create + edit form for a single delivery.
+ * DeliveryDialog — the delivery detail card, built on the shared EntityCard
+ * primitive (reference consumer).
  *
- * One dialog handles both modes. The parent passes either a `delivery`
- * (edit mode) or null (create mode); the dialog reads its open state
- * from the same useDeliveries hook that drives the board.
+ * Composition:
+ *   <EntityCard>                       ← shell: white, 5xl, one scroll, no footer
+ *     <EntityCardTitle>                ← name, edited in place, "Saved ✓" whisper
+ *     <PropertyTable>                  ← Status | Client | Type | Module access |
+ *                                        Brand | External ID (declarative defs)
+ *     <ProjectsSection> <LogSection>   ← Deliveries-owned domain sections
  *
- * Fields:
- *   - name        (required)
- *   - clientName  (optional)
- *   - status      (active / paused / completed — required, defaults to active)
+ * Edit mode auto-saves per field, silently (errors toast AND restore the
+ * previous value — the card never shows unsaved state as saved). Create mode
+ * fills the same cells locally and submits with one button.
  *
- * Submit is disabled while the relevant mutation is pending so users
- * cannot double-submit.
+ * Type drives the module preset; the Module access cell is the custom
+ * override. Retired earlier (v1.35.0): seoSiteId + the single Project
+ * access-grant select.
  */
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, Send } from 'lucide-react';
+import { toast } from 'sonner';
 
+import {
+  CARD_TYPE,
+  EntityCard,
+  EntityCardSection,
+  EntityCardTitle,
+  PropertyTable,
+  relTime,
+  type PropertyDef,
+} from '@/components/shared/EntityCard';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 import { trpc } from '@/lib/trpc';
-import { Checkbox } from '@/components/ui/checkbox';
+import { AddProjectMenu, DeliveryProjectsBody, useDeliveryProjects } from './DeliveryProjects';
 import { useTypePresets } from './hooks/useTypePresets';
 
 import {
@@ -52,12 +51,19 @@ const STATUS_LABELS: Record<DeliveryStatus, string> = {
   completed: 'Completed',
 };
 
+/** Status dot colors — matches the Kanban lane semantics. */
+const STATUS_DOTS: Record<DeliveryStatus, string> = {
+  active: '#16a34a',
+  paused: '#d97706',
+  completed: '#94a3b8',
+};
+
 export interface DeliveryDialogProps {
   /** Open state — controlled by the parent (useDeliveries hook). */
   open: boolean;
   /** Existing delivery in edit mode; null in create mode. */
   delivery: Delivery | null;
-  /** Called when the dialog wants to close (overlay click, X, Cancel). */
+  /** Called when the dialog wants to close (overlay click, X, Esc). */
   onClose: () => void;
   /** Create handler. Resolves on server ack so the dialog can close. */
   onCreate: (data: {
@@ -66,12 +72,10 @@ export interface DeliveryDialogProps {
     status?: DeliveryStatus;
     type?: string | null;
     brandId?: number | null;
-    projectId?: number | null;
-    seoSiteId?: number | null;
     modules?: string[];
     externalId?: string | null;
   }) => Promise<unknown>;
-  /** Update handler. Resolves on server ack so the dialog can close. */
+  /** Update handler. Resolves on server ack (used per-field for auto-save). */
   onUpdate: (data: {
     id: number;
     name?: string;
@@ -79,8 +83,6 @@ export interface DeliveryDialogProps {
     status?: DeliveryStatus;
     type?: string | null;
     brandId?: number | null;
-    projectId?: number | null;
-    seoSiteId?: number | null;
     modules?: string[];
     externalId?: string | null;
   }) => Promise<unknown>;
@@ -96,321 +98,312 @@ export function DeliveryDialog({
   const isEdit = delivery !== null;
 
   const [name, setName] = useState('');
-  const [clientName, setClientName] = useState('');
   const [externalId, setExternalId] = useState('');
   const [status, setStatus] = useState<DeliveryStatus>('active');
-  // '' = none. Picking a type pre-fills the module checkboxes from the
-  // central preset (Settings → Delivery Types); checkboxes stay editable.
   const [type, setType] = useState('');
   const { presets: typePresets } = useTypePresets();
-  // '' = none — Select values are strings; converted to number|null on submit.
   const [brandId, setBrandId] = useState('');
-  const [projectId, setProjectId] = useState('');
-  // SEO module — a connected site (Sites/SEO tab) chosen for this delivery.
-  const [seoSiteId, setSeoSiteId] = useState('');
-  // Module grants for assignees (nav ids).
   const [modules, setModules] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  const toggleModule = (id: string) =>
-    setModules((prev) => (prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]));
-
-  const handleTypeChange = (next: string) => {
-    const cleaned = next === 'none' ? '' : next;
-    setType(cleaned);
-    if (cleaned && typePresets[cleaned]) {
-      setModules([...typePresets[cleaned].modules]);
-    }
+  // Transient "Saved ✓" whisper next to the title (spec: silent saves).
+  const [saved, setSaved] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashSaved = () => {
+    setSaved(true);
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setSaved(false), 1500);
   };
 
-  // Options for the brand/project linkage — the delivery carries these so
-  // assigning it grants access to both.
   const { data: brandsRaw } = trpc.brands.list.useQuery();
-  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
-  // Connected sites for the SEO module — the same list shown in the SEO tab.
-  const { data: sitesRaw } = trpc.sites.list.useQuery();
   const brands: { id: number; name: string }[] = Array.isArray(brandsRaw)
     ? brandsRaw.map((b: any) => ({ id: Number(b.id), name: b.name }))
     : [];
-  const projects: { id: number; name: string }[] = Array.isArray(projectsRaw)
-    ? projectsRaw.map((p: any) => ({ id: Number(p.id), name: p.name }))
-    : [];
-  const sites: { id: number; name: string }[] = Array.isArray(sitesRaw)
-    ? sitesRaw.map((s: any) => ({ id: Number(s.id), name: String(s.name || s.url || `Site #${s.id}`) }))
-    : [];
 
-  // Sync form to the supplied delivery whenever the dialog opens. Both
-  // modes (create / edit) reset state here so users get a clean form
-  // every time the dialog appears.
+  // Sync form state whenever the card opens (both modes reset here).
   useEffect(() => {
     if (!open) return;
     if (delivery) {
       setName(delivery.name);
-      setClientName(delivery.clientName ?? '');
       setExternalId(delivery.externalId ?? '');
       setStatus(delivery.status);
       setType(delivery.type ?? '');
       setBrandId(delivery.brandId ? String(delivery.brandId) : '');
-      setProjectId(delivery.projectId ? String(delivery.projectId) : '');
-      setSeoSiteId(delivery.seoSiteId ? String(delivery.seoSiteId) : '');
       setModules(Array.isArray(delivery.modules) ? delivery.modules : []);
     } else {
       setName('');
-      setClientName('');
       setExternalId('');
       setStatus('active');
       setType('');
       setBrandId('');
-      setProjectId('');
-      setSeoSiteId('');
       setModules([]);
     }
+    setSaved(false);
     setSubmitting(false);
   }, [open, delivery]);
 
+  /**
+   * Auto-save one field (edit mode): apply optimistically, whisper "Saved ✓"
+   * on ack, RESTORE the previous state on failure — the card never displays
+   * unsaved state as saved. Errors toast via the useDeliveries hook.
+   */
+  const persist = (patch: Record<string, unknown>, apply: () => void, revert: () => void) => {
+    apply();
+    if (!isEdit || !delivery) return;
+    onUpdate({ id: delivery.id, ...patch }).then(flashSaved).catch(revert);
+  };
+
+  const handleTypeChange = (next: string | null) => {
+    const cleaned = next ?? '';
+    const prevType = type;
+    const prevModules = modules;
+    // Type applies the central preset; the Module access cell is the override.
+    const presetModules = cleaned && typePresets[cleaned] ? [...typePresets[cleaned].modules] : null;
+    persist(
+      { type: cleaned || null, ...(presetModules ? { modules: presetModules } : {}) },
+      () => { setType(cleaned); if (presetModules) setModules(presetModules); },
+      () => { setType(prevType); setModules(prevModules); },
+    );
+  };
+
+  // ── Declarative property row (order per spec: Status·Type·Brand·Modules·ID). ──
+  const properties: PropertyDef[] = [
+    {
+      control: 'select', key: 'status', label: 'Status', width: '14%',
+      value: status,
+      noneLabel: '—',
+      options: DELIVERY_STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s], dot: STATUS_DOTS[s] })),
+      onSave: (v) => {
+        if (!v) return; // status is never empty
+        const prev = status;
+        persist({ status: v as DeliveryStatus }, () => setStatus(v as DeliveryStatus), () => setStatus(prev));
+      },
+    },
+    {
+      control: 'select', key: 'type', label: 'Type', width: '20%',
+      value: type || null,
+      noneLabel: 'No type',
+      options: Object.entries(typePresets).map(([id, preset]) => ({ value: id, label: preset.label })),
+      onSave: handleTypeChange,
+    },
+    {
+      control: 'select', key: 'brand', label: 'Brand', width: '20%',
+      value: brandId || null,
+      noneLabel: 'No brand',
+      options: brands.map((b) => ({ value: String(b.id), label: b.name })),
+      onSave: (v) => {
+        const prev = brandId;
+        persist({ brandId: v ? Number(v) : null }, () => setBrandId(v ?? ''), () => setBrandId(prev));
+      },
+    },
+    {
+      control: 'multiToggle', key: 'modules', label: 'Modules', width: '26%',
+      values: modules,
+      options: GRANTABLE_MODULES.map((m) => ({ id: m.id, label: m.label })),
+      popoverLabel: 'Module access (Ads includes Copy + Image)',
+      onSave: (next) => {
+        const prev = modules;
+        persist({ modules: next }, () => setModules(next), () => setModules(prev));
+      },
+    },
+    {
+      control: 'text', key: 'externalId', label: 'ID', width: '20%',
+      value: externalId, placeholder: 'Empty',
+      onSave: (v) => {
+        const prev = externalId;
+        persist({ externalId: v.length > 0 ? v : null }, () => setExternalId(v), () => setExternalId(prev));
+      },
+    },
+  ];
+
+  // ── Create mode: same cells, local state only, one primary action. ──
   const canSubmit = name.trim().length > 0 && !submitting;
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleCreate = async () => {
     if (!canSubmit) return;
-
     setSubmitting(true);
     try {
       const trimmedExternalId = externalId.trim();
-      if (isEdit && delivery) {
-        const trimmedClient = clientName.trim();
-        await onUpdate({
-          id: delivery.id,
-          name: name.trim(),
-          clientName: trimmedClient.length > 0 ? trimmedClient : null,
-          status,
-          type: type || null,
-          brandId: brandId ? Number(brandId) : null,
-          projectId: projectId ? Number(projectId) : null,
-          seoSiteId: seoSiteId ? Number(seoSiteId) : null,
-          modules,
-          externalId: trimmedExternalId.length > 0 ? trimmedExternalId : null,
-        });
-      } else {
-        const trimmedClient = clientName.trim();
-        await onCreate({
-          name: name.trim(),
-          ...(trimmedClient.length > 0 ? { clientName: trimmedClient } : {}),
-          status,
-          type: type || null,
-          brandId: brandId ? Number(brandId) : null,
-          projectId: projectId ? Number(projectId) : null,
-          seoSiteId: seoSiteId ? Number(seoSiteId) : null,
-          modules,
-          externalId: trimmedExternalId.length > 0 ? trimmedExternalId : null,
-        });
-      }
+      await onCreate({
+        name: name.trim(),
+        status,
+        type: type || null,
+        brandId: brandId ? Number(brandId) : null,
+        modules,
+        externalId: trimmedExternalId.length > 0 ? trimmedExternalId : null,
+      });
       onClose();
     } catch {
-      // Errors surface as toasts via the hook — keep the dialog open so
-      // the user can adjust input and retry.
+      // Errors surface as toasts via the hook — keep the card open.
       setSubmitting(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
-            <DialogTitle>
-              {isEdit ? 'Edit delivery' : 'New delivery'}
-            </DialogTitle>
-            <DialogDescription>
-              {isEdit
-                ? 'Update the name, client, or pipeline stage.'
-                : 'Create a delivery to organize continual-fulfilment work for a client.'}
-            </DialogDescription>
-          </DialogHeader>
+    <EntityCard
+      open={open}
+      onClose={onClose}
+      ariaTitle={isEdit ? 'Edit delivery' : 'New delivery'}
+      ariaDescription={isEdit
+        ? 'Delivery card — every field saves automatically.'
+        : 'Create a delivery to organize continual-fulfilment work for a client.'}
+    >
+      <EntityCardTitle
+        value={name}
+        placeholder="Untitled delivery"
+        meta={isEdit && delivery?.updatedAt ? `Edited ${relTime(delivery.updatedAt)}` : undefined}
+        autoFocus={!isEdit}
+        saved={saved}
+        onSave={(next) => {
+          const prev = name;
+          if (isEdit) {
+            persist({ name: next }, () => setName(next), () => setName(prev));
+          } else {
+            setName(next);
+          }
+        }}
+      />
 
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="delivery-name">
-                Name <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="delivery-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. ACME — May campaign"
-                autoFocus
-                maxLength={256}
-                required
-              />
-            </div>
+      <PropertyTable properties={properties} />
 
-            <div className="grid gap-2">
-              <Label htmlFor="delivery-client">Client</Label>
-              <Input
-                id="delivery-client"
-                value={clientName}
-                onChange={(e) => setClientName(e.target.value)}
-                placeholder="Client / account name (optional)"
-                maxLength={256}
-              />
-            </div>
+      {isEdit && delivery && <ProjectsSection delivery={delivery} onCardClose={onClose} />}
+      {isEdit && delivery && <LogSection delivery={delivery} />}
 
-            <div className="grid gap-2">
-              <Label htmlFor="delivery-external-id">External ID (eg. airtable or other PM tool)</Label>
-              <Input
-                id="delivery-external-id"
-                value={externalId}
-                onChange={(e) => setExternalId(e.target.value)}
-                placeholder="Optional — used for webhook/automation mapping"
-                maxLength={256}
-              />
-            </div>
+      {!isEdit && (
+        <div className="mt-6 flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
+          <Button type="button" onClick={() => void handleCreate()} disabled={!canSubmit}>
+            {submitting ? 'Creating…' : 'Create delivery'}
+          </Button>
+        </div>
+      )}
+    </EntityCard>
+  );
+}
 
-            <div className="grid gap-2">
-              <Label htmlFor="delivery-type">Type</Label>
-              <p className="text-xs text-muted-foreground -mt-1">
-                Picking a type pre-fills the modules it needs — you can still
-                adjust the checkboxes below.
+/**
+ * Projects in this delivery — projects.deliveryId = this delivery. The whole
+ * surface (data hook + add menu + table) lives in DeliveryProjects.tsx, shared
+ * with the Deliveries table's accordion rows; this section is card glue only.
+ * Mounted only while the card is open in edit mode.
+ */
+function ProjectsSection({ delivery, onCardClose }: { delivery: Delivery; onCardClose: () => void }) {
+  const state = useDeliveryProjects(delivery);
+
+  return (
+    <EntityCardSection
+      title="Projects"
+      action={
+        state.inDelivery.length > 0 ? (
+          <AddProjectMenu
+            available={state.available}
+            onAssign={(id, name) => void state.assignProject(id, name)}
+            trigger={
+              <Button type="button" variant="ghost" size="sm" className={`h-7 gap-1 ${CARD_TYPE.LABEL}`}>
+                <Plus className="h-3.5 w-3.5" /> Add project
+              </Button>
+            }
+          />
+        ) : undefined
+      }
+    >
+      <DeliveryProjectsBody state={state} onNavigated={onCardClose} />
+    </EntityCardSection>
+  );
+}
+
+/** How many log entries show before the "Show all" expander. */
+const LOG_PREVIEW_COUNT = 10;
+
+/**
+ * Work log — append-only "what was done" entries (pcm_delivery_logs), newest
+ * first. The composer input is the empty state; Enter or the send affordance
+ * submits. Mounted only while the card is open in edit mode.
+ */
+function LogSection({ delivery }: { delivery: Delivery }) {
+  const [note, setNote] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const { data: logsRaw, refetch } = trpc.deliveries.logs.useQuery({ id: Number(delivery.id) });
+  const logs: { id: number; note: string; userName: string; createdAt: string }[] = Array.isArray(logsRaw)
+    ? (logsRaw as any[]).map((l) => ({
+        id: Number(l.id),
+        note: String(l.note ?? ''),
+        userName: String(l.userName ?? ''),
+        createdAt: String(l.createdAt ?? ''),
+      }))
+    : [];
+  const visible = showAll ? logs : logs.slice(0, LOG_PREVIEW_COUNT);
+
+  const addMutation = trpc.deliveries.addLog.useMutation() as any;
+  const addEntry = async () => {
+    const trimmed = note.trim();
+    if (!trimmed) return;
+    try {
+      await addMutation.mutateAsync({ id: Number(delivery.id), note: trimmed });
+      setNote('');
+      refetch();
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to save the log entry');
+    }
+  };
+
+  return (
+    <EntityCardSection title="Log">
+      {/* Composer — the input IS the empty state. */}
+      <div className="relative mb-3">
+        <Input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Write what was done…"
+          aria-label="Write what was done"
+          maxLength={2000}
+          className={`h-9 pr-10 ${CARD_TYPE.BODY}`}
+          onKeyDown={(e) => {
+            // Enter and ⌘/Ctrl+Enter both submit; never the surrounding form.
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void addEntry();
+            }
+          }}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-label="Add log entry"
+          className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 p-0 text-muted-foreground disabled:opacity-30"
+          disabled={addMutation.isPending || !note.trim()}
+          onClick={() => void addEntry()}
+        >
+          <Send className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      {visible.length > 0 && (
+        <ul className="space-y-2">
+          {visible.map((l) => (
+            <li key={l.id} className="rounded-md border px-3 py-2">
+              <p className={`whitespace-pre-wrap ${CARD_TYPE.BODY}`}>{l.note}</p>
+              <p
+                className={`mt-1 ${CARD_TYPE.LABEL}`}
+                title={l.createdAt ? new Date(l.createdAt.replace(' ', 'T')).toLocaleString() : undefined}
+              >
+                {l.userName} · {relTime(l.createdAt)}
               </p>
-              <Select
-                value={type || 'none'}
-                onValueChange={handleTypeChange}
-              >
-                <SelectTrigger id="delivery-type">
-                  <SelectValue placeholder="No type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No type</SelectItem>
-                  {Object.entries(typePresets).map(([id, preset]) => (
-                    <SelectItem key={id} value={id}>{preset.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="delivery-brand">Brand</Label>
-              <Select
-                value={brandId || 'none'}
-                onValueChange={(v) => setBrandId(v === 'none' ? '' : v)}
-              >
-                <SelectTrigger id="delivery-brand">
-                  <SelectValue placeholder="No brand linked" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No brand</SelectItem>
-                  {brands.map((b) => (
-                    <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="delivery-project">Project</Label>
-              <Select
-                value={projectId || 'none'}
-                onValueChange={(v) => setProjectId(v === 'none' ? '' : v)}
-              >
-                <SelectTrigger id="delivery-project">
-                  <SelectValue placeholder="No project linked" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No project</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid gap-2">
-              <Label>Modules needed</Label>
-              <p className="text-xs text-muted-foreground -mt-1">
-                Assignees of this delivery get access to the checked modules
-                (Ads includes the Copy + Image backends).
-              </p>
-              <div className="grid grid-cols-2 gap-1.5">
-                {GRANTABLE_MODULES.map((m) => (
-                  <div key={m.id} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`delivery-module-${m.id}`}
-                      checked={modules.includes(m.id)}
-                      onCheckedChange={() => toggleModule(m.id)}
-                    />
-                    <Label htmlFor={`delivery-module-${m.id}`} className="cursor-pointer font-normal">
-                      {m.label}
-                    </Label>
-                  </div>
-                ))}
-              </div>
-
-              {/* SEO module — a dropdown of connected sites (the SEO tab's site
-                  list), scoped to this caller. The chosen site is saved on the
-                  delivery (seoSiteId). */}
-              <div className="mt-2 grid gap-1.5">
-                <Label htmlFor="delivery-seo-site" className="font-normal">SEO module — site</Label>
-                <Select
-                  value={seoSiteId || 'none'}
-                  onValueChange={(v) => setSeoSiteId(v === 'none' ? '' : v)}
-                >
-                  <SelectTrigger id="delivery-seo-site">
-                    <SelectValue placeholder="No site selected" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No site</SelectItem>
-                    {sites.map((s) => (
-                      <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                    ))}
-                    {sites.length === 0 && (
-                      <div className="px-2 py-1.5 text-xs text-muted-foreground">No connected sites yet</div>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="delivery-status">Status</Label>
-              <Select
-                value={status}
-                onValueChange={(v) => setStatus(v as DeliveryStatus)}
-              >
-                <SelectTrigger id="delivery-status">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DELIVERY_STATUSES.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {STATUS_LABELS[s]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={onClose}
-              disabled={submitting}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!canSubmit}>
-              {submitting
-                ? isEdit
-                  ? 'Saving…'
-                  : 'Creating…'
-                : isEdit
-                  ? 'Save changes'
-                  : 'Create delivery'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!showAll && logs.length > LOG_PREVIEW_COUNT && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={`mt-2 h-7 ${CARD_TYPE.LABEL}`}
+          onClick={() => setShowAll(true)}
+        >
+          Show all ({logs.length})
+        </Button>
+      )}
+    </EntityCardSection>
   );
 }

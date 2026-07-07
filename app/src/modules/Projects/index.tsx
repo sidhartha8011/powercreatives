@@ -38,6 +38,7 @@ import {
   FolderInput,
 } from 'lucide-react';
 import { BulkActionBar } from '@/components/shared/BulkActionBar';
+import { useApp } from '@/contexts/AppContext';
 
 export function ProjectsModule() {
   // Global View State
@@ -90,6 +91,19 @@ export function ProjectsModule() {
   const projectsQuery = trpc.assets.getProjects.useQuery({ includeThumbnails: true });
   const projects: Project[] = projectsQuery.data ?? [];
 
+  // Cross-module deep-link (e.g. delivery card → a project's media/copy tab).
+  // One-shot: consume clears the pending nav; waits until projects are loaded.
+  const { consumePendingProjectNav } = useApp();
+  useEffect(() => {
+    if (projects.length === 0) return;
+    const nav = consumePendingProjectNav();
+    if (!nav) return;
+    const target = projects.find((p) => Number(p.id) === nav.projectId);
+    if (!target) return;
+    setSelectedProject(target);
+    setDetailTab(nav.tab);
+  }, [projects, consumePendingProjectNav]);
+
   // Brand → Delivery → Project: assign the delivery a project belongs to. Brand is then
   // inherited live from that delivery everywhere (approval sets, etc.) — never stored.
   const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
@@ -106,6 +120,25 @@ export function ProjectsModule() {
       toast.success(deliveryId ? 'Delivery assigned — brand now inherited from it' : 'Delivery cleared');
     } catch (e: any) {
       toast.error(e?.message || 'Failed to set the project delivery');
+    }
+  };
+
+  // Site ↔ Project connection (projects.siteId, N:1 — same link the Sites and Deliveries
+  // controls edit). "Site" = a connected WP site from the Sites module.
+  const { data: sitesRaw } = trpc.sites.list.useQuery();
+  const sites: { id: number; name: string }[] = Array.isArray(sitesRaw)
+    ? (sitesRaw as any[]).map((s) => ({ id: Number(s.id), name: String(s.name) }))
+    : [];
+  const setProjectSiteMutation = trpc.assets.setProjectSite.useMutation();
+  const handleSetProjectSite = async (siteId: number | null) => {
+    if (!selectedProject) return;
+    try {
+      await setProjectSiteMutation.mutateAsync({ id: selectedProject.id, siteId });
+      setSelectedProject({ ...selectedProject, siteId });
+      projectsQuery.refetch();
+      toast.success(siteId ? 'Site connected' : 'Site disconnected');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update the site connection');
     }
   };
 
@@ -311,6 +344,18 @@ export function ProjectsModule() {
               <SelectContent>
                 <SelectItem value="none">No delivery</SelectItem>
                 {deliveries.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {/* Site ↔ Project: connect/disconnect the site this project uses. */}
+            <span className="text-xs font-medium text-slate-500">Site</span>
+            <Select
+              value={selectedProject.siteId != null ? String(selectedProject.siteId) : 'none'}
+              onValueChange={(v) => handleSetProjectSite(v === 'none' ? null : Number(v))}
+            >
+              <SelectTrigger className="h-9 w-[220px] text-xs bg-white"><SelectValue placeholder="Not connected" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Not connected</SelectItem>
+                {sites.map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
