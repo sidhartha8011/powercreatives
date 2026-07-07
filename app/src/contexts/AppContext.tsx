@@ -56,6 +56,20 @@ export interface PendingProjectNav {
   tab: 'media' | 'copy';
 }
 
+/**
+ * Cross-module creation handover (e.g. a delivery project row's "+" →
+ * open a module with brand / delivery / project pre-selected, so whatever
+ * gets produced is born correctly mapped). One-shot; only the TARGET module
+ * consumes it (consumePendingCreate checks the module id), so a stale
+ * context can never leak into a different module.
+ */
+export interface PendingCreateContext {
+  module: 'image' | 'copy' | 'video' | 'approvals';
+  brandId: number | null;
+  deliveryId: number;
+  projectId: number;
+}
+
 interface AppState {
   /** App-wide settings */
   settings: AppSettings;
@@ -71,6 +85,8 @@ interface AppState {
   pendingApprovalSetId: number | null;
   /** e.g. Delivery card → Projects: open one project on a specific tab (one-shot). */
   pendingProjectNav: PendingProjectNav | null;
+  /** e.g. Delivery project row "+" → create in a module, pre-mapped (one-shot). */
+  pendingCreate: PendingCreateContext | null;
 
   /** Event subscribers */
   eventListeners: Map<AppEventType, Set<(event: AppEvent) => void>>;
@@ -87,7 +103,8 @@ type AppAction =
   | { type: 'SET_PENDING_VIDEO_DATA'; payload: PendingVideoData | null }
   | { type: 'SET_PENDING_WRITER_DATA'; payload: PendingWriterData | null }
   | { type: 'SET_PENDING_APPROVAL_SET'; payload: number | null }
-  | { type: 'SET_PENDING_PROJECT_NAV'; payload: PendingProjectNav | null };
+  | { type: 'SET_PENDING_PROJECT_NAV'; payload: PendingProjectNav | null }
+  | { type: 'SET_PENDING_CREATE'; payload: PendingCreateContext | null };
 
 // ============================================
 // Initial State
@@ -122,6 +139,7 @@ const initialState: AppState = {
   pendingWriterData: null,
   pendingApprovalSetId: null,
   pendingProjectNav: null,
+  pendingCreate: null,
   eventListeners: new Map(),
 };
 
@@ -175,6 +193,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         pendingProjectNav: action.payload,
       };
 
+    case 'SET_PENDING_CREATE':
+      return {
+        ...state,
+        pendingCreate: action.payload,
+      };
+
     default:
       return state;
   }
@@ -203,6 +227,8 @@ interface AppContextValue {
   consumePendingApprovalSetId: () => number | null;
   navigateToProjectTab: (nav: PendingProjectNav) => void;
   consumePendingProjectNav: () => PendingProjectNav | null;
+  navigateToCreate: (ctx: PendingCreateContext) => void;
+  consumePendingCreate: (module: PendingCreateContext['module']) => PendingCreateContext | null;
 
   /** Event system */
   emit: (event: AppEvent) => void;
@@ -288,6 +314,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return nav;
   }, [state.pendingProjectNav]);
 
+  // Cross-module: create something in a module with brand/delivery/project
+  // pre-selected (e.g. the "+" on a delivery project row). Same one-shot
+  // pattern; the module check keeps a context addressed to one module from
+  // ever being consumed by another.
+  const navigateToCreate = useCallback((ctx: PendingCreateContext) => {
+    dispatch({ type: 'SET_PENDING_CREATE', payload: ctx });
+    dispatch({ type: 'SET_ACTIVE_MODULE', payload: ctx.module });
+  }, []);
+
+  const consumePendingCreate = useCallback(
+    (module: PendingCreateContext['module']): PendingCreateContext | null => {
+      const ctx = state.pendingCreate;
+      if (ctx && ctx.module === module) {
+        dispatch({ type: 'SET_PENDING_CREATE', payload: null });
+        return ctx;
+      }
+      return null;
+    },
+    [state.pendingCreate]
+  );
+
   // Event system
   const emit = useCallback(
     (event: AppEvent) => {
@@ -355,6 +402,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     consumePendingApprovalSetId,
     navigateToProjectTab,
     consumePendingProjectNav,
+    navigateToCreate,
+    consumePendingCreate,
     emit,
     subscribe,
   };

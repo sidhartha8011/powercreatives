@@ -398,12 +398,30 @@ function LeadSelect({ delivery, onSaved }: { delivery: Delivery; onSaved: () => 
  * Accordion content: the delivery's projects as native rows of the parent
  * grid. Cell mapping is POSITIONAL (independent of the parent's column order):
  * chevron (empty) | project name (indented, inline-renames the real project) |
- * site select | Images | Copy | Videos counts | spacers | ✕. The sub-header
- * row above labels these cells. Trailing row = the same AddProjectMenu the
+ * site select | Images | Copy | Videos | Approvals counts | spacer | ✕. The
+ * sub-header row above labels these cells. Count cells carry a "+" that opens
+ * the matching module with brand/delivery/project pre-selected
+ * (AppContext.navigateToCreate). Trailing row = the same AddProjectMenu the
  * delivery card has.
  */
 function ProjectSubRows({ delivery }: { delivery: Delivery }) {
-  const { navigateToProjectTab } = useApp();
+  const { navigateToProjectTab, navigateToCreate } = useApp();
+  // Approvals count = frontend join on the sets list (approval_sets.projectId)
+  // — the assets module must never read the approvals tables server-side.
+  const { data: setsRaw } = trpc.approvals.listSets.useQuery();
+  const setCountByProject = useMemo(() => {
+    const counts = new Map<number, number>();
+    if (Array.isArray(setsRaw)) {
+      for (const s of setsRaw as any[]) {
+        if (s?.projectId != null) {
+          const pid = Number(s.projectId);
+          counts.set(pid, (counts.get(pid) ?? 0) + 1);
+        }
+      }
+    }
+    return counts;
+  }, [setsRaw]);
+
   const {
     inDelivery,
     available,
@@ -427,20 +445,52 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
     );
   }
 
-  // Count cell: the sub-header labels the column, so the cell is just the
-  // number — clickable, jumps straight into the project on that tab.
-  const countCell = (p: DeliveryProject, count: number, label: string, tab: 'media' | 'copy') => (
+  /** The "+" beside a count: open the target module with brand / delivery /
+   *  project pre-selected — whatever gets produced is born correctly mapped. */
+  const createPlus = (p: DeliveryProject, module: 'image' | 'copy' | 'video' | 'approvals', label: string) => (
     <Button
       type="button"
       variant="ghost"
       size="sm"
-      className={`h-7 px-2 text-xs tabular-nums hover:text-primary ${count === 0 ? 'text-muted-foreground/50' : ''}`}
-      title={`Open ${label.toLowerCase()} in ${p.name}`}
-      aria-label={`${count} ${label.toLowerCase()} in ${p.name} — open`}
-      onClick={() => navigateToProjectTab({ projectId: p.id, tab })}
+      className="h-6 w-6 shrink-0 p-0 text-muted-foreground/40 hover:text-primary"
+      title={`Create ${label.toLowerCase()} for ${p.name}`}
+      aria-label={`Create ${label.toLowerCase()} for ${p.name} — pre-mapped to this delivery and project`}
+      onClick={() =>
+        navigateToCreate({
+          module,
+          brandId: delivery.brandId != null ? Number(delivery.brandId) : null,
+          deliveryId: Number(delivery.id),
+          projectId: p.id,
+        })
+      }
     >
-      {count}
+      <Plus className="h-3.5 w-3.5" />
     </Button>
+  );
+
+  // Count cell: the sub-header labels the column, so the cell is just the
+  // number (click = jump into the project on that tab) plus the create "+".
+  const countCell = (
+    p: DeliveryProject,
+    count: number,
+    label: string,
+    tab: 'media' | 'copy',
+    module: 'image' | 'copy' | 'video'
+  ) => (
+    <span className="flex items-center">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className={`h-7 px-2 text-xs tabular-nums hover:text-primary ${count === 0 ? 'text-muted-foreground/50' : ''}`}
+        title={`Open ${label.toLowerCase()} in ${p.name}`}
+        aria-label={`${count} ${label.toLowerCase()} in ${p.name} — open`}
+        onClick={() => navigateToProjectTab({ projectId: p.id, tab })}
+      >
+        {count}
+      </Button>
+      {createPlus(p, module, label)}
+    </span>
   );
 
   // Whisper-gray band + 10px label ink: reads as a section header, one level
@@ -467,7 +517,9 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
         <td className={subHead}>
           <span className="block pl-2">Videos</span>
         </td>
-        <td className={subHead} />
+        <td className={subHead}>
+          <span className="block pl-2">Approvals</span>
+        </td>
         <td className={subHead} />
         <td className={subHead} />
       </tr>
@@ -496,10 +548,19 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
               onSave={(v) => setProjectSite(p, v != null ? Number(v) : null)}
             />
           </td>
-          <td>{countCell(p, p.imageCount, 'Images', 'media')}</td>
-          <td>{countCell(p, p.copyCount, 'Copy', 'copy')}</td>
-          <td>{countCell(p, p.videoCount, 'Videos', 'media')}</td>
-          <td />
+          <td>{countCell(p, p.imageCount, 'Images', 'media', 'image')}</td>
+          <td>{countCell(p, p.copyCount, 'Copy', 'copy', 'copy')}</td>
+          <td>{countCell(p, p.videoCount, 'Videos', 'media', 'video')}</td>
+          <td>
+            {/* No approvals tab in the project detail to jump to — the count
+                is informational, the + creates a pre-mapped approval set. */}
+            <span className="flex items-center">
+              <span className={`px-2 text-xs tabular-nums ${(setCountByProject.get(p.id) ?? 0) === 0 ? 'text-muted-foreground/50' : ''}`}>
+                {setCountByProject.get(p.id) ?? 0}
+              </span>
+              {createPlus(p, 'approvals', 'approval set')}
+            </span>
+          </td>
           <td />
           <td className="text-right">
             <Button
@@ -549,11 +610,12 @@ export interface DeliveriesTableProps {
 }
 
 export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTableProps) {
-  // Warm the shared project/site caches at table mount so expanding a row is
-  // instant client-side filtering, not a first-expand network wait (the
-  // sub-row hook reads these exact query keys).
+  // Warm the shared project/site/sets caches at table mount so expanding a
+  // row is instant client-side filtering, not a first-expand network wait
+  // (the sub-row hooks read these exact query keys).
   trpc.assets.getProjects.useQuery();
   trpc.sites.list.useQuery();
+  trpc.approvals.listSets.useQuery();
 
   const isAdmin = getIsAdmin();
   const { updateDelivery, refetch } = useDeliveries();
