@@ -308,13 +308,13 @@ export function SitesModule() {
       ) : (
         <>
           {/* Filter bar — instant search + status (shared Kanban filter engine) */}
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <Input value={search} onChange={onSearch} placeholder="Search sites…" className="h-9 w-[220px] pl-8 text-xs" />
+          <div className="flex flex-wrap items-center gap-3 mb-4 bg-slate-50/50 p-2 rounded-lg border border-slate-100">
+            <div className="relative flex-1 min-w-[200px] max-w-[220px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input value={search} onChange={onSearch} placeholder="Search sites…" className="h-9 pl-9 text-xs bg-white" />
             </div>
             <Select value={statusValue} onValueChange={onStatus}>
-              <SelectTrigger className="h-9 w-[150px] text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectTrigger className="h-9 w-[150px] text-xs bg-white"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL_STATUS} className="text-xs">All statuses</SelectItem>
                 {statusOptions.map((s) => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
