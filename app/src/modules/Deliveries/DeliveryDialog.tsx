@@ -62,6 +62,7 @@ import {
 } from '@/components/ui/table';
 
 import { trpc } from '@/lib/trpc';
+import { useApp } from '@/contexts/AppContext';
 import { useTypePresets } from './hooks/useTypePresets';
 
 import {
@@ -124,7 +125,6 @@ export function DeliveryDialog({
   const isEdit = delivery !== null;
 
   const [name, setName] = useState('');
-  const [clientName, setClientName] = useState('');
   const [externalId, setExternalId] = useState('');
   const [status, setStatus] = useState<DeliveryStatus>('active');
   const [type, setType] = useState('');
@@ -152,7 +152,6 @@ export function DeliveryDialog({
     if (!open) return;
     if (delivery) {
       setName(delivery.name);
-      setClientName(delivery.clientName ?? '');
       setExternalId(delivery.externalId ?? '');
       setStatus(delivery.status);
       setType(delivery.type ?? '');
@@ -160,7 +159,6 @@ export function DeliveryDialog({
       setModules(Array.isArray(delivery.modules) ? delivery.modules : []);
     } else {
       setName('');
-      setClientName('');
       setExternalId('');
       setStatus('active');
       setType('');
@@ -195,10 +193,10 @@ export function DeliveryDialog({
     );
   };
 
-  // ── Declarative property row (spec: fixed widths, no jitter). ──
+  // ── Declarative property row (order per spec: Status·Type·Brand·Modules·ID). ──
   const properties: PropertyDef[] = [
     {
-      control: 'select', key: 'status', label: 'Status', width: '12%',
+      control: 'select', key: 'status', label: 'Status', width: '14%',
       value: status,
       noneLabel: '—',
       options: DELIVERY_STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s], dot: STATUS_DOTS[s] })),
@@ -209,32 +207,14 @@ export function DeliveryDialog({
       },
     },
     {
-      control: 'text', key: 'client', label: 'Client', width: '22%',
-      value: clientName, placeholder: 'Empty',
-      onSave: (v) => {
-        const prev = clientName;
-        persist({ clientName: v.length > 0 ? v : null }, () => setClientName(v), () => setClientName(prev));
-      },
-    },
-    {
-      control: 'select', key: 'type', label: 'Type', width: '16%',
+      control: 'select', key: 'type', label: 'Type', width: '20%',
       value: type || null,
       noneLabel: 'No type',
       options: Object.entries(typePresets).map(([id, preset]) => ({ value: id, label: preset.label })),
       onSave: handleTypeChange,
     },
     {
-      control: 'multiToggle', key: 'modules', label: 'Module access', width: '18%',
-      values: modules,
-      options: GRANTABLE_MODULES.map((m) => ({ id: m.id, label: m.label })),
-      popoverLabel: 'Module access (Ads includes Copy + Image)',
-      onSave: (next) => {
-        const prev = modules;
-        persist({ modules: next }, () => setModules(next), () => setModules(prev));
-      },
-    },
-    {
-      control: 'select', key: 'brand', label: 'Brand', width: '16%',
+      control: 'select', key: 'brand', label: 'Brand', width: '20%',
       value: brandId || null,
       noneLabel: 'No brand',
       options: brands.map((b) => ({ value: String(b.id), label: b.name })),
@@ -244,7 +224,17 @@ export function DeliveryDialog({
       },
     },
     {
-      control: 'text', key: 'externalId', label: 'External ID', width: '16%',
+      control: 'multiToggle', key: 'modules', label: 'Modules', width: '26%',
+      values: modules,
+      options: GRANTABLE_MODULES.map((m) => ({ id: m.id, label: m.label })),
+      popoverLabel: 'Module access (Ads includes Copy + Image)',
+      onSave: (next) => {
+        const prev = modules;
+        persist({ modules: next }, () => setModules(next), () => setModules(prev));
+      },
+    },
+    {
+      control: 'text', key: 'externalId', label: 'ID', width: '20%',
       value: externalId, placeholder: 'Empty',
       onSave: (v) => {
         const prev = externalId;
@@ -259,11 +249,9 @@ export function DeliveryDialog({
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      const trimmedClient = clientName.trim();
       const trimmedExternalId = externalId.trim();
       await onCreate({
         name: name.trim(),
-        ...(trimmedClient.length > 0 ? { clientName: trimmedClient } : {}),
         status,
         type: type || null,
         brandId: brandId ? Number(brandId) : null,
@@ -304,7 +292,7 @@ export function DeliveryDialog({
 
       <PropertyTable properties={properties} />
 
-      {isEdit && delivery && <ProjectsSection delivery={delivery} />}
+      {isEdit && delivery && <ProjectsSection delivery={delivery} onCardClose={onClose} />}
       {isEdit && delivery && <LogSection delivery={delivery} />}
 
       {!isEdit && (
@@ -352,12 +340,18 @@ function AddProjectMenu({
 }
 
 /**
- * Projects in this delivery — projects.deliveryId = this delivery, each with
- * its Site ↔ Project connection (projects.siteId — the same link the Sites
- * table and Projects module edit). Row actions reveal on hover; the empty
- * state IS the add action. Mounted only while the card is open in edit mode.
+ * Projects in this delivery — projects.deliveryId = this delivery. Columns:
+ * Site (the projects.siteId connect/disconnect select, own column) + one nav
+ * cell per content type. Images/Copy/Videos jump straight into that project
+ * on the matching detail tab (AppContext.navigateToProjectTab — videos live
+ * on the media tab alongside images). Articles is intentionally disabled:
+ * articles have no project relation in the data model (articles.siteId only)
+ * and Projects has no articles tab — wiring it anywhere would be a lie.
+ * Row actions reveal on hover; the empty state IS the add action. Mounted
+ * only while the card is open in edit mode.
  */
-function ProjectsSection({ delivery }: { delivery: Delivery }) {
+function ProjectsSection({ delivery, onCardClose }: { delivery: Delivery; onCardClose: () => void }) {
+  const { navigateToProjectTab } = useApp();
   const { data: projectsRaw, refetch: refetchProjects } = trpc.assets.getProjects.useQuery();
   const { data: sitesRaw } = trpc.sites.list.useQuery();
 
@@ -412,6 +406,12 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
     }
   };
 
+  /** Jump straight into the project on the given detail tab; the card closes. */
+  const goToProject = (projectId: number, tab: 'media' | 'copy') => {
+    navigateToProjectTab({ projectId, tab });
+    onCardClose();
+  };
+
   return (
     <EntityCardSection
       title="Projects"
@@ -450,7 +450,11 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
             <TableHeader>
               <TableRow className={CARD_TABLE_ROW}>
                 <TableHead className={CARD_TABLE_HEAD}>Project</TableHead>
-                <TableHead className={CARD_TABLE_HEAD}>Connected</TableHead>
+                <TableHead className={CARD_TABLE_HEAD}>Site</TableHead>
+                <TableHead className={CARD_TABLE_HEAD}>Images</TableHead>
+                <TableHead className={CARD_TABLE_HEAD}>Copy</TableHead>
+                <TableHead className={CARD_TABLE_HEAD}>Articles</TableHead>
+                <TableHead className={CARD_TABLE_HEAD}>Videos</TableHead>
                 <TableHead className={`${CARD_TABLE_HEAD} w-10`} />
               </TableRow>
             </TableHeader>
@@ -460,27 +464,44 @@ function ProjectsSection({ delivery }: { delivery: Delivery }) {
                   {/* Names earn emphasis from position, not weight — BODY like every value. */}
                   <TableCell className={`${CARD_TABLE_CELL} px-3`}>{p.name}</TableCell>
                   <TableCell className={CARD_TABLE_CELL}>
-                    <div className="flex items-center gap-3">
-                      <Select
-                        value={p.siteId != null ? String(p.siteId) : 'none'}
-                        onValueChange={(v) => void setProjectSite(p, v === 'none' ? null : Number(v))}
-                        disabled={setSiteMutation.isPending}
+                    <Select
+                      value={p.siteId != null ? String(p.siteId) : 'none'}
+                      onValueChange={(v) => void setProjectSite(p, v === 'none' ? null : Number(v))}
+                      disabled={setSiteMutation.isPending}
+                    >
+                      <SelectTrigger
+                        aria-label={`Site for ${p.name}`}
+                        className={`h-8 w-full rounded border-none bg-transparent px-2 shadow-none hover:bg-slate-50 focus-visible:ring-1 ${CARD_TYPE.BODY} ${p.siteId == null ? 'text-muted-foreground' : ''}`}
                       >
-                        <SelectTrigger
-                          aria-label={`Site for ${p.name}`}
-                          className={`h-8 w-[190px] rounded border-none bg-transparent px-2 shadow-none hover:bg-slate-50 focus-visible:ring-1 ${CARD_TYPE.BODY} ${p.siteId == null ? 'text-muted-foreground' : ''}`}
-                        >
-                          <SelectValue placeholder="Not connected" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none" className="text-muted-foreground">Not connected</SelectItem>
-                          {sites.map((s) => (
-                            <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <span className={`shrink-0 ${CARD_TYPE.LABEL}`}>{p.assetCount} media</span>
-                    </div>
+                        <SelectValue placeholder="Not connected" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none" className="text-muted-foreground">Not connected</SelectItem>
+                        {sites.map((s) => (
+                          <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  {/* Per-type jump cells — straight into the project on that tab. */}
+                  <TableCell className={CARD_TABLE_CELL}>
+                    <Button type="button" variant="ghost" size="sm" className={`h-7 px-2 ${CARD_TYPE.BODY} hover:text-primary`} onClick={() => goToProject(p.id, 'media')}>
+                      Images
+                    </Button>
+                  </TableCell>
+                  <TableCell className={CARD_TABLE_CELL}>
+                    <Button type="button" variant="ghost" size="sm" className={`h-7 px-2 ${CARD_TYPE.BODY} hover:text-primary`} onClick={() => goToProject(p.id, 'copy')}>
+                      Copy
+                    </Button>
+                  </TableCell>
+                  <TableCell className={CARD_TABLE_CELL}>
+                    {/* Disabled on purpose: articles aren't project-linked in the data model. */}
+                    <span className={`px-2 ${CARD_TYPE.LABEL}`} title="Articles are not linked to projects yet">—</span>
+                  </TableCell>
+                  <TableCell className={CARD_TABLE_CELL}>
+                    <Button type="button" variant="ghost" size="sm" className={`h-7 px-2 ${CARD_TYPE.BODY} hover:text-primary`} onClick={() => goToProject(p.id, 'media')}>
+                      Videos
+                    </Button>
                   </TableCell>
                   <TableCell className={`${CARD_TABLE_CELL} text-right`}>
                     {/* Revealed on row hover — quiet at rest. */}

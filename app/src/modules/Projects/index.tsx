@@ -38,6 +38,7 @@ import {
   FolderInput,
 } from 'lucide-react';
 import { BulkActionBar } from '@/components/shared/BulkActionBar';
+import { useApp } from '@/contexts/AppContext';
 
 export function ProjectsModule() {
   // Global View State
@@ -89,6 +90,19 @@ export function ProjectsModule() {
   // Data Fetching (Batch Loaded)
   const projectsQuery = trpc.assets.getProjects.useQuery({ includeThumbnails: true });
   const projects: Project[] = projectsQuery.data ?? [];
+
+  // Cross-module deep-link (e.g. delivery card → a project's media/copy tab).
+  // One-shot: consume clears the pending nav; waits until projects are loaded.
+  const { consumePendingProjectNav } = useApp();
+  useEffect(() => {
+    if (projects.length === 0) return;
+    const nav = consumePendingProjectNav();
+    if (!nav) return;
+    const target = projects.find((p) => Number(p.id) === nav.projectId);
+    if (!target) return;
+    setSelectedProject(target);
+    setDetailTab(nav.tab);
+  }, [projects, consumePendingProjectNav]);
 
   // Brand → Delivery → Project: assign the delivery a project belongs to. Brand is then
   // inherited live from that delivery everywhere (approval sets, etc.) — never stored.

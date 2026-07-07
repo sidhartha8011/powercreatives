@@ -6002,3 +6002,17 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   BEFORE 81540a7 → AFTER (this commit).
 
 ## 2026-07-07 — label token 12px → 10px (user-specified; one @theme line, all metadata follows: table headers, meta line, counts, timestamps)
+
+## 2026-07-07 — delivery card columns (Client removed, per-type project nav)
+- Properties: Client column REMOVED (clientName state/payload dropped from the card;
+  backend field untouched); order now Status | Type | Brand | Modules | ID.
+- Projects table: Site is its own column; + per-type nav cells Images/Copy/Videos —
+  click jumps STRAIGHT into that project on the matching detail tab and closes the card.
+  Mechanism: new AppContext PendingProjectNav + navigateToProjectTab/consumePendingProjectNav
+  (exact one-shot pattern of navigateToApprovalsWithSet); ProjectsModule consumes it once
+  projects are loaded (setSelectedProject + setDetailTab). Videos → media tab (videos are
+  assets on the media tab). Articles column intentionally DISABLED ("—", tooltip): articles
+  have no project relation in the data model (articles.siteId only) and Projects has no
+  articles tab — flagged for the user instead of faking a link.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live click-through
+  pending user. BEFORE 3865b22 → AFTER (this commit).
