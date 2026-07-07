@@ -6046,3 +6046,22 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
   user (expand row, jump cells from accordion, toggle persistence, card regression).
   BEFORE d291884 → AFTER 7d9f711.
+
+## 2026-07-07 — Deliveries table: inline edit + native sub-rows + expand-lag fix [datatable-subrows-api + deliveries-inline-edit-subrows]
+- DataTable `renderExpanded` → `renderSubRows`: expanded content is now real sibling
+  <tr>s inheriting the grid (user: "extra row, not a separate table"); data-subrow
+  stays as the panel escape hatch. One atomic commit with the consumer (a split pair
+  would not build in between).
+- DeliveriesTable: every cell in-place editable with the card's auto-save contract
+  (optimistic + revert-on-failure via useDeliveries.updateDelivery; Type applies the
+  central preset like the card; Status trigger renders the lane pill). Row click
+  removed — card opens via always-visible Maximize2 on the name cell (group-hover is
+  a coarse-pointer no-op). Updated column read-only.
+- ProjectSubRows: grid-native project rows (indent, site select, Images/Copy/Videos
+  jumps, ✕ unassign, trailing AddProjectMenu row, explicit loading row).
+- LAG ROOT CAUSE: the old expanded panel mounted its queries lazily on first expand
+  (network wait) and useDeliveryProjects rendered the load gap as the empty state.
+  Fix: warm assets.getProjects + sites.list at table mount (queries are global,
+  per-delivery filter is client-side) + new isLoading on the hook.
+- Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
+  user. BEFORE 7bd82eb → AFTER 33b6169.
