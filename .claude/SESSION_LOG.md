@@ -5990,3 +5990,13 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   dist; chip merge path node-checked; tsc 56 = baseline identical; build OK.
 - Card text elements now FULLY declared (title 32 / body 11 / label 12 / section 11 /
   chip 12+lh1) — nothing inherits by accident. BEFORE cb5f8a6 → AFTER (this commit).
+
+## 2026-07-07 — chip derives from BODY (no own size, ever)
+- CARD_TYPE.CHIP = `${BODY} leading-none` — a chip is a row value like its siblings
+  (Status/Type/Brand all wear BODY); its ONLY pill-specific trait is leading-none
+  (height from padding, not line box). Replaces the 12px guess (user: chips looked
+  ~9-10px before; root principle per user: reuse the same, never individual hardcoded
+  values). If body ever resizes, chips follow automatically.
+- Verified: chip merge path node-checked (text-card-body survives Badge cn, text-xs/
+  font-medium evicted, leading-none kept); tsc 56 = baseline; build OK.
+  BEFORE 81540a7 → AFTER (this commit).

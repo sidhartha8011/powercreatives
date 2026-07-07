@@ -19,16 +19,20 @@
  * a px class here or in a component.
  */
 
+/** The one shared value voice — every readable/editable value wears this. */
+const BODY = 'text-card-body font-normal text-foreground';
+
 export const CARD_TYPE = {
   /** The entity name. */
   TITLE: 'text-card-title font-bold tracking-tight text-foreground',
   /** Everything the user reads or edits: values, selects, inputs, notes. */
-  BODY: 'text-card-body font-normal text-foreground',
+  BODY,
   /** Everything ABOUT the content: table headers, meta, counts, timestamps. */
   LABEL: 'text-card-label font-normal text-muted-foreground',
-  /** Compact pills/chips: label size, but height comes from padding — never
-   *  the line box. Reading leading (1.5) on a py-0 pill inflates it. */
-  CHIP: 'text-card-label leading-none font-normal',
+  /** A chip IS a body value in pill clothing — it derives from BODY and owns
+   *  NO size of its own, ever. leading-none only: a pill's height comes from
+   *  its padding, not the line box. */
+  CHIP: `${BODY} leading-none`,
   /** Section headers (PROJECTS / LOG) only. */
   SECTION: 'text-card-section font-semibold uppercase tracking-wider text-muted-foreground',
 } as const;
