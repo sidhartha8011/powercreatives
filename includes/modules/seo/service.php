@@ -2405,6 +2405,33 @@ class PCM_SEO_Service
         return $src > 0 ? $src : $page_post_id;
     }
 
+    /** Apply a heading edit through the connector's render-time OVERRIDE layer (connector 2.6.0+):
+     *  rewrites the matching `<hN>text</hN>` in the page output regardless of how/where the builder
+     *  stores it. This is the universal path for headings whose stored form the builder-field /
+     *  content replace can't reach (Brizy & other builders store headings as STRUCTURED nodes, not
+     *  inline HTML, and regenerate their compiled HTML — so a string replace finds nothing / is lost).
+     *  Returns the refreshed heading list on success, WP_Error otherwise. */
+    private static function remote_apply_heading_override(object $site, int $post_id, string $type, string $old_text, int $old_level, ?string $new_text, int $new_level)
+    {
+        $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/override-heading', array(), array(
+            'post_id'  => $post_id,
+            'oldText'  => $old_text,
+            'oldLevel' => $old_level,
+            'newText'  => ($new_text !== null ? $new_text : $old_text),
+            'newLevel' => $new_level,
+        ), 60);
+        if (is_wp_error($rep)) {
+            return new WP_Error('pcm_seo_remote_heading', $rep->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($rep['status'] ?? 0) === 404) {
+            return new WP_Error('pcm_seo_connector_outdated', __('This site needs connector v2.6.0+ to edit this heading — push it via Sites → "Update connectors" (or reinstall once), then retry.', 'power-creatives'), array('status' => 409));
+        }
+        if ((int) ($rep['status'] ?? 0) >= 300 || (int) ($rep['body']['replaced'] ?? 0) === 0) {
+            return new WP_Error('pcm_seo_remote_heading', sprintf(__('The connector rejected the heading override (HTTP %d).', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
+        }
+        return self::remote_get_headings($site, $post_id, $type);
+    }
+
     public static function remote_update_heading(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level)
     {
         self::ensure_sites_service();
@@ -2421,6 +2448,12 @@ class PCM_SEO_Service
         $old_level = (int) $h['level'];
         $new_level = ($level !== null) ? max(1, min(6, $level)) : $old_level;
         $new_text  = $text; // null = keep
+
+        // RENDERED-ONLY heading (theme PHP / nav menu / widget title — no DB source anywhere), or one
+        // already edited via the override layer: goes straight to the render-time override.
+        if (in_array((string) ($h['source'] ?? ''), array('rendered', 'override'), true)) {
+            return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
+        }
 
         // Builder-FIELD heading (text + level in separate meta fields) → connector /replace-heading.
         if ((string) ($h['field'] ?? '') === 'widget') {
@@ -2443,7 +2476,10 @@ class PCM_SEO_Service
                 return new WP_Error('pcm_seo_remote_heading', sprintf(__('The connector rejected the heading edit (HTTP %d).', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
             }
             if ((int) ($rep['body']['replaced'] ?? 0) === 0) {
-                return new WP_Error('pcm_seo_heading_not_found', __('That heading wasn’t found in the builder data — re-open and try again, or edit it in the page builder.', 'power-creatives'), array('status' => 409));
+                // The widget field couldn't be matched (stale scan, or a builder that renders the
+                // heading without the widget keys we edit) → fall back to the render-time override,
+                // which rewrites the visible heading regardless of storage.
+                return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
             }
             return self::remote_get_headings($site, $post_id, $type);
         }
@@ -2451,7 +2487,9 @@ class PCM_SEO_Service
         // Content / inline-HTML heading → builder-aware URL-style replace of the whole element HTML.
         $old_html = (string) $h['html'];
         if ($old_html === '') {
-            return new WP_Error('pcm_seo_heading_not_editable', __('This heading has no editable source markup — edit it in the page builder on the site.', 'power-creatives'), array('status' => 422));
+            // No stored markup to string-replace (e.g. a builder that keeps the heading as a
+            // structured node) — go straight to the render-time override.
+            return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
         }
         $new_html = self::rebuild_heading_html($old_html, $old_level, $new_level, $new_text);
         if ($new_html === $old_html) {
@@ -2471,7 +2509,10 @@ class PCM_SEO_Service
             return new WP_Error('pcm_seo_remote_heading', sprintf(__('The connector rejected the heading edit (HTTP %d) — check its app-password user can edit, and that the connector is v2.1.7+.', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
         }
         if ((int) ($rep['body']['replaced'] ?? 0) === 0) {
-            return new WP_Error('pcm_seo_heading_not_found', __('That heading wasn’t found in the page content or any builder field — it may be hardcoded in the theme or a template. Edit it on the site.', 'power-creatives'), array('status' => 409));
+            // The string replace matched nothing — the builder (Brizy, Divi, …) stores the heading as
+            // a structured node, or regenerated its compiled HTML, so there's no literal <hN> to swap.
+            // Fall back to the render-time override so the edit still applies on the visible page.
+            return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
         }
         return self::remote_get_headings($site, $post_id, $type);
     }
