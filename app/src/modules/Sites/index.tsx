@@ -308,7 +308,7 @@ export function SitesModule() {
       ) : (
         <>
           {/* Filter bar — instant search + status (shared Kanban filter engine) */}
-          <div className="flex flex-wrap items-center gap-3 mb-4 bg-white p-2 rounded-lg border border-slate-200/80 shadow-sm">
+          <div className="flex flex-wrap items-center gap-3 mb-4 bg-white p-2 rounded-lg border border-slate-200/80">
             <div className="relative flex-1 min-w-[200px] max-w-[220px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input value={search} onChange={onSearch} placeholder="Search sites…" className="h-9 pl-9 text-xs bg-slate-50" />
@@ -335,6 +335,7 @@ export function SitesModule() {
             rowKey={(s) => s.id}
             defaultSortKey="name"
             emptyMessage="No sites match your filters."
+            wrapperClassName="shadow-none"
           />
         </>
       )}
