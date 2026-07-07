@@ -12,7 +12,7 @@
 import { useState, useCallback, useMemo, type ChangeEvent } from 'react';
 import {
   Globe, Plus, Trash2, RefreshCw, ExternalLink, Loader2, ShieldCheck,
-  KeyRound, Puzzle, Download, Search, X, ChevronDown, FolderKanban,
+  KeyRound, Puzzle, Download, Search, X, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -180,7 +180,7 @@ export function SitesModule() {
   }) as any;
   const toggleProjectSite = useCallback((project: ProjectRef, site: Site, connect: boolean) => {
     setProjectSiteMutation.mutate(
-      { id: project.id, siteId: connect ? site.id : null },
+      { id: project.id, siteId: connect ? Number(site.id) : null },
       {
         onSuccess: () => {
           toast.success(connect ? `“${project.name}” connected to ${site.name}` : `“${project.name}” disconnected`);
@@ -252,14 +252,16 @@ export function SitesModule() {
       // Connect/disconnect projects right from the row. Checked = connected to THIS site;
       // N:1, so several projects can be checked and toggling one never touches the others.
       key: 'projects', header: 'Project(s)', width: '15%',
-      sortAccessor: (s) => projects.filter((p) => p.siteId === s.id).map((p) => p.name.toLowerCase()).join(', '),
+      // Number() both sides — wpdb returns ids as strings; a strict === on mixed types
+      // would never match and the checkmarks would never render.
+      sortAccessor: (s) => projects.filter((p) => p.siteId === Number(s.id)).map((p) => p.name.toLowerCase()).join(', '),
       cell: (site) => {
-        const connected = projects.filter((p) => p.siteId === site.id);
+        const siteId = Number(site.id);
+        const connected = projects.filter((p) => p.siteId === siteId);
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 max-w-full gap-1 text-xs font-normal">
-                <FolderKanban className="w-3.5 h-3.5 shrink-0" style={{ color: colors.primary }} />
                 <span className="truncate">
                   {connected.length === 0 ? 'Not connected' : connected.map((p) => p.name).join(', ')}
                 </span>
@@ -276,14 +278,14 @@ export function SitesModule() {
                 <DropdownMenuCheckboxItem
                   key={p.id}
                   className="text-xs"
-                  checked={p.siteId === site.id}
+                  checked={p.siteId === siteId}
                   disabled={setProjectSiteMutation.isPending}
                   onCheckedChange={(checked) => toggleProjectSite(p, site, checked === true)}
                   onSelect={(e) => e.preventDefault()}
                 >
                   <span className="truncate">{p.name}</span>
-                  {p.siteId !== null && p.siteId !== site.id && (
-                    <span className="ml-auto pl-2 text-[10px] text-muted-foreground shrink-0">other site</span>
+                  {p.siteId !== null && p.siteId !== siteId && (
+                    <span className="ml-auto pl-2 text-[10px] text-muted-foreground shrink-0">connected to another site</span>
                   )}
                 </DropdownMenuCheckboxItem>
               ))}
