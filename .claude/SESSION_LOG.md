@@ -6122,3 +6122,17 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Verified: php -l, tsc 56 = baseline, build OK. Live pass pending user.
   BEFOREs dec9928 / 292d4c2 → AFTERs 23cffef / d8af260. Comms/email relay
   feature ON HOLD per user (consult delivered in chat).
+
+## 2026-07-07 — create-from-delivery "+" flow [create-from-delivery-seam + consumers]
+- Generic one-shot PendingCreateContext (module-checked consume) in AppContext;
+  "+" on delivery sub-row count cells opens Image/Copy/Video/Approvals with
+  brand/delivery/project pre-selected. NEW Approvals count cell per project
+  (frontend join on approvals.listSets — boundary respected), warmed at mount.
+- Consumers: Image/Copy/Video set ContextPanel brand (project rides on
+  brand.projectId — the prop path Image save already reads; toast on fetch
+  fail). Approvals opens CreateCustomSetDialog with preset → SendToApprovalSet
+  Dialog (new defaultDeliveryId prop; brandId/projectId existed).
+- SEO SERP-check action DROPPED per user mid-batch (no SEO table changes for
+  now) — remains on the roadmap list, unbuilt.
+- Verified: tsc 56 = baseline (0 new), build OK. Live pass pending user.
+  BEFOREs 3e2d0c7 / 4276d1c → AFTERs 758c74a / ae2852e.
