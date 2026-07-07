@@ -6089,3 +6089,21 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   Types preset schema (Settings → Delivery Types) if the user wants it later.
 - Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pass pending
   user. BEFORE d5acde6 → AFTER f9af943.
+
+## 2026-07-07 — Deliveries table v2 [projects-counts-delivery-assignees + deliveries-table-v2]
+- BACKEND: get_projects → imageCount/videoCount (SUM CASE on assets.type) +
+  copyCount (copy_results batch); deliveries list_items → assignees [{id,name}]
+  (delivery_assignments JOIN pcm_users, one batch query). Additive, php -l clean.
+- DataTable gains OPT-IN layoutKey → SEO-style drag-reorder + drag-resize via the
+  shared useColumnLayout/ColumnHead (colgroup + fixed chevron col; hook always
+  called, persists only with a key; Sites' legacy path untouched).
+- Sub-rows: project name inline-renames the REAL project (new renameProject on
+  useDeliveryProjects → assets.renameProject, rethrow → draft revert);
+  Images/Copy/Videos cells = clickable counts (muted at 0). Positional mapping
+  documented (sub-band keeps its own labeled order under any parent column order).
+- TypePill: 7-slot predefined palette, stable hash by type KEY (color survives
+  label renames; no preset-schema change). Assignee column read-only after Modules
+  (assign via Users module — per-delivery editing would fight the user-centric
+  PUT /users/{id}/deliveries shape).
+- Verified: tsc 56 = baseline, build OK. Live pass pending user.
+  BEFOREs 039399a (PHP) / 754a08c (TS) → AFTERs 80475a7 / dd614ef.
