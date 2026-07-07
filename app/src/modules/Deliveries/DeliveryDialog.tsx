@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useState, type FormEvent } from 'react';
+import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -126,17 +127,43 @@ export function DeliveryDialog({
   // Options for the brand/project linkage — the delivery carries these so
   // assigning it grants access to both.
   const { data: brandsRaw } = trpc.brands.list.useQuery();
-  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
+  const { data: projectsRaw, refetch: refetchProjects } = trpc.assets.getProjects.useQuery();
   // Connected sites for the SEO module — the same list shown in the SEO tab.
   const { data: sitesRaw } = trpc.sites.list.useQuery();
   const brands: { id: number; name: string }[] = Array.isArray(brandsRaw)
     ? brandsRaw.map((b: any) => ({ id: Number(b.id), name: b.name }))
     : [];
-  const projects: { id: number; name: string }[] = Array.isArray(projectsRaw)
-    ? projectsRaw.map((p: any) => ({ id: Number(p.id), name: p.name }))
-    : [];
+  // deliveryId/siteId are Number()-normalized (wpdb returns strings): deliveryId drives the
+  // "Connected projects" list below; siteId is each project's Site ↔ Project connection.
+  const projects: { id: number; name: string; deliveryId: number | null; siteId: number | null }[] =
+    Array.isArray(projectsRaw)
+      ? projectsRaw.map((p: any) => ({
+          id: Number(p.id),
+          name: p.name,
+          deliveryId: p.deliveryId != null ? Number(p.deliveryId) : null,
+          siteId: p.siteId != null ? Number(p.siteId) : null,
+        }))
+      : [];
   const sites: { id: number; name: string }[] = Array.isArray(sitesRaw)
     ? sitesRaw.map((s: any) => ({ id: Number(s.id), name: String(s.name || s.url || `Site #${s.id}`) }))
+    : [];
+
+  // Site ↔ Project connection (projects.siteId, N:1) — the same link the Sites table and
+  // the Projects module edit. Applied immediately (not part of the form submit), because it
+  // lives on the project, not on the delivery.
+  const setProjectSiteMutation = trpc.assets.setProjectSite.useMutation();
+  const handleSetProjectSite = async (project: { id: number; name: string }, siteId: number | null) => {
+    try {
+      await setProjectSiteMutation.mutateAsync({ id: project.id, siteId });
+      toast.success(siteId ? `“${project.name}” connected to site` : `“${project.name}” disconnected from site`);
+      refetchProjects();
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update the site connection');
+    }
+  };
+  // All projects that belong to this delivery (projects.deliveryId → PCM_Hierarchy chain).
+  const deliveryProjects = isEdit && delivery
+    ? projects.filter((p) => p.deliveryId === Number(delivery.id))
     : [];
 
   // Sync form to the supplied delivery whenever the dialog opens. Both
@@ -323,6 +350,43 @@ export function DeliveryDialog({
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Connected projects (edit mode): every project belonging to this delivery, each
+                with its Site ↔ Project connection. Changes apply immediately — the link lives
+                on the project (projects.siteId), not on the delivery. */}
+            {isEdit && (
+              <div className="grid gap-2">
+                <Label>Connected projects — site per project</Label>
+                {deliveryProjects.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No projects belong to this delivery yet. Assign a delivery on the project to see it here.
+                  </p>
+                ) : (
+                  <div className="grid gap-1.5">
+                    {deliveryProjects.map((p) => (
+                      <div key={p.id} className="flex items-center gap-2">
+                        <span className="flex-1 truncate text-sm">{p.name}</span>
+                        <Select
+                          value={p.siteId != null ? String(p.siteId) : 'none'}
+                          onValueChange={(v) => handleSetProjectSite(p, v === 'none' ? null : Number(v))}
+                          disabled={setProjectSiteMutation.isPending}
+                        >
+                          <SelectTrigger className="h-8 w-[180px] text-xs">
+                            <SelectValue placeholder="Not connected" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Not connected</SelectItem>
+                            {sites.map((s) => (
+                              <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="grid gap-2">
               <Label>Modules needed</Label>

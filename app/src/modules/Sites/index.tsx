@@ -12,7 +12,7 @@
 import { useState, useCallback, useMemo, type ChangeEvent } from 'react';
 import {
   Globe, Plus, Trash2, RefreshCw, ExternalLink, Loader2, ShieldCheck,
-  KeyRound, Puzzle, Download, Search, X,
+  KeyRound, Puzzle, Download, Search, X, ChevronDown, FolderKanban,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -27,6 +27,10 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { useListState, textFilter, searchableSelect, type FilterState } from '@/components/shared/Kanban';
 import { colors, typography } from '@/components/shared/design-tokens';
@@ -43,6 +47,15 @@ interface Site {
   connectMethod?: string;
   lastSyncAt?: string;
   createdAt: string;
+}
+
+/** Minimal project shape for the Project(s) connection column. The link itself lives on
+ *  the projects table (`projects.siteId`, N:1 — several projects may connect to one site);
+ *  this module only renders it and calls the assets endpoint that owns it. */
+interface ProjectRef {
+  id: number;
+  name: string;
+  siteId: number | null;
 }
 
 type AddStep = null | 'choose' | 'password';
@@ -72,6 +85,18 @@ export function SitesModule() {
   // ── Data ──
   const { data: sitesRaw, isLoading, refetch } = trpc.sites.list.useQuery() as any;
   const sites: Site[] = Array.isArray(sitesRaw) ? sitesRaw : [];
+
+  // Projects, for the Project(s) connection column. Ids are Number()-normalized (wpdb
+  // returns strings); the connection is read from each project's siteId.
+  const { data: projectsRaw, refetch: refetchProjects } = trpc.assets.getProjects.useQuery() as any;
+  const projects: ProjectRef[] = useMemo(
+    () => (Array.isArray(projectsRaw) ? projectsRaw : []).map((p: any) => ({
+      id: Number(p.id),
+      name: String(p.name ?? ''),
+      siteId: p.siteId != null ? Number(p.siteId) : null,
+    })),
+    [projectsRaw],
+  );
 
   // ── Dialog + form state ──
   const [addStep, setAddStep] = useState<AddStep>(null);
@@ -148,6 +173,22 @@ export function SitesModule() {
     onError: (e: any) => toast.error(e.message ?? 'Connection test failed'),
     onSettled: () => setTestingId(null),
   }) as any;
+  // Connect/disconnect a project ↔ this site. Same endpoint as the Projects and Deliveries
+  // controls — the link lives only in projects.siteId, so all surfaces stay in sync.
+  const setProjectSiteMutation = trpc.assets.setProjectSite.useMutation({
+    onError: (e: any) => toast.error(e.message ?? 'Could not update the connection'),
+  }) as any;
+  const toggleProjectSite = useCallback((project: ProjectRef, site: Site, connect: boolean) => {
+    setProjectSiteMutation.mutate(
+      { id: project.id, siteId: connect ? site.id : null },
+      {
+        onSuccess: () => {
+          toast.success(connect ? `“${project.name}” connected to ${site.name}` : `“${project.name}” disconnected`);
+          refetchProjects();
+        },
+      },
+    );
+  }, [setProjectSiteMutation, refetchProjects]);
 
   // ── Handlers ──
   const openAdd = useCallback(() => setAddStep(isAdmin ? 'choose' : 'password'), [isAdmin]);
@@ -191,7 +232,7 @@ export function SitesModule() {
   // Column config for the global <DataTable>.
   const columns = useMemo<DataTableColumn<Site>[]>(() => [
     {
-      key: 'name', header: 'Name', width: '20%', sortAccessor: (s) => s.name.toLowerCase(),
+      key: 'name', header: 'Name', width: '18%', sortAccessor: (s) => s.name.toLowerCase(),
       cell: (site) => (
         <div className="flex items-center gap-2 min-w-0">
           <Globe className="w-4 h-4 shrink-0" style={{ color: colors.primary }} />
@@ -200,7 +241,7 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'url', header: 'URL', width: '24%', sortAccessor: (s) => s.url.toLowerCase(),
+      key: 'url', header: 'URL', width: '20%', sortAccessor: (s) => s.url.toLowerCase(),
       cell: (site) => (
         <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-[260px] items-center gap-1 text-primary hover:underline">
           <span className="truncate">{site.url}</span><ExternalLink className="w-3 h-3 shrink-0" />
@@ -208,11 +249,55 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'username', header: 'User', width: '13%', sortAccessor: (s) => s.username.toLowerCase(),
+      // Connect/disconnect projects right from the row. Checked = connected to THIS site;
+      // N:1, so several projects can be checked and toggling one never touches the others.
+      key: 'projects', header: 'Project(s)', width: '15%',
+      sortAccessor: (s) => projects.filter((p) => p.siteId === s.id).map((p) => p.name.toLowerCase()).join(', '),
+      cell: (site) => {
+        const connected = projects.filter((p) => p.siteId === site.id);
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 max-w-full gap-1 text-xs font-normal">
+                <FolderKanban className="w-3.5 h-3.5 shrink-0" style={{ color: colors.primary }} />
+                <span className="truncate">
+                  {connected.length === 0 ? 'Not connected' : connected.map((p) => p.name).join(', ')}
+                </span>
+                <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64">
+              <DropdownMenuLabel className="text-xs">Connected projects</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {projects.length === 0 && (
+                <div className="px-2 py-1.5 text-xs text-muted-foreground">No projects yet</div>
+              )}
+              {projects.map((p) => (
+                <DropdownMenuCheckboxItem
+                  key={p.id}
+                  className="text-xs"
+                  checked={p.siteId === site.id}
+                  disabled={setProjectSiteMutation.isPending}
+                  onCheckedChange={(checked) => toggleProjectSite(p, site, checked === true)}
+                  onSelect={(e) => e.preventDefault()}
+                >
+                  <span className="truncate">{p.name}</span>
+                  {p.siteId !== null && p.siteId !== site.id && (
+                    <span className="ml-auto pl-2 text-[10px] text-muted-foreground shrink-0">other site</span>
+                  )}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
+    {
+      key: 'username', header: 'User', width: '10%', sortAccessor: (s) => s.username.toLowerCase(),
       className: 'text-muted-foreground', cell: (site) => site.username,
     },
     {
-      key: 'method', header: 'Method', width: '13%',
+      key: 'method', header: 'Method', width: '10%',
       sortAccessor: (s) => (s.connectMethod === 'connector' ? 'plugin' : 'password'),
       cell: (site) => (
         <Badge variant="outline" className="gap-1 text-[10px]">
@@ -221,13 +306,13 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'status', header: 'Status', width: '10%', sortAccessor: (s) => s.status,
+      key: 'status', header: 'Status', width: '8%', sortAccessor: (s) => s.status,
       cell: (site) => (
         <span className={`capitalize ${site.status === 'active' ? 'text-muted-foreground' : 'font-medium text-destructive'}`}>{site.status}</span>
       ),
     },
     {
-      key: 'createdAt', header: 'Added', width: '10%', sortAccessor: (s) => new Date(s.createdAt).getTime(),
+      key: 'createdAt', header: 'Added', width: '9%', sortAccessor: (s) => new Date(s.createdAt).getTime(),
       className: 'text-muted-foreground',
       cell: (site) => (site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'),
     },
@@ -248,7 +333,7 @@ export function SitesModule() {
         </div>
       ),
     },
-  ], [colors, testingId, testMutation, deleteMutation, openGsc, gscPreviewMutation.isPending, gscSite]);
+  ], [colors, testingId, testMutation, deleteMutation, openGsc, gscPreviewMutation.isPending, gscSite, projects, toggleProjectSite, setProjectSiteMutation.isPending]);
   const search = readSearch(list.filterState);
   const statusValue = readStatus(list.filterState);
   const statusOptions = useMemo(

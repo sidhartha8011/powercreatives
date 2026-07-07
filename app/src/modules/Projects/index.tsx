@@ -109,6 +109,25 @@ export function ProjectsModule() {
     }
   };
 
+  // Site ↔ Project connection (projects.siteId, N:1 — same link the Sites and Deliveries
+  // controls edit). "Site" = a connected WP site from the Sites module.
+  const { data: sitesRaw } = trpc.sites.list.useQuery();
+  const sites: { id: number; name: string }[] = Array.isArray(sitesRaw)
+    ? (sitesRaw as any[]).map((s) => ({ id: Number(s.id), name: String(s.name) }))
+    : [];
+  const setProjectSiteMutation = trpc.assets.setProjectSite.useMutation();
+  const handleSetProjectSite = async (siteId: number | null) => {
+    if (!selectedProject) return;
+    try {
+      await setProjectSiteMutation.mutateAsync({ id: selectedProject.id, siteId });
+      setSelectedProject({ ...selectedProject, siteId });
+      projectsQuery.refetch();
+      toast.success(siteId ? 'Site connected' : 'Site disconnected');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update the site connection');
+    }
+  };
+
   // Filter State
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -311,6 +330,18 @@ export function ProjectsModule() {
               <SelectContent>
                 <SelectItem value="none">No delivery</SelectItem>
                 {deliveries.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {/* Site ↔ Project: connect/disconnect the site this project uses. */}
+            <span className="text-xs font-medium text-slate-500">Site</span>
+            <Select
+              value={selectedProject.siteId != null ? String(selectedProject.siteId) : 'none'}
+              onValueChange={(v) => handleSetProjectSite(v === 'none' ? null : Number(v))}
+            >
+              <SelectTrigger className="h-9 w-[220px] text-xs bg-white"><SelectValue placeholder="Not connected" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Not connected</SelectItem>
+                {sites.map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

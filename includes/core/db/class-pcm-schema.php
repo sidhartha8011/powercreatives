@@ -113,6 +113,10 @@ class PCM_Schema
         // Anything attached to a project derives its delivery + brand LIVE from this chain
         // (see PCM_Hierarchy) — never stored/hardcoded — so reassigning the project's delivery
         // (or that delivery's brand) moves everything that belongs to the project with it.
+        // siteId (v1.34.0): FK to the {$prefix}sites table (WP connection credentials) —
+        // NULL = not connected. NOT the SEO Hub tenant site (that is deliveries.seoSiteId).
+        // N:1 on purpose: many projects may connect to the same site. Read the link only via
+        // PCM_Hierarchy::site_for_project() / projects_for_site().
         $sql = "CREATE TABLE {$prefix}projects (
             id int(11) NOT NULL AUTO_INCREMENT,
             userId int(11) NOT NULL,
@@ -120,13 +124,15 @@ class PCM_Schema
             description text DEFAULT NULL,
             status varchar(50) DEFAULT 'active' NOT NULL,
             deliveryId int(11) DEFAULT NULL,
+            siteId int(11) DEFAULT NULL,
             settings text DEFAULT NULL,
             externalId varchar(191) DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
             KEY idx_userId (userId),
-            KEY idx_deliveryId (deliveryId)
+            KEY idx_deliveryId (deliveryId),
+            KEY idx_siteId (siteId)
         ) $charset_collate;";
         dbDelta($sql);
 

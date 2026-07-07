@@ -5832,3 +5832,24 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   rename+sort/filter, non-ASCII fix, Pos split, auto-verify, 411/401 fixes, no-data fix, reuse+indexed-
   domain popup, token-check hardening, no-data-yet messaging; PRT: host match + keyword parity; connector
   2.4.0 self-update; white GSC input; ~10 verified zip builds). No files changed.
+
+## 2026-07-07 — Site ↔ Project connection (projects.siteId, 3 control surfaces)
+- New indexed `siteId` column on projects (schema comment: FK to {prefix}sites WP-connection
+  table, NOT SEO Hub's deliveries.seoSiteId; N:1 — many projects may share one site). DB
+  1.33.0 → 1.34.0 (additive dbDelta, no migrate_*). Sites module backend untouched.
+- PCM_Hierarchy: + site_for_project() (forward, null when unset) and projects_for_site()
+  (reverse lookup, always a list of full chains). All cross-module reads go through these.
+- assets/controller.php: + PATCH /assets/projects/{id}/site {siteId:int|null} (mirrors
+  set_project_delivery: PCM_Access scope + PCM_DB::get_site ownership check → 404);
+  get_projects now selects/returns siteId.
+- Frontend (one mutation assets.setProjectSite drives all three surfaces): Sites table
+  + "Project(s)" dropdown column (checkbox list, N:1-safe, "other site" hint); Projects
+  detail + "Site" select next to Delivery; DeliveryDialog (edit mode) + "Connected
+  projects — site per project" section (projects with deliveryId = this delivery, each
+  with an instant-apply Site select).
+- Tests: NEW tests/unit/HierarchySiteLinkTest.php (6 tests: int cast, null unset, id
+  guards, empty reverse lookup, multi-chain shared site).
+- Verified: php -l ×5 clean; tsc — errors only in untouched files (Templates/Writer/Home
+  baseline); vite build OK (dist 4.68MB). PHP suite NOT run locally (no composer/vendor on
+  this machine — runs in CI). Live 3-surface click-through pending user. Committed
+  (BEFORE 7273726 → AFTER); needs a zip rebuild to ship.
