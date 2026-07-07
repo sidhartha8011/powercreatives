@@ -12,22 +12,22 @@
  * also the WordPress-bleed fix: cards render inside Radix portals mounted in
  * wp-admin's body, where WP's global input/select CSS fills any property we
  * leave unspecified. Fully specified roles leave it nothing to style.
+ *
+ * The px VALUES live in exactly one place: the `--text-card-*` tokens in
+ * index.css `@theme` (which generate the semantic text-card-* utilities used
+ * below). To resize the whole card system, edit those variables — never add
+ * a px class here or in a component.
  */
 
 export const CARD_TYPE = {
-  /**
-   * The entity name. The `!` marks are required: the title renders inside the
-   * Input component whose base variant carries `md:text-sm` — a responsive
-   * class tailwind-merge does NOT treat as conflicting with a plain size, so
-   * without `!important` the title would shrink to 14px on desktop.
-   */
-  TITLE: '!text-[32px] !font-bold !leading-tight tracking-tight text-foreground',
+  /** The entity name. */
+  TITLE: 'text-card-title font-bold tracking-tight text-foreground',
   /** Everything the user reads or edits: values, selects, inputs, notes. */
-  BODY: 'text-[13px] font-normal leading-normal text-foreground',
+  BODY: 'text-card-body font-normal text-foreground',
   /** Everything ABOUT the content: table headers, meta, counts, timestamps, chips. */
-  LABEL: 'text-xs font-normal leading-normal text-muted-foreground',
+  LABEL: 'text-card-label font-normal text-muted-foreground',
   /** Section headers (PROJECTS / LOG) only. */
-  SECTION: 'text-[11px] font-semibold uppercase tracking-wider text-muted-foreground',
+  SECTION: 'text-card-section font-semibold uppercase tracking-wider text-muted-foreground',
 } as const;
 
 export const CARD_SPACE = {

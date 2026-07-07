@@ -5951,3 +5951,20 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - REMAINING USER VERIFICATION: title 32px, Empty/log inputs 13px, and DRAG A KANBAN CARD
   (deliveries/approvals) — !important utilities could in theory fight dnd inline styles.
   BEFORE b35214c → AFTER (this commit).
+
+## 2026-07-07 — card semantic type tokens (body 11px) + backlog: typography cleanup
+- index.css @theme: NEW --text-card-title/-body/-label/-section tokens (32/11/12/11px +
+  line-heights) — the ONLY place card px values live. Generates clean semantic utilities
+  (.text-card-body{font-size:11px!important} — verified in dist) instead of bracket-soup
+  arbitrary classes.
+- cardTokens.ts: roles now reference text-card-* (no px in TS); TITLE's redundant ! marks
+  and its disproven md:text-sm comment removed; contract updated (resize = edit @theme
+  vars, never add px classes).
+- BODY 13px → 11px per the user's own DevTools test ("Paused"/tables/log input were too
+  big at 13; 11 confirmed good). Root of the "worse after the flag" mystery: the 13px
+  design never actually applied until the important flag made it win — the liked smaller
+  size had been the cascade accident.
+- docs/backlog.md: NEW "Typography spaghetti cleanup" item (8 systems/1265 declarations,
+  5-step plan, opportunistic-only for the 1096 inline classes).
+- Verified: 4 semantic utilities byte-checked in dist; tsc 56 = baseline identical set;
+  vite build OK. BEFORE 0e583f2 → AFTER (this commit).

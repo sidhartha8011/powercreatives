@@ -101,6 +101,18 @@
  */
 
 @theme inline {
+  /* ── EntityCard type scale (semantic tokens — the ONLY place these px live).
+     Generates real utilities: text-card-title/-body/-label/-section.
+     Change a value here and every card follows; see cardTokens.ts contract. */
+  --text-card-title: 32px;
+  --text-card-title--line-height: 1.2;
+  --text-card-body: 11px;
+  --text-card-body--line-height: 1.5;
+  --text-card-label: 12px;
+  --text-card-label--line-height: 1.5;
+  --text-card-section: 11px;
+  --text-card-section--line-height: 1.3;
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
