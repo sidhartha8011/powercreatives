@@ -87,7 +87,43 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         $user = $this->get_current_pcm_user();
         $rows = PCM_DB::get_user_deliveries($user->id);
 
-        return $this->success(array_map(array($this->service, 'format_delivery'), $rows));
+        $items = array_map(array($this->service, 'format_delivery'), $rows);
+
+        // Batch-attach assignees ({id, name} per delivery) from
+        // delivery_assignments — read-only enrichment for list surfaces (the
+        // Deliveries table's Assignee column). Assigning itself stays in the
+        // Users module (PUT /users/{id}/deliveries).
+        if (!empty($items)) {
+            global $wpdb;
+            $ids = array_map(static function (array $item): int {
+                return (int) $item['id'];
+            }, $items);
+            $placeholders = implode(',', array_fill(0, count($ids), '%d'));
+            $assign_table = PCM_Schema::table('delivery_assignments');
+            $users_table  = PCM_Schema::table('users');
+            // phpcs:ignore WordPress.DB.PreparedSQL -- placeholders built from %d only.
+            $assignment_rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT a.deliveryId, u.id AS userId, u.name
+                 FROM $assign_table a
+                 INNER JOIN $users_table u ON u.id = a.userId
+                 WHERE a.deliveryId IN ($placeholders)
+                 ORDER BY u.name ASC",
+                ...$ids
+            ));
+            $by_delivery = array();
+            foreach ($assignment_rows as $assignment) {
+                $by_delivery[(int) $assignment->deliveryId][] = array(
+                    'id'   => (int) $assignment->userId,
+                    'name' => (string) $assignment->name,
+                );
+            }
+            foreach ($items as &$item) {
+                $item['assignees'] = $by_delivery[(int) $item['id']] ?? array();
+            }
+            unset($item);
+        }
+
+        return $this->success($items);
     }
 
     /** GET /deliveries/<id> — Get a single delivery by ID. */
