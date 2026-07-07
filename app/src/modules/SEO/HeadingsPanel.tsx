@@ -13,7 +13,7 @@
  */
 
 import { Fragment, useEffect, useState, type KeyboardEvent } from 'react';
-import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight, Lock } from 'lucide-react';
+import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight, Lock, LayoutTemplate } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -32,6 +32,10 @@ export interface HeadingItem {
   elId: string;
   field: string;
   editable: boolean;
+  /** Set for headings that live in a SHARED source (Elementor Theme Builder template or reusable
+   *  block) rendered on many pages — `sourceLabel` names it; editing changes every page using it. */
+  sourceLabel?: string;
+  sourcePostId?: number;
 }
 
 /** Default reason shown on a heading that can't be edited from here (mirrors the read-only
@@ -222,6 +226,17 @@ export function HeadingRows({
                         {`H${h.level}`}
                       </span>
                     )}
+                    {/* Shared-source badge: this heading lives in a template/reusable block used by many
+                        pages — editing it changes them all. Tooltip spells out the cross-page effect. */}
+                    {h.sourceLabel ? (
+                      <span
+                        className="inline-flex h-5 max-w-[150px] shrink-0 items-center gap-0.5 rounded-[3px] border border-amber-500/40 bg-amber-500/10 px-1 text-[10px] font-medium text-amber-600"
+                        title={`Shared source — editing this heading changes it on EVERY page that uses it. Lives in: ${h.sourceLabel}.`}
+                      >
+                        <LayoutTemplate className="h-2.5 w-2.5 shrink-0" />
+                        <span className="truncate">{h.sourceLabel}</span>
+                      </span>
+                    ) : null}
                     <div className="flex-1 min-w-0">
                       {suggestion != null ? (
                         /* Same staged-suggestion UI as every other cell (EditableCell). */

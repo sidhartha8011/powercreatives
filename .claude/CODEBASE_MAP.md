@@ -1003,6 +1003,18 @@ flow is a **one-paste pairing code**, which sidesteps the public-hub requirement
   (`query.refetch()`), `pcm_seo_heading_not_found`/`_not_editable` → flips that row to read-only with a `Lock`
   + reason tooltip (mirrors the LinksPopup read-only affordance). This relies on **`app/src/lib/trpc.ts` now
   preserving `error.code` + `.status` on the thrown Error** (additive; any caller can branch on `e.code`).
+  **Shared-template heading editing (2026-07-07, connector 2.4.0 → 2.5.0):** headings that live in a
+  SHARED source rendered on many pages — Elementor Theme Builder templates (`elementor_library`) +
+  Gutenberg reusable blocks (`wp_block`) — are now scanned + editable, not just the page's own. Connector
+  `scan_template_headings()` (new) walks those posts (skips Elementor types page/section/container/popup/kit/widget),
+  tags each heading `source`/`sourcePostId`/`sourceType`/`sourceLabel`; the `/scan-headings` route merges them
+  after the page's own + re-indexes. Hub: `remote_get_headings` passes the fields through; **`PCM_SEO_Service::heading_target_post_id($h,$pagePid)`**
+  (pure, unit-tested) picks `sourcePostId` (>0) else the page, and `remote_update_heading` sends that as `post_id`
+  to `/replace-heading` + `/replace-url` — the existing routes are post-id-generic + capability-check `edit_post`
+  on the passed id (no priv-esc). Frontend: template/block rows show an amber `LayoutTemplate` "lives in: …"
+  badge whose tooltip warns the edit changes EVERY page using that source (rows stay editable). **True
+  theme-PHP-hardcoded headings still aren't returned → stay read-only** (can't be DB-edited). Connector
+  self-updates from the hub (twice-daily) once the hub rebuilds the connector zip at v2.5.0 — no manual reinstall needed.
   `POST /pcm-conn/v1/replace-url` {post_id, old, new | replacements{}} → manager replaces the URL in
   post_content AND **every custom field** (serialization-safe via `pcm_conn_replace_in` recursion over
   strings/arrays/objects + `update_metadata_by_mid(wp_slash())`, matching plain + JSON `\/` forms) →
