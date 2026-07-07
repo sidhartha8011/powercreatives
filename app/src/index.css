@@ -1,4 +1,11 @@
-@import "tailwindcss";
+/* `important` is load-bearing: this SPA renders inside wp-admin, whose
+   UNLAYERED core CSS (e.g. forms.css `input { font-size: 14px }`) beats any
+   layered Tailwind utility on the same property — layers always lose to
+   unlayered rules. The flag emits every utility with !important so our
+   classes win against WordPress everywhere (incl. Radix portals into body).
+   Known trade-off: utilities also beat runtime INLINE styles — keep utility
+   classes off properties that JS libs set inline (e.g. dnd transforms). */
+@import "tailwindcss" important;
 @import "tw-animate-css";
 
 /**

@@ -5924,3 +5924,30 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Item 6 (global dialog bg-card) NOT included — awaiting explicit user go.
 - Verified: tsc 56 = baseline, 0 in touched files; vite build OK. Live pending user.
   BEFORE dd630d1 → AFTER (this commit); needs zip rebuild to ship.
+
+## 2026-07-07 — wp-css-layer root fix (@import tailwindcss important)
+- ROOT CAUSE of the small-title/14px-inputs regressions, fully proven: Tailwind v4 emits
+  utilities inside @layer; wp-admin's UNLAYERED forms.css `input{font-size:14px}` (line 13)
+  beats ANY layered utility on the same property (layers always lose to unlayered CSS).
+  The card's earlier ! marks were load-bearing armor against WP, not a tw-merge fix; plain
+  inputs "looked right" only because WP's 14px == text-sm. Evidence chain: user's DOM paste
+  (class on element), node repro of cva+twMerge (merge correct), dist CSS (rules present,
+  @layer confirmed), forms.css:13 (the winning WP rule).
+- FIX: reverted a3c4db6 (git reset --hard ee6a7e2), then on a clean base:
+  (1) index.css `@import "tailwindcss" important;` — every utility !important, beats all
+      unlayered wp-admin CSS incl. portals (2192 !important in dist; rationale + inline-
+      style trade-off documented at the import);
+  (2) re-applied Input/Textarea `text-base md:text-sm` → `text-sm` (the responsive class
+      is emitted after base utilities so even !important text-[13px] would lose to
+      !important md:text-sm at desktop);
+  (3) CARD_TYPE.TITLE keeps its ! marks (harmless double-important).
+- Verified in compiled dist/index.css (byte-exact): .text-\[13px\]{font-size:13px!important},
+  .\!text-\[32px\]{32px!important}, .text-sm !important; WP enqueues this exact file w/
+  filemtime cache-bust. tsc 56 = baseline, IDENTICAL error set. vite build OK.
+- NOTE (debug honesty): two of my greps mis-read dist CSS this session (unescaped brackets
+  → false "0"; later a broken node regex → false "NOT FOUND"). Byte-exact single-quoted
+  grep -F is the reliable form. The earlier md:text-sm-only theory (a3c4db6) was WRONG —
+  reverted.
+- REMAINING USER VERIFICATION: title 32px, Empty/log inputs 13px, and DRAG A KANBAN CARD
+  (deliveries/approvals) — !important utilities could in theory fight dnd inline styles.
+  BEFORE b35214c → AFTER (this commit).
