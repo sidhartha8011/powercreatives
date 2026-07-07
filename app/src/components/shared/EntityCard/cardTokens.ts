@@ -24,8 +24,11 @@ export const CARD_TYPE = {
   TITLE: 'text-card-title font-bold tracking-tight text-foreground',
   /** Everything the user reads or edits: values, selects, inputs, notes. */
   BODY: 'text-card-body font-normal text-foreground',
-  /** Everything ABOUT the content: table headers, meta, counts, timestamps, chips. */
+  /** Everything ABOUT the content: table headers, meta, counts, timestamps. */
   LABEL: 'text-card-label font-normal text-muted-foreground',
+  /** Compact pills/chips: label size, but height comes from padding — never
+   *  the line box. Reading leading (1.5) on a py-0 pill inflates it. */
+  CHIP: 'text-card-label leading-none font-normal',
   /** Section headers (PROJECTS / LOG) only. */
   SECTION: 'text-card-section font-semibold uppercase tracking-wider text-muted-foreground',
 } as const;

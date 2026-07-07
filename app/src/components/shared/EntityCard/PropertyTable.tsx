@@ -193,10 +193,10 @@ function MultiToggleCell({ def }: { def: Extract<PropertyDef, { control: 'multiT
           <span className="flex min-w-0 items-center gap-1">
             {selected.length === 0 && <span className="text-muted-foreground">None</span>}
             {selected.slice(0, 2).map((o) => (
-              <Badge key={o.id} variant="secondary" className={`px-1.5 py-0 ${CARD_TYPE.LABEL}`}>{o.label}</Badge>
+              <Badge key={o.id} variant="secondary" className={`px-1.5 py-0.5 ${CARD_TYPE.CHIP}`}>{o.label}</Badge>
             ))}
             {selected.length > 2 && (
-              <Badge variant="secondary" className={`px-1.5 py-0 ${CARD_TYPE.LABEL}`}>+{selected.length - 2}</Badge>
+              <Badge variant="secondary" className={`px-1.5 py-0.5 ${CARD_TYPE.CHIP}`}>+{selected.length - 2}</Badge>
             )}
           </span>
           <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />

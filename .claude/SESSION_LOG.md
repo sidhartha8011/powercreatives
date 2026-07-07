@@ -5980,3 +5980,13 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   --text-* @theme token MUST be registered there or cn() eats it.
 - Proven by node repro (HEAD/INPUT/TITLE paths: token survives, text-sm evicted, colors
   intact); tsc 56 = baseline identical; build OK. BEFORE 6ca3d68 → AFTER (this commit).
+
+## 2026-07-07 — chip role (pills get leading-none)
+- CARD_TYPE.CHIP = 'text-card-label leading-none font-normal' (+ py-0.5 on the two chip
+  Badges in PropertyTable). Chips regressed tall because the twMerge fix made LABEL's
+  reading line-height (1.5) finally apply to py-0 pills — pill height must come from
+  padding, never the line box. leading-none sets --tw-leading → cleanly overrides the
+  token's var(--tw-leading, 1.5). Verified: .leading-none{line-height:1!important} in
+  dist; chip merge path node-checked; tsc 56 = baseline identical; build OK.
+- Card text elements now FULLY declared (title 32 / body 11 / label 12 / section 11 /
+  chip 12+lh1) — nothing inherits by accident. BEFORE cb5f8a6 → AFTER (this commit).
