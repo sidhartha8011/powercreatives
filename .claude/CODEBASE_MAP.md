@@ -997,7 +997,12 @@ flow is a **one-paste pairing code**, which sidesteps the public-hub requirement
   labels + Elementor `el_id`), **`/scan-links`**, **`/scan-headings`** + **`/replace-heading`** (H1–H6
   scan/edit, builder-widget text+level), used by the hub's `remote_replace_anchor` /
   `remote_scan_headings` / `remote_update_heading` and the SEO **Headings** editor (`SEO/HeadingsPanel.tsx`
-  + `/seo/{content,sites/{id}/content/{post}}/headings[…]` routes).
+  + `/seo/{content,sites/{id}/content/{post}}/headings[…]` routes). **Read-only heading UX (2026-07-07):**
+  the scan marks all headings `editable:true`, so "can't edit here" surfaces at SAVE time — `HeadingsPanel`
+  now branches on the WP error CODE: `pcm_seo_heading_stale` → toast with a **Re-scan** action
+  (`query.refetch()`), `pcm_seo_heading_not_found`/`_not_editable` → flips that row to read-only with a `Lock`
+  + reason tooltip (mirrors the LinksPopup read-only affordance). This relies on **`app/src/lib/trpc.ts` now
+  preserving `error.code` + `.status` on the thrown Error** (additive; any caller can branch on `e.code`).
   `POST /pcm-conn/v1/replace-url` {post_id, old, new | replacements{}} → manager replaces the URL in
   post_content AND **every custom field** (serialization-safe via `pcm_conn_replace_in` recursion over
   strings/arrays/objects + `update_metadata_by_mid(wp_slash())`, matching plain + JSON `\/` forms) →

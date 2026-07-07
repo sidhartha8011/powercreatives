@@ -5861,4 +5861,38 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   Bundle contains pulled UI (PrtLiveTest/GscSetupGuide/EmailSenders as literals; HeadingsPanel imported in SEO/index.tsx,
   identifier minified). Live REST: `pcm/v1` registered, `/brands` + `/automations/logs` → 403 (loaded+guarded, not 404).
 - **Map updated:** added the "pulled but nothing changed → dirty committed SESSION_LOG.md blocks FF pull" gotcha
-  to the Local WordPress section (recurs every session). **Specialists:** none — git/build diagnosis, no code edited. No commit.
+  to the Local WordPress section (recurs every session). **Specialists:** none — git/build diagnosis, no code edited.
+- **Committed (user-authorized) `19eabbc`** — the two `.claude/` doc changes only (map gotcha + this entry, +37).
+  Branch `feat/seo-suite-port` now ahead of origin by 1; **not pushed**.
+
+## 2026-07-07 — "emojis STILL disappear on approval-card edit" (image feedback) — diagnosed: NOT a code bug
+- **Repro (image):** generate ads → send to approvals → open set → click one ad → click outside → saved w/o emojis (🎬/📊).
+- **Exhaustive verification — every path is emoji-safe (no code change made):**
+  - Frontend save (`CreativeAssetCard.tsx:357-359`) escapes headline/body/description via `escapeAstral()` → pure ASCII
+    `&#…;` on the wire ⇒ **WAF-proof** (a request-stripping filter can't drop ASCII). Body edits go through
+    `TiptapBodyEditor` (text→HTML→text) which preserves emoji (`decodeHtmlEntities`).
+  - Controller (`approvals/controller.php::update_snapshot_asset`) `decode_numeric_entities()` restores UTF-8;
+    **CLI-proved lossless** for the exact image emoji (🎬 U+1F3AC, 📊 U+1F4CA): wire=ASCII, decode==original, JSON round-trip==original.
+  - Service stores snapshot via `wp_json_encode` (ASCII `\uXXXX`, charset-agnostic); the `copy_results` propagation
+    (`service.php:1427-1443`) writes raw, but columns use `get_charset_collate()` = utf8mb4 (MySQL 8.4) so no `$wpdb` strip.
+  - Read/display path (`format_set_row`) reads body from the **snapshot only**, never re-reads `copy_results`.
+  - `sanitize_textarea_field` keeps emoji (verified prior session).
+- **ROOT CAUSE = stale bundle, not code** (same class as the two prior tasks today). The escape fix (`c2228e5`) was in
+  source but the corrected `app/dist/index-writer.js` wasn't running on the site until the pull+rebuild earlier today.
+- **Confirmed fix is now LIVE end-to-end:** live site serves the fresh bundle (`GET …/app/dist/index-writer.js` → 200,
+  4,668,841 B = today's 13:52 build) and it **contains `escapeAstral` (`codePointAt`)**. Both enqueues cache-bust on build
+  (admin `time()` `class-pcm-admin.php:129`; shortcode `filemtime` `class-pcm-shortcode.php:429`) so the browser picks it up.
+- **User action:** reload the admin approvals page (JS auto-busts); if the browser cached the old fixed-filename bundle,
+  one Ctrl+F5 clears it permanently. Then re-run the repro — emoji now survive.
+- **Specialists:** none — pure diagnosis (traced FE→controller→service→DB + CLI round-trip proof + live-bundle fetch). **No code changed, no commit.**
+
+## 2026-07-07 — SEO heading editor: clearer read-only UX (PDF feedback, option b)
+- **Ask:** distinguish the two read-only cases in the heading editor — "hardcoded in your theme/template (can't edit here)" vs "stale (re-scan needed)". (Option (a), re-scan-on-open, was already shipped `6f7b572`.)
+- **Root shape:** `remote_get_headings` marks every scanned heading `editable:true`, so the truth only appears at SAVE time as distinct WP error codes (`pcm_seo_heading_stale` 409 vs `pcm_seo_heading_not_found`/`_not_editable`). The FE only had the message.
+- **Change (2 files, minimal, mirrors the LinksPopup read-only pattern):**
+  - `app/src/lib/trpc.ts` — additively preserve `error.code` + `.status` on the thrown Error (existing `.message` callers unaffected) so callers can branch on the machine-readable code, not translatable strings.
+  - `app/src/modules/SEO/HeadingsPanel.tsx` — `saveHeading` now branches on `e.code`: **stale → toast with a "Re-scan" action** (`query.refetch()`); **hardcoded/not-editable → flip that row to read-only** (`readOnlyReason` state) with a `Lock` icon + reason tooltip. Any `editable:false` heading (older-connector fallback) renders the same lock affordance instead of bare muted text.
+- **Verified:** `npm run check` → **56 errors = baseline, 0 in touched files**; `npm run build` clean; new copy ("Re-scan", "lives in your theme or a page template", "changed on the site since it was scanned") confirmed present in `app/dist/index-writer.js`.
+- **NOT visually verified live:** reproducing the read-only state needs a connected remote Elementor site with a theme-hardcoded heading + a failed save — not stageable headlessly. Logic verified against the established Links read-only pattern; offer to run `ui-visual-validator` if a staged case is available.
+- **Map:** added a note under *SEO Hub → Headings* (read-only-by-error-code UX + the new `trpc` error-code preservation). **Specialists:** none (2-file focused change, worked inline per the small-change rule).
+- **Committed + pushed (user-authorized):** the option-(b) work (`trpc.ts`, `HeadingsPanel.tsx`) + map/log, plus the prior `19eabbc` doc commit, pushed to `origin/feat/seo-suite-port` (clean fast-forward, remote unchanged since the 07-07 pull). Bundle rebuild is a gitignored artifact — not committed; the site reflects it via the junction + hard-refresh.

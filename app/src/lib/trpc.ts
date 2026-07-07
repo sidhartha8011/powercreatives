@@ -101,9 +101,16 @@ async function apiFetch<T>(
 
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(
+        // Preserve the WordPress REST error CODE (e.g. `pcm_seo_heading_stale`) and HTTP
+        // status on the thrown Error so callers can branch on the machine-readable code
+        // instead of matching translatable message strings. Additive — existing consumers
+        // that only read `.message` are unaffected.
+        const err = new Error(
             error.message ?? `API error: ${response.status} ${response.statusText}`
-        );
+        ) as Error & { code?: string; status?: number };
+        if (typeof error.code === "string") err.code = error.code;
+        err.status = response.status;
+        throw err;
     }
 
     return response.json();
