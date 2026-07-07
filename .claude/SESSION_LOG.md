@@ -1,5 +1,90 @@
 # Session Log
 
+## 2026-07-07 — "editing it gives an api error" → opaque 500s from unguarded REST callbacks [/task]
+- **Ask:** editing a heading (SEO table) shows "an api error".
+- **Investigation:** reproduced the whole edit chain against real local WP (PHP 8.5) — all green:
+  connector /scan-headings + /replace-heading + /override-heading (repro2/repro3, incl. default-tag
+  Elementor widgets, multi-heading index stability, retag h2→h4); hub-local get/update_post_heading
+  (repro-local, incl. duplicate-occurrence edit); every method remote_update_heading/remote_apply_heading_override
+  calls EXISTS with matching signatures; tRPC route+param mapping matches the controller exactly. The
+  earlier "connector fatal (exit 255)" was a bug in my OWN old test script (Call to undefined method
+  WP_REST_Response::set_param at test-edit-repro.php:32), NOT the product — confirmed via debug.log.
+- **Root cause (of the OPACITY):** the SPA client (app/src/lib/trpc.ts:108) only shows the server's
+  `{code,message}` when the body is JSON; a bare 500 with a non-JSON body falls back to the literal
+  "API error: 500 Internal Server Error" with no reason. base-controller.php registered
+  `'callback' => array($this,$callback)` with NO try/catch — WordPress does not wrap REST callbacks, so
+  any environment-specific THROWN fatal on the live site (a version-mismatch `Call to undefined method`
+  after a partial update, a PHP-8.x type error) escapes as that opaque 500. The edit code itself is
+  correct in every environment I can test; the user's fault is env-specific and was undiagnosable.
+- **Fix:** `PCM_REST_Base::guard_callback()` wraps every controller method — catches `\Throwable`, logs
+  `[power-creatives] Unhandled … at file:line`, and returns a structured `pcm_internal_error` (HTTP 500,
+  real message). Returned WP_Errors are untouched; only *thrown* faults are converted. Now the SPA toast
+  shows the actual reason instead of "API error: 500". Plugin-wide (all REST routes), minimal diff.
+- **Verified:** php -l clean; repro-guard (thrown undefined-method → 500 `{code:pcm_internal_error, message:
+  "…Call to undefined method…"}`) PASS; guard-ok (non-throwing handler → 200, params pass through) PASS;
+  full PHPUnit 112/112 (393 assertions), no regressions. No frontend change (PHP-only) so no vite rebuild.
+  Deploy zip updated in place (single-file freshen of includes/core/base-controller.php; dist preserved).
+  Not committed.
+- **Likely real underlying fault (surfaced, not yet fixed):** the connected site runs a connector OLDER
+  than the bundled 2.6.3, so the default-tag headings my prior fix now surfaces mismatch its edit path.
+  After deploying this build, the next failed edit will show the REAL message (most likely a connector
+  version/HTTP error) → resolve by pushing 2.6.3 via Sites → "Update connectors" (or one manual reinstall).
+
+## 2026-07-07 — Elementor: detect headings left at the DEFAULT tag [/task]
+- **Ask:** on some Elementor pages, some H1/H2/etc. headings aren't detected.
+- **Root cause:** the connector's `collect_headings` only recognised a heading WIDGET when a tag key
+  (`header_size`, …) was present. But Elementor stores ONLY non-default widget settings — so a Heading
+  widget left at its default tag (h2) has `{title:…}` with NO `header_size`, so it was silently skipped.
+  Also `title_size` (Icon/Image Box) wasn't in the tag-key list, so those were missed too.
+- **Fix (`seohub/service.php`, connector 2.6.2 → 2.6.3):**
+  1. Added `title_size` to `$heading_tag_keys`.
+  2. Added `$heading_widget_defaults` (widgetType → [default_tag, size_key]) for the common
+     heading-bearing widgets — `heading`→h2, `icon-box`/`image-box`→h3, `call-to-action`→h2,
+     `price-table`→h3.
+  3. `collect_headings` now threads the element's `widgetType` down and, when NO explicit tag key is
+     present, falls back to the widget's default level — so default-tag headings are detected. Restricted
+     to those known widget types, so a button/text widget's `text` is NOT falsely picked up.
+  4. `set_heading_in_element`: when an explicit tag key is supplied, set it even if absent, so retagging a
+     default-tag heading (which had no `header_size`) actually persists the new level.
+- **Verified (realistic `_elementor_data`, 9/9):** default-tag Heading now detected as h2 (the bug),
+  explicit h3 detected once (no duplicate), Icon Box explicit + default detected, a Button widget NOT
+  detected (no false positive), and retag h2→h4 adds `header_size:h4`. Regression: Brizy heading
+  read/write 3/3 still pass. `php -l` clean; PHPUnit 112/112; connector artifact serves v2.6.3.
+- **Deploy:** connected Elementor sites need connector v2.6.3 to get this (auto-update once they're on a
+  self-updating 2.6.x, else one manual reinstall). Backend/connector only; no frontend change. No commit.
+- **(also uncommitted from the prior task in this working tree:** the flaky-Brevo-test fix + the
+  wp_tempnam-in-REST auto-update fix — all in the same 2 files.)
+
+## 2026-07-07 — Flaky Brevo test + connector auto-update bug + Brizy review [/task]
+- **Ask:** fix the flaky test, check Rishi's Brizy builder changes, and explain why the connector isn't
+  auto-updating (it shows "manually update").
+- **Flaky test fixed:** `BrevoEmailChannelTest::setUp` didn't mock `get_option` (the Brevo channel reads
+  the from-sender via `PCM_Settings::get()`), so it errored ~2/3 runs depending on test order (it had been
+  borrowing a leaked mock). Added `WP_Mock::userFunction('get_option')->andReturn(array())` — same fix as
+  the earlier automation-test one. Suite now green 112/112 across repeated runs.
+- **Why the connector shows "manually update" — two reasons:**
+  1. **Bootstrap (by design):** the connector's WordPress-native self-update (Update-URI header +
+     `update_plugins_<host>` manifest poll + sha256-verified auto-install) was added recently (connector
+     2.6.x). A site can only auto-update if it's ALREADY running a connector that contains that block, so
+     every currently-connected site (on an older connector) needs ONE manual reinstall to 2.6.2 — after
+     which all future updates install automatically. Can't be avoided: you can't push auto-update code to
+     a plugin that lacks auto-update code.
+  2. **Real bug found + fixed:** `PCM_SEOHub_Service::connector_artifact()` called `wp_tempnam()`, which
+     lives in `wp-admin/includes/file.php` and is NOT loaded in a REST request — but the
+     `/seohub/connector-manifest` + `connector-package` routes connected sites poll ARE REST. Masked by
+     an `get_option` package cache, but on the FIRST poll after every connector version bump (cache
+     stale) the manifest fataled with a 500, so even self-updating connectors saw no update → fell back
+     to manual. **Fix:** `if (!function_exists('wp_tempnam')) require_once ABSPATH.'wp-admin/includes/file.php';`
+     before the call (one file). Verified from a cold cache: manifest now returns 200 without auth,
+     version 2.6.2, sha256 byte-matches the served package.
+- **Rishi's Brizy changes: done and correct.** Verified end-to-end against the current connector: Brizy
+  base64 heading READ (deduped to one across the compiled-HTML + editor-JSON metas) and WRITE (updates
+  BOTH base64 blobs, incl. the JSON escaped-quote needle variant) all pass. My earlier Brizy fix survived
+  the merges.
+- **Verified:** `php -l` clean; connector auto-update artifact/manifest 13/13 (incl. cold-cache REST poll);
+  Brizy heading read/write 3/3; PHPUnit 112/112 (repeated). Two files changed (test + connector artifact).
+  No commit.
+
 ## 2026-07-06 — SEO heading editor: make it work on Brizy (base64 builder data) [/task]
 - **Ask:** "will it work on brizy" — the heading editor on a Brizy page-builder site.
 - **Answer (verified): not until this fix.** Brizy stores its editor JSON + compiled HTML BASE64-encoded.
@@ -6308,3 +6393,69 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   now) — remains on the roadmap list, unbuilt.
 - Verified: tsc 56 = baseline (0 new), build OK. Live pass pending user.
   BEFOREs 3e2d0c7 / 4276d1c → AFTERs 758c74a / ae2852e.
+
+## 2026-07-08 — Audit existing `strategy`/`keywords` modules to correct the PowerContent migration plan [/task]
+- User instruction: "we already have the keyword things in the current powercreatives no need to do extra
+  check the current strategies that is already build in it" — a correction to the earlier PowerContent
+  (third-party AI content tool) migration report, which had proposed adding keyword-research providers and
+  treated "Content Strategies" as mostly net-new.
+- Dispatched an Explore agent to map both modules exhaustively (routes, DB schema, exact frontend UI, and a
+  traced call-path check of the create-strategy payload). Spot-verified its two load-bearing claims myself
+  (`controller.php:68-105` param whitelist + `Keywords/index.tsx:533-537` payload spread) before trusting them.
+- **Findings:** keyword research is fully built (Google Suggest + Ahrefs volume/KD/CPC/SERP-DR via the Ahrefs
+  MCP endpoint, `keywords` module) — no DataForSEO or other provider needed. **Content Strategies already
+  works**: create a strategy from a keyword list + template + brand → one `strategy_items` row per keyword →
+  manual one-item-per-call `POST /strategies/{id}/generate` → `PCM_LLM::invoke_json` (hardcoded
+  gemini-2.5-flash) → `pcm_articles` row, with per-item/per-strategy status counters. Real gotcha found:
+  `Keywords/CreateStrategyDialog.tsx` collects `structure`/hierarchy-parent fields/`interlinksConfig`/
+  `scheduleConfig`/`approvalMode` and spreads them into the POST body, but `create_strategy()` only reads
+  `name/templateId/brandId/keywords/hierarchyMode/publishingMode/config` — the rest is silently dropped, and
+  even the two fields that DO persist are never branched on in `generate_next_item()` (every item generates
+  as a flat standalone article regardless of hierarchy/publishing choice). No batch/queue runner, no cron,
+  no retry-a-failed-item endpoint, no AI topic-suggestion step (items are always 1:1 with pre-picked keywords).
+- **Action:** updated `.claude/CODEBASE_MAP.md` — module registry `strategy` row + new "Content Strategies
+  pipeline" section (was previously a one-line "Strategic planning" stub) documenting the above, so the
+  mismatch doesn't get rediscovered blind. No code changed (pure investigation/docs task); not committed.
+- Corrected migration-plan takeaway (for the PowerContent evaluation): do NOT rebuild keyword research or the
+  core strategy→item→LLM→article loop. The only legitimately-missing pieces, if porting PowerContent's
+  Content Strategies feature, are narrower than "the whole module": AI topic/idea generation, real
+  scheduling execution, batch/queue processing, and wiring up the hierarchy/interlink/approval fields the
+  UI already collects but the backend ignores.
+
+## 2026-07-08 — Strategy: selectable AI model (was google-only) + Generate-All + Retry [/task, Fable 5 / T1]
+- Task: "now it only works with google api ... make it so we can select the models like others; also check if
+  anything is missing from the autopress intelligence strategy to here and make them in it."
+- Scoped: the article generator hardcoded `'model'=>'gemini-2.5-flash'`. AutoPress's strategy service is large
+  (scheduling+processDueItems, publish, approval gates, interlink injection, hierarchy) — most is feature-sized
+  work needing cron/publishing/Approvals architecture. So I implemented the clear bounded pieces now and
+  surfaced the big ones as follow-ups (didn't silently build a multi-day system under a "minimal diff" task).
+- **Done (5 files):**
+  1. **Model selection like other modules.** `CreateStrategyDialog.tsx` gained an AI-Model dropdown fed by
+     `trpc.models.getForGeneration({type:'text'})` (same pattern as Copy/Writer); it sends `model`+`provider`.
+     `controller.php create_strategy` builds a `config` JSON (model/provider + the previously-DROPPED fields:
+     structure/approvalMode/parentTargetUrl/parentKeyword/interlinksConfig/scheduleConfig — sanitized).
+     `service.php generate_next_item` reads model/provider via new `resolve_model()` and passes them
+     data-driven to `PCM_LLM::invoke_json` (provider only when non-empty); legacy strategies (no config)
+     fall back to `gemini-2.5-flash`. This also fixes the documented "fields silently dropped" bug.
+  2. **Generate All** (Strategies/index.tsx): client-side loop over the existing per-item endpoint until
+     `complete`, `bulkModeRef` suppresses per-item toasts → one summary toast, `totalItems+1` runaway guard.
+  3. **Retry a failed item**: `generate` now accepts optional `{itemId}` (trpc-routes body passthrough) →
+     `generate_next_item($s,$uid,$item_id)` targets that specific item (ownership-checked: must belong to the
+     strategy), clears its prior error; Strategies list shows a Retry button on errored rows.
+  4. **Retry-safe counters**: replaced the naive `completedItems+1`/`failedItems+1` increments with
+     `recompute_counters()` (counts actual item states) so a retry (error→completed) doesn't double-count.
+- **Verified:** `php -l` clean (service+controller); `tsc` = 56 (baseline, 0 new errors, none in touched files);
+  `vite build` OK (2120 modules); behavioral harness `strategy_gen_test.php` **21/21** (model fallback,
+  explicit model+provider passed, retry-by-itemId targets the errored item + leaves next-pending untouched,
+  retry-safe counters, failure path, no-pending-with-failure ≠ 'completed', null-when-empty).
+  NB: full browser drive not run — the Power Creatives SPA/dev-server wasn't up (running preview servers are
+  the separate PowerContent sandbox); verification is build + types + behavioral harness.
+- **spec-verifier (done-gate):** no P0/P1; ownership on the itemId path + data-driven provider verified clean.
+  Fixed all 3 P2s: (a) Generate-All guard `strategy.totalItems + 1` = string concat ("5"+1="51") → `Number()`
+  (also the wpdb-string rule); (b) the no-pending branch hard-set status 'completed' even with a failed item →
+  now via `recompute_counters()` (stays 'in_progress' when a failure remains); (c) `interlinksConfig`/
+  `scheduleConfig` stored raw → now whitelist + coerce sub-keys before persist. Skipped P3s (same-user
+  registry validation, item-list reuse, text-domain wrapping — low-value / against the existing pattern).
+- **Deferred (surfaced to user, feature-sized):** real scheduling execution (cron + due dates), auto-publish,
+  approval-gate wiring to Approvals module, interlink injection, hierarchy-aware generation, `consolidated`
+  structure. Map "Content Strategies pipeline" section + header updated. Not committed.
