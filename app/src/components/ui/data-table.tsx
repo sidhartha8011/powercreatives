@@ -60,13 +60,20 @@ const GRID_CLASS =
   '[&>tbody>tr:not([data-subrow])>td]:whitespace-nowrap [&>tbody>tr:not([data-subrow])>td]:overflow-hidden ' +
   '[&>thead>tr>th]:sticky [&>thead>tr>th]:top-0 [&>thead>tr>th]:z-20 [&>thead>tr>th]:bg-card';
 
+/** Expansion context passed to cell renderers (inlineExpand mode). */
+export interface DataTableCellCtx {
+  canExpand: boolean;
+  isExpanded: boolean;
+  toggleExpanded: () => void;
+}
+
 export interface DataTableColumn<T> {
   /** Stable column id — also the sort key. */
   key: string;
   /** Header content. */
   header: ReactNode;
-  /** Cell renderer for a row. */
-  cell: (row: T) => ReactNode;
+  /** Cell renderer for a row. ctx carries expansion state (inlineExpand mode). */
+  cell: (row: T, ctx?: DataTableCellCtx) => ReactNode;
   /**
    * When provided, the column is sortable: returns the comparable value for a
    * row. Omit for non-sortable columns (e.g. an "Actions" column).
@@ -112,6 +119,12 @@ export interface DataTableProps<T> {
   /** Whether a row can expand (default: every row, when renderSubRows is set). */
   rowCanExpand?: (row: T) => boolean;
   /**
+   * Render the expand toggle INSIDE a cell (SEO-table style) instead of a
+   * dedicated chevron column: no chevron column is emitted, and cell
+   * renderers receive the expansion ctx to place the chevron themselves.
+   */
+  inlineExpand?: boolean;
+  /**
    * SEO-style column layout: pass a unique localStorage key to enable
    * drag-to-reorder (drag a header) and drag-to-resize (drag its right edge),
    * persisted per browser via the shared useColumnLayout. Numeric `width`s
@@ -151,11 +164,14 @@ export function DataTable<T>({
   className,
   renderSubRows,
   rowCanExpand,
+  inlineExpand = false,
   layoutKey,
   filterDefs,
   selection,
 }: DataTableProps<T>) {
   const expandable = renderSubRows != null;
+  /** The dedicated chevron column renders only in non-inline mode. */
+  const chevronCol = expandable && !inlineExpand;
   const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(new Set());
   const toggleExpanded = (key: string | number) => {
     setExpandedKeys((prev) => {
@@ -229,7 +245,7 @@ export function DataTable<T>({
   const widthStyle = (w?: number | string): CSSProperties | undefined =>
     w == null ? undefined : { width: w };
 
-  const colCount = orderedColumns.length + (expandable ? 1 : 0) + (selection ? 1 : 0);
+  const colCount = orderedColumns.length + (chevronCol ? 1 : 0) + (selection ? 1 : 0);
 
   // Select-all toggles the currently VISIBLE (filtered + sorted) rows.
   const visibleKeys = selection ? sortedData.map((row) => rowKey(row)) : [];
@@ -253,7 +269,7 @@ export function DataTable<T>({
         {layoutEnabled && (
           <colgroup>
             {selection && <col style={{ width: 36 }} />}
-            {expandable && <col style={{ width: 36 }} />}
+            {chevronCol && <col style={{ width: 36 }} />}
             {orderedColumns.map((c) => (
               <col key={c.key} style={{ width: layout.width(c.key) }} />
             ))}
@@ -270,7 +286,7 @@ export function DataTable<T>({
                 />
               </th>
             )}
-            {expandable && <th style={{ width: 36 }} aria-label="Expand" />}
+            {chevronCol && <th style={{ width: 36 }} aria-label="Expand" />}
             {orderedColumns.map((c) =>
               layoutEnabled ? (
                 <ColumnHead
@@ -354,7 +370,7 @@ export function DataTable<T>({
                         />
                       </td>
                     )}
-                    {expandable && (
+                    {chevronCol && (
                       <td className="text-center">
                         {canExpand && (
                           <button
@@ -377,7 +393,11 @@ export function DataTable<T>({
                     )}
                     {orderedColumns.map((c) => (
                       <td key={c.key} className={cn(c.className, c.cellClassName)}>
-                        {c.cell(row)}
+                        {c.cell(row, {
+                          canExpand,
+                          isExpanded: Boolean(isExpanded),
+                          toggleExpanded: () => toggleExpanded(key),
+                        })}
                       </td>
                     ))}
                   </tr>

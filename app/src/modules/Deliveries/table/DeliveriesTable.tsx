@@ -22,7 +22,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, Maximize2, Plus, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Maximize2, Plus, Trash2, X } from 'lucide-react';
 
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import type { FilterDef } from '@/hooks/useColumnFilters';
@@ -461,7 +461,6 @@ function ProjectSubRows({
     return (
       <tr>
         {hasSelectionCol && <td />}
-        <td />
         <td colSpan={9} className="text-muted-foreground">
           Loading projects…
         </td>
@@ -526,7 +525,6 @@ function ProjectSubRows({
     <>
       <tr aria-hidden="true">
         {hasSelectionCol && <td className={subHead} />}
-        <td className={subHead} />
         <td className={subHead}>
           <span className="block pl-4">Project</span>
         </td>
@@ -560,7 +558,6 @@ function ProjectSubRows({
               />
             </td>
           )}
-          <td />
           <td>
             {/* Indent = hierarchy; edits rename the ACTUAL project (card
                 auto-save contract — revert on failure via rethrow). */}
@@ -615,7 +612,6 @@ function ProjectSubRows({
       ))}
       <tr>
         {hasSelectionCol && <td />}
-        <td />
         <td colSpan={9}>
           <AddProjectMenu
             available={available}
@@ -752,8 +748,24 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
         header: 'Delivery',
         width: 220,
         sortAccessor: (d) => d.name.toLowerCase(),
-        cell: (d) => (
+        cell: (d, ctx) => (
           <div className="flex items-center gap-1">
+            {/* Expand lives INSIDE the name cell (SEO-table pattern). */}
+            {ctx?.canExpand && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  ctx.toggleExpanded();
+                }}
+                title={ctx.isExpanded ? 'Hide projects' : 'Show projects'}
+                aria-label={ctx.isExpanded ? `Hide projects of ${d.name}` : `Show projects of ${d.name}`}
+                aria-expanded={ctx.isExpanded}
+                className="shrink-0 text-muted-foreground/60 hover:text-foreground"
+              >
+                {ctx.isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              </button>
+            )}
             {isAdmin ? (
               <InlineTextCell
                 value={d.name}
@@ -999,6 +1011,7 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
         rowKey={(d) => d.id}
         defaultSortKey="updated"
         defaultSortDir="desc"
+        inlineExpand
         renderSubRows={(d) => (
           <ProjectSubRows
             delivery={d}
