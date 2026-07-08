@@ -60,6 +60,75 @@ Implemented by `PCM_SEO_Service::parse_content_nodes()` / `get_post_content_node
   decode entities, case-insensitive compare — specced with the matcher.
 - Any change to ordering/skip/shape = contract version bump, documented here.
 
+### Normalization spec v1 (FROZEN 2026-07-08, pair 2)
+
+The matcher's law — byte-identical implementation on the hub
+(`PCM_Text_Matcher::normalize()`) and in the connector
+(`pcm_conn_normalize_text()`); the two MUST stay in sync (fixture-tested):
+
+1. `html_entity_decode(ENT_QUOTES | ENT_HTML5, UTF-8)`
+2. NBSP (U+00A0) → regular space
+3. every Unicode whitespace run → one space (`/\s+/u`)
+4. trim
+5. case-fold (`mb_strtolower` UTF-8)
+
+### Rule schema v1 (FROZEN 2026-07-08, pair 2)
+
+Push payload `POST /pcm-conn/v1/rules` (replaces the post's whole set):
+
+```
+{ schemaVersion: 1, postId, rules: [ {
+    id,                       // hub seo_dynamic_rules.id
+    target: 'paragraph',      // enum reserved: paragraph|heading|anchorText|href
+    match: { text, occurrence },  // text is ALREADY normalized (spec v1)
+    replacement,              // sanitized (wp_kses_post) BEFORE storage
+    active: bool,
+    changesetId?, sourceChangeId?,
+    anchor: { parentHeading?: {level, text} }  // re-anchor context (pair 4 healing)
+} ] }
+```
+
+- Connector validates `schemaVersion === 1` and rejects others honestly.
+- Capability check before every push: `GET /pcm-conn/v1/rules` → 404 = connector
+  too old → honest error pointing at the Sites Connector column.
+- Storage on the connector: `pcm_conn_rules_{postId}` options (autoload OFF) +
+  `pcm_conn_rules_index`; serve/miss counters per post, throttled writes.
+
+### Serving mechanism v1 (verified engineering decision, pair 2)
+
+`template_redirect` + `ob_start`, singular front-end requests only, whole
+callback in try/catch → ANY throwable serves the ORIGINAL buffer (a rule can
+never break a client page). Per rule: find the target block, compare its
+VISIBLE text (strip tags → normalize spec v1) against `match.text`,
+occurrence-aware; swap the block's inner content with the pre-sanitized
+replacement; no match → original + stale counter.
+
+**Block targets (`paragraph`, later `heading`) use boundary matching on
+non-nestable tags** (`<p>`/`<hN>` cannot legally nest — the same proven
+pattern as the shipped heading overrides). **NOT** `WP_HTML_Tag_Processor`:
+verified against core, its API is tag navigation + attribute writes
+(+ per-text-node `set_modifiable_text` in newer WP) and cannot atomically
+replace a block's inner HTML — a paragraph containing `<strong>` spans
+multiple text nodes. The core parser IS the right tool for the future
+`href`/attribute targets (`set_attribute`) and is reserved for exactly that.
+This paragraph documents the decision so it is never re-litigated from the
+earlier plan wording.
+
+### scan-content v1 (connector route, pair 2)
+
+`GET /pcm-conn/v1/scan-content?post_id=N` → `{ nodes: [...] }` where each node
+is `{ kind:'paragraph', index, text, html, occurrence, source:'rendered',
+anchor:{level,text}|null }` — paragraphs in TRUE rendered document order
+(hardened loopback fetch, `<body>` only, `<header>/<nav>/<footer>/<aside>`
+regions stripped). `anchor` = nearest preceding rendered heading, used ONLY
+for display interleaving with the heading scan (heading rows + their editing
+stay on `/scan-headings`, 100% unchanged). `occurrence` = position among
+same-normalized-text paragraphs — the rule-target identity on builder pages.
+Rationale: rules act on the SERVED page, so the inventory must come from the
+rendered output, not raw storage. Loopback blocked → `{ nodes: [],
+error:'loopback_blocked' }` (HTTP 200, honest) → the hub UI keeps the
+headings-only view and says so.
+
 ## Phase 1 — Approval rails (backlog item 1, unchanged)
 
 Staging table → envelope → approvals adapter registry → Before/After cards →
