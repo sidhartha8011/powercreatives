@@ -11,9 +11,13 @@ Laws: producer → envelope → adapter (no cross-module hardcoding) · routing 
 reachable links keep the proven 2.2.x source path) · no silent fallbacks ·
 local-first serving · reversible by construction.
 
-**GATE (precondition, not a phase):** the owner's live verification pass over
-the ~15 UNVERIFIED commits from 07-07/08. Nothing below ships on top of
-unverified ground.
+**GATE — CLEARED by owner 2026-07-08:** the 07-07/08 work is declared working
+in practice; the `- UNVERIFIED` commit labels are historical, not blocking.
+
+**SCOPE CUT by owner 2026-07-08:** everything SERP is OUT of this build — no
+SERP API purchase, AI optimizer v1 runs WITHOUT competitor data (page +
+structure/interlink analysis only), and the Google-results row action is
+dropped from this build.
 
 ---
 
@@ -189,6 +193,42 @@ The labor-deleter and the revenue protector — both pure consumers of Phases
 
 Delivery health evaluators · email relay (buy-vs-build first) · Articles ↔
 Projects (a decision, not a build) · typography (opportunistic only).
+
+## Zero-debt engineering additions (senior-dev requirements, 2026-07-08)
+
+1. **Contracts frozen before code, versioned:** node identity (`kind + index +
+   normalized text`), envelope (carries `version`), rule schema (connector
+   capability-check before push — "do you accept rule schema v1?"). Contract
+   changes = version bump, documented in this repo.
+2. **The matcher is a pure, WP-free PHP class** with a written normalization
+   spec (whitespace/NBSP/entities/case) and a fixture corpus of REAL builder
+   HTML (Elementor/Brizy/Divi pages) as unit tests.
+3. **No parallel paths:** new asset types go through the adapter registry; the
+   three legacy approvals types (visual/copy/article buckets) get WRAPPED as
+   adapters over their existing data in a SCHEDULED follow-up pair — one render
+   path, debt with a date.
+4. **Touched debt is cleaned in-stream, never swept:** the 3 hardcoded prompts
+   → templates (Brand & Template workstream); rule storage = a proper indexed
+   table (the 200-cap options list must NOT be extended); Copy's
+   `handleBrandSaved` 1-liner when approved.
+5. **Definition of Done per pair:** `php -l` + `npm run check` (56-error
+   baseline, zero new) + build + session log + BEFORE/AFTER commits + contract
+   doc updated if an interface changed + owner verification.
+
+## Brand & Template Foundation (cross-cutting workstream, lands before/with 1c)
+
+1. Template law: every LLM call resolves through a user-editable Template;
+   migrate the 3 hardcoded prompts (llm-info builder, remote site-desc,
+   AI-readiness page summary) into seeded templates.
+2. `sites.brandId` (optional FK, DB bump) + brand picker in site settings
+   (hierarchy as suggestion); local-site tab gets a brand picker too.
+3. Unified `{{brand.*}}` variable namespace: every brands column (phone,
+   niche, location, tonOfVoice, targetAudience, uniqueSellingPoints,
+   businessSummary, language…) becomes a template variable, brand-row-first
+   with GBP snapshot as overlay; variables VISIBLE in the Templates UI.
+4. Auto brand resolution in every SEO generation (table cells, headings,
+   paragraphs, bulk/column, remote — `remote_generate_field` gains brandId and
+   `remote_field_vars` builds from the brand).
 
 ## Open PO decisions (mapped to the phase that needs them)
 
