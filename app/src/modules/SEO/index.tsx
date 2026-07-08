@@ -44,6 +44,7 @@ import { useColumnFilters } from '@/hooks/useColumnFilters';
 import { useViews, type SeoView } from './hooks/useViews';
 import { useColumnLayout } from '@/hooks/useColumnLayout';
 import { ColumnHead } from '@/components/ui/column-head';
+import { CELL_PILL_NEUTRAL } from '@/components/ui/table-cell-recipes';
 import { ViewsToolbar } from './ViewsToolbar';
 import { buildFilterDefs, type FilterDef, type FilterOption } from './seoFilters';
 import { AIReadinessPanel } from './AIReadinessPanel';
@@ -1011,7 +1012,7 @@ export function SEOModule() {
       case 'type':
         return (
           <TableCell key={key}>
-            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] capitalize bg-muted/60 text-muted-foreground">{row.type}</span>
+            <span className={`${CELL_PILL_NEUTRAL} capitalize`}>{row.type}</span>
           </TableCell>
         );
       case 'title':

@@ -36,7 +36,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
 import { BulkActionBar } from '@/components/shared/BulkActionBar';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -55,6 +54,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import {
+  CELL_EDIT_INPUT,
+  CELL_EMPTY_TEXT,
+  CELL_PILL,
+  CELL_PILL_NEUTRAL,
+  CELL_VIEW_TEXT,
+} from '@/components/ui/table-cell-recipes';
 import { relTime } from '@/components/shared/EntityCard';
 import { cn } from '@/lib/utils';
 import { trpc } from '@/lib/trpc';
@@ -80,10 +87,7 @@ function StatusPill({ status }: { status: DeliveryStatus }) {
   const lane = STATUS_LANES[status];
   if (!lane) return <span>{status}</span>;
   return (
-    <span
-      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-none font-medium"
-      style={{ background: lane.accentColor, color: lane.accentText }}
-    >
+    <span className={CELL_PILL} style={{ background: lane.accentColor, color: lane.accentText }}>
       {lane.label}
     </span>
   );
@@ -114,10 +118,7 @@ export function typeColors(typeKey: string): { bg: string; text: string } {
 function TypePill({ typeKey, label }: { typeKey: string; label: string }) {
   const colors = typeColors(typeKey);
   return (
-    <span
-      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-none font-medium"
-      style={{ background: colors.bg, color: colors.text }}
-    >
+    <span className={CELL_PILL} style={{ background: colors.bg, color: colors.text }}>
       {label}
     </span>
   );
@@ -127,8 +128,10 @@ function TypePill({ typeKey, label }: { typeKey: string; label: string }) {
 const NONE_VALUE = '__none__';
 
 /**
- * Borderless in-place text editor — the cell IS the input. Card auto-save
- * contract: commit on blur/Enter, Esc cancels, revert the draft on failure.
+ * Click-to-edit text cell — the SEO table's cell design (view text with
+ * dotted-underline hover affordance; compact Input while editing), with the
+ * delivery card's save contract kept: commit on blur/Enter (only when
+ * changed), Esc cancels, revert the draft on failure.
  */
 function InlineTextCell({
   value,
@@ -146,20 +149,14 @@ function InlineTextCell({
   className?: string;
   onSave: (next: string) => Promise<unknown>;
 }) {
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
-  // Esc must skip the commit that its own blur fires (blur reads a stale
-  // closure otherwise) — flagged via ref, not state.
-  const cancelled = useRef(false);
   useEffect(() => {
     setDraft(value);
   }, [value]);
 
   const commit = () => {
-    if (cancelled.current) {
-      cancelled.current = false;
-      setDraft(value);
-      return;
-    }
+    setEditing(false);
     const next = draft.trim();
     if (next === value) return;
     if (required && next.length === 0) {
@@ -169,25 +166,42 @@ function InlineTextCell({
     onSave(next).catch(() => setDraft(value));
   };
 
+  if (editing) {
+    return (
+      <Input
+        autoFocus
+        value={draft}
+        aria-label={ariaLabel}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+          }
+          if (e.key === 'Escape') {
+            setDraft(value);
+            setEditing(false);
+          }
+        }}
+        className={cn(CELL_EDIT_INPUT, className)}
+      />
+    );
+  }
+
   return (
-    <input
-      value={draft}
-      placeholder={placeholder}
+    <button
+      type="button"
       aria-label={ariaLabel}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur();
-        if (e.key === 'Escape') {
-          cancelled.current = true;
-          e.currentTarget.blur();
-        }
+      onClick={() => {
+        setDraft(value);
+        setEditing(true);
       }}
-      className={cn(
-        'h-7 w-full rounded bg-transparent px-1 outline-none placeholder:text-muted-foreground/60 hover:bg-slate-50 focus:bg-white focus:ring-1 focus:ring-ring',
-        className
-      )}
-    />
+      className={cn(CELL_VIEW_TEXT, className)}
+      title={value || placeholder}
+    >
+      {value || <span className={CELL_EMPTY_TEXT}>{placeholder ?? '—'}</span>}
+    </button>
   );
 }
 
@@ -292,17 +306,13 @@ function InlineModulesCell({
         >
           {/* Chips, not a sentence — same 2-chips-then-overflow rule as the card. */}
           <span className="flex min-w-0 items-center gap-1">
-            {selected.length === 0 && <span className="text-muted-foreground">None</span>}
+            {selected.length === 0 && <span className={CELL_EMPTY_TEXT}>None</span>}
             {selected.slice(0, 2).map((o) => (
-              <Badge key={o.id} variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
+              <span key={o.id} className={CELL_PILL_NEUTRAL}>
                 {o.label}
-              </Badge>
+              </span>
             ))}
-            {selected.length > 2 && (
-              <Badge variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
-                +{selected.length - 2}
-              </Badge>
-            )}
+            {selected.length > 2 && <span className={CELL_PILL_NEUTRAL}>+{selected.length - 2}</span>}
           </span>
           <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
         </Button>
@@ -329,19 +339,15 @@ function InlineModulesCell({
 /** Read-only module chips — the non-admin rendering of the Modules cell. */
 function ModulesChips({ values }: { values: string[] }) {
   const selected = GRANTABLE_MODULES.filter((o) => values.includes(o.id));
-  if (selected.length === 0) return <span className="px-1 text-muted-foreground">None</span>;
+  if (selected.length === 0) return <span className={`px-1 ${CELL_EMPTY_TEXT}`}>None</span>;
   return (
     <span className="flex min-w-0 items-center gap-1 px-1">
       {selected.slice(0, 2).map((o) => (
-        <Badge key={o.id} variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
+        <span key={o.id} className={CELL_PILL_NEUTRAL}>
           {o.label}
-        </Badge>
+        </span>
       ))}
-      {selected.length > 2 && (
-        <Badge variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
-          +{selected.length - 2}
-        </Badge>
-      )}
+      {selected.length > 2 && <span className={CELL_PILL_NEUTRAL}>+{selected.length - 2}</span>}
     </span>
   );
 }
