@@ -158,6 +158,45 @@ class PCM_Sites_Service
     }
 
     /**
+     * Installed version of the Power Creatives Connector on a connected site
+     * (read live via its /wp/v2/plugins), or '' when it can't be read (no
+     * connector installed, or the plugin list isn't readable by the app-password
+     * user). THE single reader — the SEO module delegates here; never duplicate.
+     */
+    public static function remote_connector_version(object $site): string
+    {
+        $res = self::remote_rest($site, 'GET', '/wp/v2/plugins', array('_fields' => 'name,version'));
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return '';
+        }
+        foreach ($res['body'] as $plugin) {
+            if (stripos((string) ($plugin['name'] ?? ''), 'Power Creatives Connector') !== false) {
+                return (string) ($plugin['version'] ?? '');
+            }
+        }
+        return '';
+    }
+
+    /**
+     * The latest connector version this hub ships (what a site self-updates to).
+     * Read from the SEO-Hub's cached connector artifact; '' when unavailable.
+     */
+    public static function latest_connector_version(): string
+    {
+        if (!class_exists('PCM_SEOHub_Service')) {
+            $seohub = dirname(__DIR__) . '/seohub/service.php';
+            if (file_exists($seohub)) {
+                require_once $seohub;
+            }
+        }
+        if (!class_exists('PCM_SEOHub_Service') || !method_exists('PCM_SEOHub_Service', 'connector_artifact')) {
+            return '';
+        }
+        $artifact = PCM_SEOHub_Service::connector_artifact();
+        return isset($artifact['error']) ? '' : (string) ($artifact['version'] ?? '');
+    }
+
+    /**
      * Test connection to a WordPress site.
      *
      * Calls GET /wp-json/wp/v2/users/me to verify credentials.

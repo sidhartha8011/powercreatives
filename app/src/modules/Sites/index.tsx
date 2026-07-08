@@ -232,7 +232,7 @@ export function SitesModule() {
   // Column config for the global <DataTable>.
   const columns = useMemo<DataTableColumn<Site>[]>(() => [
     {
-      key: 'name', header: 'Name', width: '18%', sortAccessor: (s) => s.name.toLowerCase(),
+      key: 'name', header: 'Name', width: '16%', sortAccessor: (s) => s.name.toLowerCase(),
       cell: (site) => (
         <div className="flex items-center gap-2 min-w-0">
           <Globe className="w-4 h-4 shrink-0" style={{ color: colors.primary }} />
@@ -241,7 +241,7 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'url', header: 'URL', width: '20%', sortAccessor: (s) => s.url.toLowerCase(),
+      key: 'url', header: 'URL', width: '18%', sortAccessor: (s) => s.url.toLowerCase(),
       cell: (site) => (
         <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-[260px] items-center gap-1 text-primary hover:underline">
           <span className="truncate">{site.url}</span><ExternalLink className="w-3 h-3 shrink-0" />
@@ -251,7 +251,7 @@ export function SitesModule() {
     {
       // Connect/disconnect projects right from the row. Checked = connected to THIS site;
       // N:1, so several projects can be checked and toggling one never touches the others.
-      key: 'projects', header: 'Project(s)', width: '15%',
+      key: 'projects', header: 'Project(s)', width: '13%',
       // Number() both sides — wpdb returns ids as strings; a strict === on mixed types
       // would never match and the checkmarks would never render.
       sortAccessor: (s) => projects.filter((p) => p.siteId === Number(s.id)).map((p) => p.name.toLowerCase()).join(', '),
@@ -295,11 +295,11 @@ export function SitesModule() {
       },
     },
     {
-      key: 'username', header: 'User', width: '10%', sortAccessor: (s) => s.username.toLowerCase(),
+      key: 'username', header: 'User', width: '8%', sortAccessor: (s) => s.username.toLowerCase(),
       className: 'text-muted-foreground', cell: (site) => site.username,
     },
     {
-      key: 'method', header: 'Method', width: '10%',
+      key: 'method', header: 'Method', width: '9%',
       sortAccessor: (s) => (s.connectMethod === 'connector' ? 'plugin' : 'password'),
       cell: (site) => (
         <Badge variant="outline" className="gap-1 text-[10px]">
@@ -308,13 +308,20 @@ export function SitesModule() {
       ),
     },
     {
-      key: 'status', header: 'Status', width: '8%', sortAccessor: (s) => s.status,
+      // Installed connector version, read live from the site. When the site is behind
+      // the hub's latest, the version turns amber and an inline update button appears
+      // right beside it (both the version text and the button trigger the update).
+      key: 'connector', header: 'Connector', width: '11%',
+      cell: (site) => <ConnectorCell site={site} />,
+    },
+    {
+      key: 'status', header: 'Status', width: '7%', sortAccessor: (s) => s.status,
       cell: (site) => (
         <span className={`capitalize ${site.status === 'active' ? 'text-muted-foreground' : 'font-medium text-destructive'}`}>{site.status}</span>
       ),
     },
     {
-      key: 'createdAt', header: 'Added', width: '9%', sortAccessor: (s) => new Date(s.createdAt).getTime(),
+      key: 'createdAt', header: 'Added', width: '8%', sortAccessor: (s) => new Date(s.createdAt).getTime(),
       className: 'text-muted-foreground',
       cell: (site) => (site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'),
     },
@@ -527,6 +534,83 @@ export function SitesModule() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * Connector column cell: the site's INSTALLED connector version, read live from the
+ * site (cached 5 min). Up to date → plain muted version. Behind the hub's latest →
+ * amber version + inline update button right beside it (BOTH trigger the per-site
+ * self-update). Unreadable → an honest "—" with the reason in the tooltip.
+ */
+function ConnectorCell({ site }: { site: Site }) {
+  const versionQuery = trpc.sites.connectorVersion.useQuery(
+    { id: site.id },
+    { staleTime: 5 * 60_000 },
+  ) as any;
+  const updateMutation = trpc.sites.updateConnector.useMutation({
+    onSuccess: (r: any) => {
+      if (r?.status === 'up-to-date') {
+        toast.success(`${site.name}: connector already up to date${r?.version ? ` (v${r.version})` : ''}.`);
+      } else {
+        toast.success(`${site.name}: connector updated${r?.from ? ` v${r.from} → v${r.to || r.version}` : ''}.`);
+      }
+      versionQuery.refetch();
+    },
+    onError: (e: any) => toast.error(`${site.name}: ${e?.message ?? 'Connector update failed'}`),
+  }) as any;
+
+  if (versionQuery.isLoading) {
+    return <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground/60" />;
+  }
+  const d: any = versionQuery.data ?? {};
+  const version = String(d.version ?? '');
+  const latest = String(d.latest ?? '');
+  const upToDate = !!d.upToDate;
+
+  if (!version) {
+    return (
+      <span
+        className="text-xs text-muted-foreground/60"
+        title="Could not read the connector version — no connector installed, or the site's plugin list isn't readable by the connection user."
+      >
+        —
+      </span>
+    );
+  }
+  if (upToDate || !latest) {
+    return (
+      <span
+        className="text-xs text-muted-foreground tabular-nums"
+        title={latest ? `Up to date (latest is v${latest})` : `Installed: v${version} — could not read the hub's latest version`}
+      >
+        v{version}
+      </span>
+    );
+  }
+  const busy = updateMutation.isPending;
+  const run = () => { if (!busy) updateMutation.mutate({ id: site.id }); };
+  return (
+    <span className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        onClick={run}
+        disabled={busy}
+        title={`v${version} installed — click to update to v${latest}`}
+        className="text-xs font-medium tabular-nums text-amber-600 hover:underline decoration-dotted disabled:opacity-60"
+      >
+        v{version}
+      </button>
+      <button
+        type="button"
+        onClick={run}
+        disabled={busy}
+        title={`Update connector to v${latest}`}
+        className="shrink-0 rounded p-0.5 text-amber-600 transition-colors hover:bg-muted hover:text-primary disabled:opacity-60"
+      >
+        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+      </button>
+    </span>
   );
 }
 

@@ -1340,21 +1340,12 @@ class PCM_SEO_Service
         );
     }
 
-    /** Installed version of the Power Creatives Connector on a connected site (via /wp/v2/plugins),
-     *  or '' if it can't be read. Used to tell the user precisely whether their connector is current. */
+    /** Installed version of the Power Creatives Connector on a connected site — delegates to
+     *  the SINGLE reader in PCM_Sites_Service (also used by the Sites module's Connector column). */
     private static function remote_connector_version(object $site): string
     {
         self::ensure_sites_service();
-        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/wp/v2/plugins', array('_fields' => 'name,version'));
-        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
-            return '';
-        }
-        foreach ($res['body'] as $plugin) {
-            if (stripos((string) ($plugin['name'] ?? ''), 'Power Creatives Connector') !== false) {
-                return (string) ($plugin['version'] ?? '');
-            }
-        }
-        return '';
+        return PCM_Sites_Service::remote_connector_version($site);
     }
 
     /** Per-link details for a connected post (computed on-demand from its raw content). */

@@ -40,7 +40,69 @@ class PCM_REST_Sites extends PCM_REST_Base
             array('POST',   '/sites/(?P<id>\d+)/gsc-verify',   'gsc_verify_site'),
             array('POST',   '/sites/(?P<id>\d+)/gsc-preview',  'gsc_preview'),
             array('POST',   '/sites/update-connectors',        'update_connectors'),
+            array('GET',    '/sites/(?P<id>\d+)/connector-version', 'connector_version'),
+            array('POST',   '/sites/(?P<id>\d+)/update-connector',  'update_connector'),
         );
+    }
+
+    /**
+     * GET /sites/{id}/connector-version — the site's INSTALLED connector version (read live
+     * from its plugin list) + the hub's latest, so the UI can show an inline update button
+     * only when the site is behind. version/latest are '' when unreadable (shown honestly).
+     */
+    public function connector_version(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $pcm_user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        require_once __DIR__ . '/service.php';
+        $version = PCM_Sites_Service::remote_connector_version($site);
+        $latest  = PCM_Sites_Service::latest_connector_version();
+        return $this->success(array(
+            'version'  => $version,
+            'latest'   => $latest,
+            'upToDate' => $version !== '' && $latest !== '' && version_compare($version, $latest, '>='),
+        ));
+    }
+
+    /**
+     * POST /sites/{id}/update-connector — force ONE site's connector to self-update now
+     * (the per-site twin of update_connectors; same /pcm-conn/v1/update-now channel).
+     * Returns { status, from, to, version } — version re-read after the update so the
+     * UI reflects what is actually installed, not what the update claimed.
+     */
+    public function update_connector(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $pcm_user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        require_once __DIR__ . '/service.php';
+        $r = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/update-now', array(), array(), 120);
+        if (is_wp_error($r)) {
+            return $this->error($r->get_error_message(), 502, 'pcm_conn_update_failed');
+        }
+        $code = (int) ($r['status'] ?? 0);
+        $body = is_array($r['body'] ?? null) ? $r['body'] : array();
+        if ($code === 404) {
+            return $this->error(
+                __('This site’s connector predates self-update (no /update-now). Reinstall the connector once (Download connector), then it self-updates from here on.', 'power-creatives'),
+                409,
+                'pcm_conn_too_old'
+            );
+        }
+        if ($code >= 300) {
+            return $this->error((string) ($body['message'] ?? ('HTTP ' . $code)), 502, 'pcm_conn_update_failed');
+        }
+        return $this->success(array(
+            'status'  => (string) ($body['status'] ?? 'ok'),
+            'from'    => (string) ($body['from'] ?? ''),
+            'to'      => (string) ($body['to'] ?? ''),
+            'version' => PCM_Sites_Service::remote_connector_version($site),
+        ));
     }
 
     /**

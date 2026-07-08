@@ -291,6 +291,16 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `sites/${input.id}/gsc-preview` }),
     },
     "sites.updateConnectors": { endpoint: "sites/update-connectors", method: "POST" },
+    "sites.connectorVersion": {
+        endpoint: "sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `sites/${input.id}/connector-version` }),
+    },
+    "sites.updateConnector": {
+        endpoint: "sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `sites/${input.id}/update-connector` }),
+    },
     "sites.test": {
         endpoint: "sites",
         method: "POST",
