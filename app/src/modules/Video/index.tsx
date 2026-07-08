@@ -94,6 +94,7 @@ interface GenerationStatus {
   completedModels?: number;
 }
 
+// BEFORE BRAND ACCORDION TEST
 export function VideoModule() {
   const { settings } = useSettings();
   const { setActiveModule, consumePendingVideoData, consumePendingCreate, state: appState } = useApp();
