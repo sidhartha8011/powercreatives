@@ -16,10 +16,12 @@ import { SessionReferenceImagePanel } from '@/components/shared/SessionReference
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { VideoTemplateDropdown } from './VideoTemplateDropdown';
 import { useVideoModelsForGeneration } from '@/hooks/useModelsForGeneration';
-import { ContextPanel, createEmptyContextData, GlobalEngineSelector, GlobalProductionParameters } from '@/components/shared';
-import type { ContextData } from '@/components/shared/ContextPanel';
+import { ContextPanel, createEmptyContextData, GlobalEngineSelector, GlobalProductionParameters, EnhancedBrandSection } from '@/components/shared';
+import { SaveBrandButton } from '@/components/shared/SaveBrandButton';
+import type { ContextData, ScrapedBusinessData } from '@/components/shared/ContextPanel';
 import { BrandColorSwatches } from '@/components/shared/BrandColorSwatches';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { mapBrandToFormValues, mapScrapedToFormValues } from '@shared/brandTypes';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
@@ -131,25 +133,63 @@ export function VideoModule() {
   const [enhanceTemplateId, setEnhanceTemplateId] = useState<number | undefined>(undefined);
   const [enhanceTemplateContent, setEnhanceTemplateContent] = useState<string | null>(null);
 
+  const utils = trpc.useUtils();
+
   // Brand Context — shared ContextPanel (single source of truth)
   const [contextData, setContextData] = useState<ContextData>(createEmptyContextData);
+  const [formValues, setFormValues] = useState<Record<string, string | number | undefined>>({});
 
-  // Create-from-delivery handover (one-shot): land with the brand
-  // pre-selected; the target project rides along on brand.projectId for save
-  // paths that read it.
-  // NB: imperative fetches go through apiFetch — the hand-rolled trpc proxy
-  // has NO utils.client.*.query().
+  const handleFieldChange = (fieldId: string, value: string | number | undefined) => {
+    setFormValues((prev) => ({ ...prev, [fieldId]: value }));
+  };
+
+  const handleContextChange = useCallback((newCtx: ContextData) => {
+    const prevCtx = contextData;
+    setContextData(newCtx);
+
+    const brandChanged = newCtx.brandId !== prevCtx.brandId;
+    const brandDataUpdated = newCtx.brand !== prevCtx.brand;
+    if ((brandChanged || brandDataUpdated) && newCtx.brand) {
+      const mapped = mapBrandToFormValues(newCtx.brand as Record<string, any>);
+      if (Object.keys(mapped).length > 0) {
+        setFormValues((prev) => ({ ...prev, ...mapped }));
+      }
+    }
+  }, [contextData]);
+
+  const handleUrlFetched = useCallback((scraped: ScrapedBusinessData) => {
+    const mapped = mapScrapedToFormValues(scraped);
+    if (Object.keys(mapped).length > 0) {
+      setFormValues((prev) => ({ ...prev, ...mapped }));
+    }
+  }, []);
+
+  const handleBrandSaved = useCallback(async (brandId: number) => {
+    try {
+      const fresh = await utils.client.brands.getById.query({ id: brandId });
+      if (fresh) {
+        setContextData((prev) => ({ ...prev, brandId, brand: fresh }));
+      }
+    } catch {
+      // Silently fail
+    }
+  }, [utils]);
+
+  // Create-from-delivery handover (one-shot): routed through
+  // handleContextChange — the EXACT path a manual brand pick takes — so the
+  // full brand→form mapping (mapBrandToFormValues) runs, not just the two
+  // raw context fields. The target project rides on brand.projectId.
   useEffect(() => {
     const ctx = consumePendingCreate('video');
     if (!ctx || ctx.brandId == null) return;
     void apiFetch<any>(`brands/${ctx.brandId}`)
       .then((fresh: any) => {
         if (!fresh) return;
-        setContextData((prev) => ({
-          ...prev,
+        handleContextChange({
+          ...contextData,
           brandId: ctx.brandId as number,
           brand: { ...fresh, projectId: ctx.projectId },
-        }));
+        });
       })
       .catch(() => toast.error('Could not pre-select the brand for this delivery'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -412,8 +452,12 @@ export function VideoModule() {
         completedModels: 0
       }));
 
-      // Launch all generation promises concurrently
-      const generationPromises = tasksToRun.map(async (task) => {
+      // Concurrency limit & queue controller
+      const CONCURRENCY_LIMIT = 2;
+      const executing = new Set<Promise<void>>();
+      const promises: Promise<void>[] = [];
+
+      const runTaskWithRetry = async (task: typeof tasksToRun[0], attempt = 1): Promise<void> => {
         const { version, modelId, model, placeholderId } = task;
 
         try {
@@ -430,6 +474,15 @@ export function VideoModule() {
             textOverlayContent: textOverlay.isActive && textOverlay.text ? textOverlay.text : undefined,
             textOverlayPlacement: textOverlay.isActive ? textOverlay.placement : undefined,
           };
+
+          // Update UI card to show attempt count if retrying
+          if (attempt > 1) {
+            setVideos(prev => prev.map(v =>
+              v.id === placeholderId
+                ? { ...v, status: 'processing' as const, errorMessage: `Retrying (Attempt ${attempt}/3)...` }
+                : v
+            ));
+          }
 
           let result: any;
           if (model?.provider === 'kieai') {
@@ -455,7 +508,7 @@ export function VideoModule() {
               pollErrors = 0;
               if (poll.status === 'completed') { result = poll; break; }
               if (poll.status === 'failed') {
-                throw new Error(poll.error || 'Generation failed.');
+                throw new Error(poll.error || 'Generation failed on Kie.ai.');
               }
             }
             if (!result) {
@@ -473,21 +526,30 @@ export function VideoModule() {
                 ...v,
                 id: dbAssetId ? String(dbAssetId) : v.id,
                 url: result.url,
-                status: 'complete' as const
+                status: 'complete' as const,
+                errorMessage: undefined
               }
               : v
           ));
           finished++;
         } catch (error) {
           const errorMsg = getErrorMessage(error, 'Unknown error');
-          console.error('Video generation failed:', errorMsg);
-          // Mark as failed with error message visible to user
+          console.error(`Video generation failed (Attempt ${attempt}/3):`, errorMsg);
+
+          if (attempt < 3) {
+            const backoffMs = attempt * 5000;
+            console.log(`Retrying task ${placeholderId} in ${backoffMs}ms...`);
+            await new Promise(r => setTimeout(r, backoffMs));
+            return runTaskWithRetry(task, attempt + 1);
+          }
+
+          // All retry attempts exhausted — mark as definitively failed
           setVideos(prev => prev.map(v =>
             v.id === placeholderId
               ? { ...v, status: 'failed' as const, errorMessage: errorMsg }
               : v
           ));
-          toast.error(`Video failed: ${errorMsg}`);
+          toast.error(`Video failed after 3 attempts: ${errorMsg}`);
           failed++;
           finished++;
         }
@@ -499,10 +561,25 @@ export function VideoModule() {
           message: `Finished: ${version.name} (${model?.name || modelId})`,
           completedModels: Math.floor(finished / variationsPerModel)
         }));
-      });
+      };
+
+      for (const task of tasksToRun) {
+        const p = (async () => {
+          await runTaskWithRetry(task);
+        })();
+        promises.push(p);
+        executing.add(p);
+
+        const clean = () => executing.delete(p);
+        p.then(clean, clean);
+
+        if (executing.size >= CONCURRENCY_LIMIT) {
+          await Promise.race(executing);
+        }
+      }
 
       // Wait for all generations to finish
-      await Promise.allSettled(generationPromises);
+      await Promise.allSettled(promises);
 
       setStatus({ isGenerating: false, progress: 100, message: 'Generation complete!' });
       // Only show success toast if ALL videos actually succeeded.
@@ -732,23 +809,32 @@ export function VideoModule() {
               />
             </section>
 
-            {/* Brand / URL / Theme Context — shared ContextPanel */}
+            {/* Brand / URL Context — shared ContextPanel (Theme hidden, handled by EnhancedBrandSection) */}
             <ContextPanel
               moduleId="video"
               value={contextData}
-              onChange={setContextData}
+              onChange={handleContextChange}
+              onUrlFetched={handleUrlFetched}
+              hideTheme
             />
 
-            {/* Brand Colors — displayed below ContextPanel when a brand is selected */}
-            {contextData.brand && (contextData.brand as any).colors &&
-              ((contextData.brand as any).colors as string[]).length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-2">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Brand Colors</h3>
-                  </div>
-                  <BrandColorSwatches colors={(contextData.brand as any).colors as string[]} size="md" />
-                </section>
-              )}
+            {/* Business Info & Brand Assets — Replaces dynamic section to include colors/logo/subjects */}
+            <EnhancedBrandSection
+              contextData={contextData}
+              onContextChange={handleContextChange}
+              formValues={formValues}
+              onFormChange={handleFieldChange}
+              referenceImages={sessionReferenceImages}
+              onReferenceImagesChange={setSessionReferenceImages}
+            />
+
+            {/* Save to Brand — only shows when business_name has value */}
+            <SaveBrandButton
+              formValues={formValues}
+              selectedBrandId={contextData.brandId}
+              selectedBrandName={contextData.brand?.name}
+              onBrandSaved={handleBrandSaved}
+            />
 
             {/* Production Parameters */}
             <GlobalProductionParameters
@@ -980,9 +1066,6 @@ export function VideoModule() {
                     <section key={modelId} className="space-y-3">
                       {/* Model Header */}
                       <div className="flex items-center gap-3 pb-2 border-b border-border">
-                        <div className="w-6 h-6 rounded bg-primary/10 flex items-center justify-center">
-                          <Cpu className="w-3 h-3 text-primary" />
-                        </div>
                         <div>
                           <h3 className="text-sm font-semibold">{modelInfo.name}</h3>
                           <p className="text-xs text-muted-foreground capitalize">{modelInfo.provider}</p>
@@ -1010,14 +1093,21 @@ export function VideoModule() {
                             >
                               <div className="aspect-video relative">
                                 {video.status === 'processing' ? (
-                                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted">
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted p-3 text-center">
                                     <Loader2 className="w-8 h-8 text-primary animate-spin mb-2" />
-                                    <span className="text-xs text-muted-foreground">Generating...</span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {video.errorMessage || 'Generating...'}
+                                    </span>
                                   </div>
                                 ) : video.status === 'failed' ? (
-                                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted">
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted p-3 text-center">
                                     <AlertCircle className="w-8 h-8 text-destructive mb-2" />
-                                    <span className="text-xs text-destructive">Failed</span>
+                                    <span className="text-xs text-destructive font-semibold">Failed</span>
+                                    {video.errorMessage && (
+                                      <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2 px-1" title={video.errorMessage}>
+                                        {video.errorMessage}
+                                      </p>
+                                    )}
                                   </div>
                                 ) : (
                                   <>
