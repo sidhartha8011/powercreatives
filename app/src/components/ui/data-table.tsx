@@ -126,6 +126,12 @@ export interface DataTableProps<T> {
    * hidden before sorting.
    */
   filterDefs?: Record<string, FilterDef<T>>;
+  /**
+   * Quiet header chrome: filter dots + sort icons hidden at rest, revealed on
+   * hover/focus, primary blue when active (ColumnHead's quietIcons; layout
+   * mode only).
+   */
+  quietHeaderIcons?: boolean;
 }
 
 export function DataTable<T>({
@@ -142,6 +148,7 @@ export function DataTable<T>({
   rowCanExpand,
   layoutKey,
   filterDefs,
+  quietHeaderIcons = false,
 }: DataTableProps<T>) {
   const expandable = renderSubRows != null;
   const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(new Set());
@@ -265,6 +272,7 @@ export function DataTable<T>({
                   onDragEnd={() => { setDragKey(null); setDragOverKey(null); }}
                   isDropTarget={dragOverKey === c.key && dragKey !== c.key}
                   onResizeStart={startResize(c.key)}
+                  quietIcons={quietHeaderIcons}
                 />
               ) : c.sortAccessor ? (
                 <SortableTableHead

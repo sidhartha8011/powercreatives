@@ -55,6 +55,14 @@ interface ColumnHeadProps {
   sort?: SortState;
   filter?: FilterState;
   generate?: GenerateState;
+  /**
+   * Quiet header chrome (opt-in): filter dot + sort icon are HIDDEN at rest,
+   * revealed on header hover / keyboard focus, and always visible in primary
+   * blue when active. CSS hover — known no-op on coarse-pointer devices
+   * (documented gotcha); accepted trade-off for the tables that opt in.
+   * Default off — the SEO table keeps its current look.
+   */
+  quietIcons?: boolean;
   // Drag-to-reorder (native HTML5 DnD) — wired by the table.
   draggable?: boolean;
   onDragStart?: (e: DragEvent<HTMLTableCellElement>) => void;
@@ -71,12 +79,20 @@ interface ColumnHeadProps {
 export function ColumnHead({
   label, width, className, sort, filter, generate,
   draggable, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, isDropTarget,
-  onResizeStart,
+  onResizeStart, quietIcons = false,
 }: ColumnHeadProps) {
   const isFiltered = !!filter?.value;
   const SortIcon = sort && sort.active && sort.dir === 'asc' ? ArrowUp
     : sort && sort.active && sort.dir === 'desc' ? ArrowDown
     : ArrowUpDown;
+
+  // Quiet mode: invisible at rest → revealed on hover/focus → blue when active.
+  const dotClass = quietIcons
+    ? `block h-1.5 w-1.5 rounded-full transition-all ${isFiltered ? 'bg-primary' : 'bg-muted-foreground/70 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`
+    : `block h-1.5 w-1.5 rounded-full transition-colors ${isFiltered ? 'bg-primary' : 'bg-muted-foreground/40 group-hover:bg-muted-foreground/70'}`;
+  const sortIconClass = quietIcons
+    ? `w-3.5 h-3.5 shrink-0 transition-all ${sort?.active ? 'opacity-100 text-primary' : 'opacity-0 group-hover:opacity-70 group-focus-within:opacity-70'}`
+    : `w-3.5 h-3.5 shrink-0 transition-opacity ${sort?.active ? 'opacity-100' : 'opacity-40 group-hover:opacity-70'}`;
 
   return (
     <th
@@ -100,7 +116,7 @@ export function ColumnHead({
                 title={`Filter ${label}`}
                 className="shrink-0 rounded p-1 transition-colors hover:bg-muted"
               >
-                <span className={`block h-1.5 w-1.5 rounded-full transition-colors ${isFiltered ? 'bg-primary' : 'bg-muted-foreground/40 group-hover:bg-muted-foreground/70'}`} />
+                <span className={dotClass} />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-48">
@@ -149,7 +165,7 @@ export function ColumnHead({
         {sort ? (
           <button type="button" onClick={sort.onToggle} className="flex min-w-0 items-center gap-1 text-left hover:text-foreground">
             <span className="truncate">{label}</span>
-            <SortIcon className={`w-3.5 h-3.5 shrink-0 transition-opacity ${sort.active ? 'opacity-100' : 'opacity-40 group-hover:opacity-70'}`} />
+            <SortIcon className={sortIconClass} />
           </button>
         ) : (
           <span className="min-w-0 truncate text-left">{label}</span>
