@@ -15,8 +15,8 @@ import { useSettings, useApp, type PendingVideoData } from '@/contexts/AppContex
 import { SessionReferenceImagePanel } from '@/components/shared/SessionReferenceImagePanel';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { VideoTemplateDropdown } from './VideoTemplateDropdown';
-import { useVideoModelsForGeneration, TIER_CONFIG } from '@/hooks/useModelsForGeneration';
-import { ContextPanel, createEmptyContextData } from '@/components/shared/ContextPanel';
+import { useVideoModelsForGeneration } from '@/hooks/useModelsForGeneration';
+import { ContextPanel, createEmptyContextData, GlobalEngineSelector, GlobalProductionParameters } from '@/components/shared';
 import type { ContextData } from '@/components/shared/ContextPanel';
 import { BrandColorSwatches } from '@/components/shared/BrandColorSwatches';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -262,28 +262,6 @@ export function VideoModule() {
     }))
     , [videoModels]);
 
-  // Track which cost tiers are expanded (all expanded by default)
-  const [expandedTiers, setExpandedTiers] = useState<Record<CostTier, boolean>>({
-    budget: true,
-    standard: true,
-    premium: true,
-  });
-
-  const toggleTier = (tier: CostTier) => {
-    setExpandedTiers(prev => ({ ...prev, [tier]: !prev[tier] }));
-  };
-
-  // Use shared tier config from hook
-  const tierLabels = TIER_CONFIG;
-
-  const toggleModel = (modelId: string) => {
-    setSelectedModels(prev =>
-      prev.includes(modelId)
-        ? prev.filter(m => m !== modelId)
-        : [...prev, modelId]
-    );
-  };
-
 
 
   /**
@@ -389,130 +367,149 @@ export function VideoModule() {
 
       // Step 2: Generate videos for each concept
       const totalWork = generatedVersions.length * selectedModels.length * variationsPerModel;
-      let completed = 0;
+      let finished = 0;
       let failed = 0;
+
+      // Build a flat list of tasks to run in parallel
+      const tasksToRun: { version: VideoVersion; modelId: string; model: any; variationIndex: number; placeholderId: string }[] = [];
 
       for (const version of generatedVersions) {
         for (const modelId of selectedModels) {
           const model = displayModels.find(m => m.id === modelId);
 
           for (let v = 0; v < variationsPerModel; v++) {
-            setStatus(prev => ({
-              ...prev,
-              progress: 10 + ((completed / totalWork) * 85),
-              message: `Generating: ${version.name} (${model?.name || modelId})...`,
-              currentModel: modelId,
-              totalModels: selectedModels.length,
-              completedModels: Math.floor(completed / variationsPerModel)
-            }));
-
-            // Create placeholder
             const placeholderId = crypto.randomUUID();
-            const placeholderVideo: GeneratedVideo = {
-              id: placeholderId,
-              versionId: version.id,
-              prompt: version.prompt ?? version.description,
-              modelId: modelId,
-              modelName: model?.name || modelId,
-              duration: duration === 'smart' ? 'auto' : `${duration}s`,
-              status: 'processing',
-              createdAt: new Date()
-            };
-            setVideos(prev => [...prev, placeholderVideo]);
-
-            try {
-              const payload = {
-                prompt: version.prompt ?? version.description,
-                model: modelId,
-                // Provider from model registry — same pattern as Image module.
-                // No fallback: if provider is missing, it's a data integrity bug
-                // that must surface immediately, not route silently to wrong provider.
-                provider: model?.provider,
-                duration: duration === 'smart' ? undefined : duration,
-                format: videoFormat,
-                inputUrl: sessionReferenceImages[0]?.url || undefined,
-                brandId: contextData.brandId || undefined,
-                // Prompt-enrichment: providers append these to the prompt string
-                generateAudio: generateAudio,
-                voiceoverScript: generateAudio && voiceoverScript ? voiceoverScript : undefined,
-                textOverlayContent: textOverlay.isActive && textOverlay.text ? textOverlay.text : undefined,
-                textOverlayPlacement: textOverlay.isActive ? textOverlay.placement : undefined,
-              };
-
-              let result: any;
-              if (model?.provider === 'kieai') {
-                // Async path: create task, poll every 10s (videos take
-                // minutes), 20-minute cap, tolerate transient poll errors.
-                const task: any = await createVideoTaskMutation.mutateAsync(payload);
-                const deadline = Date.now() + 20 * 60_000;
-                let pollErrors = 0;
-                result = null;
-                while (Date.now() < deadline) {
-                  await new Promise(r => setTimeout(r, 10_000));
-                  let poll: any;
-                  try {
-                    poll = await videoTaskResultMutation.mutateAsync({
-                      ...payload,
-                      prompt: task.prompt ?? payload.prompt,
-                      taskId: task.taskId,
-                    });
-                  } catch (pollError) {
-                    if (++pollErrors >= 3) throw pollError;
-                    continue;
-                  }
-                  pollErrors = 0;
-                  if (poll.status === 'completed') { result = poll; break; }
-                  if (poll.status === 'failed') {
-                    throw new Error(poll.error || 'Generation failed.');
-                  }
-                }
-                if (!result) {
-                  throw new Error('Timed out after 20 minutes — the task may still finish on Kie.ai.');
-                }
-              } else {
-                result = await generateVideoMutation.mutateAsync(payload);
-              }
-
-              // Update with generated video.
-              // CRITICAL: Capture result.assetId (DB autoincrement from pcm_assets)
-              // so Save-to-Project sends the real asset ID, not the UUID placeholder.
-              const dbAssetId = (result as any).assetId;
-              setVideos(prev => prev.map(v =>
-                v.id === placeholderId
-                  ? {
-                    ...v,
-                    id: dbAssetId ? String(dbAssetId) : v.id,
-                    url: result.url,
-                    status: 'complete' as const
-                  }
-                  : v
-              ));
-            } catch (error) {
-              const errorMsg = getErrorMessage(error, 'Unknown error');
-              console.error('Video generation failed:', errorMsg);
-              // Mark as failed with error message visible to user
-              setVideos(prev => prev.map(v =>
-                v.id === placeholderId
-                  ? { ...v, status: 'failed' as const, errorMessage: errorMsg }
-                  : v
-              ));
-              toast.error(`Video failed: ${errorMsg}`);
-              failed++;
-            }
-
-            completed++;
+            tasksToRun.push({
+              version,
+              modelId,
+              model,
+              variationIndex: v,
+              placeholderId,
+            });
           }
         }
       }
 
+      // Add all placeholders to UI state immediately
+      const initialPlaceholders = tasksToRun.map(task => ({
+        id: task.placeholderId,
+        versionId: task.version.id,
+        prompt: task.version.prompt ?? task.version.description,
+        modelId: task.modelId,
+        modelName: task.model?.name || task.modelId,
+        duration: duration === 'smart' ? 'auto' : `${duration}s`,
+        status: 'processing' as const,
+        createdAt: new Date(),
+      }));
+      setVideos(prev => [...prev, ...initialPlaceholders]);
+
+      // Set initial status message
+      setStatus(prev => ({
+        ...prev,
+        progress: 10,
+        message: 'Kicking off parallel generations...',
+        totalModels: selectedModels.length,
+        completedModels: 0
+      }));
+
+      // Launch all generation promises concurrently
+      const generationPromises = tasksToRun.map(async (task) => {
+        const { version, modelId, model, placeholderId } = task;
+
+        try {
+          const payload = {
+            prompt: version.prompt ?? version.description,
+            model: modelId,
+            provider: model?.provider,
+            duration: duration === 'smart' ? undefined : duration,
+            format: videoFormat,
+            inputUrl: sessionReferenceImages[0]?.url || undefined,
+            brandId: contextData.brandId || undefined,
+            generateAudio: generateAudio,
+            voiceoverScript: generateAudio && voiceoverScript ? voiceoverScript : undefined,
+            textOverlayContent: textOverlay.isActive && textOverlay.text ? textOverlay.text : undefined,
+            textOverlayPlacement: textOverlay.isActive ? textOverlay.placement : undefined,
+          };
+
+          let result: any;
+          if (model?.provider === 'kieai') {
+            // Async path: create task, poll every 10s (videos take
+            // minutes), 20-minute cap, tolerate transient poll errors.
+            const taskRes: any = await createVideoTaskMutation.mutateAsync(payload);
+            const deadline = Date.now() + 20 * 60_000;
+            let pollErrors = 0;
+            result = null;
+            while (Date.now() < deadline) {
+              await new Promise(r => setTimeout(r, 10_000));
+              let poll: any;
+              try {
+                poll = await videoTaskResultMutation.mutateAsync({
+                  ...payload,
+                  prompt: taskRes.prompt ?? payload.prompt,
+                  taskId: taskRes.taskId,
+                });
+              } catch (pollError) {
+                if (++pollErrors >= 3) throw pollError;
+                continue;
+              }
+              pollErrors = 0;
+              if (poll.status === 'completed') { result = poll; break; }
+              if (poll.status === 'failed') {
+                throw new Error(poll.error || 'Generation failed.');
+              }
+            }
+            if (!result) {
+              throw new Error('Timed out after 20 minutes — the task may still finish on Kie.ai.');
+            }
+          } else {
+            result = await generateVideoMutation.mutateAsync(payload);
+          }
+
+          // Update UI with generated video using database assetId
+          const dbAssetId = (result as any).assetId;
+          setVideos(prev => prev.map(v =>
+            v.id === placeholderId
+              ? {
+                ...v,
+                id: dbAssetId ? String(dbAssetId) : v.id,
+                url: result.url,
+                status: 'complete' as const
+              }
+              : v
+          ));
+          finished++;
+        } catch (error) {
+          const errorMsg = getErrorMessage(error, 'Unknown error');
+          console.error('Video generation failed:', errorMsg);
+          // Mark as failed with error message visible to user
+          setVideos(prev => prev.map(v =>
+            v.id === placeholderId
+              ? { ...v, status: 'failed' as const, errorMessage: errorMsg }
+              : v
+          ));
+          toast.error(`Video failed: ${errorMsg}`);
+          failed++;
+          finished++;
+        }
+
+        // Update progress status message concurrently
+        setStatus(prev => ({
+          ...prev,
+          progress: 10 + ((finished / totalWork) * 85),
+          message: `Finished: ${version.name} (${model?.name || modelId})`,
+          completedModels: Math.floor(finished / variationsPerModel)
+        }));
+      });
+
+      // Wait for all generations to finish
+      await Promise.allSettled(generationPromises);
+
       setStatus({ isGenerating: false, progress: 100, message: 'Generation complete!' });
       // Only show success toast if ALL videos actually succeeded.
-      // Don't mislead the user — if some failed, the per-video error toasts
-      // already fired above and the cards show 'failed' status.
       if (failed === 0) {
         toast.success('All videos generated successfully!');
-      } else if (failed < completed) {
-        toast.warning(`${completed - failed} of ${completed} videos generated. ${failed} failed.`);
+      } else if (failed < totalWork) {
+        toast.warning(`${totalWork - failed} of ${totalWork} videos generated. ${failed} failed.`);
       }
 
     } catch (error) {
@@ -637,112 +634,37 @@ export function VideoModule() {
         {/* Sidebar */}
         <aside className="w-72 shrink-0 border-r border-border overflow-y-auto bg-muted/20">
           <div className="p-4 space-y-6">
-            {/* Production Engines - Grouped by Cost */}
+            {/* Production Engines */}
             <section>
-              <div className="flex items-center gap-2 mb-3">
-                <Cpu className="w-4 h-4 text-muted-foreground" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Production Engines
-                </h3>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Cpu className="w-4 h-4 text-muted-foreground" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Production Engines
+                  </h3>
+                </div>
+                <span className="text-xs text-muted-foreground">{selectedModels.length} selected</span>
               </div>
-              <div className="space-y-3">
-                {displayModels.length === 0 ? (
-                  <div className="p-3 rounded-lg border border-dashed border-border text-center">
-                    <p className="text-xs text-muted-foreground">No video models available</p>
-                    <Button
-                      variant="link"
-                      size="sm"
-                      className="text-xs h-auto p-0 mt-1"
-                      onClick={() => setActiveModule('integrations')}
-                    >
-                      Add Integration
-                    </Button>
-                  </div>
-                ) : (
-                  (['budget', 'standard', 'premium'] as CostTier[]).map(tier => {
-                    const models = modelsByTier[tier];
-                    if (models.length === 0) return null;
-
-                    const tierInfo = tierLabels[tier];
-                    const selectedInTier = models.filter(m => selectedModels.includes(m.id)).length;
-
-                    return (
-                      <div key={tier} className="border border-border rounded-lg overflow-hidden">
-                        {/* Tier Header - Collapsible */}
-                        <button
-                          onClick={() => toggleTier(tier)}
-                          className="w-full flex items-center justify-between px-3 py-2 bg-muted/50 hover:bg-muted/70 transition-colors"
-                        >
-                          <div className="flex items-center gap-2">
-                            {expandedTiers[tier] ? (
-                              <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                            ) : (
-                              <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                            )}
-                            <span className={`text-sm font-semibold ${tierInfo.color}`}>
-                              {tierInfo.icon}
-                            </span>
-                            <span className="text-sm font-medium">{tierInfo.label}</span>
-                          </div>
-                          <span className="text-xs text-muted-foreground">
-                            {selectedInTier}/{models.length} models
-                          </span>
-                        </button>
-
-                        {/* Tier Models - Collapsible Content */}
-                        {expandedTiers[tier] && (
-                          <div className="p-2 space-y-1 bg-background">
-                            {models.map(model => (
-                              <button
-                                key={model.id}
-                                onClick={() => toggleModel(model.id)}
-                                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${selectedModels.includes(model.id)
-                                  ? 'bg-primary/10 border border-primary/30'
-                                  : 'hover:bg-muted/50'
-                                  }`}
-                              >
-                                <div className={`w-5 h-5 rounded flex items-center justify-center ${selectedModels.includes(model.id) ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                                  }`}>
-                                  {selectedModels.includes(model.id) && <Check className="w-3 h-3" />}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-sm font-medium truncate">{model.name}</div>
-                                  <div className="flex items-center gap-1 mt-0.5">
-                                    <span className="text-xs text-muted-foreground capitalize">{model.provider}</span>
-                                    <div className="flex gap-0.5 ml-1">
-                                      {/* Format/duration badges — from capabilities endpoint */}
-                                      {videoCapabilities?.[model.id] && (
-                                        <>
-                                          {videoCapabilities[model.id].supportedFormats.length > 0 && (
-                                            <span className="text-[10px] px-1 py-0 rounded bg-muted text-muted-foreground" title={`Formats: ${videoCapabilities[model.id].supportedFormats.join(', ')}`}>
-                                              {videoCapabilities[model.id].supportedFormats.includes('portrait') || videoCapabilities[model.id].supportedFormats.includes('9:16') ? '↕↔' : '↔'}
-                                            </span>
-                                          )}
-                                          {videoCapabilities[model.id].validDurations.length > 0 && (
-                                            <span className="text-[10px] px-1 py-0 rounded bg-muted text-muted-foreground" title={`Durations: ${videoCapabilities[model.id].validDurations.join('s, ')}s`}>
-                                              {videoCapabilities[model.id].validDurations[0]}–{videoCapabilities[model.id].validDurations[videoCapabilities[model.id].validDurations.length - 1]}s
-                                            </span>
-                                          )}
-                                        </>
-                                      )}
-                                      {/* Audio support badge — from model registry supportsAudio field */}
-                                      {model.supportsAudio && (
-                                        <span className="text-[10px] px-1 py-0 rounded bg-muted text-muted-foreground inline-flex items-center gap-0.5" title="Supports audio">
-                                          <Volume2 className="w-3 h-3" />
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
+              {displayModels.length === 0 ? (
+                <div className="p-3 rounded-lg border border-dashed border-border text-center">
+                  <p className="text-xs text-muted-foreground">No video models available</p>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="text-xs h-auto p-0 mt-1"
+                    onClick={() => setActiveModule('integrations')}
+                  >
+                    Add Integration
+                  </Button>
+                </div>
+              ) : (
+                <GlobalEngineSelector
+                  type="video"
+                  selectedIds={selectedModels}
+                  onChange={setSelectedModels}
+                  multiSelect={true}
+                />
+              )}
             </section>
 
             {/* Video Templates: Enhancement (prompt style) + Scene (fishbone) + Recipe (content type) */}
@@ -829,60 +751,24 @@ export function VideoModule() {
               )}
 
             {/* Production Parameters */}
+            <GlobalProductionParameters
+              angles={numVersions}
+              onAnglesChange={setNumVersions}
+              variations={variationsPerModel}
+              onVariationsChange={setVariationsPerModel}
+              maxAngles={6}
+              maxVariations={3}
+            />
+
+            {/* Format & Duration */}
             <section>
               <div className="flex items-center gap-2 mb-3">
-                <SlidersHorizontal className="w-4 h-4 text-muted-foreground" />
+                <Clock className="w-4 h-4 text-muted-foreground" />
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Production Parameters
+                  Format & Duration
                 </h3>
               </div>
               <div className="space-y-4">
-                {/* Angles (Scenes) */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                      <Dices className="w-3 h-3" />
-                      Angles (Scenes)
-                    </label>
-                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">{numVersions}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="6"
-                    value={numVersions}
-                    onChange={(e) => setNumVersions(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
-                  />
-                  <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                    <span>1</span>
-                    <span>6</span>
-                  </div>
-                </div>
-
-                {/* Variations per Engine */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                      <Zap className="w-3 h-3" />
-                      Variations per Engine
-                    </label>
-                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">{variationsPerModel}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="3"
-                    value={variationsPerModel}
-                    onChange={(e) => setVariationsPerModel(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
-                  />
-                  <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                    <span>1</span>
-                    <span>3</span>
-                  </div>
-                </div>
-
                 {/* Duration */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
