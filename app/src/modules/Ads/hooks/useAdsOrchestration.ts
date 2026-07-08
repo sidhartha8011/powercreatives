@@ -1,5 +1,7 @@
 /**
- * USE ADS ORCHESTRATION HOOK
+ * BEFORE ADS ORCHESTRATION FALLBACK FIX
+ *
+ * ADS ORCHESTRATION HOOK
  *
  * Central orchestrator for the Ads module. Manages the full pipeline:
  *   1. Text phase:  POST /copy/generate (SSE) → TextSlot[]
