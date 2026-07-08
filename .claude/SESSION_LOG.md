@@ -6502,3 +6502,15 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   / derived).
 - Verified: tsc 56 baseline after each pair; build OK. Live pass pending.
   BEFOREs e78bee5/e58bfe9/daf788a/a7d27b2/a204baf → AFTER f0e964c (last).
+
+## 2026-07-08 — minimal header chrome for BOTH tables [columnhead-title-filter]
+- ColumnHead redesigned (single shared behavior — SEO + Deliveries at once):
+  left filter DOT deleted (no reserved left space); at rest the header is just
+  the label. Hover/focus reveals the sort arrow (title click sorts, arrow blue
+  when active) + a ListFilter funnel right of the title (click opens the same
+  filter menu). ACTIVE FILTER = title text lights primary blue (the persistent
+  indicator). Yesterday's quietIcons/quietHeaderIcons opt-in REMOVED — this is
+  now the one behavior (DataTable + DeliveriesTable pass-throughs dropped).
+- Verified: tsc 56 = baseline, build OK. Live pass pending user (both tables:
+  hover reveal, title-click sort, funnel filter, blue title when filtered).
+  BEFORE 2b27aba → AFTER (this commit).
