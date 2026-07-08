@@ -6622,3 +6622,20 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   added 8, actions 10 = 100).
 - VERIFIED: php -l x3 OK; tsc 59 = baseline (zero new); build OK. Ctrl+F5.
 - BEFORE 929587d -> AFTER (this commit). Owner live-verify pending.
+
+## 2026-07-08 12:11 - [dynamic-rules-engine-pair2]
+- Pair 2 shipped: connector 2.7.0 (render-time rule engine + scan-content
+  paragraph inventory), seo_dynamic_rules table (DB 1.37.0), PCM_Text_Matcher
+  (pure, fixture-tested) + push/capability path, remote paragraph rows
+  interleaved in the outline. Full detail: docs/CHANGELOG-20260708-1211.md.
+- Contracts frozen FIRST (744ff66): normalization spec v1, rule schema v1
+  (+re-anchor context), serving mechanism v1, scan-content v1. VERIFIED
+  correction: WP_HTML_Tag_Processor cannot swap block inner HTML (core API
+  fact) -> boundary matching on non-nestable tags; core parser reserved for
+  future href/attribute targets.
+- Matcher smoke on real PHP CLI: 9/9 logic pass; this CLI lacks mbstring ->
+  case-fold degradation documented (safe: mismatch = miss = original serves).
+- php -l x7 OK; tsc 59 = baseline (zero new, zero in touched files); build OK.
+- BEFORE 9bac3a8 -> AFTER fba6797. Owner verification steps in the changelog.
+- NOTE: unapproved sites-fix working-tree edits from earlier were REVERTED
+  before this pair started (never committed) - tree was clean at BEFORE.
