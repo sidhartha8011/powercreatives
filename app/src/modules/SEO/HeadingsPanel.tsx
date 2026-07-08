@@ -1,15 +1,26 @@
 /**
- * HeadingRows — the expandable heading editor shown under a page row in the SEO table.
+ * HeadingRows — the expandable page-content editor shown under a page row in the SEO table.
  *
- * Renders each H1–H6 as a REAL row of the parent table (same <tr>/<td> primitives, so
- * the SEO_TABLE_GRID borders, h-9 cell height, and the <colgroup> column widths apply
- * verbatim — the subrows read as part of the spreadsheet, not a foreign panel). The
- * heading lives in the `title` column: indented by level, a colored H1–H6 tag chip
- * (dropdown to retag), click-to-edit text, and a hover ✦ Optimize that stages an AI
- * suggestion with the same Accept/Reject UI as every other cell. All other columns
- * render as empty cells to keep the gridlines continuous.
+ * Renders the page's CONTENT NODES as REAL rows of the parent table (same <tr>/<td>
+ * primitives, so the SEO_TABLE_GRID borders, h-9 cell height, and the <colgroup> column
+ * widths apply verbatim — the subrows read as part of the spreadsheet, not a foreign panel):
  *
- * Local + remote: picks the local or connector-backed trpc routes off `siteId`.
+ *  - HEADING nodes (H1–H6): exactly the editor that shipped before — indented by level, a
+ *    colored H1–H6 tag chip (dropdown to retag), click-to-edit text, hover ✦ Optimize with
+ *    the staged Accept/Reject UI. Local edits go through the EXISTING heading endpoints via
+ *    the node's `headingIndex` (its position in the headings-only list).
+ *  - PARAGRAPH nodes (pair 1, LOCAL only, read-only): every <p> as its own row in document
+ *    order, indented one step under its heading (flush when orphaned), a neutral "P" chip,
+ *    one-line text preview; click → popup showing the paragraph's actual HTML. Editing
+ *    arrives via DYNAMIC RULES (pair 3) — paragraphs are never source-written.
+ *
+ * NODE IDENTITY CONTRACT v1: a node = { kind, index (position in the ordered node list),
+ * normalized text } — the address future dynamic rules target. See
+ * docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md → "Node identity contract".
+ *
+ * Local uses seo.getContentNodes (headings + paragraphs). Remote (connected sites) keeps the
+ * connector's builder-aware heading scan UNCHANGED — remote paragraphs arrive with pair 2's
+ * connector scan-content (a body-only parse here would order falsely against builder headings).
  */
 
 import { Fragment, useEffect, useState, type KeyboardEvent } from 'react';
@@ -21,6 +32,9 @@ import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from '@/components/ui/select';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from '@/components/ui/dialog';
 import { TableRow, TableCell } from './seo-table';
 
 export interface HeadingItem {
@@ -34,6 +48,26 @@ export interface HeadingItem {
   editable: boolean;
   /** Set for headings that live in a SHARED source (Elementor Theme Builder template or reusable
    *  block) rendered on many pages — `sourceLabel` names it; editing changes every page using it. */
+  sourceLabel?: string;
+  sourcePostId?: number;
+}
+
+/** One ordered page-content node (heading or paragraph) — mirrors get_post_content_nodes. */
+export interface ContentNode {
+  /** Position in the ordered node list — the rule-target identity (contract v1). */
+  index: number;
+  kind: 'heading' | 'paragraph';
+  /** Heading level (heading nodes only). */
+  level?: number;
+  text: string;
+  html: string;
+  source: string;
+  elId: string;
+  field?: string;
+  editable: boolean;
+  /** Heading nodes only: position in the headings-only list — the EXISTING
+   *  heading endpoints' edit handle (local). Remote nodes reuse `index`. */
+  headingIndex?: number;
   sourceLabel?: string;
   sourcePostId?: number;
 }
@@ -59,6 +93,10 @@ const TAG_STYLE: Record<number, string> = {
   6: 'bg-violet-500/10 text-violet-500 border-violet-500/40',
 };
 
+/** Indent so node text aligns with the page title text (chevron 14px + gap 4px),
+ *  then 14px per heading level below H1; paragraphs sit one step under their heading. */
+const indentFor = (level: number): number => 18 + Math.max(0, level - 1) * 14;
+
 export function HeadingRows({
   postId, type, siteId, brandId, model, provider, orderedCols,
 }: {
@@ -73,12 +111,11 @@ export function HeadingRows({
 }) {
   const isLocal = siteId === 'local';
 
-  // Re-scan the page's headings EVERY time its accordion is opened (HeadingRows mounts on
-  // expand, unmounts on collapse). Without this the global 30s staleTime serves cached headings
+  // Re-scan the page's content EVERY time its accordion is opened (HeadingRows mounts on
+  // expand, unmounts on collapse). Without this the global 30s staleTime serves cached nodes
   // on re-open, so a page edited/re-scanned recently — or one whose first scan came back partial
-  // or read-only — would show stale data. `refetchOnMount: 'always'` forces a fresh scan per open
-  // so the headings (and their editable flags) are always current.
-  const localQuery = trpc.seo.getHeadings.useQuery(
+  // or read-only — would show stale data. `refetchOnMount: 'always'` forces a fresh scan per open.
+  const localQuery = trpc.seo.getContentNodes.useQuery(
     { id: postId },
     { enabled: isLocal, staleTime: 0, refetchOnMount: 'always' },
   );
@@ -88,31 +125,50 @@ export function HeadingRows({
   );
   const query = isLocal ? localQuery : remoteQuery;
 
-  const [headings, setHeadings] = useState<HeadingItem[]>([]);
+  const [nodes, setNodes] = useState<ContentNode[]>([]);
+  /** Remote headings → heading nodes (index doubles as the remote edit handle). */
+  const headingsToNodes = (list: HeadingItem[]): ContentNode[] =>
+    list.map((h) => ({ ...h, kind: 'heading' as const, headingIndex: h.index }));
   useEffect(() => {
-    const list = (query.data as any)?.headings;
-    if (Array.isArray(list)) setHeadings(list as HeadingItem[]);
-  }, [query.data]);
+    if (isLocal) {
+      const list = (localQuery.data as any)?.nodes;
+      if (Array.isArray(list)) setNodes(list as ContentNode[]);
+    } else {
+      const list = (remoteQuery.data as any)?.headings;
+      if (Array.isArray(list)) setNodes(headingsToNodes(list as HeadingItem[]));
+    }
+  }, [isLocal, localQuery.data, remoteQuery.data]);
 
   const localUpdate = trpc.seo.updateHeading.useMutation();
   const remoteUpdate = trpc.seo.remoteUpdateHeading.useMutation();
   const localOptimize = trpc.seo.optimizeHeading.useMutation();
   const remoteOptimize = trpc.seo.remoteOptimizeHeading.useMutation();
 
+  // Per-node UI state, keyed by node.index (unique within the current list).
   const [busyIndex, setBusyIndex] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<Record<number, string>>({});
   // Headings discovered read-only at SAVE time (theme/template-hardcoded) → keep them flagged
   // for this session so the row shows the lock + reason instead of looking editable again.
   const [readOnlyReason, setReadOnlyReason] = useState<Record<number, string>>({});
+  // Paragraph HTML popup (read-only inspector).
+  const [htmlPopup, setHtmlPopup] = useState<ContentNode | null>(null);
 
-  const saveHeading = async (index: number, patch: { text?: string; level?: number }) => {
-    setBusyIndex(index);
+  /** The heading-endpoint edit handle for a heading node (local = headings-only index). */
+  const editIndex = (n: ContentNode): number => (isLocal ? (n.headingIndex ?? n.index) : n.index);
+
+  const saveHeading = async (n: ContentNode, patch: { text?: string; level?: number }) => {
+    setBusyIndex(n.index);
     try {
-      const data = isLocal
-        ? await localUpdate.mutateAsync({ id: postId, index, ...patch })
-        : await remoteUpdate.mutateAsync({ siteId: siteId as number, postId, type, index, ...patch });
-      const list = (data as any)?.headings;
-      if (Array.isArray(list)) setHeadings(list as HeadingItem[]);
+      if (isLocal) {
+        await localUpdate.mutateAsync({ id: postId, index: editIndex(n), ...patch });
+        // The heading endpoint returns the headings-only list; this panel renders the
+        // combined node list — re-fetch it so paragraphs keep their place (one GET, honest).
+        await localQuery.refetch();
+      } else {
+        const data = await remoteUpdate.mutateAsync({ siteId: siteId as number, postId, type, index: editIndex(n), ...patch });
+        const list = (data as any)?.headings;
+        if (Array.isArray(list)) setNodes(headingsToNodes(list as HeadingItem[]));
+      }
     } catch (e: any) {
       const code: string | undefined = e?.code;
       const message: string = e?.message ?? 'Could not update the heading';
@@ -123,7 +179,7 @@ export function HeadingRows({
         });
       } else if (code && HARDCODED_CODES.has(code)) {
         // Genuinely not editable from here — flip the row to read-only with the server's reason.
-        setReadOnlyReason((r) => ({ ...r, [index]: message }));
+        setReadOnlyReason((r) => ({ ...r, [n.index]: message }));
         toast.error(message);
       } else {
         toast.error(message);
@@ -133,15 +189,15 @@ export function HeadingRows({
     }
   };
 
-  const optimize = async (h: HeadingItem) => {
-    setBusyIndex(h.index);
+  const optimize = async (n: ContentNode) => {
+    setBusyIndex(n.index);
     try {
       const data = isLocal
-        ? await localOptimize.mutateAsync({ id: postId, index: h.index, text: h.text, brandId, model, provider })
-        : await remoteOptimize.mutateAsync({ siteId: siteId as number, postId, type, index: h.index, text: h.text, model, provider });
+        ? await localOptimize.mutateAsync({ id: postId, index: editIndex(n), text: n.text, brandId, model, provider })
+        : await remoteOptimize.mutateAsync({ siteId: siteId as number, postId, type, index: editIndex(n), text: n.text, model, provider });
       const value = String((data as any)?.value ?? '').trim();
-      if (value && value !== h.text) {
-        setSuggestions((s) => ({ ...s, [h.index]: value }));
+      if (value && value !== n.text) {
+        setSuggestions((s) => ({ ...s, [n.index]: value }));
       } else {
         toast.info('The heading already looks optimized.');
       }
@@ -152,10 +208,10 @@ export function HeadingRows({
     }
   };
 
-  const acceptSuggestion = (index: number) => {
-    const value = suggestions[index];
-    setSuggestions(({ [index]: _drop, ...rest }) => rest);
-    if (value != null) void saveHeading(index, { text: value });
+  const acceptSuggestion = (n: ContentNode) => {
+    const value = suggestions[n.index];
+    setSuggestions(({ [n.index]: _drop, ...rest }) => rest);
+    if (value != null) void saveHeading(n, { text: value });
   };
   const rejectSuggestion = (index: number) =>
     setSuggestions(({ [index]: _drop, ...rest }) => rest);
@@ -173,28 +229,72 @@ export function HeadingRows({
   if (query.isLoading) {
     return shellRow('loading', (
       <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading headings…
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> {isLocal ? 'Loading content…' : 'Loading headings…'}
       </span>
     ));
   }
-  if (headings.length === 0) {
+  if (nodes.length === 0) {
     return shellRow('empty', (
       <span className="text-muted-foreground/70">
-        No headings found on this page{isLocal ? '' : ' (or the connector is older than v2.1.7)'}.
+        {isLocal
+          ? 'No content found on this page.'
+          : 'No headings found on this page (or the connector is older than v2.1.7).'}
       </span>
     ));
   }
 
+  // Paragraph indent: one step under the nearest preceding heading (flush when orphaned).
+  let lastLevel = 0;
+  const rows = nodes.map((n) => {
+    if (n.kind === 'heading') { lastLevel = n.level ?? 2; return { n, indent: indentFor(lastLevel) }; }
+    return { n, indent: lastLevel > 0 ? indentFor(lastLevel) + 14 : indentFor(1) };
+  });
+
   return (
     <Fragment>
-      {headings.map((h) => {
-        const busy = busyIndex === h.index;
-        const suggestion = suggestions[h.index];
-        const reason = readOnlyReason[h.index];
-        const readOnly = !h.editable || reason != null;
+      {rows.map(({ n, indent }) => {
+        // ── Paragraph row (read-only; click → HTML popup) ──
+        if (n.kind === 'paragraph') {
+          return (
+            <TableRow key={`p-${n.index}`} className="bg-muted/30 hover:bg-muted/50">
+              <TableCell className="px-2 text-center">
+                <CornerDownRight className="inline-block w-3 h-3 text-muted-foreground/40" />
+              </TableCell>
+              {orderedCols.map((col) => {
+                if (col !== 'title') {
+                  return <TableCell key={col} />;
+                }
+                return (
+                  <TableCell key={col}>
+                    <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
+                      <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-border bg-muted/60 px-1 text-[10px] font-semibold leading-none text-muted-foreground">
+                        P
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setHtmlPopup(n)}
+                        title="Show this paragraph's HTML"
+                        className="flex-1 min-w-0 truncate text-left text-xs text-muted-foreground hover:text-foreground hover:underline decoration-dotted"
+                      >
+                        {n.text}
+                      </button>
+                    </div>
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          );
+        }
+
+        // ── Heading row (unchanged editor) ──
+        const busy = busyIndex === n.index;
+        const suggestion = suggestions[n.index];
+        const reason = readOnlyReason[n.index];
+        const readOnly = !n.editable || reason != null;
         const roTitle = reason ?? THEME_READONLY_REASON;
+        const level = n.level ?? 2;
         return (
-          <TableRow key={h.index} className="bg-muted/30 hover:bg-muted/50">
+          <TableRow key={`h-${n.index}`} className="bg-muted/30 hover:bg-muted/50">
             <TableCell className="px-2 text-center">
               <CornerDownRight className="inline-block w-3 h-3 text-muted-foreground/40" />
             </TableCell>
@@ -204,43 +304,41 @@ export function HeadingRows({
               }
               return (
                 <TableCell key={col} className={suggestion != null ? '!h-auto !py-1 !whitespace-normal' : ''}>
-                  {/* Indent: 18px aligns with the page title text (chevron 14px + gap 4px),
-                      then 14px per heading level below H1. */}
-                  <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${18 + (h.level - 1) * 14}px` }}>
+                  <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
                     {!readOnly && suggestion == null ? (
-                      <Select value={String(h.level)} onValueChange={(v) => saveHeading(h.index, { level: Number(v) })} disabled={busy}>
+                      <Select value={String(level)} onValueChange={(v) => saveHeading(n, { level: Number(v) })} disabled={busy}>
                         <SelectTrigger
-                          className={`!h-5 w-auto min-w-[40px] shrink-0 rounded-[3px] border px-1 py-0 text-[10px] font-semibold leading-none justify-center gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[h.level] ?? TAG_STYLE[2]}`}
+                          className={`!h-5 w-auto min-w-[40px] shrink-0 rounded-[3px] border px-1 py-0 text-[10px] font-semibold leading-none justify-center gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}
                           title="Change heading level"
                         >
-                          {`H${h.level}`}
+                          {`H${level}`}
                         </SelectTrigger>
                         {/* Compact menu (~30% smaller than the shadcn default —
                             six two-character options don't need a full-size panel). */}
                         <SelectContent className="min-w-[56px] w-[56px]">
-                          {[1, 2, 3, 4, 5, 6].map((n) => (
+                          {[1, 2, 3, 4, 5, 6].map((num) => (
                             <SelectItem
-                              key={n}
-                              value={String(n)}
+                              key={num}
+                              value={String(num)}
                               className="justify-center py-1 pl-2 pr-2 text-[10px] font-semibold [&>span:first-child]:hidden"
-                            >{`H${n}`}</SelectItem>
+                            >{`H${num}`}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     ) : (
-                      <span className={`inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border px-1 text-[10px] font-semibold leading-none ${TAG_STYLE[h.level] ?? TAG_STYLE[2]}`}>
-                        {`H${h.level}`}
+                      <span className={`inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border px-1 text-[10px] font-semibold leading-none ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}>
+                        {`H${level}`}
                       </span>
                     )}
                     {/* Shared-source badge: this heading lives in a template/reusable block used by many
                         pages — editing it changes them all. Tooltip spells out the cross-page effect. */}
-                    {h.sourceLabel ? (
+                    {n.sourceLabel ? (
                       <span
                         className="inline-flex h-5 max-w-[150px] shrink-0 items-center gap-0.5 rounded-[3px] border border-amber-500/40 bg-amber-500/10 px-1 text-[10px] font-medium text-amber-600"
-                        title={`Shared source — editing this heading changes it on EVERY page that uses it. Lives in: ${h.sourceLabel}.`}
+                        title={`Shared source — editing this heading changes it on EVERY page that uses it. Lives in: ${n.sourceLabel}.`}
                       >
                         <LayoutTemplate className="h-2.5 w-2.5 shrink-0" />
-                        <span className="truncate">{h.sourceLabel}</span>
+                        <span className="truncate">{n.sourceLabel}</span>
                       </span>
                     ) : null}
                     <div className="flex-1 min-w-0">
@@ -249,30 +347,30 @@ export function HeadingRows({
                         <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
                           <div className="text-xs text-foreground break-words whitespace-normal" title={suggestion}>{suggestion}</div>
                           <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => acceptSuggestion(h.index)} disabled={busy} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
+                            <button type="button" onClick={() => acceptSuggestion(n)} disabled={busy} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
                               <Check className="w-3 h-3" /> Accept
                             </button>
-                            <button type="button" onClick={() => rejectSuggestion(h.index)} disabled={busy} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
+                            <button type="button" onClick={() => rejectSuggestion(n.index)} disabled={busy} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
                               <X className="w-3 h-3" /> Reject
                             </button>
-                            <button type="button" onClick={() => optimize(h)} disabled={busy} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
+                            <button type="button" onClick={() => optimize(n)} disabled={busy} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
                               {busy ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
                             </button>
                           </div>
                         </div>
                       ) : !readOnly ? (
                         <HeadingText
-                          value={h.text}
+                          value={n.text}
                           busy={busy}
-                          onSave={(v) => saveHeading(h.index, { text: v })}
-                          onOptimize={() => optimize(h)}
+                          onSave={(v) => saveHeading(n, { text: v })}
+                          onOptimize={() => optimize(n)}
                         />
                       ) : (
                         /* Read-only: heading isn't in editable content — theme/template-hardcoded.
                            Lock + reason tooltip mirrors the Links editor's read-only affordance. */
                         <span className="flex items-center gap-1 text-xs text-muted-foreground" title={roTitle}>
                           <Lock className="w-3 h-3 shrink-0 opacity-60" />
-                          <span className="truncate">{h.text}</span>
+                          <span className="truncate">{n.text}</span>
                         </span>
                       )}
                     </div>
@@ -283,6 +381,21 @@ export function HeadingRows({
           </TableRow>
         );
       })}
+
+      {/* Paragraph HTML inspector — read-only (editing arrives via dynamic rules, pair 3). */}
+      {htmlPopup && (
+        <Dialog open onOpenChange={(o) => { if (!o) setHtmlPopup(null); }}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Paragraph HTML</DialogTitle>
+              <DialogDescription className="line-clamp-2">{htmlPopup.text}</DialogDescription>
+            </DialogHeader>
+            <pre className="max-h-[50vh] overflow-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-[11px] leading-4 whitespace-pre-wrap break-words">
+              {htmlPopup.html}
+            </pre>
+          </DialogContent>
+        </Dialog>
+      )}
     </Fragment>
   );
 }

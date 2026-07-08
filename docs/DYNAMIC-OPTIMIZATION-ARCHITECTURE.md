@@ -39,6 +39,27 @@ of that block (LinksPopup is the in-house pattern). Read-only in phase 0.
 identity a dynamic rule targets and the exact unit the AI optimizer rewrites.
 The inventory IS the shared contract.
 
+### Node identity contract v1 (FROZEN 2026-07-08, pair 1)
+
+Implemented by `PCM_SEO_Service::parse_content_nodes()` / `get_post_content_nodes()`
+(`GET /seo/content/{id}/content-nodes` → `{ nodes: [...] }`).
+
+- **Node** = `{ index, kind: 'heading'|'paragraph', level? (headings), text,
+  html, source, elId, editable }`.
+- **`index`** = the node's position in the ordered node list — the address a
+  dynamic rule targets and the AI optimizer rewrites. Heading nodes ALSO carry
+  **`headingIndex`** (position in the headings-only list) — the edit handle for
+  the EXISTING heading endpoints, which stay unchanged.
+- **Ordering:** strict document order; one combined parse (headings exactly as
+  `parse_heading_details` — identical skip rule — plus every `<p>`).
+- **Skip rules:** headings with empty stripped text; paragraphs empty after
+  tag-strip + entity-decode (a lone `&nbsp;` spacer is not content).
+- **Classic content:** when the content has no `<p>` at all, `wpautop` is
+  applied for the parse (mirrors what the site serves; headings unaffected).
+- **Text normalization (match side, pair 2):** collapse whitespace incl. NBSP,
+  decode entities, case-insensitive compare — specced with the matcher.
+- Any change to ordering/skip/shape = contract version bump, documented here.
+
 ## Phase 1 — Approval rails (backlog item 1, unchanged)
 
 Staging table → envelope → approvals adapter registry → Before/After cards →

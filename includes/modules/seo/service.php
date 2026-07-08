@@ -546,6 +546,100 @@ class PCM_SEO_Service
         }, $list, array_keys($list)));
     }
 
+    // =====================================================================
+    // CONTENT NODES (headings + paragraphs) — the SEO outline's page-content
+    // rows (dynamic-optimization pair 1). NODE IDENTITY CONTRACT v1: a node
+    // is addressed by { kind, index (position in THIS ordered list),
+    // normalized text } — the exact identity dynamic rules will target and
+    // the AI optimizer will rewrite. Never change the ordering or the skip
+    // rules without bumping the contract version (documented in
+    // docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md → "Node identity contract").
+    // =====================================================================
+
+    /**
+     * Parse an HTML string into ordered content nodes: every H1–H6 heading
+     * (exactly as parse_heading_details sees them — same skip rule, so
+     * heading order/count always matches the heading scan) plus every <p>
+     * paragraph, in document order.
+     *
+     * Classic-editor content stores paragraphs as bare newline-separated text
+     * (no <p> tags — WP adds them at render via wpautop). When the content
+     * contains no <p> at all, the same wpautop is applied for the parse so
+     * the nodes mirror what the site actually serves. Headings are untouched
+     * by wpautop, so this never desyncs the heading indices.
+     *
+     * @param string $content Raw post content HTML.
+     * @return array<int,array{kind:string,level?:int,text:string,html:string}>
+     */
+    public static function parse_content_nodes(string $content): array
+    {
+        if (trim($content) === '') {
+            return array();
+        }
+        if (stripos($content, '<p') === false && function_exists('wpautop')) {
+            $content = wpautop($content);
+        }
+        // One combined pattern keeps document order: heading branch (groups
+        // 1–3, with the </h\1> backreference) OR paragraph branch (groups 4–5).
+        if (!preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>|<p(\s[^>]*)?>(.*?)</p>#is', $content, $m, PREG_SET_ORDER)) {
+            return array();
+        }
+        $out = array();
+        foreach ($m as $mm) {
+            if (($mm[1] ?? '') !== '') {
+                $text = trim(wp_strip_all_tags($mm[3]));
+                if ($text === '') { continue; } // same skip rule as parse_heading_details
+                $out[] = array('kind' => 'heading', 'level' => (int) $mm[1], 'text' => $text, 'html' => $mm[0]);
+            } else {
+                $text  = trim(wp_strip_all_tags((string) ($mm[5] ?? '')));
+                // Skip spacer paragraphs: empty after stripping tags AND
+                // decoding entities (a lone &nbsp; is a spacer, not content).
+                $plain = trim(html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8'), " \t\n\r\0\x0B\xC2\xA0");
+                if ($plain === '') { continue; }
+                $out[] = array('kind' => 'paragraph', 'text' => $text, 'html' => $mm[0]);
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Local post's ordered content nodes for the SEO outline, indexed.
+     *
+     * `index` = the node's position in THIS list (the rule-target identity).
+     * Heading nodes ALSO carry `headingIndex` — their position in the
+     * headings-only list (get_post_headings) — so the existing heading
+     * edit/optimize endpoints keep working unchanged from the combined view.
+     * Paragraphs are read-only here (they become editable via dynamic rules,
+     * pair 3 — never via source writes).
+     *
+     * @return array[] Node rows.
+     */
+    public function get_post_content_nodes(int $post_id): array
+    {
+        $post      = get_post($post_id);
+        $content   = $post ? (string) $post->post_content : '';
+        $nodes     = self::parse_content_nodes($content);
+        $out       = array();
+        $heading_i = 0;
+        foreach ($nodes as $i => $n) {
+            $n['index']  = (int) $i;
+            $n['id']     = (int) $i;
+            $n['source'] = 'content';
+            $n['elId']   = '';
+            if ($n['kind'] === 'heading') {
+                $n['headingIndex'] = $heading_i++;
+                $n['editable']     = true; // via the existing heading endpoints (headingIndex)
+                $n['field']        = '';
+                $n['tagKey']       = '';
+                $n['textKey']      = '';
+            } else {
+                $n['editable'] = false; // read-only until the dynamic-rule path (pair 3)
+            }
+            $out[] = $n;
+        }
+        return $out;
+    }
+
     /**
      * Edit a local heading: change its text and/or tag level in post_content (occurrence-aware),
      * propagate to any content-based builder meta, purge caches, re-scan. Returns the heading list.

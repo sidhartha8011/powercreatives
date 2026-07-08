@@ -365,6 +365,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `seo/content/${input.id}/headings` }),
     },
+    "seo.getContentNodes": {
+        endpoint: "seo/content",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/content-nodes` }),
+    },
     "seo.updateHeading": {
         endpoint: "seo/content",
         method: "POST",

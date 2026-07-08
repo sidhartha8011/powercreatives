@@ -51,6 +51,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)', 'update_link'),
             array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)/remove', 'remove_link'),
             array('GET',  '/seo/content/(?P<id>\d+)/headings', 'get_headings'),
+            array('GET',  '/seo/content/(?P<id>\d+)/content-nodes', 'get_content_nodes'),
             array('POST', '/seo/content/(?P<id>\d+)/headings/(?P<idx>\d+)', 'update_heading'),
             array('POST', '/seo/content/(?P<id>\d+)/headings/(?P<idx>\d+)/optimize', 'optimize_heading'),
             array('GET',  '/seo/content/(?P<id>\d+)/body',     'get_body'),
@@ -761,6 +762,16 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Content');
         }
         return $this->success(array('headings' => $this->service->get_post_headings($id)));
+    }
+
+    /** GET /seo/content/{id}/content-nodes — ordered headings + paragraphs for the outline. */
+    public function get_content_nodes(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        return $this->success(array('nodes' => $this->service->get_post_content_nodes($id)));
     }
 
     /** POST /seo/content/{id}/headings/{idx} — change a heading's text and/or tag level. */
