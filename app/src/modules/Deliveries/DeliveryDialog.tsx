@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Send } from 'lucide-react';
+import { Send } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -35,7 +35,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
 import { trpc } from '@/lib/trpc';
-import { AddProjectMenu, DeliveryProjectsBody, useDeliveryProjects } from './DeliveryProjects';
+import { DeliveryProjectsBody, ProjectAddActions, useDeliveryProjects } from './DeliveryProjects';
 import { useTypePresets } from './hooks/useTypePresets';
 
 import {
@@ -292,19 +292,7 @@ function ProjectsSection({ delivery, onCardClose }: { delivery: Delivery; onCard
   return (
     <EntityCardSection
       title="Projects"
-      action={
-        state.inDelivery.length > 0 ? (
-          <AddProjectMenu
-            available={state.available}
-            onAssign={(id, name) => void state.assignProject(id, name)}
-            trigger={
-              <Button type="button" variant="ghost" size="sm" className={`h-7 gap-1 ${CARD_TYPE.LABEL}`}>
-                <Plus className="h-3.5 w-3.5" /> Add project
-              </Button>
-            }
-          />
-        ) : undefined
-      }
+      action={state.inDelivery.length > 0 ? <ProjectAddActions state={state} /> : undefined}
     >
       <DeliveryProjectsBody state={state} onNavigated={onCardClose} />
     </EntityCardSection>

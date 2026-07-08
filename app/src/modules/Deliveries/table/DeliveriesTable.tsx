@@ -69,7 +69,7 @@ import { getIsAdmin } from '@/lib/pcmConfig';
 import { toast } from 'sonner';
 import { useApp } from '@/contexts/AppContext';
 
-import { AddProjectMenu, useDeliveryProjects, type DeliveryProject } from '../DeliveryProjects';
+import { ProjectAddActions, useDeliveryProjects, type DeliveryProject } from '../DeliveryProjects';
 import { deliveryColumns, type DeliveryColumn } from '../kanban/deliveryColumns';
 import { useDeliveries, type UpdateDeliveryInput } from '../hooks/useDeliveries';
 import { useTypePresets } from '../hooks/useTypePresets';
@@ -419,8 +419,8 @@ function LeadSelect({ delivery, onSaved }: { delivery: Delivery; onSaved: () => 
  * site select | Images | Copy | Videos | Approvals counts | spacer | ✕. The
  * sub-header row above labels these cells. Count cells carry a "+" that opens
  * the matching module with brand/delivery/project pre-selected
- * (AppContext.navigateToCreate). Trailing row = the same AddProjectMenu the
- * delivery card has.
+ * (AppContext.navigateToCreate). Trailing row = the shared connect/create
+ * actions (ProjectAddActions), same as the delivery card.
  */
 function ProjectSubRows({
   delivery,
@@ -435,6 +435,7 @@ function ProjectSubRows({
   onToggleProject: (projectId: number) => void;
 }) {
   const { navigateToProjectTab, navigateToCreate } = useApp();
+  const projectsState = useDeliveryProjects(delivery);
   // Approvals count = frontend join on the sets list (approval_sets.projectId)
   // — the assets module must never read the approvals tables server-side.
   const { data: setsRaw } = trpc.approvals.listSets.useQuery();
@@ -461,7 +462,7 @@ function ProjectSubRows({
     renameProject,
     sitePending,
     isLoading,
-  } = useDeliveryProjects(delivery);
+  } = projectsState;
 
   if (isLoading) {
     return (
@@ -619,20 +620,11 @@ function ProjectSubRows({
       <tr>
         {hasSelectionCol && <td />}
         <td colSpan={9}>
-          <AddProjectMenu
-            available={available}
-            onAssign={(id, name) => void assignProject(id, name)}
-            trigger={
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1 pl-4 text-xs text-muted-foreground"
-              >
-                <Plus className="h-3.5 w-3.5" /> Add project
-              </Button>
-            }
-          />
+          {/* Connect an existing project / create a new one — same actions as
+              the delivery card, one shared component. */}
+          <span className="inline-flex pl-3">
+            <ProjectAddActions state={projectsState} />
+          </span>
         </td>
       </tr>
     </>

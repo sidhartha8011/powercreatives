@@ -676,6 +676,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "PATCH",
         transform: (input: any) => ({ url: `assets/projects/${input.id}/site`, body: { siteId: input.siteId } }),
     },
+    "assets.addProjectImages": {
+        endpoint: "assets/projects",
+        method: "POST",
+        transform: (input: any) => ({ url: `assets/projects/${input.id}/images`, body: { urls: input.urls } }),
+    },
 
     // ── Copy ──
     "copy.generate": { endpoint: "copy/generate", method: "POST" },

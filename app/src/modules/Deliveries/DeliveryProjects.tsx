@@ -16,8 +16,10 @@
  * articles tab — wiring it anywhere would be a lie.
  */
 
-import { Plus, X } from 'lucide-react';
+import { useState } from 'react';
+import { Check, Link2, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
+import * as PopoverPrimitive from '@radix-ui/react-popover';
 
 import {
   CARD_TABLE_CELL,
@@ -28,13 +30,15 @@ import {
 } from '@/components/shared/EntityCard';
 import { Button } from '@/components/ui/button';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverTrigger } from '@/components/ui/popover';
+import { CreateProjectDialog } from '@/modules/Projects/CreateProjectDialog';
 import {
   Select,
   SelectContent,
@@ -171,8 +175,13 @@ export function useDeliveryProjects(delivery: Delivery): DeliveryProjectsState {
   };
 }
 
-/** Shared "assign a project" menu — used by the header action AND the empty state. */
-export function AddProjectMenu({
+/**
+ * Connect — searchable project picker (there may be MANY projects: search
+ * input on top, Command-filtered list). Non-portal popover on purpose — this
+ * renders inside the EntityCard dialog, whose scroll lock blocks portalled
+ * popovers (the ApprovalSetPicker pattern).
+ */
+function ConnectProjectPopover({
   available,
   onAssign,
   trigger,
@@ -181,25 +190,131 @@ export function AddProjectMenu({
   onAssign: (projectId: number, name: string) => void;
   trigger: React.ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel className="text-xs">Assign a project to this delivery</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {available.length === 0 && (
-          <div className="px-2 py-1.5 text-xs text-muted-foreground">No unassigned projects</div>
-        )}
-        {available.map((p) => (
-          <DropdownMenuItem key={p.id} className="text-xs" onSelect={() => onAssign(p.id, p.name)}>
-            <span className="truncate">{p.name}</span>
-            {p.deliveryId !== null && (
-              <span className="ml-auto pl-2 text-[10px] text-muted-foreground shrink-0">in another delivery</span>
-            )}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      <PopoverPrimitive.Content
+        align="end"
+        sideOffset={4}
+        collisionPadding={8}
+        className="z-50 flex max-h-80 w-64 flex-col overflow-hidden rounded-md border border-slate-300 bg-popover text-popover-foreground shadow-sm outline-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+      >
+        <Command className="flex min-h-0 flex-1 flex-col">
+          <CommandInput placeholder="Search projects…" />
+          <CommandList className="min-h-0 max-h-72 flex-1 overflow-y-auto">
+            <CommandEmpty>No connectable projects.</CommandEmpty>
+            <CommandGroup>
+              {available.map((p) => (
+                <CommandItem
+                  key={p.id}
+                  value={`${p.name} ${p.id}`}
+                  className="text-xs"
+                  onSelect={() => {
+                    onAssign(p.id, p.name);
+                    setOpen(false);
+                  }}
+                >
+                  <Check className="mr-2 h-3.5 w-3.5 opacity-0" />
+                  <span className="truncate">{p.name}</span>
+                  {p.deliveryId !== null && (
+                    <span className="ml-auto shrink-0 pl-2 text-[10px] text-muted-foreground">in another delivery</span>
+                  )}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverPrimitive.Content>
+    </Popover>
+  );
+}
+
+/**
+ * The projects add-actions: CONNECT an existing project (link icon →
+ * searchable picker) and CREATE a new one (plus icon → the shared
+ * CreateProjectDialog; the new project is connected to this delivery via
+ * onCreated). `variant='empty'` renders the dashed empty-state block; the
+ * default renders the compact icon pair for headers/rows.
+ */
+export function ProjectAddActions({
+  state,
+  variant = 'inline',
+}: {
+  state: DeliveryProjectsState;
+  variant?: 'inline' | 'empty';
+}) {
+  const [createOpen, setCreateOpen] = useState(false);
+
+  const dialog = (
+    <CreateProjectDialog
+      open={createOpen}
+      onClose={() => setCreateOpen(false)}
+      onCreated={(projectId, name) => state.assignProject(projectId, name)}
+    />
+  );
+
+  if (variant === 'empty') {
+    return (
+      <>
+        <div className={`flex w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-4 ${CARD_TYPE.LABEL}`}>
+          <ConnectProjectPopover
+            available={state.available}
+            onAssign={(id, name) => void state.assignProject(id, name)}
+            trigger={
+              <Button type="button" variant="ghost" size="sm" className={`h-7 gap-1 ${CARD_TYPE.LABEL}`}>
+                <Link2 className="h-3.5 w-3.5" /> Connect project
+              </Button>
+            }
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={`h-7 gap-1 ${CARD_TYPE.LABEL}`}
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus className="h-3.5 w-3.5" /> Create project
+          </Button>
+        </div>
+        {dialog}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <span className="flex items-center gap-0.5">
+        <ConnectProjectPopover
+          available={state.available}
+          onAssign={(id, name) => void state.assignProject(id, name)}
+          trigger={
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+              title="Connect an existing project"
+              aria-label="Connect an existing project"
+            >
+              <Link2 className="h-3.5 w-3.5" />
+            </Button>
+          }
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+          title="Create a new project in this delivery"
+          aria-label="Create a new project in this delivery"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
+      </span>
+      {dialog}
+    </>
   );
 }
 
@@ -225,22 +340,9 @@ export function DeliveryProjectsBody({
   };
 
   if (inDelivery.length === 0) {
-    // The empty state IS the action — one click, same menu.
-    return (
-      <AddProjectMenu
-        available={available}
-        onAssign={(id, name) => void assignProject(id, name)}
-        trigger={
-          <Button
-            type="button"
-            variant="ghost"
-            className={`h-auto w-full justify-center gap-1 rounded-md border border-dashed px-3 py-4 ${CARD_TYPE.LABEL}`}
-          >
-            <Plus className="h-3.5 w-3.5" /> Add a project to this delivery
-          </Button>
-        }
-      />
-    );
+    // The empty state IS the action — connect an existing project or create
+    // a new one, side by side.
+    return <ProjectAddActions state={state} variant="empty" />;
   }
 
   return (
