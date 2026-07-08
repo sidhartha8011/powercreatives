@@ -714,7 +714,7 @@ export function VideoModule() {
         <aside className="w-72 shrink-0 border-r border-border overflow-y-auto bg-muted/20">
           <div className="p-4 space-y-3">
             {/* 1. Brand Context */}
-            <AccordionSection title="Brand" defaultOpen={true}>
+            <AccordionSection title="Brand" defaultOpen={false}>
               <ContextPanel
                 moduleId="video"
                 value={contextData}
@@ -839,7 +839,7 @@ export function VideoModule() {
             </AccordionSection>
 
             {/* 5. First Image */}
-            <AccordionSection title="First Image" defaultOpen={true}>
+            <AccordionSection title="First Image" defaultOpen={false}>
               <SessionReferenceImagePanel
                 value={sessionReferenceImages}
                 onChange={setSessionReferenceImages}
@@ -850,8 +850,8 @@ export function VideoModule() {
               )}
             </AccordionSection>
 
-            {/* 6. Extra Settings */}
-            <AccordionSection title="Extra Settings" defaultOpen={false}>
+            {/* 6. Production Parameters */}
+            <AccordionSection title="Production Parameters" defaultOpen={true}>
               <div className="space-y-4">
                 {/* Production Engines */}
                 <div className="space-y-2">
@@ -881,6 +881,24 @@ export function VideoModule() {
                   )}
                 </div>
 
+                {/* Production parameters (Angles & Variations) */}
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-muted-foreground block">Angles & Variations</span>
+                  <GlobalProductionParameters
+                    angles={numVersions}
+                    onAnglesChange={setNumVersions}
+                    variations={variationsPerModel}
+                    onVariationsChange={setVariationsPerModel}
+                    maxAngles={6}
+                    maxVariations={3}
+                  />
+                </div>
+              </div>
+            </AccordionSection>
+
+            {/* 7. Extra Settings */}
+            <AccordionSection title="Extra Settings" defaultOpen={false}>
+              <div className="space-y-4">
                 {/* Video Templates */}
                 <div className="space-y-2">
                   <span className="text-xs font-medium text-muted-foreground block">Templates</span>
@@ -907,19 +925,6 @@ export function VideoModule() {
                     onTemplateContent={setRecipeTemplateContent}
                     label="Content Recipe"
                     placeholder="Select ad recipe..."
-                  />
-                </div>
-
-                {/* Production Parameters */}
-                <div className="space-y-2">
-                  <span className="text-xs font-medium text-muted-foreground block">Production Parameters</span>
-                  <GlobalProductionParameters
-                    angles={numVersions}
-                    onAnglesChange={setNumVersions}
-                    variations={variationsPerModel}
-                    onVariationsChange={setVariationsPerModel}
-                    maxAngles={6}
-                    maxVariations={3}
                   />
                 </div>
 
