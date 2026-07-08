@@ -16,7 +16,7 @@ import { SessionReferenceImagePanel } from '@/components/shared/SessionReference
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { VideoTemplateDropdown } from './VideoTemplateDropdown';
 import { useVideoModelsForGeneration } from '@/hooks/useModelsForGeneration';
-import { ContextPanel, createEmptyContextData, GlobalEngineSelector, GlobalProductionParameters, EnhancedBrandSection } from '@/components/shared';
+import { ContextPanel, createEmptyContextData, GlobalEngineSelector, GlobalProductionParameters, EnhancedBrandSection, SaveBrandButton, ThemeSelector } from '@/components/shared';
 import { SaveBrandButton } from '@/components/shared/SaveBrandButton';
 import type { ContextData, ScrapedBusinessData } from '@/components/shared/ContextPanel';
 import { BrandColorSwatches } from '@/components/shared/BrandColorSwatches';
@@ -711,68 +711,100 @@ export function VideoModule() {
         {/* Sidebar */}
         <aside className="w-72 shrink-0 border-r border-border overflow-y-auto bg-muted/20">
           <div className="p-4 space-y-6">
-            {/* Production Engines */}
+            {/* 1. Brand Context */}
+            <ContextPanel
+              moduleId="video"
+              value={contextData}
+              onChange={handleContextChange}
+              onUrlFetched={handleUrlFetched}
+              hideTheme
+            />
+
+            <EnhancedBrandSection
+              contextData={contextData}
+              onContextChange={handleContextChange}
+              formValues={formValues}
+              onFormChange={handleFieldChange}
+              referenceImages={sessionReferenceImages}
+              onReferenceImagesChange={setSessionReferenceImages}
+            />
+
+            <SaveBrandButton
+              formValues={formValues}
+              selectedBrandId={contextData.brandId}
+              selectedBrandName={contextData.brand?.name}
+              onBrandSaved={handleBrandSaved}
+            />
+
+            {/* 2. Theme Selection */}
+            <ThemeSelector
+              seasonEvent={contextData.seasonEvent}
+              campaignTheme={contextData.campaignTheme}
+              onSeasonChange={(seasonEvent) => handleContextChange({ ...contextData, seasonEvent })}
+              onCampaignThemeChange={(campaignTheme) => handleContextChange({ ...contextData, campaignTheme })}
+            />
+
+            {/* 3. Format & Duration */}
             <section>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Cpu className="w-4 h-4 text-muted-foreground" />
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Production Engines
-                  </h3>
-                </div>
-                <span className="text-xs text-muted-foreground">{selectedModels.length} selected</span>
+              <div className="flex items-center gap-2 mb-3">
+                <SlidersHorizontal className="w-4 h-4 text-muted-foreground" />
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Format & Duration
+                </h3>
               </div>
-              {displayModels.length === 0 ? (
-                <div className="p-3 rounded-lg border border-dashed border-border text-center">
-                  <p className="text-xs text-muted-foreground">No video models available</p>
-                  <Button
-                    variant="link"
-                    size="sm"
-                    className="text-xs h-auto p-0 mt-1"
-                    onClick={() => setActiveModule('integrations')}
-                  >
-                    Add Integration
-                  </Button>
+              <div className="space-y-4">
+                {/* Video Format */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs text-muted-foreground">Format</label>
+                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">
+                      {videoFormat === 'portrait' ? '9:16' : '16:9'}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    {(['landscape', 'portrait'] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => setVideoFormat(f)}
+                        className={`flex-1 py-1.5 text-xs rounded transition-colors capitalize ${videoFormat === f
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted hover:bg-muted/80'
+                          }`}
+                      >
+                        {f === 'landscape' ? 'Landscape (16:9)' : 'Portrait (9:16)'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              ) : (
-                <GlobalEngineSelector
-                  type="video"
-                  selectedIds={selectedModels}
-                  onChange={setSelectedModels}
-                  multiSelect={true}
-                />
-              )}
+
+                {/* Duration */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <Clock className="w-3 h-3" />
+                      Duration (seconds)
+                    </label>
+                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">{duration === 'smart' ? 'Smart' : `${duration}s`}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    {['smart', '5', '10', '15', '20'].map(d => (
+                      <button
+                        key={d}
+                        onClick={() => setDuration(d)}
+                        className={`flex-1 py-1.5 text-xs rounded transition-colors ${duration === d
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted hover:bg-muted/80'
+                          }`}
+                      >
+                        {d === 'smart' ? '✦' : `${d}s`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </section>
 
-            {/* Video Templates: Enhancement (prompt style) + Scene (fishbone) + Recipe (content type) */}
-            <section className="space-y-2">
-              <VideoTemplateDropdown
-                templateType="enhance"
-                selectedId={enhanceTemplateId}
-                onSelect={setEnhanceTemplateId}
-                onTemplateContent={setEnhanceTemplateContent}
-                label="Enhancement"
-                placeholder="Select enhancement style..."
-              />
-              <VideoTemplateDropdown
-                templateType="scene"
-                selectedId={sceneTemplateId}
-                onSelect={setSceneTemplateId}
-                onTemplateContent={setSceneTemplateContent}
-                label="Scene Framework"
-                placeholder="Select scene structure..."
-              />
-              <VideoTemplateDropdown
-                templateType="recipe"
-                selectedId={recipeTemplateId}
-                onSelect={setRecipeTemplateId}
-                onTemplateContent={setRecipeTemplateContent}
-                label="Content Recipe"
-                placeholder="Select ad recipe..."
-              />
-            </section>
-
-            {/* Product Brief */}
+            {/* 4. Product Brief */}
             <section>
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -781,7 +813,6 @@ export function VideoModule() {
                     Product Brief
                   </h3>
                 </div>
-                {/* Enhance prompt icon — calls LLM to rewrite the prompt */}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -809,127 +840,108 @@ export function VideoModule() {
               />
             </section>
 
-            {/* Brand / URL Context — shared ContextPanel (Theme hidden, handled by EnhancedBrandSection) */}
-            <ContextPanel
-              moduleId="video"
-              value={contextData}
-              onChange={handleContextChange}
-              onUrlFetched={handleUrlFetched}
-              hideTheme
-            />
-
-            {/* Business Info & Brand Assets — Replaces dynamic section to include colors/logo/subjects */}
-            <EnhancedBrandSection
-              contextData={contextData}
-              onContextChange={handleContextChange}
-              formValues={formValues}
-              onFormChange={handleFieldChange}
-              referenceImages={sessionReferenceImages}
-              onReferenceImagesChange={setSessionReferenceImages}
-            />
-
-            {/* Save to Brand — only shows when business_name has value */}
-            <SaveBrandButton
-              formValues={formValues}
-              selectedBrandId={contextData.brandId}
-              selectedBrandName={contextData.brand?.name}
-              onBrandSaved={handleBrandSaved}
-            />
-
-            {/* Production Parameters */}
-            <GlobalProductionParameters
-              angles={numVersions}
-              onAnglesChange={setNumVersions}
-              variations={variationsPerModel}
-              onVariationsChange={setVariationsPerModel}
-              maxAngles={6}
-              maxVariations={3}
-            />
-
-            {/* Format & Duration */}
+            {/* 5. First Image */}
             <section>
               <div className="flex items-center gap-2 mb-3">
-                <Clock className="w-4 h-4 text-muted-foreground" />
+                <VideoIcon className="w-4 h-4 text-muted-foreground" />
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Format & Duration
+                  First Image
                 </h3>
               </div>
-              <div className="space-y-4">
-                {/* Duration */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                      <Clock className="w-3 h-3" />
-                      Duration (seconds)
-                    </label>
-                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">{duration === 'smart' ? 'Smart' : `${duration}s`}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    {['smart', '5', '10', '15', '20'].map(d => (
-                      <button
-                        key={d}
-                        onClick={() => setDuration(d)}
-                        className={`flex-1 py-1.5 text-xs rounded transition-colors ${duration === d
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted hover:bg-muted/80'
-                          }`}
-                      >
-                        {d === 'smart' ? '✦' : `${d}s`}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Video Format */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                      <SlidersHorizontal className="w-3 h-3" />
-                      Format
-                    </label>
-                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">
-                      {videoFormat === 'portrait' ? '9:16' : '16:9'}
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    {(['landscape', 'portrait'] as const).map(f => (
-                      <button
-                        key={f}
-                        onClick={() => setVideoFormat(f)}
-                        className={`flex-1 py-1.5 text-xs rounded transition-colors capitalize ${videoFormat === f
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted hover:bg-muted/80'
-                          }`}
-                      >
-                        {f === 'landscape' ? 'Landscape (16:9)' : 'Portrait (9:16)'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              <div className="p-3 rounded-lg border border-border bg-background">
+                <SessionReferenceImagePanel
+                  value={sessionReferenceImages}
+                  onChange={setSessionReferenceImages}
+                  maxImages={1}
+                />
+                {sessionReferenceImages.length === 0 && (
+                  <p className="text-xs text-muted-foreground mt-1">Optional: Add an image to use as the starting frame</p>
+                )}
               </div>
             </section>
 
-            {/* Video Options */}
-            <section>
-              <div className="flex items-center gap-2 mb-3">
+            {/* 6. Extra Settings */}
+            <section className="space-y-4 pt-4 border-t border-border">
+              <div className="flex items-center gap-2">
                 <Settings2 className="w-4 h-4 text-muted-foreground" />
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Video Options
+                  Extra Settings
                 </h3>
               </div>
-              <div className="space-y-3">
-                {/* Starting Frame — shared reference image panel (upload, URL, library) */}
-                <div className="p-3 rounded-lg border border-border bg-background">
-                  <span className="text-xs font-medium mb-2 block">Starting Frame</span>
-                  <SessionReferenceImagePanel
-                    value={sessionReferenceImages}
-                    onChange={setSessionReferenceImages}
-                    maxImages={1}
-                  />
-                  {sessionReferenceImages.length === 0 && (
-                    <p className="text-xs text-muted-foreground mt-1">Optional: Add an image to use as the first frame</p>
-                  )}
+
+              {/* Production Engines */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Production Engines</span>
+                  <span className="text-xs text-muted-foreground">{selectedModels.length} selected</span>
                 </div>
+                {displayModels.length === 0 ? (
+                  <div className="p-3 rounded-lg border border-dashed border-border text-center">
+                    <p className="text-xs text-muted-foreground">No video models available</p>
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="text-xs h-auto p-0 mt-1"
+                      onClick={() => setActiveModule('integrations')}
+                    >
+                      Add Integration
+                    </Button>
+                  </div>
+                ) : (
+                  <GlobalEngineSelector
+                    type="video"
+                    selectedIds={selectedModels}
+                    onChange={setSelectedModels}
+                    multiSelect={true}
+                  />
+                )}
+              </div>
+
+              {/* Video Templates */}
+              <div className="space-y-2">
+                <span className="text-xs font-medium text-muted-foreground block">Templates</span>
+                <VideoTemplateDropdown
+                  templateType="enhance"
+                  selectedId={enhanceTemplateId}
+                  onSelect={setEnhanceTemplateId}
+                  onTemplateContent={setEnhanceTemplateContent}
+                  label="Enhancement"
+                  placeholder="Select enhancement style..."
+                />
+                <VideoTemplateDropdown
+                  templateType="scene"
+                  selectedId={sceneTemplateId}
+                  onSelect={setSceneTemplateId}
+                  onTemplateContent={setSceneTemplateContent}
+                  label="Scene Framework"
+                  placeholder="Select scene structure..."
+                />
+                <VideoTemplateDropdown
+                  templateType="recipe"
+                  selectedId={recipeTemplateId}
+                  onSelect={setRecipeTemplateId}
+                  onTemplateContent={setRecipeTemplateContent}
+                  label="Content Recipe"
+                  placeholder="Select ad recipe..."
+                />
+              </div>
+
+              {/* Production Parameters */}
+              <div className="space-y-2">
+                <span className="text-xs font-medium text-muted-foreground block">Production Parameters</span>
+                <GlobalProductionParameters
+                  angles={numVersions}
+                  onAnglesChange={setNumVersions}
+                  variations={variationsPerModel}
+                  onVariationsChange={setVariationsPerModel}
+                  maxAngles={6}
+                  maxVariations={3}
+                />
+              </div>
+
+              {/* Audio & Voiceover */}
+              <div className="space-y-3">
+                <span className="text-xs font-medium text-muted-foreground block">Audio & Text Options</span>
 
                 {/* Audio Toggle */}
                 <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-background">
@@ -944,7 +956,7 @@ export function VideoModule() {
                   />
                 </div>
 
-                {/* Voiceover Script (shown when audio is enabled) */}
+                {/* Voiceover Script */}
                 {generateAudio && (
                   <div className="p-3 rounded-lg border border-border bg-background animate-fade-in">
                     <label className="text-xs font-medium mb-2 block">
@@ -975,7 +987,6 @@ export function VideoModule() {
 
                   {textOverlay.isActive && (
                     <div className="space-y-3 mt-3">
-                      {/* Text Input */}
                       <div>
                         <input
                           type="text"
@@ -986,7 +997,6 @@ export function VideoModule() {
                         />
                       </div>
 
-                      {/* Optimize Checkbox */}
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
@@ -997,7 +1007,6 @@ export function VideoModule() {
                         <span className="text-xs text-muted-foreground">Optimize text (allow model to adjust)</span>
                       </label>
 
-                      {/* Placement Dropdown */}
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">Placement</label>
                         <select
