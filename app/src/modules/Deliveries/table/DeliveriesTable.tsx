@@ -26,8 +26,20 @@ import { ChevronDown, Maximize2, Plus, Trash2, X } from 'lucide-react';
 
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import type { FilterDef } from '@/hooks/useColumnFilters';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
+import { BulkActionBar } from '@/components/shared/BulkActionBar';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -404,7 +416,18 @@ function LeadSelect({ delivery, onSaved }: { delivery: Delivery; onSaved: () => 
  * (AppContext.navigateToCreate). Trailing row = the same AddProjectMenu the
  * delivery card has.
  */
-function ProjectSubRows({ delivery }: { delivery: Delivery }) {
+function ProjectSubRows({
+  delivery,
+  hasSelectionCol,
+  selectedProjects,
+  onToggleProject,
+}: {
+  delivery: Delivery;
+  /** True when the parent table renders the selection column (admins). */
+  hasSelectionCol: boolean;
+  selectedProjects: ReadonlySet<number>;
+  onToggleProject: (projectId: number) => void;
+}) {
   const { navigateToProjectTab, navigateToCreate } = useApp();
   // Approvals count = frontend join on the sets list (approval_sets.projectId)
   // — the assets module must never read the approvals tables server-side.
@@ -437,6 +460,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
   if (isLoading) {
     return (
       <tr>
+        {hasSelectionCol && <td />}
         <td />
         <td colSpan={9} className="text-muted-foreground">
           Loading projects…
@@ -501,6 +525,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
   return (
     <>
       <tr aria-hidden="true">
+        {hasSelectionCol && <td className={subHead} />}
         <td className={subHead} />
         <td className={subHead}>
           <span className="block pl-4">Project</span>
@@ -525,7 +550,16 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
         <td className={subHead} />
       </tr>
       {inDelivery.map((p) => (
-        <tr key={`project-${p.id}`} className="group">
+        <tr key={`project-${p.id}`} className={`group ${selectedProjects.has(p.id) ? 'bg-primary/5' : ''}`}>
+          {hasSelectionCol && (
+            <td className="text-center">
+              <Checkbox
+                checked={selectedProjects.has(p.id)}
+                onCheckedChange={() => onToggleProject(p.id)}
+                aria-label={`Select project ${p.name}`}
+              />
+            </td>
+          )}
           <td />
           <td>
             {/* Indent = hierarchy; edits rename the ACTUAL project (card
@@ -580,6 +614,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
         </tr>
       ))}
       <tr>
+        {hasSelectionCol && <td />}
         <td />
         <td colSpan={9}>
           <AddProjectMenu
@@ -620,9 +655,78 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
   trpc.approvals.listSets.useQuery();
 
   const isAdmin = getIsAdmin();
-  const { updateDelivery, refetch } = useDeliveries();
+  const { updateDelivery, deleteDelivery, refetch } = useDeliveries();
   const patch = (id: number, input: Omit<UpdateDeliveryInput, 'id'>) =>
     updateDelivery({ id, ...input });
+
+  // ── Multi-select + bulk actions (admin-only — all bulk ops are writes) ──
+  const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const toggleProject = (projectId: number) => {
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setSelectedProjectIds(new Set());
+  };
+
+  const bulkSetStatus = async (status: DeliveryStatus) => {
+    setBulkBusy(true);
+    try {
+      await Promise.all([...selectedIds].map((id) => updateDelivery({ id: Number(id), status })));
+      toast.success(`Status updated for ${selectedIds.size} deliver${selectedIds.size === 1 ? 'y' : 'ies'}`);
+      setSelectedIds(new Set());
+    } catch {
+      // Per-call errors already toast via useDeliveries.
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const bulkDelete = async () => {
+    setBulkDeleteOpen(false);
+    setBulkBusy(true);
+    try {
+      // Sequential: deleteDelivery is optimistic per-row; parallel deletes
+      // would race the shared cache snapshots it restores on failure.
+      for (const id of selectedIds) {
+        await deleteDelivery(Number(id));
+      }
+      setSelectedIds(new Set());
+    } catch {
+      // Per-call errors already toast + roll back via useDeliveries.
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation() as any;
+  const projectsUtils = trpc.assets.getProjects.useUtils();
+  const bulkRemoveProjects = async () => {
+    setBulkBusy(true);
+    try {
+      for (const projectId of selectedProjectIds) {
+        await setProjectDeliveryMutation.mutateAsync({ id: projectId, deliveryId: null });
+      }
+      toast.success(`${selectedProjectIds.size} project${selectedProjectIds.size === 1 ? '' : 's'} removed from their delivery`);
+      setSelectedProjectIds(new Set());
+      projectsUtils.invalidate();
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to remove some projects');
+      projectsUtils.invalidate();
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const { data: brandsRaw } = trpc.brands.list.useQuery();
   const brandOptions = useMemo(() => {
@@ -888,28 +992,96 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
   );
 
   return (
-    <DataTable<Delivery>
-      columns={columns}
-      data={[...items]}
-      rowKey={(d) => d.id}
-      defaultSortKey="updated"
-      defaultSortDir="desc"
-      renderSubRows={(d) => <ProjectSubRows delivery={d} />}
-      emptyMessage="No deliveries match your filters."
-      // SEO-style column layout: drag headers to reorder, drag edges to
-      // resize; persisted per browser. Header filter dots per filterDefs.
-      layoutKey={DELIVERIES_LAYOUT_KEY}
-      filterDefs={filterDefs}
-      // Quiet headers: filter dot + sort icon hidden until hover, blue when
-      // active (PO decision 2026-07-07: CSS variant, coarse-pointer caveat
-      // accepted).
-      quietHeaderIcons
-      // Deliveries-scoped chrome: hairline border does the separation (no
-      // shadow), slightly rounder corners, light-gray header band so the
-      // header reads as distinct from the white body rows. Global DataTable
-      // default untouched.
-      wrapperClassName="shadow-none rounded-lg"
-      className="[&>thead>tr>th]:bg-slate-50"
-    />
+    <>
+      <DataTable<Delivery>
+        columns={columns}
+        data={[...items]}
+        rowKey={(d) => d.id}
+        defaultSortKey="updated"
+        defaultSortDir="desc"
+        renderSubRows={(d) => (
+          <ProjectSubRows
+            delivery={d}
+            hasSelectionCol={isAdmin}
+            selectedProjects={selectedProjectIds}
+            onToggleProject={toggleProject}
+          />
+        )}
+        emptyMessage="No deliveries match your filters."
+        // SEO-style column layout: drag headers to reorder, drag edges to
+        // resize; persisted per browser. Header filter dots per filterDefs.
+        layoutKey={DELIVERIES_LAYOUT_KEY}
+        filterDefs={filterDefs}
+        // Quiet headers: filter dot + sort icon hidden until hover, blue when
+        // active (PO decision 2026-07-07: CSS variant, coarse-pointer caveat
+        // accepted).
+        quietHeaderIcons
+        selection={isAdmin ? { selected: selectedIds, onChange: setSelectedIds } : undefined}
+        // Deliveries-scoped chrome: hairline border does the separation (no
+        // shadow), slightly rounder corners, light-gray header band so the
+        // header reads as distinct from the white body rows. Global DataTable
+        // default untouched.
+        wrapperClassName="shadow-none rounded-lg"
+        className="[&>thead>tr>th]:bg-slate-50"
+      />
+
+      {/* Bulk bar — one bar for both selection kinds; actions render per kind. */}
+      <BulkActionBar count={selectedIds.size + selectedProjectIds.size} onClear={clearSelection}>
+        {selectedIds.size > 0 && (
+          <>
+            <Select onValueChange={(v) => void bulkSetStatus(v as DeliveryStatus)} disabled={bulkBusy}>
+              <SelectTrigger className="h-8 w-[150px] text-xs" aria-label="Set status for selected deliveries">
+                <SelectValue placeholder="Set status…" />
+              </SelectTrigger>
+              <SelectContent>
+                {DELIVERY_STATUSES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {STATUS_LANES[s]?.label ?? s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <BulkActionBar.Action
+              icon={Trash2}
+              label={`Delete ${selectedIds.size}`}
+              variant="destructive"
+              loading={bulkBusy}
+              onClick={() => setBulkDeleteOpen(true)}
+            />
+          </>
+        )}
+        {selectedProjectIds.size > 0 && (
+          <BulkActionBar.Action
+            icon={X}
+            label={`Remove ${selectedProjectIds.size} from delivery`}
+            loading={bulkBusy}
+            onClick={() => void bulkRemoveProjects()}
+          />
+        )}
+      </BulkActionBar>
+
+      {/* Bulk delete confirmation — mirrors the board's single-delete dialog. */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={(open) => { if (!open) setBulkDeleteOpen(false); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {selectedIds.size} deliver{selectedIds.size === 1 ? 'y' : 'ies'}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. The selected deliveries will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setBulkDeleteOpen(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void bulkDelete()}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

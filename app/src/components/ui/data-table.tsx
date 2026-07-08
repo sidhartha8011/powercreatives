@@ -38,6 +38,7 @@ import {
 import { ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ColumnHead } from '@/components/ui/column-head';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import { useColumnFilters, type FilterDef } from '@/hooks/useColumnFilters';
@@ -132,6 +133,16 @@ export interface DataTableProps<T> {
    * mode only).
    */
   quietHeaderIcons?: boolean;
+  /**
+   * Controlled multi-select: renders a leading checkbox column (before the
+   * chevron); the header checkbox selects/clears all currently visible
+   * (filtered+sorted) rows. Sub-row renderers must account for the extra
+   * leading cell.
+   */
+  selection?: {
+    selected: ReadonlySet<string | number>;
+    onChange: (next: Set<string | number>) => void;
+  };
 }
 
 export function DataTable<T>({
@@ -149,6 +160,7 @@ export function DataTable<T>({
   layoutKey,
   filterDefs,
   quietHeaderIcons = false,
+  selection,
 }: DataTableProps<T>) {
   const expandable = renderSubRows != null;
   const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(new Set());
@@ -224,13 +236,30 @@ export function DataTable<T>({
   const widthStyle = (w?: number | string): CSSProperties | undefined =>
     w == null ? undefined : { width: w };
 
-  const colCount = orderedColumns.length + (expandable ? 1 : 0);
+  const colCount = orderedColumns.length + (expandable ? 1 : 0) + (selection ? 1 : 0);
+
+  // Select-all toggles the currently VISIBLE (filtered + sorted) rows.
+  const visibleKeys = selection ? sortedData.map((row) => rowKey(row)) : [];
+  const allVisibleSelected =
+    selection != null && visibleKeys.length > 0 && visibleKeys.every((k) => selection.selected.has(k));
+  const toggleAll = () => {
+    if (!selection) return;
+    selection.onChange(allVisibleSelected ? new Set() : new Set(visibleKeys));
+  };
+  const toggleOne = (key: string | number) => {
+    if (!selection) return;
+    const next = new Set(selection.selected);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    selection.onChange(next);
+  };
 
   return (
     <div className={cn('rounded-md border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)] bg-card', wrapperClassName)}>
       <table className={cn(GRID_CLASS, className)}>
         {layoutEnabled && (
           <colgroup>
+            {selection && <col style={{ width: 36 }} />}
             {expandable && <col style={{ width: 36 }} />}
             {orderedColumns.map((c) => (
               <col key={c.key} style={{ width: layout.width(c.key) }} />
@@ -239,6 +268,15 @@ export function DataTable<T>({
         )}
         <thead>
           <tr>
+            {selection && (
+              <th style={{ width: 36 }} className="text-center">
+                <Checkbox
+                  checked={allVisibleSelected}
+                  onCheckedChange={toggleAll}
+                  aria-label={allVisibleSelected ? 'Clear selection' : 'Select all visible rows'}
+                />
+              </th>
+            )}
             {expandable && <th style={{ width: 36 }} aria-label="Expand" />}
             {orderedColumns.map((c) =>
               layoutEnabled ? (
@@ -308,9 +346,22 @@ export function DataTable<T>({
               return (
                 <Fragment key={key}>
                   <tr
-                    className={cn('group hover:bg-muted/60', onRowClick && 'cursor-pointer')}
+                    className={cn(
+                      'group hover:bg-muted/60',
+                      onRowClick && 'cursor-pointer',
+                      selection?.selected.has(key) && 'bg-primary/5'
+                    )}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                   >
+                    {selection && (
+                      <td className="text-center" onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selection.selected.has(key)}
+                          onCheckedChange={() => toggleOne(key)}
+                          aria-label="Select row"
+                        />
+                      </td>
+                    )}
                     {expandable && (
                       <td className="text-center">
                         {canExpand && (
