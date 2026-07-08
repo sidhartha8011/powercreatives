@@ -6514,3 +6514,26 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Verified: tsc 56 = baseline, build OK. Live pass pending user (both tables:
   hover reveal, title-click sort, funnel filter, blue title when filtered).
   BEFORE 2b27aba → AFTER (this commit).
+
+## 2026-07-08 — batch of five + dynamic-optimization architecture doc
+- [datatable-inline-expand]: cell renderers get ctx {canExpand,isExpanded,
+  toggleExpanded}; inlineExpand prop kills the chevron column; Deliveries
+  chevron now INSIDE the name cell (SEO pattern); sub-rows −1 cell.
+- [table-cell-recipe-unify]: NEW components/ui/table-cell-recipes.ts sourced
+  verbatim from SEO (CELL_VIEW_TEXT/EDIT_INPUT/PILL/PILL_NEUTRAL/EMPTY_TEXT);
+  SEO swapped literals (zero visual change); Deliveries adopted: pills lose
+  rounded-full (SEO shape, semantic colors kept), InlineTextCell is now
+  CLICK-TO-EDIT (SEO look + card revert contract), chips → neutral pills.
+- [columnhead-generate-hover]: ✦ joins the hover choreography (busy stays
+  visible), sits in sequence after the funnel.
+- [kanban-lane-reorder]: KanbanBoard opt-in onColumnReorder — native HTML5
+  drag on lane headers (custom MIME so foreign drags never trigger; coexists
+  with hello-pangea card DnD); DeliveriesBoard persists PER-FIELD lane order
+  (pcm:deliveries:lane-order:v1, reconciled); "Lanes:" prefix dropped.
+- [headings-tag-select-compact]: H-tag dropdown menu ~30% smaller (56px wide,
+  centered 10px items, check-indicator hidden).
+- docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md: full phased architecture (point-5
+  content rows = phase 0 inventory; routing law; connector rule engine; three-
+  state switches; heartbeat licensing; AI optimizer last; open PO decisions).
+- Verified per pair: tsc 56 = baseline; final build OK. Live pass pending.
+  BEFOREs 631ca67/129bd71/299358e/0298f0c/6ebadad → AFTERs through c1fb5a1.
