@@ -176,7 +176,8 @@ export function ColumnHead({
           </DropdownMenu>
         )}
 
-        {/* Generate — right edge; pick a template → generate the whole column. */}
+        {/* Generate — in sequence after the funnel; hover-revealed like the
+            other header icons (a busy column stays visible — spinner). */}
         {generate && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -184,7 +185,9 @@ export function ColumnHead({
                 type="button"
                 disabled={generate.busy}
                 title={`Generate ${label} — pick a template`}
-                className="shrink-0 rounded p-0.5 text-muted-foreground/60 transition-colors hover:text-primary disabled:opacity-60"
+                className={`shrink-0 rounded p-0.5 text-muted-foreground/60 transition-opacity hover:text-primary ${
+                  generate.busy ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+                }`}
               >
                 {generate.busy
                   ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
