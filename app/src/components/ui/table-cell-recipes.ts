@@ -15,8 +15,12 @@ export const CELL_VIEW_TEXT =
 export const CELL_EDIT_INPUT = 'h-7 text-xs';
 
 /** Pill/tag shape — square-ish corners, compact (NOT rounded-full). Color
- *  comes from the consumer (semantic bg/text or the neutral variant below). */
-export const CELL_PILL = 'inline-flex items-center rounded px-1.5 py-0.5 text-[11px]';
+ *  comes from the consumer (semantic bg/text or the neutral variant below).
+ *  leading-4 is EXPLICIT on purpose: text-[11px] sets only font-size, so a
+ *  pill otherwise inherits its container's line-height — inside a Select
+ *  trigger (text-sm → 20px) it rendered taller than in a text-xs table cell
+ *  (16px). Pinning 16px makes every pill the same height everywhere. */
+export const CELL_PILL = 'inline-flex items-center rounded px-1.5 py-0.5 text-[11px] leading-4';
 
 /** The neutral pill (SEO's type pill). */
 export const CELL_PILL_NEUTRAL = `${CELL_PILL} bg-muted/60 text-muted-foreground`;

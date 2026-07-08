@@ -1376,8 +1376,9 @@ export function SEOModule() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Toolbar buttons rest GRAY, hover BLUE (PO 2026-07-08) — default
+              variant; 'active' (blue at rest) is reserved for pressed states. */}
           <PillButton
-            variant="active"
             icon={scanningAll ? <Loader2 className="animate-spin" /> : <Link2 />}
             onClick={handleScanAll}
             disabled={busy || scanningAll || sortedData.length === 0}
@@ -1386,7 +1387,6 @@ export function SEOModule() {
           </PillButton>
           {/* Pulls clicks / impressions / CTR / position / top queries (last 28 days). */}
           <PillButton
-            variant="active"
             icon={gscPulling ? <Loader2 className="animate-spin" /> : <TrendingUp />}
             onClick={handlePullGsc}
             disabled={busy || gscPulling}
@@ -1395,17 +1395,16 @@ export function SEOModule() {
           </PillButton>
           {/* Pulls ProRankTracker rank of each row's Primary Keyword → "Pos (PRT)" column. */}
           <PillButton
-            variant="active"
             icon={prtPulling ? <Loader2 className="animate-spin" /> : <Target />}
             onClick={handlePullPrt}
             disabled={busy || prtPulling}
           >
             {prtPulling ? 'Pulling…' : 'PRT ranks'}
           </PillButton>
-          <PillButton variant="active" icon={<Plus />} onClick={() => handleCreate('post')} disabled={busy}>
+          <PillButton icon={<Plus />} onClick={() => handleCreate('post')} disabled={busy}>
             Post
           </PillButton>
-          <PillButton variant="active" icon={<Plus />} onClick={() => handleCreate('page')} disabled={busy}>
+          <PillButton icon={<Plus />} onClick={() => handleCreate('page')} disabled={busy}>
             Page
           </PillButton>
           <Select
