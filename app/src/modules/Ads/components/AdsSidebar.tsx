@@ -223,7 +223,6 @@ export const AdsSidebar = memo(function AdsSidebar({
          * ================================================================ */}
         <AccordionSection
           title="Creative Brief"
-          icon={<Wand2 className="w-3.5 h-3.5" />}
           defaultOpen={true}
         >
           {/* AI Enhance toggle */}
@@ -269,8 +268,7 @@ export const AdsSidebar = memo(function AdsSidebar({
          * ================================================================ */}
         <AccordionSection
           title="Copy Settings"
-          icon={<FileText className="w-3.5 h-3.5" />}
-          defaultOpen={enabledOutputs.copy}
+          defaultOpen={false}
           disabled={!enabledOutputs.copy}
           headerAction={
             <Switch
@@ -337,8 +335,7 @@ export const AdsSidebar = memo(function AdsSidebar({
          * ================================================================ */}
         <AccordionSection
           title="Image Settings"
-          icon={<ImageIcon className="w-3.5 h-3.5" />}
-          defaultOpen={enabledOutputs.image}
+          defaultOpen={false}
           disabled={!enabledOutputs.image}
           headerAction={
             <Switch
@@ -392,8 +389,7 @@ export const AdsSidebar = memo(function AdsSidebar({
          * ================================================================ */}
         <AccordionSection
           title="Video Settings"
-          icon={<Video className="w-3.5 h-3.5" />}
-          defaultOpen={enabledOutputs.video}
+          defaultOpen={false}
           disabled={!enabledOutputs.video}
           headerAction={
             <Switch

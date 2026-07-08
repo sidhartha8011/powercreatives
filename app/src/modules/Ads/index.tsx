@@ -93,8 +93,8 @@ export function AdsModule() {
 
   // ── Enabled outputs state (toggles) ──
   const [enabledOutputs, setEnabledOutputs] = useState<Record<string, boolean>>({
-    copy: true,
-    image: true,
+    copy: false,
+    image: false,
     video: false,
   });
 
