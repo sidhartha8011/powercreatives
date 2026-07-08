@@ -6459,3 +6459,14 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - **Deferred (surfaced to user, feature-sized):** real scheduling execution (cron + due dates), auto-publish,
   approval-gate wiring to Approvals module, interlink injection, hierarchy-aware generation, `consolidated`
   structure. Map "Content Strategies pipeline" section + header updated. Not committed.
+
+## 2026-07-07 — quiet header icons (deliveries) [columnhead-quiet-icons]
+- Shared ColumnHead gains OPT-IN `quietIcons`: filter dot + sort icon opacity-0
+  at rest → revealed on header group-hover/group-focus-within → active = always
+  visible + primary blue (dot bg-primary as before; sort icon now text-primary).
+  Default OFF — SEO table pixel-identical; adopting later = one flag.
+- DataTable passes it through as `quietHeaderIcons`; DeliveriesTable opts in.
+- CSS variant chosen by PO (JS-hover alternative declined); coarse-pointer
+  hover gotcha explicitly accepted and documented on the prop.
+- Verified: tsc 56 = baseline, build OK. Live pass pending user.
+  BEFORE feb8015 → AFTER (this commit).
