@@ -50,12 +50,15 @@ import {
 } from '@/components/shared/Kanban';
 import { EmptyState } from '@/components/shared/EmptyState';
 
+import { trpc } from '@/lib/trpc';
+
 import { DELIVERIES_LAYOUT_KEY, DeliveriesTable } from '../table/DeliveriesTable';
 import { DeliveryCard } from './DeliveryCard';
 import { deliveryColumns } from './deliveryColumns';
-import { deliveryFilters } from './deliveryFilters';
+import { buildDeliveryFilters } from './deliveryFilters';
 import { DEFAULT_DELIVERY_SORT, deliverySorts } from './deliverySorts';
 import { useDeliveries } from '../hooks/useDeliveries';
+import { useTypePresets } from '../hooks/useTypePresets';
 import {
   DELIVERY_STATUSES,
   type Delivery,
@@ -123,6 +126,28 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
     updateStatus,
     deleteDelivery,
   } = useDeliveries();
+
+  // Universal search: the filter walks every row value dynamically; brand
+  // names and type labels (display-only, not on the row) come from these
+  // live lookups so "everything in the table" is genuinely searchable.
+  const { data: brandsRaw } = trpc.brands.list.useQuery();
+  const brandNames = useMemo(() => {
+    const map = new Map<number, string>();
+    if (Array.isArray(brandsRaw)) {
+      for (const b of brandsRaw as any[]) map.set(Number(b.id), String(b.name ?? ''));
+    }
+    return map;
+  }, [brandsRaw]);
+  const { presets: typePresets } = useTypePresets();
+
+  const deliveryFilters = useMemo(
+    () =>
+      buildDeliveryFilters({
+        brandName: (d) => (d.brandId != null ? brandNames.get(Number(d.brandId)) ?? null : null),
+        typeLabel: (d) => (d.type ? typePresets[d.type]?.label ?? null : null),
+      }),
+    [brandNames, typePresets]
+  );
 
   const listState = useListState<Delivery>(
     deliveries,
