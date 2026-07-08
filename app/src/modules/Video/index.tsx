@@ -712,7 +712,7 @@ export function VideoModule() {
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
         <aside className="w-72 shrink-0 border-r border-border overflow-y-auto bg-muted/20">
-          <div className="p-4 space-y-6">
+          <div className="p-4 space-y-3">
             {/* 1. Brand Context */}
             <AccordionSection title="Brand" defaultOpen={true}>
               <ContextPanel
