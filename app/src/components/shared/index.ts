@@ -41,3 +41,5 @@ export * from './copySettingsConfig';
 export { DynamicSection } from './DynamicSection';
 export { ReferenceAdsSection, getReferenceAdEntries, countFilledReferenceAds, REFERENCE_AD_PREFIX } from './ReferenceAdsSection';
 export { CopyTypeSelector } from './CopyTypeSelector';
+export { AccordionSection } from './AccordionSection';
+

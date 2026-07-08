@@ -16,7 +16,7 @@ import { SessionReferenceImagePanel } from '@/components/shared/SessionReference
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
 import { VideoTemplateDropdown } from './VideoTemplateDropdown';
 import { useVideoModelsForGeneration } from '@/hooks/useModelsForGeneration';
-import { ContextPanel, createEmptyContextData, GlobalEngineSelector, GlobalProductionParameters, EnhancedBrandSection, SaveBrandButton, ThemeSelector } from '@/components/shared';
+import { ContextPanel, createEmptyContextData, GlobalEngineSelector, GlobalProductionParameters, EnhancedBrandSection, SaveBrandButton, ThemeSelector, AccordionSection } from '@/components/shared';
 import { SaveBrandButton } from '@/components/shared/SaveBrandButton';
 import type { ContextData, ScrapedBusinessData } from '@/components/shared/ContextPanel';
 import { BrandColorSwatches } from '@/components/shared/BrandColorSwatches';
@@ -94,7 +94,8 @@ interface GenerationStatus {
   completedModels?: number;
 }
 
-// BEFORE BRAND ACCORDION TEST
+
+
 export function VideoModule() {
   const { settings } = useSettings();
   const { setActiveModule, consumePendingVideoData, consumePendingCreate, state: appState } = useApp();
@@ -713,46 +714,46 @@ export function VideoModule() {
         <aside className="w-72 shrink-0 border-r border-border overflow-y-auto bg-muted/20">
           <div className="p-4 space-y-6">
             {/* 1. Brand Context */}
-            <ContextPanel
-              moduleId="video"
-              value={contextData}
-              onChange={handleContextChange}
-              onUrlFetched={handleUrlFetched}
-              hideTheme
-            />
+            <AccordionSection title="Brand" defaultOpen={true}>
+              <ContextPanel
+                moduleId="video"
+                value={contextData}
+                onChange={handleContextChange}
+                onUrlFetched={handleUrlFetched}
+                hideTheme
+                hideBrandHeader={true}
+              />
 
-            <EnhancedBrandSection
-              contextData={contextData}
-              onContextChange={handleContextChange}
-              formValues={formValues}
-              onFormChange={handleFieldChange}
-              referenceImages={sessionReferenceImages}
-              onReferenceImagesChange={setSessionReferenceImages}
-            />
+              <EnhancedBrandSection
+                contextData={contextData}
+                onContextChange={handleContextChange}
+                formValues={formValues}
+                onFormChange={handleFieldChange}
+                referenceImages={sessionReferenceImages}
+                onReferenceImagesChange={setSessionReferenceImages}
+              />
 
-            <SaveBrandButton
-              formValues={formValues}
-              selectedBrandId={contextData.brandId}
-              selectedBrandName={contextData.brand?.name}
-              onBrandSaved={handleBrandSaved}
-            />
+              <SaveBrandButton
+                formValues={formValues}
+                selectedBrandId={contextData.brandId}
+                selectedBrandName={contextData.brand?.name}
+                onBrandSaved={handleBrandSaved}
+              />
+            </AccordionSection>
 
             {/* 2. Theme Selection */}
-            <ThemeSelector
-              seasonEvent={contextData.seasonEvent}
-              campaignTheme={contextData.campaignTheme}
-              onSeasonChange={(seasonEvent) => handleContextChange({ ...contextData, seasonEvent })}
-              onCampaignThemeChange={(campaignTheme) => handleContextChange({ ...contextData, campaignTheme })}
-            />
+            <AccordionSection title="Theme" defaultOpen={false}>
+              <ThemeSelector
+                seasonEvent={contextData.seasonEvent}
+                campaignTheme={contextData.campaignTheme}
+                onSeasonChange={(seasonEvent) => handleContextChange({ ...contextData, seasonEvent })}
+                onCampaignThemeChange={(campaignTheme) => handleContextChange({ ...contextData, campaignTheme })}
+                bare
+              />
+            </AccordionSection>
 
             {/* 3. Format & Duration */}
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <SlidersHorizontal className="w-4 h-4 text-muted-foreground" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Format & Duration
-                </h3>
-              </div>
+            <AccordionSection title="Format & Duration" defaultOpen={true}>
               <div className="space-y-4">
                 {/* Video Format */}
                 <div>
@@ -803,233 +804,216 @@ export function VideoModule() {
                   </div>
                 </div>
               </div>
-            </section>
+            </AccordionSection>
 
             {/* 4. Product Brief */}
-            <section>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Wand2 className="w-4 h-4 text-muted-foreground" />
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Product Brief
-                  </h3>
+            <AccordionSection title="Product Brief" defaultOpen={true}>
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={handleEnhancePrompt}
+                        disabled={!productBrief.trim() || isEnhancing}
+                        className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        aria-label="Enhance prompt with AI"
+                      >
+                        {isEnhancing
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <Sparkles className="w-3.5 h-3.5" />
+                        }
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" className="text-xs">
+                      Enhance prompt with AI
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={handleEnhancePrompt}
-                      disabled={!productBrief.trim() || isEnhancing}
-                      className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      aria-label="Enhance prompt with AI"
-                    >
-                      {isEnhancing
-                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        : <Sparkles className="w-3.5 h-3.5" />
-                      }
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="left" className="text-xs">
-                    Enhance prompt with AI
-                  </TooltipContent>
-                </Tooltip>
+                <Textarea
+                  value={productBrief}
+                  onChange={(e) => setProductBrief(e.target.value)}
+                  placeholder="Describe your product or service..."
+                  className="min-h-[100px] text-sm resize-none"
+                />
               </div>
-              <Textarea
-                value={productBrief}
-                onChange={(e) => setProductBrief(e.target.value)}
-                placeholder="Describe your product or service..."
-                className="min-h-[100px] text-sm resize-none"
-              />
-            </section>
+            </AccordionSection>
 
             {/* 5. First Image */}
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <VideoIcon className="w-4 h-4 text-muted-foreground" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  First Image
-                </h3>
-              </div>
-              <div className="p-3 rounded-lg border border-border bg-background">
-                <SessionReferenceImagePanel
-                  value={sessionReferenceImages}
-                  onChange={setSessionReferenceImages}
-                  maxImages={1}
-                />
-                {sessionReferenceImages.length === 0 && (
-                  <p className="text-xs text-muted-foreground mt-1">Optional: Add an image to use as the starting frame</p>
-                )}
-              </div>
-            </section>
+            <AccordionSection title="First Image" defaultOpen={true}>
+              <SessionReferenceImagePanel
+                value={sessionReferenceImages}
+                onChange={setSessionReferenceImages}
+                maxImages={1}
+              />
+              {sessionReferenceImages.length === 0 && (
+                <p className="text-xs text-muted-foreground mt-1">Optional: Add an image to use as the starting frame</p>
+              )}
+            </AccordionSection>
 
             {/* 6. Extra Settings */}
-            <section className="space-y-4 pt-4 border-t border-border">
-              <div className="flex items-center gap-2">
-                <Settings2 className="w-4 h-4 text-muted-foreground" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Extra Settings
-                </h3>
-              </div>
-
-              {/* Production Engines */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-muted-foreground">Production Engines</span>
-                  <span className="text-xs text-muted-foreground">{selectedModels.length} selected</span>
-                </div>
-                {displayModels.length === 0 ? (
-                  <div className="p-3 rounded-lg border border-dashed border-border text-center">
-                    <p className="text-xs text-muted-foreground">No video models available</p>
-                    <Button
-                      variant="link"
-                      size="sm"
-                      className="text-xs h-auto p-0 mt-1"
-                      onClick={() => setActiveModule('integrations')}
-                    >
-                      Add Integration
-                    </Button>
-                  </div>
-                ) : (
-                  <GlobalEngineSelector
-                    type="video"
-                    selectedIds={selectedModels}
-                    onChange={setSelectedModels}
-                    multiSelect={true}
-                  />
-                )}
-              </div>
-
-              {/* Video Templates */}
-              <div className="space-y-2">
-                <span className="text-xs font-medium text-muted-foreground block">Templates</span>
-                <VideoTemplateDropdown
-                  templateType="enhance"
-                  selectedId={enhanceTemplateId}
-                  onSelect={setEnhanceTemplateId}
-                  onTemplateContent={setEnhanceTemplateContent}
-                  label="Enhancement"
-                  placeholder="Select enhancement style..."
-                />
-                <VideoTemplateDropdown
-                  templateType="scene"
-                  selectedId={sceneTemplateId}
-                  onSelect={setSceneTemplateId}
-                  onTemplateContent={setSceneTemplateContent}
-                  label="Scene Framework"
-                  placeholder="Select scene structure..."
-                />
-                <VideoTemplateDropdown
-                  templateType="recipe"
-                  selectedId={recipeTemplateId}
-                  onSelect={setRecipeTemplateId}
-                  onTemplateContent={setRecipeTemplateContent}
-                  label="Content Recipe"
-                  placeholder="Select ad recipe..."
-                />
-              </div>
-
-              {/* Production Parameters */}
-              <div className="space-y-2">
-                <span className="text-xs font-medium text-muted-foreground block">Production Parameters</span>
-                <GlobalProductionParameters
-                  angles={numVersions}
-                  onAnglesChange={setNumVersions}
-                  variations={variationsPerModel}
-                  onVariationsChange={setVariationsPerModel}
-                  maxAngles={6}
-                  maxVariations={3}
-                />
-              </div>
-
-              {/* Audio & Voiceover */}
-              <div className="space-y-3">
-                <span className="text-xs font-medium text-muted-foreground block">Audio & Text Options</span>
-
-                {/* Audio Toggle */}
-                <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-background">
-                  <div className="flex items-center gap-2">
-                    <Volume2 className="w-4 h-4 text-muted-foreground" />
-                    <Label htmlFor="audio-toggle" className="text-xs font-medium">Generate Audio</Label>
-                  </div>
-                  <Switch
-                    id="audio-toggle"
-                    checked={generateAudio}
-                    onCheckedChange={setGenerateAudio}
-                  />
-                </div>
-
-                {/* Voiceover Script */}
-                {generateAudio && (
-                  <div className="p-3 rounded-lg border border-border bg-background animate-fade-in">
-                    <label className="text-xs font-medium mb-2 block">
-                      Voiceover Script (Optional)
-                    </label>
-                    <Textarea
-                      placeholder="Enter a script for the voiceover..."
-                      value={voiceoverScript}
-                      onChange={(e) => setVoiceoverScript(e.target.value)}
-                      rows={3}
-                      className="resize-none text-sm"
-                    />
-                  </div>
-                )}
-
-                {/* Text Overlay */}
-                <div className="p-3 rounded-lg border border-border bg-background">
+            <AccordionSection title="Extra Settings" defaultOpen={false}>
+              <div className="space-y-4">
+                {/* Production Engines */}
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium flex items-center gap-1.5">
-                      <Type className="w-3 h-3" />
-                      Allow Text
-                    </span>
-                    <Switch
-                      checked={textOverlay.isActive}
-                      onCheckedChange={(checked) => setTextOverlay(prev => ({ ...prev, isActive: checked }))}
-                    />
+                    <span className="text-xs font-medium text-muted-foreground">Production Engines</span>
+                    <span className="text-xs text-muted-foreground">{selectedModels.length} selected</span>
                   </div>
-
-                  {textOverlay.isActive && (
-                    <div className="space-y-3 mt-3">
-                      <div>
-                        <input
-                          type="text"
-                          value={textOverlay.text}
-                          onChange={(e) => setTextOverlay(prev => ({ ...prev, text: e.target.value }))}
-                          placeholder="Enter text to display..."
-                          className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                        />
-                      </div>
-
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={textOverlay.optimize}
-                          onChange={(e) => setTextOverlay(prev => ({ ...prev, optimize: e.target.checked }))}
-                          className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary"
-                        />
-                        <span className="text-xs text-muted-foreground">Optimize text (allow model to adjust)</span>
-                      </label>
-
-                      <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Placement</label>
-                        <select
-                          value={textOverlay.placement}
-                          onChange={(e) => setTextOverlay(prev => ({ ...prev, placement: e.target.value as TextPlacement }))}
-                          className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                        >
-                          <option value="optimize">Optimize (model chooses)</option>
-                          <option value="top-left">Top Left</option>
-                          <option value="top-center">Top Center</option>
-                          <option value="top-right">Top Right</option>
-                          <option value="center">Center</option>
-                          <option value="bottom-left">Bottom Left</option>
-                          <option value="bottom-center">Bottom Center</option>
-                          <option value="bottom-right">Bottom Right</option>
-                        </select>
-                      </div>
+                  {displayModels.length === 0 ? (
+                    <div className="p-3 rounded-lg border border-dashed border-border text-center bg-background">
+                      <p className="text-xs text-muted-foreground">No video models available</p>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="text-xs h-auto p-0 mt-1"
+                        onClick={() => setActiveModule('integrations')}
+                      >
+                        Add Integration
+                      </Button>
                     </div>
+                  ) : (
+                    <GlobalEngineSelector
+                      type="video"
+                      selectedIds={selectedModels}
+                      onChange={setSelectedModels}
+                      multiSelect={true}
+                    />
                   )}
                 </div>
+
+                {/* Video Templates */}
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-muted-foreground block">Templates</span>
+                  <VideoTemplateDropdown
+                    templateType="enhance"
+                    selectedId={enhanceTemplateId}
+                    onSelect={setEnhanceTemplateId}
+                    onTemplateContent={setEnhanceTemplateContent}
+                    label="Enhancement"
+                    placeholder="Select enhancement style..."
+                  />
+                  <VideoTemplateDropdown
+                    templateType="scene"
+                    selectedId={sceneTemplateId}
+                    onSelect={setSceneTemplateId}
+                    onTemplateContent={setSceneTemplateContent}
+                    label="Scene Framework"
+                    placeholder="Select scene structure..."
+                  />
+                  <VideoTemplateDropdown
+                    templateType="recipe"
+                    selectedId={recipeTemplateId}
+                    onSelect={setRecipeTemplateId}
+                    onTemplateContent={setRecipeTemplateContent}
+                    label="Content Recipe"
+                    placeholder="Select ad recipe..."
+                  />
+                </div>
+
+                {/* Production Parameters */}
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-muted-foreground block">Production Parameters</span>
+                  <GlobalProductionParameters
+                    angles={numVersions}
+                    onAnglesChange={setNumVersions}
+                    variations={variationsPerModel}
+                    onVariationsChange={setVariationsPerModel}
+                    maxAngles={6}
+                    maxVariations={3}
+                  />
+                </div>
+
+                {/* Audio & Voiceover */}
+                <div className="space-y-3">
+                  <span className="text-xs font-medium text-muted-foreground block">Audio & Text Options</span>
+
+                  {/* Audio Toggle */}
+                  <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-background">
+                    <div className="flex items-center gap-2">
+                      <Volume2 className="w-4 h-4 text-muted-foreground" />
+                      <Label htmlFor="audio-toggle" className="text-xs font-medium">Generate Audio</Label>
+                    </div>
+                    <Switch
+                      id="audio-toggle"
+                      checked={generateAudio}
+                      onCheckedChange={setGenerateAudio}
+                    />
+                  </div>
+
+                  {/* Voiceover Script */}
+                  {generateAudio && (
+                    <div className="p-3 rounded-lg border border-border bg-background animate-fade-in">
+                      <label className="text-xs font-medium mb-2 block">
+                        Voiceover Script (Optional)
+                      </label>
+                      <Textarea
+                        placeholder="Enter a script for the voiceover..."
+                        value={voiceoverScript}
+                        onChange={(e) => setVoiceoverScript(e.target.value)}
+                        rows={3}
+                        className="resize-none text-sm"
+                      />
+                    </div>
+                  )}
+
+                  {/* Text Overlay */}
+                  <div className="p-3 rounded-lg border border-border bg-background">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium flex items-center gap-1.5">
+                        <Type className="w-3 h-3" />
+                        Allow Text
+                      </span>
+                      <Switch
+                        checked={textOverlay.isActive}
+                        onCheckedChange={(checked) => setTextOverlay(prev => ({ ...prev, isActive: checked }))}
+                      />
+                    </div>
+
+                    {textOverlay.isActive && (
+                      <div className="space-y-3 mt-3">
+                        <div>
+                          <input
+                            type="text"
+                            value={textOverlay.text}
+                            onChange={(e) => setTextOverlay(prev => ({ ...prev, text: e.target.value }))}
+                            placeholder="Enter text to display..."
+                            className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                          />
+                        </div>
+
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={textOverlay.optimize}
+                            onChange={(e) => setTextOverlay(prev => ({ ...prev, optimize: e.target.checked }))}
+                            className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary"
+                          />
+                          <span className="text-xs text-muted-foreground">Optimize text (allow model to adjust)</span>
+                        </label>
+
+                        <div>
+                          <label className="text-xs text-muted-foreground mb-1 block">Placement</label>
+                          <select
+                            value={textOverlay.placement}
+                            onChange={(e) => setTextOverlay(prev => ({ ...prev, placement: e.target.value as TextPlacement }))}
+                            className="w-full px-3 py-2 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                          >
+                            <option value="optimize">Optimize (model chooses)</option>
+                            <option value="top-left">Top Left</option>
+                            <option value="top-center">Top Center</option>
+                            <option value="top-right">Top Right</option>
+                            <option value="center">Center</option>
+                            <option value="bottom-left">Bottom Left</option>
+                            <option value="bottom-center">Bottom Center</option>
+                            <option value="bottom-right">Bottom Right</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-            </section>
+            </AccordionSection>
           </div>
         </aside>
 
