@@ -27,22 +27,86 @@ AFTER commit `- UNVERIFIED` → session log → push → owner verifies.
   click → HTML popup (Dialog, LinksPopup pattern). Read-only.
 
 **Pair 2 — Rule engine (connector) + rules store (hub). ONE connector bump.**
-- Matcher: pure WP-free `PCM_Text_Matcher` class; normalization spec
-  (whitespace/NBSP/entities/case) written first; unit fixtures from real
-  builder HTML. Extends the PROVEN visible-text match pattern
-  (seohub/service.php:1767 `wp_strip_all_tags` compare) with normalization +
-  per-post + occurrence scoping.
-- Connector (bump bundles BOTH): `GET /pcm-conn/v1/scan-content` (rendered,
-  hardened-loopback pattern from :1620) + `POST /pcm-conn/v1/rules` (replaces
-  the post's set, purges via `pcm_conn_purge_caches` :532) + output-buffer
-  application (`template_redirect` + `ob_start` at priority 1, exactly like
-  :1752) + capability answer ("rule schema v1"). Rules stored per post in
-  non-autoloaded options (`pcm_conn_rules_{postId}`) — render loads only the
-  current post's rules; miss → serve original + increment that post's stale
-  counter.
-- Hub: `seo_dynamic_rules` indexed table (siteId, postId, target, matchText,
-  occurrence, replacement, active, changesetId NULLABLE from day one,
-  staleCount, timestamps) — DB bump. Rule schema CONTRACT frozen.
+Owner-approved 2026-07-08: HIGHEST-STANDARD upgrades baked in — (A) the
+matcher applies via WordPress core's streaming HTML parser, (B) rules carry
+re-anchor context so stale rules get ASSISTED one-click healing in pair 4
+(deterministic serving + assisted healing; never fuzzy auto-matching).
+
+**2a. Contracts FIRST (docs before code, architecture doc):**
+- Rule schema v1: `{ schemaVersion:1, postId, rules:[{ id, target:
+  'paragraph'|'heading'|'anchorText'|'href', match:{ text:<normalized>,
+  occurrence }, replacement, active, changesetId?, sourceChangeId?,
+  anchor:{ parentHeading?, prevText? } }] }` — `anchor` = the re-anchor
+  context for pair 4's assisted healing.
+- Normalization spec v1 (the matcher's law): decode HTML entities → map NBSP
+  to space → collapse all Unicode whitespace runs to one space → trim →
+  case-fold. Byte-identical implementation hub + connector.
+- scan-content contract: node shape identical to the frozen node-identity
+  contract v1 (pair 1) + `source: 'content'|'rendered'`.
+
+**2b. Hub side:**
+- `PCM_Text_Matcher`: pure, WP-free class (normalize + occurrence-aware block
+  match); fixture corpus from REAL builder HTML (Gutenberg/classic/Elementor/
+  Brizy pages) — tests written now, runnable where composer/CI exists.
+- `seo_dynamic_rules` indexed table (siteId, postId, target, matchText,
+  occurrence, replacement, anchorContext, active, changesetId NULLABLE from
+  day one, staleCount, timestamps) — DB bump (`PCM_DB_VERSION` 1.37.0).
+- Push path in `PCM_Sites_Service`: capability check FIRST (GET
+  /pcm-conn/v1/rules; 404 → honest "connector too old, update via the Sites
+  Connector column" error), then POST replaces the post's rule set.
+- Remote content-nodes endpoint (`GET /seo/sites/{id}/content/{post}/
+  content-nodes`) proxying the connector's scan-content; HeadingsPanel's
+  remote path switches to it WHEN the connector answers (older connector →
+  current headings-only behavior + honest note, never a fake).
+
+**2c. Connector (ONE version bump, 2.6.3 → 2.7.0, bundles everything):**
+- `GET /pcm-conn/v1/scan-content?post_id=` — ordered heading+paragraph nodes:
+  parse `content.raw` with the SAME parser rules as local pair 1 when raw is
+  non-empty; builder pages (empty raw) → hardened-loopback rendered parse
+  (pattern from seohub/service.php:1620), `<body>` only, `<header>/<nav>/
+  <footer>/<aside>` regions stripped (deterministic, documented), nodes
+  flagged `source:'rendered'`.
+- Rule storage per post: `pcm_conn_rules_{postId}` options (autoload OFF —
+  render loads only the current post's rules) + `pcm_conn_rules_index` (posts
+  with rules; drives site-wide purge/kill-switch iteration). NOT the 200-cap
+  overrides list — that stays heading-override-only, untouched.
+- **Serving (the high-grade core):** `template_redirect` + `ob_start` prio 1
+  (proven pattern :1752), singular requests only, skip admin/feed/REST.
+  Application walks the buffered HTML with **`WP_HTML_Tag_Processor` (WP core
+  6.2+, maintained by WordPress, built for malformed builder HTML)** — find
+  target blocks, compare their VISIBLE text via the normalization spec,
+  occurrence-aware, swap inner content (`wp_kses_post`-sanitized replacement).
+  Regex fallback path ONLY when the core class is absent (WP < 6.2), flagged
+  in the rule status so it's never silent. ENTIRE callback wrapped in
+  try/catch — ANY throwable returns the ORIGINAL buffer untouched + error
+  counter (a rule can never white-screen a client site).
+- Miss → serve original + `staleCount++` on that post's rules (read back by
+  pair 4's indicator). Every rule write purges via `pcm_conn_purge_caches`.
+- `POST /pcm-conn/v1/rules` validates `schemaVersion === 1` (reject others
+  honestly); GET returns rules + serve/miss counters.
+
+**Pair-2 build checklist (in order, owner-approval gate before start):**
+1. `git fetch && git pull --ff-only` → BEFORE commit → push.
+2. Write 2a contracts into the architecture doc (commit as DOCS).
+3. `PCM_Text_Matcher` + normalization impl + fixtures.
+4. DB bump: `seo_dynamic_rules` (additive dbDelta, PCM_DB_VERSION 1.37.0).
+5. Connector template: scan-content + rule store + buffer application +
+   rules routes + version 2.7.0 (artifact regenerates automatically).
+6. Hub: capability check + push path + remote content-nodes proxy + trpc map
+   + HeadingsPanel remote switch.
+7. Verify: `php -l` every touched file; tsc = 59 baseline ZERO new; build.
+8. Roll connectors: self-update via the Sites Connector column (sites whose
+   self-update is broken — e.g. powerstock.local — need the documented
+   one-time manual reinstall).
+9. AFTER commit `- UNVERIFIED` + session log + changelog + push.
+10. Owner verification: (a) remote site shows paragraph rows in the outline,
+    (b) connector column reads 2.7.0, (c) one hand-pushed test rule serves a
+    swapped paragraph on the live page, original restored when the rule is
+    removed, (d) a deliberately-wrong rule serves the ORIGINAL (fail-safe).
+
+> NOTE: paragraph rows are READ-ONLY through pair 2 BY DESIGN — pair 2 builds
+> the engine that edits need to write to. Pair 3 (next, small) adds
+> click-to-edit + ✦ AI-optimize on the paragraph rows.
 
 **Pair 3 — Edit + AI-optimize paragraphs from the table (operator path).**
 - Paragraph rows gain click-to-edit + ✦ optimize with the staged
