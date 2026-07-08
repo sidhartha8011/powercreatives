@@ -283,7 +283,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       try {
         const optimized = await optimizeBriefMutation.mutateAsync({
           brief: brief,
-          modelId: settings?.defaultImageTextModel || '',
+          modelId: settings?.defaultImageTextModel || settings?.defaultCopyMenuIntelligence || params.textModelId || '',
           brandContext: brandCtx,
         });
         briefToUse = (optimized as any).optimizedBrief ?? brief;
@@ -310,7 +310,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
         const conceptsResult = await generateConceptsMutation.mutateAsync({
           prompt: briefToUse,
           count: params.numVersions - 1,
-          modelId: settings?.defaultImageTextModel || '',
+          modelId: settings?.defaultImageTextModel || settings?.defaultCopyMenuIntelligence || params.textModelId || '',
           brandContext: brandCtx,
           referenceImages: toggles.useReferenceSubjects
             ? sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent }))
@@ -505,8 +505,8 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       return;
     }
     if (params.autoOptimizeBrief || params.numVersions > 1) {
-      if (!settings?.defaultImageTextModel) {
-        toast.error('Menu Intelligence saknas. Välj en modell i Settings → Module Defaults.');
+      if (!settings?.defaultImageTextModel && !settings?.defaultCopyMenuIntelligence && !params.textModelId) {
+        toast.error('Menu Intelligence saknas. Vänligen välj en textmodell i sidopanelen eller ställ in en standardmodell (t.ex. under Image Module eller Copy Module) i Inställningar → Module Defaults.');
         return;
       }
     }
