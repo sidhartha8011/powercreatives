@@ -27,6 +27,7 @@ import {
   GroupedAnglesList,
   ReferenceAdsSection,
   CopyTypeSelector,
+  AccordionSection,
 } from '@/components/shared';
 import type { ContextData, ScrapedBusinessData, GenerationMode, ListItem, AngleItem } from '@/components/shared';
 import type { SessionReferenceImage } from '@shared/referenceImageIntents';
@@ -55,61 +56,7 @@ interface AdsGenSettings {
 /** Which output-type tab is active in the segmented control */
 type OutputTab = 'image' | 'copy' | 'video';
 
-// BEFORE ADS SIDEBAR ACCORDION REFACTORING
-// ============================================================================
-// Reusable Accordion Section (local to this sidebar)
-// ============================================================================
 
-interface AccordionSectionProps {
-  title: string;
-  icon?: React.ReactNode;
-  defaultOpen?: boolean;
-  badge?: string;
-  children: React.ReactNode;
-}
-
-/**
- * Lightweight collapsible section used exclusively inside AdsSidebar.
- * Provides consistent visual hierarchy across all sidebar groups.
- */
-function AccordionSection({ title, icon, defaultOpen = false, badge, children }: AccordionSectionProps) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-
-  return (
-    <div className="rounded-lg overflow-hidden shadow-sm border border-border">
-      {/* Accordion header — Tailwind classes only, no inline styles */}
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors bg-[var(--sidebar-section-bg)] hover:bg-[var(--sidebar-section-hover)]"
-      >
-        <div className="flex items-center gap-2">
-          {icon && <span className="text-muted-foreground">{icon}</span>}
-          <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
-            {title}
-          </span>
-          {badge && (
-            <span className="text-[10px] font-medium text-muted-foreground px-1.5 py-0.5 rounded bg-[var(--sidebar-section-hover)]">
-              {badge}
-            </span>
-          )}
-        </div>
-        <ChevronDown
-          className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 ${
-            isOpen ? 'rotate-0' : '-rotate-90'
-          }`}
-        />
-      </button>
-
-      {/* Accordion content */}
-      {isOpen && (
-        <div className="px-3 pb-3 pt-2 space-y-4 border-t border-border bg-card">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ============================================================================
 // Props
