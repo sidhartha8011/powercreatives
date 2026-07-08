@@ -6537,3 +6537,32 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   state switches; heartbeat licensing; AI optimizer last; open PO decisions).
 - Verified per pair: tsc 56 = baseline; final build OK. Live pass pending.
   BEFOREs 631ca67/129bd71/299358e/0298f0c/6ebadad → AFTERs through c1fb5a1.
+
+## 2026-07-08 — pill hover, connect/create projects, brand-mapping bug
+- [pillbutton-blue-hover]: shared PillButton default/subtle hover → BLUE
+  (primaryLight bg + primary text/icon; hover previews the active palette).
+  Applies everywhere PillButton renders (SEO toolbar, Copy, Writer).
+- [project-connect-create]: delivery projects surface split into TWO actions —
+  Connect (Link2 → searchable non-portal Command popover, ApprovalSetPicker
+  pattern; search input on top) + Create (Plus → NEW shared
+  modules/Projects/CreateProjectDialog.tsx on the EntityCard primitive: inline
+  title, wp.media multi-image picker with thumbnail strip, Cancel/Create).
+  New POST /assets/projects/{id}/images (ownership-checked, esc_url_raw, cap
+  50) registers uploaded media-library URLs as project image assets (type
+  'image', provider 'upload'). onCreated chains assignProject → the new
+  project lands connected to the delivery. AddProjectMenu replaced by
+  ProjectAddActions in all three surfaces (card header, empty state, table
+  add-row). php -l clean.
+- [pending-create-context-mapping] BUG FIX (user live-report: "+ flow picks 2
+  brand properties, manual pick fills ~7"): the consume effect set contextData
+  RAW, bypassing each module's handleContextChange → mapBrandToFormValues
+  never ran. Fix: Image + Copy consumers now call handleContextChange (the
+  exact manual-selection code path). Video unchanged — it has no such mapping
+  (ContextPanel gets setContextData directly).
+- PILL-SIZE PARITY (user report): investigated — Deliveries and SEO pills now
+  share the SAME constant (CELL_PILL, unified earlier tonight); no code
+  difference remains. Most likely a stale bundle → hard-refresh; if still
+  bigger after refresh, next suspect is the Select-trigger wrapper around the
+  Status/Type pills (chevron + h-7 hit area) — measure in DevTools first.
+- Verified: tsc 56 = baseline throughout; build OK. Live pass pending.
+  BEFOREs a1fceeb/5ea6dc3/9180e21 → AFTERs (this batch).
