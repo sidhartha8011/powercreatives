@@ -108,12 +108,60 @@ re-anchor context so stale rules get ASSISTED one-click healing in pair 4
 > the engine that edits need to write to. Pair 3 (next, small) adds
 > click-to-edit + ✦ AI-optimize on the paragraph rows.
 
-**Pair 3 — Edit + AI-optimize paragraphs from the table (operator path).**
-- Paragraph rows gain click-to-edit + ✦ optimize with the staged
-  accept/reject UI (identical to EditableCell); accept → hub rule row → push
-  to connector → toast confirms applied.
-- Prompt = NEW seeded template section `paragraph_optimize` via the existing
-  seeding (service.php:2776) — template law honored from the first generation.
+**Pair 2.5 — Scan resilience (connector 2.7.1) — root-cause fix for loopback.**
+Owner-approved diagnosis: loopback-per-request is the design weakness (LocalWP
+worker starvation; WAF-blocked hosts). Fix at the SOURCE:
+- **Scan cache:** connector caches the scan-content result per post (transient,
+  ~10 min), busted on `save_post` and on every rules POST/purge — repeat
+  outline-opens cost zero loopbacks.
+- **Single-flight lock:** max ONE loopback at a time site-wide (transient
+  lock); a locked request skips straight to the fallback tiers. Protects
+  against ANY concurrency (two tabs, two users), not just our panel. The
+  heading scan's rendered pass respects the same lock (its skip path already
+  exists and is unchanged behavior).
+- **Honest fallback tiers when loopback fails/locked:** ① in-process render
+  via WP's `the_content` filter (catches Divi/WPBakery/shortcode builders, no
+  HTTP), flagged `source:'content-rendered'` → ② raw parse (wpautop path,
+  plain WP/Gutenberg — the powerstock case), flagged `source:'content'`.
+  Every tier flagged — never silent.
+- **Loopback timeout 20s → 8s** (fast honest degradation; cache+fallbacks make
+  slow waiting wrong).
+- **Hub panel serializes:** content-nodes query starts only after the headings
+  query resolves (belt and braces).
+Checklist: BEFORE → connector template edits (cache/lock/tiers/timeout, bump
+2.7.1) → template-extract lint (the NEW mandatory step: lint the GENERATED
+connector source, not just the hub file) → panel serialization → php -l/tsc/
+build → AFTER + logs + push → owner reinstalls/updates connectors.
+
+**Pair 3 — Edit + AI-optimize paragraphs from the table (REMOTE sites).**
+Scope law: paragraphs are DYNAMIC-only (routing law) — editing works on
+connected sites (the rules engine lives on the connector). The LOCAL tab's
+paragraph rows stay read-only with an honest tooltip (no engine on the hub's
+own site — no fake path).
+- **UI (HeadingsPanel, remote paragraph rows):** click-to-edit text (mirrors
+  HeadingText) + hover ✦ AI-optimize with the SAME staged Accept/Reject UI.
+  Accept (manual or AI) → rule saved + pushed → toast confirms it's serving.
+- **Display truth:** the scan shows ORIGINAL text by design (rules match
+  originals), so the panel overlays the hub's rule set: a paragraph with an
+  active rule shows the SERVED text + a minimal "optimized" mark (no bloat —
+  small dot, tooltip carries original). New read endpoint for the overlay.
+- **Hub endpoints:** `POST /seo/sites/{id}/content/{post}/paragraph-rule`
+  (UPSERT by siteId+postId+matchText+occurrence: edit-again updates the same
+  rule, never piles up; replacement identical to original → rule DELETED =
+  clean revert, mirroring the shipped override behavior) → writes
+  `seo_dynamic_rules` → `push_rules()` (capability-checked). `GET
+  /seo/sites/{id}/content/{post}/rules` (hub DB, for the overlay). `POST
+  …/paragraph-optimize` (AI suggestion, NOT saved — staged).
+- **Template law:** new `paragraph` prompt section in prompts.php
+  (optimize + generate) → auto-seeded as user-editable Templates via the
+  existing seeding — user controls the prompt from day one.
+- **Identity:** matchText normalized SERVER-side (PCM_Text_Matcher::normalize)
+  from the scan node's text; occurrence from the node; anchor → anchorContext.
+Checklist: BEFORE → prompts section → endpoints + service methods → trpc map
+entries → panel edit/optimize/overlay → template-extract lint + php -l + tsc
+(59 baseline) + build → AFTER + session log + changelog + push → owner
+verifies: edit a paragraph on powerstock → live page serves it → edit back to
+original → rule gone, original serves.
 
 **Pair 4 — Switches + serving indicator.**
 - Active toggles: per change / per page / per site (hub UI writes, push
