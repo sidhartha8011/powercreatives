@@ -18,7 +18,7 @@
  *   - Optional drag-and-drop (via @hello-pangea/dnd) when onItemMove is set.
  */
 
-import { useCallback, useMemo, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type DragEvent, type ReactNode } from 'react';
 import {
   DragDropContext,
   Draggable,
@@ -45,6 +45,7 @@ export function KanbanBoard<T extends { id: string | number }>({
   isLoading = false,
   error = null,
   onItemMove,
+  onColumnReorder,
   className,
   style,
   ariaLabel = 'Kanban board',
@@ -113,6 +114,7 @@ export function KanbanBoard<T extends { id: string | number }>({
           items={grouped.get(col.id) ?? []}
           renderCard={renderCard}
           dndEnabled={dndEnabled}
+          onColumnReorder={onColumnReorder}
         />
       ))}
     </div>
@@ -136,22 +138,71 @@ interface KanbanColumnProps<T extends { id: string | number }> {
   items: T[];
   renderCard: (item: T, ctx: RenderCardContext) => ReactNode;
   dndEnabled: boolean;
+  onColumnReorder?: (fromColumnId: string, toColumnId: string) => void;
 }
+
+/** Custom MIME type so lane drops never react to foreign drags. */
+const COLUMN_DRAG_TYPE = 'text/pck-column';
 
 function KanbanColumn<T extends { id: string | number }>({
   column,
   items,
   renderCard,
   dndEnabled,
+  onColumnReorder,
 }: KanbanColumnProps<T>) {
   const pillStyle = {
     background: column.accentColor ?? undefined,
     color: column.accentText ?? undefined,
   };
 
+  // Lane reorder (native HTML5 drag on the header — separate element and
+  // mechanism from the hello-pangea card DnD, so the two never interfere).
+  const reorderable = Boolean(onColumnReorder);
+  const [isColumnDropTarget, setColumnDropTarget] = useState(false);
+
+  const handleHeaderDragStart = (e: DragEvent<HTMLElement>) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(COLUMN_DRAG_TYPE, column.id);
+    try {
+      e.dataTransfer.setData('text/plain', column.id);
+    } catch {
+      /* older engines */
+    }
+  };
+  const handleHeaderDragOver = (e: DragEvent<HTMLElement>) => {
+    if (e.dataTransfer.types.includes(COLUMN_DRAG_TYPE)) {
+      e.preventDefault();
+      setColumnDropTarget(true);
+    }
+  };
+  const handleHeaderDrop = (e: DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    setColumnDropTarget(false);
+    const from = e.dataTransfer.getData(COLUMN_DRAG_TYPE) || e.dataTransfer.getData('text/plain');
+    if (from && from !== column.id && onColumnReorder) onColumnReorder(from, column.id);
+  };
+
   const header = (
-    <header className={styles.columnHeader}>
-      <span className={styles.columnHeaderPill} style={pillStyle}>
+    <header
+      className={styles.columnHeader}
+      draggable={reorderable || undefined}
+      onDragStart={reorderable ? handleHeaderDragStart : undefined}
+      onDragOver={reorderable ? handleHeaderDragOver : undefined}
+      onDragLeave={reorderable ? () => setColumnDropTarget(false) : undefined}
+      onDrop={reorderable ? handleHeaderDrop : undefined}
+      style={reorderable ? { cursor: 'grab' } : undefined}
+      title={reorderable ? 'Drag to reorder lanes' : undefined}
+    >
+      <span
+        className={styles.columnHeaderPill}
+        style={{
+          ...pillStyle,
+          ...(isColumnDropTarget
+            ? { outline: '2px solid var(--pck-border-focus)', outlineOffset: 2 }
+            : {}),
+        }}
+      >
         <span className={styles.columnHeaderLabel}>{column.label}</span>
       </span>
     </header>

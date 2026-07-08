@@ -89,8 +89,19 @@ const LANE_FIELD_OPTIONS: ReadonlyArray<{ value: LaneField; label: string }> = [
   { value: 'client', label: 'Client' },
 ];
 const LANES_STORAGE_KEY = 'pcm:deliveries:lanes';
+/** Per-lane-field custom lane ORDER (drag a lane header to reorder). */
+const LANE_ORDER_KEY = 'pcm:deliveries:lane-order:v1';
 /** Lane id for "field is empty" — dropping here clears the value. */
 const NONE_LANE = '__none__';
+
+function readLaneOrders(): Record<string, string[]> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LANE_ORDER_KEY) ?? '{}') as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string[]>) : {};
+  } catch {
+    return {};
+  }
+}
 
 function readStoredLaneField(): LaneField {
   try {
@@ -298,6 +309,46 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
     }
   }, [laneField, deliveries, brandNames, typePresets]);
 
+  // Custom lane order — persisted PER lane field (your Status order is not
+  // your Brand order); reconciled so removed lanes drop out and new lanes
+  // append, like the table's column layout.
+  const [laneOrders, setLaneOrders] = useState<Record<string, string[]>>(readLaneOrders);
+  const orderedLaneColumns = useMemo(() => {
+    const stored = laneOrders[laneField] ?? [];
+    const byId = new Map(laneColumns.map((c) => [c.id, c]));
+    const ordered: KanbanColumn[] = [];
+    for (const id of stored) {
+      const col = byId.get(id);
+      if (col) {
+        ordered.push(col);
+        byId.delete(id);
+      }
+    }
+    for (const col of laneColumns) if (byId.has(col.id)) ordered.push(col);
+    return ordered;
+  }, [laneColumns, laneOrders, laneField]);
+
+  const handleColumnReorder = useCallback(
+    (fromId: string, toId: string) => {
+      const ids = orderedLaneColumns.map((c) => c.id);
+      const from = ids.indexOf(fromId);
+      const to = ids.indexOf(toId);
+      if (from < 0 || to < 0) return;
+      ids.splice(from, 1);
+      ids.splice(to, 0, fromId);
+      setLaneOrders((prev) => {
+        const next = { ...prev, [laneField]: ids };
+        try {
+          localStorage.setItem(LANE_ORDER_KEY, JSON.stringify(next));
+        } catch {
+          // Storage unavailable — order still applies in-session.
+        }
+        return next;
+      });
+    },
+    [orderedLaneColumns, laneField]
+  );
+
   const getColumnId = useCallback(
     (d: Delivery): string => {
       switch (laneField) {
@@ -475,7 +526,7 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
               <SelectContent>
                 {LANE_FIELD_OPTIONS.map((o) => (
                   <SelectItem key={o.value} value={o.value}>
-                    Lanes: {o.label}
+                    {o.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -577,11 +628,12 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
             />
           ) : (
             <KanbanBoard<Delivery>
-              columns={laneColumns}
+              columns={orderedLaneColumns}
               items={listState.filteredItems}
               getColumnId={getColumnId}
               renderCard={renderCard}
               onItemMove={handleMove}
+              onColumnReorder={handleColumnReorder}
               isLoading={isLoading}
               error={error}
               ariaLabel="Deliveries pipeline"

@@ -89,6 +89,14 @@ export interface KanbanBoardProps<T extends { id: string | number }> {
    */
   onItemMove?: (event: KanbanMoveEvent) => void;
 
+  /**
+   * Optional lane reorder: when set, lane HEADERS become draggable (native
+   * HTML5 drag — a different element and mechanism than the card DnD, so the
+   * two coexist). Called with the dragged lane id and the lane it was
+   * dropped on; the consumer owns ordering + persistence.
+   */
+  onColumnReorder?: (fromColumnId: string, toColumnId: string) => void;
+
   className?: string;
   style?: CSSProperties;
   ariaLabel?: string;
