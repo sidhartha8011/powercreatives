@@ -270,6 +270,7 @@ export const AdsSidebar = memo(function AdsSidebar({
           title="Copy Settings"
           defaultOpen={false}
           disabled={!enabledOutputs.copy}
+          onDisabledClick={() => onEnabledOutputsChange({ ...enabledOutputs, copy: true })}
           headerAction={
             <Switch
               checked={enabledOutputs.copy}
@@ -337,6 +338,7 @@ export const AdsSidebar = memo(function AdsSidebar({
           title="Image Settings"
           defaultOpen={false}
           disabled={!enabledOutputs.image}
+          onDisabledClick={() => onEnabledOutputsChange({ ...enabledOutputs, image: true })}
           headerAction={
             <Switch
               checked={enabledOutputs.image}
@@ -391,6 +393,7 @@ export const AdsSidebar = memo(function AdsSidebar({
           title="Video Settings"
           defaultOpen={false}
           disabled={!enabledOutputs.video}
+          onDisabledClick={() => onEnabledOutputsChange({ ...enabledOutputs, video: true })}
           headerAction={
             <Switch
               checked={enabledOutputs.video}

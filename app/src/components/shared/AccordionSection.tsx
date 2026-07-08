@@ -18,6 +18,7 @@ interface AccordionSectionProps {
   children: React.ReactNode;
   headerAction?: React.ReactNode;
   disabled?: boolean;
+  onDisabledClick?: () => void;
 }
 
 export function AccordionSection({
@@ -28,11 +29,18 @@ export function AccordionSection({
   children,
   headerAction,
   disabled = false,
+  onDisabledClick,
 }: AccordionSectionProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   const handleToggle = () => {
-    if (disabled) return;
+    if (disabled) {
+      if (onDisabledClick) {
+        onDisabledClick();
+      }
+      setIsOpen(true);
+      return;
+    }
     setIsOpen(!isOpen);
   };
 
@@ -43,9 +51,8 @@ export function AccordionSection({
       <div className={`w-full flex items-center justify-between px-3 py-2.5 ${disabled ? 'bg-muted/5' : 'hover:bg-muted/10'}`}>
         <button
           type="button"
-          disabled={disabled}
           onClick={handleToggle}
-          className={`flex-1 flex items-center justify-between text-left ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+          className="flex-1 flex items-center justify-between text-left cursor-pointer"
         >
           <div className="flex items-center gap-2 min-w-0">
             {icon && <span className="text-muted-foreground">{icon}</span>}
@@ -58,13 +65,11 @@ export function AccordionSection({
               </span>
             )}
           </div>
-          {!disabled && (
-            <ChevronRight
-              className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 mr-3 ${
-                isOpen ? 'rotate-90' : 'rotate-0'
-              }`}
-            />
-          )}
+          <ChevronRight
+            className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 mr-3 ${
+              isOpen && !disabled ? 'rotate-90' : 'rotate-0'
+            }`}
+          />
         </button>
         {headerAction && (
           <div className="flex items-center shrink-0">
