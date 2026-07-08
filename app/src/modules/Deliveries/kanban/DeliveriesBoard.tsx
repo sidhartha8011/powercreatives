@@ -46,13 +46,14 @@ import {
   KanbanBoard,
   useListState,
   type FilterState,
+  type KanbanColumn,
   type KanbanMoveEvent,
 } from '@/components/shared/Kanban';
 import { EmptyState } from '@/components/shared/EmptyState';
 
 import { trpc } from '@/lib/trpc';
 
-import { DELIVERIES_LAYOUT_KEY, DeliveriesTable } from '../table/DeliveriesTable';
+import { DELIVERIES_LAYOUT_KEY, DeliveriesTable, leadOf, typeColors } from '../table/DeliveriesTable';
 import { DeliveryCard } from './DeliveryCard';
 import { deliveryColumns } from './deliveryColumns';
 import { buildDeliveryFilters } from './deliveryFilters';
@@ -73,6 +74,32 @@ const NO_SORT_VALUE = '__none__';
 /** Kanban ⇄ Table — persisted per browser, like the SEO column layout. */
 type DeliveriesView = 'kanban' | 'table';
 const VIEW_STORAGE_KEY = 'pcm:deliveries:view';
+
+/**
+ * Dynamic lanes: which delivery field buckets the Kanban. All are
+ * single-value fields with a write path, so a lane drop WRITES the value.
+ * Modules (multi-value) and Updated (derived) are deliberately excluded.
+ */
+type LaneField = 'status' | 'type' | 'brand' | 'lead' | 'client';
+const LANE_FIELD_OPTIONS: ReadonlyArray<{ value: LaneField; label: string }> = [
+  { value: 'status', label: 'Status' },
+  { value: 'type', label: 'Type' },
+  { value: 'brand', label: 'Brand' },
+  { value: 'lead', label: 'Lead' },
+  { value: 'client', label: 'Client' },
+];
+const LANES_STORAGE_KEY = 'pcm:deliveries:lanes';
+/** Lane id for "field is empty" — dropping here clears the value. */
+const NONE_LANE = '__none__';
+
+function readStoredLaneField(): LaneField {
+  try {
+    const raw = localStorage.getItem(LANES_STORAGE_KEY);
+    return LANE_FIELD_OPTIONS.some((o) => o.value === raw) ? (raw as LaneField) : 'status';
+  } catch {
+    return 'status';
+  }
+}
 
 function readStoredView(): DeliveriesView {
   try {
@@ -124,6 +151,8 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
     isLoading,
     error,
     updateStatus,
+    updateFieldsOptimistic,
+    setLeadOptimistic,
     deleteDelivery,
   } = useDeliveries();
 
@@ -198,7 +227,96 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
     [listState]
   );
 
-  const getColumnId = useCallback((d: Delivery) => d.status, []);
+  // ─── Dynamic lanes ───────────────────────────────────────────
+  const [laneField, setLaneField] = useState<LaneField>(readStoredLaneField);
+  const switchLaneField = useCallback((next: LaneField) => {
+    setLaneField(next);
+    try {
+      localStorage.setItem(LANES_STORAGE_KEY, next);
+    } catch {
+      // Storage unavailable — works in-session.
+    }
+  }, []);
+
+  // Lanes per field: Status keeps its fixed declaration; Type shows every
+  // preset (so a card can be dragged INTO an empty type); Brand/Lead/Client
+  // derive from the values present in the data (unfiltered, so lanes don't
+  // flicker while searching) + a "No X" lane whose drop CLEARS the value.
+  const laneColumns = useMemo((): ReadonlyArray<KanbanColumn> => {
+    const neutral = { accentColor: '#eef0f3', accentText: '#4a4a45' };
+    const noneLane = (label: string): KanbanColumn => ({
+      id: NONE_LANE,
+      label,
+      accentColor: '#f4f4f2',
+      accentText: '#8a8a84',
+    });
+    switch (laneField) {
+      case 'status':
+        return deliveryColumns;
+      case 'type': {
+        const lanes: KanbanColumn[] = Object.entries(typePresets).map(([key, preset]) => {
+          const colors = typeColors(key);
+          return { id: key, label: preset.label, accentColor: colors.bg, accentText: colors.text };
+        });
+        return [...lanes, noneLane('No type')];
+      }
+      case 'brand': {
+        const present = new Map<string, string>();
+        for (const d of deliveries) {
+          if (d.brandId != null) {
+            const key = String(Number(d.brandId));
+            present.set(key, brandNames.get(Number(d.brandId)) ?? `Brand #${key}`);
+          }
+        }
+        const lanes: KanbanColumn[] = [...present.entries()]
+          .sort((a, b) => a[1].localeCompare(b[1]))
+          .map(([id, label]) => ({ id, label, ...neutral }));
+        return [...lanes, noneLane('No brand')];
+      }
+      case 'lead': {
+        const present = new Map<string, string>();
+        for (const d of deliveries) {
+          const lead = leadOf(d);
+          if (lead) present.set(String(lead.id), lead.name);
+        }
+        const lanes: KanbanColumn[] = [...present.entries()]
+          .sort((a, b) => a[1].localeCompare(b[1]))
+          .map(([id, label]) => ({ id, label, ...neutral }));
+        return [...lanes, noneLane('No lead')];
+      }
+      case 'client': {
+        const present = new Set<string>();
+        for (const d of deliveries) {
+          const client = d.clientName?.trim();
+          if (client) present.add(client);
+        }
+        const lanes: KanbanColumn[] = [...present]
+          .sort((a, b) => a.localeCompare(b))
+          .map((client) => ({ id: client, label: client, ...neutral }));
+        return [...lanes, noneLane('No client')];
+      }
+    }
+  }, [laneField, deliveries, brandNames, typePresets]);
+
+  const getColumnId = useCallback(
+    (d: Delivery): string => {
+      switch (laneField) {
+        case 'status':
+          return d.status;
+        case 'type':
+          return d.type ?? NONE_LANE;
+        case 'brand':
+          return d.brandId != null ? String(Number(d.brandId)) : NONE_LANE;
+        case 'lead': {
+          const lead = leadOf(d);
+          return lead ? String(lead.id) : NONE_LANE;
+        }
+        case 'client':
+          return d.clientName?.trim() || NONE_LANE;
+      }
+    },
+    [laneField]
+  );
 
   // ─── Kanban ⇄ Table view toggle ──────────────────────────────
   const [view, setView] = useState<DeliveriesView>(readStoredView);
@@ -250,14 +368,37 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
     [onEdit, requestDelete]
   );
 
+  // A lane drop WRITES the lane field's value (NONE_LANE clears it). Every
+  // path is optimistic-with-revert — required by the dnd IDLE-paint contract.
   const handleMove = useCallback(
     (event: KanbanMoveEvent) => {
-      if (!isDeliveryStatus(event.toColumnId)) return;
       const id = Number(event.itemId);
       if (!Number.isFinite(id)) return;
-      void updateStatus(id, event.toColumnId);
+      const to = event.toColumnId;
+      switch (laneField) {
+        case 'status':
+          if (isDeliveryStatus(to)) void updateStatus(id, to);
+          return;
+        case 'type':
+          void updateFieldsOptimistic(id, { type: to === NONE_LANE ? null : to });
+          return;
+        case 'brand':
+          void updateFieldsOptimistic(id, { brandId: to === NONE_LANE ? null : Number(to) });
+          return;
+        case 'client':
+          void updateFieldsOptimistic(id, { clientName: to === NONE_LANE ? null : to });
+          return;
+        case 'lead': {
+          const userId = to === NONE_LANE ? null : Number(to);
+          const name = userId != null
+            ? laneColumns.find((c) => c.id === to)?.label ?? null
+            : null;
+          void setLeadOptimistic(id, userId, name);
+          return;
+        }
+      }
     },
-    [updateStatus]
+    [laneField, laneColumns, updateStatus, updateFieldsOptimistic, setLeadOptimistic]
   );
 
   const hasActiveFilter = listState.activeFilterCount > 0;
@@ -324,6 +465,22 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
             Showing {listState.filteredItems.length} deliver
             {listState.filteredItems.length === 1 ? 'y' : 'ies'}
           </div>
+          {/* Lanes-by: any single-value column can bucket the board; a lane
+              drop writes that value. Kanban view only. */}
+          {view === 'kanban' && (
+            <Select value={laneField} onValueChange={(v) => switchLaneField(v as LaneField)}>
+              <SelectTrigger className="w-[140px] h-9 bg-white" aria-label="Lanes by">
+                <SelectValue placeholder="Lanes" />
+              </SelectTrigger>
+              <SelectContent>
+                {LANE_FIELD_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    Lanes: {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           {/* Sort dropdown drives the Kanban only — in table view the column
               headers own sorting (two competing sort systems would fight). */}
           {view === 'kanban' && (
@@ -420,7 +577,7 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
             />
           ) : (
             <KanbanBoard<Delivery>
-              columns={deliveryColumns}
+              columns={laneColumns}
               items={listState.filteredItems}
               getColumnId={getColumnId}
               renderCard={renderCard}

@@ -105,7 +105,7 @@ const TYPE_PALETTE: ReadonlyArray<{ bg: string; text: string }> = [
   { bg: '#f1f5f9', text: '#334155' }, // slate
 ];
 
-function typeColors(typeKey: string): { bg: string; text: string } {
+export function typeColors(typeKey: string): { bg: string; text: string } {
   let h = 0;
   for (let i = 0; i < typeKey.length; i++) h = (h * 31 + typeKey.charCodeAt(i)) >>> 0;
   return TYPE_PALETTE[h % TYPE_PALETTE.length];
@@ -347,7 +347,7 @@ function ModulesChips({ values }: { values: string[] }) {
 }
 
 /** The delivery's lead among its assignees (role='lead'; single by contract). */
-function leadOf(d: Delivery): { id: number; name: string } | null {
+export function leadOf(d: Delivery): { id: number; name: string } | null {
   const lead = d.assignees?.find((a) => a.role === 'lead');
   return lead ? { id: lead.id, name: lead.name } : null;
 }
