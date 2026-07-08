@@ -26,6 +26,7 @@ require_once __DIR__ . '/schema.php';
 require_once __DIR__ . '/site.php';
 require_once __DIR__ . '/gbp.php';
 require_once __DIR__ . '/export.php';
+require_once __DIR__ . '/class-pcm-text-matcher.php';
 
 class PCM_SEO_Service
 {
@@ -2615,6 +2616,83 @@ class PCM_SEO_Service
         $max   = (int) (self::field_prompts()['heading']['max'] ?? 80);
         $val   = self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
         return ($val instanceof WP_Error) ? $val : array('value' => $val);
+    }
+
+    // =====================================================================
+    // DYNAMIC RULES (rule schema v1) + remote content inventory — pair 2.
+    // Contracts: docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md.
+    // =====================================================================
+
+    /**
+     * A connected post's paragraph inventory (scan-content v1) via the
+     * connector — paragraphs in TRUE rendered document order, each with its
+     * display anchor (nearest preceding heading). Heading rows keep coming
+     * from remote_get_headings; their editing pipeline is untouched.
+     *
+     * @return array{supported:bool,nodes:array,error?:string}
+     */
+    public static function remote_get_content_nodes(object $site, int $post_id): array
+    {
+        self::ensure_sites_service();
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/scan-content', array('post_id' => $post_id), null, 30);
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) === 404) {
+            // Older connector (no scan-content) — the UI keeps its headings-only
+            // view and says so; never an error toast, never fake nodes.
+            return array('supported' => false, 'nodes' => array());
+        }
+        if ((int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return array('supported' => false, 'nodes' => array());
+        }
+        $body  = $res['body'];
+        $nodes = (isset($body['nodes']) && is_array($body['nodes'])) ? $body['nodes'] : array();
+        $out   = array('supported' => true, 'nodes' => $nodes);
+        if (!empty($body['error'])) {
+            $out['error'] = (string) $body['error']; // e.g. loopback_blocked — surfaced honestly
+        }
+        return $out;
+    }
+
+    /** Whether a connected site's connector accepts rule schema v1 (capability check). */
+    public static function connector_supports_rules(object $site): bool
+    {
+        self::ensure_sites_service();
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/rules');
+        return !is_wp_error($res) && (int) ($res['status'] ?? 0) < 300 && !empty($res['body']['supported']);
+    }
+
+    /**
+     * Push a post's COMPLETE rule set to its connector (schema v1 — replaces
+     * the set; the connector re-normalizes + sanitizes defensively and purges
+     * caches). Capability-checked first so an old connector fails honestly.
+     *
+     * @param array[] $rules Rule rows shaped per rule schema v1.
+     * @return array{stored:int}|\WP_Error
+     */
+    public static function push_rules(object $site, int $post_id, array $rules)
+    {
+        self::ensure_sites_service();
+        if (!self::connector_supports_rules($site)) {
+            return new WP_Error(
+                'pcm_seo_connector_no_rules',
+                __('This site’s connector doesn’t support dynamic rules yet (needs v2.7.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+        $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/rules', array(), array(
+            'schemaVersion' => 1,
+            'postId'        => $post_id,
+            'rules'         => array_values($rules),
+        ), 60);
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_rules_push', $res->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($res['status'] ?? 0) >= 300) {
+            $msg = (is_array($res['body'] ?? null) && !empty($res['body']['error']))
+                ? (string) $res['body']['error']
+                : ('HTTP ' . (int) ($res['status'] ?? 0));
+            return new WP_Error('pcm_seo_rules_push', sprintf(__('The connector rejected the rule push (%s).', 'power-creatives'), $msg), array('status' => 502));
+        }
+        return array('stored' => (int) ($res['body']['stored'] ?? 0));
     }
 
     /**

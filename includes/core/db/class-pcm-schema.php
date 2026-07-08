@@ -694,6 +694,37 @@ class PCM_Schema
             KEY userId (userId)
         ) $charset_collate;";
         dbDelta($sql);
+
+        // ── SEO Dynamic Rules (v1.37.0) ──
+        // The hub's source of truth for render-time content rules served by the
+        // connector (rule schema v1 — docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md).
+        // A rule swaps ONE block's visible text on ONE remote post at render
+        // time; matchText is stored ALREADY normalized (normalization spec v1).
+        // changesetId is NULLABLE ON PURPOSE: the approval/version machine
+        // (pair 5) groups rules into changesets — the column exists from day
+        // one so that lands additively, never as a migration of meaning.
+        $sql = "CREATE TABLE {$prefix}seo_dynamic_rules (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            siteId int(11) NOT NULL,
+            postId int(11) NOT NULL,
+            target varchar(20) DEFAULT 'paragraph' NOT NULL,
+            matchText text NOT NULL,
+            occurrence int(11) DEFAULT 0 NOT NULL,
+            replacement longtext NOT NULL,
+            anchorContext text DEFAULT NULL,
+            active tinyint(1) DEFAULT 1 NOT NULL,
+            staleCount int(11) DEFAULT 0 NOT NULL,
+            changesetId bigint(20) unsigned DEFAULT NULL,
+            sourceChangeId bigint(20) unsigned DEFAULT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_site_post (siteId, postId),
+            KEY idx_changesetId (changesetId),
+            KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
     }
 
     /**
@@ -1116,6 +1147,7 @@ class PCM_Schema
             'approval_sets',
             'notifications',
             'seo_views',
+            'seo_dynamic_rules',
             'seo_tenants',
             'seo_hmac_nonces',
             'delivery_assignments',

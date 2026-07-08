@@ -97,6 +97,58 @@ const TAG_STYLE: Record<number, string> = {
  *  then 14px per heading level below H1; paragraphs sit one step under their heading. */
 const indentFor = (level: number): number => 18 + Math.max(0, level - 1) * 14;
 
+/** Display-side normalization for anchor matching (mirrors normalization spec v1
+ *  minus entity decoding — a rare entity mismatch just demotes a paragraph to
+ *  "after previous position" placement; DISPLAY ordering only, never targeting). */
+const normAnchor = (s: string): string =>
+  s.replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * Interleave remote paragraphs among the (builder-aware) heading rows using each
+ * paragraph's rendered-order anchor (nearest preceding heading). Deterministic:
+ * anchors resolve to the first matching heading at/after the current cursor;
+ * unmatched anchors keep the paragraph after the previous paragraph's position.
+ * Paragraph node indexes are offset by 10000 — display/key space only (they are
+ * read-only; no mutation ever uses a paragraph index).
+ */
+function mergeRemoteNodes(headings: ContentNode[], paragraphs: any[]): ContentNode[] {
+  const byKey = new Map<string, number[]>();
+  headings.forEach((h, pos) => {
+    const key = `${h.level ?? 0}|${normAnchor(h.text)}`;
+    const arr = byKey.get(key) ?? [];
+    arr.push(pos);
+    byKey.set(key, arr);
+  });
+  const assigned = new Map<number, ContentNode[]>(); // heading pos (-1 = before first) → paragraphs
+  let cursor = -1;
+  paragraphs.forEach((p, i) => {
+    if (p?.anchor && typeof p.anchor.text === 'string') {
+      const key = `${Number(p.anchor.level) || 0}|${normAnchor(String(p.anchor.text))}`;
+      const positions = byKey.get(key) ?? [];
+      const hit = positions.find((pos) => pos >= cursor);
+      if (hit !== undefined) cursor = hit;
+    }
+    const node: ContentNode = {
+      index: 10000 + i,
+      kind: 'paragraph',
+      text: String(p?.text ?? ''),
+      html: String(p?.html ?? ''),
+      source: String(p?.source ?? 'rendered'),
+      elId: '',
+      editable: false,
+    };
+    const bucket = assigned.get(cursor) ?? [];
+    bucket.push(node);
+    assigned.set(cursor, bucket);
+  });
+  const out: ContentNode[] = [...(assigned.get(-1) ?? [])];
+  headings.forEach((h, pos) => {
+    out.push(h);
+    out.push(...(assigned.get(pos) ?? []));
+  });
+  return out;
+}
+
 export function HeadingRows({
   postId, type, siteId, brandId, model, provider, orderedCols,
 }: {
@@ -123,9 +175,17 @@ export function HeadingRows({
     { siteId: siteId as number, postId, type },
     { enabled: !isLocal, staleTime: 0, refetchOnMount: 'always' },
   );
+  // Remote paragraph inventory (scan-content v1, connector 2.7.0+). Heading rows +
+  // their editing stay on remoteGetHeadings — this only ADDS paragraph rows.
+  const remoteNodesQuery = trpc.seo.remoteGetContentNodes.useQuery(
+    { siteId: siteId as number, postId },
+    { enabled: !isLocal, staleTime: 0, refetchOnMount: 'always' },
+  );
   const query = isLocal ? localQuery : remoteQuery;
 
   const [nodes, setNodes] = useState<ContentNode[]>([]);
+  // Honest paragraph-availability note for remote (old connector / blocked loopback).
+  const [remoteParaNote, setRemoteParaNote] = useState<string | null>(null);
   /** Remote headings → heading nodes (index doubles as the remote edit handle). */
   const headingsToNodes = (list: HeadingItem[]): ContentNode[] =>
     list.map((h) => ({ ...h, kind: 'heading' as const, headingIndex: h.index }));
@@ -133,11 +193,23 @@ export function HeadingRows({
     if (isLocal) {
       const list = (localQuery.data as any)?.nodes;
       if (Array.isArray(list)) setNodes(list as ContentNode[]);
-    } else {
-      const list = (remoteQuery.data as any)?.headings;
-      if (Array.isArray(list)) setNodes(headingsToNodes(list as HeadingItem[]));
+      setRemoteParaNote(null);
+      return;
     }
-  }, [isLocal, localQuery.data, remoteQuery.data]);
+    const list = (remoteQuery.data as any)?.headings;
+    if (!Array.isArray(list)) return;
+    const headingNodes = headingsToNodes(list as HeadingItem[]);
+    const meta: any = remoteNodesQuery.data ?? null;
+    const paragraphs: any[] = Array.isArray(meta?.nodes) ? meta.nodes : [];
+    if (meta && meta.supported === false) {
+      setRemoteParaNote('Paragraphs need connector v2.7.0+ on this site — update it from the Sites module.');
+    } else if (meta && meta.error === 'loopback_blocked') {
+      setRemoteParaNote('Paragraphs unavailable — the site blocked the connector’s content scan (loopback request).');
+    } else {
+      setRemoteParaNote(null);
+    }
+    setNodes(mergeRemoteNodes(headingNodes, paragraphs));
+  }, [isLocal, localQuery.data, remoteQuery.data, remoteNodesQuery.data]);
 
   const localUpdate = trpc.seo.updateHeading.useMutation();
   const remoteUpdate = trpc.seo.remoteUpdateHeading.useMutation();
@@ -381,6 +453,11 @@ export function HeadingRows({
           </TableRow>
         );
       })}
+
+      {/* Honest availability note (remote only): old connector / blocked loopback. */}
+      {remoteParaNote && shellRow('para-note', (
+        <span className="text-xs text-muted-foreground/60">{remoteParaNote}</span>
+      ))}
 
       {/* Paragraph HTML inspector — read-only (editing arrives via dynamic rules, pair 3). */}
       {htmlPopup && (

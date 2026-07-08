@@ -79,6 +79,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)', 'remote_update_link', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/remove', 'remote_remove_link', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings', 'remote_get_headings', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/content-nodes', 'remote_get_content_nodes', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)', 'remote_update_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)/optimize', 'remote_optimize_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/featured', 'remote_set_featured', array(), 'manage_options'),
@@ -343,6 +344,18 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
         return $this->success(array('headings' => PCM_SEO_Service::remote_get_headings($site, absint($request->get_param('post')), $type)));
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/content-nodes — the connected post's paragraph
+     *  inventory (scan-content v1) in rendered document order, with display anchors. */
+    public function remote_get_content_nodes(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(PCM_SEO_Service::remote_get_content_nodes($site, absint($request->get_param('post'))));
     }
 
     /** POST /seo/sites/{id}/content/{post}/headings/{idx} — edit a connected post's heading. */

@@ -445,7 +445,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.6.3
+ * Version: 2.7.0
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1882,6 +1882,225 @@ add_action('wp_head', function () {
     if ($desc !== '') { echo '<meta name="description" content="' . esc_attr($desc) . '">' . "\n"; }
     if ($kw !== '')   { echo '<meta name="keywords" content="' . esc_attr($kw) . '">' . "\n"; }
 }, 1);
+
+// ═══ Dynamic content rules (rule schema v1) — render-time paragraph optimization ═══
+// Pushed by the hub, stored locally per post, applied to the final HTML on every
+// front-end render. Builder-agnostic by construction (operates AFTER the builder).
+// Contracts: docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md (hub repo). SYNC CONTRACT:
+// pcm_conn_normalize_text / the boundary matcher below MUST stay behavior-identical
+// to the hub's fixture-tested PCM_Text_Matcher.
+
+/** Normalization spec v1 — mirror of PCM_Text_Matcher::normalize(). */
+function pcm_conn_normalize_text($text) {
+    $text = html_entity_decode((string) $text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $text = str_replace("\xC2\xA0", ' ', $text);
+    $text = (string) preg_replace('/\s+/u', ' ', $text);
+    $text = trim($text);
+    return function_exists('mb_strtolower') ? mb_strtolower($text, 'UTF-8') : strtolower($text);
+}
+/** Visible text of an HTML fragment — mirror of PCM_Text_Matcher::visible_text(). */
+function pcm_conn_visible_text($html) {
+    $html = (string) preg_replace('#<(script|style)[^>]*>.*?</\1>#is', '', (string) $html);
+    return strip_tags($html);
+}
+/** The post's stored rule set (rule schema v1 rows), [] when none. */
+function pcm_conn_rules_for($pid) {
+    $r = get_option('pcm_conn_rules_' . (int) $pid, array());
+    return is_array($r) ? array_values(array_filter($r, 'is_array')) : array();
+}
+/** Replace a post's rule set + maintain the index of posts that have rules. */
+function pcm_conn_rules_save($pid, $rules) {
+    $pid = (int) $pid;
+    $idx = get_option('pcm_conn_rules_index', array());
+    if (!is_array($idx)) { $idx = array(); }
+    if (empty($rules)) {
+        delete_option('pcm_conn_rules_' . $pid);
+        delete_option('pcm_conn_rules_stats_' . $pid);
+        $idx = array_values(array_diff(array_map('intval', $idx), array($pid)));
+    } else {
+        update_option('pcm_conn_rules_' . $pid, array_values($rules), false); // autoload OFF
+        if (!in_array($pid, array_map('intval', $idx), true)) { $idx[] = $pid; }
+    }
+    update_option('pcm_conn_rules_index', $idx, false);
+}
+/** Per-post serve/miss counters (throttled writes — max one DB write per 5 min per post). */
+function pcm_conn_rules_bump_stats($pid, $applied, $missed) {
+    $key = 'pcm_conn_rules_stats_' . (int) $pid;
+    $s = get_option($key, array());
+    if (!is_array($s)) { $s = array(); }
+    $now = time();
+    if (isset($s['lastAt']) && ($now - (int) $s['lastAt']) < 300 && $missed <= (int) ($s['lastMissed'] ?? -1)) { return; }
+    $s['applied']    = (int) ($s['applied'] ?? 0) + (int) $applied;
+    $s['missed']     = (int) ($s['missed'] ?? 0) + (int) $missed;
+    $s['lastMissed'] = (int) $missed;
+    $s['lastAt']     = $now;
+    update_option($key, $s, false);
+}
+/**
+ * Apply active rules to a full HTML response. Boundary matching on NON-NESTABLE
+ * tags (<p>/<hN> cannot legally nest — same proven pattern as the heading
+ * overrides above). Miss → block left untouched (the original serves) + counted.
+ * v1 serves target 'paragraph'; the engine is target-agnostic by design.
+ */
+function pcm_conn_apply_rules($html, $rules, $pid) {
+    $applied = 0; $missed = 0;
+    foreach ($rules as $r) {
+        if (empty($r['active'])) { continue; }
+        $target = (string) ($r['target'] ?? '');
+        $tag = ($target === 'paragraph') ? 'p' : '';
+        if ($tag === '') { continue; } // heading/anchorText/href reserved — never guessed at
+        $want = (string) ($r['match']['text'] ?? '');
+        $occ  = (int) ($r['match']['occurrence'] ?? 0);
+        $replacement = (string) ($r['replacement'] ?? '');
+        if ($want === '') { $missed++; continue; }
+        $seen = 0; $done = false;
+        $out = preg_replace_callback('#<' . $tag . '(\s[^>]*)?>(.*?)</' . $tag . '>#is', function ($m) use (&$seen, &$done, $want, $occ, $replacement, $tag) {
+            if ($done) { return $m[0]; }
+            if (pcm_conn_normalize_text(pcm_conn_visible_text($m[2])) !== $want) { return $m[0]; }
+            if ($seen++ !== $occ) { return $m[0]; }
+            $done = true;
+            return '<' . $tag . (isset($m[1]) ? $m[1] : '') . '>' . $replacement . '</' . $tag . '>';
+        }, $html);
+        if (is_string($out) && $done) { $html = $out; $applied++; } else { $missed++; }
+    }
+    if ($applied > 0 || $missed > 0) { pcm_conn_rules_bump_stats($pid, $applied, $missed); }
+    return $html;
+}
+// Serving: front-end singular renders only. The ENTIRE callback is fail-safe —
+// any throwable serves the ORIGINAL buffer (a rule can never break a page).
+// pcm_cscan requests (the hub's content inventory) are EXCLUDED on purpose: the
+// inventory must show the ORIGINAL rendered text, because that is exactly what
+// rules match against (matching post-rule text would chain rules on themselves).
+add_action('template_redirect', function () {
+    if (is_admin() || is_feed() || (defined('REST_REQUEST') && REST_REQUEST) || !is_singular()) { return; }
+    if (isset($_GET['pcm_cscan'])) { return; }
+    if (get_option('pcm_conn_rules_off') === '1') { return; } // site kill switch (hub-managed)
+    $pid = (int) get_queried_object_id();
+    if (!$pid) { return; }
+    $rules = pcm_conn_rules_for($pid);
+    if (empty($rules)) { return; }
+    ob_start(function ($html) use ($rules, $pid) {
+        try {
+            return pcm_conn_apply_rules($html, $rules, $pid);
+        } catch (\Throwable $e) {
+            return $html; // fail-to-original, always
+        }
+    });
+}, 2);
+// Rules API: GET = capability answer + a post's rules & counters; POST = replace
+// a post's rule set (schema v1 only — anything else is rejected honestly).
+add_action('rest_api_init', function () {
+    $perm = function () { return current_user_can('manage_options'); };
+    register_rest_route('pcm-conn/v1', '/rules', array(
+        array('methods' => 'GET', 'permission_callback' => $perm, 'callback' => function ($req) {
+            $pid = absint($req->get_param('post_id'));
+            if (!$pid) {
+                $idx = get_option('pcm_conn_rules_index', array());
+                return array('supported' => true, 'schemaVersion' => 1, 'posts' => is_array($idx) ? array_map('intval', $idx) : array(), 'killSwitch' => get_option('pcm_conn_rules_off') === '1');
+            }
+            return array(
+                'supported'     => true,
+                'schemaVersion' => 1,
+                'rules'         => pcm_conn_rules_for($pid),
+                'stats'         => (array) get_option('pcm_conn_rules_stats_' . $pid, array()),
+            );
+        }),
+        array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) {
+            $p = $req->get_json_params();
+            if (!is_array($p) || (int) ($p['schemaVersion'] ?? 0) !== 1) {
+                return new WP_REST_Response(array('error' => 'unsupported_schema', 'accepts' => 1), 400);
+            }
+            $pid = absint($p['postId'] ?? 0);
+            if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            $clean = array();
+            foreach ((array) ($p['rules'] ?? array()) as $r) {
+                if (!is_array($r)) { continue; }
+                $target = (string) ($r['target'] ?? '');
+                if (!in_array($target, array('paragraph', 'heading', 'anchorText', 'href'), true)) { continue; }
+                $clean[] = array(
+                    'id'             => (int) ($r['id'] ?? 0),
+                    'target'         => $target,
+                    'match'          => array(
+                        'text'       => pcm_conn_normalize_text((string) ($r['match']['text'] ?? '')),
+                        'occurrence' => (int) ($r['match']['occurrence'] ?? 0),
+                    ),
+                    'replacement'    => wp_kses_post((string) ($r['replacement'] ?? '')),
+                    'active'         => !empty($r['active']),
+                    'changesetId'    => isset($r['changesetId']) ? (int) $r['changesetId'] : null,
+                    'sourceChangeId' => isset($r['sourceChangeId']) ? (int) $r['sourceChangeId'] : null,
+                    'anchor'         => (isset($r['anchor']) && is_array($r['anchor'])) ? $r['anchor'] : null,
+                );
+            }
+            pcm_conn_rules_save($pid, $clean);
+            pcm_conn_purge_caches($pid);
+            return array('stored' => count($clean), 'schemaVersion' => 1);
+        }),
+    ));
+    // Content inventory (scan-content v1): the post's paragraphs in TRUE rendered
+    // document order — the identity dynamic rules target. Headings stay on
+    // /scan-headings (their editing pipeline is untouched); each paragraph carries
+    // its nearest preceding heading as a DISPLAY anchor for interleaving.
+    register_rest_route('pcm-conn/v1', '/scan-content', array(
+        'methods' => 'GET',
+        'permission_callback' => $perm,
+        'callback' => function ($req) {
+            $pid = absint($req->get_param('post_id'));
+            if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            // Hardened loopback (same rationale as the heading scan): real browser UA,
+            // cache-busting arg (ALSO excludes rule application — the inventory must be
+            // the ORIGINAL text rules match against), redirects, generous timeout.
+            $scan_url = add_query_arg('pcm_cscan', (string) time(), get_permalink($pid));
+            $resp = wp_remote_get($scan_url, array(
+                'timeout'     => 20,
+                'redirection' => 3,
+                'sslverify'   => apply_filters('https_local_ssl_verify', false),
+                'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreativesConnector/2.7; +content-scan)',
+                'headers'     => array('Accept' => 'text/html', 'Cache-Control' => 'no-cache'),
+            ));
+            if (is_wp_error($resp) || (int) wp_remote_retrieve_response_code($resp) !== 200) {
+                return array('nodes' => array(), 'error' => 'loopback_blocked');
+            }
+            $live = (string) wp_remote_retrieve_body($resp);
+            if (($bpos = stripos($live, '<body')) !== false) { $live = substr($live, $bpos); }
+            // Strip chrome regions — deterministic approximation, documented in the
+            // contract: paragraphs in header/nav/footer/aside are site chrome, not
+            // page content, and must not enter the optimization inventory.
+            foreach (array('header', 'nav', 'footer', 'aside') as $chrome) {
+                $live = (string) preg_replace('#<' . $chrome . '(\s[^>]*)?>.*?</' . $chrome . '>#is', '', $live);
+            }
+            $nodes = array();
+            $anchor = null;
+            $occ_seen = array();
+            if (preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>|<p(\s[^>]*)?>(.*?)</p>#is', $live, $mm, PREG_SET_ORDER)) {
+                $i = 0;
+                foreach ($mm as $m) {
+                    if (($m[1] ?? '') !== '') {
+                        $txt = trim(pcm_conn_visible_text($m[3]));
+                        if ($txt === '') { continue; }
+                        $anchor = array('level' => (int) $m[1], 'text' => pcm_conn_normalize_text($txt));
+                        continue;
+                    }
+                    $txt = trim(pcm_conn_visible_text((string) ($m[5] ?? '')));
+                    $plain = trim(html_entity_decode($txt, ENT_QUOTES | ENT_HTML5, 'UTF-8'), " \t\n\r\0\x0B\xC2\xA0");
+                    if ($plain === '') { continue; }
+                    $norm = pcm_conn_normalize_text($txt);
+                    $occ  = isset($occ_seen[$norm]) ? $occ_seen[$norm] : 0;
+                    $occ_seen[$norm] = $occ + 1;
+                    $nodes[] = array(
+                        'kind'       => 'paragraph',
+                        'index'      => $i++,
+                        'text'       => $txt,
+                        'html'       => $m[0],
+                        'occurrence' => $occ,
+                        'source'     => 'rendered',
+                        'anchor'     => $anchor,
+                    );
+                }
+            }
+            return array('nodes' => $nodes);
+        },
+    ));
+});
 PHP;
     }
 

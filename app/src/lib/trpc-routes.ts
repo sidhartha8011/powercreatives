@@ -391,6 +391,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `seo/content/${input.id}/headings/${input.index}/optimize`, body: { text: input.text, brandId: input.brandId, model: input.model, provider: input.provider, templateId: input.templateId } }),
     },
     // ── Heading editor — remote (connected sites) ──
+    "seo.remoteGetContentNodes": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/content-nodes` }),
+    },
     "seo.remoteGetHeadings": {
         endpoint: "seo/sites",
         method: "GET",
