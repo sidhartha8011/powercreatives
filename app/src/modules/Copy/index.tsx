@@ -239,9 +239,10 @@ export function CopyModule() {
     }
   }, [utils]);
 
-  // Create-from-delivery handover (one-shot): land with the brand
-  // pre-selected; the target project rides along on brand.projectId for save
-  // paths that read it.
+  // Create-from-delivery handover (one-shot): routed through
+  // handleContextChange — the EXACT path a manual brand pick takes — so the
+  // full brand→form mapping (mapBrandToFormValues) runs, not just the two
+  // raw context fields. The target project rides on brand.projectId.
   // NB: imperative fetches go through apiFetch — the hand-rolled trpc proxy
   // has NO utils.client.*.query() (handleBrandSaved above carries that same
   // dormant broken call, masked by its silent catch — flagged 2026-07-07).
@@ -252,11 +253,11 @@ export function CopyModule() {
     void apiFetch<any>(`brands/${ctx.brandId}`)
       .then((fresh: any) => {
         if (!fresh) return;
-        setContextData((prev) => ({
-          ...prev,
+        handleContextChange({
+          ...contextData,
           brandId: ctx.brandId as number,
           brand: { ...fresh, projectId: ctx.projectId },
-        }));
+        });
       })
       .catch(() => toast.error('Could not pre-select the brand for this delivery'));
     // eslint-disable-next-line react-hooks/exhaustive-deps

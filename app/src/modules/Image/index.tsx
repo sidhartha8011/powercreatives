@@ -52,26 +52,6 @@ export function ImageModule() {
   // ── Shared state ──
   const [contextData, setContextData] = useState<ContextData>(createEmptyContextData);
 
-  // Create-from-delivery handover (one-shot): land with the brand pre-selected
-  // and the target project threaded through brand.projectId — the exact prop
-  // path the save flow already reads — so output is born correctly mapped.
-  // NB: imperative fetches go through apiFetch — the hand-rolled trpc proxy
-  // has NO utils.client.*.query() (that call is a dormant bug elsewhere).
-  useEffect(() => {
-    const ctx = consumePendingCreate('image');
-    if (!ctx || ctx.brandId == null) return;
-    void apiFetch<any>(`brands/${ctx.brandId}`)
-      .then((fresh: any) => {
-        if (!fresh) return;
-        setContextData((prev) => ({
-          ...prev,
-          brandId: ctx.brandId as number,
-          brand: { ...fresh, projectId: ctx.projectId },
-        }));
-      })
-      .catch(() => toast.error('Could not pre-select the brand for this delivery'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appState.pendingCreate]);
   const [sessionReferenceImages, setSessionReferenceImages] = useState<SessionReferenceImage[]>([]);
   const [productBrief, setProductBrief] = useState('');
 
@@ -166,6 +146,28 @@ export function ImageModule() {
       }
     }
   }, [contextData]);
+
+  // Create-from-delivery handover (one-shot): routed through
+  // handleContextChange — the EXACT path a manual brand pick takes — so the
+  // full brand→form mapping (mapBrandToFormValues) runs, not just the two
+  // raw context fields. The target project rides on brand.projectId (the
+  // prop path the save flow reads). Imperative fetch = apiFetch (the trpc
+  // proxy has no utils.client.*.query()).
+  useEffect(() => {
+    const ctx = consumePendingCreate('image');
+    if (!ctx || ctx.brandId == null) return;
+    void apiFetch<any>(`brands/${ctx.brandId}`)
+      .then((fresh: any) => {
+        if (!fresh) return;
+        handleContextChange({
+          ...contextData,
+          brandId: ctx.brandId as number,
+          brand: { ...fresh, projectId: ctx.projectId },
+        });
+      })
+      .catch(() => toast.error('Could not pre-select the brand for this delivery'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appState.pendingCreate]);
 
   // ── Sync URL fetch results to Image form fields ──
   const handleUrlFetched = useCallback((scraped: ScrapedBusinessData) => {
