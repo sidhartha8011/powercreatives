@@ -6601,3 +6601,24 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   (baseline drifted 56->59 from other machine: SaveBrandButton dup, streamdown,
   Templates unknown[] - NOT this pair); build OK. Ctrl+F5 needed.
 - BEFORE 4342ef8 -> AFTER 27a7d4f. Owner live-verify pending.
+
+## 2026-07-08 07:45 - [sites-connector-version-column]
+- FEATURE: Sites table gains a "Connector" column: each connected site's
+  INSTALLED connector version, read live via its /wp/v2/plugins (cached 5 min
+  per row). Up to date -> muted "vX.Y.Z". Behind the hub's latest -> amber
+  version + inline update button in the SAME column (per PO: version text AND
+  the small button both trigger the update). Unreadable -> honest em dash +
+  reason tooltip. Per-site update = POST /sites/{id}/update-connector (twin of
+  the bulk update-connectors; same /pcm-conn/v1/update-now channel; 404 ->
+  honest "predates self-update, reinstall once" error; version RE-READ after
+  update so the UI shows what is actually installed).
+- ZERO-DEBT REFACTOR: connector-version reader moved to
+  PCM_Sites_Service::remote_connector_version() (single reader); SEO module's
+  private copy now delegates. Hub's latest = PCM_SEOHub_Service::
+  connector_artifact() version (cached artifact; no seohub changes).
+- Routes: GET /sites/{id}/connector-version -> {version, latest, upToDate};
+  trpc sites.connectorVersion + sites.updateConnector. Column widths trimmed
+  (name 16, url 18, projects 13, user 8, method 9, status 7, connector 11,
+  added 8, actions 10 = 100).
+- VERIFIED: php -l x3 OK; tsc 59 = baseline (zero new); build OK. Ctrl+F5.
+- BEFORE 929587d -> AFTER (this commit). Owner live-verify pending.
