@@ -1,4 +1,87 @@
-# Implementation Plan — Autonomy Machine, 3 Phases (2026-07-08, rev 2)
+# Implementation Plan — Autonomy Machine, 3 Phases (2026-07-08, rev 3)
+
+> **THIS BUILD (owner-locked 2026-07-08): Phase 1 only — dynamic paragraph
+> optimization + dynamic approval. NOT the AI optimizer, NOT SERP, NOT
+> licensing, NOT the version-selector UI. Nothing starts without the owner's
+> explicit go PER PAIR. See "THIS BUILD — pair plan" below.**
+
+---
+
+## THIS BUILD — pair plan (senior-dev, fact-anchored)
+
+Every fact below is code-verified (file:line), not assumed. Every pair follows
+the commit ritual: pull → BEFORE commit (rollback point) → build → verify →
+AFTER commit `- UNVERIFIED` → session log → push → owner verifies.
+
+**Pair 1 — Paragraph rows in the outline (read-only).**
+- Local: new pure `parse_content_nodes()` beside `parse_heading_details()`
+  (seo/service.php:496) → ordered `{index, kind:'heading'|'paragraph', level?,
+  text, html}`; new route `GET /seo/content/{id}/content-nodes` + trpc map
+  entry. Node identity CONTRACT frozen in this pair (documented in the
+  architecture doc).
+- Remote: NO connector change yet — reuse the existing fallback pattern
+  (`remote_get_headings` fallback parses `content.raw` via context=edit,
+  service.php:2379) so pair 1 carries zero connector risk.
+- UI: paragraph rows in HeadingsPanel (same `<tr>`/colgroup mechanics,
+  paddingLeft indent math at HeadingsPanel.tsx:209, TAG_STYLE-like "P" chip);
+  click → HTML popup (Dialog, LinksPopup pattern). Read-only.
+
+**Pair 2 — Rule engine (connector) + rules store (hub). ONE connector bump.**
+- Matcher: pure WP-free `PCM_Text_Matcher` class; normalization spec
+  (whitespace/NBSP/entities/case) written first; unit fixtures from real
+  builder HTML. Extends the PROVEN visible-text match pattern
+  (seohub/service.php:1767 `wp_strip_all_tags` compare) with normalization +
+  per-post + occurrence scoping.
+- Connector (bump bundles BOTH): `GET /pcm-conn/v1/scan-content` (rendered,
+  hardened-loopback pattern from :1620) + `POST /pcm-conn/v1/rules` (replaces
+  the post's set, purges via `pcm_conn_purge_caches` :532) + output-buffer
+  application (`template_redirect` + `ob_start` at priority 1, exactly like
+  :1752) + capability answer ("rule schema v1"). Rules stored per post in
+  non-autoloaded options (`pcm_conn_rules_{postId}`) — render loads only the
+  current post's rules; miss → serve original + increment that post's stale
+  counter.
+- Hub: `seo_dynamic_rules` indexed table (siteId, postId, target, matchText,
+  occurrence, replacement, active, changesetId NULLABLE from day one,
+  staleCount, timestamps) — DB bump. Rule schema CONTRACT frozen.
+
+**Pair 3 — Edit + AI-optimize paragraphs from the table (operator path).**
+- Paragraph rows gain click-to-edit + ✦ optimize with the staged
+  accept/reject UI (identical to EditableCell); accept → hub rule row → push
+  to connector → toast confirms applied.
+- Prompt = NEW seeded template section `paragraph_optimize` via the existing
+  seeding (service.php:2776) — template law honored from the first generation.
+
+**Pair 4 — Switches + serving indicator.**
+- Active toggles: per change / per page / per site (hub UI writes, push
+  replaces the set, purge). Three-state row indicator original/optimized(N)/
+  STALE — stale read on outline expand via `GET /pcm-conn/v1/rules` status
+  (no cron; on-demand, honest).
+
+**Pair 5 — Dynamic approval.**
+- DB bump: `seo_changesets` + `seo_staged_changes` (backlog.md:49 shape;
+  reject = MARKED). Hold-toggle on paragraph edits → "Send for approval" →
+  envelope v1 (CONTRACT frozen: type/version/tags/items) → NEW adapter
+  registry in Approvals (registry pattern = automations service.php:102) →
+  Before/After card on the share board (approval_sets.snapshot longtext,
+  schema:561; per-asset anchors exist, approvals/service.php:722) →
+  apply-on-approve via `approvals.asset_approved` (fires :1163-1179 under set
+  owner) → activate + push rules. Legacy three bucket types get wrapped as
+  adapters in a SCHEDULED follow-up pair (dated debt).
+
+**Definition-of-Done checklist (every pair, no exceptions):**
+1. `git fetch && git pull --ff-only` (two machines).
+2. BEFORE commit (rollback point, `--allow-empty` on clean tree).
+3. Contract doc updated FIRST if the pair freezes/changes an interface.
+4. `php -l` every touched PHP file (lightning-services php 8.2).
+5. `cd app && npm run check` — baseline 56 errors, ZERO new.
+6. `npm run build` — remind owner: Ctrl+F5 (fixed bundle filenames).
+7. Matcher changes: fixtures updated + passing (runnable machine/CI).
+8. No silent fallbacks introduced; every failure path surfaces honestly.
+9. AFTER commit `- UNVERIFIED` + SESSION_LOG entry (+ changelog if
+   substantial) + push `origin feat/seo-suite-port`.
+10. Owner live-verifies before the next pair starts.
+
+---
 
 Owner-approved consolidation of every agreed-but-unbuilt change. Companion to
 `docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md` (mechanism detail) and
