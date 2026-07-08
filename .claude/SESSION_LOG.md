@@ -6470,3 +6470,18 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   hover gotcha explicitly accepted and documented on the prop.
 - Verified: tsc 56 = baseline, build OK. Live pass pending user.
   BEFORE feb8015 → AFTER (this commit).
+
+## 2026-07-07 — FIX: + buttons crashed on click [fix-pending-create-brand-fetch]
+- User live-test: TypeError utils.client.brands.getById.query is not a function.
+  ROOT CAUSE: the hand-rolled trpc proxy's useUtils() supports ONLY
+  invalidate/refetch/setData — there is NO tRPC-style .client.*.query()
+  imperative fetch. I copied the pattern from Copy's handleBrandSaved, whose
+  identical call is a DORMANT PRE-EXISTING BUG masked by its silent catch
+  ("brand saved → refresh contextData" has never worked). Flagged to PO, not
+  fixed (unapproved).
+- FIX: all three create-from-delivery consumers now use the exported
+  apiFetch(`brands/{id}`) (the sanctioned imperative path; success() returns
+  the raw payload, same shape useQuery consumers get).
+- LESSON: in this codebase, imperative fetches = apiFetch; trpc proxy is
+  hooks-only. Verified: tsc 56 = baseline, build OK.
+  BEFORE 689b501 → AFTER (this commit).
