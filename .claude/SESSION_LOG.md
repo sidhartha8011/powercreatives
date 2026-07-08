@@ -6566,3 +6566,16 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   Status/Type pills (chevron + h-7 hit area) — measure in DevTools first.
 - Verified: tsc 56 = baseline throughout; build OK. Live pass pending.
   BEFOREs a1fceeb/5ea6dc3/9180e21 → AFTERs (this batch).
+
+## 2026-07-08 — FIX after PO re-report: toolbar still blue + pills still unequal
+- User was RIGHT on both; previous answers were incomplete:
+  (1) SEO toolbar buttons hardcoded PillButton variant="active" (blue AT
+  REST) — the hover change never applied to them. All five (Scan links / GSC
+  stats / PRT ranks / Post / Page) now default variant: gray rest, blue hover.
+  (2) Pill size root cause MEASURED in source: text-[11px] sets font-size
+  only; Deliveries pills sit inside SelectTrigger (text-sm → line-height 20px)
+  vs SEO pills in text-xs cells (16px) → taller pills despite identical
+  classes. CELL_PILL now pins `leading-4` (16px): SEO pixel-identical,
+  Deliveries drops to parity. LESSON: arbitrary font-size utilities inherit
+  line-height — pin leading in shared recipes.
+- Verified: tsc 56 = baseline; build OK. BEFORE 0c246dc → AFTER (this commit).
