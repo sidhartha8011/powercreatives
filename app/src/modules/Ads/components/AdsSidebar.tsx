@@ -55,6 +55,7 @@ interface AdsGenSettings {
 /** Which output-type tab is active in the segmented control */
 type OutputTab = 'image' | 'copy' | 'video';
 
+// BEFORE ADS SIDEBAR ACCORDION REFACTORING
 // ============================================================================
 // Reusable Accordion Section (local to this sidebar)
 // ============================================================================
