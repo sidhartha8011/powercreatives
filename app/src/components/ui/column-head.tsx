@@ -1,7 +1,13 @@
 /**
  * ColumnHead — a spreadsheet-style table header cell:
- *   [Filter • (far left, small dot)] [Title + Sort] … [Generate ✦]
- * Optional drag-to-reorder + drag-to-resize handles are wired by the table.
+ *   [Title (click = sort, hover reveals arrow)] [Filter funnel] … [Generate ✦]
+ *
+ * Minimal chrome (PO 2026-07-08, applies to EVERY consumer — SEO +
+ * Deliveries): no left filter dot / reserved space. At rest the header is
+ * just the label. Hover/keyboard-focus reveals the sort arrow (title click
+ * sorts) and the filter funnel (click opens the filter menu). Active states
+ * stay visible in primary blue — an ACTIVE FILTER lights the TITLE text
+ * itself. CSS hover reveal — known coarse-pointer gotcha, accepted.
  *
  * Global/reusable: pairs with the shared `useColumnLayout` (order + widths) and
  * `useColumnFilters` (per-column filters). Any module can compose a SEO-style
@@ -10,7 +16,7 @@
  */
 
 import type { DragEvent, PointerEvent } from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown, X, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, ListFilter, X, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -55,14 +61,6 @@ interface ColumnHeadProps {
   sort?: SortState;
   filter?: FilterState;
   generate?: GenerateState;
-  /**
-   * Quiet header chrome (opt-in): filter dot + sort icon are HIDDEN at rest,
-   * revealed on header hover / keyboard focus, and always visible in primary
-   * blue when active. CSS hover — known no-op on coarse-pointer devices
-   * (documented gotcha); accepted trade-off for the tables that opt in.
-   * Default off — the SEO table keeps its current look.
-   */
-  quietIcons?: boolean;
   // Drag-to-reorder (native HTML5 DnD) — wired by the table.
   draggable?: boolean;
   onDragStart?: (e: DragEvent<HTMLTableCellElement>) => void;
@@ -79,20 +77,20 @@ interface ColumnHeadProps {
 export function ColumnHead({
   label, width, className, sort, filter, generate,
   draggable, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, isDropTarget,
-  onResizeStart, quietIcons = false,
+  onResizeStart,
 }: ColumnHeadProps) {
   const isFiltered = !!filter?.value;
   const SortIcon = sort && sort.active && sort.dir === 'asc' ? ArrowUp
     : sort && sort.active && sort.dir === 'desc' ? ArrowDown
     : ArrowUpDown;
 
-  // Quiet mode: invisible at rest → revealed on hover/focus → blue when active.
-  const dotClass = quietIcons
-    ? `block h-1.5 w-1.5 rounded-full transition-all ${isFiltered ? 'bg-primary' : 'bg-muted-foreground/70 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`
-    : `block h-1.5 w-1.5 rounded-full transition-colors ${isFiltered ? 'bg-primary' : 'bg-muted-foreground/40 group-hover:bg-muted-foreground/70'}`;
-  const sortIconClass = quietIcons
-    ? `w-3.5 h-3.5 shrink-0 transition-all ${sort?.active ? 'opacity-100 text-primary' : 'opacity-0 group-hover:opacity-70 group-focus-within:opacity-70'}`
-    : `w-3.5 h-3.5 shrink-0 transition-opacity ${sort?.active ? 'opacity-100' : 'opacity-40 group-hover:opacity-70'}`;
+  // Icons: invisible at rest → revealed on hover/focus → blue when active.
+  const sortIconClass = `w-3.5 h-3.5 shrink-0 transition-opacity ${
+    sort?.active ? 'opacity-100 text-primary' : 'opacity-0 group-hover:opacity-70 group-focus-within:opacity-70'
+  }`;
+  const filterIconClass = `w-3.5 h-3.5 shrink-0 transition-opacity ${
+    isFiltered ? 'opacity-100 text-primary' : 'opacity-0 text-muted-foreground group-hover:opacity-70 group-focus-within:opacity-70'
+  }`;
 
   return (
     <th
@@ -107,16 +105,33 @@ export function ColumnHead({
     >
       {isDropTarget && <span className="pointer-events-none absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />}
       <div className="flex items-center gap-1 group">
-        {/* Filter — furthest left, a small dot; primary when active. */}
+        {/* Title (click to sort; arrow revealed on hover, blue when sorted).
+            An ACTIVE FILTER lights the title text blue — that's the filter's
+            persistent indicator; there is no dot. */}
+        {sort ? (
+          <button
+            type="button"
+            onClick={sort.onToggle}
+            className={`flex min-w-0 items-center gap-1 text-left ${isFiltered ? 'text-primary' : 'hover:text-foreground'}`}
+          >
+            <span className="truncate">{label}</span>
+            <SortIcon className={sortIconClass} />
+          </button>
+        ) : (
+          <span className={`min-w-0 truncate text-left ${isFiltered ? 'text-primary' : ''}`}>{label}</span>
+        )}
+
+        {/* Filter — funnel right of the title, revealed on hover; opens the menu. */}
         {filter && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 title={`Filter ${label}`}
-                className="shrink-0 rounded p-1 transition-colors hover:bg-muted"
+                aria-label={`Filter ${label}`}
+                className="shrink-0 rounded p-0.5 transition-colors hover:bg-muted"
               >
-                <span className={dotClass} />
+                <ListFilter className={filterIconClass} />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-48">
@@ -159,16 +174,6 @@ export function ColumnHead({
               )}
             </DropdownMenuContent>
           </DropdownMenu>
-        )}
-
-        {/* Title (click to sort). Left-grouped so Generate ✦ sits beside it. */}
-        {sort ? (
-          <button type="button" onClick={sort.onToggle} className="flex min-w-0 items-center gap-1 text-left hover:text-foreground">
-            <span className="truncate">{label}</span>
-            <SortIcon className={sortIconClass} />
-          </button>
-        ) : (
-          <span className="min-w-0 truncate text-left">{label}</span>
         )}
 
         {/* Generate — right edge; pick a template → generate the whole column. */}

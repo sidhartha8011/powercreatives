@@ -1012,10 +1012,6 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
         // resize; persisted per browser. Header filter dots per filterDefs.
         layoutKey={DELIVERIES_LAYOUT_KEY}
         filterDefs={filterDefs}
-        // Quiet headers: filter dot + sort icon hidden until hover, blue when
-        // active (PO decision 2026-07-07: CSS variant, coarse-pointer caveat
-        // accepted).
-        quietHeaderIcons
         selection={isAdmin ? { selected: selectedIds, onChange: setSelectedIds } : undefined}
         // Deliveries-scoped chrome: hairline border does the separation (no
         // shadow), slightly rounder corners, light-gray header band so the
