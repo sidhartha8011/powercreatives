@@ -19,7 +19,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { PenLine } from 'lucide-react';
-import { trpc } from '@/lib/trpc';
+import { apiFetch, trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
 import { useApp, useSettings } from '@/contexts/AppContext';
 import {
@@ -242,12 +242,14 @@ export function CopyModule() {
   // Create-from-delivery handover (one-shot): land with the brand
   // pre-selected; the target project rides along on brand.projectId for save
   // paths that read it.
+  // NB: imperative fetches go through apiFetch — the hand-rolled trpc proxy
+  // has NO utils.client.*.query() (handleBrandSaved above carries that same
+  // dormant broken call, masked by its silent catch — flagged 2026-07-07).
   const { consumePendingCreate, state: appState } = useApp();
   useEffect(() => {
     const ctx = consumePendingCreate('copy');
     if (!ctx || ctx.brandId == null) return;
-    void utils.client.brands.getById
-      .query({ id: ctx.brandId })
+    void apiFetch<any>(`brands/${ctx.brandId}`)
       .then((fresh: any) => {
         if (!fresh) return;
         setContextData((prev) => ({

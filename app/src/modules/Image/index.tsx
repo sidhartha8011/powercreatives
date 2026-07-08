@@ -28,7 +28,7 @@ import type { BrandAsset } from '@shared/brandTypes';
 import { getBrandLogo } from '@shared/brandAssetResolver';
 import type { GeneratedAsset } from '@/types';
 import { useApp } from '@/contexts/AppContext';
-import { trpc } from '@/lib/trpc';
+import { apiFetch } from '@/lib/trpc';
 
 // Hooks
 import { useImageGeneration } from './hooks/useImageGeneration';
@@ -55,12 +55,12 @@ export function ImageModule() {
   // Create-from-delivery handover (one-shot): land with the brand pre-selected
   // and the target project threaded through brand.projectId — the exact prop
   // path the save flow already reads — so output is born correctly mapped.
-  const utils = trpc.useUtils();
+  // NB: imperative fetches go through apiFetch — the hand-rolled trpc proxy
+  // has NO utils.client.*.query() (that call is a dormant bug elsewhere).
   useEffect(() => {
     const ctx = consumePendingCreate('image');
     if (!ctx || ctx.brandId == null) return;
-    void utils.client.brands.getById
-      .query({ id: ctx.brandId })
+    void apiFetch<any>(`brands/${ctx.brandId}`)
       .then((fresh: any) => {
         if (!fresh) return;
         setContextData((prev) => ({
