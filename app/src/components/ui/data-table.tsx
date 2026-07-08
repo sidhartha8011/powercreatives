@@ -308,7 +308,7 @@ export function DataTable<T>({
               return (
                 <Fragment key={key}>
                   <tr
-                    className={cn('hover:bg-muted/60', onRowClick && 'cursor-pointer')}
+                    className={cn('group hover:bg-muted/60', onRowClick && 'cursor-pointer')}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                   >
                     {expandable && (

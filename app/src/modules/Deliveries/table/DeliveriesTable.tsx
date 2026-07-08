@@ -438,7 +438,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
     return (
       <tr>
         <td />
-        <td colSpan={8} className="text-muted-foreground">
+        <td colSpan={9} className="text-muted-foreground">
           Loading projects…
         </td>
       </tr>
@@ -522,9 +522,10 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
         </td>
         <td className={subHead} />
         <td className={subHead} />
+        <td className={subHead} />
       </tr>
       {inDelivery.map((p) => (
-        <tr key={`project-${p.id}`}>
+        <tr key={`project-${p.id}`} className="group">
           <td />
           <td>
             {/* Indent = hierarchy; edits rename the ACTUAL project (card
@@ -562,12 +563,13 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
             </span>
           </td>
           <td />
+          <td />
           <td className="text-right">
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="h-7 w-7 p-0 text-muted-foreground/60 hover:text-destructive"
+              className="h-6 w-6 p-0 text-muted-foreground/50 opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
               title="Remove from this delivery"
               aria-label={`Remove ${p.name} from this delivery`}
               onClick={() => void unassignProject(p.id, p.name)}
@@ -579,7 +581,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
       ))}
       <tr>
         <td />
-        <td colSpan={8}>
+        <td colSpan={9}>
           <AddProjectMenu
             available={available}
             onAssign={(id, name) => void assignProject(id, name)}
@@ -659,31 +661,18 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
             ) : (
               <span className="block min-w-0 flex-1 truncate px-1 font-medium">{d.name}</span>
             )}
-            {/* Always visible (group-hover is a no-op on coarse pointers) — quiet at rest. */}
+            {/* Hover-only (PO 2026-07-07; CSS hover accepted) — row carries `group`. */}
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-muted-foreground/50 hover:text-foreground"
+              className="h-5 w-5 shrink-0 p-0 text-muted-foreground/50 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
               title="Open delivery card"
               aria-label={`Open ${d.name}`}
               onClick={() => onEdit(d)}
             >
-              <Maximize2 className="h-3.5 w-3.5" />
+              <Maximize2 className="h-3 w-3" />
             </Button>
-            {isAdmin && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 shrink-0 p-0 text-muted-foreground/40 hover:text-destructive"
-                title="Delete delivery"
-                aria-label={`Delete ${d.name}`}
-                onClick={() => onRequestDelete(d)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            )}
           </div>
         ),
       },
@@ -828,6 +817,27 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
         width: 110,
         sortAccessor: (d) => d.updatedAt,
         cell: (d) => <span className="text-muted-foreground">{relTime(d.updatedAt)}</span>,
+      },
+      {
+        key: 'actions',
+        header: '',
+        width: 44,
+        // Row actions live in their own far-right column (PO 2026-07-07);
+        // hover-revealed via the row's `group`.
+        cell: (d) =>
+          isAdmin ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 text-muted-foreground/50 opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+              title="Delete delivery"
+              aria-label={`Delete ${d.name}`}
+              onClick={() => onRequestDelete(d)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          ) : null,
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps — patch/onEdit are stable enough per render
