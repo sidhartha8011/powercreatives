@@ -215,9 +215,15 @@ export function HeadingRows({
                         >
                           {`H${h.level}`}
                         </SelectTrigger>
-                        <SelectContent>
+                        {/* Compact menu (~30% smaller than the shadcn default —
+                            six two-character options don't need a full-size panel). */}
+                        <SelectContent className="min-w-[56px] w-[56px]">
                           {[1, 2, 3, 4, 5, 6].map((n) => (
-                            <SelectItem key={n} value={String(n)} className="text-xs">{`H${n}`}</SelectItem>
+                            <SelectItem
+                              key={n}
+                              value={String(n)}
+                              className="justify-center py-1 pl-2 pr-2 text-[10px] font-semibold [&>span:first-child]:hidden"
+                            >{`H${n}`}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
