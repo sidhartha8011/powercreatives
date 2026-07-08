@@ -6579,3 +6579,25 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   Deliveries drops to parity. LESSON: arbitrary font-size utilities inherit
   line-height — pin leading in shared recipes.
 - Verified: tsc 56 = baseline; build OK. BEFORE 0c246dc → AFTER (this commit).
+
+## 2026-07-08 07:24 - [seo-paragraph-rows-readonly] (pair 1 of phase-1 build)
+- FEATURE: paragraphs become visible rows in the SEO outline (LOCAL, read-only).
+  parse_content_nodes() + get_post_content_nodes() in PCM_SEO_Service (combined
+  heading+<p> parse, document order, wpautop only when content has no <p>;
+  heading skip rule byte-identical to parse_heading_details so headingIndex
+  aligns with the headings-only list). New GET /seo/content/{id}/content-nodes
+  -> { nodes } + trpc seo.getContentNodes.
+- NODE IDENTITY CONTRACT v1 frozen (architecture doc): { kind, index, text };
+  headings ALSO carry headingIndex = the EXISTING heading endpoints' handle,
+  so heading edit/optimize flows are unchanged. After a local heading save the
+  panel refetches nodes (heading endpoint returns headings-only list).
+- UI: HeadingsPanel renders ContentNode list. Paragraph rows: neutral P chip,
+  indent one step under nearest heading (flush when orphaned), one-line
+  preview, click -> Dialog with the paragraph's escaped HTML. Heading rows
+  pixel-identical to before. REMOTE left 100% untouched (connector heading
+  scan) - remote paragraphs arrive with pair 2 scan-content; a raw-body parse
+  here would order falsely against builder headings (honest gap, not silent).
+- VERIFIED: php -l x2 OK; tsc = 59 on HEAD and 59 with changes -> ZERO new
+  (baseline drifted 56->59 from other machine: SaveBrandButton dup, streamdown,
+  Templates unknown[] - NOT this pair); build OK. Ctrl+F5 needed.
+- BEFORE 4342ef8 -> AFTER 27a7d4f. Owner live-verify pending.
