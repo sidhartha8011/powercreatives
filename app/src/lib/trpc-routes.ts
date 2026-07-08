@@ -721,6 +721,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "image.generateSuggestions": { endpoint: "image/suggestions", method: "POST" },
     "image.generateContextSuggestions": { endpoint: "image/context-suggestions", method: "POST" },
     "image.optimizeBrief": { endpoint: "image/optimize-brief", method: "POST" },
+    "image.sessionUpload": { endpoint: "image/session-upload", method: "POST" },
 
     // ── Video ──
     "video.suggestConcepts": { endpoint: "video/concepts", method: "POST" },
