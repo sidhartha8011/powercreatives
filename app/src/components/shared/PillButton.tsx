@@ -44,21 +44,23 @@ const variantStyles: Record<
     hoverBg: colors.primaryLight,
     hoverColor: colors.primary,
   },
+  // Rest = gray; hover = blue (PO 2026-07-08) — hover previews the pressed
+  // ('active') palette.
   default: {
     bg: 'transparent',
     color: '#555',
     iconColor: colors.textMuted,
     weight: typography.medium,
-    hoverBg: colors.bgHover,
-    hoverColor: '#333',
+    hoverBg: colors.primaryLight,
+    hoverColor: colors.primary,
   },
   subtle: {
     bg: 'transparent',
     color: colors.textMuted,
     iconColor: colors.textFaint,
     weight: typography.regular,
-    hoverBg: colors.bgHover,
-    hoverColor: '#555',
+    hoverBg: colors.primaryLight,
+    hoverColor: colors.primary,
   },
 };
 
@@ -76,8 +78,11 @@ export function PillButton({
   const v = variantStyles[variant];
   const isDisabled = disabled || loading;
 
-  const bg = hovered && !isDisabled && variant !== 'active' ? v.hoverBg : v.bg;
-  const color = hovered && !isDisabled && variant !== 'active' ? v.hoverColor : v.color;
+  const isHovering = hovered && !isDisabled && variant !== 'active';
+  const bg = isHovering ? v.hoverBg : v.bg;
+  const color = isHovering ? v.hoverColor : v.color;
+  // Icon follows the text on hover so the whole pill reads blue at once.
+  const iconColor = isHovering ? v.hoverColor : v.iconColor;
 
   return (
     <button
@@ -102,13 +107,13 @@ export function PillButton({
     >
       {loading ? (
         <Loader2
-          style={{ width: spacing.iconSm, height: spacing.iconSm, color: v.iconColor }}
+          style={{ width: spacing.iconSm, height: spacing.iconSm, color: iconColor }}
           className="animate-spin"
         />
       ) : icon ? (
         <span
           style={{
-            color: v.iconColor,
+            color: iconColor,
             display: 'flex',
             alignItems: 'center',
             width: spacing.iconSm,
