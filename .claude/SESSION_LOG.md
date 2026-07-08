@@ -6485,3 +6485,20 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - LESSON: in this codebase, imperative fetches = apiFetch; trpc proxy is
   hooks-only. Verified: tsc 56 = baseline, build OK.
   BEFORE 689b501 → AFTER (this commit).
+
+## 2026-07-08 — deliveries batch of five [kanban-compact-cards + deliveries-name-cell-actions + deliveries-universal-search + deliveries-multiselect-bulk + kanban-dynamic-lanes]
+- Compact Kanban via shared TOKENS only (all boards). Name-cell: open icon
+  hover-only+smaller; delete → new far-right actions column; sub-rows +1 cell.
+- Universal search: buildDeliveryFilters walks every row value dynamically
+  (future fields free) + brand-name/type-label resolvers from the board.
+- DataTable controlled `selection` prop (leading checkbox col, select-all
+  visible); deliveries + project sub-row selection; shared BulkActionBar:
+  status select + Delete N (confirm; sequential — optimistic snapshots race
+  in parallel) / Remove N projects.
+- Dynamic lanes: Lanes dropdown (status/type/brand/lead/client, persisted);
+  lanes derived live + "No X" clear-lane; drops WRITE via new optimistic
+  helpers updateFieldsOptimistic/setLeadOptimistic (flushSync contract from
+  updateStatus — dnd snap-back autopsy). Modules/Updated excluded (multi-value
+  / derived).
+- Verified: tsc 56 baseline after each pair; build OK. Live pass pending.
+  BEFOREs e78bee5/e58bfe9/daf788a/a7d27b2/a204baf → AFTER f0e964c (last).
