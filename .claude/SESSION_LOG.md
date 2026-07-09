@@ -6691,3 +6691,41 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   editor - on remote sites it lands on their login unless already logged in,
   which is why it felt dead; retitled "Edit on site (WP editor)").
 - tsc 59 = baseline; build OK. BEFORE 859f3f9 -> AFTER (this commit).
+
+## 2026-07-09 - [section-engine-phase1] (section editor, phase 1 of 2)
+- ENGINE shipped per approved spec (docs/SECTION-EDITOR-PLAN-20260709.md):
+  every header owns its section; two new rule targets end-to-end. `section`
+  replace = swap a whole section (merge/delete/add paragraphs, headings,
+  lists) guarded by a FINGERPRINT of the original paragraph texts - any
+  client edit inside -> miss -> original serves + stale (occurrence is only
+  a hint; chrome-duplicate headings can never cause a wrong swap).
+  `sectionInsert` = complete NEW section (FAQ case) anchored before/after an
+  existing heading ('after' lands top-level before the next section's
+  heading; last section falls back inside-wrapper, documented).
+- Contracts v2 frozen FIRST (a62d058, architecture doc). Reference impl in
+  PCM_Text_Matcher (fingerprint/parse_blocks/parse_replacement_units/
+  apply_section_rule/apply_section_insert; same-tag block swaps KEEP original
+  attrs so builder styling survives; lists in rewrites never dropped) + 14
+  new fixture tests.
+- Hub: save_section_rule (UPSERT by heading identity, CLEAN REVERT deletes,
+  ABSORB covered paragraph rules in the same push, capability BEFORE write,
+  push-fail rollback via full snapshot/restore w/ preserved ids),
+  save_section_insert (UPSERT by rule id; empty replacement = clean removal),
+  remote_optimize_section (staged; new 'section' prompt seeded as Template),
+  RE-KEY on remote heading edit (remote_update_heading gained trailing
+  $user_id; core extracted to remote_update_heading_apply, behavior
+  identical), connector_rules_schema_version + push v2 ONLY when section
+  targets present (paragraph-only posts push v1 byte-identical - zero
+  regression on old connectors; v2-needing push vs old connector = honest
+  2.8.0 error). Routes section-rule (kind replace|insert) + section-optimize
+  + trpc map x2.
+- Connector 2.7.1 -> 2.8.0: GET /rules schemaVersion 2, POST accepts v1+v2,
+  mirrored section engine (SYNC CONTRACT), apply = sections -> inserts ->
+  v1 paragraph pass byte-identical; same fail-to-original/kill-switch/purge.
+- VERIFIED: php -l x6 OK; GENERATED connector source extracted + linted
+  (118,845 chars, the mandatory step); matcher smoke 22/22; PARITY smoke
+  17/17 (extracted connector functions === PCM_Text_Matcher on every
+  fixture); tsc 59 = baseline (zero new); build OK.
+- Phase 2 = the floating modal UI (separate go). Owner verify steps in
+  docs/CHANGELOG-20260709-0330.md.
+- BEFORE ff07e56 -> AFTER (this commit).

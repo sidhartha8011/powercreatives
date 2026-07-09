@@ -65,6 +65,20 @@ return array(
             . "Requirements:\n- Keep roughly the same length (never more than ~40% longer)\n- Improve clarity, keyword relevance, and search intent — do NOT change what the paragraph says or invent facts\n- Write in {{site.lang}} (the SAME language as the current paragraph)\n- Plain text only — no headings, no markdown, no quotation marks around the output\n- Output ONLY the paragraph text, nothing else",
     ),
 
+    // ── Section (heading + its paragraphs) — the section editor's AI rewrite ──
+    // Output is served VERBATIM at render time by the connector's section engine
+    // (rule schema v2), so the requirements pin clean sibling block HTML: one
+    // heading + <p>/<ul>/<ol> blocks, same language, no wrappers, no styles.
+    'section' => array(
+        'max'      => 1200,
+        'generate' => "Write a complete NEW content section for this page.\n\n"
+            . "Section topic / instruction: {{topic}}\nPage Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nBusiness: {{business.name}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- Output clean HTML blocks ONLY: exactly one heading (<h2> or <h3>) first, then 1-4 <p> paragraphs (a <ul>/<ol> list is allowed where it genuinely helps)\n- No wrapper elements (<div>/<section>), no inline styles, no classes\n- Work a relevant keyword in naturally (no stuffing); clear and factual — never invent business facts\n- Write in {{site.lang}}\n- Output ONLY the HTML — no markdown, no code fences, no commentary",
+        'optimize' => "Optimize the following page section for SEO and readability, keeping its original meaning, facts, and language.\n\n"
+            . "Current Section HTML: {{current_value}}\nPage Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nBusiness: {{business.name}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- Keep the same overall structure and roughly the same length (never more than ~40% longer); you may merge or split paragraphs when it clearly improves readability\n- Keep the heading's tag level; improve its text only when it clearly helps search intent\n- Output clean sibling HTML blocks ONLY (heading, <p>, optionally <ul>/<ol>); keep existing inline links; no wrappers, no inline styles, no classes\n- Do NOT change what the section says or invent facts\n- Write in {{site.lang}} (the SAME language as the current section)\n- Output ONLY the HTML — no markdown, no code fences, no commentary",
+    ),
+
     // ── Meta description ──
     'meta_description' => array(
         'max'      => 220,

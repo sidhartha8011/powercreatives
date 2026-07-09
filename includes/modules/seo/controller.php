@@ -83,6 +83,8 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/rules', 'remote_list_rules', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-rule', 'remote_save_paragraph_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-optimize', 'remote_optimize_paragraph', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-rule', 'remote_save_section_rule', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)', 'remote_update_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)/optimize', 'remote_optimize_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/featured', 'remote_set_featured', array(), 'manage_options'),
@@ -415,6 +417,67 @@ class PCM_REST_SEO extends PCM_REST_Base
         return $this->success($result);
     }
 
+    /**
+     * POST /seo/sites/{id}/content/{post}/section-rule — save a section's dynamic
+     * rule (contracts v2). `kind:'replace'` (default) swaps a whole existing
+     * section; `kind:'insert'` adds a NEW section anchored to an existing heading.
+     */
+    public function remote_save_section_rule(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $kind   = ((string) ($params['kind'] ?? 'replace')) === 'insert' ? 'insert' : 'replace';
+        if ($kind === 'insert') {
+            $result = $this->service->save_section_insert((int) $user->id, $site, absint($request->get_param('post')), array(
+                'anchorText'       => (string) ($params['anchorText'] ?? ''),
+                'anchorLevel'      => (int) ($params['anchorLevel'] ?? 2),
+                'anchorOccurrence' => (int) ($params['anchorOccurrence'] ?? 0),
+                'position'         => (string) ($params['position'] ?? 'after'),
+                'replacement'      => (string) ($params['replacement'] ?? ''),
+                'ruleId'           => (int) ($params['ruleId'] ?? 0),
+            ));
+        } else {
+            $result = $this->service->save_section_rule((int) $user->id, $site, absint($request->get_param('post')), array(
+                'headingText'       => (string) ($params['headingText'] ?? ''),
+                'headingLevel'      => (int) ($params['headingLevel'] ?? 2),
+                'headingOccurrence' => (int) ($params['headingOccurrence'] ?? 0),
+                'paragraphs'        => (isset($params['paragraphs']) && is_array($params['paragraphs'])) ? $params['paragraphs'] : array(),
+                'replacement'       => (string) ($params['replacement'] ?? ''),
+            ));
+        }
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/section-optimize — AI-rewrite a whole
+     *  section / draft a new one (block HTML, NOT saved — staged). */
+    public function remote_optimize_section(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params      = $request->get_json_params() ?: array();
+        $type        = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $html        = wp_kses_post((string) ($params['html'] ?? '')); // section HTML — kses, NOT textarea-stripped
+        $topic       = sanitize_textarea_field((string) ($params['topic'] ?? ''));
+        $model       = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider    = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+        $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
+        $result = PCM_SEO_Service::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
     /** POST /seo/sites/{id}/content/{post}/headings/{idx} — edit a connected post's heading. */
     public function remote_update_heading(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
@@ -427,7 +490,9 @@ class PCM_REST_SEO extends PCM_REST_Base
         $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
         $text   = array_key_exists('text', $params) ? wp_kses_post((string) $params['text']) : null;
         $level  = array_key_exists('level', $params) ? absint($params['level']) : null;
-        $result = PCM_SEO_Service::remote_update_heading($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $text, $level);
+        // user id rides along so a successful edit RE-KEYS any section rules
+        // anchored to this heading (interaction law, contracts v2).
+        $result = PCM_SEO_Service::remote_update_heading($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $text, $level, (int) $user->id);
         if ($result instanceof WP_Error) {
             return $result;
         }

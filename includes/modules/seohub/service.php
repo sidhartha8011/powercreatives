@@ -445,7 +445,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.7.1
+ * Version: 2.8.0
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1958,6 +1958,141 @@ function pcm_conn_parse_paragraph_nodes($html, $source) {
     }
     return $nodes;
 }
+// --- Section engine v2 (2.8.0) — MIRROR of PCM_Text_Matcher's fixture-tested
+// reference (fingerprint / parse_blocks / parse_replacement_units /
+// apply_section_rule / apply_section_insert). SYNC CONTRACT: behavior-identical,
+// change the hub class first, mirror here, same pair. ---
+/** Section fingerprint v2: normalized paragraph texts joined with "\n". */
+function pcm_conn_section_fingerprint($texts) {
+    $out = array();
+    foreach ((array) $texts as $t) { $out[] = pcm_conn_normalize_text((string) $t); }
+    return implode("\n", $out);
+}
+/** Top-level <h1-6>/<p> blocks with offsets (level 0 = <p>). */
+function pcm_conn_parse_blocks($html) {
+    $out = array();
+    if (!preg_match_all('#<(h[1-6]|p)(\s[^>]*)?>(.*?)</\1>#is', (string) $html, $mm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) { return $out; }
+    foreach ($mm as $m) {
+        $tag   = strtolower($m[1][0]);
+        $out[] = array(
+            'tag'   => $tag,
+            'level' => ($tag === 'p') ? 0 : (int) substr($tag, 1),
+            'attrs' => isset($m[2][0]) ? (string) $m[2][0] : '',
+            'inner' => (string) $m[3][0],
+            'text'  => pcm_conn_visible_text((string) $m[3][0]),
+            'html'  => (string) $m[0][0],
+            'start' => (int) $m[0][1],
+            'len'   => strlen((string) $m[0][0]),
+        );
+    }
+    return $out;
+}
+/** A replacement's ordered units: h/p blocks + raw chunks (lists etc.) between them. */
+function pcm_conn_parse_replacement_units($html) {
+    $units = array(); $pos = 0; $html = (string) $html;
+    if (preg_match_all('#<(h[1-6]|p)(\s[^>]*)?>(.*?)</\1>#is', $html, $mm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+        foreach ($mm as $m) {
+            $start = (int) $m[0][1];
+            $gap   = substr($html, $pos, $start - $pos);
+            if (trim($gap) !== '') { $units[] = array('tag' => '', 'inner' => '', 'html' => trim($gap)); }
+            $units[] = array('tag' => strtolower($m[1][0]), 'inner' => (string) $m[3][0], 'html' => (string) $m[0][0]);
+            $pos = $start + strlen((string) $m[0][0]);
+        }
+    }
+    $tail = substr($html, $pos);
+    if (trim($tail) !== '') { $units[] = array('tag' => '', 'inner' => '', 'html' => trim($tail)); }
+    return $units;
+}
+/** The section body owned by the heading block at $i: following <p> block indices. */
+function pcm_conn_section_body($blocks, $i) {
+    $body = array();
+    for ($j = $i + 1, $n = count($blocks); $j < $n; $j++) {
+        if ($blocks[$j]['tag'] !== 'p') { break; }
+        $body[] = $j;
+    }
+    return $body;
+}
+/**
+ * Apply one `section` replace rule — all-or-nothing, wrapper-safe (contracts v2):
+ * candidates verify their body FINGERPRINT (occurrence is only a hint among
+ * verified twins, so chrome-duplicate headings can never cause a wrong swap);
+ * replacement units map 1:1 onto original blocks (same tag keeps the ORIGINAL
+ * attributes), surplus new units ride as siblings, surplus originals are removed
+ * whole. Returns new HTML or null (miss → caller serves original + stale count).
+ */
+function pcm_conn_apply_section_rule($html, $match_text, $level, $fingerprint, $occurrence, $replacement) {
+    if ((string) $match_text === '') { return null; }
+    $blocks = pcm_conn_parse_blocks($html);
+    $verified = array();
+    foreach ($blocks as $i => $b) {
+        if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) { continue; }
+        if (pcm_conn_normalize_text($b['text']) !== $match_text) { continue; }
+        $body  = pcm_conn_section_body($blocks, $i);
+        $texts = array();
+        foreach ($body as $j) { $texts[] = $blocks[$j]['text']; }
+        if (pcm_conn_section_fingerprint($texts) === (string) $fingerprint) {
+            $verified[] = array('heading' => $i, 'body' => $body);
+        }
+    }
+    if (empty($verified)) { return null; }
+    $hit      = $verified[min(max(0, (int) $occurrence), count($verified) - 1)];
+    $orig_idx = array_merge(array($hit['heading']), $hit['body']);
+    $units    = pcm_conn_parse_replacement_units($replacement);
+    if (empty($units)) { return null; }
+    $edits  = array();
+    $shared = min(count($orig_idx), count($units));
+    for ($k = 0; $k < $shared; $k++) {
+        $o = $blocks[$orig_idx[$k]];
+        $n = $units[$k];
+        $new_html = ($n['tag'] !== '' && $o['tag'] === $n['tag'])
+            ? '<' . $o['tag'] . $o['attrs'] . '>' . $n['inner'] . '</' . $o['tag'] . '>'
+            : $n['html'];
+        $edits[] = array('start' => $o['start'], 'len' => $o['len'], 'html' => $new_html);
+    }
+    if (count($units) > $shared) {
+        $last  = $blocks[$orig_idx[$shared - 1]];
+        $extra = '';
+        for ($k = $shared; $k < count($units); $k++) { $extra .= $units[$k]['html']; }
+        $edits[] = array('start' => $last['start'] + $last['len'], 'len' => 0, 'html' => $extra);
+    }
+    for ($k = $shared; $k < count($orig_idx); $k++) {
+        $o       = $blocks[$orig_idx[$k]];
+        $edits[] = array('start' => $o['start'], 'len' => $o['len'], 'html' => '');
+    }
+    usort($edits, function ($a, $b) { return $b['start'] - $a['start']; });
+    foreach ($edits as $e) { $html = substr_replace($html, $e['html'], $e['start'], $e['len']); }
+    return $html;
+}
+/**
+ * Apply one `sectionInsert` rule: new section before the anchor heading, or
+ * after the anchor section ('after' = before the NEXT heading block when one
+ * exists — top-level, outside builder wrappers; only the page's LAST section
+ * falls back to after-its-last-block). Anchor missing → null (nothing inserted).
+ */
+function pcm_conn_apply_section_insert($html, $match_text, $level, $position, $occurrence, $replacement) {
+    if ((string) $match_text === '' || trim((string) $replacement) === '') { return null; }
+    $blocks = pcm_conn_parse_blocks($html);
+    $candidates = array();
+    foreach ($blocks as $i => $b) {
+        if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) { continue; }
+        if (pcm_conn_normalize_text($b['text']) === $match_text) { $candidates[] = $i; }
+    }
+    if (empty($candidates)) { return null; }
+    $i = $candidates[min(max(0, (int) $occurrence), count($candidates) - 1)];
+    if ($position === 'before') {
+        $at = $blocks[$i]['start'];
+    } else {
+        $body = pcm_conn_section_body($blocks, $i);
+        $next = empty($body) ? $i + 1 : $body[count($body) - 1] + 1;
+        if (isset($blocks[$next]) && $blocks[$next]['tag'] !== 'p') {
+            $at = $blocks[$next]['start'];
+        } else {
+            $last = empty($body) ? $blocks[$i] : $blocks[$body[count($body) - 1]];
+            $at   = $last['start'] + $last['len'];
+        }
+    }
+    return substr_replace($html, $replacement, $at, 0);
+}
 // Scan cache (2.7.1): busted whenever the post changes — a stale inventory must
 // never outlive an edit (rules POST also busts it, see the /rules route).
 add_action('save_post', function ($pid) { delete_transient('pcm_conn_cscan_' . (int) $pid); });
@@ -2002,6 +2137,22 @@ function pcm_conn_rules_bump_stats($pid, $applied, $missed) {
  */
 function pcm_conn_apply_rules($html, $rules, $pid) {
     $applied = 0; $missed = 0;
+    // Pass 1 (v2): section replaces, then section inserts — each rule re-parses
+    // the current buffer (offsets shift between rules; a few rules per post, cheap).
+    foreach (array('section', 'sectionInsert') as $phase) {
+        foreach ($rules as $r) {
+            if (empty($r['active']) || (string) ($r['target'] ?? '') !== $phase) { continue; }
+            $want = (string) ($r['match']['text'] ?? '');
+            $occ  = (int) ($r['match']['occurrence'] ?? 0);
+            $sec  = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
+            $lvl  = (int) ($sec['level'] ?? 0);
+            $out  = ($phase === 'section')
+                ? pcm_conn_apply_section_rule($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ, (string) ($r['replacement'] ?? ''))
+                : pcm_conn_apply_section_insert($html, $want, $lvl, (string) ($sec['position'] ?? 'after'), $occ, (string) ($r['replacement'] ?? ''));
+            if (is_string($out)) { $html = $out; $applied++; } else { $missed++; }
+        }
+    }
+    // Pass 2 (v1, byte-identical behavior): paragraph rules.
     foreach ($rules as $r) {
         if (empty($r['active'])) { continue; }
         $target = (string) ($r['target'] ?? '');
@@ -2054,28 +2205,33 @@ add_action('rest_api_init', function () {
             $pid = absint($req->get_param('post_id'));
             if (!$pid) {
                 $idx = get_option('pcm_conn_rules_index', array());
-                return array('supported' => true, 'schemaVersion' => 1, 'posts' => is_array($idx) ? array_map('intval', $idx) : array(), 'killSwitch' => get_option('pcm_conn_rules_off') === '1');
+                return array('supported' => true, 'schemaVersion' => 2, 'posts' => is_array($idx) ? array_map('intval', $idx) : array(), 'killSwitch' => get_option('pcm_conn_rules_off') === '1');
             }
             return array(
                 'supported'     => true,
-                'schemaVersion' => 1,
+                'schemaVersion' => 2,
                 'rules'         => pcm_conn_rules_for($pid),
                 'stats'         => (array) get_option('pcm_conn_rules_stats_' . $pid, array()),
             );
         }),
         array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) {
             $p = $req->get_json_params();
-            if (!is_array($p) || (int) ($p['schemaVersion'] ?? 0) !== 1) {
-                return new WP_REST_Response(array('error' => 'unsupported_schema', 'accepts' => 1), 400);
+            $schema = is_array($p) ? (int) ($p['schemaVersion'] ?? 0) : 0;
+            if ($schema !== 1 && $schema !== 2) {
+                return new WP_REST_Response(array('error' => 'unsupported_schema', 'accepts' => 2), 400);
             }
             $pid = absint($p['postId'] ?? 0);
             if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            // v2 adds the section targets; a v1 payload keeps exactly its v1 shape.
+            $targets = ($schema === 2)
+                ? array('paragraph', 'heading', 'anchorText', 'href', 'section', 'sectionInsert')
+                : array('paragraph', 'heading', 'anchorText', 'href');
             $clean = array();
             foreach ((array) ($p['rules'] ?? array()) as $r) {
                 if (!is_array($r)) { continue; }
                 $target = (string) ($r['target'] ?? '');
-                if (!in_array($target, array('paragraph', 'heading', 'anchorText', 'href'), true)) { continue; }
-                $clean[] = array(
+                if (!in_array($target, $targets, true)) { continue; }
+                $row = array(
                     'id'             => (int) ($r['id'] ?? 0),
                     'target'         => $target,
                     'match'          => array(
@@ -2088,6 +2244,19 @@ add_action('rest_api_init', function () {
                     'sourceChangeId' => isset($r['sourceChangeId']) ? (int) $r['sourceChangeId'] : null,
                     'anchor'         => (isset($r['anchor']) && is_array($r['anchor'])) ? $r['anchor'] : null,
                 );
+                if ($target === 'section' || $target === 'sectionInsert') {
+                    $sec = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
+                    $row['section'] = array('level' => max(0, min(6, (int) ($sec['level'] ?? 0))));
+                    if ($target === 'section') {
+                        // Fingerprint is stored as-is: the hub computed it via the SAME
+                        // normalization (sync contract) — re-normalizing per line here
+                        // would be redundant, and the compare side normalizes live text.
+                        $row['section']['fingerprint'] = (string) ($sec['fingerprint'] ?? '');
+                    } else {
+                        $row['section']['position'] = ((string) ($sec['position'] ?? 'after')) === 'before' ? 'before' : 'after';
+                    }
+                }
+                $clean[] = $row;
             }
             pcm_conn_rules_save($pid, $clean);
             delete_transient('pcm_conn_cscan_' . $pid); // rules changed → inventory cache is stale

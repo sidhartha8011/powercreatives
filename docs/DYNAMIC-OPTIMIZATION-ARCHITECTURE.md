@@ -176,9 +176,11 @@ headingOccurrence, fingerprint }`.
    whole. Non-block content between blocks (images, divs, shortcodes output)
    is untouched by construction.
 4. `sectionInsert`: locate the anchor section the same way (NO fingerprint
-   gate — inserts key on the heading only); insert the replacement blocks
-   before the anchor heading block or after the section's last block. Anchor
-   missing → nothing inserted + stale.
+   gate — inserts key on the heading only). `before` = at the anchor heading
+   block; `after` = before the NEXT section's heading block when one exists
+   (top-level placement, outside the anchor's builder wrappers) — only the
+   page's LAST section falls back to after-its-last-block. Anchor missing →
+   nothing inserted + stale.
 5. Order inside the serving callback: section replaces → section inserts →
    v1 paragraph rules. Same try/catch fail-to-original, same kill switch,
    same purge + stats pipeline, same `?pcm_cscan` exclusion.

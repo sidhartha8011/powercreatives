@@ -411,6 +411,17 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/paragraph-optimize`, body: { type: input.type, text: input.text, model: input.model, provider: input.provider, templateId: input.templateId } }),
     },
+    // ── Section editor (contracts v2) — remote (connected sites) ──
+    "seo.remoteSaveSectionRule": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-rule`, body: { kind: input.kind, headingText: input.headingText, headingLevel: input.headingLevel, headingOccurrence: input.headingOccurrence, paragraphs: input.paragraphs, anchorText: input.anchorText, anchorLevel: input.anchorLevel, anchorOccurrence: input.anchorOccurrence, position: input.position, ruleId: input.ruleId, replacement: input.replacement } }),
+    },
+    "seo.remoteOptimizeSection": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-optimize`, body: { type: input.type, html: input.html, topic: input.topic, model: input.model, provider: input.provider, templateId: input.templateId } }),
+    },
     "seo.remoteGetHeadings": {
         endpoint: "seo/sites",
         method: "GET",

@@ -2531,13 +2531,35 @@ class PCM_SEO_Service
         return self::remote_get_headings($site, $post_id, $type);
     }
 
-    public static function remote_update_heading(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level)
+    public static function remote_update_heading(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level, ?int $user_id = null)
     {
         self::ensure_sites_service();
         $headings = self::remote_get_headings($site, $post_id, $type);
         if (!isset($headings[$index])) {
             return new WP_Error('pcm_seo_heading_not_found', __('Heading not found — re-open and try again.', 'power-creatives'), array('status' => 404));
         }
+        // Section rules key on the heading (identity = normalized text + occurrence) —
+        // capture the OLD identity before the edit so a successful source-write can
+        // RE-KEY those rules in the same operation. A heading fix must never strand
+        // its section rule stale (interaction law, contracts v2).
+        $texts    = array_map(static fn($hh) => (string) ($hh['text'] ?? ''), $headings);
+        $old_norm = PCM_Text_Matcher::normalize((string) $headings[$index]['text']);
+        $old_occ  = PCM_Text_Matcher::occurrence_of($texts, $index);
+        $result   = self::remote_update_heading_apply($site, $post_id, $type, $index, $text, $level, $headings);
+        if ($user_id && !is_wp_error($result) && ($text !== null || $level !== null)) {
+            $new_text  = ($text !== null && $text !== '') ? $text : (string) $headings[$index]['text'];
+            $new_level = ($level !== null) ? max(1, min(6, $level)) : (int) $headings[$index]['level'];
+            $new_texts = is_array($result) ? array_map(static fn($hh) => (string) ($hh['text'] ?? ''), $result) : array();
+            $new_occ   = isset($new_texts[$index]) ? PCM_Text_Matcher::occurrence_of($new_texts, $index) : $old_occ;
+            self::rekey_section_rules($user_id, $site, $post_id, $old_norm, $old_occ, PCM_Text_Matcher::normalize($new_text), $new_occ, $new_level);
+        }
+        return $result;
+    }
+
+    /** The heading edit's routing core (override / widget / content paths) — unchanged
+     *  behavior, extracted so the public method can re-key section rules on success. */
+    private static function remote_update_heading_apply(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level, array $headings)
+    {
         $h = $headings[$index];
         // Shared-source headings (template / reusable block) edit their owning post, not the page.
         $target_pid = self::heading_target_post_id($h, $post_id);
@@ -2668,9 +2690,23 @@ class PCM_SEO_Service
     /** Whether a connected site's connector accepts rule schema v1 (capability check). */
     public static function connector_supports_rules(object $site): bool
     {
+        return self::connector_rules_schema_version($site) >= 1;
+    }
+
+    /**
+     * The highest rule-schema version a connected site's connector accepts:
+     * 0 = none (pre-2.7.0), 1 = paragraph rules (2.7.x), 2 = + section rules
+     * (2.8.0+). Read from GET /pcm-conn/v1/rules `schemaVersion` — the single
+     * capability handle for every push decision.
+     */
+    public static function connector_rules_schema_version(object $site): int
+    {
         self::ensure_sites_service();
         $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/rules');
-        return !is_wp_error($res) && (int) ($res['status'] ?? 0) < 300 && !empty($res['body']['supported']);
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || empty($res['body']['supported'])) {
+            return 0;
+        }
+        return max(1, (int) ($res['body']['schemaVersion'] ?? 1));
     }
 
     /**
@@ -2684,15 +2720,33 @@ class PCM_SEO_Service
     public static function push_rules(object $site, int $post_id, array $rules)
     {
         self::ensure_sites_service();
-        if (!self::connector_supports_rules($site)) {
+        // v2 ONLY when the set contains section targets — posts with plain
+        // paragraph rules keep pushing v1, byte-identical to before (zero
+        // regression on un-updated connectors).
+        $needs_v2 = false;
+        foreach ($rules as $r) {
+            if (in_array((string) ($r['target'] ?? ''), array('section', 'sectionInsert'), true)) {
+                $needs_v2 = true;
+                break;
+            }
+        }
+        $accepts = self::connector_rules_schema_version($site);
+        if ($accepts < 1) {
             return new WP_Error(
                 'pcm_seo_connector_no_rules',
                 __('This site’s connector doesn’t support dynamic rules yet (needs v2.7.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
                 array('status' => 409)
             );
         }
+        if ($needs_v2 && $accepts < 2) {
+            return new WP_Error(
+                'pcm_seo_connector_no_sections',
+                __('This site’s connector doesn’t support section rules yet (needs v2.8.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
         $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/rules', array(), array(
-            'schemaVersion' => 1,
+            'schemaVersion' => $needs_v2 ? 2 : 1,
             'postId'        => $post_id,
             'rules'         => array_values($rules),
         ), 60);
@@ -2721,6 +2775,13 @@ class PCM_SEO_Service
             $post_id
         ), ARRAY_A);
         return array_map(static function ($r) {
+            $ctx = null;
+            if (!empty($r['anchorContext'])) {
+                $decoded = json_decode((string) $r['anchorContext'], true);
+                if (is_array($decoded)) {
+                    $ctx = $decoded;
+                }
+            }
             return array(
                 'id'          => (int) $r['id'],
                 'target'      => (string) $r['target'],
@@ -2729,29 +2790,48 @@ class PCM_SEO_Service
                 'replacement' => (string) $r['replacement'],
                 'active'      => (bool) (int) $r['active'],
                 'staleCount'  => (int) $r['staleCount'],
+                // Section rules: {level, fingerprint, paragraphs} / {level, position}
+                // (the phase-2 overlay + absorb read these; null on paragraph rules
+                // whose anchorContext is display-anchor data, not section identity).
+                'section'     => in_array((string) $r['target'], array('section', 'sectionInsert'), true) ? $ctx : null,
             );
         }, (array) $rows);
     }
 
-    /** Map hub rule rows to rule schema v1 payload entries (the push shape). */
+    /** Map hub rule rows to rule schema v1/v2 payload entries (the push shape). */
     private static function rules_to_schema(array $rows): array
     {
         return array_map(static function ($r) {
-            $anchor = null;
+            $target = (string) $r['target'];
+            $ctx    = null;
             if (!empty($r['anchorContext'])) {
                 $decoded = json_decode((string) $r['anchorContext'], true);
                 if (is_array($decoded)) {
-                    $anchor = $decoded;
+                    $ctx = $decoded;
                 }
             }
-            return array(
+            $out = array(
                 'id'          => (int) $r['id'],
-                'target'      => (string) $r['target'],
+                'target'      => $target,
                 'match'       => array('text' => (string) $r['matchText'], 'occurrence' => (int) $r['occurrence']),
                 'replacement' => (string) $r['replacement'],
                 'active'      => (bool) (int) $r['active'],
-                'anchor'      => $anchor,
             );
+            if (in_array($target, array('section', 'sectionInsert'), true)) {
+                // v2: anchorContext IS the section identity {level, fingerprint|position}.
+                $out['section'] = array(
+                    'level' => (int) ($ctx['level'] ?? 0),
+                );
+                if ($target === 'section') {
+                    $out['section']['fingerprint'] = (string) ($ctx['fingerprint'] ?? '');
+                } else {
+                    $out['section']['position'] = (string) ($ctx['position'] ?? 'after');
+                }
+                $out['anchor'] = null;
+            } else {
+                $out['anchor'] = $ctx;
+            }
+            return $out;
         }, $rows);
     }
 
@@ -2875,6 +2955,338 @@ class PCM_SEO_Service
             $out['rule'] = array('matchText' => $match_text, 'occurrence' => $occurrence, 'replacement' => $replacement, 'active' => true);
         }
         return $out;
+    }
+
+    // =====================================================================
+    // SECTION RULES (contracts v2, FROZEN 2026-07-09) — section editor phase 1.
+    // =====================================================================
+
+    /** Every rule row of one connected post — snapshot source for rollback + push. */
+    private static function post_rule_rows(int $user_id, int $site_id, int $post_id): array
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_dynamic_rules');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        return (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT id, userId, siteId, postId, target, matchText, occurrence, replacement, anchorContext, active, staleCount FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d",
+            $user_id,
+            $site_id,
+            $post_id
+        ), ARRAY_A);
+    }
+
+    /**
+     * Restore a post's rule set from a snapshot (ROLLBACK after a failed push —
+     * hub DB must mirror what the connector actually serves; ids are restored
+     * explicitly so insert-rule identities survive the rollback).
+     */
+    private static function restore_rule_rows(int $user_id, int $site_id, int $post_id, array $rows): void
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_dynamic_rules');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->delete($table, array('userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id), array('%d', '%d', '%d'));
+        foreach ($rows as $r) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->insert($table, array(
+                'id'            => (int) $r['id'],
+                'userId'        => (int) $r['userId'],
+                'siteId'        => (int) $r['siteId'],
+                'postId'        => (int) $r['postId'],
+                'target'        => (string) $r['target'],
+                'matchText'     => (string) $r['matchText'],
+                'occurrence'    => (int) $r['occurrence'],
+                'replacement'   => (string) $r['replacement'],
+                'anchorContext' => $r['anchorContext'] !== null ? (string) $r['anchorContext'] : null,
+                'active'        => (int) $r['active'],
+                'staleCount'    => (int) $r['staleCount'],
+            ), array('%d', '%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d', '%d'));
+        }
+    }
+
+    /** Push a post's CURRENT hub rule set; on failure restore $snapshot and return the error. */
+    private static function push_current_rules_or_rollback(int $user_id, object $site, int $post_id, array $snapshot)
+    {
+        $rows = self::post_rule_rows($user_id, (int) $site->id, $post_id);
+        $push = self::push_rules($site, $post_id, self::rules_to_schema($rows));
+        if ($push instanceof WP_Error) {
+            self::restore_rule_rows($user_id, (int) $site->id, $post_id, $snapshot);
+            return $push;
+        }
+        return $push;
+    }
+
+    /**
+     * Save a SECTION replace rule (contracts v2) — same atomicity law as
+     * save_paragraph_rule: capability BEFORE any write, push-fail ROLLS BACK.
+     *
+     * UPSERT identity: siteId+postId+target='section'+matchText(heading)+occurrence.
+     * CLEAN REVERT: a replacement that reproduces the original section exactly
+     * (same heading text+level, same paragraph fingerprint, nothing extra)
+     * deletes the rule. ABSORB: paragraph rules covered by this section are
+     * deleted in the same push — a paragraph rule must never fight a section
+     * rule over the same block (interaction law).
+     *
+     * @param array{headingText:string,headingLevel:int,headingOccurrence:int,
+     *              paragraphs:array<int,array{text:string,occurrence:int}>,
+     *              replacement:string} $input
+     * @return array|\WP_Error
+     */
+    public function save_section_rule(int $user_id, object $site, int $post_id, array $input)
+    {
+        global $wpdb;
+        $table       = PCM_Schema::table('seo_dynamic_rules');
+        $site_id     = (int) $site->id;
+        $match_text  = PCM_Text_Matcher::normalize((string) ($input['headingText'] ?? ''));
+        $level       = max(1, min(6, (int) ($input['headingLevel'] ?? 2)));
+        $occurrence  = max(0, (int) ($input['headingOccurrence'] ?? 0));
+        $replacement = wp_kses_post((string) ($input['replacement'] ?? ''));
+        $paragraphs  = array();
+        $para_texts  = array();
+        foreach ((array) ($input['paragraphs'] ?? array()) as $p) {
+            if (!is_array($p) || !isset($p['text'])) {
+                continue;
+            }
+            $paragraphs[] = array('text' => PCM_Text_Matcher::normalize((string) $p['text']), 'occurrence' => max(0, (int) ($p['occurrence'] ?? 0)));
+            $para_texts[] = (string) $p['text'];
+        }
+        $fingerprint = PCM_Text_Matcher::fingerprint($para_texts);
+        if ($match_text === '') {
+            return new WP_Error('pcm_seo_rule_no_match', __('The section has no matchable heading text.', 'power-creatives'), array('status' => 400));
+        }
+        $units = PCM_Text_Matcher::parse_replacement_units($replacement);
+        if (empty($units)) {
+            return new WP_Error('pcm_seo_rule_empty', __('The replacement section is empty.', 'power-creatives'), array('status' => 400));
+        }
+        // Capability BEFORE any write — an old connector fails honestly, nothing half-done.
+        if (self::connector_rules_schema_version($site) < 2) {
+            return new WP_Error(
+                'pcm_seo_connector_no_sections',
+                __('This site’s connector doesn’t support section rules yet (needs v2.8.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+
+        // CLEAN REVERT: the replacement reproduces the original section exactly —
+        // heading unchanged (text + level) and paragraph fingerprint identical.
+        $reverted = false;
+        if (($units[0]['tag'] ?? '') === 'h' . $level
+            && PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text($units[0]['inner'])) === $match_text) {
+            $rest_all_p = true;
+            $rest_texts = array();
+            foreach (array_slice($units, 1) as $u) {
+                if ($u['tag'] !== 'p') {
+                    $rest_all_p = false;
+                    break;
+                }
+                $rest_texts[] = PCM_Text_Matcher::visible_text($u['inner']);
+            }
+            $reverted = $rest_all_p && PCM_Text_Matcher::fingerprint($rest_texts) === $fingerprint;
+        }
+
+        $snapshot = self::post_rule_rows($user_id, $site_id, $post_id);
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $prev = $wpdb->get_row($wpdb->prepare(
+            "SELECT id FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d",
+            $user_id,
+            $site_id,
+            $post_id,
+            $match_text,
+            $occurrence
+        ), ARRAY_A);
+
+        if ($reverted) {
+            if (!$prev) {
+                return array('reverted' => true, 'stored' => count($snapshot)); // nothing to do — no push needed
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->delete($table, array('id' => (int) $prev['id']), array('%d'));
+        } else {
+            $ctx = wp_json_encode(array('level' => $level, 'fingerprint' => $fingerprint, 'paragraphs' => $paragraphs));
+            if ($prev) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update($table, array('replacement' => $replacement, 'anchorContext' => $ctx, 'active' => 1), array('id' => (int) $prev['id']), array('%s', '%s', '%d'), array('%d'));
+            } else {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->insert($table, array(
+                    'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
+                    'target' => 'section', 'matchText' => $match_text, 'occurrence' => $occurrence,
+                    'replacement' => $replacement, 'anchorContext' => $ctx, 'active' => 1,
+                ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
+            }
+            // ABSORB: covered paragraph rules die with this push (their served text
+            // was folded into the section's initial state by the caller/UI first).
+            foreach ($paragraphs as $p) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->delete($table, array(
+                    'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
+                    'target' => 'paragraph', 'matchText' => $p['text'], 'occurrence' => $p['occurrence'],
+                ), array('%d', '%d', '%d', '%s', '%s', '%d'));
+            }
+        }
+
+        $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
+        if ($push instanceof WP_Error) {
+            return $push;
+        }
+        $out = array('stored' => (int) ($push['stored'] ?? 0));
+        if ($reverted) {
+            $out['reverted'] = true;
+        } else {
+            $out['rule'] = array('matchText' => $match_text, 'occurrence' => $occurrence, 'level' => $level, 'fingerprint' => $fingerprint, 'active' => true);
+        }
+        return $out;
+    }
+
+    /**
+     * Save a SECTION INSERT rule (contracts v2): a complete NEW section anchored
+     * before/after an existing heading. Identity = hub rule id (several inserts
+     * may share an anchor). Saving an existing insert with an EMPTY replacement
+     * deletes it (clean removal). Same capability/rollback laws as above.
+     *
+     * @param array{anchorText:string,anchorLevel:int,anchorOccurrence:int,
+     *              position:string,replacement:string,ruleId?:int} $input
+     * @return array|\WP_Error
+     */
+    public function save_section_insert(int $user_id, object $site, int $post_id, array $input)
+    {
+        global $wpdb;
+        $table       = PCM_Schema::table('seo_dynamic_rules');
+        $site_id     = (int) $site->id;
+        $match_text  = PCM_Text_Matcher::normalize((string) ($input['anchorText'] ?? ''));
+        $level       = max(1, min(6, (int) ($input['anchorLevel'] ?? 2)));
+        $occurrence  = max(0, (int) ($input['anchorOccurrence'] ?? 0));
+        $position    = ((string) ($input['position'] ?? 'after')) === 'before' ? 'before' : 'after';
+        $replacement = wp_kses_post((string) ($input['replacement'] ?? ''));
+        $rule_id     = isset($input['ruleId']) ? absint($input['ruleId']) : 0;
+        if ($match_text === '') {
+            return new WP_Error('pcm_seo_rule_no_match', __('New sections need an existing heading to anchor to.', 'power-creatives'), array('status' => 400));
+        }
+        if ($rule_id === 0 && trim(PCM_Text_Matcher::visible_text($replacement)) === '') {
+            return new WP_Error('pcm_seo_rule_empty', __('The new section is empty.', 'power-creatives'), array('status' => 400));
+        }
+        if (self::connector_rules_schema_version($site) < 2) {
+            return new WP_Error(
+                'pcm_seo_connector_no_sections',
+                __('This site’s connector doesn’t support section rules yet (needs v2.8.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+
+        $prev = null;
+        if ($rule_id > 0) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+            $prev = $wpdb->get_row($wpdb->prepare(
+                "SELECT id FROM {$table} WHERE id = %d AND userId = %d AND siteId = %d AND postId = %d AND target = 'sectionInsert'",
+                $rule_id,
+                $user_id,
+                $site_id,
+                $post_id
+            ), ARRAY_A);
+            if (!$prev) {
+                return new WP_Error('pcm_seo_rule_not_found', __('This added section no longer exists — re-open the outline.', 'power-creatives'), array('status' => 404));
+            }
+        }
+
+        $snapshot = self::post_rule_rows($user_id, $site_id, $post_id);
+        $removed  = false;
+        $ctx      = wp_json_encode(array('level' => $level, 'position' => $position));
+        if ($prev && trim(PCM_Text_Matcher::visible_text($replacement)) === '') {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->delete($table, array('id' => (int) $prev['id']), array('%d'));
+            $removed = true;
+        } elseif ($prev) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->update(
+                $table,
+                array('matchText' => $match_text, 'occurrence' => $occurrence, 'replacement' => $replacement, 'anchorContext' => $ctx, 'active' => 1),
+                array('id' => (int) $prev['id']),
+                array('%s', '%d', '%s', '%s', '%d'),
+                array('%d')
+            );
+            $rule_id = (int) $prev['id'];
+        } else {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->insert($table, array(
+                'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
+                'target' => 'sectionInsert', 'matchText' => $match_text, 'occurrence' => $occurrence,
+                'replacement' => $replacement, 'anchorContext' => $ctx, 'active' => 1,
+            ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
+            $rule_id = (int) $wpdb->insert_id;
+        }
+
+        $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
+        if ($push instanceof WP_Error) {
+            return $push;
+        }
+        $out = array('stored' => (int) ($push['stored'] ?? 0));
+        if ($removed) {
+            $out['removed'] = true;
+        } else {
+            $out['rule'] = array('id' => $rule_id, 'matchText' => $match_text, 'occurrence' => $occurrence, 'level' => $level, 'position' => $position, 'active' => true);
+        }
+        return $out;
+    }
+
+    /**
+     * RE-KEY section/sectionInsert rules after a successful heading source-edit
+     * (interaction law): their matchText/occurrence/level follow the heading so
+     * the rules keep serving. Push-fail restores the snapshot — hub and connector
+     * then AGREE on the old-keyed (now honestly stale) state; the stale flag is
+     * the surface, never a divergence.
+     */
+    private static function rekey_section_rules(int $user_id, object $site, int $post_id, string $old_norm, int $old_occ, string $new_norm, int $new_occ, int $new_level): void
+    {
+        global $wpdb;
+        // NOTE: even when text+occurrence are unchanged the LEVEL may have changed —
+        // the update below always runs against whatever rules key on the old identity.
+        $table = PCM_Schema::table('seo_dynamic_rules');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $rows = (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT id, anchorContext FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target IN ('section','sectionInsert') AND matchText = %s AND occurrence = %d",
+            $user_id,
+            (int) $site->id,
+            $post_id,
+            $old_norm,
+            $old_occ
+        ), ARRAY_A);
+        if (empty($rows)) {
+            return;
+        }
+        $snapshot = self::post_rule_rows($user_id, (int) $site->id, $post_id);
+        foreach ($rows as $r) {
+            $ctx = json_decode((string) ($r['anchorContext'] ?? ''), true);
+            $ctx = is_array($ctx) ? $ctx : array();
+            $ctx['level'] = $new_level;
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->update(
+                $table,
+                array('matchText' => $new_norm, 'occurrence' => $new_occ, 'anchorContext' => wp_json_encode($ctx)),
+                array('id' => (int) $r['id']),
+                array('%s', '%d', '%s'),
+                array('%d')
+            );
+        }
+        self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
+    }
+
+    /** AI-rewrite a whole section / draft a NEW one (NOT saved — staged). Returns { value } = block HTML. */
+    public static function remote_optimize_section(object $site, int $post_id, string $type, string $html, string $topic = '', ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
+    {
+        self::ensure_sites_service();
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'id,title,slug,link,author,meta'));
+        $row   = (!is_wp_error($res) && is_array($res['body'] ?? null)) ? self::remote_row($res['body'], $type, $site) : array();
+        $vars  = self::remote_field_vars($site, $row);
+        $vars['current_value'] = $html;
+        $vars['topic']         = $topic;
+        $mode  = ($html !== '') ? 'optimize' : 'generate';
+        $max   = (int) (self::field_prompts()['section']['max'] ?? 1200);
+        $val   = self::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
+        if ($val instanceof WP_Error) {
+            return $val;
+        }
+        return array('value' => wp_kses_post((string) $val));
     }
 
     /** AI-optimize a connected post's paragraph text (NOT saved — staged). Returns { value }. */

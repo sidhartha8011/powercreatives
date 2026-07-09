@@ -119,4 +119,258 @@ class PCM_Text_Matcher
         }
         return $occ;
     }
+
+    // =====================================================================
+    // Section contracts v2 (FROZEN 2026-07-09) — reference implementation.
+    // The connector's single-file mirror MUST stay behavior-identical to the
+    // four methods below (same sync contract as normalize/visible_text).
+    // =====================================================================
+
+    /**
+     * Section identity fingerprint v2: each paragraph's visible text run
+     * through normalization spec v1, joined with "\n". Empty array → '' (a
+     * heading with no paragraphs is a legal, empty-bodied section).
+     *
+     * @param array<int,string> $texts Paragraph visible texts, document order.
+     */
+    public static function fingerprint(array $texts): string
+    {
+        return implode("\n", array_map(static fn($t) => self::normalize((string) $t), $texts));
+    }
+
+    /**
+     * Top-level <h1-6>/<p> blocks of an HTML string, document order, with
+     * offsets — the section engine's working set. Same boundary-regex family
+     * as replace_block/scan-content (non-nestable tags, so boundaries are
+     * exact even in malformed builder HTML).
+     *
+     * @return array<int,array{tag:string,level:int,attrs:string,inner:string,
+     *                         text:string,html:string,start:int,len:int}>
+     *         level = 0 for <p>; text = visible text, NOT normalized.
+     */
+    public static function parse_blocks(string $html): array
+    {
+        $out = array();
+        if (!preg_match_all('#<(h[1-6]|p)(\s[^>]*)?>(.*?)</\1>#is', $html, $mm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+            return $out;
+        }
+        foreach ($mm as $m) {
+            $tag   = strtolower($m[1][0]);
+            $out[] = array(
+                'tag'   => $tag,
+                'level' => ($tag === 'p') ? 0 : (int) substr($tag, 1),
+                'attrs' => isset($m[2][0]) ? (string) $m[2][0] : '',
+                'inner' => (string) $m[3][0],
+                'text'  => self::visible_text((string) $m[3][0]),
+                'html'  => (string) $m[0][0],
+                'start' => (int) $m[0][1],
+                'len'   => strlen((string) $m[0][0]),
+            );
+        }
+        return $out;
+    }
+
+    /**
+     * A REPLACEMENT's ordered top-level units: every <h1-6>/<p> block (as in
+     * parse_blocks) PLUS any non-empty content between/around them (lists,
+     * tables, figures) as raw units — a section rewrite may legally contain
+     * `<ul>`/`<ol>` etc., which must never be dropped.
+     *
+     * @return array<int,array{tag:string,inner:string,html:string}>
+     *         tag = '' for raw (non-h/p) units.
+     */
+    public static function parse_replacement_units(string $html): array
+    {
+        $units = array();
+        $pos   = 0;
+        if (preg_match_all('#<(h[1-6]|p)(\s[^>]*)?>(.*?)</\1>#is', $html, $mm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+            foreach ($mm as $m) {
+                $start = (int) $m[0][1];
+                $gap   = substr($html, $pos, $start - $pos);
+                if (trim($gap) !== '') {
+                    $units[] = array('tag' => '', 'inner' => '', 'html' => trim($gap));
+                }
+                $units[] = array(
+                    'tag'   => strtolower($m[1][0]),
+                    'inner' => (string) $m[3][0],
+                    'html'  => (string) $m[0][0],
+                );
+                $pos = $start + strlen((string) $m[0][0]);
+            }
+        }
+        $tail = substr($html, $pos);
+        if (trim($tail) !== '') {
+            $units[] = array('tag' => '', 'inner' => '', 'html' => trim($tail));
+        }
+        return $units;
+    }
+
+    /**
+     * The section owned by the heading at $blocks[$i]: every following <p>
+     * block up to (not including) the next heading block of ANY level —
+     * the owner-locked section boundary. Returns the p-blocks' indices.
+     *
+     * @param array $blocks parse_blocks() output.
+     * @param int   $i      Index of the heading block.
+     * @return int[]
+     */
+    private static function section_body_indices(array $blocks, int $i): array
+    {
+        $body = array();
+        for ($j = $i + 1, $n = count($blocks); $j < $n; $j++) {
+            if ($blocks[$j]['tag'] !== 'p') {
+                break; // next heading = next section
+            }
+            $body[] = $j;
+        }
+        return $body;
+    }
+
+    /**
+     * Locate the section a rule targets: candidates = heading blocks whose
+     * normalized visible text AND level match; each candidate VERIFIES its
+     * body fingerprint. Exactly one verified → that one; several (identical
+     * twin sections) → the occurrence-th; none → null (the caller serves the
+     * ORIGINAL and flags stale — the fingerprint is the guard, occurrence is
+     * only a hint, so chrome-duplicate headings can never cause a wrong swap).
+     *
+     * @return array{heading:int,body:int[]}|null Block indices.
+     */
+    private static function locate_section(array $blocks, string $match_text, int $level, string $fingerprint, int $occurrence): ?array
+    {
+        $verified = array();
+        foreach ($blocks as $i => $b) {
+            if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) {
+                continue;
+            }
+            if (self::normalize($b['text']) !== $match_text) {
+                continue;
+            }
+            $body = self::section_body_indices($blocks, $i);
+            $fp   = self::fingerprint(array_map(static fn($j) => $blocks[$j]['text'], $body));
+            if ($fp === $fingerprint) {
+                $verified[] = array('heading' => $i, 'body' => $body);
+            }
+        }
+        if (empty($verified)) {
+            return null;
+        }
+        return $verified[min(max(0, $occurrence), count($verified) - 1)];
+    }
+
+    /**
+     * Apply one `section` (replace) rule v2 — all-or-nothing, wrapper-safe:
+     * replacement blocks map 1:1 onto the original blocks [heading, p1..pn];
+     * same tag → keep the ORIGINAL block's attributes, swap inner (builder
+     * styling survives); different tag → whole-block swap; surplus NEW blocks
+     * ride as siblings after the last mapped block; surplus ORIGINAL blocks
+     * are removed whole. Content BETWEEN blocks (images, divs) is untouched
+     * by construction. Returns new HTML, or NULL on no verified section
+     * (caller serves the original — never a guess).
+     *
+     * @param string $html        Full document HTML.
+     * @param string $match_text  Normalized heading text (spec v1).
+     * @param int    $level       Heading level (1–6).
+     * @param string $fingerprint Section fingerprint v2.
+     * @param int    $occurrence  Hint among verified twins.
+     * @param string $replacement Pre-sanitized section block HTML.
+     */
+    public static function apply_section_rule(string $html, string $match_text, int $level, string $fingerprint, int $occurrence, string $replacement): ?string
+    {
+        if ($match_text === '') {
+            return null;
+        }
+        $blocks = self::parse_blocks($html);
+        $hit    = self::locate_section($blocks, $match_text, $level, $fingerprint, $occurrence);
+        if ($hit === null) {
+            return null;
+        }
+        $orig_idx = array_merge(array($hit['heading']), $hit['body']);
+        $units    = self::parse_replacement_units($replacement);
+        if (empty($units)) {
+            return null; // an empty section replacement is never valid — revert deletes the rule instead
+        }
+        // Build per-block edits, then apply in REVERSE offset order (offsets stay valid).
+        $edits  = array();
+        $shared = min(count($orig_idx), count($units));
+        for ($k = 0; $k < $shared; $k++) {
+            $o = $blocks[$orig_idx[$k]];
+            $n = $units[$k];
+            $new_html = ($n['tag'] !== '' && $o['tag'] === $n['tag'])
+                ? '<' . $o['tag'] . $o['attrs'] . '>' . $n['inner'] . '</' . $o['tag'] . '>'
+                : $n['html'];
+            $edits[] = array('start' => $o['start'], 'len' => $o['len'], 'html' => $new_html);
+        }
+        // Surplus NEW units: siblings appended right after the last mapped original block.
+        if (count($units) > $shared) {
+            $last  = $blocks[$orig_idx[$shared - 1]];
+            $extra = '';
+            for ($k = $shared; $k < count($units); $k++) {
+                $extra .= $units[$k]['html'];
+            }
+            $edits[] = array('start' => $last['start'] + $last['len'], 'len' => 0, 'html' => $extra);
+        }
+        // Surplus ORIGINAL blocks: removed whole (their wrappers stay).
+        for ($k = $shared; $k < count($orig_idx); $k++) {
+            $o       = $blocks[$orig_idx[$k]];
+            $edits[] = array('start' => $o['start'], 'len' => $o['len'], 'html' => '');
+        }
+        usort($edits, static fn($a, $b) => $b['start'] <=> $a['start']);
+        foreach ($edits as $e) {
+            $html = substr_replace($html, $e['html'], $e['start'], $e['len']);
+        }
+        return $html;
+    }
+
+    /**
+     * Apply one `sectionInsert` rule v2: insert a complete new section before
+     * the anchor heading block, or after the anchor section's last block.
+     * Inserts key on the heading ONLY (no fingerprint gate — the anchor
+     * section's body may legitimately change). Anchor missing → NULL (nothing
+     * inserted, caller flags stale).
+     *
+     * @param string $html        Full document HTML.
+     * @param string $match_text  Normalized ANCHOR heading text.
+     * @param int    $level       Anchor heading level (1–6).
+     * @param string $position    'before' | 'after'.
+     * @param int    $occurrence  0-based among matching anchor headings.
+     * @param string $replacement Pre-sanitized new-section block HTML.
+     */
+    public static function apply_section_insert(string $html, string $match_text, int $level, string $position, int $occurrence, string $replacement): ?string
+    {
+        if ($match_text === '' || trim($replacement) === '') {
+            return null;
+        }
+        $blocks     = self::parse_blocks($html);
+        $candidates = array();
+        foreach ($blocks as $i => $b) {
+            if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) {
+                continue;
+            }
+            if (self::normalize($b['text']) === $match_text) {
+                $candidates[] = $i;
+            }
+        }
+        if (empty($candidates)) {
+            return null;
+        }
+        $i = $candidates[min(max(0, $occurrence), count($candidates) - 1)];
+        if ($position === 'before') {
+            $at = $blocks[$i]['start'];
+        } else {
+            // 'after' = before the NEXT section's heading block when one exists —
+            // top-level placement, outside the anchor's builder wrappers. Only the
+            // page's LAST section falls back to after-its-last-block (which may sit
+            // inside a wrapper — the documented container-inheritance limitation).
+            $body = self::section_body_indices($blocks, $i);
+            $next = empty($body) ? $i + 1 : end($body) + 1;
+            if (isset($blocks[$next]) && $blocks[$next]['tag'] !== 'p') {
+                $at = $blocks[$next]['start'];
+            } else {
+                $last = empty($body) ? $blocks[$i] : $blocks[end($body)];
+                $at   = $last['start'] + $last['len'];
+            }
+        }
+        return substr_replace($html, $replacement, $at, 0);
+    }
 }
