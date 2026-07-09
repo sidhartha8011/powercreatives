@@ -129,6 +129,93 @@ rendered output, not raw storage. Loopback blocked → `{ nodes: [],
 error:'loopback_blocked' }` (HTTP 200, honest) → the hub UI keeps the
 headings-only view and says so.
 
+### Section contracts v2 (FROZEN 2026-07-09, section-editor phase 1) — ADDITIVE
+
+Owner-locked domain decisions: **every header owns its own section** (a
+section = one heading + every following `<p>` until the NEXT heading of ANY
+level); **new sections anchor to an existing header** (before/after — pages
+with zero headings can't take inserts); per-row heading/paragraph editing
+keeps the shipped v1 paths untouched.
+
+**Section identity v2:** `{ headingText (normalized spec v1), headingLevel,
+headingOccurrence, fingerprint }`.
+- `headingOccurrence` = position among same-normalized-text headings in scan
+  order. It is a HINT — the fingerprint is the guard (see serving).
+- `fingerprint` = spec-v1 normalization of each of the section's paragraph
+  visible texts, joined with `"\n"` (`PCM_Text_Matcher::fingerprint()`).
+  Empty string for a heading with no paragraphs (legal).
+
+**Rule schema v2 (additive to v1 — v1 rules and their serving byte-identical):**
+- `target:'section'` (replace): `match:{text:<heading normalized>, occurrence:
+  <headingOccurrence>}`, `section:{level, fingerprint}`, `replacement` = the
+  ENTIRE new section as sibling block HTML (optional heading + `<p>/<hN>/<ul>/
+  <ol>` blocks), pre-sanitized `wp_kses_post`.
+- `target:'sectionInsert'`: `match:{text:<ANCHOR heading normalized>,
+  occurrence}`, `section:{level, position:'before'|'after'}`, `replacement` =
+  a complete new section. Identity = hub rule id (several inserts may share an
+  anchor; UPSERT by id, never by matchText).
+- Push carries `schemaVersion: 2` ONLY when the set contains section targets;
+  otherwise v1 exactly as before. Old connectors (≤2.7.1) reject v2 honestly
+  (`unsupported_schema`) — zero silent-drop risk. Capability = GET
+  /pcm-conn/v1/rules `schemaVersion` (2.8.0 answers 2).
+
+**Serving mechanism v2 (connector 2.8.0) — all-or-nothing, wrapper-safe:**
+1. Parse the buffered HTML's top-level `<h1-6>`/`<p>` blocks (same combined
+   boundary regex family as scan-content — non-nestable tags, exact).
+2. Candidates = heading blocks whose normalized visible text + level match.
+   For each candidate, its section = the following `<p>` blocks up to the next
+   heading block; VERIFY fingerprint. Exactly one verified candidate → apply
+   there; several (identical twin sections) → occurrence picks; none → apply
+   NOTHING for that rule + stale count. Chrome-duplicate headings therefore
+   can never cause a wrong swap.
+3. Apply as per-block ops (builder wrapper divs are NEVER touched):
+   replacement blocks map 1:1 onto original blocks (`[heading, p1..pn]`) —
+   same tag → keep the original block's attributes, swap inner (styling
+   survives); different tag → whole-block swap; surplus NEW blocks ride as
+   siblings after the last mapped block; surplus ORIGINAL blocks are removed
+   whole. Non-block content between blocks (images, divs, shortcodes output)
+   is untouched by construction.
+4. `sectionInsert`: locate the anchor section the same way (NO fingerprint
+   gate — inserts key on the heading only); insert the replacement blocks
+   before the anchor heading block or after the section's last block. Anchor
+   missing → nothing inserted + stale.
+5. Order inside the serving callback: section replaces → section inserts →
+   v1 paragraph rules. Same try/catch fail-to-original, same kill switch,
+   same purge + stats pipeline, same `?pcm_cscan` exclusion.
+6. Reference implementation lives in `PCM_Text_Matcher`
+   (`fingerprint`/`parse_blocks`/`apply_section_rule`/`apply_section_insert`),
+   fixture-tested; the connector's single-file mirror MUST stay
+   behavior-identical (same sync contract as v1).
+
+**Hub storage (NO DB bump — seo_dynamic_rules fits):** `target`
+'section'/'sectionInsert'; `matchText` = normalized (anchor) heading text;
+`occurrence` = headingOccurrence; `replacement` = section block HTML;
+`anchorContext` JSON = `{level, fingerprint, paragraphs:[{text,occurrence}]}`
+(replace — paragraphs kept for the absorb rule + stale UI) or
+`{level, position}` (insert).
+
+**Interaction laws (no mixed states, ever):**
+- **Absorb:** saving a section rule DELETES the hub's paragraph rules whose
+  matchText+occurrence fall inside that section (the UI folds their served
+  text into the section's initial state first — nothing lost, and a paragraph
+  rule can never fight a section rule over the same block).
+- **Re-key on heading edit:** a successful remote heading source-edit
+  re-keys any section/sectionInsert rules matched on that heading (matchText,
+  occurrence, level) and re-pushes — push-fail rolls the re-key back. A
+  heading fix must never strand its section rule stale.
+- **Clean revert:** a section replacement whose parsed heading + paragraph
+  texts normalize back to the original identity (heading unchanged AND
+  fingerprint identical) deletes the rule. An insert saved with an empty
+  replacement deletes the insert.
+- Fingerprint covers paragraph texts ONLY (not the heading), so a heading
+  re-key never invalidates the section body match.
+
+**Documented limitations (honest, never silent):** removed `<p>`s can leave
+empty builder wrappers (possible spacing); count-changing rewrites on
+multi-column builder sections re-flow into the surviving blocks; inserted
+sections inherit the container they land in. The authenticated preview modal
+shows the served truth immediately.
+
 ## Phase 1 — Approval rails (backlog item 1, unchanged)
 
 Staging table → envelope → approvals adapter registry → Before/After cards →
