@@ -1044,13 +1044,26 @@ export function SEOModule() {
                   onReject={() => rejectStaged(row.id, 'title')}
                 />
               </div>
+              {/* Row-hover-revealed quick actions (rest = clean title; the TableRow
+                  carries `group`). Eye = the existing preview modal (authenticated
+                  remote fetch, shows served dynamic rules, has open-in-new-tab). */}
+              {row.permalink && (
+                <button
+                  type="button"
+                  onClick={() => setPreviewRow(row)}
+                  title="Preview page"
+                  className="shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:text-primary"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                </button>
+              )}
               {row.editUrl && (
                 <a
                   href={row.editUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title="Edit on site"
-                  className="shrink-0 text-muted-foreground/50 hover:text-foreground"
+                  title="Edit on site (WP editor)"
+                  className="shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
                 >
                   <SquarePen className="w-3.5 h-3.5" />
                 </a>
