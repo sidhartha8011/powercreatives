@@ -163,6 +163,12 @@ entries → panel edit/optimize/overlay → template-extract lint + php -l + tsc
 verifies: edit a paragraph on powerstock → live page serves it → edit back to
 original → rule gone, original serves.
 
+**Pair 3.5 — SECTION EDITOR (specced 2026-07-09, AWAITING GO).** Supersedes
+the "paragraph UX redesign" discussion: every header owns its section; floating
+draggable non-blocking modal presents/edits the whole section; section replace
++ section insert (new FAQ etc.) via rule schema v2 + connector 2.8.0. Full
+fact-anchored plan + checklist: `docs/SECTION-EDITOR-PLAN-20260709.md`.
+
 **Pair 4 — Switches + serving indicator.**
 - Active toggles: per change / per page / per site (hub UI writes, push
   replaces the set, purge). Three-state row indicator original/optimized(N)/
