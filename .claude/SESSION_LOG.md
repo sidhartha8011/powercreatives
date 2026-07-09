@@ -6658,3 +6658,26 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - php -l OK; tsc 59 = baseline; build OK.
 - BEFORE 56e0579 -> AFTER (this commit). Owner: reinstall/update connector to
   2.7.1 on powerstock, then paragraphs appear via tier 3 even without loopback.
+
+## 2026-07-09 - [paragraph-edit-optimize] (pair 3)
+- FEATURE: remote paragraph rows are now EDITABLE via dynamic rules. Click a
+  paragraph -> textarea edit (Enter saves, Shift+Enter newline, Esc cancels);
+  hover ✦ -> AI optimize with the staged Accept/Reject UI. Accept ->
+  seo_dynamic_rules UPSERT (identity siteId+postId+matchText+occurrence -
+  re-edits update ONE rule, never pile up) -> push schema-v1 set to connector
+  -> live. Edit back to the original text = rule DELETED server-side (clean
+  revert). Push failure ROLLS BACK the DB write - hub state never diverges
+  silently from what the connector serves. Capability check BEFORE any write.
+- Overlay truth: panel fetches the hub rule set; a served paragraph shows the
+  REPLACEMENT text + a primary dot (tooltip carries the original). Optimize
+  runs on the SERVED text. P chip now opens the HTML popup (text click =
+  edit). LOCAL paragraphs stay read-only w/ honest tooltip (no engine on hub).
+- TEMPLATE LAW: new 'paragraph' prompt section (generate+optimize) in
+  prompts.php -> auto-seeded as user-editable Templates. run_prompt_section
+  gained a multiline mode (single-line sanitize would silently DROP sentences
+  from wrapped model output - paragraphs collapse whitespace instead).
+- Endpoints: GET .../rules, POST .../paragraph-rule, POST
+  .../paragraph-optimize (+ trpc map x3).
+- php -l x3 OK; tsc 59 = baseline; build OK. Connector UNTOUCHED this pair.
+- BEFORE ecd0c68 -> AFTER 2ea70e3. Verify: edit a paragraph on powerstock ->
+  live page serves it -> edit back -> rule gone, original serves.
