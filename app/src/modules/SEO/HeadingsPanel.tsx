@@ -1,29 +1,29 @@
 /**
  * HeadingRows — the expandable page-content editor shown under a page row in the SEO table.
  *
- * Renders the page's CONTENT NODES as REAL rows of the parent table (same <tr>/<td>
- * primitives, so the SEO_TABLE_GRID borders, h-9 cell height, and the <colgroup> column
- * widths apply verbatim — the subrows read as part of the spreadsheet, not a foreign panel):
+ * Renders the page's content as REAL rows of the parent table (same <tr>/<td> primitives,
+ * so the SEO_TABLE_GRID borders, cell heights and <colgroup> widths apply verbatim):
  *
- *  - HEADING nodes (H1–H6): exactly the editor that shipped before — indented by level, a
- *    colored H1–H6 tag chip (dropdown to retag), click-to-edit text, hover ✦ Optimize with
- *    the staged Accept/Reject UI. Local edits go through the EXISTING heading endpoints via
- *    the node's `headingIndex` (its position in the headings-only list).
- *  - PARAGRAPH nodes (pair 1, LOCAL only, read-only): every <p> as its own row in document
- *    order, indented one step under its heading (flush when orphaned), a neutral "P" chip,
- *    one-line text preview; click → popup showing the paragraph's actual HTML. Editing
- *    arrives via DYNAMIC RULES (pair 3) — paragraphs are never source-written.
+ *  - HEADING rows (H1–H6): the shipped editor, unchanged — colored tag chip (dropdown to
+ *    retag), click-to-edit text, hover ✦ Optimize with staged Accept/Reject. Local edits go
+ *    through the EXISTING heading endpoints via `headingIndex`.
+ *  - ¶ SECTION rows (owner-spec v2): ONE row per section (heading + its paragraphs) instead
+ *    of a row per <p>. Click → the floating SectionModal opens BELOW the click with the whole
+ *    section as directly editable, formatted text. Added sections (sectionInsert rules) render
+ *    as NEW rows at their served spot; “+ Add section” creates one.
  *
- * NODE IDENTITY CONTRACT v1: a node = { kind, index (position in the ordered node list),
- * normalized text } — the address future dynamic rules target. See
- * docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md → "Node identity contract".
+ * SECTION MEMBERSHIP (the root-cause fix, contracts v2): a section's paragraphs come from the
+ * CONNECTOR SCAN's own anchors (nearest preceding rendered heading — the serving engine's
+ * definition), NEVER from display layout. Duplicate anchors: the k-th contiguous run of
+ * same-anchor paragraphs belongs to the k-th matching heading. Paragraph runs whose anchor
+ * heading is NOT in the heading scan (e.g. the theme's comments title) render as standalone
+ * muted ¶ rows at the end — addressable, never silently dropped or mis-grouped.
  *
- * Local uses seo.getContentNodes (headings + paragraphs). Remote (connected sites) keeps the
- * connector's builder-aware heading scan UNCHANGED — remote paragraphs arrive with pair 2's
- * connector scan-content (a body-only parse here would order falsely against builder headings).
+ * LOCAL tab: sections come from the single local parse (true document order) and open
+ * read-only (routing law — no rule engine on the hub's own site).
  */
 
-import { Fragment, useEffect, useState, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight, Lock, LayoutTemplate, Maximize2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -32,11 +32,8 @@ import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from '@/components/ui/select';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from '@/components/ui/dialog';
 import { TableRow, TableCell } from './seo-table';
-import { SectionModal, type SectionData, type SectionAnchor, type InsertData } from './SectionModal';
+import { SectionModal, type SectionData, type SectionAnchor, type InsertData, type SectionParagraph } from './SectionModal';
 
 export interface HeadingItem {
   index: number;
@@ -55,10 +52,8 @@ export interface HeadingItem {
 
 /** One ordered page-content node (heading or paragraph) — mirrors get_post_content_nodes. */
 export interface ContentNode {
-  /** Position in the ordered node list — the rule-target identity (contract v1). */
   index: number;
   kind: 'heading' | 'paragraph';
-  /** Heading level (heading nodes only). */
   level?: number;
   text: string;
   html: string;
@@ -71,11 +66,17 @@ export interface ContentNode {
   headingIndex?: number;
   sourceLabel?: string;
   sourcePostId?: number;
-  /** Paragraph nodes: 0-based position among same-normalized-text twins — half
-   *  of the rule-target identity (matchText + occurrence). */
   occurrence?: number;
-  /** Paragraph nodes: nearest preceding rendered heading (re-anchor context). */
   anchor?: { level: number; text: string } | null;
+}
+
+/** One raw paragraph from the connector scan (scan-content v1) — scan order. */
+interface RawPara {
+  text: string;
+  html: string;
+  occurrence: number;
+  /** Nearest preceding rendered heading — SECTION MEMBERSHIP (normalized text). */
+  anchor: { level: number; text: string } | null;
 }
 
 /** One hub-stored dynamic rule (the UI overlay's source of truth). */
@@ -91,18 +92,20 @@ interface DynamicRule {
   section?: { level?: number; fingerprint?: string; position?: string } | null;
 }
 
-/** Default reason shown on a heading that can't be edited from here (mirrors the read-only
- *  copy in the Links editor). Applies when the scan flags a heading non-editable up front. */
+/** A section as the panel models it: heading node (or anchor-only) + its paragraphs. */
+interface PanelSection {
+  key: string;
+  heading: { text: string; level: number; occurrence: number; html: string };
+  /** The heading's node (undefined for anchor-only sections — e.g. comments title). */
+  headingNode?: ContentNode;
+  paragraphs: RawPara[];
+}
+
 const THEME_READONLY_REASON =
   'Read-only — this heading lives in your theme or a page template, not the editable page content. Edit it on the site.';
-
-/** WP error codes that mean the heading genuinely has no editable source on the site (theme /
- *  template hardcoded, or no editable markup) — the row should flip to read-only, not retry. */
 const HARDCODED_CODES = new Set(['pcm_seo_heading_not_found', 'pcm_seo_heading_not_editable']);
-/** WP error code meaning the page changed since the scan — a fresh re-scan fixes it. */
 const STALE_CODE = 'pcm_seo_heading_stale';
 
-/** Tag-chip accents per level (H1 → H6) — border + text on the table's card bg. */
 const TAG_STYLE: Record<number, string> = {
   1: 'bg-blue-500/10 text-blue-500 border-blue-500/40',
   2: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/40',
@@ -112,65 +115,7 @@ const TAG_STYLE: Record<number, string> = {
   6: 'bg-violet-500/10 text-violet-500 border-violet-500/40',
 };
 
-/** Indent so node text aligns with the page title text (chevron 14px + gap 4px),
- *  then 14px per heading level below H1; paragraphs sit one step under their heading. */
 const indentFor = (level: number): number => 18 + Math.max(0, level - 1) * 14;
-
-/** Display-side normalization for anchor matching (mirrors normalization spec v1
- *  minus entity decoding — a rare entity mismatch just demotes a paragraph to
- *  "after previous position" placement; DISPLAY ordering only, never targeting). */
-const normAnchor = (s: string): string =>
-  s.replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
-
-/**
- * Interleave remote paragraphs among the (builder-aware) heading rows using each
- * paragraph's rendered-order anchor (nearest preceding heading). Deterministic:
- * anchors resolve to the first matching heading at/after the current cursor;
- * unmatched anchors keep the paragraph after the previous paragraph's position.
- * Paragraph node indexes are offset by 10000 — display/key space only (they are
- * read-only; no mutation ever uses a paragraph index).
- */
-function mergeRemoteNodes(headings: ContentNode[], paragraphs: any[]): ContentNode[] {
-  const byKey = new Map<string, number[]>();
-  headings.forEach((h, pos) => {
-    const key = `${h.level ?? 0}|${normAnchor(h.text)}`;
-    const arr = byKey.get(key) ?? [];
-    arr.push(pos);
-    byKey.set(key, arr);
-  });
-  const assigned = new Map<number, ContentNode[]>(); // heading pos (-1 = before first) → paragraphs
-  let cursor = -1;
-  paragraphs.forEach((p, i) => {
-    if (p?.anchor && typeof p.anchor.text === 'string') {
-      const key = `${Number(p.anchor.level) || 0}|${normAnchor(String(p.anchor.text))}`;
-      const positions = byKey.get(key) ?? [];
-      const hit = positions.find((pos) => pos >= cursor);
-      if (hit !== undefined) cursor = hit;
-    }
-    const node: ContentNode = {
-      index: 10000 + i,
-      kind: 'paragraph',
-      text: String(p?.text ?? ''),
-      html: String(p?.html ?? ''),
-      source: String(p?.source ?? 'rendered'),
-      elId: '',
-      editable: true, // via dynamic rules (remote-only; the save path enforces it)
-      occurrence: Number(p?.occurrence ?? 0),
-      anchor: p?.anchor && typeof p.anchor.text === 'string'
-        ? { level: Number(p.anchor.level) || 0, text: String(p.anchor.text) }
-        : null,
-    };
-    const bucket = assigned.get(cursor) ?? [];
-    bucket.push(node);
-    assigned.set(cursor, bucket);
-  });
-  const out: ContentNode[] = [...(assigned.get(-1) ?? [])];
-  headings.forEach((h, pos) => {
-    out.push(h);
-    out.push(...(assigned.get(pos) ?? []));
-  });
-  return out;
-}
 
 export function HeadingRows({
   postId, type, siteId, brandId, model, provider, orderedCols,
@@ -181,15 +126,11 @@ export function HeadingRows({
   brandId?: number;
   model?: string;
   provider?: string;
-  /** The parent table's visible column keys, in order — one <td> per column. */
   orderedCols: string[];
 }) {
   const isLocal = siteId === 'local';
 
-  // Re-scan the page's content EVERY time its accordion is opened (HeadingRows mounts on
-  // expand, unmounts on collapse). Without this the global 30s staleTime serves cached nodes
-  // on re-open, so a page edited/re-scanned recently — or one whose first scan came back partial
-  // or read-only — would show stale data. `refetchOnMount: 'always'` forces a fresh scan per open.
+  // Fresh scan on every accordion open (mount) — see the shipped rationale.
   const localQuery = trpc.seo.getContentNodes.useQuery(
     { id: postId },
     { enabled: isLocal, staleTime: 0, refetchOnMount: 'always' },
@@ -198,10 +139,7 @@ export function HeadingRows({
     { siteId: siteId as number, postId, type },
     { enabled: !isLocal, staleTime: 0, refetchOnMount: 'always' },
   );
-  // Remote paragraph inventory (scan-content v1, connector 2.7.0+). Heading rows +
-  // their editing stay on remoteGetHeadings — this only ADDS paragraph rows.
-  // SERIALIZED after the heading query (2.7.1): both scans can trigger a loopback
-  // on the connected site; firing them together starves worker-limited hosts.
+  // Remote paragraph inventory — SERIALIZED after the heading query (2.7.1).
   const remoteNodesQuery = trpc.seo.remoteGetContentNodes.useQuery(
     { siteId: siteId as number, postId },
     { enabled: !isLocal && remoteQuery.isFetched, staleTime: 0, refetchOnMount: 'always' },
@@ -209,31 +147,39 @@ export function HeadingRows({
   const query = isLocal ? localQuery : remoteQuery;
 
   const [nodes, setNodes] = useState<ContentNode[]>([]);
-  // Honest paragraph-availability note for remote (old connector / blocked loopback).
+  /** Remote: the RAW scan paragraphs in scan order — section membership's source of truth. */
+  const [rawParas, setRawParas] = useState<RawPara[]>([]);
   const [remoteParaNote, setRemoteParaNote] = useState<string | null>(null);
-  /** Remote headings → heading nodes (index doubles as the remote edit handle). */
   const headingsToNodes = (list: HeadingItem[]): ContentNode[] =>
     list.map((h) => ({ ...h, kind: 'heading' as const, headingIndex: h.index }));
   useEffect(() => {
     if (isLocal) {
       const list = (localQuery.data as any)?.nodes;
       if (Array.isArray(list)) setNodes(list as ContentNode[]);
+      setRawParas([]);
       setRemoteParaNote(null);
       return;
     }
     const list = (remoteQuery.data as any)?.headings;
     if (!Array.isArray(list)) return;
-    const headingNodes = headingsToNodes(list as HeadingItem[]);
+    setNodes(headingsToNodes(list as HeadingItem[]));
     const meta: any = remoteNodesQuery.data ?? null;
     const paragraphs: any[] = Array.isArray(meta?.nodes) ? meta.nodes : [];
+    setRawParas(paragraphs.map((p) => ({
+      text: String(p?.text ?? ''),
+      html: String(p?.html ?? ''),
+      occurrence: Number(p?.occurrence ?? 0),
+      anchor: p?.anchor && typeof p.anchor.text === 'string'
+        ? { level: Number(p.anchor.level) || 0, text: String(p.anchor.text) }
+        : null,
+    })));
     if (meta && meta.supported === false) {
-      setRemoteParaNote('Paragraphs need connector v2.7.0+ on this site — update it from the Sites module.');
+      setRemoteParaNote('Sections need connector v2.7.0+ on this site — update it from the Sites module.');
     } else if (meta && meta.error === 'loopback_blocked') {
-      setRemoteParaNote('Paragraphs unavailable — the site blocked the connector’s content scan (loopback request).');
+      setRemoteParaNote('Sections unavailable — the site blocked the connector’s content scan (loopback request).');
     } else {
       setRemoteParaNote(null);
     }
-    setNodes(mergeRemoteNodes(headingNodes, paragraphs));
   }, [isLocal, localQuery.data, remoteQuery.data, remoteNodesQuery.data]);
 
   const localUpdate = trpc.seo.updateHeading.useMutation();
@@ -241,8 +187,7 @@ export function HeadingRows({
   const localOptimize = trpc.seo.optimizeHeading.useMutation();
   const remoteOptimize = trpc.seo.remoteOptimizeHeading.useMutation();
 
-  // ── Dynamic paragraph rules (remote only): the hub's stored rules overlay the
-  // scan's ORIGINAL text so the panel shows what the site actually SERVES. ──
+  // ── Dynamic rules overlay (remote): what the site actually SERVES. ──
   const rulesQuery = trpc.seo.remoteGetParagraphRules.useQuery(
     { siteId: siteId as number, postId },
     { enabled: !isLocal, staleTime: 0 },
@@ -250,153 +195,180 @@ export function HeadingRows({
   const rules: DynamicRule[] = Array.isArray((rulesQuery.data as any)?.rules)
     ? ((rulesQuery.data as any).rules as DynamicRule[])
     : [];
-  const saveParagraphMutation = trpc.seo.remoteSaveParagraphRule.useMutation();
-  const optimizeParagraphMutation = trpc.seo.remoteOptimizeParagraph.useMutation();
 
-  /** Match-side normalization for the overlay (entity decode via textarea +
-   *  NBSP/whitespace/case — mirrors normalization spec v1 close enough for
-   *  DISPLAY matching; the authoritative normalize runs server-side). */
+  /** Display-side normalization (entity decode + NBSP/whitespace/case) — mirrors
+   *  spec v1 for MATCHING display state; the authoritative normalize is server-side. */
   const jsNormalize = (s: string): string => {
     const el = document.createElement('textarea');
     el.innerHTML = s;
-    return el.value.replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+    return el.value.replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
   };
-  /** The paragraph node's active rule, if any (matchText + occurrence identity). */
-  const ruleFor = (n: ContentNode): DynamicRule | undefined =>
+  /** A paragraph's active rule (matchText + occurrence identity) — folded into sections. */
+  const paraRuleFor = (p: RawPara): DynamicRule | undefined =>
     rules.find((r) => r.target === 'paragraph' && r.active
-      && r.occurrence === (n.occurrence ?? 0) && r.matchText === jsNormalize(n.text));
-  /** Plain-text preview of a rule's replacement (may carry inline HTML). */
-  const rulePreview = (r: DynamicRule): string => {
+      && r.occurrence === p.occurrence && r.matchText === jsNormalize(p.text));
+  /** Plain-text preview of an HTML fragment. */
+  const textOf = (html: string): string => {
     const el = document.createElement('div');
-    el.innerHTML = r.replacement;
+    el.innerHTML = html;
     return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
   };
 
-  /** Save a paragraph's rule (or clean-revert when edited back to the original). */
-  const saveParagraph = async (n: ContentNode, replacement: string) => {
-    setBusyIndex(n.index);
-    try {
-      const res: any = await saveParagraphMutation.mutateAsync({
-        siteId: siteId as number,
-        postId,
-        text: n.text, // ALWAYS the scan's ORIGINAL text — the rule's identity
-        occurrence: n.occurrence ?? 0,
-        replacement,
-        anchor: n.anchor ?? undefined,
-      });
-      await rulesQuery.refetch();
-      toast.success(res?.reverted
-        ? 'Reverted — the original paragraph serves again.'
-        : 'Paragraph rule saved — the site serves the new text (page/CDN caches may need a purge).');
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Could not save the paragraph change');
-    } finally {
-      setBusyIndex(null);
-    }
-  };
+  // ── Sections (contracts v2 membership) ──────────────────────────────────
+  const sectionKey = (level: number, normText: string) => `${level}|${normText}`;
 
-  // Per-node UI state, keyed by node.index (unique within the current list).
-  const [busyIndex, setBusyIndex] = useState<number | null>(null);
-  const [suggestions, setSuggestions] = useState<Record<number, string>>({});
-  // Headings discovered read-only at SAVE time (theme/template-hardcoded) → keep them flagged
-  // for this session so the row shows the lock + reason instead of looking editable again.
-  const [readOnlyReason, setReadOnlyReason] = useState<Record<number, string>>({});
-  // Paragraph HTML popup (read-only inspector — orphan paragraphs without a section).
-  const [htmlPopup, setHtmlPopup] = useState<ContentNode | null>(null);
+  /** Remote: contiguous same-anchor RUNS of scan paragraphs, scan order. */
+  const paraRuns = (() => {
+    const runs: Array<{ key: string; paras: RawPara[] }> = [];
+    rawParas.forEach((p) => {
+      const key = p.anchor ? sectionKey(p.anchor.level, p.anchor.text) : '';
+      const last = runs[runs.length - 1];
+      if (last && last.key === key) last.paras.push(p);
+      else runs.push({ key, paras: [p] });
+    });
+    return runs;
+  })();
 
-  // ── Section editor (contracts v2): every header owns its section. ──
-  const [sectionModal, setSectionModal] = useState<
-    | { mode: 'section'; section: SectionData }
-    | { mode: 'insert'; insert?: InsertData; anchors?: SectionAnchor[] }
-    | null
-  >(null);
-
-  /** 0-based occurrence per heading node (among same-normalized-text headings) —
-   *  half of the section-rule identity; mirrors the server's occurrence_of. */
+  /** 0-based occurrence per heading node among same-key headings. */
   const headingOcc = new Map<number, number>();
   {
     const seen = new Map<string, number>();
     nodes.forEach((n) => {
       if (n.kind !== 'heading') return;
-      const key = jsNormalize(n.text);
+      const key = sectionKey(n.level ?? 0, jsNormalize(n.text));
       const occ = seen.get(key) ?? 0;
       headingOcc.set(n.index, occ);
       seen.set(key, occ + 1);
     });
   }
 
-  /** The active `section` rule serving a heading's section, if any. */
-  const sectionRuleFor = (heading: ContentNode): DynamicRule | undefined =>
-    rules.find((r) => r.target === 'section' && r.active
-      && r.matchText === jsNormalize(heading.text)
-      && r.occurrence === (headingOcc.get(heading.index) ?? 0));
-
-  /** `sectionInsert` rules anchored to a heading (added sections). */
-  const insertRulesFor = (heading: ContentNode): DynamicRule[] =>
-    rules.filter((r) => r.target === 'sectionInsert' && r.active
-      && r.matchText === jsNormalize(heading.text)
-      && r.occurrence === (headingOcc.get(heading.index) ?? 0));
-
-  /** Plain-text title of an added section (first heading inside its replacement). */
-  const insertTitle = (r: DynamicRule): string => {
-    const m = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(r.replacement);
-    const el = document.createElement('div');
-    el.innerHTML = m ? m[1] : r.replacement;
-    return (el.textContent ?? '').replace(/\s+/g, ' ').trim() || 'New section';
+  /** The section owned by a heading node. Remote: k-th same-key run (scan anchors).
+   *  Local: the paragraphs FOLLOWING the heading in the single local parse. */
+  const sectionFor = (heading: ContentNode): PanelSection => {
+    const level = heading.level ?? 2;
+    const occ = headingOcc.get(heading.index) ?? 0;
+    const key = sectionKey(level, jsNormalize(heading.text));
+    let paras: RawPara[] = [];
+    if (isLocal) {
+      const pos = nodes.findIndex((n) => n === heading);
+      for (let j = pos + 1; j < nodes.length; j++) {
+        if (nodes[j].kind !== 'paragraph') break;
+        paras.push({ text: nodes[j].text, html: nodes[j].html, occurrence: nodes[j].occurrence ?? 0, anchor: null });
+      }
+    } else {
+      const matching = paraRuns.filter((r) => r.key === key);
+      paras = matching[occ]?.paras ?? [];
+    }
+    return {
+      key: `${key}#${occ}`,
+      heading: { text: heading.text, level, occurrence: occ, html: heading.html || '' },
+      headingNode: heading,
+      paragraphs: paras,
+    };
   };
 
-  /** Open the floating section editor for the heading at nodes position `pos`. */
-  const openSectionModal = (pos: number) => {
-    const heading = nodes[pos];
-    if (!heading || heading.kind !== 'heading') return;
-    const paragraphs: ContentNode[] = [];
-    for (let j = pos + 1; j < nodes.length; j++) {
-      if (nodes[j].kind !== 'paragraph') break;
-      paragraphs.push(nodes[j]);
+  /** Remote runs whose anchor heading is NOT in the heading scan (comments title
+   *  etc.) — rendered as standalone ¶ rows so nothing is silently mis-grouped. */
+  const unlistedSections = (): PanelSection[] => {
+    if (isLocal) return [];
+    const headingKeys = new Set(
+      nodes.filter((n) => n.kind === 'heading').map((n) => sectionKey(n.level ?? 0, jsNormalize(n.text))),
+    );
+    const occPerKey = new Map<string, number>();
+    const out: PanelSection[] = [];
+    paraRuns.forEach((r) => {
+      if (r.key === '') return; // orphans handled separately
+      const occ = occPerKey.get(r.key) ?? 0;
+      occPerKey.set(r.key, occ + 1);
+      if (headingKeys.has(r.key)) return; // belongs to a listed heading
+      const [lvl, txt] = [Number(r.key.split('|')[0]) || 2, r.key.slice(r.key.indexOf('|') + 1)];
+      out.push({
+        key: `${r.key}#${occ}`,
+        heading: { text: txt, level: lvl, occurrence: occ, html: '' },
+        paragraphs: r.paras,
+      });
+    });
+    return out;
+  };
+
+  /** Leading paragraphs with no heading at all (orphans) — read-only ¶ row. */
+  const orphanParas = (): RawPara[] => {
+    if (isLocal) {
+      const out: RawPara[] = [];
+      for (const n of nodes) {
+        if (n.kind === 'heading') break;
+        if (n.kind === 'paragraph') out.push({ text: n.text, html: n.html, occurrence: n.occurrence ?? 0, anchor: null });
+      }
+      return out;
     }
-    const sRule = !isLocal ? sectionRuleFor(heading) : undefined;
+    return paraRuns.filter((r) => r.key === '').flatMap((r) => r.paras);
+  };
+
+  /** The active `section` rule serving a section, if any. */
+  const sectionRuleOf = (s: PanelSection): DynamicRule | undefined =>
+    rules.find((r) => r.target === 'section' && r.active
+      && r.matchText === jsNormalize(s.heading.text) && r.occurrence === s.heading.occurrence);
+
+  /** `sectionInsert` rules anchored to a section's heading. */
+  const insertRulesOf = (s: PanelSection): DynamicRule[] =>
+    rules.filter((r) => r.target === 'sectionInsert' && r.active
+      && r.matchText === jsNormalize(s.heading.text) && r.occurrence === s.heading.occurrence);
+
+  const insertTitle = (r: DynamicRule): string => {
+    const m = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(r.replacement);
+    return textOf(m ? m[1] : r.replacement) || 'New section';
+  };
+
+  // ── The floating editor ──
+  const [sectionModal, setSectionModal] = useState<
+    | { mode: 'section'; section: SectionData; at: { x: number; y: number } }
+    | { mode: 'insert'; insert?: InsertData; anchors?: SectionAnchor[]; at: { x: number; y: number } }
+    | null
+  >(null);
+
+  const clickPoint = (e: MouseEvent): { x: number; y: number } => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    return { x: r.left, y: r.bottom };
+  };
+
+  const openSection = (s: PanelSection, at: { x: number; y: number }) => {
+    const sRule = !isLocal ? sectionRuleOf(s) : undefined;
+    const paragraphs: SectionParagraph[] = s.paragraphs.map((p) => {
+      const pr = !isLocal ? paraRuleFor(p) : undefined;
+      return { text: p.text, occurrence: p.occurrence, html: p.html, servedHtml: pr ? pr.replacement : undefined };
+    });
     setSectionModal({
       mode: 'section',
-      section: {
-        heading: {
-          text: heading.text,
-          level: heading.level ?? 2,
-          occurrence: headingOcc.get(heading.index) ?? 0,
-          html: heading.html || '',
-        },
-        paragraphs: paragraphs.map((p) => {
-          const pr = !isLocal ? ruleFor(p) : undefined;
-          return { text: p.text, occurrence: p.occurrence ?? 0, html: p.html, servedHtml: pr ? pr.replacement : undefined };
-        }),
-        sectionRuleReplacement: sRule ? sRule.replacement : null,
-      },
+      at,
+      section: { heading: s.heading, paragraphs, sectionRuleReplacement: sRule ? sRule.replacement : null },
     });
   };
 
-  /** Anchor options for placing a NEW section (every heading, document order). */
   const sectionAnchors = (): SectionAnchor[] =>
     nodes.filter((n) => n.kind === 'heading').map((n) => ({
-      text: n.text,
-      level: n.level ?? 2,
-      occurrence: headingOcc.get(n.index) ?? 0,
+      text: n.text, level: n.level ?? 2, occurrence: headingOcc.get(n.index) ?? 0,
     }));
 
-  /** Open an EXISTING added section for editing (its insert rule). */
-  const openInsertModal = (rule: DynamicRule, anchorHeading: ContentNode) => {
+  const openInsert = (rule: DynamicRule, s: PanelSection, at: { x: number; y: number }) => {
     setSectionModal({
       mode: 'insert',
+      at,
       insert: {
         ruleId: rule.id,
-        anchorText: anchorHeading.text, // ORIGINAL text — the save re-normalizes server-side
-        anchorLevel: anchorHeading.level ?? 2,
-        anchorOccurrence: headingOcc.get(anchorHeading.index) ?? 0,
+        anchorText: s.heading.text,
+        anchorLevel: s.heading.level,
+        anchorOccurrence: s.heading.occurrence,
         position: (rule.section?.position === 'before' ? 'before' : 'after'),
         replacement: rule.replacement,
       },
     });
   };
 
-  /** The heading-endpoint edit handle for a heading node (local = headings-only index). */
+  // ── Heading editor state (unchanged behavior) ──
+  const [busyIndex, setBusyIndex] = useState<number | null>(null);
+  const [suggestions, setSuggestions] = useState<Record<number, string>>({});
+  const [readOnlyReason, setReadOnlyReason] = useState<Record<number, string>>({});
+
   const editIndex = (n: ContentNode): number => (isLocal ? (n.headingIndex ?? n.index) : n.index);
 
   const saveHeading = async (n: ContentNode, patch: { text?: string; level?: number }) => {
@@ -404,24 +376,21 @@ export function HeadingRows({
     try {
       if (isLocal) {
         await localUpdate.mutateAsync({ id: postId, index: editIndex(n), ...patch });
-        // The heading endpoint returns the headings-only list; this panel renders the
-        // combined node list — re-fetch it so paragraphs keep their place (one GET, honest).
         await localQuery.refetch();
       } else {
         const data = await remoteUpdate.mutateAsync({ siteId: siteId as number, postId, type, index: editIndex(n), ...patch });
         const list = (data as any)?.headings;
         if (Array.isArray(list)) setNodes(headingsToNodes(list as HeadingItem[]));
+        void rulesQuery.refetch(); // heading edits RE-KEY section rules server-side
       }
     } catch (e: any) {
       const code: string | undefined = e?.code;
       const message: string = e?.message ?? 'Could not update the heading';
       if (code === STALE_CODE) {
-        // The page changed on the site since the scan — offer a one-click re-scan.
         toast.error('This page changed on the site since it was scanned. Re-scan to load the current headings.', {
           action: { label: 'Re-scan', onClick: () => { void query.refetch(); } },
         });
       } else if (code && HARDCODED_CODES.has(code)) {
-        // Genuinely not editable from here — flip the row to read-only with the server's reason.
         setReadOnlyReason((r) => ({ ...r, [n.index]: message }));
         toast.error(message);
       } else {
@@ -435,24 +404,14 @@ export function HeadingRows({
   const optimize = async (n: ContentNode) => {
     setBusyIndex(n.index);
     try {
-      // Paragraphs optimize their SERVED text (the active rule's replacement when
-      // one exists) — re-optimizing improves what the visitor actually reads.
-      const current = n.kind === 'paragraph'
-        ? (() => { const r = ruleFor(n); return r ? rulePreview(r) : n.text; })()
-        : n.text;
-      const data = n.kind === 'paragraph'
-        ? await optimizeParagraphMutation.mutateAsync({ siteId: siteId as number, postId, type, text: current, model, provider })
-        : isLocal
-          ? await localOptimize.mutateAsync({ id: postId, index: editIndex(n), text: n.text, brandId, model, provider })
-          : await remoteOptimize.mutateAsync({ siteId: siteId as number, postId, type, index: editIndex(n), text: n.text, model, provider });
+      const data = isLocal
+        ? await localOptimize.mutateAsync({ id: postId, index: editIndex(n), text: n.text, brandId, model, provider })
+        : await remoteOptimize.mutateAsync({ siteId: siteId as number, postId, type, index: editIndex(n), text: n.text, model, provider });
       const value = String((data as any)?.value ?? '').trim();
-      if (value && value !== current) {
-        setSuggestions((s) => ({ ...s, [n.index]: value }));
-      } else {
-        toast.info(n.kind === 'paragraph' ? 'The paragraph already looks optimized.' : 'The heading already looks optimized.');
-      }
+      if (value && value !== n.text) setSuggestions((s) => ({ ...s, [n.index]: value }));
+      else toast.info('The heading already looks optimized.');
     } catch (e: any) {
-      toast.error(e?.message ?? (n.kind === 'paragraph' ? 'Could not optimize the paragraph' : 'Could not optimize the heading'));
+      toast.error(e?.message ?? 'Could not optimize the heading');
     } finally {
       setBusyIndex(null);
     }
@@ -461,20 +420,91 @@ export function HeadingRows({
   const acceptSuggestion = (n: ContentNode) => {
     const value = suggestions[n.index];
     setSuggestions(({ [n.index]: _drop, ...rest }) => rest);
-    if (value == null) return;
-    if (n.kind === 'paragraph') void saveParagraph(n, value);
-    else void saveHeading(n, { text: value });
+    if (value != null) void saveHeading(n, { text: value });
   };
   const rejectSuggestion = (index: number) =>
     setSuggestions(({ [index]: _drop, ...rest }) => rest);
 
-  /** One full-width subrow whose title column holds `content`; other cells stay empty. */
+  /** One full-width subrow whose title column holds `content`. */
   const shellRow = (key: string, content: React.ReactNode) => (
     <TableRow key={key} className="bg-muted/30">
       <TableCell />
       {orderedCols.map((col) => (
         <TableCell key={col}>{col === 'title' ? content : null}</TableCell>
       ))}
+    </TableRow>
+  );
+
+  /** ONE ¶ row per section — the editor's opener; shows the SERVED state. */
+  const sectionRow = (s: PanelSection, indent: number, opts?: { muted?: boolean; readOnly?: boolean }) => {
+    const sRule = !isLocal ? sectionRuleOf(s) : undefined;
+    const preview = sRule
+      ? textOf(sRule.replacement)
+      : s.paragraphs.map((p) => {
+        const pr = !isLocal ? paraRuleFor(p) : undefined;
+        return pr ? textOf(pr.replacement) : p.text;
+      }).join(' · ');
+    const count = s.paragraphs.length;
+    return (
+      <TableRow key={`sec-${s.key}`} className="bg-muted/30 hover:bg-muted/50">
+        <TableCell className="px-2 text-center">
+          <CornerDownRight className="inline-block w-3 h-3 text-muted-foreground/40" />
+        </TableCell>
+        {orderedCols.map((col) => {
+          if (col !== 'title') return <TableCell key={col} />;
+          return (
+            <TableCell key={col}>
+              <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
+                <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-border bg-muted/60 px-1 text-[10px] font-semibold leading-none text-muted-foreground">
+                  ¶ {count}
+                </span>
+                {sRule && (
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="Optimized — a section rule serves this content" />
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => openSection(s, clickPoint(e))}
+                  className={`flex-1 min-w-0 text-left truncate text-xs hover:underline decoration-dotted ${opts?.muted ? 'text-muted-foreground/70' : 'text-muted-foreground hover:text-foreground'}`}
+                  title={isLocal || opts?.readOnly
+                    ? 'Open this section (read-only here — editing runs via dynamic rules on connected sites)'
+                    : 'Open this section in the editor'}
+                >
+                  {preview || '(empty section)'}
+                </button>
+              </div>
+            </TableCell>
+          );
+        })}
+      </TableRow>
+    );
+  };
+
+  /** An added section (sectionInsert rule) as a row at its served spot. */
+  const insertRow = (rule: DynamicRule, s: PanelSection, indent: number) => (
+    <TableRow key={`ins-${rule.id}`} className="bg-muted/30 hover:bg-muted/50">
+      <TableCell className="px-2 text-center">
+        <CornerDownRight className="inline-block w-3 h-3 text-muted-foreground/40" />
+      </TableCell>
+      {orderedCols.map((col) => {
+        if (col !== 'title') return <TableCell key={col} />;
+        return (
+          <TableCell key={col}>
+            <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
+              <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-primary/40 bg-primary/10 px-1 text-[10px] font-semibold leading-none text-primary">
+                NEW
+              </span>
+              <button
+                type="button"
+                onClick={(e) => openInsert(rule, s, clickPoint(e))}
+                className="flex-1 min-w-0 text-left truncate text-xs hover:underline decoration-dotted"
+                title="Added section (served dynamically) — click to edit or remove"
+              >
+                {insertTitle(rule)}
+              </button>
+            </div>
+          </TableCell>
+        );
+      })}
     </TableRow>
   );
 
@@ -485,7 +515,7 @@ export function HeadingRows({
       </span>
     ));
   }
-  if (nodes.length === 0) {
+  if (nodes.length === 0 && rawParas.length === 0) {
     return shellRow('empty', (
       <span className="text-muted-foreground/70">
         {isLocal
@@ -495,299 +525,160 @@ export function HeadingRows({
     ));
   }
 
-  // Paragraph indent: one step under the nearest preceding heading (flush when orphaned).
-  // Added-section rows (sectionInsert rules) are interleaved at their served spot:
-  // 'before' rows ahead of their anchor heading, 'after' rows at the section's end.
-  type RenderItem =
-    | { kind: 'node'; n: ContentNode; indent: number; headingPos: number }
-    | { kind: 'insert'; rule: DynamicRule; anchor: ContentNode; indent: number };
-  let lastLevel = 0;
-  let lastHeadingPos = -1;
-  const items: RenderItem[] = [];
-  const pushAfterInserts = (headingPos: number) => {
-    if (isLocal || headingPos < 0) return;
-    const anchor = nodes[headingPos];
-    insertRulesFor(anchor)
-      .filter((r) => r.section?.position !== 'before')
-      .forEach((rule) => items.push({ kind: 'insert', rule, anchor, indent: indentFor(anchor.level ?? 2) }));
-  };
-  nodes.forEach((n, pos) => {
-    if (n.kind === 'heading') {
-      pushAfterInserts(lastHeadingPos); // the PREVIOUS section just ended
-      if (!isLocal) {
-        insertRulesFor(n)
-          .filter((r) => r.section?.position === 'before')
-          .forEach((rule) => items.push({ kind: 'insert', rule, anchor: n, indent: indentFor(n.level ?? 2) }));
-      }
-      lastLevel = n.level ?? 2;
-      lastHeadingPos = pos;
-      items.push({ kind: 'node', n, indent: indentFor(lastLevel), headingPos: pos });
-      return;
-    }
-    items.push({ kind: 'node', n, indent: lastLevel > 0 ? indentFor(lastLevel) + 14 : indentFor(1), headingPos: lastHeadingPos });
-  });
-  pushAfterInserts(lastHeadingPos); // the LAST section's added rows
+  const headingNodes = nodes.filter((n) => n.kind === 'heading');
+  const orphans = orphanParas();
 
   return (
     <Fragment>
-      {items.map((item) => {
-        // ── Added-section row (a sectionInsert rule, served dynamically) ──
-        if (item.kind === 'insert') {
-          const { rule, anchor, indent } = item;
-          return (
-            <TableRow key={`ins-${rule.id}`} className="bg-muted/30 hover:bg-muted/50">
-              <TableCell className="px-2 text-center">
-                <CornerDownRight className="inline-block w-3 h-3 text-muted-foreground/40" />
-              </TableCell>
-              {orderedCols.map((col) => {
-                if (col !== 'title') {
-                  return <TableCell key={col} />;
-                }
-                return (
-                  <TableCell key={col}>
-                    <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
-                      <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-primary/40 bg-primary/10 px-1 text-[10px] font-semibold leading-none text-primary">
-                        NEW
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => openInsertModal(rule, anchor)}
-                        className="flex-1 min-w-0 text-left truncate text-xs hover:underline decoration-dotted"
-                        title="Added section (served dynamically) — click to edit or remove"
-                      >
-                        {insertTitle(rule)}
-                      </button>
-                    </div>
-                  </TableCell>
-                );
-              })}
-            </TableRow>
-          );
-        }
+      {/* Orphan paragraphs (before any heading) — one row, read-only (no heading = no section anchor). */}
+      {orphans.length > 0 && sectionRow(
+        { key: 'orphan', heading: { text: '', level: 1, occurrence: 0, html: '' }, paragraphs: orphans },
+        indentFor(1),
+        { muted: true, readOnly: true },
+      )}
 
-        const { n, indent, headingPos } = item;
-        // ── Paragraph row: remote = click-to-edit + ✦ (dynamic rule); local = read-only.
-        // The P chip opens the HTML popup on both. A served rule shows its text + a dot. ──
-        if (n.kind === 'paragraph') {
-          const pBusy = busyIndex === n.index;
-          const pSuggestion = suggestions[n.index];
-          const served = !isLocal ? ruleFor(n) : undefined;
-          const displayText = served ? rulePreview(served) : n.text;
-          // Whole-section rule serving this paragraph's section: row edits route
-          // into the section editor (a row-level paragraph rule would honestly
-          // miss — the section replace already swapped the block).
-          const secRule = !isLocal && headingPos >= 0 ? sectionRuleFor(nodes[headingPos]) : undefined;
-          return (
-            <TableRow key={`p-${n.index}`} className="bg-muted/30 hover:bg-muted/50">
-              <TableCell className="px-2 text-center">
-                <CornerDownRight className="inline-block w-3 h-3 text-muted-foreground/40" />
-              </TableCell>
-              {orderedCols.map((col) => {
-                if (col !== 'title') {
-                  return <TableCell key={col} />;
-                }
-                return (
-                  <TableCell key={col} className={pSuggestion != null ? '!h-auto !py-1 !whitespace-normal' : ''}>
-                    <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
-                      <button
-                        type="button"
-                        onClick={() => (headingPos >= 0 ? openSectionModal(headingPos) : setHtmlPopup(n))}
-                        title={headingPos >= 0 ? 'Open this paragraph’s section in the section editor' : "Show this paragraph's HTML"}
-                        className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-border bg-muted/60 px-1 text-[10px] font-semibold leading-none text-muted-foreground hover:text-foreground"
-                      >
-                        P
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        {pSuggestion != null ? (
-                          /* Same staged-suggestion UI as every other cell. */
-                          <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
-                            <div className="text-xs text-foreground break-words whitespace-normal" title={pSuggestion}>{pSuggestion}</div>
-                            <div className="flex items-center gap-1">
-                              <button type="button" onClick={() => acceptSuggestion(n)} disabled={pBusy} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
-                                <Check className="w-3 h-3" /> Accept
-                              </button>
-                              <button type="button" onClick={() => rejectSuggestion(n.index)} disabled={pBusy} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-                                <X className="w-3 h-3" /> Reject
-                              </button>
-                              <button type="button" onClick={() => optimize(n)} disabled={pBusy} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-                                {pBusy ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
-                              </button>
-                            </div>
-                          </div>
-                        ) : secRule ? (
-                          /* Section-served: the whole section is one rule — edit it there. */
-                          <button
-                            type="button"
-                            onClick={() => openSectionModal(headingPos)}
-                            className="flex min-w-0 w-full items-center gap-1.5 text-left"
-                            title="This section is optimized as a whole — click to open the section editor."
-                          >
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                            <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground hover:text-foreground hover:underline decoration-dotted">{n.text}</span>
-                          </button>
-                        ) : !isLocal ? (
-                          <ParagraphText
-                            value={displayText}
-                            originalText={served ? n.text : undefined}
-                            busy={pBusy}
-                            onSave={(v) => saveParagraph(n, v)}
-                            onOptimize={() => optimize(n)}
-                          />
-                        ) : (
-                          <span
-                            className="block truncate text-xs text-muted-foreground"
-                            title="Read-only here — paragraph editing runs via dynamic rules on connected sites."
-                          >
-                            {n.text}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </TableCell>
-                );
-              })}
-            </TableRow>
-          );
-        }
+      {headingNodes.map((n) => {
+        const s = sectionFor(n);
+        const indent = indentFor(n.level ?? 2);
+        const inserts = !isLocal ? insertRulesOf(s) : [];
+        const before = inserts.filter((r) => r.section?.position === 'before');
+        const after = inserts.filter((r) => r.section?.position !== 'before');
 
-        // ── Heading row (inline editor unchanged; + section-served dot & expand) ──
+        // ── Heading row (the shipped editor, unchanged) ──
         const busy = busyIndex === n.index;
         const suggestion = suggestions[n.index];
         const reason = readOnlyReason[n.index];
         const readOnly = !n.editable || reason != null;
         const roTitle = reason ?? THEME_READONLY_REASON;
         const level = n.level ?? 2;
-        const hSecRule = !isLocal ? sectionRuleFor(n) : undefined;
+        const hSecRule = !isLocal ? sectionRuleOf(s) : undefined;
+
         return (
-          <TableRow key={`h-${n.index}`} className="bg-muted/30 hover:bg-muted/50">
-            <TableCell className="px-2 text-center">
-              <CornerDownRight className="inline-block w-3 h-3 text-muted-foreground/40" />
-            </TableCell>
-            {orderedCols.map((col) => {
-              if (col !== 'title') {
-                return <TableCell key={col} />;
-              }
-              return (
-                <TableCell key={col} className={suggestion != null ? '!h-auto !py-1 !whitespace-normal' : ''}>
-                  <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
-                    {!readOnly && suggestion == null ? (
-                      <Select value={String(level)} onValueChange={(v) => saveHeading(n, { level: Number(v) })} disabled={busy}>
-                        <SelectTrigger
-                          className={`!h-5 w-auto min-w-[40px] shrink-0 rounded-[3px] border px-1 py-0 text-[10px] font-semibold leading-none justify-center gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}
-                          title="Change heading level"
-                        >
-                          {`H${level}`}
-                        </SelectTrigger>
-                        {/* Compact menu (~30% smaller than the shadcn default —
-                            six two-character options don't need a full-size panel). */}
-                        <SelectContent className="min-w-[56px] w-[56px]">
-                          {[1, 2, 3, 4, 5, 6].map((num) => (
-                            <SelectItem
-                              key={num}
-                              value={String(num)}
-                              className="justify-center py-1 pl-2 pr-2 text-[10px] font-semibold [&>span:first-child]:hidden"
-                            >{`H${num}`}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <span className={`inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border px-1 text-[10px] font-semibold leading-none ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}>
-                        {`H${level}`}
-                      </span>
-                    )}
-                    {/* Shared-source badge: this heading lives in a template/reusable block used by many
-                        pages — editing it changes them all. Tooltip spells out the cross-page effect. */}
-                    {n.sourceLabel ? (
-                      <span
-                        className="inline-flex h-5 max-w-[150px] shrink-0 items-center gap-0.5 rounded-[3px] border border-amber-500/40 bg-amber-500/10 px-1 text-[10px] font-medium text-amber-600"
-                        title={`Shared source — editing this heading changes it on EVERY page that uses it. Lives in: ${n.sourceLabel}.`}
-                      >
-                        <LayoutTemplate className="h-2.5 w-2.5 shrink-0" />
-                        <span className="truncate">{n.sourceLabel}</span>
-                      </span>
-                    ) : null}
-                    {/* Whole-section rule active → the served dot lives on the heading row. */}
-                    {hSecRule && (
-                      <span
-                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
-                        title="Section optimized (dynamic rule) — the live page serves the section editor's version."
-                      />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      {suggestion != null ? (
-                        /* Same staged-suggestion UI as every other cell (EditableCell). */
-                        <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
-                          <div className="text-xs text-foreground break-words whitespace-normal" title={suggestion}>{suggestion}</div>
-                          <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => acceptSuggestion(n)} disabled={busy} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
-                              <Check className="w-3 h-3" /> Accept
-                            </button>
-                            <button type="button" onClick={() => rejectSuggestion(n.index)} disabled={busy} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-                              <X className="w-3 h-3" /> Reject
-                            </button>
-                            <button type="button" onClick={() => optimize(n)} disabled={busy} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-                              {busy ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
-                            </button>
-                          </div>
-                        </div>
-                      ) : !readOnly ? (
-                        <HeadingText
-                          value={n.text}
-                          busy={busy}
-                          onSave={(v) => saveHeading(n, { text: v })}
-                          onOptimize={() => optimize(n)}
-                        />
+          <Fragment key={`h-${n.index}`}>
+            {before.map((r) => insertRow(r, s, indent))}
+            <TableRow className="bg-muted/30 hover:bg-muted/50">
+              <TableCell className="px-2 text-center">
+                <CornerDownRight className="inline-block w-3 h-3 text-muted-foreground/40" />
+              </TableCell>
+              {orderedCols.map((col) => {
+                if (col !== 'title') return <TableCell key={col} />;
+                return (
+                  <TableCell key={col} className={suggestion != null ? '!h-auto !py-1 !whitespace-normal' : ''}>
+                    <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
+                      {!readOnly && suggestion == null ? (
+                        <Select value={String(level)} onValueChange={(v) => saveHeading(n, { level: Number(v) })} disabled={busy}>
+                          <SelectTrigger
+                            className={`!h-5 w-auto min-w-[40px] shrink-0 rounded-[3px] border px-1 py-0 text-[10px] font-semibold leading-none justify-center gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}
+                            title="Change heading level"
+                          >
+                            {`H${level}`}
+                          </SelectTrigger>
+                          <SelectContent className="min-w-[56px] w-[56px]">
+                            {[1, 2, 3, 4, 5, 6].map((num) => (
+                              <SelectItem
+                                key={num}
+                                value={String(num)}
+                                className="justify-center py-1 pl-2 pr-2 text-[10px] font-semibold [&>span:first-child]:hidden"
+                              >{`H${num}`}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       ) : (
-                        /* Read-only: heading isn't in editable content — theme/template-hardcoded.
-                           Lock + reason tooltip mirrors the Links editor's read-only affordance. */
-                        <span className="flex items-center gap-1 text-xs text-muted-foreground" title={roTitle}>
-                          <Lock className="w-3 h-3 shrink-0 opacity-60" />
-                          <span className="truncate">{n.text}</span>
+                        <span className={`inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border px-1 text-[10px] font-semibold leading-none ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}>
+                          {`H${level}`}
                         </span>
                       )}
+                      {n.sourceLabel ? (
+                        <span
+                          className="inline-flex h-5 max-w-[150px] shrink-0 items-center gap-0.5 rounded-[3px] border border-amber-500/40 bg-amber-500/10 px-1 text-[10px] font-medium text-amber-600"
+                          title={`Shared source — editing this heading changes it on EVERY page that uses it. Lives in: ${n.sourceLabel}.`}
+                        >
+                          <LayoutTemplate className="h-2.5 w-2.5 shrink-0" />
+                          <span className="truncate">{n.sourceLabel}</span>
+                        </span>
+                      ) : null}
+                      {hSecRule && (
+                        <span
+                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                          title="Section optimized (dynamic rule) — the live page serves the section editor's version."
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        {suggestion != null ? (
+                          <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
+                            <div className="text-xs text-foreground break-words whitespace-normal" title={suggestion}>{suggestion}</div>
+                            <div className="flex items-center gap-1">
+                              <button type="button" onClick={() => acceptSuggestion(n)} disabled={busy} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
+                                <Check className="w-3 h-3" /> Accept
+                              </button>
+                              <button type="button" onClick={() => rejectSuggestion(n.index)} disabled={busy} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
+                                <X className="w-3 h-3" /> Reject
+                              </button>
+                              <button type="button" onClick={() => optimize(n)} disabled={busy} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
+                                {busy ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
+                              </button>
+                            </div>
+                          </div>
+                        ) : !readOnly ? (
+                          <HeadingText
+                            value={n.text}
+                            busy={busy}
+                            onSave={(v) => saveHeading(n, { text: v })}
+                            onOptimize={() => optimize(n)}
+                          />
+                        ) : (
+                          <span className="flex items-center gap-1 text-xs text-muted-foreground" title={roTitle}>
+                            <Lock className="w-3 h-3 shrink-0 opacity-60" />
+                            <span className="truncate">{n.text}</span>
+                          </span>
+                        )}
+                      </div>
+                      {/* Open the whole section in the floating editor (below the click). */}
+                      <button
+                        type="button"
+                        onClick={(e) => openSection(s, clickPoint(e))}
+                        title="Open this section in the section editor"
+                        className="shrink-0 text-muted-foreground/50 hover:text-primary opacity-0 group-hover:opacity-100"
+                      >
+                        <Maximize2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                    {/* Open the whole section (heading + its paragraphs) in the floating editor. */}
-                    <button
-                      type="button"
-                      onClick={() => openSectionModal(headingPos)}
-                      title="Open this section in the section editor"
-                      className="shrink-0 text-muted-foreground/50 hover:text-primary opacity-0 group-hover:opacity-100"
-                    >
-                      <Maximize2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </TableCell>
-              );
-            })}
-          </TableRow>
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+            {/* ONE ¶ row per section (owner-spec v2 — no per-<p> rows). */}
+            {(s.paragraphs.length > 0 || hSecRule) && sectionRow(s, indent + 14)}
+            {after.map((r) => insertRow(r, s, indent))}
+          </Fragment>
         );
       })}
 
-      {/* Add a brand-new section (FAQ etc.) — served as a sectionInsert rule,
-          anchored to an existing heading (remote only; needs ≥1 heading). */}
-      {!isLocal && nodes.some((n) => n.kind === 'heading') && shellRow('add-section', (
+      {/* Sections whose anchor heading isn't in the heading scan (comments title etc.). */}
+      {unlistedSections().map((s) => sectionRow(s, indentFor(s.heading.level), { muted: true }))}
+
+      {/* Add a brand-new section (FAQ etc.) — anchored to an existing heading. */}
+      {!isLocal && headingNodes.length > 0 && shellRow('add-section', (
         <button
           type="button"
-          onClick={() => setSectionModal({ mode: 'insert', anchors: sectionAnchors() })}
+          onClick={(e) => setSectionModal({ mode: 'insert', anchors: sectionAnchors(), at: clickPoint(e) })}
           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
         >
           <Plus className="w-3.5 h-3.5" /> Add section
         </button>
       ))}
 
-      {/* Honest availability note (remote only): old connector / blocked loopback. */}
       {remoteParaNote && shellRow('para-note', (
         <span className="text-xs text-muted-foreground/60">{remoteParaNote}</span>
       ))}
 
-      {/* The floating section editor (drag, non-blocking — the table stays live).
-          The key REMOUNTS the modal per target — switching sections while it is
-          open must never keep the previous section's editor state. */}
+      {/* The floating section editor — keyed per target so switching sections
+          never bleeds state; stale onClose from a replaced instance is ignored. */}
       {sectionModal && (
         <SectionModal
           key={sectionModal.mode === 'section'
-            ? `s-${sectionModal.section.heading.text}-${sectionModal.section.heading.occurrence}`
-            : `i-${sectionModal.insert?.ruleId ?? 'new'}`}
+            ? `s-${(sectionModal as any).section.heading.text}-${(sectionModal as any).section.heading.occurrence}`
+            : `i-${(sectionModal as any).insert?.ruleId ?? 'new'}`}
           siteId={siteId}
           postId={postId}
           type={type}
@@ -798,24 +689,10 @@ export function HeadingRows({
           section={sectionModal.mode === 'section' ? sectionModal.section : undefined}
           insert={sectionModal.mode === 'insert' ? sectionModal.insert : undefined}
           anchors={sectionModal.mode === 'insert' ? sectionModal.anchors : undefined}
-          onClose={() => setSectionModal(null)}
+          anchorPoint={sectionModal.at}
+          onClose={() => setSectionModal((cur) => (cur === sectionModal ? null : cur))}
           onSaved={() => { void rulesQuery.refetch(); }}
         />
-      )}
-
-      {/* Paragraph HTML inspector — read-only (orphan paragraphs without a section). */}
-      {htmlPopup && (
-        <Dialog open onOpenChange={(o) => { if (!o) setHtmlPopup(null); }}>
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Paragraph HTML</DialogTitle>
-              <DialogDescription className="line-clamp-2">{htmlPopup.text}</DialogDescription>
-            </DialogHeader>
-            <pre className="max-h-[50vh] overflow-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-[11px] leading-4 whitespace-pre-wrap break-words">
-              {htmlPopup.html}
-            </pre>
-          </DialogContent>
-        </Dialog>
       )}
     </Fragment>
   );
@@ -861,79 +738,6 @@ function HeadingText({ value, busy, onSave, onOptimize }: {
         type="button"
         onClick={() => { setDraft(value); setEditing(true); }}
         className="flex-1 min-w-0 text-left truncate text-xs leading-snug hover:underline decoration-dotted"
-        title={value}
-      >
-        {value}
-      </button>
-      <button
-        type="button"
-        onClick={onOptimize}
-        disabled={busy}
-        title="Optimize with AI"
-        className="shrink-0 text-muted-foreground/50 hover:text-primary opacity-0 group-hover:opacity-100 disabled:opacity-100"
-      >
-        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" /> : <Sparkles className="w-3.5 h-3.5" />}
-      </button>
-    </div>
-  );
-}
-
-/**
- * Click-to-edit paragraph text + hover ✦ Optimize — the dynamic-rule editor
- * (remote sites). Textarea editor (paragraphs are long): Enter saves,
- * Shift+Enter = newline, Esc cancels. A paragraph currently served by a rule
- * shows a primary dot; its tooltip carries the ORIGINAL text — editing back
- * to the original deletes the rule (clean revert, handled server-side).
- */
-function ParagraphText({ value, originalText, busy, onSave, onOptimize }: {
-  value: string;
-  /** Set when a rule serves this paragraph — the scan's original text. */
-  originalText?: string;
-  busy?: boolean;
-  onSave: (v: string) => void;
-  onOptimize: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-
-  const commit = () => {
-    setEditing(false);
-    const v = draft.trim();
-    if (v && v !== value) onSave(v); else setDraft(value);
-  };
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(); }
-    if (e.key === 'Escape') { setDraft(value); setEditing(false); }
-  };
-
-  if (editing) {
-    return (
-      <textarea
-        autoFocus
-        rows={3}
-        value={draft}
-        disabled={busy}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={onKey}
-        className="w-full resize-y rounded-md border border-input bg-card p-2 text-xs leading-snug outline-none focus:border-primary"
-      />
-    );
-  }
-  return (
-    <div className="flex items-center gap-1.5 group min-w-0">
-      {originalText !== undefined && (
-        <span
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
-          title={`Optimized (dynamic rule) — original: ${originalText}`}
-        />
-      )}
-      <button
-        type="button"
-        onClick={() => { setDraft(value); setEditing(true); }}
-        disabled={busy}
-        className="flex-1 min-w-0 text-left truncate text-xs leading-snug text-muted-foreground hover:text-foreground hover:underline decoration-dotted disabled:opacity-60"
         title={value}
       >
         {value}

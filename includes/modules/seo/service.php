@@ -693,6 +693,12 @@ class PCM_SEO_Service
         }
         $default = (string) $prompts[$section][$mode];
         $tpl     = self::resolve_prompt($section . '_' . $mode, $default, $user_id, $template_id);
+        // A user's free-form INSTRUCTION ('topic') must reach the model even when
+        // the resolved template predates the {{topic}} placeholder (already-seeded
+        // or user-edited templates are never rewritten) — append it honestly.
+        if (!empty($vars['topic']) && strpos($tpl, '{{topic}}') === false) {
+            $tpl .= "\n\nExtra instruction (follow it): {{topic}}";
+        }
         $prompt  = self::substitute_vars($tpl, $vars);
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));

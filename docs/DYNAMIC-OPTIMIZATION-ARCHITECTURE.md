@@ -159,9 +159,27 @@ headingOccurrence, fingerprint }`.
   (`unsupported_schema`) — zero silent-drop risk. Capability = GET
   /pcm-conn/v1/rules `schemaVersion` (2.8.0 answers 2).
 
-**Serving mechanism v2 (connector 2.8.0) — all-or-nothing, wrapper-safe:**
+**Section membership (AMENDED 2026-07-09 — root-cause fact from the first
+live test):** the paragraphs belonging to a section are taken from the
+CONNECTOR SCAN's own anchors (`node.anchor` = nearest preceding rendered
+heading — the exact same definition serving uses), NEVER from the outline's
+display interleave. The display interleave resolves anchors against the
+heading-scan list and parks unmatched paragraphs under the previous row —
+correct for DISPLAY, wrong for IDENTITY (proven: a comments-area paragraph
+whose anchor heading isn't in the heading scan was folded into the preceding
+section → fingerprint had 4 paragraphs, the served page's section has 3 →
+honest miss, rule never served). Duplicate anchors: the k-th contiguous RUN
+of same-anchor paragraphs in scan order belongs to the k-th matching heading.
+
+**Serving mechanism v2 (connector 2.8.0; chrome scope 2.8.1) — all-or-nothing,
+wrapper-safe:**
 1. Parse the buffered HTML's top-level `<h1-6>`/`<p>` blocks (same combined
-   boundary regex family as scan-content — non-nestable tags, exact).
+   boundary regex family as scan-content — non-nestable tags, exact), then
+   drop blocks inside CHROME (everything before `<body>` +
+   `<header>/<nav>/<footer>/<aside>` regions) — the 2.8.1 parity fix: the
+   scan strips those regions before fingerprinting, so serving must compare
+   against the same block set (a cookie-banner `<p>` must never break a
+   match). Offsets stay true to the full buffer; chrome is never edited.
 2. Candidates = heading blocks whose normalized visible text + level match.
    For each candidate, its section = the following `<p>` blocks up to the next
    heading block; VERIFY fingerprint. Exactly one verified candidate → apply

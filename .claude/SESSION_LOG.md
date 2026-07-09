@@ -6778,3 +6778,34 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   orphan-paragraph fallback, occurrence round-trip.
 - VERIFIED: php -l OK; tsc 59 = baseline; build OK. Connector UNTOUCHED.
 - BEFORE a5f9a17 -> AFTER (this commit).
+
+## 2026-07-09 - [section-ux-redo-and-serving-parity]
+- ROOT CAUSE of "saved but page unchanged" FACT-TRACED on the owner's own
+  failing edit: hub row OK -> connector store OK -> serving refused (stats
+  applied 0 / missed 2) -> live diff: saved fingerprint 4 paragraphs vs real
+  section 3 (display interleave folded a comments-area <p> into the section).
+  FIX: section membership from the SCAN's anchors (contracts v2 amended;
+  runs-of-same-anchor -> k-th run = k-th matching heading). RELATED fix:
+  serving compares CHROME-EXCLUDED blocks (2.8.1 + chrome_spans/
+  content_blocks + cookie-banner regression test). LIVE PROOF script: fixed
+  membership = 3 paragraphs -> serve APPLIED on the real page w/ the real
+  replacement; old broken fingerprint still refused.
+- SectionModal v2 per owner sketch EXACTLY: opens below the click, ONE
+  constant shape (no Edit button/read mode), white/compact (440px, 12px
+  scale, fixed-height editor), header = title + Ask AI (instruction ->
+  {{topic}}, runtime-append for pre-existing templates) + Re-write + X,
+  persistent B/I/U/Link/H1/H2/bullet toolbar, Acceptera/Angra footer,
+  CLICK-OUTSIDE SAVES (dirty-checked against the editor's normalized
+  baseline - no phantom saves), Esc closes without saving, stale-onClose
+  guard + per-target remount key.
+- HeadingsPanel: P rows REMOVED (owner call) -> one "para N" row per section
+  (served text preview, dot, opens editor below click); unlisted-anchor
+  sections (comments title etc.) = muted standalone rows (addressable,
+  never silently mis-grouped); orphans = read-only row; dead code deleted
+  (ParagraphText, paragraph optimize, HTML popup, mergeRemoteNodes).
+- DRAFT/PUBLISH PAUSED by owner mid-pair - half-built code reverted cleanly
+  (service/schema/version untouched vs HEAD); spec retained for later.
+- VERIFIED: php -l x5; generated-source lint; matcher 22/22; parity 17/17;
+  LIVE PROOF passed; tsc 59 = baseline; build OK.
+- BEFORE 917bac6 -> AFTER (this commit). Owner: connector -> 2.8.1, Ctrl+F5,
+  re-save the Hello! section once (old broken rule stays refused until then).

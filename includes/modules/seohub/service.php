@@ -445,7 +445,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.8.0
+ * Version: 2.8.1
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1987,6 +1987,34 @@ function pcm_conn_parse_blocks($html) {
     }
     return $out;
 }
+/** Chrome spans (pre-<body> + header/nav/footer/aside) — mirror of
+ *  PCM_Text_Matcher::chrome_spans (2.8.1 scan-parity fix). */
+function pcm_conn_chrome_spans($html) {
+    $spans = array();
+    $body  = stripos((string) $html, '<body');
+    if ($body !== false && $body > 0) { $spans[] = array(0, $body); }
+    foreach (array('header', 'nav', 'footer', 'aside') as $tag) {
+        if (preg_match_all('#<' . $tag . '(\s[^>]*)?>.*?</' . $tag . '>#is', (string) $html, $mm, PREG_OFFSET_CAPTURE)) {
+            foreach ($mm[0] as $m) { $spans[] = array((int) $m[1], (int) $m[1] + strlen((string) $m[0])); }
+        }
+    }
+    return $spans;
+}
+/** parse_blocks filtered to CONTENT blocks — the set the scan fingerprinted. */
+function pcm_conn_content_blocks($html) {
+    $spans = pcm_conn_chrome_spans($html);
+    $blocks = pcm_conn_parse_blocks($html);
+    if (empty($spans)) { return $blocks; }
+    $out = array();
+    foreach ($blocks as $b) {
+        $inside = false;
+        foreach ($spans as $s) {
+            if ($b['start'] >= $s[0] && $b['start'] < $s[1]) { $inside = true; break; }
+        }
+        if (!$inside) { $out[] = $b; }
+    }
+    return array_values($out);
+}
 /** A replacement's ordered units: h/p blocks + raw chunks (lists etc.) between them. */
 function pcm_conn_parse_replacement_units($html) {
     $units = array(); $pos = 0; $html = (string) $html;
@@ -2022,7 +2050,7 @@ function pcm_conn_section_body($blocks, $i) {
  */
 function pcm_conn_apply_section_rule($html, $match_text, $level, $fingerprint, $occurrence, $replacement) {
     if ((string) $match_text === '') { return null; }
-    $blocks = pcm_conn_parse_blocks($html);
+    $blocks = pcm_conn_content_blocks($html); // chrome-excluded (scan parity, 2.8.1)
     $verified = array();
     foreach ($blocks as $i => $b) {
         if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) { continue; }
@@ -2071,7 +2099,7 @@ function pcm_conn_apply_section_rule($html, $match_text, $level, $fingerprint, $
  */
 function pcm_conn_apply_section_insert($html, $match_text, $level, $position, $occurrence, $replacement) {
     if ((string) $match_text === '' || trim((string) $replacement) === '') { return null; }
-    $blocks = pcm_conn_parse_blocks($html);
+    $blocks = pcm_conn_content_blocks($html); // chrome-excluded (scan parity, 2.8.1)
     $candidates = array();
     foreach ($blocks as $i => $b) {
         if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) { continue; }

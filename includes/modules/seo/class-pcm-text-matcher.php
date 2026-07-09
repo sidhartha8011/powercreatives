@@ -171,6 +171,50 @@ class PCM_Text_Matcher
     }
 
     /**
+     * Character spans of page CHROME — everything before <body> plus every
+     * <header>/<nav>/<footer>/<aside> region. MUST mirror the scan-content
+     * stripping (scan REMOVES these regions before inventorying paragraphs),
+     * so the serving side sees the SAME block set the fingerprint was built
+     * from — a cookie-banner <p> in the site chrome must never break a
+     * section match (the 2.8.1 parity fix).
+     *
+     * @return array<int,array{0:int,1:int}> [start, end) spans.
+     */
+    public static function chrome_spans(string $html): array
+    {
+        $spans = array();
+        $body  = stripos($html, '<body');
+        if ($body !== false && $body > 0) {
+            $spans[] = array(0, $body);
+        }
+        foreach (array('header', 'nav', 'footer', 'aside') as $tag) {
+            if (preg_match_all('#<' . $tag . '(\s[^>]*)?>.*?</' . $tag . '>#is', $html, $mm, PREG_OFFSET_CAPTURE)) {
+                foreach ($mm[0] as $m) {
+                    $spans[] = array((int) $m[1], (int) $m[1] + strlen((string) $m[0]));
+                }
+            }
+        }
+        return $spans;
+    }
+
+    /** parse_blocks() filtered to CONTENT blocks (outside every chrome span). */
+    public static function content_blocks(string $html): array
+    {
+        $spans = self::chrome_spans($html);
+        if (empty($spans)) {
+            return self::parse_blocks($html);
+        }
+        return array_values(array_filter(self::parse_blocks($html), static function ($b) use ($spans) {
+            foreach ($spans as $s) {
+                if ($b['start'] >= $s[0] && $b['start'] < $s[1]) {
+                    return false;
+                }
+            }
+            return true;
+        }));
+    }
+
+    /**
      * A REPLACEMENT's ordered top-level units: every <h1-6>/<p> block (as in
      * parse_blocks) PLUS any non-empty content between/around them (lists,
      * tables, figures) as raw units — a section rewrite may legally contain
@@ -280,7 +324,9 @@ class PCM_Text_Matcher
         if ($match_text === '') {
             return null;
         }
-        $blocks = self::parse_blocks($html);
+        // CONTENT blocks only (chrome excluded) — parity with the scan the
+        // fingerprint was computed from; offsets stay true to the full buffer.
+        $blocks = self::content_blocks($html);
         $hit    = self::locate_section($blocks, $match_text, $level, $fingerprint, $occurrence);
         if ($hit === null) {
             return null;
@@ -341,7 +387,7 @@ class PCM_Text_Matcher
         if ($match_text === '' || trim($replacement) === '') {
             return null;
         }
-        $blocks     = self::parse_blocks($html);
+        $blocks     = self::content_blocks($html); // chrome-excluded (scan parity)
         $candidates = array();
         foreach ($blocks as $i => $b) {
             if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) {

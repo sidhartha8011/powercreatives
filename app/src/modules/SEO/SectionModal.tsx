@@ -1,53 +1,54 @@
 /**
- * SectionModal — the floating section editor (section-editor phase 2).
+ * SectionModal — the floating section editor (owner-spec v2, 2026-07-09).
  *
- * A DRAGGABLE, NON-blocking floating panel (custom portal — the shared Dialog
- * is modal by construction): click a paragraph in the SEO outline and its
- * WHOLE section (heading + paragraphs) opens as readable, formatted text.
- * The table behind stays fully interactive.
+ * EXACTLY the owner's sketch — one constant shape, nothing else:
  *
- *  - READ view: the section as rendered HTML (served state when a section rule
- *    is active — original otherwise, with active paragraph rules folded in).
- *  - EDIT view: a TipTap editor (headings, paragraphs, lists, bold/italic/
- *    underline/strike, links) with a selection bubble toolbar — merge, split,
- *    delete and add paragraphs freely; the engine's fingerprint guard and the
- *    all-or-nothing serving keep every change reversible and honest.
- *  - AI: ✦ rewrites the whole section (staged Accept/Reject — never saved
- *    until accepted). Create mode drafts a NEW section from a topic.
- *  - SAVE: one `section` replace rule (UPSERT; editing back to the original
- *    deletes the rule server-side) or one `sectionInsert` rule (new sections,
- *    anchored before/after an existing heading; emptying an insert removes it).
+ *   ┌──────────────────────────────────────┐
+ *   │ ¶ Heading……            [Ask AI] [Re-write] [X] │  ← draggable header
+ *   ├──────────────────────────────────────┤
+ *   │ (optional Ask-AI instruction input)  │
+ *   │ formatted, DIRECTLY editable text    │  ← fixed-height TipTap, white
+ *   │ [B][I][U][Link] [H1][H2][•]          │  ← persistent toolbar
+ *   │ [✓ Acceptera]  [↶ Ångra]             │
+ *   └──────────────────────────────────────┘
  *
- * LOCAL tab: read-only formatted view (routing law — no rule engine on the
- * hub's own site; the honest tooltip says so).
+ * Laws (owner-set): opens BELOW the clicked row · editable on FIRST click
+ * (no Edit button, no read mode, the shape never changes) · white background,
+ * compact text · Acceptera OR clicking outside SAVES · Ångra restores the
+ * last saved state · Esc closes without saving.
  *
- * Contracts: docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md → "Section contracts v2".
+ * SECTION IDENTITY (the root-cause fix): the paragraphs this modal saves
+ * against come from the CONNECTOR SCAN's anchors — the same section
+ * definition the serving engine verifies — never from display layout.
+ * See DYNAMIC-OPTIMIZATION-ARCHITECTURE.md → "Section membership".
+ *
+ * Saving creates/updates ONE dynamic rule (UPSERT; editing back to the
+ * original deletes it; push-fail rolls back — phase-1 engine). LOCAL tab =
+ * read-only formatted view (no rule engine on the hub's own site).
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
-import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import {
-  X, Sparkles, Loader2, Check, RefreshCw, Pencil, Code, GripHorizontal,
-  BoldIcon, ItalicIcon, UnderlineIcon, StrikethroughIcon, Link as LinkIcon,
-  Heading2, Heading3, List, ListOrdered, Trash2,
+  X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
+  BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
+  Heading1, Heading2, List,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
 
-/** One paragraph of the section, as scanned (ORIGINAL text = rule identity). */
+/** One paragraph of the section, from the SCAN (original text = rule identity). */
 export interface SectionParagraph {
   text: string;
   occurrence: number;
   html: string;
-  /** An active paragraph rule's replacement (folded into the initial state). */
+  /** An active paragraph rule's replacement (folded into the shown state). */
   servedHtml?: string;
 }
 
-/** The section a modal instance works on (mode 'section'). */
 export interface SectionData {
   heading: { text: string; level: number; occurrence: number; html: string };
   paragraphs: SectionParagraph[];
@@ -55,14 +56,8 @@ export interface SectionData {
   sectionRuleReplacement?: string | null;
 }
 
-/** An anchor option for placing a NEW section. */
-export interface SectionAnchor {
-  text: string;
-  level: number;
-  occurrence: number;
-}
+export interface SectionAnchor { text: string; level: number; occurrence: number }
 
-/** Existing insert-rule data when editing an already-added section. */
 export interface InsertData {
   ruleId?: number;
   anchorText: string;
@@ -78,59 +73,54 @@ export interface SectionModalProps {
   type: 'post' | 'page';
   model?: string;
   provider?: string;
-  /** Local tab = read-only formatted view (no engine on the hub's own site). */
+  /** Local tab: read-only formatted view. */
   readOnly: boolean;
   mode: 'section' | 'insert';
   section?: SectionData;
   insert?: InsertData;
-  /** Anchor choices for a NEW section (create mode without an existing rule). */
+  /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
+  /** Where the user clicked — the window opens right below it. */
+  anchorPoint?: { x: number; y: number };
   onClose: () => void;
-  /** Called after any successful save/removal so the panel refetches rules. */
   onSaved: () => void;
 }
 
-/** Readable type scale for the rendered section (no `prose` plugin in this build). */
-const READ_VIEW_CLASS =
-  'text-sm leading-relaxed text-foreground break-words ' +
-  '[&_h1]:text-lg [&_h1]:font-semibold [&_h1]:mt-3 [&_h1]:mb-1.5 ' +
-  '[&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 ' +
-  '[&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-2.5 [&_h3]:mb-1 ' +
-  '[&_h4]:text-sm [&_h4]:font-medium [&_h4]:mt-2 [&_h4]:mb-1 ' +
-  '[&_p]:my-1.5 [&_ul]:my-1.5 [&_ul]:pl-5 [&_ul]:list-disc [&_ol]:my-1.5 [&_ol]:pl-5 [&_ol]:list-decimal ' +
+const WIDTH = 440;
+/** Compact readable scale (no `prose` plugin in this build). */
+const TYPE_SCALE =
+  'text-xs leading-relaxed text-slate-800 break-words ' +
+  '[&_h1]:text-sm [&_h1]:font-semibold [&_h1]:mt-2 [&_h1]:mb-1 ' +
+  '[&_h2]:text-sm [&_h2]:font-semibold [&_h2]:mt-2 [&_h2]:mb-1 ' +
+  '[&_h3]:text-xs [&_h3]:font-semibold [&_h3]:mt-1.5 [&_h3]:mb-0.5 ' +
+  '[&_h4]:text-xs [&_h4]:font-medium [&_h4]:mt-1.5 [&_h4]:mb-0.5 ' +
+  '[&_p]:my-1 [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:list-disc [&_ol]:my-1 [&_ol]:pl-4 [&_ol]:list-decimal ' +
   '[&_li]:my-0.5 [&_a]:text-primary [&_a]:underline [&_a]:decoration-dotted';
 
-/** Compose a section's CURRENT html: served rule > original with paragraph rules folded in. */
+/** The section's CURRENT html: served rule > original with paragraph rules folded in. */
 export function composeSectionHtml(section: SectionData): string {
-  if (section.sectionRuleReplacement) {
-    return section.sectionRuleReplacement;
-  }
-  const headingHtml = section.heading.html
+  if (section.sectionRuleReplacement) return section.sectionRuleReplacement;
+  const h = section.heading.html
     || `<h${section.heading.level}>${escapeHtml(section.heading.text)}</h${section.heading.level}>`;
-  const body = section.paragraphs
+  return h + section.paragraphs
     .map((p) => (p.servedHtml != null ? `<p>${p.servedHtml}</p>` : p.html))
     .join('');
-  return headingHtml + body;
 }
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** Shared small icon-button for the bubble toolbar. */
 function ToolButton({ onClick, active, title, children }: {
-  onClick: () => void;
-  active?: boolean;
-  title: string;
-  children: React.ReactNode;
+  onClick: () => void; active?: boolean; title: string; children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
-      onMouseDown={(e) => e.preventDefault() /* keep the text selection */}
+      onMouseDown={(e) => e.preventDefault() /* keep the selection */}
       onClick={onClick}
       title={title}
-      className={`rounded p-1 transition-colors hover:bg-accent ${active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'}`}
+      className={`rounded p-1 transition-colors hover:bg-slate-100 ${active ? 'bg-slate-100 text-slate-900' : 'text-slate-500'}`}
     >
       {children}
     </button>
@@ -138,19 +128,19 @@ function ToolButton({ onClick, active, title, children }: {
 }
 
 export function SectionModal({
-  siteId, postId, type, model, provider, readOnly, mode, section, insert, anchors, onClose, onSaved,
+  siteId, postId, type, model, provider, readOnly, mode, section, insert, anchors, anchorPoint, onClose, onSaved,
 }: SectionModalProps) {
   const isInsert = mode === 'insert';
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  // ── Draggable position (pointer-drag on the header; no dependency) ──
-  const [pos, setPos] = useState<{ x: number; y: number }>(() => ({
-    x: Math.max(16, window.innerWidth - 560),
-    y: 96,
+  // ── Position: right below the click, draggable from the header. ──
+  const [pos, setPos] = useState(() => ({
+    x: Math.min(Math.max(8, (anchorPoint?.x ?? 120)), Math.max(8, window.innerWidth - WIDTH - 12)),
+    y: Math.min(Math.max(8, (anchorPoint?.y ?? 80) + 6), Math.max(8, window.innerHeight - 200)),
   }));
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const onDragStart = (e: React.PointerEvent) => {
-    // Header buttons (Re-write / Edit / HTML / X) must click, never start a drag.
-    if ((e.target as HTMLElement).closest('button')) return;
+    if ((e.target as HTMLElement).closest('button')) return; // buttons click, never drag
     dragRef.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y };
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
   };
@@ -163,94 +153,42 @@ export function SectionModal({
   };
   const onDragEnd = () => { dragRef.current = null; };
 
-  // ── Content state ──
-  const initialHtml = isInsert
-    ? (insert?.replacement ?? '')
-    : (section ? composeSectionHtml(section) : '');
-  /** What the site serves NOW — read view + cancel target; updated after every
-   *  successful save so the modal never flips back to stale pre-save content. */
-  const [currentHtml, setCurrentHtml] = useState(initialHtml);
-  /** The section's plain ORIGINAL (no rules) — what a clean revert serves. */
-  const originalHtml = !isInsert && section
-    ? (section.heading.html || `<h${section.heading.level}>${escapeHtml(section.heading.text)}</h${section.heading.level}>`)
-      + section.paragraphs.map((p) => p.html).join('')
-    : '';
-  const [editMode, setEditMode] = useState(isInsert && !insert?.ruleId); // new sections start in edit
-  const [showHtml, setShowHtml] = useState(false);
+  // ── Content: ONE state — the editor. `savedHtml` = last saved/opened state. ──
+  const openedHtml = isInsert ? (insert?.replacement ?? '') : (section ? composeSectionHtml(section) : '');
+  const [savedHtml, setSavedHtml] = useState(openedHtml);
   const [busy, setBusy] = useState(false);
-  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
-  const [topic, setTopic] = useState('');
-  // Insert placement (create mode): default = after the LAST heading on the page.
-  const [anchorIdx, setAnchorIdx] = useState<number>(() => Math.max(0, (anchors?.length ?? 1) - 1));
+  const [askOpen, setAskOpen] = useState(false);
+  const [instruction, setInstruction] = useState('');
   const [position, setPosition] = useState<'before' | 'after'>(insert?.position ?? 'after');
+  const [anchorIdx, setAnchorIdx] = useState<number>(() => Math.max(0, (anchors?.length ?? 1) - 1));
 
   const editor = useEditor({
     editable: !readOnly,
     extensions: [
-      // Inline marks + headings + lists + links — the block kinds the section
-      // engine serves legally. No images/tables (they'd need per-builder care).
       StarterKit.configure({
         heading: { levels: [1, 2, 3, 4] },
         link: {
-          openOnClick: false,
-          autolink: true,
-          defaultProtocol: 'https',
+          openOnClick: false, autolink: true, defaultProtocol: 'https',
           HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
         },
-        codeBlock: false,
-        blockquote: false,
-        horizontalRule: false,
+        codeBlock: false, blockquote: false, horizontalRule: false,
       }),
     ],
-    content: initialHtml,
+    content: openedHtml,
+    // Baseline for dirty-checks must be the EDITOR's normalized form of the
+    // opened content (TipTap reorders attrs etc.) — otherwise an untouched
+    // window would "save" on every outside click.
+    onCreate: ({ editor: ed }) => setSavedHtml(ed.getHTML()),
   });
-
-  // Esc: leave edit mode first, then close (never while a drag is running).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (aiSuggestion != null) { setAiSuggestion(null); return; }
-      if (editMode && !isInsert) { setEditMode(false); editor?.commands.setContent(currentHtml); return; }
-      onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, aiSuggestion, editor, onClose]);
 
   const saveMutation = trpc.seo.remoteSaveSectionRule.useMutation();
   const optimizeMutation = trpc.seo.remoteOptimizeSection.useMutation();
 
-  // ── AI (staged — nothing saves until Accept) ──
-  const runOptimize = async () => {
-    setBusy(true);
-    try {
-      const current = isInsert && !editor?.getText().trim()
-        ? '' // empty new section → generate mode (topic drives it)
-        : (editor?.getHTML() ?? currentHtml);
-      const res: any = await optimizeMutation.mutateAsync({
-        siteId: siteId as number, postId, type,
-        html: current, topic, model, provider,
-      });
-      const value = String(res?.value ?? '').trim();
-      if (value) setAiSuggestion(value);
-      else toast.info('The section already looks optimized.');
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Could not optimize the section');
-    } finally {
-      setBusy(false);
-    }
-  };
-  const acceptSuggestion = () => {
-    if (aiSuggestion == null) return;
-    editor?.commands.setContent(aiSuggestion);
-    setAiSuggestion(null);
-    setEditMode(true); // land in the editor so the user can tweak before saving
-  };
+  const isDirty = () => !readOnly && !!editor && editor.getHTML() !== savedHtml;
 
-  // ── Save (section replace / section insert) ──
-  const save = async (replacementOverride?: string) => {
-    if (!isInsert && !section) return; // nothing to save against
+  // ── Save (Acceptera / click outside): live rule, engine handles UPSERT/revert. ──
+  const save = async (replacementOverride?: string): Promise<boolean> => {
+    if (readOnly || (!isInsert && !section)) return true;
     const replacement = replacementOverride ?? (editor?.getHTML() ?? '');
     setBusy(true);
     try {
@@ -258,8 +196,8 @@ export function SectionModal({
       if (isInsert) {
         const anchor = insert?.ruleId
           ? { text: insert.anchorText, level: insert.anchorLevel, occurrence: insert.anchorOccurrence }
-          : (anchors?.[anchorIdx] ? { text: anchors[anchorIdx].text, level: anchors[anchorIdx].level, occurrence: anchors[anchorIdx].occurrence } : null);
-        if (!anchor) { toast.error('Pick a section to anchor the new one to.'); return; }
+          : anchors?.[anchorIdx];
+        if (!anchor) { toast.error('Pick a section to anchor the new one to.'); return false; }
         res = await saveMutation.mutateAsync({
           siteId: siteId as number, postId, kind: 'insert',
           anchorText: anchor.text, anchorLevel: anchor.level, anchorOccurrence: anchor.occurrence,
@@ -268,239 +206,211 @@ export function SectionModal({
       } else if (section) {
         res = await saveMutation.mutateAsync({
           siteId: siteId as number, postId, kind: 'replace',
-          headingText: section.heading.text,       // ALWAYS the scan's ORIGINAL — rule identity
+          headingText: section.heading.text, // ALWAYS the scan's ORIGINAL — rule identity
           headingLevel: section.heading.level,
           headingOccurrence: section.heading.occurrence,
+          // Identity = the SCAN's section membership (anchors) — the fix that
+          // makes the serving-side verify agree with what we saved.
           paragraphs: section.paragraphs.map((p) => ({ text: p.text, occurrence: p.occurrence })),
           replacement,
         });
       }
       onSaved();
-      if (res?.removed) {
-        toast.success('Section removed — the page serves without it again.');
-        onClose();
-      } else if (res?.reverted) {
-        toast.success('Reverted — the original section serves again.');
-        setCurrentHtml(originalHtml);
-        editor?.commands.setContent(originalHtml);
-        setEditMode(false);
-      } else {
-        toast.success('Section saved — the site serves it now (page/CDN caches may need a purge).');
-        setCurrentHtml(replacement); // the read view now shows what actually serves
-        setEditMode(false);
-        if (isInsert) onClose();
-      }
+      if (res?.removed) toast.success('Section removed — the page serves without it again.');
+      else if (res?.reverted) toast.success('Reverted — the original section serves again.');
+      else toast.success('Saved — the site serves it now (page/CDN caches may need a purge).');
+      setSavedHtml(replacement);
+      return true;
     } catch (e: any) {
       toast.error(e?.message ?? 'Could not save the section');
+      return false;
     } finally {
       setBusy(false);
     }
   };
 
-  /** Remove an existing added section (insert rule) — empty replacement = clean removal. */
-  const removeInsert = () => { void save(''); };
+  // ── Click OUTSIDE = save (when changed) then close. Esc = close without saving. ──
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement;
+      if (rootRef.current?.contains(t)) return;
+      if (t.closest('[data-sonner-toaster]')) return; // toasts are not "outside"
+      if (isDirty()) void save().then((ok) => { if (ok) onClose(); });
+      else onClose();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, savedHtml, busy, position, anchorIdx]);
+
+  // ── AI: Re-write = whole-section rewrite into the editor; Ask AI adds an instruction. ──
+  const runAi = async (withInstruction: string) => {
+    setBusy(true);
+    try {
+      const current = editor?.getText().trim() ? (editor?.getHTML() ?? '') : '';
+      const res: any = await optimizeMutation.mutateAsync({
+        siteId: siteId as number, postId, type,
+        html: current, topic: withInstruction, model, provider,
+      });
+      const value = String(res?.value ?? '').trim();
+      if (value) { editor?.commands.setContent(value); setAskOpen(false); }
+      else toast.info('The section already looks optimized.');
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Could not run the AI on this section');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const title = isInsert
-    ? (insert?.ruleId ? 'Added section' : 'New section')
-    : `Section — H${section?.heading.level ?? 2}: ${section?.heading.text ?? ''}`;
-
-  const canEdit = !readOnly && !isInsert;
+    ? (insert?.ruleId ? '¶ Added section' : '¶ New section')
+    : `¶ ${section?.heading.text ?? ''}`;
   const served = !isInsert && !!section?.sectionRuleReplacement;
 
   return createPortal(
     <div
-      className="fixed z-40 flex max-h-[80vh] w-[540px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl"
-      style={{ left: pos.x, top: pos.y }}
+      ref={rootRef}
+      className="fixed z-40 flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl"
+      style={{ left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
       role="dialog"
       aria-label={title}
     >
-      {/* ── Header (drag handle + AI actions, always visible) ── */}
+      {/* ── Header: ¶ title + [Ask AI] [Re-write] [X] — draggable ── */}
       <div
-        className="flex cursor-grab select-none items-center gap-2 border-b border-border bg-muted/40 px-3 py-2 active:cursor-grabbing"
+        className="flex cursor-grab select-none items-center gap-1.5 border-b border-slate-200 bg-white px-2.5 py-1.5 active:cursor-grabbing"
         onPointerDown={onDragStart}
         onPointerMove={onDragMove}
         onPointerUp={onDragEnd}
       >
-        <GripHorizontal className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
-        <div className="min-w-0 flex-1 truncate text-xs font-medium" title={title}>
+        <div className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800" title={title}>
           {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
           {title}
         </div>
         {!readOnly && (
-          <button
-            type="button"
-            onClick={runOptimize}
-            disabled={busy}
-            title={isInsert ? 'Draft this section with AI' : 'Rewrite this section with AI'}
-            className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-primary disabled:opacity-60"
-          >
-            {busy ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
-            {isInsert ? 'Generate' : 'Re-write'}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setAskOpen((v) => !v)}
+              disabled={busy}
+              title="Tell the AI what to do with this section"
+              className={`inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 disabled:opacity-60 ${askOpen ? 'text-primary border-primary/40' : 'text-slate-600'}`}
+            >
+              <MessageSquarePlus className="h-3 w-3" /> Ask AI
+            </button>
+            <button
+              type="button"
+              onClick={() => runAi('')}
+              disabled={busy}
+              title={isInsert ? 'Draft this section with AI' : 'Rewrite this section with AI'}
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
+              {isInsert ? 'Generate' : 'Re-write'}
+            </button>
+          </>
         )}
-        {canEdit && !editMode && (
-          <button
-            type="button"
-            onClick={() => setEditMode(true)}
-            title="Edit this section"
-            className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <Pencil className="h-3 w-3" /> Edit
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setShowHtml((v) => !v)}
-          title="View HTML"
-          className={`shrink-0 rounded p-1 hover:bg-accent ${showHtml ? 'text-primary' : 'text-muted-foreground'}`}
-        >
-          <Code className="h-3.5 w-3.5" />
-        </button>
-        <button type="button" onClick={onClose} title="Close" className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
+        <button type="button" onClick={onClose} title="Close (Esc) — closes without saving" className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
+      {/* ── Ask-AI instruction (Enter runs it) ── */}
+      {askOpen && !readOnly && (
+        <div className="border-b border-slate-200 px-2.5 py-1.5">
+          <input
+            autoFocus
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && instruction.trim()) void runAi(instruction.trim()); }}
+            placeholder="e.g. “make it shorter and add a price example” — Enter to run"
+            className="h-6 w-full rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-800 outline-none focus:border-primary"
+          />
+        </div>
+      )}
+
       {/* ── New-section placement (create mode only) ── */}
       {isInsert && !insert?.ruleId && (
-        <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
-          <span className="shrink-0 text-muted-foreground">Place</span>
-          <select
-            value={position}
-            onChange={(e) => setPosition(e.target.value === 'before' ? 'before' : 'after')}
-            className="h-6 rounded border border-input bg-card px-1 text-xs"
-          >
+        <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5 text-[11px]">
+          <span className="shrink-0 text-slate-500">Place</span>
+          <select value={position} onChange={(e) => setPosition(e.target.value === 'before' ? 'before' : 'after')} className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px]">
             <option value="after">after</option>
             <option value="before">before</option>
           </select>
-          <select
-            value={anchorIdx}
-            onChange={(e) => setAnchorIdx(Number(e.target.value))}
-            className="h-6 min-w-0 flex-1 truncate rounded border border-input bg-card px-1 text-xs"
-          >
+          <select value={anchorIdx} onChange={(e) => setAnchorIdx(Number(e.target.value))} className="h-6 min-w-0 flex-1 truncate rounded border border-slate-200 bg-white px-1 text-[11px]">
             {(anchors ?? []).map((a, i) => (
               <option key={`${a.text}-${i}`} value={i}>{`H${a.level}: ${a.text}`}</option>
             ))}
           </select>
         </div>
       )}
-      {isInsert && !insert?.ruleId && (
-        <div className="border-b border-border px-3 py-2">
-          <input
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            placeholder="Topic for AI (e.g. “FAQ about pricing”) — or just write below"
-            className="h-7 w-full rounded border border-input bg-card px-2 text-xs outline-none focus:border-primary"
-          />
-        </div>
-      )}
 
-      {/* ── Staged AI suggestion (Accept / Reject / Re-generate) ── */}
-      {aiSuggestion != null && (
-        <div className="border-b border-primary/20 bg-accent px-3 py-2">
-          <div
-            className={`${READ_VIEW_CLASS} max-h-56 overflow-auto`}
-            // eslint-disable-next-line react/no-danger
-            dangerouslySetInnerHTML={{ __html: aiSuggestion }}
-          />
-          <div className="mt-1.5 flex items-center gap-1">
-            <button type="button" onClick={acceptSuggestion} disabled={busy} className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
-              <Check className="h-3 w-3" /> Accept
-            </button>
-            <button type="button" onClick={() => setAiSuggestion(null)} disabled={busy} className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-              <X className="h-3 w-3" /> Reject
-            </button>
-            <button type="button" onClick={runOptimize} disabled={busy} className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-              {busy ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <RefreshCw className="h-3 w-3" />} Re-generate
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Body: HTML inspector / editor / read view ── */}
-      <div className="min-h-0 flex-1 overflow-auto p-3">
-        {showHtml ? (
-          <pre className="rounded-md border border-border bg-muted/40 p-2.5 font-mono text-[11px] leading-4 whitespace-pre-wrap break-words">
-            {editMode || isInsert ? (editor?.getHTML() ?? currentHtml) : currentHtml}
-          </pre>
-        ) : (editMode || isInsert) && !readOnly ? (
-          <>
-            {editor && (
-              <BubbleMenu
-                editor={editor}
-                shouldShow={({ state }: { state: any }) => !state.selection.empty && !state.selection.node}
-                className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-0.5 shadow-md"
-              >
-                <ToolButton title="Bold" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><BoldIcon className="h-3.5 w-3.5" /></ToolButton>
-                <ToolButton title="Italic" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><ItalicIcon className="h-3.5 w-3.5" /></ToolButton>
-                <ToolButton title="Underline" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon className="h-3.5 w-3.5" /></ToolButton>
-                <ToolButton title="Strikethrough" active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()}><StrikethroughIcon className="h-3.5 w-3.5" /></ToolButton>
-                <div className="mx-0.5 h-4 w-px bg-border" />
-                <ToolButton
-                  title={editor.isActive('link') ? 'Remove link' : 'Add link'}
-                  active={editor.isActive('link')}
-                  onClick={() => {
-                    if (editor.isActive('link')) { editor.chain().focus().unsetLink().run(); return; }
-                    // eslint-disable-next-line no-alert
-                    const url = window.prompt('Link URL');
-                    if (url) editor.chain().focus().setLink({ href: url }).run();
-                  }}
-                ><LinkIcon className="h-3.5 w-3.5" /></ToolButton>
-                <div className="mx-0.5 h-4 w-px bg-border" />
-                <ToolButton title="Heading 2" active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="h-3.5 w-3.5" /></ToolButton>
-                <ToolButton title="Heading 3" active={editor.isActive('heading', { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><Heading3 className="h-3.5 w-3.5" /></ToolButton>
-                <ToolButton title="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-3.5 w-3.5" /></ToolButton>
-                <ToolButton title="Numbered list" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered className="h-3.5 w-3.5" /></ToolButton>
-              </BubbleMenu>
-            )}
-            <EditorContent
-              editor={editor}
-              className={`${READ_VIEW_CLASS} min-h-[160px] rounded-md border border-input bg-card p-2.5 [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[140px]`}
-            />
-          </>
-        ) : (
-          <div
-            className={READ_VIEW_CLASS}
-            title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}
-            // Server-sanitized content (rule replacements are wp_kses_post'd;
-            // originals are the site's own published markup).
-            // eslint-disable-next-line react/no-danger
-            dangerouslySetInnerHTML={{ __html: currentHtml }}
-          />
-        )}
+      {/* ── The text: ONE fixed-shape, directly editable surface ── */}
+      <div
+        className="h-[280px] overflow-auto bg-white px-3 py-2"
+        title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}
+      >
+        <EditorContent
+          editor={editor}
+          className={`${TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`}
+        />
       </div>
 
-      {/* ── Footer: Save / Cancel (+ Remove for existing added sections) ── */}
-      {!readOnly && (editMode || isInsert) && !showHtml && (
-        <div className="flex items-center gap-1.5 border-t border-border px-3 py-2">
+      {/* ── Persistent toolbar: [B][I][U][Link] [H1][H2][•] ── */}
+      {!readOnly && editor && (
+        <div className="flex items-center gap-0.5 border-t border-slate-200 bg-white px-2 py-1">
+          <ToolButton title="Bold" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><BoldIcon className="h-3.5 w-3.5" /></ToolButton>
+          <ToolButton title="Italic" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><ItalicIcon className="h-3.5 w-3.5" /></ToolButton>
+          <ToolButton title="Underline" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon className="h-3.5 w-3.5" /></ToolButton>
+          <ToolButton
+            title={editor.isActive('link') ? 'Remove link' : 'Add link'}
+            active={editor.isActive('link')}
+            onClick={() => {
+              if (editor.isActive('link')) { editor.chain().focus().unsetLink().run(); return; }
+              // eslint-disable-next-line no-alert
+              const url = window.prompt('Link URL');
+              if (url) editor.chain().focus().setLink({ href: url }).run();
+            }}
+          ><LinkIcon className="h-3.5 w-3.5" /></ToolButton>
+          <div className="mx-1 h-4 w-px bg-slate-200" />
+          <ToolButton title="Heading 1" active={editor.isActive('heading', { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="h-3.5 w-3.5" /></ToolButton>
+          <ToolButton title="Heading 2" active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="h-3.5 w-3.5" /></ToolButton>
+          <ToolButton title="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-3.5 w-3.5" /></ToolButton>
+        </div>
+      )}
+
+      {/* ── [✓ Acceptera] [↶ Ångra] (+ Remove for existing added sections) ── */}
+      {!readOnly && (
+        <div className="flex items-center gap-1.5 border-t border-slate-200 bg-white px-2.5 py-1.5">
           <button
             type="button"
-            onClick={() => save()}
+            onClick={() => { void save().then((ok) => { if (ok && isInsert && !insert?.ruleId) onClose(); }); }}
             disabled={busy}
             className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
           >
-            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Accept
+            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Acceptera
           </button>
           <button
             type="button"
-            onClick={() => {
-              if (isInsert && !insert?.ruleId) { onClose(); return; }
-              editor?.commands.setContent(currentHtml);
-              setEditMode(false);
-            }}
+            onClick={() => editor?.commands.setContent(savedHtml)}
             disabled={busy}
-            className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-60"
+            title="Restore the last saved state"
+            className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
-            <X className="h-3 w-3" /> Cancel
+            <Undo2 className="h-3 w-3" /> Ångra
           </button>
           <div className="flex-1" />
           {isInsert && !!insert?.ruleId && (
             <button
               type="button"
-              onClick={removeInsert}
+              onClick={() => { void save('').then((ok) => { if (ok) onClose(); }); }}
               disabled={busy}
               title="Remove this added section from the live page"
-              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-60"
+              className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-destructive disabled:opacity-60"
             >
               <Trash2 className="h-3 w-3" /> Remove
             </button>

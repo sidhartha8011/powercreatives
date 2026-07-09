@@ -273,6 +273,34 @@ final class TextMatcherTest extends TestCase
         $this->assertSame('<h2>Rubrik</h2><p>Nytt stycke under.</p><h2>Nästa</h2><p>x</p>', $out);
     }
 
+    /** THE 2.8.1 parity fix: chrome <p>s (cookie banner in <header>, footer text,
+     *  off-canvas <nav>) must NOT break a section match — the scan stripped them
+     *  when the fingerprint was built, so serving must exclude them too. */
+    public function test_apply_section_rule_ignores_chrome_paragraphs(): void
+    {
+        $page = '<html><head><title>x</title></head><body>'
+            . '<header><p>Vi använder cookies.</p><h1>Sajtnamn</h1></header>'
+            . '<nav><p>Meny</p></nav>'
+            . '<h2>Våra tjänster</h2><p>Första stycket.</p>'
+            . '<aside><p>Sidokolumn.</p></aside>'
+            . '<p>Andra stycket.</p>'
+            . '<footer><p>© 2026</p></footer></body></html>';
+        $out = PCM_Text_Matcher::apply_section_rule(
+            $page,
+            PCM_Text_Matcher::normalize('Våra tjänster'),
+            2,
+            PCM_Text_Matcher::fingerprint(array('Första stycket.', 'Andra stycket.')), // scan saw ONLY content <p>s
+            0,
+            '<h2>Tjänster</h2><p>Ny text ett.</p><p>Ny text två.</p>'
+        );
+        $this->assertStringContainsString('<p>Ny text ett.</p>', (string) $out);
+        $this->assertStringContainsString('<p>Ny text två.</p>', (string) $out);
+        // Chrome untouched, byte for byte.
+        $this->assertStringContainsString('<header><p>Vi använder cookies.</p><h1>Sajtnamn</h1></header>', (string) $out);
+        $this->assertStringContainsString('<aside><p>Sidokolumn.</p></aside>', (string) $out);
+        $this->assertStringContainsString('<footer><p>© 2026</p></footer>', (string) $out);
+    }
+
     // ── sectionInsert v2 ──
 
     public function test_apply_section_insert_after_section_end(): void
