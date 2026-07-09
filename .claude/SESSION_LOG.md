@@ -6639,3 +6639,22 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - BEFORE 9bac3a8 -> AFTER fba6797. Owner verification steps in the changelog.
 - NOTE: unapproved sites-fix working-tree edits from earlier were REVERTED
   before this pair started (never committed) - tree was clean at BEFORE.
+
+## 2026-07-09 - [connector-scan-resilience] (pair 2.5, connector 2.7.1)
+- ROOT-CAUSE fix for loopback fragility (LocalWP worker starvation diagnosed
+  from owner symptoms; scan-content answered honestly loopback_blocked):
+  (1) scan-content result CACHED per post (transient 10 min; busted on
+  save_post + every rules push), (2) site-wide SINGLE-FLIGHT loopback lock -
+  max one self-request at a time regardless of caller; heading scan's
+  rendered pass now shares lock + helper, (3) honest fallback tiers when
+  loopback fails: the_content in-process render (source content-rendered) ->
+  raw+wpautop (source content); rendered scan w/ ZERO paragraphs is TRUSTED
+  (no fallback-invented nodes), (4) loopback timeout 20s -> 8s, (5) panel
+  serializes content-nodes AFTER headings resolve. Occurrence-order caveat of
+  tier 2/3 documented in code (stale-flag is the safety net).
+- NEW MANDATORY VERIFY STEP executed: extracted the GENERATED connector
+  source from the template (109,685 chars) and php-lint'ed it - OK (lesson:
+  hub-file lint does NOT cover the nowdoc template).
+- php -l OK; tsc 59 = baseline; build OK.
+- BEFORE 56e0579 -> AFTER (this commit). Owner: reinstall/update connector to
+  2.7.1 on powerstock, then paragraphs appear via tier 3 even without loopback.
