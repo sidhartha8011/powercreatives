@@ -52,6 +52,19 @@ return array(
             . "Requirements:\n- Keep it concise (ideally under 70 characters)\n- Improve clarity, keyword relevance, and search intent — do NOT change what the section is about\n- Plain text only — no HTML tags, no markdown, no quotation marks\n- Output ONLY the heading text, nothing else",
     ),
 
+    // ── Paragraph (on-page body text) — the dynamic-rule editor's AI optimize ──
+    // Output is served VERBATIM at render time by the connector's rule engine, so
+    // the requirements pin plain inline text (links allowed) and same-language.
+    'paragraph' => array(
+        'max'      => 400,
+        'generate' => "Write a single SEO-optimized paragraph for a section of this page.\n\n"
+            . "Page Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nBusiness: {{business.name}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- 2-4 sentences, clear and factual\n- Work a relevant keyword in naturally (no stuffing)\n- Write in {{site.lang}}\n- Plain text only — no headings, no markdown, no quotation marks around the output\n- Output ONLY the paragraph text, nothing else",
+        'optimize' => "Optimize the following paragraph for SEO and readability, keeping its original meaning, facts, and language.\n\n"
+            . "Current Paragraph: {{current_value}}\nPage Title: {{title}}\nPrimary Keyword: {{primary_keyword}}\nSupporting Keyword: {{supporting_keyword}}\nBusiness: {{business.name}}\nLanguage: {{site.lang}}\n\n"
+            . "Requirements:\n- Keep roughly the same length (never more than ~40% longer)\n- Improve clarity, keyword relevance, and search intent — do NOT change what the paragraph says or invent facts\n- Write in {{site.lang}} (the SAME language as the current paragraph)\n- Plain text only — no headings, no markdown, no quotation marks around the output\n- Output ONLY the paragraph text, nothing else",
+    ),
+
     // ── Meta description ──
     'meta_description' => array(
         'max'      => 220,

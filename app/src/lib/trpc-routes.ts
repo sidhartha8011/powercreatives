@@ -396,6 +396,21 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/content-nodes` }),
     },
+    "seo.remoteGetParagraphRules": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/rules` }),
+    },
+    "seo.remoteSaveParagraphRule": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/paragraph-rule`, body: { text: input.text, occurrence: input.occurrence, replacement: input.replacement, anchor: input.anchor } }),
+    },
+    "seo.remoteOptimizeParagraph": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/paragraph-optimize`, body: { type: input.type, text: input.text, model: input.model, provider: input.provider, templateId: input.templateId } }),
+    },
     "seo.remoteGetHeadings": {
         endpoint: "seo/sites",
         method: "GET",

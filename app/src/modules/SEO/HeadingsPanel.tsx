@@ -70,6 +70,22 @@ export interface ContentNode {
   headingIndex?: number;
   sourceLabel?: string;
   sourcePostId?: number;
+  /** Paragraph nodes: 0-based position among same-normalized-text twins — half
+   *  of the rule-target identity (matchText + occurrence). */
+  occurrence?: number;
+  /** Paragraph nodes: nearest preceding rendered heading (re-anchor context). */
+  anchor?: { level: number; text: string } | null;
+}
+
+/** One hub-stored dynamic rule (the UI overlay's source of truth). */
+interface DynamicRule {
+  id: number;
+  target: string;
+  matchText: string;
+  occurrence: number;
+  replacement: string;
+  active: boolean;
+  staleCount: number;
 }
 
 /** Default reason shown on a heading that can't be edited from here (mirrors the read-only
@@ -135,7 +151,11 @@ function mergeRemoteNodes(headings: ContentNode[], paragraphs: any[]): ContentNo
       html: String(p?.html ?? ''),
       source: String(p?.source ?? 'rendered'),
       elId: '',
-      editable: false,
+      editable: true, // via dynamic rules (remote-only; the save path enforces it)
+      occurrence: Number(p?.occurrence ?? 0),
+      anchor: p?.anchor && typeof p.anchor.text === 'string'
+        ? { level: Number(p.anchor.level) || 0, text: String(p.anchor.text) }
+        : null,
     };
     const bucket = assigned.get(cursor) ?? [];
     bucket.push(node);
@@ -218,6 +238,60 @@ export function HeadingRows({
   const localOptimize = trpc.seo.optimizeHeading.useMutation();
   const remoteOptimize = trpc.seo.remoteOptimizeHeading.useMutation();
 
+  // ── Dynamic paragraph rules (remote only): the hub's stored rules overlay the
+  // scan's ORIGINAL text so the panel shows what the site actually SERVES. ──
+  const rulesQuery = trpc.seo.remoteGetParagraphRules.useQuery(
+    { siteId: siteId as number, postId },
+    { enabled: !isLocal, staleTime: 0 },
+  );
+  const rules: DynamicRule[] = Array.isArray((rulesQuery.data as any)?.rules)
+    ? ((rulesQuery.data as any).rules as DynamicRule[])
+    : [];
+  const saveParagraphMutation = trpc.seo.remoteSaveParagraphRule.useMutation();
+  const optimizeParagraphMutation = trpc.seo.remoteOptimizeParagraph.useMutation();
+
+  /** Match-side normalization for the overlay (entity decode via textarea +
+   *  NBSP/whitespace/case — mirrors normalization spec v1 close enough for
+   *  DISPLAY matching; the authoritative normalize runs server-side). */
+  const jsNormalize = (s: string): string => {
+    const el = document.createElement('textarea');
+    el.innerHTML = s;
+    return el.value.replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  };
+  /** The paragraph node's active rule, if any (matchText + occurrence identity). */
+  const ruleFor = (n: ContentNode): DynamicRule | undefined =>
+    rules.find((r) => r.target === 'paragraph' && r.active
+      && r.occurrence === (n.occurrence ?? 0) && r.matchText === jsNormalize(n.text));
+  /** Plain-text preview of a rule's replacement (may carry inline HTML). */
+  const rulePreview = (r: DynamicRule): string => {
+    const el = document.createElement('div');
+    el.innerHTML = r.replacement;
+    return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+  };
+
+  /** Save a paragraph's rule (or clean-revert when edited back to the original). */
+  const saveParagraph = async (n: ContentNode, replacement: string) => {
+    setBusyIndex(n.index);
+    try {
+      const res: any = await saveParagraphMutation.mutateAsync({
+        siteId: siteId as number,
+        postId,
+        text: n.text, // ALWAYS the scan's ORIGINAL text — the rule's identity
+        occurrence: n.occurrence ?? 0,
+        replacement,
+        anchor: n.anchor ?? undefined,
+      });
+      await rulesQuery.refetch();
+      toast.success(res?.reverted
+        ? 'Reverted — the original paragraph serves again.'
+        : 'Paragraph rule saved — the site serves the new text (page/CDN caches may need a purge).');
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Could not save the paragraph change');
+    } finally {
+      setBusyIndex(null);
+    }
+  };
+
   // Per-node UI state, keyed by node.index (unique within the current list).
   const [busyIndex, setBusyIndex] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<Record<number, string>>({});
@@ -266,17 +340,24 @@ export function HeadingRows({
   const optimize = async (n: ContentNode) => {
     setBusyIndex(n.index);
     try {
-      const data = isLocal
-        ? await localOptimize.mutateAsync({ id: postId, index: editIndex(n), text: n.text, brandId, model, provider })
-        : await remoteOptimize.mutateAsync({ siteId: siteId as number, postId, type, index: editIndex(n), text: n.text, model, provider });
+      // Paragraphs optimize their SERVED text (the active rule's replacement when
+      // one exists) — re-optimizing improves what the visitor actually reads.
+      const current = n.kind === 'paragraph'
+        ? (() => { const r = ruleFor(n); return r ? rulePreview(r) : n.text; })()
+        : n.text;
+      const data = n.kind === 'paragraph'
+        ? await optimizeParagraphMutation.mutateAsync({ siteId: siteId as number, postId, type, text: current, model, provider })
+        : isLocal
+          ? await localOptimize.mutateAsync({ id: postId, index: editIndex(n), text: n.text, brandId, model, provider })
+          : await remoteOptimize.mutateAsync({ siteId: siteId as number, postId, type, index: editIndex(n), text: n.text, model, provider });
       const value = String((data as any)?.value ?? '').trim();
-      if (value && value !== n.text) {
+      if (value && value !== current) {
         setSuggestions((s) => ({ ...s, [n.index]: value }));
       } else {
-        toast.info('The heading already looks optimized.');
+        toast.info(n.kind === 'paragraph' ? 'The paragraph already looks optimized.' : 'The heading already looks optimized.');
       }
     } catch (e: any) {
-      toast.error(e?.message ?? 'Could not optimize the heading');
+      toast.error(e?.message ?? (n.kind === 'paragraph' ? 'Could not optimize the paragraph' : 'Could not optimize the heading'));
     } finally {
       setBusyIndex(null);
     }
@@ -285,7 +366,9 @@ export function HeadingRows({
   const acceptSuggestion = (n: ContentNode) => {
     const value = suggestions[n.index];
     setSuggestions(({ [n.index]: _drop, ...rest }) => rest);
-    if (value != null) void saveHeading(n, { text: value });
+    if (value == null) return;
+    if (n.kind === 'paragraph') void saveParagraph(n, value);
+    else void saveHeading(n, { text: value });
   };
   const rejectSuggestion = (index: number) =>
     setSuggestions(({ [index]: _drop, ...rest }) => rest);
@@ -327,8 +410,13 @@ export function HeadingRows({
   return (
     <Fragment>
       {rows.map(({ n, indent }) => {
-        // ── Paragraph row (read-only; click → HTML popup) ──
+        // ── Paragraph row: remote = click-to-edit + ✦ (dynamic rule); local = read-only.
+        // The P chip opens the HTML popup on both. A served rule shows its text + a dot. ──
         if (n.kind === 'paragraph') {
+          const pBusy = busyIndex === n.index;
+          const pSuggestion = suggestions[n.index];
+          const served = !isLocal ? ruleFor(n) : undefined;
+          const displayText = served ? rulePreview(served) : n.text;
           return (
             <TableRow key={`p-${n.index}`} className="bg-muted/30 hover:bg-muted/50">
               <TableCell className="px-2 text-center">
@@ -339,19 +427,50 @@ export function HeadingRows({
                   return <TableCell key={col} />;
                 }
                 return (
-                  <TableCell key={col}>
+                  <TableCell key={col} className={pSuggestion != null ? '!h-auto !py-1 !whitespace-normal' : ''}>
                     <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
-                      <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-border bg-muted/60 px-1 text-[10px] font-semibold leading-none text-muted-foreground">
-                        P
-                      </span>
                       <button
                         type="button"
                         onClick={() => setHtmlPopup(n)}
                         title="Show this paragraph's HTML"
-                        className="flex-1 min-w-0 truncate text-left text-xs text-muted-foreground hover:text-foreground hover:underline decoration-dotted"
+                        className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-border bg-muted/60 px-1 text-[10px] font-semibold leading-none text-muted-foreground hover:text-foreground"
                       >
-                        {n.text}
+                        P
                       </button>
+                      <div className="flex-1 min-w-0">
+                        {pSuggestion != null ? (
+                          /* Same staged-suggestion UI as every other cell. */
+                          <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
+                            <div className="text-xs text-foreground break-words whitespace-normal" title={pSuggestion}>{pSuggestion}</div>
+                            <div className="flex items-center gap-1">
+                              <button type="button" onClick={() => acceptSuggestion(n)} disabled={pBusy} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
+                                <Check className="w-3 h-3" /> Accept
+                              </button>
+                              <button type="button" onClick={() => rejectSuggestion(n.index)} disabled={pBusy} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
+                                <X className="w-3 h-3" /> Reject
+                              </button>
+                              <button type="button" onClick={() => optimize(n)} disabled={pBusy} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
+                                {pBusy ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
+                              </button>
+                            </div>
+                          </div>
+                        ) : !isLocal ? (
+                          <ParagraphText
+                            value={displayText}
+                            originalText={served ? n.text : undefined}
+                            busy={pBusy}
+                            onSave={(v) => saveParagraph(n, v)}
+                            onOptimize={() => optimize(n)}
+                          />
+                        ) : (
+                          <span
+                            className="block truncate text-xs text-muted-foreground"
+                            title="Read-only here — paragraph editing runs via dynamic rules on connected sites."
+                          >
+                            {n.text}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </TableCell>
                 );
@@ -519,6 +638,79 @@ function HeadingText({ value, busy, onSave, onOptimize }: {
         type="button"
         onClick={() => { setDraft(value); setEditing(true); }}
         className="flex-1 min-w-0 text-left truncate text-xs leading-snug hover:underline decoration-dotted"
+        title={value}
+      >
+        {value}
+      </button>
+      <button
+        type="button"
+        onClick={onOptimize}
+        disabled={busy}
+        title="Optimize with AI"
+        className="shrink-0 text-muted-foreground/50 hover:text-primary opacity-0 group-hover:opacity-100 disabled:opacity-100"
+      >
+        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" /> : <Sparkles className="w-3.5 h-3.5" />}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Click-to-edit paragraph text + hover ✦ Optimize — the dynamic-rule editor
+ * (remote sites). Textarea editor (paragraphs are long): Enter saves,
+ * Shift+Enter = newline, Esc cancels. A paragraph currently served by a rule
+ * shows a primary dot; its tooltip carries the ORIGINAL text — editing back
+ * to the original deletes the rule (clean revert, handled server-side).
+ */
+function ParagraphText({ value, originalText, busy, onSave, onOptimize }: {
+  value: string;
+  /** Set when a rule serves this paragraph — the scan's original text. */
+  originalText?: string;
+  busy?: boolean;
+  onSave: (v: string) => void;
+  onOptimize: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+
+  const commit = () => {
+    setEditing(false);
+    const v = draft.trim();
+    if (v && v !== value) onSave(v); else setDraft(value);
+  };
+  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { setDraft(value); setEditing(false); }
+  };
+
+  if (editing) {
+    return (
+      <textarea
+        autoFocus
+        rows={3}
+        value={draft}
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKey}
+        className="w-full resize-y rounded-md border border-input bg-card p-2 text-xs leading-snug outline-none focus:border-primary"
+      />
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 group min-w-0">
+      {originalText !== undefined && (
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+          title={`Optimized (dynamic rule) — original: ${originalText}`}
+        />
+      )}
+      <button
+        type="button"
+        onClick={() => { setDraft(value); setEditing(true); }}
+        disabled={busy}
+        className="flex-1 min-w-0 text-left truncate text-xs leading-snug text-muted-foreground hover:text-foreground hover:underline decoration-dotted disabled:opacity-60"
         title={value}
       >
         {value}
