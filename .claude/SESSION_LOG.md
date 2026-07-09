@@ -6857,3 +6857,19 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Owner: update the powerleads connector to 2.8.2 (Sites -> Connector column),
   Ctrl+F5, open the Hello! section -> Acceptera -> live page serves.
 - BEFORE 1197dcb -> AFTER (this commit).
+
+## 2026-07-09 - [heading-scan-rule-exclusion] (connector 2.8.3, appended to the open pair)
+- LIVE INSTRUMENTATION on powerleads (temporary mu-plugin logger, removed
+  after) nailed the remaining incoherence: the HEADING scan's loopback
+  (?pcm_hscan) was NOT excluded from rule serving (only ?pcm_cscan was) ->
+  heading rows displayed SERVED text while paragraph anchors carried ORIGINAL
+  text -> section grouping keys mismatched (the owner's screenshot: main
+  section stranded at the bottom as an unlisted row) AND a re-save while a
+  rule serves would have re-anchored the rule onto its own output (chaining).
+  Logger also proved order 2.8.2 is correct live (raw h1 'Hello world!' ->
+  overrides -> rules input h1 'Hello!').
+- FIX: serving skips BOTH scan params (pcm_cscan + pcm_hscan) - connector
+  2.8.3. Both inventories now see the ORIGINAL page, the identity rules match.
+- Owner's latest test rule targets comment-area content (his click during the
+  broken grouping); he reverts it via Original + Acceptera after updating.
+- VERIFIED: php -l hub file + extracted generated source OK.

@@ -445,7 +445,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.8.2
+ * Version: 2.8.3
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -2216,7 +2216,12 @@ function pcm_conn_apply_rules($html, $rules, $pid) {
 // on the displayed text, raw text still the old one — permanent honest miss).
 add_action('template_redirect', function () {
     if (is_admin() || is_feed() || (defined('REST_REQUEST') && REST_REQUEST) || !is_singular()) { return; }
-    if (isset($_GET['pcm_cscan'])) { return; }
+    // BOTH scan loopbacks are excluded from rule serving (2.8.3): the content
+    // scan AND the heading scan must inventory the ORIGINAL page — that is the
+    // identity rules match. Serving rules into the heading scan made heading
+    // rows display served text, broke section grouping keys, and would chain
+    // rules onto their own output on the next save.
+    if (isset($_GET['pcm_cscan']) || isset($_GET['pcm_hscan'])) { return; }
     if (get_option('pcm_conn_rules_off') === '1') { return; } // site kill switch (hub-managed)
     $pid = (int) get_queried_object_id();
     if (!$pid) { return; }
