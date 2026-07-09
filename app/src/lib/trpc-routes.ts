@@ -417,6 +417,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-rule`, body: { kind: input.kind, headingText: input.headingText, headingLevel: input.headingLevel, headingOccurrence: input.headingOccurrence, paragraphs: input.paragraphs, anchorText: input.anchorText, anchorLevel: input.anchorLevel, anchorOccurrence: input.anchorOccurrence, position: input.position, ruleId: input.ruleId, replacement: input.replacement } }),
     },
+    "seo.remoteSectionVersions": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-versions?text=${encodeURIComponent(input.text)}&occurrence=${input.occurrence ?? 0}` }),
+    },
     "seo.remoteOptimizeSection": {
         endpoint: "seo/sites",
         method: "POST",

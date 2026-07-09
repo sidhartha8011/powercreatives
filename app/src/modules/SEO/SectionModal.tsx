@@ -30,6 +30,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
+import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
@@ -155,6 +156,11 @@ export function SectionModal({
 
   // ── Content: ONE state — the editor. `savedHtml` = last saved/opened state. ──
   const openedHtml = isInsert ? (insert?.replacement ?? '') : (section ? composeSectionHtml(section) : '');
+  /** The section's TRUE original (no rules applied) — always live from the scan. */
+  const originalHtml = !isInsert && section
+    ? (section.heading.html || `<h${section.heading.level}>${escapeHtml(section.heading.text)}</h${section.heading.level}>`)
+      + section.paragraphs.map((p) => p.html).join('')
+    : '';
   const [savedHtml, setSavedHtml] = useState(openedHtml);
   const [busy, setBusy] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
@@ -183,6 +189,27 @@ export function SectionModal({
 
   const saveMutation = trpc.seo.remoteSaveSectionRule.useMutation();
   const optimizeMutation = trpc.seo.remoteOptimizeSection.useMutation();
+
+  // ── Version history (replace-sections only — inserts have no Original). ──
+  const versionsQuery = trpc.seo.remoteSectionVersions.useQuery(
+    {
+      siteId: siteId as number, postId,
+      text: section?.heading.text ?? '', occurrence: section?.heading.occurrence ?? 0,
+    },
+    { enabled: !readOnly && !isInsert && !!section, staleTime: 0 },
+  );
+  const versions: Array<{ id: number; replacement: string; createdAt: string }> =
+    Array.isArray((versionsQuery.data as any)?.versions) ? (versionsQuery.data as any).versions : [];
+  /** '' = just viewing the current state; 'original' | version id as string. */
+  const [versionPick, setVersionPick] = useState('');
+  const pickVersion = (v: string) => {
+    setVersionPick(v);
+    if (v === 'original') editor?.commands.setContent(originalHtml);
+    else if (v !== '') {
+      const row = versions.find((x) => String(x.id) === v);
+      if (row) editor?.commands.setContent(row.replacement);
+    }
+  };
 
   const isDirty = () => !readOnly && !!editor && editor.getHTML() !== savedHtml;
 
@@ -220,6 +247,8 @@ export function SectionModal({
       else if (res?.reverted) toast.success('Reverted — the original section serves again.');
       else toast.success('Saved — the site serves it now (page/CDN caches may need a purge).');
       setSavedHtml(replacement);
+      setVersionPick('');
+      if (!isInsert) void versionsQuery.refetch(); // the accepted state is a new version
       return true;
     } catch (e: any) {
       toast.error(e?.message ?? 'Could not save the section');
@@ -291,6 +320,22 @@ export function SectionModal({
           {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
           {title}
         </div>
+        {/* Version history: Original + every accepted save (date/time). Picking one
+            loads it in the editor; Acceptera makes it the version the site serves. */}
+        {!readOnly && !isInsert && (
+          <select
+            value={versionPick}
+            onChange={(e) => pickVersion(e.target.value)}
+            title="Versions — pick one to view it; Acceptera makes it live"
+            className="h-6 max-w-[130px] shrink-0 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600"
+          >
+            <option value="">{versions.length > 0 ? `Versions (${versions.length})` : 'Versions'}</option>
+            <option value="original">Original</option>
+            {versions.map((v) => (
+              <option key={v.id} value={String(v.id)}>{v.createdAt.slice(0, 16)}</option>
+            ))}
+          </select>
+        )}
         {!readOnly && (
           <>
             <button
@@ -349,39 +394,43 @@ export function SectionModal({
         </div>
       )}
 
-      {/* ── The text: ONE fixed-shape, directly editable surface ── */}
+      {/* ── The text: ONE fixed-shape, directly editable surface. Formatting
+             lives in the SELECT-TEXT popover (owner correction — no permanent
+             toolbar): select text → the floating B/I/U/Link/H1/H2/• menu. ── */}
       <div
         className="h-[280px] overflow-auto bg-white px-3 py-2"
         title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}
       >
+        {!readOnly && editor && (
+          <BubbleMenu
+            editor={editor}
+            shouldShow={({ state }: { state: any }) => !state.selection.empty && !state.selection.node}
+            className="flex items-center gap-0.5 rounded-md border border-slate-200 bg-white p-0.5 shadow-md"
+          >
+            <ToolButton title="Bold" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><BoldIcon className="h-3.5 w-3.5" /></ToolButton>
+            <ToolButton title="Italic" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><ItalicIcon className="h-3.5 w-3.5" /></ToolButton>
+            <ToolButton title="Underline" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon className="h-3.5 w-3.5" /></ToolButton>
+            <ToolButton
+              title={editor.isActive('link') ? 'Remove link' : 'Add link'}
+              active={editor.isActive('link')}
+              onClick={() => {
+                if (editor.isActive('link')) { editor.chain().focus().unsetLink().run(); return; }
+                // eslint-disable-next-line no-alert
+                const url = window.prompt('Link URL');
+                if (url) editor.chain().focus().setLink({ href: url }).run();
+              }}
+            ><LinkIcon className="h-3.5 w-3.5" /></ToolButton>
+            <div className="mx-0.5 h-4 w-px bg-slate-200" />
+            <ToolButton title="Heading 1" active={editor.isActive('heading', { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="h-3.5 w-3.5" /></ToolButton>
+            <ToolButton title="Heading 2" active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="h-3.5 w-3.5" /></ToolButton>
+            <ToolButton title="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-3.5 w-3.5" /></ToolButton>
+          </BubbleMenu>
+        )}
         <EditorContent
           editor={editor}
           className={`${TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`}
         />
       </div>
-
-      {/* ── Persistent toolbar: [B][I][U][Link] [H1][H2][•] ── */}
-      {!readOnly && editor && (
-        <div className="flex items-center gap-0.5 border-t border-slate-200 bg-white px-2 py-1">
-          <ToolButton title="Bold" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><BoldIcon className="h-3.5 w-3.5" /></ToolButton>
-          <ToolButton title="Italic" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><ItalicIcon className="h-3.5 w-3.5" /></ToolButton>
-          <ToolButton title="Underline" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon className="h-3.5 w-3.5" /></ToolButton>
-          <ToolButton
-            title={editor.isActive('link') ? 'Remove link' : 'Add link'}
-            active={editor.isActive('link')}
-            onClick={() => {
-              if (editor.isActive('link')) { editor.chain().focus().unsetLink().run(); return; }
-              // eslint-disable-next-line no-alert
-              const url = window.prompt('Link URL');
-              if (url) editor.chain().focus().setLink({ href: url }).run();
-            }}
-          ><LinkIcon className="h-3.5 w-3.5" /></ToolButton>
-          <div className="mx-1 h-4 w-px bg-slate-200" />
-          <ToolButton title="Heading 1" active={editor.isActive('heading', { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="h-3.5 w-3.5" /></ToolButton>
-          <ToolButton title="Heading 2" active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="h-3.5 w-3.5" /></ToolButton>
-          <ToolButton title="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-3.5 w-3.5" /></ToolButton>
-        </div>
-      )}
 
       {/* ── [✓ Acceptera] [↶ Ångra] (+ Remove for existing added sections) ── */}
       {!readOnly && (

@@ -6809,3 +6809,24 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   LIVE PROOF passed; tsc 59 = baseline; build OK.
 - BEFORE 917bac6 -> AFTER (this commit). Owner: connector -> 2.8.1, Ctrl+F5,
   re-save the Hello! section once (old broken rule stays refused until then).
+
+## 2026-07-09 - [section-versions-and-ui-restore]
+- SECTION VERSION HISTORY: new seo_rule_versions table (DB 1.38.0) - one row
+  per ACCEPTED save, keyed by SECTION IDENTITY (matchText+occurrence) so
+  history SURVIVES the rule row's deletion on clean revert; version written
+  ONLY after a successful save+push (rolled-back saves leave no ghost);
+  consecutive duplicates skipped; capped 20/section (heading-overrides
+  runaway-guard pattern). "Original" never stored - always live from scan.
+  NOT the phase-2 changeset system (deployment grouping) - pure edit
+  history; boundary documented in the schema comment.
+- Editor: Versions dropdown in the header (Original + each save w/ date/
+  time); pick -> loads in the editor; Acceptera makes it live; Original +
+  Acceptera = the existing clean revert (one mechanism, no new path).
+  GET .../section-versions + trpc seo.remoteSectionVersions.
+- OWNER CORRECTIONS: toolbar back to SELECT-TEXT popover (BubbleMenu, same
+  proven pattern as Writer; permanent toolbar row removed); section row chip
+  back to the regular P (same family as H1-H6 chips).
+- VERIFIED: php -l x4 OK; tsc 59 = baseline; build OK; RUNTIME: db version
+  1.38.0 migrated, versions table EXISTS, section-versions route registered
+  on the live local site. Connector UNTOUCHED. NO PUSH (owner law).
+- BEFORE 251bcc1 -> AFTER (this commit).

@@ -444,7 +444,6 @@ export function HeadingRows({
         const pr = !isLocal ? paraRuleFor(p) : undefined;
         return pr ? textOf(pr.replacement) : p.text;
       }).join(' · ');
-    const count = s.paragraphs.length;
     return (
       <TableRow key={`sec-${s.key}`} className="bg-muted/30 hover:bg-muted/50">
         <TableCell className="px-2 text-center">
@@ -455,8 +454,9 @@ export function HeadingRows({
           return (
             <TableCell key={col}>
               <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
+                {/* The regular P chip — same family as the H1–H6 tag chips (owner correction). */}
                 <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-border bg-muted/60 px-1 text-[10px] font-semibold leading-none text-muted-foreground">
-                  ¶ {count}
+                  P
                 </span>
                 {sRule && (
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="Optimized — a section rule serves this content" />

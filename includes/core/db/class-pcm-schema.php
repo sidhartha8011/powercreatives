@@ -725,6 +725,29 @@ class PCM_Schema
             KEY idx_userId (userId)
         ) $charset_collate;";
         dbDelta($sql);
+
+        // ── SEO section version history (DB 1.38.0) ──
+        // One row per ACCEPTED section save — the editor's version dropdown.
+        // Keyed by the SECTION IDENTITY (matchText + occurrence), NOT the rule
+        // id: a clean revert DELETES the rule row, and history must survive it.
+        // "Original" is never stored — it is always read live from the scan.
+        // NOT the changeset system (phase 2 deployment grouping) — this is
+        // pure per-section edit history; the two layers stay separate.
+        $sql = "CREATE TABLE {$prefix}seo_rule_versions (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            siteId int(11) NOT NULL,
+            postId int(11) NOT NULL,
+            target varchar(20) DEFAULT 'section' NOT NULL,
+            matchText text NOT NULL,
+            occurrence int(11) DEFAULT 0 NOT NULL,
+            replacement longtext NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_section (siteId, postId),
+            KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
     }
 
     /**

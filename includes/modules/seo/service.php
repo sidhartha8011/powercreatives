@@ -3147,6 +3147,12 @@ class PCM_SEO_Service
         if ($push instanceof WP_Error) {
             return $push;
         }
+        // Version history: record ONLY after the push succeeded (a rolled-back
+        // save must never leave a ghost version). Reverts record nothing — the
+        // Original is always in the dropdown, read live from the scan.
+        if (!$reverted) {
+            self::record_section_version($user_id, $site_id, $post_id, $match_text, $occurrence, $replacement);
+        }
         $out = array('stored' => (int) ($push['stored'] ?? 0));
         if ($reverted) {
             $out['reverted'] = true;
@@ -3154,6 +3160,78 @@ class PCM_SEO_Service
             $out['rule'] = array('matchText' => $match_text, 'occurrence' => $occurrence, 'level' => $level, 'fingerprint' => $fingerprint, 'active' => true);
         }
         return $out;
+    }
+
+    /** Cap per section — same runaway-guard pattern as the heading overrides list. */
+    private const SECTION_VERSION_CAP = 20;
+
+    /**
+     * Record one accepted section state in the version history. Keyed by the
+     * SECTION IDENTITY (matchText + occurrence) — history survives the rule
+     * row's deletion on clean revert. Consecutive duplicates are skipped;
+     * history is capped (oldest rows dropped).
+     */
+    private static function record_section_version(int $user_id, int $site_id, int $post_id, string $match_text, int $occurrence, string $replacement): void
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_rule_versions');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $last = $wpdb->get_var($wpdb->prepare(
+            "SELECT replacement FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d ORDER BY id DESC LIMIT 1",
+            $user_id,
+            $site_id,
+            $post_id,
+            $match_text,
+            $occurrence
+        ));
+        if ($last !== null && (string) $last === $replacement) {
+            return; // accepting the same content twice must not stack versions
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->insert($table, array(
+            'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
+            'target' => 'section', 'matchText' => $match_text, 'occurrence' => $occurrence,
+            'replacement' => $replacement,
+        ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s'));
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $ids = $wpdb->get_col($wpdb->prepare(
+            "SELECT id FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d ORDER BY id DESC",
+            $user_id,
+            $site_id,
+            $post_id,
+            $match_text,
+            $occurrence
+        ));
+        foreach (array_slice(array_map('intval', $ids), self::SECTION_VERSION_CAP) as $old_id) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->delete($table, array('id' => $old_id), array('%d'));
+        }
+    }
+
+    /**
+     * A section's saved versions, newest first — the editor's dropdown.
+     *
+     * @return array[] [{id, replacement, createdAt}, …]
+     */
+    public function list_section_versions(int $user_id, int $site_id, int $post_id, string $heading_text, int $occurrence): array
+    {
+        global $wpdb;
+        $table      = PCM_Schema::table('seo_rule_versions');
+        $match_text = PCM_Text_Matcher::normalize($heading_text);
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $rows = (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT id, replacement, createdAt FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d ORDER BY id DESC",
+            $user_id,
+            $site_id,
+            $post_id,
+            $match_text,
+            $occurrence
+        ), ARRAY_A);
+        return array_map(static fn($r) => array(
+            'id'          => (int) $r['id'],
+            'replacement' => (string) $r['replacement'],
+            'createdAt'   => (string) $r['createdAt'],
+        ), $rows);
     }
 
     /**
