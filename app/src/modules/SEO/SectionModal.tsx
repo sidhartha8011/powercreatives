@@ -149,6 +149,8 @@ export function SectionModal({
   }));
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const onDragStart = (e: React.PointerEvent) => {
+    // Header buttons (Re-write / Edit / HTML / X) must click, never start a drag.
+    if ((e.target as HTMLElement).closest('button')) return;
     dragRef.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y };
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
   };
@@ -165,6 +167,14 @@ export function SectionModal({
   const initialHtml = isInsert
     ? (insert?.replacement ?? '')
     : (section ? composeSectionHtml(section) : '');
+  /** What the site serves NOW — read view + cancel target; updated after every
+   *  successful save so the modal never flips back to stale pre-save content. */
+  const [currentHtml, setCurrentHtml] = useState(initialHtml);
+  /** The section's plain ORIGINAL (no rules) — what a clean revert serves. */
+  const originalHtml = !isInsert && section
+    ? (section.heading.html || `<h${section.heading.level}>${escapeHtml(section.heading.text)}</h${section.heading.level}>`)
+      + section.paragraphs.map((p) => p.html).join('')
+    : '';
   const [editMode, setEditMode] = useState(isInsert && !insert?.ruleId); // new sections start in edit
   const [showHtml, setShowHtml] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -200,7 +210,7 @@ export function SectionModal({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (aiSuggestion != null) { setAiSuggestion(null); return; }
-      if (editMode && !isInsert) { setEditMode(false); editor?.commands.setContent(initialHtml); return; }
+      if (editMode && !isInsert) { setEditMode(false); editor?.commands.setContent(currentHtml); return; }
       onClose();
     };
     window.addEventListener('keydown', onKey);
@@ -217,7 +227,7 @@ export function SectionModal({
     try {
       const current = isInsert && !editor?.getText().trim()
         ? '' // empty new section → generate mode (topic drives it)
-        : (editor?.getHTML() ?? initialHtml);
+        : (editor?.getHTML() ?? currentHtml);
       const res: any = await optimizeMutation.mutateAsync({
         siteId: siteId as number, postId, type,
         html: current, topic, model, provider,
@@ -240,6 +250,7 @@ export function SectionModal({
 
   // ── Save (section replace / section insert) ──
   const save = async (replacementOverride?: string) => {
+    if (!isInsert && !section) return; // nothing to save against
     const replacement = replacementOverride ?? (editor?.getHTML() ?? '');
     setBusy(true);
     try {
@@ -270,9 +281,12 @@ export function SectionModal({
         onClose();
       } else if (res?.reverted) {
         toast.success('Reverted — the original section serves again.');
+        setCurrentHtml(originalHtml);
+        editor?.commands.setContent(originalHtml);
         setEditMode(false);
       } else {
         toast.success('Section saved — the site serves it now (page/CDN caches may need a purge).');
+        setCurrentHtml(replacement); // the read view now shows what actually serves
         setEditMode(false);
         if (isInsert) onClose();
       }
@@ -407,7 +421,7 @@ export function SectionModal({
       <div className="min-h-0 flex-1 overflow-auto p-3">
         {showHtml ? (
           <pre className="rounded-md border border-border bg-muted/40 p-2.5 font-mono text-[11px] leading-4 whitespace-pre-wrap break-words">
-            {editMode || isInsert ? (editor?.getHTML() ?? initialHtml) : initialHtml}
+            {editMode || isInsert ? (editor?.getHTML() ?? currentHtml) : currentHtml}
           </pre>
         ) : (editMode || isInsert) && !readOnly ? (
           <>
@@ -451,7 +465,7 @@ export function SectionModal({
             // Server-sanitized content (rule replacements are wp_kses_post'd;
             // originals are the site's own published markup).
             // eslint-disable-next-line react/no-danger
-            dangerouslySetInnerHTML={{ __html: initialHtml }}
+            dangerouslySetInnerHTML={{ __html: currentHtml }}
           />
         )}
       </div>
@@ -471,7 +485,7 @@ export function SectionModal({
             type="button"
             onClick={() => {
               if (isInsert && !insert?.ruleId) { onClose(); return; }
-              editor?.commands.setContent(initialHtml);
+              editor?.commands.setContent(currentHtml);
               setEditMode(false);
             }}
             disabled={busy}

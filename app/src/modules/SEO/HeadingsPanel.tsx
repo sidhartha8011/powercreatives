@@ -780,9 +780,14 @@ export function HeadingRows({
         <span className="text-xs text-muted-foreground/60">{remoteParaNote}</span>
       ))}
 
-      {/* The floating section editor (drag, non-blocking — the table stays live). */}
+      {/* The floating section editor (drag, non-blocking — the table stays live).
+          The key REMOUNTS the modal per target — switching sections while it is
+          open must never keep the previous section's editor state. */}
       {sectionModal && (
         <SectionModal
+          key={sectionModal.mode === 'section'
+            ? `s-${sectionModal.section.heading.text}-${sectionModal.section.heading.occurrence}`
+            : `i-${sectionModal.insert?.ruleId ?? 'new'}`}
           siteId={siteId}
           postId={postId}
           type={type}

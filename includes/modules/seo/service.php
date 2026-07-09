@@ -2545,8 +2545,12 @@ class PCM_SEO_Service
         $texts    = array_map(static fn($hh) => (string) ($hh['text'] ?? ''), $headings);
         $old_norm = PCM_Text_Matcher::normalize((string) $headings[$index]['text']);
         $old_occ  = PCM_Text_Matcher::occurrence_of($texts, $index);
-        $result   = self::remote_update_heading_apply($site, $post_id, $type, $index, $text, $level, $headings);
-        if ($user_id && !is_wp_error($result) && ($text !== null || $level !== null)) {
+        $via      = '';
+        $result   = self::remote_update_heading_apply($site, $post_id, $type, $index, $text, $level, $headings, $via);
+        // Re-key ONLY on a true SOURCE write. An override-layer edit leaves the raw
+        // HTML untouched (the override rewrites at render, AFTER rules run), so the
+        // section rule must keep matching the OLD heading text to keep serving.
+        if ($user_id && $via === 'source' && !is_wp_error($result) && ($text !== null || $level !== null)) {
             $new_text  = ($text !== null && $text !== '') ? $text : (string) $headings[$index]['text'];
             $new_level = ($level !== null) ? max(1, min(6, $level)) : (int) $headings[$index]['level'];
             $new_texts = is_array($result) ? array_map(static fn($hh) => (string) ($hh['text'] ?? ''), $result) : array();
@@ -2557,8 +2561,10 @@ class PCM_SEO_Service
     }
 
     /** The heading edit's routing core (override / widget / content paths) — unchanged
-     *  behavior, extracted so the public method can re-key section rules on success. */
-    private static function remote_update_heading_apply(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level, array $headings)
+     *  behavior, extracted so the public method can re-key section rules on success.
+     *  `$via` reports which layer took the edit: 'source' (raw content changed) or
+     *  'override' (render-time layer; source unchanged) — the re-key decision. */
+    private static function remote_update_heading_apply(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level, array $headings, string &$via = '')
     {
         $h = $headings[$index];
         // Shared-source headings (template / reusable block) edit their owning post, not the page.
@@ -2573,6 +2579,7 @@ class PCM_SEO_Service
         // RENDERED-ONLY heading (theme PHP / nav menu / widget title — no DB source anywhere), or one
         // already edited via the override layer: goes straight to the render-time override.
         if (in_array((string) ($h['source'] ?? ''), array('rendered', 'override'), true)) {
+            $via = 'override';
             return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
         }
 
@@ -2600,8 +2607,10 @@ class PCM_SEO_Service
                 // The widget field couldn't be matched (stale scan, or a builder that renders the
                 // heading without the widget keys we edit) → fall back to the render-time override,
                 // which rewrites the visible heading regardless of storage.
+                $via = 'override';
                 return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
             }
+            $via = 'source';
             return self::remote_get_headings($site, $post_id, $type);
         }
 
@@ -2610,6 +2619,7 @@ class PCM_SEO_Service
         if ($old_html === '') {
             // No stored markup to string-replace (e.g. a builder that keeps the heading as a
             // structured node) — go straight to the render-time override.
+            $via = 'override';
             return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
         }
         $new_html = self::rebuild_heading_html($old_html, $old_level, $new_level, $new_text);
@@ -2633,8 +2643,10 @@ class PCM_SEO_Service
             // The string replace matched nothing — the builder (Brizy, Divi, …) stores the heading as
             // a structured node, or regenerated its compiled HTML, so there's no literal <hN> to swap.
             // Fall back to the render-time override so the edit still applies on the visible page.
+            $via = 'override';
             return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
         }
+        $via = 'source';
         return self::remote_get_headings($site, $post_id, $type);
     }
 

@@ -6753,3 +6753,28 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - VERIFIED: tsc 59 = baseline (zero new, zero in touched files); build OK.
   No PHP touched. Owner steps in docs/CHANGELOG-20260709-0700.md (Ctrl+F5!).
 - BEFORE f83070e -> AFTER (this commit).
+
+## 2026-07-09 - [section-editor-review-fixes] (adversarial self-review of phases 1+2)
+- REVIEW FINDING 1 (correctness, hub): the heading-edit re-key ran on EVERY
+  successful edit - but OVERRIDE-layer edits (rendered-only headings, widget/
+  content fallbacks) leave the RAW html untouched (the override rewrites at
+  render AFTER rules run, outer buffer), so re-keying the section rule to the
+  new text would make it MISS -> wrongly stale. FIX: remote_update_heading_
+  apply reports its layer via by-ref $via ('source'|'override'); re-key runs
+  ONLY on 'source'. No-op edits ($via '') never re-key.
+- FIX 2 (frontend): SectionModal now REMOUNTS per target (key on heading
+  text+occurrence / insert ruleId) - switching sections while the floating
+  panel is open no longer bleeds the previous section's editor state.
+- FIX 3 (frontend): new currentHtml state = "what the site serves NOW";
+  read view/HTML toggle/cancel/Esc all use it and save success updates it
+  (revert -> plain original) - the modal never flips back to stale pre-save
+  content after Accept.
+- FIX 4 (frontend): drag start ignores header buttons (closest('button')) -
+  Re-write/Edit/HTML/X always click, never drag. + save() guards the
+  no-section edge instead of falsely toasting success.
+- Reviewed clean (no change needed): matcher/connector parity (fixture-
+  locked), absorb/revert interplay, v1 push byte-parity, rollback snapshot
+  id preservation, buffer nesting order (rules inner, overrides outer),
+  orphan-paragraph fallback, occurrence round-trip.
+- VERIFIED: php -l OK; tsc 59 = baseline; build OK. Connector UNTOUCHED.
+- BEFORE a5f9a17 -> AFTER (this commit).
