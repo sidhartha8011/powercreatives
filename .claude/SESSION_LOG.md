@@ -6729,3 +6729,27 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Phase 2 = the floating modal UI (separate go). Owner verify steps in
   docs/CHANGELOG-20260709-0330.md.
 - BEFORE ff07e56 -> AFTER (this commit).
+
+## 2026-07-09 - [section-modal-phase2] (section editor, phase 2 of 2)
+- THE EDITOR UI shipped (frontend only; rides phase 1's engine, connector
+  untouched). NEW SEO/SectionModal.tsx: draggable NON-blocking floating panel
+  (custom portal, no overlay - the table behind stays interactive; Esc steps
+  back suggestion->edit->close; zero new dependencies). Read view = whole
+  section as formatted HTML (served state when a section rule is active,
+  else original w/ paragraph rules folded in) + raw-HTML toggle. Edit view =
+  TipTap (h1-4, p, lists, b/i/u/s, links) w/ SELECTION bubble toolbar -
+  merge/split/delete/add paragraphs freely. AI Re-write staged
+  Accept/Reject/Re-generate via section-optimize; accepting lands in the
+  editor. Save = ONE section rule (UPSERT/clean-revert/rollback from phase 1).
+  Create mode: anchor picker (before/after any heading, default after last),
+  AI topic->Generate or manual; existing added sections re-open w/ Remove.
+- HeadingsPanel wiring: P chip opens the paragraph's SECTION (orphans keep
+  the HTML popup); text click keeps inline quick-edit; heading rows get
+  hover expand icon + primary dot when section-served; paragraph rows inside
+  a section-served section route into the editor (honest - row rule would
+  miss); sectionInsert rules render as NEW rows at their served spot
+  (before-anchor / section-end); "+ Add section" outline row (remote only);
+  LOCAL tab opens the modal as read-only formatted view (routing law).
+- VERIFIED: tsc 59 = baseline (zero new, zero in touched files); build OK.
+  No PHP touched. Owner steps in docs/CHANGELOG-20260709-0700.md (Ctrl+F5!).
+- BEFORE f83070e -> AFTER (this commit).

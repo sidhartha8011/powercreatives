@@ -24,7 +24,7 @@
  */
 
 import { Fragment, useEffect, useState, type KeyboardEvent } from 'react';
-import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight, Lock, LayoutTemplate } from 'lucide-react';
+import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight, Lock, LayoutTemplate, Maximize2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -36,6 +36,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
 import { TableRow, TableCell } from './seo-table';
+import { SectionModal, type SectionData, type SectionAnchor, type InsertData } from './SectionModal';
 
 export interface HeadingItem {
   index: number;
@@ -86,6 +87,8 @@ interface DynamicRule {
   replacement: string;
   active: boolean;
   staleCount: number;
+  /** Section rules: {level, fingerprint?} / {level, position} (contracts v2). */
+  section?: { level?: number; fingerprint?: string; position?: string } | null;
 }
 
 /** Default reason shown on a heading that can't be edited from here (mirrors the read-only
@@ -298,8 +301,100 @@ export function HeadingRows({
   // Headings discovered read-only at SAVE time (theme/template-hardcoded) → keep them flagged
   // for this session so the row shows the lock + reason instead of looking editable again.
   const [readOnlyReason, setReadOnlyReason] = useState<Record<number, string>>({});
-  // Paragraph HTML popup (read-only inspector).
+  // Paragraph HTML popup (read-only inspector — orphan paragraphs without a section).
   const [htmlPopup, setHtmlPopup] = useState<ContentNode | null>(null);
+
+  // ── Section editor (contracts v2): every header owns its section. ──
+  const [sectionModal, setSectionModal] = useState<
+    | { mode: 'section'; section: SectionData }
+    | { mode: 'insert'; insert?: InsertData; anchors?: SectionAnchor[] }
+    | null
+  >(null);
+
+  /** 0-based occurrence per heading node (among same-normalized-text headings) —
+   *  half of the section-rule identity; mirrors the server's occurrence_of. */
+  const headingOcc = new Map<number, number>();
+  {
+    const seen = new Map<string, number>();
+    nodes.forEach((n) => {
+      if (n.kind !== 'heading') return;
+      const key = jsNormalize(n.text);
+      const occ = seen.get(key) ?? 0;
+      headingOcc.set(n.index, occ);
+      seen.set(key, occ + 1);
+    });
+  }
+
+  /** The active `section` rule serving a heading's section, if any. */
+  const sectionRuleFor = (heading: ContentNode): DynamicRule | undefined =>
+    rules.find((r) => r.target === 'section' && r.active
+      && r.matchText === jsNormalize(heading.text)
+      && r.occurrence === (headingOcc.get(heading.index) ?? 0));
+
+  /** `sectionInsert` rules anchored to a heading (added sections). */
+  const insertRulesFor = (heading: ContentNode): DynamicRule[] =>
+    rules.filter((r) => r.target === 'sectionInsert' && r.active
+      && r.matchText === jsNormalize(heading.text)
+      && r.occurrence === (headingOcc.get(heading.index) ?? 0));
+
+  /** Plain-text title of an added section (first heading inside its replacement). */
+  const insertTitle = (r: DynamicRule): string => {
+    const m = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(r.replacement);
+    const el = document.createElement('div');
+    el.innerHTML = m ? m[1] : r.replacement;
+    return (el.textContent ?? '').replace(/\s+/g, ' ').trim() || 'New section';
+  };
+
+  /** Open the floating section editor for the heading at nodes position `pos`. */
+  const openSectionModal = (pos: number) => {
+    const heading = nodes[pos];
+    if (!heading || heading.kind !== 'heading') return;
+    const paragraphs: ContentNode[] = [];
+    for (let j = pos + 1; j < nodes.length; j++) {
+      if (nodes[j].kind !== 'paragraph') break;
+      paragraphs.push(nodes[j]);
+    }
+    const sRule = !isLocal ? sectionRuleFor(heading) : undefined;
+    setSectionModal({
+      mode: 'section',
+      section: {
+        heading: {
+          text: heading.text,
+          level: heading.level ?? 2,
+          occurrence: headingOcc.get(heading.index) ?? 0,
+          html: heading.html || '',
+        },
+        paragraphs: paragraphs.map((p) => {
+          const pr = !isLocal ? ruleFor(p) : undefined;
+          return { text: p.text, occurrence: p.occurrence ?? 0, html: p.html, servedHtml: pr ? pr.replacement : undefined };
+        }),
+        sectionRuleReplacement: sRule ? sRule.replacement : null,
+      },
+    });
+  };
+
+  /** Anchor options for placing a NEW section (every heading, document order). */
+  const sectionAnchors = (): SectionAnchor[] =>
+    nodes.filter((n) => n.kind === 'heading').map((n) => ({
+      text: n.text,
+      level: n.level ?? 2,
+      occurrence: headingOcc.get(n.index) ?? 0,
+    }));
+
+  /** Open an EXISTING added section for editing (its insert rule). */
+  const openInsertModal = (rule: DynamicRule, anchorHeading: ContentNode) => {
+    setSectionModal({
+      mode: 'insert',
+      insert: {
+        ruleId: rule.id,
+        anchorText: anchorHeading.text, // ORIGINAL text — the save re-normalizes server-side
+        anchorLevel: anchorHeading.level ?? 2,
+        anchorOccurrence: headingOcc.get(anchorHeading.index) ?? 0,
+        position: (rule.section?.position === 'before' ? 'before' : 'after'),
+        replacement: rule.replacement,
+      },
+    });
+  };
 
   /** The heading-endpoint edit handle for a heading node (local = headings-only index). */
   const editIndex = (n: ContentNode): number => (isLocal ? (n.headingIndex ?? n.index) : n.index);
@@ -401,15 +496,76 @@ export function HeadingRows({
   }
 
   // Paragraph indent: one step under the nearest preceding heading (flush when orphaned).
+  // Added-section rows (sectionInsert rules) are interleaved at their served spot:
+  // 'before' rows ahead of their anchor heading, 'after' rows at the section's end.
+  type RenderItem =
+    | { kind: 'node'; n: ContentNode; indent: number; headingPos: number }
+    | { kind: 'insert'; rule: DynamicRule; anchor: ContentNode; indent: number };
   let lastLevel = 0;
-  const rows = nodes.map((n) => {
-    if (n.kind === 'heading') { lastLevel = n.level ?? 2; return { n, indent: indentFor(lastLevel) }; }
-    return { n, indent: lastLevel > 0 ? indentFor(lastLevel) + 14 : indentFor(1) };
+  let lastHeadingPos = -1;
+  const items: RenderItem[] = [];
+  const pushAfterInserts = (headingPos: number) => {
+    if (isLocal || headingPos < 0) return;
+    const anchor = nodes[headingPos];
+    insertRulesFor(anchor)
+      .filter((r) => r.section?.position !== 'before')
+      .forEach((rule) => items.push({ kind: 'insert', rule, anchor, indent: indentFor(anchor.level ?? 2) }));
+  };
+  nodes.forEach((n, pos) => {
+    if (n.kind === 'heading') {
+      pushAfterInserts(lastHeadingPos); // the PREVIOUS section just ended
+      if (!isLocal) {
+        insertRulesFor(n)
+          .filter((r) => r.section?.position === 'before')
+          .forEach((rule) => items.push({ kind: 'insert', rule, anchor: n, indent: indentFor(n.level ?? 2) }));
+      }
+      lastLevel = n.level ?? 2;
+      lastHeadingPos = pos;
+      items.push({ kind: 'node', n, indent: indentFor(lastLevel), headingPos: pos });
+      return;
+    }
+    items.push({ kind: 'node', n, indent: lastLevel > 0 ? indentFor(lastLevel) + 14 : indentFor(1), headingPos: lastHeadingPos });
   });
+  pushAfterInserts(lastHeadingPos); // the LAST section's added rows
 
   return (
     <Fragment>
-      {rows.map(({ n, indent }) => {
+      {items.map((item) => {
+        // ── Added-section row (a sectionInsert rule, served dynamically) ──
+        if (item.kind === 'insert') {
+          const { rule, anchor, indent } = item;
+          return (
+            <TableRow key={`ins-${rule.id}`} className="bg-muted/30 hover:bg-muted/50">
+              <TableCell className="px-2 text-center">
+                <CornerDownRight className="inline-block w-3 h-3 text-muted-foreground/40" />
+              </TableCell>
+              {orderedCols.map((col) => {
+                if (col !== 'title') {
+                  return <TableCell key={col} />;
+                }
+                return (
+                  <TableCell key={col}>
+                    <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
+                      <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-primary/40 bg-primary/10 px-1 text-[10px] font-semibold leading-none text-primary">
+                        NEW
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => openInsertModal(rule, anchor)}
+                        className="flex-1 min-w-0 text-left truncate text-xs hover:underline decoration-dotted"
+                        title="Added section (served dynamically) — click to edit or remove"
+                      >
+                        {insertTitle(rule)}
+                      </button>
+                    </div>
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          );
+        }
+
+        const { n, indent, headingPos } = item;
         // ── Paragraph row: remote = click-to-edit + ✦ (dynamic rule); local = read-only.
         // The P chip opens the HTML popup on both. A served rule shows its text + a dot. ──
         if (n.kind === 'paragraph') {
@@ -417,6 +573,10 @@ export function HeadingRows({
           const pSuggestion = suggestions[n.index];
           const served = !isLocal ? ruleFor(n) : undefined;
           const displayText = served ? rulePreview(served) : n.text;
+          // Whole-section rule serving this paragraph's section: row edits route
+          // into the section editor (a row-level paragraph rule would honestly
+          // miss — the section replace already swapped the block).
+          const secRule = !isLocal && headingPos >= 0 ? sectionRuleFor(nodes[headingPos]) : undefined;
           return (
             <TableRow key={`p-${n.index}`} className="bg-muted/30 hover:bg-muted/50">
               <TableCell className="px-2 text-center">
@@ -431,8 +591,8 @@ export function HeadingRows({
                     <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
                       <button
                         type="button"
-                        onClick={() => setHtmlPopup(n)}
-                        title="Show this paragraph's HTML"
+                        onClick={() => (headingPos >= 0 ? openSectionModal(headingPos) : setHtmlPopup(n))}
+                        title={headingPos >= 0 ? 'Open this paragraph’s section in the section editor' : "Show this paragraph's HTML"}
                         className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-border bg-muted/60 px-1 text-[10px] font-semibold leading-none text-muted-foreground hover:text-foreground"
                       >
                         P
@@ -454,6 +614,17 @@ export function HeadingRows({
                               </button>
                             </div>
                           </div>
+                        ) : secRule ? (
+                          /* Section-served: the whole section is one rule — edit it there. */
+                          <button
+                            type="button"
+                            onClick={() => openSectionModal(headingPos)}
+                            className="flex min-w-0 w-full items-center gap-1.5 text-left"
+                            title="This section is optimized as a whole — click to open the section editor."
+                          >
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                            <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground hover:text-foreground hover:underline decoration-dotted">{n.text}</span>
+                          </button>
                         ) : !isLocal ? (
                           <ParagraphText
                             value={displayText}
@@ -479,13 +650,14 @@ export function HeadingRows({
           );
         }
 
-        // ── Heading row (unchanged editor) ──
+        // ── Heading row (inline editor unchanged; + section-served dot & expand) ──
         const busy = busyIndex === n.index;
         const suggestion = suggestions[n.index];
         const reason = readOnlyReason[n.index];
         const readOnly = !n.editable || reason != null;
         const roTitle = reason ?? THEME_READONLY_REASON;
         const level = n.level ?? 2;
+        const hSecRule = !isLocal ? sectionRuleFor(n) : undefined;
         return (
           <TableRow key={`h-${n.index}`} className="bg-muted/30 hover:bg-muted/50">
             <TableCell className="px-2 text-center">
@@ -534,6 +706,13 @@ export function HeadingRows({
                         <span className="truncate">{n.sourceLabel}</span>
                       </span>
                     ) : null}
+                    {/* Whole-section rule active → the served dot lives on the heading row. */}
+                    {hSecRule && (
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                        title="Section optimized (dynamic rule) — the live page serves the section editor's version."
+                      />
+                    )}
                     <div className="flex-1 min-w-0">
                       {suggestion != null ? (
                         /* Same staged-suggestion UI as every other cell (EditableCell). */
@@ -567,6 +746,15 @@ export function HeadingRows({
                         </span>
                       )}
                     </div>
+                    {/* Open the whole section (heading + its paragraphs) in the floating editor. */}
+                    <button
+                      type="button"
+                      onClick={() => openSectionModal(headingPos)}
+                      title="Open this section in the section editor"
+                      className="shrink-0 text-muted-foreground/50 hover:text-primary opacity-0 group-hover:opacity-100"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </TableCell>
               );
@@ -575,12 +763,42 @@ export function HeadingRows({
         );
       })}
 
+      {/* Add a brand-new section (FAQ etc.) — served as a sectionInsert rule,
+          anchored to an existing heading (remote only; needs ≥1 heading). */}
+      {!isLocal && nodes.some((n) => n.kind === 'heading') && shellRow('add-section', (
+        <button
+          type="button"
+          onClick={() => setSectionModal({ mode: 'insert', anchors: sectionAnchors() })}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+        >
+          <Plus className="w-3.5 h-3.5" /> Add section
+        </button>
+      ))}
+
       {/* Honest availability note (remote only): old connector / blocked loopback. */}
       {remoteParaNote && shellRow('para-note', (
         <span className="text-xs text-muted-foreground/60">{remoteParaNote}</span>
       ))}
 
-      {/* Paragraph HTML inspector — read-only (editing arrives via dynamic rules, pair 3). */}
+      {/* The floating section editor (drag, non-blocking — the table stays live). */}
+      {sectionModal && (
+        <SectionModal
+          siteId={siteId}
+          postId={postId}
+          type={type}
+          model={model}
+          provider={provider}
+          readOnly={isLocal}
+          mode={sectionModal.mode}
+          section={sectionModal.mode === 'section' ? sectionModal.section : undefined}
+          insert={sectionModal.mode === 'insert' ? sectionModal.insert : undefined}
+          anchors={sectionModal.mode === 'insert' ? sectionModal.anchors : undefined}
+          onClose={() => setSectionModal(null)}
+          onSaved={() => { void rulesQuery.refetch(); }}
+        />
+      )}
+
+      {/* Paragraph HTML inspector — read-only (orphan paragraphs without a section). */}
       {htmlPopup && (
         <Dialog open onOpenChange={(o) => { if (!o) setHtmlPopup(null); }}>
           <DialogContent className="sm:max-w-2xl">
