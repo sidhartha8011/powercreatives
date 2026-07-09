@@ -445,7 +445,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.7.0
+ * Version: 2.7.1
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1612,21 +1612,12 @@ add_action('rest_api_init', function () {
             // host blocks loopback requests this scan is skipped and behaviour is unchanged.
             $seen_all = array();
             foreach ($headings as $hh) { $seen_all[$hh['level'] . '|' . $hh['text']] = 1; }
-            // Hardened loopback: a real browser UA (security plugins/WAFs serve a near-empty
-            // challenge page to unknown agents → the scan would see "only a few"), a cache-busting
-            // query arg (skip a stale full-page cache that predates recent edits), redirect follow,
-            // and a longer timeout for heavy builder pages. Add ?pcm_hscan so page caches treat it
-            // as a distinct URL; strip nothing else. `blocking` GET so we actually read the body.
-            $scan_url = add_query_arg('pcm_hscan', (string) time(), get_permalink($pid));
-            $resp = wp_remote_get($scan_url, array(
-                'timeout'     => 20,
-                'redirection' => 3,
-                'sslverify'   => apply_filters('https_local_ssl_verify', false),
-                'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreativesConnector/2.6; +heading-scan)',
-                'headers'     => array('Accept' => 'text/html', 'Cache-Control' => 'no-cache'),
-            ));
-            if (!is_wp_error($resp) && (int) wp_remote_retrieve_response_code($resp) === 200) {
-                $live = (string) wp_remote_retrieve_body($resp);
+            // Hardened loopback via the shared 2.7.1 helper: real browser UA (WAFs serve
+            // near-empty challenge pages to unknown agents), cache-busting ?pcm_hscan, and
+            // the site-wide SINGLE-FLIGHT lock + 8s budget. Locked/failed → '' → this
+            // rendered pass is skipped, exactly the pre-existing graceful behavior.
+            $live = pcm_conn_loopback_fetch($pid, 'pcm_hscan', 'heading-scan');
+            if ($live !== '') {
                 // Only scan the <body> (drop <head>: <title>, OG/twitter meta, JSON-LD headline
                 // strings never contain <hN>, but a defensive trim keeps the match set page-visible).
                 if (($bpos = stripos($live, '<body')) !== false) { $live = substr($live, $bpos); }
@@ -1890,6 +1881,39 @@ add_action('wp_head', function () {
 // pcm_conn_normalize_text / the boundary matcher below MUST stay behavior-identical
 // to the hub's fixture-tested PCM_Text_Matcher.
 
+/**
+ * Site-wide SINGLE-FLIGHT loopback lock (2.7.1): at most ONE self-request runs at a
+ * time, no matter who asks (two hub tabs, two users, heading + content scan at once).
+ * Rationale: on worker-limited hosts (LocalWP, small shared hosting) concurrent
+ * loopbacks starve the PHP workers and time EVERYTHING out. Transients aren't CAS —
+ * a rare race admits a second loopback, which is exactly today's behavior (no worse).
+ */
+function pcm_conn_loopback_acquire() {
+    if (get_transient('pcm_conn_loopback_lock')) { return false; }
+    set_transient('pcm_conn_loopback_lock', 1, 15); // covers the 8s timeout + margin
+    return true;
+}
+function pcm_conn_loopback_release() { delete_transient('pcm_conn_loopback_lock'); }
+/**
+ * Fetch this site's own page (loopback) under the single-flight lock, 8s budget
+ * (2.7.1 — was 20s: with caching + fallback tiers, waiting long is wrong; fail fast
+ * and honestly). Returns the HTML body, or '' when locked/failed — callers MUST
+ * have a non-loopback fallback path.
+ */
+function pcm_conn_loopback_fetch($pid, $bust_arg, $agent_tag) {
+    if (!pcm_conn_loopback_acquire()) { return ''; }
+    $resp = wp_remote_get(add_query_arg($bust_arg, (string) time(), get_permalink($pid)), array(
+        'timeout'     => 8,
+        'redirection' => 3,
+        'sslverify'   => apply_filters('https_local_ssl_verify', false),
+        'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreativesConnector/2.7; +' . $agent_tag . ')',
+        'headers'     => array('Accept' => 'text/html', 'Cache-Control' => 'no-cache'),
+    ));
+    pcm_conn_loopback_release();
+    if (is_wp_error($resp) || (int) wp_remote_retrieve_response_code($resp) !== 200) { return ''; }
+    return (string) wp_remote_retrieve_body($resp);
+}
+
 /** Normalization spec v1 — mirror of PCM_Text_Matcher::normalize(). */
 function pcm_conn_normalize_text($text) {
     $text = html_entity_decode((string) $text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -1903,6 +1927,40 @@ function pcm_conn_visible_text($html) {
     $html = (string) preg_replace('#<(script|style)[^>]*>.*?</\1>#is', '', (string) $html);
     return strip_tags($html);
 }
+/** Ordered paragraph nodes out of an HTML string (scan-content v1 node shape). */
+function pcm_conn_parse_paragraph_nodes($html, $source) {
+    $nodes = array(); $anchor = null; $occ_seen = array(); $i = 0;
+    if (!preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>|<p(\s[^>]*)?>(.*?)</p>#is', (string) $html, $mm, PREG_SET_ORDER)) {
+        return $nodes;
+    }
+    foreach ($mm as $m) {
+        if (($m[1] ?? '') !== '') {
+            $txt = trim(pcm_conn_visible_text($m[3]));
+            if ($txt === '') { continue; }
+            $anchor = array('level' => (int) $m[1], 'text' => pcm_conn_normalize_text($txt));
+            continue;
+        }
+        $txt = trim(pcm_conn_visible_text((string) ($m[5] ?? '')));
+        $plain = trim(html_entity_decode($txt, ENT_QUOTES | ENT_HTML5, 'UTF-8'), " \t\n\r\0\x0B\xC2\xA0");
+        if ($plain === '') { continue; }
+        $norm = pcm_conn_normalize_text($txt);
+        $occ  = isset($occ_seen[$norm]) ? $occ_seen[$norm] : 0;
+        $occ_seen[$norm] = $occ + 1;
+        $nodes[] = array(
+            'kind'       => 'paragraph',
+            'index'      => $i++,
+            'text'       => $txt,
+            'html'       => $m[0],
+            'occurrence' => $occ,
+            'source'     => $source,
+            'anchor'     => $anchor,
+        );
+    }
+    return $nodes;
+}
+// Scan cache (2.7.1): busted whenever the post changes — a stale inventory must
+// never outlive an edit (rules POST also busts it, see the /rules route).
+add_action('save_post', function ($pid) { delete_transient('pcm_conn_cscan_' . (int) $pid); });
 /** The post's stored rule set (rule schema v1 rows), [] when none. */
 function pcm_conn_rules_for($pid) {
     $r = get_option('pcm_conn_rules_' . (int) $pid, array());
@@ -2032,6 +2090,7 @@ add_action('rest_api_init', function () {
                 );
             }
             pcm_conn_rules_save($pid, $clean);
+            delete_transient('pcm_conn_cscan_' . $pid); // rules changed → inventory cache is stale
             pcm_conn_purge_caches($pid);
             return array('stored' => count($clean), 'schemaVersion' => 1);
         }),
@@ -2046,58 +2105,55 @@ add_action('rest_api_init', function () {
         'callback' => function ($req) {
             $pid = absint($req->get_param('post_id'));
             if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
-            // Hardened loopback (same rationale as the heading scan): real browser UA,
-            // cache-busting arg (ALSO excludes rule application — the inventory must be
-            // the ORIGINAL text rules match against), redirects, generous timeout.
-            $scan_url = add_query_arg('pcm_cscan', (string) time(), get_permalink($pid));
-            $resp = wp_remote_get($scan_url, array(
-                'timeout'     => 20,
-                'redirection' => 3,
-                'sslverify'   => apply_filters('https_local_ssl_verify', false),
-                'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreativesConnector/2.7; +content-scan)',
-                'headers'     => array('Accept' => 'text/html', 'Cache-Control' => 'no-cache'),
-            ));
-            if (is_wp_error($resp) || (int) wp_remote_retrieve_response_code($resp) !== 200) {
-                return array('nodes' => array(), 'error' => 'loopback_blocked');
-            }
-            $live = (string) wp_remote_retrieve_body($resp);
-            if (($bpos = stripos($live, '<body')) !== false) { $live = substr($live, $bpos); }
-            // Strip chrome regions — deterministic approximation, documented in the
-            // contract: paragraphs in header/nav/footer/aside are site chrome, not
-            // page content, and must not enter the optimization inventory.
-            foreach (array('header', 'nav', 'footer', 'aside') as $chrome) {
-                $live = (string) preg_replace('#<' . $chrome . '(\s[^>]*)?>.*?</' . $chrome . '>#is', '', $live);
-            }
-            $nodes = array();
-            $anchor = null;
-            $occ_seen = array();
-            if (preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>|<p(\s[^>]*)?>(.*?)</p>#is', $live, $mm, PREG_SET_ORDER)) {
-                $i = 0;
-                foreach ($mm as $m) {
-                    if (($m[1] ?? '') !== '') {
-                        $txt = trim(pcm_conn_visible_text($m[3]));
-                        if ($txt === '') { continue; }
-                        $anchor = array('level' => (int) $m[1], 'text' => pcm_conn_normalize_text($txt));
-                        continue;
+            // Cache first (2.7.1): repeat outline-opens must not cost a loopback.
+            // Busted on save_post + every rules push.
+            $cache_key = 'pcm_conn_cscan_' . $pid;
+            $cached = get_transient($cache_key);
+            if (is_array($cached)) { return $cached; }
+            $result = null;
+            // Tier 1 — rendered page via the LOCKED loopback (TRUE serving order,
+            // incl. builder output; the ?pcm_cscan arg also excludes rule serving so
+            // the inventory is the ORIGINAL text rules match against). A rendered
+            // scan that finds ZERO paragraphs is TRUSTED (the page truly has none
+            // outside chrome) — the fallback tiers run only when loopback FAILED.
+            $live = pcm_conn_loopback_fetch($pid, 'pcm_cscan', 'content-scan');
+            if ($live !== '') {
+                if (($bpos = stripos($live, '<body')) !== false) { $live = substr($live, $bpos); }
+                // Strip chrome regions — deterministic approximation, documented in the
+                // contract: header/nav/footer/aside paragraphs are site chrome, not content.
+                foreach (array('header', 'nav', 'footer', 'aside') as $chrome) {
+                    $live = (string) preg_replace('#<' . $chrome . '(\s[^>]*)?>.*?</' . $chrome . '>#is', '', $live);
+                }
+                $result = array('nodes' => pcm_conn_parse_paragraph_nodes($live, 'rendered'), 'tier' => 'rendered');
+            } else {
+                // Tier 2 — in-process render via the_content (Divi/WPBakery/shortcode
+                // builders hook it; no HTTP, no workers consumed). Fail-safe to tier 3.
+                $html = '';
+                try {
+                    $html = (string) apply_filters('the_content', (string) get_post($pid)->post_content);
+                } catch (\Throwable $e) {
+                    $html = '';
+                }
+                $nodes = ($html !== '') ? pcm_conn_parse_paragraph_nodes($html, 'content-rendered') : array();
+                if (!empty($nodes)) {
+                    $result = array('nodes' => $nodes, 'tier' => 'content-rendered');
+                } else {
+                    // Tier 3 — raw storage (wpautop for classic content): plain WP/Gutenberg.
+                    // NOTE (documented limitation): tier-2/3 occurrence is counted in content
+                    // order, which can differ from rendered order in edge cases — the serving
+                    // stale-flag is the safety net; never a wrong swap, at worst a flagged miss.
+                    $raw = (string) get_post($pid)->post_content;
+                    if (stripos($raw, '<p') === false && trim($raw) !== '') { $raw = wpautop($raw); }
+                    $nodes  = ($raw !== '') ? pcm_conn_parse_paragraph_nodes($raw, 'content') : array();
+                    $result = array('nodes' => $nodes, 'tier' => 'content');
+                    if (empty($nodes)) {
+                        // Loopback failed AND storage has nothing — say exactly that.
+                        $result['error'] = 'loopback_blocked';
                     }
-                    $txt = trim(pcm_conn_visible_text((string) ($m[5] ?? '')));
-                    $plain = trim(html_entity_decode($txt, ENT_QUOTES | ENT_HTML5, 'UTF-8'), " \t\n\r\0\x0B\xC2\xA0");
-                    if ($plain === '') { continue; }
-                    $norm = pcm_conn_normalize_text($txt);
-                    $occ  = isset($occ_seen[$norm]) ? $occ_seen[$norm] : 0;
-                    $occ_seen[$norm] = $occ + 1;
-                    $nodes[] = array(
-                        'kind'       => 'paragraph',
-                        'index'      => $i++,
-                        'text'       => $txt,
-                        'html'       => $m[0],
-                        'occurrence' => $occ,
-                        'source'     => 'rendered',
-                        'anchor'     => $anchor,
-                    );
                 }
             }
-            return array('nodes' => $nodes);
+            set_transient($cache_key, $result, 10 * MINUTE_IN_SECONDS);
+            return $result;
         },
     ));
 });

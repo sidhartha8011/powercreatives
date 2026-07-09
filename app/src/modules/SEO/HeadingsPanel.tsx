@@ -177,9 +177,11 @@ export function HeadingRows({
   );
   // Remote paragraph inventory (scan-content v1, connector 2.7.0+). Heading rows +
   // their editing stay on remoteGetHeadings — this only ADDS paragraph rows.
+  // SERIALIZED after the heading query (2.7.1): both scans can trigger a loopback
+  // on the connected site; firing them together starves worker-limited hosts.
   const remoteNodesQuery = trpc.seo.remoteGetContentNodes.useQuery(
     { siteId: siteId as number, postId },
-    { enabled: !isLocal, staleTime: 0, refetchOnMount: 'always' },
+    { enabled: !isLocal && remoteQuery.isFetched, staleTime: 0, refetchOnMount: 'always' },
   );
   const query = isLocal ? localQuery : remoteQuery;
 
