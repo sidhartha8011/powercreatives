@@ -200,14 +200,34 @@ export function SectionModal({
   );
   const versions: Array<{ id: number; replacement: string; createdAt: string }> =
     Array.isArray((versionsQuery.data as any)?.versions) ? (versionsQuery.data as any).versions : [];
-  /** '' = just viewing the current state; 'original' | version id as string. */
+  /** '' = viewing the current state; 'original' | version id as string. */
   const [versionPick, setVersionPick] = useState('');
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const deleteVersionMutation = trpc.seo.remoteDeleteSectionVersion.useMutation();
   const pickVersion = (v: string) => {
     setVersionPick(v);
+    setVersionsOpen(false);
     if (v === 'original') editor?.commands.setContent(originalHtml);
     else if (v !== '') {
       const row = versions.find((x) => String(x.id) === v);
       if (row) editor?.commands.setContent(row.replacement);
+    }
+  };
+  /** The dropdown ALWAYS names a state (owner law — never a counter):
+   *  the picked version, else the latest saved one when a rule serves, else Original. */
+  const hasActiveRule = !isInsert && !!section?.sectionRuleReplacement;
+  const versionLabel = versionPick === 'original'
+    ? 'Original'
+    : versionPick !== ''
+      ? (versions.find((v) => String(v.id) === versionPick)?.createdAt.slice(0, 16) ?? 'Version')
+      : (hasActiveRule && versions.length > 0 ? versions[0].createdAt.slice(0, 16) : 'Original');
+  const deleteVersion = async (id: number) => {
+    try {
+      await deleteVersionMutation.mutateAsync({ siteId: siteId as number, postId, versionId: id });
+      if (versionPick === String(id)) setVersionPick('');
+      await versionsQuery.refetch();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Could not delete the version');
     }
   };
 
@@ -320,21 +340,55 @@ export function SectionModal({
           {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
           {title}
         </div>
-        {/* Version history: Original + every accepted save (date/time). Picking one
+        {/* Version history: the button ALWAYS names the shown state (picked/latest/
+            Original — never a counter). The list: Original (light-grey, undeletable)
+            + each accepted save with date/time and a delete button. Picking one
             loads it in the editor; Acceptera makes it the version the site serves. */}
         {!readOnly && !isInsert && (
-          <select
-            value={versionPick}
-            onChange={(e) => pickVersion(e.target.value)}
-            title="Versions — pick one to view it; Acceptera makes it live"
-            className="h-6 max-w-[130px] shrink-0 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600"
-          >
-            <option value="">{versions.length > 0 ? `Versions (${versions.length})` : 'Versions'}</option>
-            <option value="original">Original</option>
-            {versions.map((v) => (
-              <option key={v.id} value={String(v.id)}>{v.createdAt.slice(0, 16)}</option>
-            ))}
-          </select>
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setVersionsOpen((v) => !v)}
+              title="Versions — pick one to view it; Acceptera makes it live"
+              className="inline-flex h-6 max-w-[140px] items-center gap-1 truncate rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 hover:bg-slate-50"
+            >
+              <span className="truncate">{versionLabel}</span>
+              <span className="text-slate-400">▾</span>
+            </button>
+            {versionsOpen && (
+              <div className="absolute right-0 top-full z-10 mt-1 w-[190px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
+                <button
+                  type="button"
+                  onClick={() => pickVersion('original')}
+                  className="block w-full bg-slate-50 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-100"
+                >
+                  Original
+                </button>
+                {versions.map((v) => (
+                  <div key={v.id} className="flex items-center hover:bg-slate-50">
+                    <button
+                      type="button"
+                      onClick={() => pickVersion(String(v.id))}
+                      className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[11px] text-slate-700"
+                    >
+                      {v.createdAt.slice(0, 16)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void deleteVersion(v.id); }}
+                      title="Delete this version"
+                      className="shrink-0 rounded p-1 text-slate-400 hover:text-destructive"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+                {versions.length === 0 && (
+                  <div className="px-2 py-1 text-[11px] text-slate-400">No saved versions yet</div>
+                )}
+              </div>
+            )}
+          </div>
         )}
         {!readOnly && (
           <>
@@ -437,7 +491,7 @@ export function SectionModal({
         <div className="flex items-center gap-1.5 border-t border-slate-200 bg-white px-2.5 py-1.5">
           <button
             type="button"
-            onClick={() => { void save().then((ok) => { if (ok && isInsert && !insert?.ruleId) onClose(); }); }}
+            onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
             disabled={busy}
             className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
           >

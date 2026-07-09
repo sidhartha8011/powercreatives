@@ -2553,10 +2553,10 @@ class PCM_SEO_Service
         $old_occ  = PCM_Text_Matcher::occurrence_of($texts, $index);
         $via      = '';
         $result   = self::remote_update_heading_apply($site, $post_id, $type, $index, $text, $level, $headings, $via);
-        // Re-key ONLY on a true SOURCE write. An override-layer edit leaves the raw
-        // HTML untouched (the override rewrites at render, AFTER rules run), so the
-        // section rule must keep matching the OLD heading text to keep serving.
-        if ($user_id && $via === 'source' && !is_wp_error($result) && ($text !== null || $level !== null)) {
+        // Re-key on ANY successful edit — source OR override layer. Since 2.8.2 the
+        // rules buffer runs AFTER the override layer, so an override edit ALSO
+        // changes the heading text rules match against. ($via '' = no-op, skip.)
+        if ($user_id && $via !== '' && !is_wp_error($result) && ($text !== null || $level !== null)) {
             $new_text  = ($text !== null && $text !== '') ? $text : (string) $headings[$index]['text'];
             $new_level = ($level !== null) ? max(1, min(6, $level)) : (int) $headings[$index]['level'];
             $new_texts = is_array($result) ? array_map(static fn($hh) => (string) ($hh['text'] ?? ''), $result) : array();
@@ -3206,6 +3206,20 @@ class PCM_SEO_Service
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->delete($table, array('id' => $old_id), array('%d'));
         }
+    }
+
+    /** Delete one saved version (ownership-checked; the Original is never a row,
+     *  so it can never be deleted — it always comes live from the scan). */
+    public function delete_section_version(int $user_id, int $version_id)
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_rule_versions');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $deleted = $wpdb->delete($table, array('id' => $version_id, 'userId' => $user_id), array('%d', '%d'));
+        if (!$deleted) {
+            return new WP_Error('pcm_seo_version_not_found', __('That version no longer exists.', 'power-creatives'), array('status' => 404));
+        }
+        return array('deleted' => true);
     }
 
     /**

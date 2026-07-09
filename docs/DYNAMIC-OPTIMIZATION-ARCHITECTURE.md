@@ -202,6 +202,16 @@ wrapper-safe:**
 5. Order inside the serving callback: section replaces → section inserts →
    v1 paragraph rules. Same try/catch fail-to-original, same kill switch,
    same purge + stats pipeline, same `?pcm_cscan` exclusion.
+5b. **Buffer order (AMENDED 2.8.2 — proven root cause):** the rules buffer
+   hooks at priority 0 (OUTER), so its callback runs AFTER the heading-
+   override layer (priority 1). Rules therefore match the OVERRIDE-
+   TRANSFORMED page — the same page the scan inventories (`?pcm_cscan`
+   disables rules only, never overrides) and the same page the user sees.
+   Proven on a live case: a section whose heading had a render-time override
+   could never match at the old priority (identity = displayed text, raw
+   buffer = old text). Consequence on the hub: a heading edit through
+   EITHER layer (source write or override) re-keys the section rules
+   anchored to it.
 6. Reference implementation lives in `PCM_Text_Matcher`
    (`fingerprint`/`parse_blocks`/`apply_section_rule`/`apply_section_insert`),
    fixture-tested; the connector's single-file mirror MUST stay

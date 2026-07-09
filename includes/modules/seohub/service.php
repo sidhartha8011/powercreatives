@@ -445,7 +445,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.8.1
+ * Version: 2.8.2
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -2208,6 +2208,12 @@ function pcm_conn_apply_rules($html, $rules, $pid) {
 // pcm_cscan requests (the hub's content inventory) are EXCLUDED on purpose: the
 // inventory must show the ORIGINAL rendered text, because that is exactly what
 // rules match against (matching post-rule text would chain rules on themselves).
+// PRIORITY 0 (2.8.2, PROVEN fix): this buffer must be the OUTER one so its
+// callback runs AFTER the heading-override layer (prio 1) — rules then match
+// the OVERRIDE-TRANSFORMED page, which is exactly what the scan inventoried
+// and what the user sees. At prio 2 (inner) rules saw the RAW page: a section
+// whose heading had a render-time override could NEVER match (identity built
+// on the displayed text, raw text still the old one — permanent honest miss).
 add_action('template_redirect', function () {
     if (is_admin() || is_feed() || (defined('REST_REQUEST') && REST_REQUEST) || !is_singular()) { return; }
     if (isset($_GET['pcm_cscan'])) { return; }
@@ -2223,7 +2229,7 @@ add_action('template_redirect', function () {
             return $html; // fail-to-original, always
         }
     });
-}, 2);
+}, 0);
 // Rules API: GET = capability answer + a post's rules & counters; POST = replace
 // a post's rule set (schema v1 only — anything else is rejected honestly).
 add_action('rest_api_init', function () {

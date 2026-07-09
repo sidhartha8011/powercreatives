@@ -6830,3 +6830,30 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   1.38.0 migrated, versions table EXISTS, section-versions route registered
   on the live local site. Connector UNTOUCHED. NO PUSH (owner law).
 - BEFORE 251bcc1 -> AFTER (this commit).
+
+## 2026-07-09 - [section-serving-order-and-editor-ux]
+- ROOT CAUSE (second live miss) PROVEN by order_proof.php with the INSTALLED
+  connector code + stored rule + stored heading override + real page: the
+  rules buffer (prio 2, inner) ran BEFORE the heading-override layer (prio 1,
+  outer) -> rules matched the RAW page while the scan (and the user)
+  inventoried the OVERRIDE-TRANSFORMED page ("Hello world!" raw vs "Hello!"
+  displayed) -> permanent honest miss. Order alone flips miss->serve
+  (applied=1 offline).
+- FIX: connector 2.8.2 - rules hook prio 2 -> 0 (rules buffer OUTER, callback
+  runs AFTER overrides; rules now match exactly what the scan sees and what
+  the user sees). Contract amended (5b, architecture doc). Hub: heading edits
+  through EITHER layer (source OR override) now re-key section rules
+  ($via !== '' instead of === 'source' - the override layer changes what
+  rules match since 2.8.2).
+- EDITOR UX (owner corrections): Acceptera SAVES AND CLOSES; the versions
+  dropdown is a custom popover whose button always NAMES the shown state
+  (picked version / latest saved / Original - never a counter); each version
+  row has a delete button (ownership-checked endpoint POST
+  .../section-versions/{vid}/delete + trpc; Original is never a row = never
+  deletable); Original row has the light-grey background.
+- VERIFIED: php -l x3; generated connector source extracted + linted; matcher
+  22/22; parity 17/17; prio-0 present in generated source; tsc 59 = baseline;
+  build OK; delete route registered on the live local site. NO PUSH.
+- Owner: update the powerleads connector to 2.8.2 (Sites -> Connector column),
+  Ctrl+F5, open the Hello! section -> Acceptera -> live page serves.
+- BEFORE 1197dcb -> AFTER (this commit).

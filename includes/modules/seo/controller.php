@@ -86,6 +86,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-rule', 'remote_save_section_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions/(?P<vid>\d+)/delete', 'remote_delete_section_version', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)', 'remote_update_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)/optimize', 'remote_optimize_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/featured', 'remote_set_featured', array(), 'manage_options'),
@@ -472,6 +473,21 @@ class PCM_REST_SEO extends PCM_REST_Base
             (string) $request->get_param('text'),
             absint($request->get_param('occurrence'))
         )));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/section-versions/{vid}/delete — delete one saved version. */
+    public function remote_delete_section_version(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $result = $this->service->delete_section_version((int) $user->id, absint($request->get_param('vid')));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** POST /seo/sites/{id}/content/{post}/section-optimize — AI-rewrite a whole
