@@ -6681,3 +6681,13 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - php -l x3 OK; tsc 59 = baseline; build OK. Connector UNTOUCHED this pair.
 - BEFORE ecd0c68 -> AFTER 2ea70e3. Verify: edit a paragraph on powerstock ->
   live page serves it -> edit back -> rule gone, original serves.
+
+## 2026-07-09 - [seo-title-preview-icon]
+- Title column: NEW Eye icon (before the edit pen) opens the EXISTING preview
+  modal - authenticated remote fetch, so served dynamic paragraph rules are
+  visible in it, and it already has open-in-new-tab. BOTH title-cell icons now
+  rest-hidden, revealed on row hover (group-hover; TableRow already carries
+  `group`; accepted coarse-pointer caveat). Edit pen kept (it opens the WP
+  editor - on remote sites it lands on their login unless already logged in,
+  which is why it felt dead; retitled "Edit on site (WP editor)").
+- tsc 59 = baseline; build OK. BEFORE 859f3f9 -> AFTER (this commit).
