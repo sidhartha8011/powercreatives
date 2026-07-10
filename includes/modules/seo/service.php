@@ -2642,6 +2642,18 @@ class PCM_SEO_Service
                 return new WP_Error('pcm_seo_no_user', __('Heading edits need a signed-in hub user.', 'power-creatives'), array('status' => 401));
             }
             $post_scope = ((string) $h['scope']) !== 'site';
+            if ($post_scope) {
+                // One-owner law: a section rule already owning this heading
+                // takes the edit; never stack a heading rule on top of it.
+                $owned = self::update_section_owned_heading((int) $user_id, $site, $post_id, $h, $new_text, $new_level);
+                if ($owned !== null) {
+                    if ($owned instanceof WP_Error) {
+                        return $owned;
+                    }
+                    $via = 'override';
+                    return self::remote_get_headings($site, $post_id, $type, $user_id);
+                }
+            }
             $saved      = self::save_heading_rule((int) $user_id, $site, array(
                 'postId'       => $post_scope ? $post_id : 0,
                 'matchText'    => (string) ($h['matchText'] ?? PCM_Text_Matcher::normalize((string) $h['text'])),
@@ -3506,6 +3518,36 @@ class PCM_SEO_Service
                     'target' => 'paragraph', 'matchText' => $p['text'], 'occurrence' => $p['occurrence'],
                 ), array('%d', '%d', '%d', '%s', '%s', '%d'));
             }
+            // ABSORB (one-owner law, v2.2): a post-scope heading rule whose OUTPUT
+            // is this section's heading dies here — its ORIGINAL identity (text,
+            // occurrence, level) becomes the section's match key, so the section
+            // owns the whole element and no rule chain survives the save.
+            $section_rule_id = $prev ? (int) $prev['id'] : (int) $wpdb->insert_id;
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+            $h_rows = (array) $wpdb->get_results($wpdb->prepare(
+                "SELECT id, matchText, occurrence, replacement, anchorContext FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'heading'",
+                $user_id,
+                $site_id,
+                $post_id
+            ), ARRAY_A);
+            foreach ($h_rows as $hr) {
+                $hctx = json_decode((string) ($hr['anchorContext'] ?? ''), true);
+                $hctx = is_array($hctx) ? $hctx : array();
+                if (PCM_Text_Matcher::normalize((string) $hr['replacement']) !== $match_text || (int) ($hctx['newLevel'] ?? 0) !== $level) {
+                    continue;
+                }
+                $match_text = (string) $hr['matchText'];
+                $occurrence = (int) $hr['occurrence'];
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update($table, array(
+                    'matchText'     => $match_text,
+                    'occurrence'    => $occurrence,
+                    'anchorContext' => wp_json_encode(array('level' => max(1, min(6, (int) ($hctx['level'] ?? $level))), 'fingerprint' => $fingerprint, 'paragraphs' => $paragraphs)),
+                ), array('id' => $section_rule_id), array('%s', '%d', '%s'), array('%d'));
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->delete($table, array('id' => (int) $hr['id']), array('%d'));
+                break;
+            }
         }
 
         $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
@@ -3797,6 +3839,61 @@ class PCM_SEO_Service
         if ($push instanceof WP_Error) {
             return $push;
         }
+        return array('stored' => (int) ($push['stored'] ?? 0));
+    }
+
+    /**
+     * ONE-OWNER LAW (v2.2, part A): when an active SECTION rule owns this
+     * heading (keyed on its identity, replacement carries the heading unit),
+     * a heading edit rewrites THAT rule's first unit — never stacks a second
+     * rule on the same element. Returns NULL when the heading is not
+     * section-owned (caller proceeds to the heading-rule path); array|WP_Error
+     * otherwise. The rule's match identity is untouched (it keys on the
+     * rules-input, which the replacement never changes); versions + rollback
+     * ride the section mechanics.
+     */
+    private static function update_section_owned_heading(int $user_id, object $site, int $post_id, array $h, ?string $new_text, int $new_level)
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_dynamic_rules');
+        $norm  = PCM_Text_Matcher::normalize((string) ($h['text'] ?? ''));
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, matchText, occurrence, replacement FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d AND active = 1",
+            $user_id,
+            (int) $site->id,
+            $post_id,
+            $norm,
+            (int) ($h['occurrence'] ?? 0)
+        ), ARRAY_A);
+        if (!$row) {
+            return null;
+        }
+        $units = PCM_Text_Matcher::parse_replacement_units((string) $row['replacement']);
+        if (empty($units) || !preg_match('/^h[1-6]$/', (string) $units[0]['tag'])
+            || PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text((string) $units[0]['inner'])) !== $norm) {
+            return null; // the replacement doesn't carry this heading — not owned
+        }
+        $new_t = trim((string) ($new_text !== null && $new_text !== '' ? $new_text : (string) $h['text']));
+        $safe  = wp_kses_post($new_t);
+        // Swap the first unit's text/level, its own attributes preserved.
+        $unit0 = preg_replace_callback(
+            '/^<h[1-6]([^>]*)>.*<\/h[1-6]>$/is',
+            static fn($m) => '<h' . $new_level . $m[1] . '>' . $safe . '</h' . $new_level . '>',
+            (string) $units[0]['html']
+        );
+        $replacement = (string) $unit0;
+        for ($i = 1, $n = count($units); $i < $n; $i++) {
+            $replacement .= $units[$i]['html'];
+        }
+        $snapshot = self::post_rule_rows($user_id, (int) $site->id, $post_id);
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update($table, array('replacement' => $replacement), array('id' => (int) $row['id']), array('%s'), array('%d'));
+        $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
+        if ($push instanceof WP_Error) {
+            return $push;
+        }
+        self::record_section_version($user_id, (int) $site->id, $post_id, (string) $row['matchText'], (int) $row['occurrence'], $replacement);
         return array('stored' => (int) ($push['stored'] ?? 0));
     }
 
