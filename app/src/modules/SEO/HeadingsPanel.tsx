@@ -24,7 +24,7 @@
  */
 
 import { Fragment, useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react';
-import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight, Lock, LayoutTemplate, Maximize2, Plus } from 'lucide-react';
+import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight, Lock, Maximize2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -634,21 +634,20 @@ export function HeadingRows({
                           {`H${level}`}
                         </span>
                       )}
-                      {n.sourceLabel ? (
+                      {/* ONE status dot per row (same family as the ¶ rows):
+                          sky = site-wide element (edits change every page),
+                          primary = optimized on this page. Full text in the tooltip. */}
+                      {(n.scope === 'site' || (n.sourcePostId ?? 0) > 0) ? (
                         <span
-                          className="inline-flex h-5 max-w-[150px] shrink-0 items-center gap-0.5 rounded-[3px] border border-amber-500/40 bg-amber-500/10 px-1 text-[10px] font-medium text-amber-600"
-                          title={`Shared source — editing this heading changes it on EVERY page that uses it. Lives in: ${n.sourceLabel}.`}
-                        >
-                          <LayoutTemplate className="h-2.5 w-2.5 shrink-0" />
-                          <span className="truncate">{n.sourceLabel}</span>
-                        </span>
-                      ) : null}
-                      {hSecRule && (
+                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"
+                          title={n.sourceLabel || 'Site-wide — this heading appears on every page; an edit changes all of them.'}
+                        />
+                      ) : (n.rule || hSecRule || n.sourceLabel) ? (
                         <span
                           className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
-                          title="Section optimized (dynamic rule) — the live page serves the section editor's version."
+                          title={n.sourceLabel || 'Optimized — a dynamic rule serves this heading on the live page.'}
                         />
-                      )}
+                      ) : null}
                       <div className="flex-1 min-w-0">
                         {suggestion != null ? (
                           <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
