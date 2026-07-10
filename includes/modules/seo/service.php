@@ -3195,13 +3195,17 @@ class PCM_SEO_Service
         $anchor   = null;
         $occ_seen = array();
         $i        = 0;
+        // Second walk = content blocks only; instruction matching restarts its
+        // occurrence count (same document order, content headings only — the
+        // exact space the first walk counted them in).
+        $match_seen = array();
         foreach (PCM_Text_Matcher::content_blocks($html) as $b) {
             if ($b['tag'] !== 'p') {
                 $text = trim($b['text']);
                 if ($text === '') {
                     continue;
                 }
-                $d      = $instruct($b['level'], $text);
+                $d      = $instruct($b['level'], $text, false);
                 $anchor = array('level' => $d['level'], 'text' => PCM_Text_Matcher::normalize($d['text']));
                 continue;
             }
@@ -3428,12 +3432,14 @@ class PCM_SEO_Service
                 // scope, originalText, allOccurrences}. allOccurrences keeps
                 // compiled-override semantics (chrome/site + migrated rules);
                 // without it serving targets the occurrence-th content twin.
+                $out['scope']   = ((string) ($ctx['scope'] ?? 'post')) === 'site' ? 'site' : 'post';
                 $out['section'] = array(
                     'level'          => (int) ($ctx['level'] ?? 0),
                     'newLevel'       => (int) ($ctx['newLevel'] ?? ($ctx['level'] ?? 0)),
-                    'allOccurrences' => !empty($ctx['allOccurrences']),
+                    // Site scope ⇒ override semantics BY LAW — rules created
+                    // before the flag existed keep serving.
+                    'allOccurrences' => !empty($ctx['allOccurrences']) || $out['scope'] === 'site',
                 );
-                $out['scope']  = ((string) ($ctx['scope'] ?? 'post')) === 'site' ? 'site' : 'post';
                 $out['anchor'] = null;
             } else {
                 $out['anchor'] = $ctx;
