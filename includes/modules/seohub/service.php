@@ -1904,13 +1904,31 @@ function pcm_conn_apply_rules($html, $rules, $pid) {
         $nl  = max(1, min(6, (int) ($sec['newLevel'] ?? $ol)));
         $nt  = (string) ($r['replacement'] ?? '');
         if (!empty($sec['allOccurrences'])) {
-            $hit = false;
-            $out = preg_replace_callback('#<h' . $ol . '(\s[^>]*)?>(.*?)</h' . $ol . '>#is', function ($m) use ($nl, $want, $nt, &$hit) {
-                if (pcm_conn_normalize_text(pcm_conn_visible_text($m[2])) !== $want) { return $m[0]; }
-                $hit = true;
-                return '<h' . $nl . (isset($m[1]) ? $m[1] : '') . '>' . esc_html($nt) . '</h' . $nl . '>';
-            }, $html);
-            if (is_string($out) && $hit) { $html = $out; $applied++; } else { $missed++; }
+            // frameOnly (site/frame edits): apply ONLY inside chrome spans —
+            // identical text in page CONTENT is never touched. Rules without
+            // the flag (migrated legacy overrides) keep whole-page semantics.
+            $frame_only = !empty($sec['frameOnly']);
+            $spans = $frame_only ? pcm_conn_chrome_spans($html) : array();
+            $edits = array();
+            if (preg_match_all('#<h' . $ol . '(\s[^>]*)?>(.*?)</h' . $ol . '>#is', $html, $mm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+                foreach ($mm as $m) {
+                    $start = (int) $m[0][1];
+                    if ($frame_only) {
+                        $inside = false;
+                        foreach ($spans as $s) {
+                            if ($start >= $s[0] && $start < $s[1]) { $inside = true; break; }
+                        }
+                        if (!$inside) { continue; }
+                    }
+                    if (pcm_conn_normalize_text(pcm_conn_visible_text((string) $m[2][0])) !== $want) { continue; }
+                    $edits[] = array('start' => $start, 'len' => strlen((string) $m[0][0]), 'html' => '<h' . $nl . (isset($m[1][0]) ? $m[1][0] : '') . '>' . esc_html($nt) . '</h' . $nl . '>');
+                }
+            }
+            if (!empty($edits)) {
+                usort($edits, function ($a, $b) { return $b['start'] - $a['start']; });
+                foreach ($edits as $e) { $html = substr_replace($html, $e['html'], $e['start'], $e['len']); }
+                $applied++;
+            } else { $missed++; }
             continue;
         }
         $occ  = max(0, (int) ($r['match']['occurrence'] ?? 0));
@@ -2072,6 +2090,7 @@ add_action('rest_api_init', function () {
                         // compiled-override semantics; else occurrence-targeted.
                         $row['section']['newLevel']       = max(1, min(6, (int) ($sec['newLevel'] ?? ($sec['level'] ?? 2))));
                         $row['section']['allOccurrences'] = !empty($sec['allOccurrences']);
+                        $row['section']['frameOnly']      = !empty($sec['frameOnly']);
                         $row['replacement'] = sanitize_text_field((string) ($r['replacement'] ?? ''));
                     }
                 }

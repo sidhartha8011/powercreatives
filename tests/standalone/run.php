@@ -203,11 +203,11 @@ $out = pcm_conn_apply_rules('<p>Client edited this text.</p>', array($pr('The ol
 check('paragraph miss serves original', $out === '<p>Client edited this text.</p>', $out);
 
 // ═════ 3. v2.2 HEADING pass (occurrence-aware; allOccurrences = override semantics) ═════
-$hr = static fn(string $old, int $ol, int $nl, string $new, int $occ = 0, bool $all = false): array => array(
+$hr = static fn(string $old, int $ol, int $nl, string $new, int $occ = 0, bool $all = false, bool $frame = false): array => array(
     'id' => 9, 'target' => 'heading', 'active' => true,
     'match' => array('text' => pcm_conn_normalize_text($old), 'occurrence' => $occ),
     'replacement' => $new,
-    'section' => array('level' => $ol, 'newLevel' => $nl, 'allOccurrences' => $all),
+    'section' => array('level' => $ol, 'newLevel' => $nl, 'allOccurrences' => $all, 'frameOnly' => $frame),
 );
 $out = pcm_conn_apply_rules('<h1 class="site-title" data-x="1">Hello world!</h1><p>x</p>', array($hr('Hello world!', 1, 1, 'Hello!')), 1);
 check('heading swap keeps attrs', $out === '<h1 class="site-title" data-x="1">Hello!</h1><p>x</p>', $out);
@@ -219,6 +219,13 @@ $out = pcm_conn_apply_rules('<header><h2>Om oss</h2></header><h2>Om oss</h2><p>a
 check('chrome twin neither counted nor touched', $out === '<header><h2>Om oss</h2></header><h2>Ny rubrik</h2><p>a</p>', $out);
 $out = pcm_conn_apply_rules('<h2>x</h2>', array($hr('x', 2, 2, 'a <b>bold</b> & raw')), 1);
 check('heading text is esc_html-ed', $out === '<h2>a &lt;b&gt;bold&lt;/b&gt; &amp; raw</h2>', $out);
+// frameOnly (v2.2 tightening): a frame edit rewrites ONLY chrome copies —
+// identical text in page CONTENT is never touched.
+$page2 = '<header><h2>Om oss</h2></header><h2>Om oss</h2><p>a</p><footer><h2>Om oss</h2></footer>';
+$out = pcm_conn_apply_rules($page2, array($hr('Om oss', 2, 2, 'Om företaget', 0, true, true)), 1);
+check('frameOnly touches ONLY frame copies', $out === '<header><h2>Om företaget</h2></header><h2>Om oss</h2><p>a</p><footer><h2>Om företaget</h2></footer>', $out);
+$out = pcm_conn_apply_rules($page2, array($hr('Om oss', 2, 2, 'Om företaget', 0, true, false)), 1);
+check('legacy allOccurrences keeps whole-page reach', $out === '<header><h2>Om företaget</h2></header><h2>Om företaget</h2><p>a</p><footer><h2>Om företaget</h2></footer>', $out);
 
 // ORDERING LAW: the heading pass runs FIRST, so a section rule keyed on the
 // heading's DISPLAY text (what the hub's snapshot parse computed) matches.

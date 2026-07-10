@@ -3442,6 +3442,7 @@ class PCM_SEO_Service
                     // Site scope ⇒ override semantics BY LAW — rules created
                     // before the flag existed keep serving.
                     'allOccurrences' => !empty($ctx['allOccurrences']) || $out['scope'] === 'site',
+                    'frameOnly'      => !empty($ctx['frameOnly']),
                 );
                 $out['anchor'] = null;
             } else {
@@ -4048,6 +4049,11 @@ class PCM_SEO_Service
                 'scope'          => $post_id === 0 ? 'site' : 'post',
                 'originalText'   => $cur_text,
                 'allOccurrences' => $post_id === 0,
+                // Frame edits apply ONLY inside the site frame (header/nav/
+                // footer/aside) — identical text in some page's CONTENT is
+                // never touched. Migrated legacy overrides keep their old
+                // whole-page semantics (no flag).
+                'frameOnly'      => $post_id === 0,
             );
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->insert($table, array(
