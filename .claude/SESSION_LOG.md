@@ -6873,3 +6873,40 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - Owner's latest test rule targets comment-area content (his click during the
   broken grouping); he reverts it via Original + Acceptera after updating.
 - VERIFIED: php -l hub file + extracted generated source OK.
+
+## 2026-07-09 (evening) - [THE CLEANUP C1-C5] (one brain in the hub, connector 3.0.0)
+- Owner GO on docs/CLEANUP-GAP-ANALYSIS-20260709.md. Deep pre-read found 7 facts
+  beyond the gap analysis, all folded into the frozen contracts: fossil v1.0.1
+  tenant template (6th debt), NO read path for overrides (C4 data gap), override
+  scope is SITE-wide vs rules per-post (scope added to stream), serving had no
+  heading pass, the 17/17 parity harness was never committed (scratchpad-only),
+  override buffer self-disables on empty list (migration = clear, no code flip),
+  heading edit handles come from the storage scan (writers keep the walkers).
+- C1 (3e25bfc): contracts v3 frozen - snapshot v1 (page-as-rules-input, tiers
+  kept, connector never parses), instruction stream v2.1 (heading target =
+  compiled override, site scope, heading-pass-FIRST, schemaVersion 3), config
+  schema v1, handle-resolution law, deletions ledger.
+- C2 (2e36774): hub parse_page_snapshot() + remote_get_inventory() + GET
+  .../inventory; HeadingsPanel: ONE query replaces the serialized two-query chain.
+- C3 (eb0d70e): connector 3.0.0 - snapshot + config endpoints, cfg() for every
+  tunable, heading pass, site-scope rules (every front-end render), identity-only
+  /replace-heading (writer-side resolution), BOTH scanners deleted, HMAC handshake
+  folded into the one template, fossil template deleted. Hub: v3 snapshot reads,
+  writer-first heading edits, save_heading_rule() (site-scope instruction with
+  exact-original revert). Matcher: serving mirror DELETED (zero hub callers,
+  verified). tests/standalone/run.php COMMITTED: 37 fixtures against the REAL
+  extracted template (parity + apply corpus + heading pass + ordering law).
+  INCIDENT: PowerShell splices double-encoded UTF-8 in 2 files; recovered
+  byte-faithfully (cp1252 reverse map), verified via diff-hunk audit. LESSON:
+  never Get-Content/Set-Content a UTF-8 source file - use Edit or iconv.
+- C4 (aca3b29): migrate_site_overrides() - config GET -> upsert instructions ->
+  one push w/ rollback -> VERIFY siteRules round-trip -> clearOverrides. Endpoint
+  + trpc + Migrate section in RemoteSiteSettingsPanel. Idempotent, per-site.
+- C5 (5457e23): hub config store + push_connector_config() auto-riding
+  remote_site_save + on-demand endpoint. D1-D5 + D6 all dead in code.
+- VERIFIED (all green, this box): harness 37/37 - php -l every touched file +
+  extracted generated template - tsc 59 = baseline throughout - build OK x3.
+- NOT in this go (gated): owner installs 3.0.0 on powerleads (Sites -> Connector)
+  -> live e2e -> run Migrate per site -> after the WHOLE fleet reads 3.0.0, the
+  follow-up commit drops pre-3.0 hub fallbacks + the legacy override buffer +
+  /override-heading + remote_apply_heading_override. NO PUSH (owner law).
