@@ -2602,10 +2602,13 @@ class PCM_SEO_Service
         $old_occ  = PCM_Text_Matcher::occurrence_of($texts, $index);
         $via      = '';
         $result   = self::remote_update_heading_apply($site, $post_id, $type, $index, $text, $level, $headings, $via, $user_id);
-        // Re-key on ANY successful edit — source OR override layer. Since 2.8.2 the
-        // rules buffer runs AFTER the override layer, so an override edit ALSO
-        // changes the heading text rules match against. ($via '' = no-op, skip.)
-        if ($user_id && $via !== '' && !is_wp_error($result) && ($text !== null || $level !== null)) {
+        // Re-key ONLY on SOURCE writes (2.x fleet): they change the rules-INPUT
+        // text, so section identities must follow. A RULE-mediated edit
+        // ($via 'override') changes DISPLAY only — the rules-input is untouched
+        // and re-keying would corrupt the rule's own match identity (live-found
+        // defect 2026-07-10: rule 9 re-keyed to its own new output and went
+        // permanently stale).
+        if ($user_id && $via === 'source' && !is_wp_error($result) && ($text !== null || $level !== null)) {
             $new_text  = ($text !== null && $text !== '') ? $text : (string) $headings[$index]['text'];
             $new_level = ($level !== null) ? max(1, min(6, $level)) : (int) $headings[$index]['level'];
             $new_texts = is_array($result) ? array_map(static fn($hh) => (string) ($hh['text'] ?? ''), $result) : array();
