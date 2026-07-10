@@ -406,6 +406,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/migrate-overrides`, body: {} }),
     },
+    "seo.remotePushConfig": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/push-config`, body: {} }),
+    },
     "seo.remoteGetParagraphRules": {
         endpoint: "seo/sites",
         method: "GET",

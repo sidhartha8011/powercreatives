@@ -82,6 +82,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/content-nodes', 'remote_get_content_nodes', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/inventory', 'remote_get_inventory', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/migrate-overrides', 'remote_migrate_overrides', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/push-config', 'remote_push_config', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/rules', 'remote_list_rules', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-rule', 'remote_save_paragraph_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-optimize', 'remote_optimize_paragraph', array(), 'manage_options'),
@@ -395,6 +396,18 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/push-config — cleanup C5: push the hub-controlled
+     *  connector tunables to the site (v3+; pushed:false honestly on older). */
+    public function remote_push_config(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(PCM_SEO_Service::push_connector_config($site));
     }
 
     /** GET /seo/sites/{id}/content/{post}/rules — the hub's dynamic rules for the post (UI overlay). */

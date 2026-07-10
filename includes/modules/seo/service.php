@@ -1769,6 +1769,45 @@ class PCM_SEO_Service
      * @param array{robots?:string,jsonld?:string} $fields
      * @return array{robots:string,jsonld:string}|\WP_Error
      */
+    /**
+     * The connector tunables the HUB controls (config schema v1, cleanup C5).
+     * Values live in one hub option; the seeded defaults equal the connector's
+     * own code defaults, so an un-pushed fleet behaves byte-identically.
+     * Filterable for per-install tuning until a dedicated UI is requested.
+     */
+    public static function get_connector_config(): array
+    {
+        $defaults = array(
+            'snapshotCacheTtl' => 600,
+            'loopbackTimeout'  => 8,
+            'loopbackLockTtl'  => 15,
+            'chromeRegions'    => array('header', 'nav', 'footer', 'aside'),
+            'statsThrottle'    => 300,
+            'overridesCap'     => 200,
+        );
+        $stored = get_option('pcm_seo_connector_config', array());
+        $cfg    = is_array($stored) ? array_merge($defaults, array_intersect_key($stored, $defaults)) : $defaults;
+        /** @param array $cfg Effective connector config the hub pushes. */
+        return (array) apply_filters('pcm_seo_connector_config', $cfg);
+    }
+
+    /**
+     * Push the hub's connector config to one site (v3+ only — older connectors
+     * have no config store; returns pushed:false honestly, never an error, so
+     * callers can fire-and-forget on mixed fleets).
+     *
+     * @return array{pushed:bool}
+     */
+    public static function push_connector_config(object $site): array
+    {
+        self::ensure_sites_service();
+        if (self::connector_rules_schema_version($site) < 3) {
+            return array('pushed' => false);
+        }
+        $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/config', array(), self::get_connector_config(), 30);
+        return array('pushed' => !is_wp_error($res) && (int) ($res['status'] ?? 0) < 300);
+    }
+
     public static function remote_site_save(object $site, array $fields)
     {
         self::ensure_sites_service();
@@ -1803,6 +1842,10 @@ class PCM_SEO_Service
                 return new WP_Error('pcm_seo_remote_site', __('Could not save the site title/tagline on the remote site.', 'power-creatives'), array('status' => 502));
             }
         }
+        // Config rides the same channel (cleanup C5): every successful site
+        // save re-syncs the hub-controlled tunables. Best-effort by design —
+        // a config miss must never fail a robots/title save.
+        self::push_connector_config($site);
         return self::remote_site_get($site);
     }
 
