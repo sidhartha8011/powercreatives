@@ -57,7 +57,7 @@ import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { LinksPopup, type LinkKind } from './LinksPopup';
 import { HeadingRows } from './HeadingsPanel';
-import { SEO_TABLE_GRID } from './seo-table';
+import { SEO_TABLE_GRID, Pill } from './seo-table';
 import { SEO_TEXT_FIELDS, type SeoRow } from './types';
 
 // WordPress media library global (wp_enqueue_media() is called in class-pcm-admin.php).
@@ -1076,7 +1076,7 @@ export function SEOModule() {
           <TableCell key={key}>
             <Select value={row.status} onValueChange={(v) => saveCell(row.id, 'status', v)}>
               <SelectTrigger className="h-full w-full border-0 rounded-none bg-transparent px-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
-                <span className={`inline-flex items-center rounded-full px-1.5 py-0 text-[9px] font-medium capitalize ${statusBadgeClass(row.status)}`}>{row.status}</span>
+                <Pill className={`capitalize ${statusBadgeClass(row.status)}`}>{row.status}</Pill>
               </SelectTrigger>
               <SelectContent>
                 {(options?.statuses ?? ['publish', 'draft', 'pending', 'private', 'future']).map((s) => (

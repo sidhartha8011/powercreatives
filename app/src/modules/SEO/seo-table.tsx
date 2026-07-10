@@ -22,6 +22,16 @@ export const SEO_TABLE_GRID =
   '[&_td]:whitespace-nowrap [&_td]:overflow-hidden ' +
   '[&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-20 [&_thead_th]:bg-card';
 
+/** THE house pill (Airtable-style single-select chip) — one source of rendering
+ *  for every small value chip: the table's status column, the outline's H1–H6 /
+ *  P / NEW chips. Pass a soft `bg-*-100 text-*-700` pair via className. */
+export const PILL_CLASS =
+  'inline-flex h-5 items-center justify-center rounded-full px-1.5 py-0 text-[9px] font-medium leading-none whitespace-nowrap';
+
+export function Pill({ className = '', ...p }: HTMLAttributes<HTMLSpanElement>) {
+  return <span {...p} className={`${PILL_CLASS} ${className}`} />;
+}
+
 export const Table = (p: TableHTMLAttributes<HTMLTableElement>) => <table {...p} />;
 export const TableHeader = (p: HTMLAttributes<HTMLTableSectionElement>) => <thead {...p} />;
 export const TableBody = (p: HTMLAttributes<HTMLTableSectionElement>) => <tbody {...p} />;

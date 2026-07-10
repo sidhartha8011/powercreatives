@@ -32,7 +32,7 @@ import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from '@/components/ui/select';
-import { TableRow, TableCell } from './seo-table';
+import { TableRow, TableCell, Pill, PILL_CLASS } from './seo-table';
 import { SectionModal, type SectionData, type SectionAnchor, type InsertData, type SectionParagraph } from './SectionModal';
 
 /** The rule that produced a SERVED row (attribution, contracts v2.2). */
@@ -125,13 +125,14 @@ const THEME_READONLY_REASON =
 const HARDCODED_CODES = new Set(['pcm_seo_heading_not_found', 'pcm_seo_heading_not_editable']);
 const STALE_CODE = 'pcm_seo_heading_stale';
 
+/** H1–H6 pill colors — the SEO table's soft single-select palette (house pill). */
 const TAG_STYLE: Record<number, string> = {
-  1: 'bg-blue-500/10 text-blue-500 border-blue-500/40',
-  2: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/40',
-  3: 'bg-amber-500/10 text-amber-600 border-amber-500/40',
-  4: 'bg-orange-600/10 text-orange-600 border-orange-600/40',
-  5: 'bg-rose-500/10 text-rose-500 border-rose-500/40',
-  6: 'bg-violet-500/10 text-violet-500 border-violet-500/40',
+  1: 'bg-blue-100 text-blue-700',
+  2: 'bg-green-100 text-green-700',
+  3: 'bg-amber-100 text-amber-700',
+  4: 'bg-orange-100 text-orange-700',
+  5: 'bg-rose-100 text-rose-700',
+  6: 'bg-violet-100 text-violet-700',
 };
 
 const indentFor = (level: number): number => 18 + Math.max(0, level - 1) * 14;
@@ -497,10 +498,8 @@ export function HeadingRows({
           return (
             <TableCell key={col}>
               <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
-                {/* The regular P chip — same family as the H1–H6 tag chips (owner correction). */}
-                <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-border bg-muted/60 px-1 text-[10px] font-semibold leading-none text-muted-foreground">
-                  P
-                </span>
+                {/* The regular P chip — the house pill, same family as H1–H6. */}
+                <Pill className="min-w-[36px] shrink-0 bg-muted text-muted-foreground">P</Pill>
                 {optimized && (
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="Optimized — a dynamic rule serves this content" />
                 )}
@@ -533,9 +532,7 @@ export function HeadingRows({
         return (
           <TableCell key={col}>
             <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
-              <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-primary/40 bg-primary/10 px-1 text-[10px] font-semibold leading-none text-primary">
-                NEW
-              </span>
+              <Pill className="min-w-[36px] shrink-0 bg-primary/10 text-primary">NEW</Pill>
               <button
                 type="button"
                 onClick={(e) => openInsert(rule, s, clickPoint(e))}
@@ -614,7 +611,7 @@ export function HeadingRows({
                       {!readOnly && suggestion == null ? (
                         <Select value={String(level)} onValueChange={(v) => saveHeading(n, { level: Number(v) })} disabled={busy}>
                           <SelectTrigger
-                            className={`!h-5 w-auto min-w-[40px] shrink-0 rounded-[3px] border px-1 py-0 text-[10px] font-semibold leading-none justify-center gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}
+                            className={`${PILL_CLASS} !h-5 w-auto min-w-[36px] shrink-0 border-0 gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}
                             title="Change heading level"
                           >
                             {`H${level}`}
@@ -630,9 +627,7 @@ export function HeadingRows({
                           </SelectContent>
                         </Select>
                       ) : (
-                        <span className={`inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border px-1 text-[10px] font-semibold leading-none ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}>
-                          {`H${level}`}
-                        </span>
+                        <Pill className={`min-w-[36px] shrink-0 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}>{`H${level}`}</Pill>
                       )}
                       {/* ONE status dot per row (same family as the ¶ rows):
                           sky = site-wide element (edits change every page),
