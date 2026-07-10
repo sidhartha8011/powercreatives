@@ -2705,6 +2705,200 @@ class PCM_SEO_Service
         return $out;
     }
 
+    // =====================================================================
+    // PAGE INVENTORY (cleanup C2) — ONE hub-side parse of the connector's
+    // snapshot replaces both remote scanners' parsing. Contracts:
+    // docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md → "Cleanup contracts v3".
+    // =====================================================================
+
+    /**
+     * Fetch a v3 connector's page snapshot — the page as RULES-INPUT
+     * (`{html, tier[, error]}`), or NULL when the connector predates 3.0.0
+     * (callers compose from the legacy scanners instead).
+     */
+    public static function remote_fetch_snapshot(object $site, int $post_id): ?array
+    {
+        self::ensure_sites_service();
+        if (self::connector_rules_schema_version($site) < 3) {
+            return null;
+        }
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/snapshot', array('post_id' => $post_id), null, 30);
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return null;
+        }
+        return array(
+            'html'  => (string) ($res['body']['html'] ?? ''),
+            'tier'  => (string) ($res['body']['tier'] ?? ''),
+            'error' => isset($res['body']['error']) ? (string) $res['body']['error'] : '',
+        );
+    }
+
+    /**
+     * Active heading instructions (compiled overrides) that shape a post's
+     * DISPLAY state: site-scope rows (postId 0) + the post's own — the hub
+     * applies them to the parsed snapshot (display-state law, contracts v3).
+     *
+     * @return array[] [{matchText, replacement, level, newLevel}, …]
+     */
+    private static function heading_instructions(int $user_id, int $site_id, int $post_id): array
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_dynamic_rules');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $rows = (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT matchText, replacement, anchorContext FROM {$table} WHERE userId = %d AND siteId = %d AND postId IN (0, %d) AND target = 'heading' AND active = 1",
+            $user_id,
+            $site_id,
+            $post_id
+        ), ARRAY_A);
+        $out = array();
+        foreach ($rows as $r) {
+            $ctx   = json_decode((string) ($r['anchorContext'] ?? ''), true);
+            $ctx   = is_array($ctx) ? $ctx : array();
+            $out[] = array(
+                'matchText'   => (string) $r['matchText'],
+                'replacement' => (string) $r['replacement'],
+                'level'       => (int) ($ctx['level'] ?? 0),
+                'newLevel'    => (int) ($ctx['newLevel'] ?? ($ctx['level'] ?? 0)),
+            );
+        }
+        return $out;
+    }
+
+    /**
+     * Parse ONE snapshot into the outline's full inventory — heading rows +
+     * paragraph nodes, exactly the shapes the legacy scanners produced:
+     *
+     * - Headings: EVERY body heading in document order (chrome INCLUDED —
+     *   theme/nav headings are editable), deduped by level|text like the old
+     *   rendered pass. Snapshot rows carry no storage handles by design
+     *   (handle-resolution law): identity is {text, level, occurrence}.
+     * - Paragraphs: chrome-stripped (scan-content parity), nearest preceding
+     *   CONTENT heading as the anchor (normalized display text).
+     * - Display-state law: active heading instructions transform text/level
+     *   BEFORE dedupe/anchoring, so section keys match what the site serves.
+     */
+    public static function parse_page_snapshot(string $html, array $heading_rules = array()): array
+    {
+        if (($bpos = stripos($html, '<body')) !== false) {
+            $html = substr($html, $bpos);
+        }
+        $instruct = static function (int $level, string $text) use ($heading_rules): array {
+            $norm = PCM_Text_Matcher::normalize($text);
+            foreach ($heading_rules as $r) {
+                if ((int) ($r['level'] ?? 0) === $level && (string) ($r['matchText'] ?? '') === $norm) {
+                    return array('level' => max(1, min(6, (int) ($r['newLevel'] ?? $level))), 'text' => (string) ($r['replacement'] ?? $text), 'instructed' => true);
+                }
+            }
+            return array('level' => $level, 'text' => $text, 'instructed' => false);
+        };
+        $headings = array();
+        $seen     = array();
+        foreach (PCM_Text_Matcher::parse_blocks($html) as $b) {
+            if ($b['tag'] === 'p') {
+                continue;
+            }
+            $text = trim($b['text']);
+            if ($text === '') {
+                continue;
+            }
+            $d   = $instruct($b['level'], $text);
+            $key = $d['level'] . '|' . $d['text'];
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = 1;
+            $headings[] = array(
+                'level'        => $d['level'],
+                'text'         => $d['text'],
+                'html'         => $d['instructed'] ? '' : $b['html'],
+                'source'       => $d['instructed'] ? 'override' : 'snapshot',
+                'elId'         => '',
+                'field'        => '',
+                'tagKey'       => '',
+                'textKey'      => '',
+                'sourcePostId' => 0,
+                'sourceType'   => $d['instructed'] ? 'override' : '',
+                'sourceLabel'  => $d['instructed'] ? __('Site-wide override (render-time)', 'power-creatives') : '',
+                'editable'     => true,
+            );
+        }
+        foreach ($headings as $i => $unused) {
+            $headings[$i]['index'] = $i;
+            $headings[$i]['id']    = $i;
+        }
+        $nodes    = array();
+        $anchor   = null;
+        $occ_seen = array();
+        $i        = 0;
+        foreach (PCM_Text_Matcher::content_blocks($html) as $b) {
+            if ($b['tag'] !== 'p') {
+                $text = trim($b['text']);
+                if ($text === '') {
+                    continue;
+                }
+                $d      = $instruct($b['level'], $text);
+                $anchor = array('level' => $d['level'], 'text' => PCM_Text_Matcher::normalize($d['text']));
+                continue;
+            }
+            $text  = trim($b['text']);
+            $plain = trim(html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8'), " \t\n\r\0\x0B\xC2\xA0");
+            if ($plain === '') {
+                continue;
+            }
+            $norm            = PCM_Text_Matcher::normalize($text);
+            $occ             = isset($occ_seen[$norm]) ? $occ_seen[$norm] : 0;
+            $occ_seen[$norm] = $occ + 1;
+            $nodes[]         = array(
+                'kind'       => 'paragraph',
+                'index'      => $i++,
+                'text'       => $text,
+                'html'       => $b['html'],
+                'occurrence' => $occ,
+                'source'     => 'rendered',
+                'anchor'     => $anchor,
+            );
+        }
+        return array('headings' => $headings, 'nodes' => $nodes);
+    }
+
+    /**
+     * The connected post's FULL inventory in one call — the outline's single
+     * read. v3 connector → one snapshot, one hub-side parse; pre-3.0 fleet →
+     * honest composition from the legacy scanners (the same two calls the UI
+     * used to make itself; this fallback dies with the C5 follow-up).
+     */
+    public static function remote_get_inventory(object $site, int $post_id, string $type, int $user_id): array
+    {
+        $snap = self::remote_fetch_snapshot($site, $post_id);
+        if ($snap !== null && $snap['html'] !== '') {
+            $parsed = self::parse_page_snapshot($snap['html'], self::heading_instructions($user_id, (int) $site->id, $post_id));
+            return array(
+                'supported' => true,
+                'source'    => 'snapshot',
+                'tier'      => $snap['tier'],
+                'headings'  => $parsed['headings'],
+                'nodes'     => $parsed['nodes'],
+            );
+        }
+        if ($snap !== null && $snap['error'] !== '') {
+            // The connector answered honestly (e.g. loopback_blocked) — say exactly that.
+            return array('supported' => true, 'source' => 'snapshot', 'tier' => $snap['tier'], 'headings' => array(), 'nodes' => array(), 'error' => $snap['error']);
+        }
+        $headings = self::remote_get_headings($site, $post_id, $type);
+        $meta     = self::remote_get_content_nodes($site, $post_id);
+        $out      = array(
+            'supported' => (bool) $meta['supported'],
+            'source'    => 'scan',
+            'headings'  => $headings,
+            'nodes'     => (array) $meta['nodes'],
+        );
+        if (!empty($meta['error'])) {
+            $out['error'] = (string) $meta['error'];
+        }
+        return $out;
+    }
+
     /** Whether a connected site's connector accepts rule schema v1 (capability check). */
     public static function connector_supports_rules(object $site): bool
     {

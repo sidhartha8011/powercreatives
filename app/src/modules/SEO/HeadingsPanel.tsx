@@ -135,14 +135,12 @@ export function HeadingRows({
     { id: postId },
     { enabled: isLocal, staleTime: 0, refetchOnMount: 'always' },
   );
-  const remoteQuery = trpc.seo.remoteGetHeadings.useQuery(
+  // ONE inventory read (cleanup C2): heading rows + paragraph nodes from a
+  // single hub-side parse — replaces the serialized headings→content-nodes
+  // query chain.
+  const remoteQuery = trpc.seo.remoteGetInventory.useQuery(
     { siteId: siteId as number, postId, type },
     { enabled: !isLocal, staleTime: 0, refetchOnMount: 'always' },
-  );
-  // Remote paragraph inventory — SERIALIZED after the heading query (2.7.1).
-  const remoteNodesQuery = trpc.seo.remoteGetContentNodes.useQuery(
-    { siteId: siteId as number, postId },
-    { enabled: !isLocal && remoteQuery.isFetched, staleTime: 0, refetchOnMount: 'always' },
   );
   const query = isLocal ? localQuery : remoteQuery;
 
@@ -160,10 +158,10 @@ export function HeadingRows({
       setRemoteParaNote(null);
       return;
     }
-    const list = (remoteQuery.data as any)?.headings;
+    const meta: any = remoteQuery.data ?? null;
+    const list = meta?.headings;
     if (!Array.isArray(list)) return;
     setNodes(headingsToNodes(list as HeadingItem[]));
-    const meta: any = remoteNodesQuery.data ?? null;
     const paragraphs: any[] = Array.isArray(meta?.nodes) ? meta.nodes : [];
     setRawParas(paragraphs.map((p) => ({
       text: String(p?.text ?? ''),
@@ -180,7 +178,7 @@ export function HeadingRows({
     } else {
       setRemoteParaNote(null);
     }
-  }, [isLocal, localQuery.data, remoteQuery.data, remoteNodesQuery.data]);
+  }, [isLocal, localQuery.data, remoteQuery.data]);
 
   const localUpdate = trpc.seo.updateHeading.useMutation();
   const remoteUpdate = trpc.seo.remoteUpdateHeading.useMutation();

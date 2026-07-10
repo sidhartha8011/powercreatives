@@ -80,6 +80,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/remove', 'remote_remove_link', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings', 'remote_get_headings', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/content-nodes', 'remote_get_content_nodes', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/inventory', 'remote_get_inventory', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/rules', 'remote_list_rules', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-rule', 'remote_save_paragraph_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-optimize', 'remote_optimize_paragraph', array(), 'manage_options'),
@@ -363,6 +364,20 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         return $this->success(PCM_SEO_Service::remote_get_content_nodes($site, absint($request->get_param('post'))));
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/inventory — the outline's ONE read (cleanup C2):
+     *  heading rows + paragraph nodes from a single hub-side snapshot parse on v3
+     *  connectors; honest legacy-scan composition on the pre-3.0 fleet. */
+    public function remote_get_inventory(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
+        return $this->success(PCM_SEO_Service::remote_get_inventory($site, absint($request->get_param('post')), $type, (int) $user->id));
     }
 
     /** GET /seo/sites/{id}/content/{post}/rules — the hub's dynamic rules for the post (UI overlay). */
