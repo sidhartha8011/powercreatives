@@ -499,7 +499,7 @@ export function HeadingRows({
             <TableCell key={col}>
               <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
                 {/* The regular P chip — the house pill, same family as H1–H6. */}
-                <Pill className="min-w-[36px] shrink-0 bg-muted text-muted-foreground">P</Pill>
+                <Pill className="shrink-0 bg-muted text-muted-foreground">P</Pill>
                 {optimized && (
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="Optimized — a dynamic rule serves this content" />
                 )}
@@ -532,7 +532,7 @@ export function HeadingRows({
         return (
           <TableCell key={col}>
             <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
-              <Pill className="min-w-[36px] shrink-0 bg-primary/10 text-primary">NEW</Pill>
+              <Pill className="shrink-0 bg-primary/10 text-primary">NEW</Pill>
               <button
                 type="button"
                 onClick={(e) => openInsert(rule, s, clickPoint(e))}
@@ -611,7 +611,7 @@ export function HeadingRows({
                       {!readOnly && suggestion == null ? (
                         <Select value={String(level)} onValueChange={(v) => saveHeading(n, { level: Number(v) })} disabled={busy}>
                           <SelectTrigger
-                            className={`${PILL_CLASS} !h-5 w-auto min-w-[36px] shrink-0 border-0 gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}
+                            className={`${PILL_CLASS} !h-auto w-auto shrink-0 border-0 gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}
                             title="Change heading level"
                           >
                             {`H${level}`}
@@ -627,7 +627,7 @@ export function HeadingRows({
                           </SelectContent>
                         </Select>
                       ) : (
-                        <Pill className={`min-w-[36px] shrink-0 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}>{`H${level}`}</Pill>
+                        <Pill className={`shrink-0 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}>{`H${level}`}</Pill>
                       )}
                       {/* ONE status dot per row (same family as the ¶ rows):
                           sky = site-wide element (edits change every page),
