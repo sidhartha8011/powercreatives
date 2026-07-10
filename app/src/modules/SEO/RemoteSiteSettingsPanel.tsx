@@ -37,6 +37,9 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
   // site's url/name as the {{website.url}} / {{business.*}} context (so robots Sitemap +
   // schema url point to the remote site). We then save it to the connected site.
   const generateMutation = trpc.seo.remoteSiteGenerate.useMutation();
+  // Cleanup C4: converts the site's legacy render-time heading overrides into
+  // hub-managed heading instructions (verified on the connector, then cleared).
+  const migrateMutation = trpc.seo.remoteMigrateOverrides.useMutation();
 
   const { data: brandsRaw } = trpc.brands.list.useQuery();
   const brands = useMemo(
@@ -224,6 +227,39 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
           placeholder='{"@context":"https://schema.org","@type":"LocalBusiness","name":"..."}'
           className="font-mono text-xs"
         />
+      </section>
+
+      {/* Legacy override migration (cleanup C4) — connector 3.0.0+ */}
+      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <Label className="text-sm font-medium">Migrate legacy heading overrides</Label>
+            <p className="text-xs text-muted-foreground">
+              Converts this site’s render-time heading overrides into hub-managed heading
+              instructions (connector 3.0.0+). Verified on the site before the old list is
+              cleared — the pages serve identically. Safe to re-run.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className="shrink-0"
+            disabled={migrateMutation.isPending}
+            onClick={() => {
+              migrateMutation.mutate({ siteId }, {
+                onSuccess: (res: any) => {
+                  const n = Number(res?.migrated ?? 0);
+                  toast.success(n > 0
+                    ? `Migrated ${n} override${n === 1 ? '' : 's'} — legacy list cleared.`
+                    : 'No legacy overrides on this site — nothing to migrate.');
+                },
+                onError: (e: any) => { toast.error(e?.message ?? 'Migration failed — nothing was changed on the live site.'); },
+              });
+            }}
+          >
+            {migrateMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            Migrate
+          </Button>
+        </div>
       </section>
 
       <div className="flex justify-end">

@@ -3708,6 +3708,104 @@ class PCM_SEO_Service
     }
 
     /**
+     * MIGRATE one site's legacy heading overrides → site-scope heading
+     * instructions (cleanup C4). Per site, verified before anything drops:
+     * read the list via the 3.0.0 config channel → upsert heading rules →
+     * ONE push (rollback on fail) → VERIFY the connector's stored siteRules
+     * round-trip → clear the legacy option (the old buffer then no-ops via
+     * its own empty-list early-return). Idempotent — re-running with an
+     * empty list is a no-op.
+     *
+     * @return array{migrated:int,cleared:bool}|\WP_Error
+     */
+    public static function migrate_site_overrides(int $user_id, object $site)
+    {
+        global $wpdb;
+        self::ensure_sites_service();
+        if (self::connector_rules_schema_version($site) < 3) {
+            return new WP_Error(
+                'pcm_seo_connector_no_heading_rules',
+                __('This site’s connector doesn’t support heading instructions yet (needs v3.0.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+        $cfg = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/config');
+        if (is_wp_error($cfg) || (int) ($cfg['status'] ?? 0) >= 300 || !is_array($cfg['body'] ?? null)) {
+            return new WP_Error('pcm_seo_migrate_read', __('Could not read the site’s legacy override list.', 'power-creatives'), array('status' => 502));
+        }
+        $overrides = array_values(array_filter((array) ($cfg['body']['overrides'] ?? array()), 'is_array'));
+        if (empty($overrides)) {
+            return array('migrated' => 0, 'cleared' => false);
+        }
+        $table    = PCM_Schema::table('seo_dynamic_rules');
+        $site_id  = (int) $site->id;
+        $snapshot = self::post_rule_rows($user_id, $site_id, 0);
+        $count    = 0;
+        foreach ($overrides as $o) {
+            $old_t = trim((string) ($o['oldText'] ?? ''));
+            $new_t = trim((string) ($o['newText'] ?? ''));
+            $old_l = max(1, min(6, (int) ($o['oldLevel'] ?? 0)));
+            $new_l = max(1, min(6, (int) ($o['newLevel'] ?? 0)));
+            if ($old_t === '' || $new_t === '') {
+                continue;
+            }
+            $norm = PCM_Text_Matcher::normalize($old_t);
+            $ctx  = wp_json_encode(array('level' => $old_l, 'newLevel' => $new_l, 'scope' => 'site', 'originalText' => $old_t));
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+            $prev = $wpdb->get_var($wpdb->prepare(
+                "SELECT id FROM {$table} WHERE userId = %d AND siteId = %d AND postId = 0 AND target = 'heading' AND matchText = %s",
+                $user_id,
+                $site_id,
+                $norm
+            ));
+            if ($prev) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update($table, array('replacement' => $new_t, 'anchorContext' => $ctx, 'active' => 1), array('id' => (int) $prev), array('%s', '%s', '%d'), array('%d'));
+            } else {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->insert($table, array(
+                    'userId' => $user_id, 'siteId' => $site_id, 'postId' => 0,
+                    'target' => 'heading', 'matchText' => $norm, 'occurrence' => 0,
+                    'replacement' => $new_t, 'anchorContext' => $ctx, 'active' => 1,
+                ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
+            }
+            $count++;
+        }
+        $push = self::push_current_rules_or_rollback($user_id, $site, 0, $snapshot);
+        if ($push instanceof WP_Error) {
+            return $push;
+        }
+        // VERIFY the connector actually stores every migrated instruction
+        // before the legacy list is cleared — no big-bang, per the plan.
+        $check = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/rules');
+        $stored = (!is_wp_error($check) && is_array($check['body']['siteRules'] ?? null))
+            ? array_column(array_filter((array) $check['body']['siteRules'], 'is_array'), 'match')
+            : array();
+        $stored_texts = array_map(static fn($m) => (string) ($m['text'] ?? ''), $stored);
+        foreach ($overrides as $o) {
+            $old_t = trim((string) ($o['oldText'] ?? ''));
+            $new_t = trim((string) ($o['newText'] ?? ''));
+            if ($old_t === '' || $new_t === '') {
+                continue;
+            }
+            if (!in_array(PCM_Text_Matcher::normalize($old_t), $stored_texts, true)) {
+                return new WP_Error(
+                    'pcm_seo_migrate_verify',
+                    __('Verification failed: the connector did not store every migrated instruction — the legacy overrides were NOT cleared, nothing changed on the live site.', 'power-creatives'),
+                    array('status' => 502)
+                );
+            }
+        }
+        $clear = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/config', array(), array('clearOverrides' => true), 30);
+        if (is_wp_error($clear) || (int) ($clear['status'] ?? 0) >= 300) {
+            // Instructions serve already (after the overrides — same output);
+            // the legacy list stayed. Safe but unfinished — say exactly that.
+            return new WP_Error('pcm_seo_migrate_clear', __('Instructions are live, but clearing the legacy override list failed — retry the migration.', 'power-creatives'), array('status' => 502));
+        }
+        return array('migrated' => $count, 'cleared' => true);
+    }
+
+    /**
      * RE-KEY section/sectionInsert rules after a successful heading source-edit
      * (interaction law): their matchText/occurrence/level follow the heading so
      * the rules keep serving. Push-fail restores the snapshot — hub and connector

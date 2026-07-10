@@ -81,6 +81,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings', 'remote_get_headings', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/content-nodes', 'remote_get_content_nodes', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/inventory', 'remote_get_inventory', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/migrate-overrides', 'remote_migrate_overrides', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/rules', 'remote_list_rules', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-rule', 'remote_save_paragraph_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-optimize', 'remote_optimize_paragraph', array(), 'manage_options'),
@@ -378,6 +379,22 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
         return $this->success(PCM_SEO_Service::remote_get_inventory($site, absint($request->get_param('post')), $type, (int) $user->id));
+    }
+
+    /** POST /seo/sites/{id}/migrate-overrides — cleanup C4: convert the site's legacy
+     *  heading overrides into site-scope heading instructions (verified, then cleared). */
+    public function remote_migrate_overrides(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $result = PCM_SEO_Service::migrate_site_overrides((int) $user->id, $site);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** GET /seo/sites/{id}/content/{post}/rules — the hub's dynamic rules for the post (UI overlay). */
