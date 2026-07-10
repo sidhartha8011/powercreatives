@@ -202,17 +202,21 @@ check('paragraph occurrence second twin', $out === '<p>Läs mer</p><p>Upptäck m
 $out = pcm_conn_apply_rules('<p>Client edited this text.</p>', array($pr('The old text', 0, 'X')), 1);
 check('paragraph miss serves original', $out === '<p>Client edited this text.</p>', $out);
 
-// ═════ 3. v2.1 HEADING pass (compiled-override semantics) + ordering ═════
-$hr = static fn(string $old, int $ol, int $nl, string $new): array => array(
+// ═════ 3. v2.2 HEADING pass (occurrence-aware; allOccurrences = override semantics) ═════
+$hr = static fn(string $old, int $ol, int $nl, string $new, int $occ = 0, bool $all = false): array => array(
     'id' => 9, 'target' => 'heading', 'active' => true,
-    'match' => array('text' => pcm_conn_normalize_text($old), 'occurrence' => 0),
+    'match' => array('text' => pcm_conn_normalize_text($old), 'occurrence' => $occ),
     'replacement' => $new,
-    'section' => array('level' => $ol, 'newLevel' => $nl),
+    'section' => array('level' => $ol, 'newLevel' => $nl, 'allOccurrences' => $all),
 );
 $out = pcm_conn_apply_rules('<h1 class="site-title" data-x="1">Hello world!</h1><p>x</p>', array($hr('Hello world!', 1, 1, 'Hello!')), 1);
 check('heading swap keeps attrs', $out === '<h1 class="site-title" data-x="1">Hello!</h1><p>x</p>', $out);
-$out = pcm_conn_apply_rules('<h2>Om oss</h2><p>a</p><h2>Om oss</h2>', array($hr('Om oss', 2, 3, 'Om företaget')), 1);
-check('heading hits ALL occurrences + level change', $out === '<h3>Om företaget</h3><p>a</p><h3>Om företaget</h3>', $out);
+$out = pcm_conn_apply_rules('<h2>Om oss</h2><p>a</p><h2>Om oss</h2>', array($hr('Om oss', 2, 3, 'Om företaget', 0, true)), 1);
+check('allOccurrences hits ALL + level change', $out === '<h3>Om företaget</h3><p>a</p><h3>Om företaget</h3>', $out);
+$out = pcm_conn_apply_rules('<h2>Om oss</h2><p>a</p><h2>Om oss</h2>', array($hr('Om oss', 2, 2, 'Om företaget', 1)), 1);
+check('occurrence targets ONLY the second twin', $out === '<h2>Om oss</h2><p>a</p><h2>Om företaget</h2>', $out);
+$out = pcm_conn_apply_rules('<header><h2>Om oss</h2></header><h2>Om oss</h2><p>a</p>', array($hr('Om oss', 2, 2, 'Ny rubrik', 0)), 1);
+check('chrome twin neither counted nor touched', $out === '<header><h2>Om oss</h2></header><h2>Ny rubrik</h2><p>a</p>', $out);
 $out = pcm_conn_apply_rules('<h2>x</h2>', array($hr('x', 2, 2, 'a <b>bold</b> & raw')), 1);
 check('heading text is esc_html-ed', $out === '<h2>a &lt;b&gt;bold&lt;/b&gt; &amp; raw</h2>', $out);
 

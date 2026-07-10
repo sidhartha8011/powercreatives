@@ -2633,47 +2633,23 @@ class PCM_SEO_Service
         $new_level = ($level !== null) ? max(1, min(6, $level)) : $old_level;
         $new_text  = $text; // null = keep
 
-        // v3 SNAPSHOT row (no storage handles by design — handle-resolution law):
-        // writer-first, identity-only. The connector resolves the storage itself
-        // (builder widgets, inline markup, shared templates). replaced:0 = no
-        // storage form exists → the render-time layer (below) takes it.
-        if ((string) ($h['source'] ?? '') === 'snapshot') {
-            $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-heading', array(), array(
-                'post_id'  => $post_id,
-                'oldText'  => (string) $h['text'],
-                'oldLevel' => $old_level,
-                'newText'  => ($new_text !== null ? $new_text : (string) $h['text']),
-                'newLevel' => $new_level,
-            ), 60);
-            if (is_wp_error($rep)) {
-                return new WP_Error('pcm_seo_remote_heading', $rep->get_error_message(), array('status' => 502));
+        // v3 row (carries the v2.2 rule identity): EVERY heading edit is a
+        // dynamic instruction — one mechanism, storage never rewritten. Scope
+        // comes from the row (chrome ⇒ site-wide, content ⇒ this page + this
+        // occurrence-th twin only).
+        if (isset($h['scope']) && in_array((string) ($h['source'] ?? ''), array('snapshot', 'override'), true)) {
+            if (!$user_id) {
+                return new WP_Error('pcm_seo_no_user', __('Heading edits need a signed-in hub user.', 'power-creatives'), array('status' => 401));
             }
-            if ((int) ($rep['status'] ?? 0) >= 300) {
-                return new WP_Error('pcm_seo_remote_heading', sprintf(__('The connector rejected the heading edit (HTTP %d).', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
-            }
-            if ((int) ($rep['body']['replaced'] ?? 0) > 0) {
-                $via = 'source';
-                return self::remote_get_headings($site, $post_id, $type, $user_id);
-            }
-            // No storage form (theme/menu/plugin-rendered). On v3 this becomes a
-            // SERVED heading instruction — one render layer, no legacy option.
-            if ($user_id) {
-                $saved = self::save_heading_rule((int) $user_id, $site, (string) $h['text'], $old_level, $new_text, $new_level);
-                if ($saved instanceof WP_Error) {
-                    return $saved;
-                }
-                $via = 'override';
-                return self::remote_get_headings($site, $post_id, $type, $user_id);
-            }
-            // No user context (shouldn't happen from the UI) — legacy layer, honestly.
-            $via = 'override';
-            return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
-        }
-
-        // v3 OVERRIDE row = an active heading INSTRUCTION shaped this row (display-state
-        // law) — the edit updates the instruction itself, never the legacy option.
-        if ((string) ($h['source'] ?? '') === 'override' && $user_id && self::connector_rules_schema_version($site) >= 3) {
-            $saved = self::save_heading_rule((int) $user_id, $site, (string) $h['text'], $old_level, $new_text, $new_level);
+            $post_scope = ((string) $h['scope']) !== 'site';
+            $saved      = self::save_heading_rule((int) $user_id, $site, array(
+                'postId'       => $post_scope ? $post_id : 0,
+                'matchText'    => (string) ($h['matchText'] ?? PCM_Text_Matcher::normalize((string) $h['text'])),
+                'matchLevel'   => (int) ($h['matchLevel'] ?? $old_level),
+                'occurrence'   => (int) ($h['matchOccurrence'] ?? 0),
+                'currentText'  => (string) $h['text'],
+                'currentLevel' => $old_level,
+            ), $new_text, $new_level);
             if ($saved instanceof WP_Error) {
                 return $saved;
             }
@@ -2858,7 +2834,7 @@ class PCM_SEO_Service
         $table = PCM_Schema::table('seo_dynamic_rules');
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
         $rows = (array) $wpdb->get_results($wpdb->prepare(
-            "SELECT matchText, replacement, anchorContext FROM {$table} WHERE userId = %d AND siteId = %d AND postId IN (0, %d) AND target = 'heading' AND active = 1",
+            "SELECT matchText, occurrence, replacement, anchorContext FROM {$table} WHERE userId = %d AND siteId = %d AND postId IN (0, %d) AND target = 'heading' AND active = 1",
             $user_id,
             $site_id,
             $post_id
@@ -2868,10 +2844,12 @@ class PCM_SEO_Service
             $ctx   = json_decode((string) ($r['anchorContext'] ?? ''), true);
             $ctx   = is_array($ctx) ? $ctx : array();
             $out[] = array(
-                'matchText'   => (string) $r['matchText'],
-                'replacement' => (string) $r['replacement'],
-                'level'       => (int) ($ctx['level'] ?? 0),
-                'newLevel'    => (int) ($ctx['newLevel'] ?? ($ctx['level'] ?? 0)),
+                'matchText'      => (string) $r['matchText'],
+                'occurrence'     => (int) $r['occurrence'],
+                'allOccurrences' => !empty($ctx['allOccurrences']),
+                'replacement'    => (string) $r['replacement'],
+                'level'          => (int) ($ctx['level'] ?? 0),
+                'newLevel'       => (int) ($ctx['newLevel'] ?? ($ctx['level'] ?? 0)),
             );
         }
         return $out;
@@ -2895,17 +2873,48 @@ class PCM_SEO_Service
         if (($bpos = stripos($html, '<body')) !== false) {
             $html = substr($html, $bpos);
         }
-        $instruct = static function (int $level, string $text) use ($heading_rules): array {
-            $norm = PCM_Text_Matcher::normalize($text);
-            foreach ($heading_rules as $r) {
-                if ((int) ($r['level'] ?? 0) === $level && (string) ($r['matchText'] ?? '') === $norm) {
-                    return array('level' => max(1, min(6, (int) ($r['newLevel'] ?? $level))), 'text' => (string) ($r['replacement'] ?? $text), 'instructed' => true);
+        // Scope-decision law (v2.2): a heading inside a chrome span is SITE
+        // chrome; everything else is PAGE content.
+        $spans     = PCM_Text_Matcher::chrome_spans($html);
+        $in_chrome = static function (int $start) use ($spans): bool {
+            foreach ($spans as $s) {
+                if ($start >= $s[0] && $start < $s[1]) {
+                    return true;
                 }
             }
-            return array('level' => $level, 'text' => $text, 'instructed' => false);
+            return false;
         };
-        $headings = array();
-        $seen     = array();
+        // Display-state law: heading instructions match in the ORIGINAL-text
+        // space, occurrence-aware — exactly what serving does. $match_seen
+        // counts CONTENT headings per (level, normalized original); chrome
+        // headings never consume content occurrences.
+        $match_seen = array();
+        $instruct   = static function (int $level, string $text, bool $chrome) use ($heading_rules, &$match_seen): array {
+            $norm = PCM_Text_Matcher::normalize($text);
+            $occ  = -1;
+            if (!$chrome) {
+                $mkey              = $level . '|' . $norm;
+                $occ               = isset($match_seen[$mkey]) ? $match_seen[$mkey] : 0;
+                $match_seen[$mkey] = $occ + 1;
+            }
+            $out = array('level' => $level, 'text' => $text, 'instructed' => false, 'matchText' => $norm, 'matchLevel' => $level, 'matchOccurrence' => max(0, $occ));
+            foreach ($heading_rules as $r) {
+                if ((int) ($r['level'] ?? 0) !== $level || (string) ($r['matchText'] ?? '') !== $norm) {
+                    continue;
+                }
+                if (empty($r['allOccurrences']) && (int) ($r['occurrence'] ?? 0) !== $occ) {
+                    continue;
+                }
+                $out['level']      = max(1, min(6, (int) ($r['newLevel'] ?? $level)));
+                $out['text']       = (string) ($r['replacement'] ?? $text);
+                $out['instructed'] = true;
+                break;
+            }
+            return $out;
+        };
+        $headings    = array();
+        $seen_chrome = array();
+        $disp_seen   = array();
         foreach (PCM_Text_Matcher::parse_blocks($html) as $b) {
             if ($b['tag'] === 'p') {
                 continue;
@@ -2914,25 +2923,45 @@ class PCM_SEO_Service
             if ($text === '') {
                 continue;
             }
-            $d   = $instruct($b['level'], $text);
-            $key = $d['level'] . '|' . $d['text'];
-            if (isset($seen[$key])) {
-                continue;
+            $chrome = $in_chrome((int) $b['start']);
+            $d      = $instruct($b['level'], $text, $chrome);
+            if ($chrome) {
+                // One row per site-wide item (a menu title repeats in header + footer).
+                $key = $d['level'] . '|' . $d['text'];
+                if (isset($seen_chrome[$key])) {
+                    continue;
+                }
+                $seen_chrome[$key] = 1;
+                $occurrence        = 0;
+            } else {
+                // Content twins are NEVER deduped (v2.2): each is its own row,
+                // individually editable. Occurrence here is DISPLAY-space —
+                // the identity section keys use.
+                $dkey             = $d['level'] . '|' . PCM_Text_Matcher::normalize($d['text']);
+                $occurrence       = isset($disp_seen[$dkey]) ? $disp_seen[$dkey] : 0;
+                $disp_seen[$dkey] = $occurrence + 1;
             }
-            $seen[$key] = 1;
             $headings[] = array(
-                'level'        => $d['level'],
-                'text'         => $d['text'],
-                'html'         => $d['instructed'] ? '' : $b['html'],
-                'source'       => $d['instructed'] ? 'override' : 'snapshot',
-                'elId'         => '',
-                'field'        => '',
-                'tagKey'       => '',
-                'textKey'      => '',
-                'sourcePostId' => 0,
-                'sourceType'   => $d['instructed'] ? 'override' : '',
-                'sourceLabel'  => $d['instructed'] ? __('Site-wide override (render-time)', 'power-creatives') : '',
-                'editable'     => true,
+                'level'           => $d['level'],
+                'text'            => $d['text'],
+                'html'            => $d['instructed'] ? '' : $b['html'],
+                'scope'           => $chrome ? 'site' : 'post',
+                'occurrence'      => $occurrence,
+                // Rule identity (ORIGINAL-text space) — what an edit targets.
+                'matchText'       => $d['matchText'],
+                'matchLevel'      => $d['matchLevel'],
+                'matchOccurrence' => $d['matchOccurrence'],
+                'source'          => $d['instructed'] ? 'override' : 'snapshot',
+                'elId'            => '',
+                'field'           => '',
+                'tagKey'          => '',
+                'textKey'         => '',
+                'sourcePostId'    => 0,
+                'sourceType'      => $d['instructed'] ? 'override' : ($chrome ? 'chrome' : ''),
+                'sourceLabel'     => $d['instructed']
+                    ? ($chrome ? __('Site-wide override (render-time)', 'power-creatives') : __('Optimized (render-time, this page)', 'power-creatives'))
+                    : ($chrome ? __('Site-wide (theme/menu) — an edit changes every page', 'power-creatives') : ''),
+                'editable'        => true,
             );
         }
         foreach ($headings as $i => $unused) {
@@ -3171,11 +3200,14 @@ class PCM_SEO_Service
                 }
                 $out['anchor'] = null;
             } elseif ($target === 'heading') {
-                // v3: heading instruction (compiled-override semantics) —
-                // anchorContext = {level, newLevel, scope, originalText}.
+                // v3: heading instruction — anchorContext = {level, newLevel,
+                // scope, originalText, allOccurrences}. allOccurrences keeps
+                // compiled-override semantics (chrome/site + migrated rules);
+                // without it serving targets the occurrence-th content twin.
                 $out['section'] = array(
-                    'level'    => (int) ($ctx['level'] ?? 0),
-                    'newLevel' => (int) ($ctx['newLevel'] ?? ($ctx['level'] ?? 0)),
+                    'level'          => (int) ($ctx['level'] ?? 0),
+                    'newLevel'       => (int) ($ctx['newLevel'] ?? ($ctx['level'] ?? 0)),
+                    'allOccurrences' => !empty($ctx['allOccurrences']),
                 );
                 $out['scope']  = ((string) ($ctx['scope'] ?? 'post')) === 'site' ? 'site' : 'post';
                 $out['anchor'] = null;
@@ -3672,21 +3704,30 @@ class PCM_SEO_Service
     }
 
     /**
-     * Save a SITE-SCOPE heading instruction (instruction stream v2.1 — the
-     * compiled-override successor): UPSERT keyed like the legacy override
-     * endpoint (re-edit matches the CURRENT value first, then the original);
-     * editing back to the exact original deletes the rule (clean revert);
-     * push-fail rolls back. Site scope = postId 0, occurrence 0 (heading
-     * instructions apply to EVERY match — override semantics).
+     * Save a heading instruction (instruction stream v2.2 — THE heading edit
+     * mechanism on v3 connectors). Identity decides scope: postId 0 = site
+     * chrome (allOccurrences, compiled-override semantics), postId N = one
+     * page, one occurrence-th twin. UPSERT matches the CURRENT value first
+     * (re-edit), then the original identity (stale outline raced the last
+     * edit); editing back to the exact original deletes the rule (clean
+     * revert); push-fail rolls back.
+     *
+     * @param array{postId:int,matchText:string,matchLevel:int,occurrence:int,
+     *              currentText:string,currentLevel:int} $identity
      */
-    public static function save_heading_rule(int $user_id, object $site, string $old_text, int $old_level, ?string $new_text, int $new_level)
+    public static function save_heading_rule(int $user_id, object $site, array $identity, ?string $new_text, int $new_level)
     {
         global $wpdb;
-        $table    = PCM_Schema::table('seo_dynamic_rules');
-        $site_id  = (int) $site->id;
-        $old_text = trim($old_text);
-        $new_t    = trim((string) ($new_text !== null && $new_text !== '' ? $new_text : $old_text));
-        if ($old_text === '' || $old_level < 1 || $old_level > 6 || $new_level < 1 || $new_level > 6) {
+        $table     = PCM_Schema::table('seo_dynamic_rules');
+        $site_id   = (int) $site->id;
+        $post_id   = max(0, (int) ($identity['postId'] ?? 0));
+        $match     = (string) ($identity['matchText'] ?? '');
+        $m_level   = max(1, min(6, (int) ($identity['matchLevel'] ?? 0)));
+        $occ       = max(0, (int) ($identity['occurrence'] ?? 0));
+        $cur_text  = trim((string) ($identity['currentText'] ?? ''));
+        $cur_level = max(1, min(6, (int) ($identity['currentLevel'] ?? $m_level)));
+        $new_t     = trim((string) ($new_text !== null && $new_text !== '' ? $new_text : $cur_text));
+        if ($match === '' || $new_level < 1 || $new_level > 6) {
             return new WP_Error('pcm_seo_rule_no_match', __('The heading has no matchable text.', 'power-creatives'), array('status' => 400));
         }
         if (self::connector_rules_schema_version($site) < 3) {
@@ -3698,27 +3739,28 @@ class PCM_SEO_Service
         }
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
         $rows = (array) $wpdb->get_results($wpdb->prepare(
-            "SELECT id, matchText, replacement, anchorContext FROM {$table} WHERE userId = %d AND siteId = %d AND postId = 0 AND target = 'heading'",
+            "SELECT id, matchText, occurrence, replacement, anchorContext FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'heading'",
             $user_id,
-            $site_id
+            $site_id,
+            $post_id
         ), ARRAY_A);
         $prev = null;
         foreach ($rows as $r) {
             $ctx = json_decode((string) ($r['anchorContext'] ?? ''), true);
             $ctx = is_array($ctx) ? $ctx : array();
-            // Re-edit of an already-instructed heading: the incoming "old" is the
-            // rule's CURRENT value (what the user sees).
-            if ((string) $r['replacement'] === $old_text && (int) ($ctx['newLevel'] ?? 0) === $old_level) {
+            // Re-edit of an already-instructed heading: the incoming "current"
+            // is the rule's own output (what the user sees).
+            if ((string) $r['replacement'] === $cur_text && (int) ($ctx['newLevel'] ?? 0) === $cur_level) {
                 $prev = array('row' => $r, 'ctx' => $ctx);
                 break;
             }
-            // Same ORIGINAL edited again (stale outline raced the last edit).
-            if ((string) $r['matchText'] === PCM_Text_Matcher::normalize($old_text) && (int) ($ctx['level'] ?? 0) === $old_level) {
+            // Same ORIGINAL identity edited again.
+            if ((string) $r['matchText'] === $match && (int) ($ctx['level'] ?? 0) === $m_level && (int) $r['occurrence'] === $occ) {
                 $prev = array('row' => $r, 'ctx' => $ctx);
                 break;
             }
         }
-        $snapshot = self::post_rule_rows($user_id, $site_id, 0);
+        $snapshot = self::post_rule_rows($user_id, $site_id, $post_id);
         if ($prev) {
             $ctx      = $prev['ctx'];
             $original = (string) ($ctx['originalText'] ?? '');
@@ -3732,18 +3774,26 @@ class PCM_SEO_Service
                 $wpdb->update($table, array('replacement' => $new_t, 'anchorContext' => wp_json_encode($ctx), 'active' => 1), array('id' => (int) $prev['row']['id']), array('%s', '%s', '%d'), array('%d'));
             }
         } else {
-            if ($new_t === $old_text && $new_level === $old_level) {
+            if ($new_t === $cur_text && $new_level === $cur_level) {
                 return array('stored' => count($snapshot), 'noop' => true); // no-op edit, no rule
             }
-            $ctx = array('level' => $old_level, 'newLevel' => $new_level, 'scope' => 'site', 'originalText' => $old_text);
+            // originalText: exact when the row was un-instructed (currentText
+            // IS the original); an instructed row always resolves to $prev.
+            $ctx = array(
+                'level'          => $m_level,
+                'newLevel'       => $new_level,
+                'scope'          => $post_id === 0 ? 'site' : 'post',
+                'originalText'   => $cur_text,
+                'allOccurrences' => $post_id === 0,
+            );
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->insert($table, array(
-                'userId' => $user_id, 'siteId' => $site_id, 'postId' => 0,
-                'target' => 'heading', 'matchText' => PCM_Text_Matcher::normalize($old_text), 'occurrence' => 0,
+                'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
+                'target' => 'heading', 'matchText' => $match, 'occurrence' => $occ,
                 'replacement' => $new_t, 'anchorContext' => wp_json_encode($ctx), 'active' => 1,
             ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
         }
-        $push = self::push_current_rules_or_rollback($user_id, $site, 0, $snapshot);
+        $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
         if ($push instanceof WP_Error) {
             return $push;
         }
@@ -3793,7 +3843,8 @@ class PCM_SEO_Service
                 continue;
             }
             $norm = PCM_Text_Matcher::normalize($old_t);
-            $ctx  = wp_json_encode(array('level' => $old_l, 'newLevel' => $new_l, 'scope' => 'site', 'originalText' => $old_t));
+            // allOccurrences: migrated legacy overrides keep their apply-to-all semantics.
+            $ctx  = wp_json_encode(array('level' => $old_l, 'newLevel' => $new_l, 'scope' => 'site', 'originalText' => $old_t, 'allOccurrences' => true));
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
             $prev = $wpdb->get_var($wpdb->prepare(
                 "SELECT id FROM {$table} WHERE userId = %d AND siteId = %d AND postId = 0 AND target = 'heading' AND matchText = %s",

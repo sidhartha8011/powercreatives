@@ -350,6 +350,34 @@ heading scan used to provide are resolved AT EDIT TIME by the writers' own
 text/elId search (the exact matching they already perform to apply an edit);
 the hub's inventory supplies `{text, level, occurrence}` identity only.
 
+### Instruction stream v2.2 (FROZEN 2026-07-10 — ADDITIVE; the dynamic-alignment laws)
+
+Companion: `docs/GAP-ANALYSIS-DYNAMIC-ALIGNMENT-20260710.md`.
+
+- **One mechanism:** on v3 connectors EVERY heading edit is a dynamic rule —
+  the storage-rewriting path (`/replace-heading` + heading walkers + the hub's
+  writer-first branch) is DELETED, not deprecated.
+- **Scope-decision law:** a heading inside a chrome span (same spans the
+  paragraph scan strips) is SITE chrome → site-scope rule (postId 0),
+  `allOccurrences: true`, labeled site-wide in the UI. Every other heading is
+  PAGE content → post-scope rule keyed `{postId, matchText (normalized
+  ORIGINAL text), level, occurrence}`.
+- **Occurrence law (serving):** heading rules with `section.allOccurrences`
+  keep compiled-override semantics (every match, whole buffer). Without it,
+  serving replaces exactly the occurrence-th matching heading among CONTENT
+  blocks (chrome-excluded — the same identity space the hub's inventory
+  computes). Occurrence counts per (level, normalized ORIGINAL text) in
+  document order of the rules-input.
+- **Inventory law:** chrome headings are deduped (one row per site-wide item);
+  content headings are NEVER deduped — identical twins are separate rows, each
+  carrying its own occurrence, individually editable. Display-state matching
+  of heading instructions is occurrence-aware in the ORIGINAL-text space;
+  row occurrence for section keys stays in the DISPLAY-text space.
+- **Sanitization:** heading-rule `replacement` remains plain text
+  (sanitize_text_field on the connector, esc_html at serve).
+- v2.1 semantics (site scope storage/serving, heading-pass-first ordering,
+  schemaVersion 3) are unchanged.
+
 ### Deletions ledger (C3 — nothing else changes behavior)
 
 1. Connector: `/scan-headings`, `/scan-content` routes + `pcm_conn_parse_paragraph_nodes`.
