@@ -2445,11 +2445,19 @@ class PCM_SEO_Service
     // REMOTE HEADINGS (connected sites, via the connector)
     // =====================================================================
 
-    /** Every H1–H6 on a connected post — builder-aware via the connector's /scan-headings
-     *  (v2.1.7+), falling back to a post-body-only parse of content.raw on older connectors. */
-    public static function remote_get_headings(object $site, int $post_id, string $type): array
+    /** Every H1–H6 on a connected post. v3 connectors: ONE snapshot, parsed hub-side
+     *  (cleanup C2/C3 — /scan-headings no longer exists there). Pre-3.0 fleet:
+     *  builder-aware /scan-headings (v2.1.7+), then a post-body-only parse of
+     *  content.raw on older connectors. */
+    public static function remote_get_headings(object $site, int $post_id, string $type, ?int $user_id = null): array
     {
         self::ensure_sites_service();
+        $snap = self::remote_fetch_snapshot($site, $post_id);
+        if ($snap !== null && $snap['html'] !== '') {
+            $rules  = $user_id ? self::heading_instructions((int) $user_id, (int) $site->id, $post_id) : array();
+            $parsed = self::parse_page_snapshot($snap['html'], $rules);
+            return $parsed['headings'];
+        }
         $scan = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/scan-headings', array('post_id' => $post_id));
         if (!is_wp_error($scan) && (int) ($scan['status'] ?? 0) < 300 && is_array($scan['body']['headings'] ?? null)) {
             $out = array(); $i = 0;
@@ -2540,7 +2548,7 @@ class PCM_SEO_Service
     public static function remote_update_heading(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level, ?int $user_id = null)
     {
         self::ensure_sites_service();
-        $headings = self::remote_get_headings($site, $post_id, $type);
+        $headings = self::remote_get_headings($site, $post_id, $type, $user_id);
         if (!isset($headings[$index])) {
             return new WP_Error('pcm_seo_heading_not_found', __('Heading not found — re-open and try again.', 'power-creatives'), array('status' => 404));
         }
@@ -2552,7 +2560,7 @@ class PCM_SEO_Service
         $old_norm = PCM_Text_Matcher::normalize((string) $headings[$index]['text']);
         $old_occ  = PCM_Text_Matcher::occurrence_of($texts, $index);
         $via      = '';
-        $result   = self::remote_update_heading_apply($site, $post_id, $type, $index, $text, $level, $headings, $via);
+        $result   = self::remote_update_heading_apply($site, $post_id, $type, $index, $text, $level, $headings, $via, $user_id);
         // Re-key on ANY successful edit — source OR override layer. Since 2.8.2 the
         // rules buffer runs AFTER the override layer, so an override edit ALSO
         // changes the heading text rules match against. ($via '' = no-op, skip.)
@@ -2570,7 +2578,7 @@ class PCM_SEO_Service
      *  behavior, extracted so the public method can re-key section rules on success.
      *  `$via` reports which layer took the edit: 'source' (raw content changed) or
      *  'override' (render-time layer; source unchanged) — the re-key decision. */
-    private static function remote_update_heading_apply(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level, array $headings, string &$via = '')
+    private static function remote_update_heading_apply(object $site, int $post_id, string $type, int $index, ?string $text, ?int $level, array $headings, string &$via = '', ?int $user_id = null)
     {
         $h = $headings[$index];
         // Shared-source headings (template / reusable block) edit their owning post, not the page.
@@ -2581,6 +2589,54 @@ class PCM_SEO_Service
         $old_level = (int) $h['level'];
         $new_level = ($level !== null) ? max(1, min(6, $level)) : $old_level;
         $new_text  = $text; // null = keep
+
+        // v3 SNAPSHOT row (no storage handles by design — handle-resolution law):
+        // writer-first, identity-only. The connector resolves the storage itself
+        // (builder widgets, inline markup, shared templates). replaced:0 = no
+        // storage form exists → the render-time layer (below) takes it.
+        if ((string) ($h['source'] ?? '') === 'snapshot') {
+            $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-heading', array(), array(
+                'post_id'  => $post_id,
+                'oldText'  => (string) $h['text'],
+                'oldLevel' => $old_level,
+                'newText'  => ($new_text !== null ? $new_text : (string) $h['text']),
+                'newLevel' => $new_level,
+            ), 60);
+            if (is_wp_error($rep)) {
+                return new WP_Error('pcm_seo_remote_heading', $rep->get_error_message(), array('status' => 502));
+            }
+            if ((int) ($rep['status'] ?? 0) >= 300) {
+                return new WP_Error('pcm_seo_remote_heading', sprintf(__('The connector rejected the heading edit (HTTP %d).', 'power-creatives'), (int) ($rep['status'] ?? 0)), array('status' => 502));
+            }
+            if ((int) ($rep['body']['replaced'] ?? 0) > 0) {
+                $via = 'source';
+                return self::remote_get_headings($site, $post_id, $type, $user_id);
+            }
+            // No storage form (theme/menu/plugin-rendered). On v3 this becomes a
+            // SERVED heading instruction — one render layer, no legacy option.
+            if ($user_id) {
+                $saved = self::save_heading_rule((int) $user_id, $site, (string) $h['text'], $old_level, $new_text, $new_level);
+                if ($saved instanceof WP_Error) {
+                    return $saved;
+                }
+                $via = 'override';
+                return self::remote_get_headings($site, $post_id, $type, $user_id);
+            }
+            // No user context (shouldn't happen from the UI) — legacy layer, honestly.
+            $via = 'override';
+            return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
+        }
+
+        // v3 OVERRIDE row = an active heading INSTRUCTION shaped this row (display-state
+        // law) — the edit updates the instruction itself, never the legacy option.
+        if ((string) ($h['source'] ?? '') === 'override' && $user_id && self::connector_rules_schema_version($site) >= 3) {
+            $saved = self::save_heading_rule((int) $user_id, $site, (string) $h['text'], $old_level, $new_text, $new_level);
+            if ($saved instanceof WP_Error) {
+                return $saved;
+            }
+            $via = 'override';
+            return self::remote_get_headings($site, $post_id, $type, $user_id);
+        }
 
         // RENDERED-ONLY heading (theme PHP / nav menu / widget title — no DB source anywhere), or one
         // already edited via the override layer: goes straight to the render-time override.
@@ -2687,6 +2743,19 @@ class PCM_SEO_Service
     public static function remote_get_content_nodes(object $site, int $post_id): array
     {
         self::ensure_sites_service();
+        // v3 connectors have no /scan-content — the nodes come from the snapshot parse.
+        $snap = self::remote_fetch_snapshot($site, $post_id);
+        if ($snap !== null) {
+            if ($snap['html'] !== '') {
+                $parsed = self::parse_page_snapshot($snap['html']);
+                return array('supported' => true, 'nodes' => $parsed['nodes']);
+            }
+            $out = array('supported' => true, 'nodes' => array());
+            if ($snap['error'] !== '') {
+                $out['error'] = $snap['error'];
+            }
+            return $out;
+        }
         $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/scan-content', array('post_id' => $post_id), null, 30);
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) === 404) {
             // Older connector (no scan-content) — the UI keeps its headings-only
@@ -2885,7 +2954,7 @@ class PCM_SEO_Service
             // The connector answered honestly (e.g. loopback_blocked) — say exactly that.
             return array('supported' => true, 'source' => 'snapshot', 'tier' => $snap['tier'], 'headings' => array(), 'nodes' => array(), 'error' => $snap['error']);
         }
-        $headings = self::remote_get_headings($site, $post_id, $type);
+        $headings = self::remote_get_headings($site, $post_id, $type, $user_id);
         $meta     = self::remote_get_content_nodes($site, $post_id);
         $out      = array(
             'supported' => (bool) $meta['supported'],
@@ -2913,12 +2982,19 @@ class PCM_SEO_Service
      */
     public static function connector_rules_schema_version(object $site): int
     {
+        // Per-request memo: several code paths check capability for the same
+        // site in one request (inventory, heading edit, rule save) — one GET.
+        static $memo = array();
+        $key = (int) $site->id;
+        if (isset($memo[$key])) {
+            return $memo[$key];
+        }
         self::ensure_sites_service();
         $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/rules');
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || empty($res['body']['supported'])) {
-            return 0;
+            return $memo[$key] = 0;
         }
-        return max(1, (int) ($res['body']['schemaVersion'] ?? 1));
+        return $memo[$key] = max(1, (int) ($res['body']['schemaVersion'] ?? 1));
     }
 
     /**
@@ -2936,10 +3012,14 @@ class PCM_SEO_Service
         // paragraph rules keep pushing v1, byte-identical to before (zero
         // regression on un-updated connectors).
         $needs_v2 = false;
+        $needs_v3 = ($post_id === 0); // site scope exists only in v3
         foreach ($rules as $r) {
-            if (in_array((string) ($r['target'] ?? ''), array('section', 'sectionInsert'), true)) {
+            $t = (string) ($r['target'] ?? '');
+            if ($t === 'section' || $t === 'sectionInsert') {
                 $needs_v2 = true;
-                break;
+            }
+            if ($t === 'heading') {
+                $needs_v3 = true; // SERVED heading rules exist only in v3
             }
         }
         $accepts = self::connector_rules_schema_version($site);
@@ -2947,6 +3027,13 @@ class PCM_SEO_Service
             return new WP_Error(
                 'pcm_seo_connector_no_rules',
                 __('This site’s connector doesn’t support dynamic rules yet (needs v2.7.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+        if ($needs_v3 && $accepts < 3) {
+            return new WP_Error(
+                'pcm_seo_connector_no_heading_rules',
+                __('This site’s connector doesn’t support heading instructions yet (needs v3.0.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
                 array('status' => 409)
             );
         }
@@ -2958,7 +3045,7 @@ class PCM_SEO_Service
             );
         }
         $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/rules', array(), array(
-            'schemaVersion' => $needs_v2 ? 2 : 1,
+            'schemaVersion' => $needs_v3 ? 3 : ($needs_v2 ? 2 : 1),
             'postId'        => $post_id,
             'rules'         => array_values($rules),
         ), 60);
@@ -3039,6 +3126,15 @@ class PCM_SEO_Service
                 } else {
                     $out['section']['position'] = (string) ($ctx['position'] ?? 'after');
                 }
+                $out['anchor'] = null;
+            } elseif ($target === 'heading') {
+                // v3: heading instruction (compiled-override semantics) —
+                // anchorContext = {level, newLevel, scope, originalText}.
+                $out['section'] = array(
+                    'level'    => (int) ($ctx['level'] ?? 0),
+                    'newLevel' => (int) ($ctx['newLevel'] ?? ($ctx['level'] ?? 0)),
+                );
+                $out['scope']  = ((string) ($ctx['scope'] ?? 'post')) === 'site' ? 'site' : 'post';
                 $out['anchor'] = null;
             } else {
                 $out['anchor'] = $ctx;
@@ -3530,6 +3626,85 @@ class PCM_SEO_Service
             $out['rule'] = array('id' => $rule_id, 'matchText' => $match_text, 'occurrence' => $occurrence, 'level' => $level, 'position' => $position, 'active' => true);
         }
         return $out;
+    }
+
+    /**
+     * Save a SITE-SCOPE heading instruction (instruction stream v2.1 — the
+     * compiled-override successor): UPSERT keyed like the legacy override
+     * endpoint (re-edit matches the CURRENT value first, then the original);
+     * editing back to the exact original deletes the rule (clean revert);
+     * push-fail rolls back. Site scope = postId 0, occurrence 0 (heading
+     * instructions apply to EVERY match — override semantics).
+     */
+    public static function save_heading_rule(int $user_id, object $site, string $old_text, int $old_level, ?string $new_text, int $new_level)
+    {
+        global $wpdb;
+        $table    = PCM_Schema::table('seo_dynamic_rules');
+        $site_id  = (int) $site->id;
+        $old_text = trim($old_text);
+        $new_t    = trim((string) ($new_text !== null && $new_text !== '' ? $new_text : $old_text));
+        if ($old_text === '' || $old_level < 1 || $old_level > 6 || $new_level < 1 || $new_level > 6) {
+            return new WP_Error('pcm_seo_rule_no_match', __('The heading has no matchable text.', 'power-creatives'), array('status' => 400));
+        }
+        if (self::connector_rules_schema_version($site) < 3) {
+            return new WP_Error(
+                'pcm_seo_connector_no_heading_rules',
+                __('This site’s connector doesn’t support heading instructions yet (needs v3.0.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $rows = (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT id, matchText, replacement, anchorContext FROM {$table} WHERE userId = %d AND siteId = %d AND postId = 0 AND target = 'heading'",
+            $user_id,
+            $site_id
+        ), ARRAY_A);
+        $prev = null;
+        foreach ($rows as $r) {
+            $ctx = json_decode((string) ($r['anchorContext'] ?? ''), true);
+            $ctx = is_array($ctx) ? $ctx : array();
+            // Re-edit of an already-instructed heading: the incoming "old" is the
+            // rule's CURRENT value (what the user sees).
+            if ((string) $r['replacement'] === $old_text && (int) ($ctx['newLevel'] ?? 0) === $old_level) {
+                $prev = array('row' => $r, 'ctx' => $ctx);
+                break;
+            }
+            // Same ORIGINAL edited again (stale outline raced the last edit).
+            if ((string) $r['matchText'] === PCM_Text_Matcher::normalize($old_text) && (int) ($ctx['level'] ?? 0) === $old_level) {
+                $prev = array('row' => $r, 'ctx' => $ctx);
+                break;
+            }
+        }
+        $snapshot = self::post_rule_rows($user_id, $site_id, 0);
+        if ($prev) {
+            $ctx      = $prev['ctx'];
+            $original = (string) ($ctx['originalText'] ?? '');
+            if ($original !== '' && $new_t === $original && $new_level === (int) ($ctx['level'] ?? 0)) {
+                // Clean revert: back to the exact original → the rule dies.
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->delete($table, array('id' => (int) $prev['row']['id']), array('%d'));
+            } else {
+                $ctx['newLevel'] = $new_level;
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update($table, array('replacement' => $new_t, 'anchorContext' => wp_json_encode($ctx), 'active' => 1), array('id' => (int) $prev['row']['id']), array('%s', '%s', '%d'), array('%d'));
+            }
+        } else {
+            if ($new_t === $old_text && $new_level === $old_level) {
+                return array('stored' => count($snapshot), 'noop' => true); // no-op edit, no rule
+            }
+            $ctx = array('level' => $old_level, 'newLevel' => $new_level, 'scope' => 'site', 'originalText' => $old_text);
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->insert($table, array(
+                'userId' => $user_id, 'siteId' => $site_id, 'postId' => 0,
+                'target' => 'heading', 'matchText' => PCM_Text_Matcher::normalize($old_text), 'occurrence' => 0,
+                'replacement' => $new_t, 'anchorContext' => wp_json_encode($ctx), 'active' => 1,
+            ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
+        }
+        $push = self::push_current_rules_or_rollback($user_id, $site, 0, $snapshot);
+        if ($push instanceof WP_Error) {
+            return $push;
+        }
+        return array('stored' => (int) ($push['stored'] ?? 0));
     }
 
     /**

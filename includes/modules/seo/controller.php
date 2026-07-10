@@ -351,7 +351,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
-        return $this->success(array('headings' => PCM_SEO_Service::remote_get_headings($site, absint($request->get_param('post')), $type)));
+        return $this->success(array('headings' => PCM_SEO_Service::remote_get_headings($site, absint($request->get_param('post')), $type, (int) $user->id)));
     }
 
     /** GET /seo/sites/{id}/content/{post}/content-nodes — the connected post's paragraph
