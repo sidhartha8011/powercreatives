@@ -246,6 +246,133 @@ multi-column builder sections re-flow into the surviving blocks; inserted
 sections inherit the container they land in. The authenticated preview modal
 shows the served truth immediately.
 
+## Cleanup contracts v3 (FROZEN 2026-07-09 — one brain, dumb frozen connector)
+
+Companion: `docs/CLEANUP-GAP-ANALYSIS-20260709.md`. Target connector: 3.0.0
+(four dumb jobs, then frozen). Everything below is the frozen law for steps
+C1–C5; hub keeps pre-3.0 fallbacks until the fleet reads 3.0.0, then drops
+them in one gated follow-up commit.
+
+### Snapshot endpoint v1 (connector 3.0.0 — replaces BOTH scanners' parsing)
+
+`GET /pcm-conn/v1/snapshot?post_id=N` → `{ html, tier }`.
+
+- **Definition: the snapshot is the page as RULES-INPUT** — the exact HTML the
+  rules layer would receive at serve time (rule serving disabled on the
+  snapshot request via `?pcm_snap`, same exclusion law as the old scan params).
+  Today (overrides still on-site) that is raw + override layer; after a site's
+  C4 migration it is the raw render. The definition survives the migration
+  unchanged because it names the LAYER, not the content.
+- Tiers preserved verbatim from scan-content v1 (they are WAF/host survival,
+  not parsing): `rendered` (hardened single-flight loopback, 8s, `<body>` on),
+  `content-rendered` (in-process `the_content`), `content` (raw storage +
+  `wpautop`), else `{ html:'', tier:'content', error:'loopback_blocked' }` —
+  honest, HTTP 200.
+- The connector does NOT parse. No node lists, no chrome stripping, no anchor
+  computation — the hub does all of it (`PCM_SEO_Service::parse_page_snapshot`
+  using the fixture-tested `PCM_Text_Matcher` family). Chrome stripping,
+  paragraph/heading/link inventory, section membership, occurrences and
+  fingerprints are computed hub-side FROM THIS ONE DOCUMENT — one parse, one
+  identity source. `/scan-headings` and `/scan-content` are DELETED in 3.0.0
+  (hub falls back to them only for pre-3.0 connectors).
+- Snapshot response is cached connector-side under the same transient/busting
+  law as scan-content (save_post + rules push bust it); TTL is config-driven
+  (see config schema v1).
+
+### Instruction stream v2.1 (ADDITIVE to rule schema v2)
+
+- **`target:'heading'` is now served** (it was reserved since v1). Semantics =
+  compiled legacy override, EXACTLY: `match:{text:<normalized ORIGINAL text>,
+  occurrence:0}` (heading rules apply to EVERY match — override semantics,
+  occurrence carried but ignored), `section:{level:<original level>,
+  newLevel:<target level>}`, `replacement` = the new heading TEXT (plain;
+  serving emits `esc_html(replacement)` inside `<h{newLevel}>`, preserving the
+  original block's attributes — byte-identical output to the old override
+  buffer).
+- **Scope:** rules now carry `scope:'post'|'site'` (absent = 'post', fully
+  backward-compatible). Site-scope rules are pushed with `postId: 0`, stored
+  connector-side in `pcm_conn_rules_site`, and served on EVERY front-end
+  render (not just singular) — the old override layer's reach. Only 'heading'
+  targets may be site-scope (a site-wide paragraph/section rule is undefined
+  and rejected).
+- **Order inside the ONE serving pass:** heading rules FIRST (site-scope, then
+  post-scope), then section replaces → section inserts → paragraph rules.
+  Rationale (5b's successor): section/paragraph identities are computed by the
+  hub on the DISPLAY state (headings as instructed), so serving must transform
+  headings before matching sections. One buffer, priority 0; the prio-1
+  override buffer becomes inert per-site after C4 (empty list early-return)
+  and its code is deleted in the C5 follow-up.
+- Capability: connector 3.0.0 answers `schemaVersion: 3` on GET /rules. Hub
+  pushes v3 only when the set contains heading targets or site scope;
+  section-only sets keep v2; paragraph-only sets keep v1 (each older shape
+  byte-identical — zero regression on an un-updated fleet).
+- Hub storage: heading rules live in `seo_dynamic_rules` like every rule
+  (`target` 'heading', `matchText` = normalized original, `occurrence` 0,
+  `replacement` = new text, `anchorContext` JSON `{level, newLevel,
+  scope:'site'}`, `postId` 0 for site scope). NO DB bump.
+- **Display-state law (one brain):** the hub's snapshot parse applies the
+  site's ACTIVE heading rules to the parsed inventory in memory before
+  computing section membership/fingerprints and before returning rows to the
+  UI (heading rows show current text, tagged source 'override' exactly as the
+  old scan-side collapse did). The connector never reports display state; it
+  only serves it.
+
+### Config schema v1 (connector 3.0.0 — hub-pushed tunables, D4 dies)
+
+`GET|POST /pcm-conn/v1/config` (same auth as every route).
+
+- POST body (partial updates merge): `{ snapshotCacheTtl: sec,
+  loopbackTimeout: sec, loopbackLockTtl: sec, chromeRegions: [tag,…],
+  statsThrottle: sec, overridesCap: n }` → stored in option
+  `pcm_conn_config`; every consumer reads via `pcm_conn_cfg(key)` = stored
+  value else CODE DEFAULT (today's literals become the defaults — a connector
+  that never received config behaves byte-identically).
+- GET returns `{ config: <effective>, overrides: [...],
+  version: PCM_CONN_VERSION }` — `overrides` EXPOSES the legacy
+  `pcm_conn_heading_overrides` list (the C4 migration's read path; today
+  nothing can read it).
+- POST also accepts `{ clearOverrides: true }` — executed ONLY by the C4
+  migration after per-site verification; an empty overrides list makes the
+  legacy buffer a no-op by its existing early-return.
+- The hub is the single editor of config values (hub option
+  `pcm_seo_connector_config`, seeded with the same defaults); pushes ride the
+  existing site channel pattern.
+
+### Handle-resolution law (why the builder walkers survive in a dumb connector)
+
+Storage writers (`/replace-heading`, `/replace-url`, `/replace-anchor`, meta)
+are job 2 and KEEP their builder-walking code (Elementor/Bricks/…/Brizy
+handlers) — reading/writing builder STORAGE is on-site intelligence by nature
+and was never mirrored hub-side. What dies is only their REST scanning surface
+(`/scan-headings`, `/scan-content`) and every rendered-HTML parse on the
+connector. Edit handles (`elId`/`textKey`/`tagKey`/`sourcePostId`) that the
+heading scan used to provide are resolved AT EDIT TIME by the writers' own
+text/elId search (the exact matching they already perform to apply an edit);
+the hub's inventory supplies `{text, level, occurrence}` identity only.
+
+### Deletions ledger (C3 — nothing else changes behavior)
+
+1. Connector: `/scan-headings`, `/scan-content` routes + `pcm_conn_parse_paragraph_nodes`.
+2. Hub `PCM_Text_Matcher`: `replace_block`, `apply_section_rule`,
+   `apply_section_insert`, `locate_section`, `section_body_indices` — serving
+   logic, connector-only from 3.0.0. The PARSING/identity primitives
+   (`normalize`, `visible_text`, `fingerprint`, `parse_blocks`,
+   `chrome_spans`, `content_blocks`, `parse_replacement_units`,
+   `occurrence_of`) STAY hub-side — the hub parses snapshots and computes
+   identity; the connector's serving copies of the primitives are enforced
+   behavior-identical by the COMMITTED extraction harness
+   (`tests/standalone/`), which runs the connector's REAL extracted source
+   against the hub fixtures. The hand-maintained "sync contract" is replaced
+   by machine enforcement.
+3. Hub seohub: the fossil v1.0.1 `connector_php()` template — the per-tenant
+   download route serves the REAL connector artifact instead.
+4. After C4 per-site verification + C5 fleet convergence (owner-gated
+   follow-up): the connector's override buffer + `/override-heading` route,
+   the hub's pre-3.0 fallback paths (`remote_get_headings` scan/raw-parse
+   fallbacks, `remote_get_content_nodes`, schema v1/v2 push shapes), and
+   `remote_apply_heading_override` (heading edits then route via heading
+   instructions).
+
 ## Phase 1 — Approval rails (backlog item 1, unchanged)
 
 Staging table → envelope → approvals adapter registry → Before/After cards →
