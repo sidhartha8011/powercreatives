@@ -6910,3 +6910,34 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   -> live e2e -> run Migrate per site -> after the WHOLE fleet reads 3.0.0, the
   follow-up commit drops pre-3.0 hub fallbacks + the legacy override buffer +
   /override-heading + remote_apply_heading_override. NO PUSH (owner law).
+
+## 2026-07-10 - [DYNAMIC ALIGNMENT P1-P3] (headings fully dynamic + served-truth editor)
+- Owner GO on GAP-ANALYSIS-DYNAMIC-ALIGNMENT-20260710.md (which superseded+
+  deleted the headings-only analysis). Contracts v2.2 frozen (additive).
+- P1 (1c69e63->3d14da1) scope+flip: inventory tags chrome/content scope;
+  content twins NEVER deduped (own occurrence, individually editable); dual
+  identity spaces (original=rule matching, display=section keys); heading
+  edits are ALWAYS dynamic rules on v3 (writer-first source-write path
+  DELETED); save_heading_rule identity-based (postId 0/N + occurrence);
+  connector 3.0.1 occurrence-aware heading pass (content-blocks identity,
+  allOccurrences keeps override semantics); /replace-heading + 6 heading
+  walkers DELETED; C4 migration writes allOccurrences.
+- P2 (e1a82b1->4089012) one-owner: heading edit on a section-owned heading
+  rewrites the rule's FIRST unit (update_section_owned_heading ->
+  update_owned_heading_unit); save_section_rule absorbs the feeding heading
+  rule (its original identity becomes the section's match key). Chains
+  impossible to create.
+- P3 (2d3540f->efbe63e) served-truth editor: snapshot mode=served (explicit
+  view marker - a 3.0.0 connector can never pass off the input view; tier-2/3
+  fallbacks apply stored rules; served cache version-stamped, bumped on every
+  rules push + save_post); hub attributes every served row to its producing
+  rule (unit-section split, SLICES included); slice edits via kind:slice
+  (save_section_slice); frontend rows = served truth, rule-born sections open
+  their slice, previews from paragraphs only (concatenation bug dead),
+  synthetic NEW rows off in served view.
+- VERIFIED (this box): harness 39/39 (occurrence twins, chrome isolation,
+  ordering) - php -l every touched file + extracted generated template - tsc
+  59 baseline throughout - build OK x3.
+- OWNER: update powerleads to 3.0.1, test per handover product checklist. The
+  stale test rules (2,5,9 + 6/7 chain) now VISIBLE correctly in the outline;
+  chain resolves on next save of that section or manual cleanup. NO PUSH.
