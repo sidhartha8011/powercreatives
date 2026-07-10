@@ -1835,7 +1835,11 @@ function pcm_conn_apply_section_insert($html, $match_text, $level, $position, $o
 }
 // Snapshot cache: busted whenever the post changes — a stale snapshot must
 // never outlive an edit (rules POST also busts it, see the /rules route).
-add_action('save_post', function ($pid) { delete_transient('pcm_conn_snap_' . (int) $pid); });
+// The served view is version-stamped; bumping the version retires it too.
+add_action('save_post', function ($pid) {
+    delete_transient('pcm_conn_snap_' . (int) $pid);
+    update_option('pcm_conn_view_ver', (int) get_option('pcm_conn_view_ver', 0) + 1, false);
+});
 /** The post's stored rule set (rule schema v1 rows), [] when none. */
 function pcm_conn_rules_for($pid) {
     $r = get_option('pcm_conn_rules_' . (int) $pid, array());
@@ -2073,6 +2077,7 @@ add_action('rest_api_init', function () {
                 }
                 $clean[] = $row;
             }
+            update_option('pcm_conn_view_ver', (int) get_option('pcm_conn_view_ver', 0) + 1, false); // served views are stale
             if ($site_scope) {
                 if (empty($clean)) { delete_option('pcm_conn_rules_site'); }
                 else { update_option('pcm_conn_rules_site', array_values($clean), true); }
@@ -2084,27 +2089,37 @@ add_action('rest_api_init', function () {
             return array('stored' => count($clean), 'schemaVersion' => 1);
         }),
     ));
-    // Page snapshot v1 (3.0.0 — replaces BOTH scanners' parsing): the page as
-    // RULES-INPUT, raw. The connector does NOT parse — the hub does all of it
-    // from this one document. Tiers preserved verbatim from scan-content (they
-    // are WAF/host survival): rendered loopback → in-process the_content →
-    // raw storage + wpautop → honest loopback_blocked.
+    // Page snapshot v1 (3.0.0 — replaces BOTH scanners' parsing): the connector
+    // does NOT parse — the hub does all of it from this one document. TWO views
+    // (v2.2): mode=input (default) = the page as RULES-INPUT (?pcm_snap is
+    // serving-excluded — exactly what rules match against); mode=served = what
+    // a visitor sees (?pcm_view is NOT excluded, rules apply). Tiers preserved
+    // verbatim from scan-content (WAF/host survival): rendered loopback →
+    // in-process the_content → raw storage + wpautop → honest loopback_blocked.
+    // Served-mode tier-2/3 fallbacks apply the stored rules to the fallback
+    // render so WAF-blocked sites stay honest.
     register_rest_route('pcm-conn/v1', '/snapshot', array(
         'methods' => 'GET',
         'permission_callback' => $perm,
         'callback' => function ($req) {
             $pid = absint($req->get_param('post_id'));
             if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            $served = ((string) $req->get_param('mode')) === 'served';
             // Cache first: repeat outline-opens must not cost a loopback.
-            // Busted on save_post + every rules push; TTL is hub-pushed config.
-            $cache_key = 'pcm_conn_snap_' . $pid;
+            // Input view busts on save_post + the post's rules push. The SERVED
+            // view is version-stamped instead: ANY rules push (site rules touch
+            // every page) bumps pcm_conn_view_ver, old entries expire by TTL.
+            $cache_key = $served
+                ? 'pcm_conn_snap_served_' . (int) get_option('pcm_conn_view_ver', 0) . '_' . $pid
+                : 'pcm_conn_snap_' . $pid;
             $cached = get_transient($cache_key);
             if (is_array($cached)) { return $cached; }
             $result = null;
             // Tier 1 — rendered page via the LOCKED loopback (TRUE serving order,
-            // incl. builder output; ?pcm_snap excludes rule serving so the snapshot
-            // is exactly what rules match against).
-            $live = pcm_conn_loopback_fetch($pid, 'pcm_snap', 'snapshot');
+            // incl. builder output).
+            $live = $served
+                ? pcm_conn_loopback_fetch($pid, 'pcm_view', 'snapshot-served')
+                : pcm_conn_loopback_fetch($pid, 'pcm_snap', 'snapshot');
             if ($live !== '') {
                 $result = array('html' => $live, 'tier' => 'rendered');
             } else {
@@ -2131,7 +2146,18 @@ add_action('rest_api_init', function () {
                         $result['error'] = 'loopback_blocked';
                     }
                 }
+                if ($served && trim((string) $result['html']) !== '' && get_option('pcm_conn_rules_off') !== '1') {
+                    try {
+                        $result['html'] = pcm_conn_apply_rules((string) $result['html'], array_merge(pcm_conn_rules_site(), pcm_conn_rules_for($pid)), $pid);
+                    } catch (\Throwable $e) {
+                        // Fail-to-fallback-render — a display view must never error.
+                    }
+                }
             }
+            // Explicit view marker: a pre-3.0.1 connector ignores ?mode and would
+            // answer with the INPUT view — the hub requires this marker before
+            // trusting a response as served.
+            $result['view'] = $served ? 'served' : 'input';
             set_transient($cache_key, $result, max(1, (int) pcm_conn_cfg('snapshotCacheTtl')));
             return $result;
         },

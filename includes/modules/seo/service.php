@@ -2495,11 +2495,9 @@ class PCM_SEO_Service
     public static function remote_get_headings(object $site, int $post_id, string $type, ?int $user_id = null): array
     {
         self::ensure_sites_service();
-        $snap = self::remote_fetch_snapshot($site, $post_id);
-        if ($snap !== null && $snap['html'] !== '') {
-            $rules  = $user_id ? self::heading_instructions((int) $user_id, (int) $site->id, $post_id) : array();
-            $parsed = self::parse_page_snapshot($snap['html'], $rules);
-            return $parsed['headings'];
+        $inv = self::served_inventory($site, $post_id, $user_id);
+        if ($inv !== null) {
+            return $inv['headings'];
         }
         $scan = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/scan-headings', array('post_id' => $post_id));
         if (!is_wp_error($scan) && (int) ($scan['status'] ?? 0) < 300 && is_array($scan['body']['headings'] ?? null)) {
@@ -2642,9 +2640,20 @@ class PCM_SEO_Service
                 return new WP_Error('pcm_seo_no_user', __('Heading edits need a signed-in hub user.', 'power-creatives'), array('status' => 401));
             }
             $post_scope = ((string) $h['scope']) !== 'site';
-            if ($post_scope) {
-                // One-owner law: a section rule already owning this heading
-                // takes the edit; never stack a heading rule on top of it.
+            // One-owner law: a section/insert rule already owning this heading
+            // takes the edit; never stack a heading rule on top of it. Served
+            // rows carry the owner directly (attribution); input-view rows
+            // resolve it by identity.
+            $att = (isset($h['rule']) && is_array($h['rule'])) ? $h['rule'] : null;
+            if ($att !== null && in_array((string) ($att['target'] ?? ''), array('section', 'sectionInsert'), true)) {
+                $owned = self::update_owned_heading_unit((int) $user_id, $site, (int) ($att['id'] ?? 0), (int) ($att['unitFrom'] ?? 0), (string) $h['text'], $new_text, $new_level);
+                if ($owned instanceof WP_Error) {
+                    return $owned;
+                }
+                $via = 'override';
+                return self::remote_get_headings($site, $post_id, $type, $user_id);
+            }
+            if ($post_scope && $att === null) {
                 $owned = self::update_section_owned_heading((int) $user_id, $site, $post_id, $h, $new_text, $new_level);
                 if ($owned !== null) {
                     if ($owned instanceof WP_Error) {
@@ -2775,15 +2784,11 @@ class PCM_SEO_Service
     {
         self::ensure_sites_service();
         // v3 connectors have no /scan-content — the nodes come from the snapshot parse.
-        $snap = self::remote_fetch_snapshot($site, $post_id);
-        if ($snap !== null) {
-            if ($snap['html'] !== '') {
-                $parsed = self::parse_page_snapshot($snap['html']);
-                return array('supported' => true, 'nodes' => $parsed['nodes']);
-            }
-            $out = array('supported' => true, 'nodes' => array());
-            if ($snap['error'] !== '') {
-                $out['error'] = $snap['error'];
+        $inv = self::served_inventory($site, $post_id, null);
+        if ($inv !== null) {
+            $out = array('supported' => true, 'nodes' => $inv['nodes']);
+            if ($inv['error'] !== '') {
+                $out['error'] = $inv['error'];
             }
             return $out;
         }
@@ -2812,25 +2817,231 @@ class PCM_SEO_Service
     // =====================================================================
 
     /**
-     * Fetch a v3 connector's page snapshot — the page as RULES-INPUT
-     * (`{html, tier[, error]}`), or NULL when the connector predates 3.0.0
-     * (callers compose from the legacy scanners instead).
+     * Fetch a v3 connector's page snapshot (`{html, tier[, error]}`), or NULL
+     * when the connector predates 3.0.0 (callers compose from the legacy
+     * scanners instead). Two views (contracts v2.2): 'input' = the page as
+     * RULES-INPUT (identity space), 'served' = what a visitor sees.
      */
-    public static function remote_fetch_snapshot(object $site, int $post_id): ?array
+    public static function remote_fetch_snapshot(object $site, int $post_id, string $mode = 'input'): ?array
     {
         self::ensure_sites_service();
         if (self::connector_rules_schema_version($site) < 3) {
             return null;
         }
-        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/snapshot', array('post_id' => $post_id), null, 30);
+        $args = array('post_id' => $post_id);
+        if ($mode === 'served') {
+            $args['mode'] = 'served';
+        }
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/snapshot', $args, null, 30);
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
             return null;
         }
         return array(
             'html'  => (string) ($res['body']['html'] ?? ''),
             'tier'  => (string) ($res['body']['tier'] ?? ''),
+            // 3.0.1 marks its view; a 3.0.0 connector ignores ?mode entirely —
+            // the missing marker tells callers the served view is unavailable.
+            'view'  => (string) ($res['body']['view'] ?? 'input'),
             'error' => isset($res['body']['error']) ? (string) $res['body']['error'] : '',
         );
+    }
+
+    /** Every ACTIVE rule shaping this post's served view (site scope included). */
+    private static function rule_rows_for_display(int $user_id, int $site_id, int $post_id): array
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_dynamic_rules');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        return (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT id, postId, target, matchText, occurrence, replacement, anchorContext, active FROM {$table} WHERE userId = %d AND siteId = %d AND postId IN (0, %d) AND active = 1 ORDER BY id ASC",
+            $user_id,
+            $site_id,
+            $post_id
+        ), ARRAY_A);
+    }
+
+    /**
+     * ATTRIBUTION (served-truth law, contracts v2.2): map every served row to
+     * the rule that produced it. Section/sectionInsert replacements are split
+     * into UNIT-SECTIONS (each heading unit starts one); a served section
+     * matches a unit-section on (normalized heading, level, paragraph
+     * fingerprint) — the row then carries `rule: {id, target, unitFrom,
+     * unitTo, whole, sliceHtml}` and the editor edits that slice. Heading
+     * rules attribute by their output (replacement text + newLevel);
+     * paragraph rules mark their node `optimized`. Unmatched rows are
+     * ORIGINAL content — their identity fields (computed from the served
+     * parse) equal the rules-input identity by definition.
+     */
+    private static function attribute_inventory(array $headings, array $nodes, array $rules): array
+    {
+        // Display sections: contiguous same-anchor runs; the k-th run belongs
+        // to the k-th heading with that key (the owner-locked grouping law).
+        $runs = array();
+        foreach ($nodes as $n) {
+            $key  = (isset($n['anchor']) && is_array($n['anchor'])) ? ($n['anchor']['level'] . '|' . $n['anchor']['text']) : '';
+            $last = count($runs) - 1;
+            if ($last >= 0 && $runs[$last]['key'] === $key) {
+                $runs[$last]['paras'][] = $n;
+            } else {
+                $runs[] = array('key' => $key, 'paras' => array($n));
+            }
+        }
+        $heads_by_key = array();
+        foreach ($headings as $i => $h) {
+            if (((string) ($h['scope'] ?? 'post')) === 'site') {
+                continue;
+            }
+            $heads_by_key[$h['level'] . '|' . PCM_Text_Matcher::normalize((string) $h['text'])][] = $i;
+        }
+        $run_for = array();
+        $run_occ = array();
+        foreach ($runs as $r) {
+            if ($r['key'] === '') {
+                continue;
+            }
+            $occ               = isset($run_occ[$r['key']]) ? $run_occ[$r['key']] : 0;
+            $run_occ[$r['key']] = $occ + 1;
+            if (isset($heads_by_key[$r['key']][$occ])) {
+                $run_for[$heads_by_key[$r['key']][$occ]] = $r['paras'];
+            }
+        }
+        // Rule outputs.
+        $unitmaps  = array();
+        $headrules = array();
+        $pararules = array();
+        foreach ($rules as $r) {
+            $t = (string) ($r['target'] ?? '');
+            if ($t === 'section' || $t === 'sectionInsert') {
+                $units = PCM_Text_Matcher::parse_replacement_units((string) $r['replacement']);
+                $secs  = array();
+                $cur   = null;
+                foreach ($units as $ui => $u) {
+                    if (preg_match('/^h([1-6])$/', (string) $u['tag'], $m)) {
+                        if ($cur !== null) {
+                            $secs[] = $cur;
+                        }
+                        $cur = array(
+                            'from'   => $ui,
+                            'to'     => $ui,
+                            'level'  => (int) $m[1],
+                            'norm'   => PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text((string) $u['inner'])),
+                            'ptexts' => array(),
+                        );
+                    } elseif ($cur !== null) {
+                        $cur['to'] = $ui;
+                        if ((string) $u['tag'] === 'p') {
+                            $cur['ptexts'][] = PCM_Text_Matcher::visible_text((string) $u['inner']);
+                        }
+                    }
+                }
+                if ($cur !== null) {
+                    $secs[] = $cur;
+                }
+                $unitmaps[] = array('rule' => $r, 'sections' => $secs, 'unitCount' => count($units), 'units' => $units);
+            } elseif ($t === 'heading') {
+                $ctx         = json_decode((string) ($r['anchorContext'] ?? ''), true);
+                $ctx         = is_array($ctx) ? $ctx : array();
+                $headrules[] = array(
+                    'id'    => (int) $r['id'],
+                    'norm'  => PCM_Text_Matcher::normalize((string) $r['replacement']),
+                    'level' => (int) ($ctx['newLevel'] ?? 0),
+                    'scope' => ((string) ($ctx['scope'] ?? 'post')) === 'site' ? 'site' : 'post',
+                );
+            } elseif ($t === 'paragraph') {
+                $pararules[] = array('id' => (int) $r['id'], 'norm' => PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text((string) $r['replacement'])));
+            }
+        }
+        foreach ($headings as $i => $h) {
+            $norm    = PCM_Text_Matcher::normalize((string) $h['text']);
+            $is_site = ((string) ($h['scope'] ?? 'post')) === 'site';
+            if (!$is_site) {
+                $paras = isset($run_for[$i]) ? $run_for[$i] : array();
+                $fp    = PCM_Text_Matcher::fingerprint(array_map(static fn($p) => (string) $p['text'], $paras));
+                $hit   = null;
+                foreach ($unitmaps as $um) {
+                    foreach ($um['sections'] as $sec) {
+                        if ($sec['level'] !== (int) $h['level'] || $sec['norm'] !== $norm || PCM_Text_Matcher::fingerprint($sec['ptexts']) !== $fp) {
+                            continue;
+                        }
+                        $slice = '';
+                        for ($ui = $sec['from']; $ui <= $sec['to']; $ui++) {
+                            $slice .= $um['units'][$ui]['html'];
+                        }
+                        $hit = array(
+                            'id'        => (int) $um['rule']['id'],
+                            'target'    => (string) $um['rule']['target'],
+                            'unitFrom'  => (int) $sec['from'],
+                            'unitTo'    => (int) $sec['to'],
+                            'whole'     => ($sec['from'] === 0 && $sec['to'] === $um['unitCount'] - 1),
+                            'sliceHtml' => $slice,
+                        );
+                        break 2;
+                    }
+                }
+                if ($hit !== null) {
+                    $headings[$i]['rule']        = $hit;
+                    $headings[$i]['source']      = 'override';
+                    $headings[$i]['sourceType']  = 'override';
+                    $headings[$i]['sourceLabel'] = __('Optimized (render-time, this page)', 'power-creatives');
+                    continue;
+                }
+            }
+            foreach ($headrules as $hr) {
+                if (($hr['scope'] === 'site') !== $is_site || $hr['level'] !== (int) $h['level'] || $hr['norm'] !== $norm) {
+                    continue;
+                }
+                $headings[$i]['rule']        = array('id' => $hr['id'], 'target' => 'heading');
+                $headings[$i]['source']      = 'override';
+                $headings[$i]['sourceType']  = 'override';
+                $headings[$i]['sourceLabel'] = $is_site
+                    ? __('Site-wide override (render-time)', 'power-creatives')
+                    : __('Optimized (render-time, this page)', 'power-creatives');
+                break;
+            }
+        }
+        foreach ($nodes as $j => $n) {
+            $pn = PCM_Text_Matcher::normalize((string) $n['text']);
+            foreach ($pararules as $pr) {
+                if ($pr['norm'] === $pn) {
+                    $nodes[$j]['optimized'] = true;
+                    $nodes[$j]['ruleId']    = $pr['id'];
+                    break;
+                }
+            }
+        }
+        return array('headings' => $headings, 'nodes' => $nodes);
+    }
+
+    /**
+     * The SERVED-truth inventory (v3 connectors): parse the served view, map
+     * every row to its producing rule. Falls back to the rules-input view +
+     * display-state law when the served fetch fails (a display view may be
+     * stale or missing, never wrong-serving). NULL = pre-v3 connector.
+     */
+    private static function served_inventory(object $site, int $post_id, ?int $user_id): ?array
+    {
+        $served = self::remote_fetch_snapshot($site, $post_id, 'served');
+        if ($served === null) {
+            return null;
+        }
+        if ($served['view'] !== 'served') {
+            // 3.0.0 connector (no served view yet): honest input-view fallback.
+            $served['html'] = '';
+        }
+        if ($served['html'] !== '') {
+            $parsed = self::parse_page_snapshot($served['html']);
+            if ($user_id) {
+                $parsed = self::attribute_inventory($parsed['headings'], $parsed['nodes'], self::rule_rows_for_display((int) $user_id, (int) $site->id, $post_id));
+            }
+            return array('view' => 'served', 'tier' => $served['tier'], 'headings' => $parsed['headings'], 'nodes' => $parsed['nodes'], 'error' => '');
+        }
+        $in = self::remote_fetch_snapshot($site, $post_id, 'input');
+        if ($in !== null && $in['html'] !== '') {
+            $rules  = $user_id ? self::heading_instructions((int) $user_id, (int) $site->id, $post_id) : array();
+            $parsed = self::parse_page_snapshot($in['html'], $rules);
+            return array('view' => 'input', 'tier' => $in['tier'], 'headings' => $parsed['headings'], 'nodes' => $parsed['nodes'], 'error' => '');
+        }
+        return array('view' => 'served', 'tier' => (string) $served['tier'], 'headings' => array(), 'nodes' => array(), 'error' => (string) ($served['error'] !== '' ? $served['error'] : 'loopback_blocked'));
     }
 
     /**
@@ -3023,26 +3234,27 @@ class PCM_SEO_Service
      */
     public static function remote_get_inventory(object $site, int $post_id, string $type, int $user_id): array
     {
-        $snap = self::remote_fetch_snapshot($site, $post_id);
-        if ($snap !== null && $snap['html'] !== '') {
-            $parsed = self::parse_page_snapshot($snap['html'], self::heading_instructions($user_id, (int) $site->id, $post_id));
-            return array(
+        $inv = self::served_inventory($site, $post_id, $user_id);
+        if ($inv !== null) {
+            $out = array(
                 'supported' => true,
                 'source'    => 'snapshot',
-                'tier'      => $snap['tier'],
-                'headings'  => $parsed['headings'],
-                'nodes'     => $parsed['nodes'],
+                'view'      => $inv['view'],
+                'tier'      => $inv['tier'],
+                'headings'  => $inv['headings'],
+                'nodes'     => $inv['nodes'],
             );
-        }
-        if ($snap !== null && $snap['error'] !== '') {
-            // The connector answered honestly (e.g. loopback_blocked) — say exactly that.
-            return array('supported' => true, 'source' => 'snapshot', 'tier' => $snap['tier'], 'headings' => array(), 'nodes' => array(), 'error' => $snap['error']);
+            if ($inv['error'] !== '') {
+                $out['error'] = $inv['error'];
+            }
+            return $out;
         }
         $headings = self::remote_get_headings($site, $post_id, $type, $user_id);
         $meta     = self::remote_get_content_nodes($site, $post_id);
         $out      = array(
             'supported' => (bool) $meta['supported'],
             'source'    => 'scan',
+            'view'      => 'input',
             'headings'  => $headings,
             'nodes'     => (array) $meta['nodes'],
         );
@@ -3859,7 +4071,7 @@ class PCM_SEO_Service
         $norm  = PCM_Text_Matcher::normalize((string) ($h['text'] ?? ''));
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
         $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, matchText, occurrence, replacement FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d AND active = 1",
+            "SELECT id, replacement FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d AND active = 1",
             $user_id,
             (int) $site->id,
             $post_id,
@@ -3874,27 +4086,121 @@ class PCM_SEO_Service
             || PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text((string) $units[0]['inner'])) !== $norm) {
             return null; // the replacement doesn't carry this heading — not owned
         }
-        $new_t = trim((string) ($new_text !== null && $new_text !== '' ? $new_text : (string) $h['text']));
+        return self::update_owned_heading_unit($user_id, $site, (int) $row['id'], 0, (string) $h['text'], $new_text, $new_level);
+    }
+
+    /**
+     * Swap ONE heading unit inside an owning rule's replacement (one-owner +
+     * served-truth laws): text/level change, the unit's own attributes kept,
+     * everything else untouched. Push-fail rolls back; section versions ride.
+     */
+    private static function update_owned_heading_unit(int $user_id, object $site, int $rule_id, int $unit_index, string $current_text, ?string $new_text, int $new_level)
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_dynamic_rules');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, postId, target, matchText, occurrence, replacement FROM {$table} WHERE id = %d AND userId = %d AND siteId = %d AND target IN ('section','sectionInsert') AND active = 1",
+            $rule_id,
+            $user_id,
+            (int) $site->id
+        ), ARRAY_A);
+        if (!$row) {
+            return new WP_Error('pcm_seo_rule_not_found', __('This section no longer exists — re-open the outline.', 'power-creatives'), array('status' => 404));
+        }
+        $units = PCM_Text_Matcher::parse_replacement_units((string) $row['replacement']);
+        if (!isset($units[$unit_index]) || !preg_match('/^h[1-6]$/', (string) $units[$unit_index]['tag'])) {
+            return new WP_Error('pcm_seo_heading_stale', __('This page changed since it was scanned — re-open the outline.', 'power-creatives'), array('status' => 409));
+        }
+        $new_t = trim((string) ($new_text !== null && $new_text !== '' ? $new_text : $current_text));
         $safe  = wp_kses_post($new_t);
-        // Swap the first unit's text/level, its own attributes preserved.
-        $unit0 = preg_replace_callback(
+        $unit  = preg_replace_callback(
             '/^<h[1-6]([^>]*)>.*<\/h[1-6]>$/is',
             static fn($m) => '<h' . $new_level . $m[1] . '>' . $safe . '</h' . $new_level . '>',
-            (string) $units[0]['html']
+            (string) $units[$unit_index]['html']
         );
-        $replacement = (string) $unit0;
-        for ($i = 1, $n = count($units); $i < $n; $i++) {
-            $replacement .= $units[$i]['html'];
+        $replacement = '';
+        foreach ($units as $i => $u) {
+            $replacement .= ($i === $unit_index) ? (string) $unit : $u['html'];
         }
-        $snapshot = self::post_rule_rows($user_id, (int) $site->id, $post_id);
+        $rule_post = (int) $row['postId'];
+        $snapshot  = self::post_rule_rows($user_id, (int) $site->id, $rule_post);
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $wpdb->update($table, array('replacement' => $replacement), array('id' => (int) $row['id']), array('%s'), array('%d'));
-        $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
+        $push = self::push_current_rules_or_rollback($user_id, $site, $rule_post, $snapshot);
         if ($push instanceof WP_Error) {
             return $push;
         }
-        self::record_section_version($user_id, (int) $site->id, $post_id, (string) $row['matchText'], (int) $row['occurrence'], $replacement);
+        if ((string) $row['target'] === 'section') {
+            self::record_section_version($user_id, (int) $site->id, $rule_post, (string) $row['matchText'], (int) $row['occurrence'], $replacement);
+        }
         return array('stored' => (int) ($push['stored'] ?? 0));
+    }
+
+    /**
+     * Save a SLICE of an owning rule's replacement (served-truth law): the
+     * edited unit range is spliced in, the rest of the rule untouched. An
+     * empty slice deletes the units; a rule left with no visible content is
+     * removed for inserts and rejected for section rules (an empty section
+     * replacement is never valid — revert deletes the rule instead).
+     */
+    public function save_section_slice(int $user_id, object $site, int $post_id, array $input)
+    {
+        global $wpdb;
+        $table       = PCM_Schema::table('seo_dynamic_rules');
+        $rule_id     = absint($input['ruleId'] ?? 0);
+        $from        = max(0, (int) ($input['unitFrom'] ?? 0));
+        $to          = max($from, (int) ($input['unitTo'] ?? $from));
+        $replacement = wp_kses_post((string) ($input['replacement'] ?? ''));
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, postId, target, matchText, occurrence, replacement FROM {$table} WHERE id = %d AND userId = %d AND siteId = %d AND target IN ('section','sectionInsert') AND active = 1",
+            $rule_id,
+            $user_id,
+            (int) $site->id
+        ), ARRAY_A);
+        if (!$row) {
+            return new WP_Error('pcm_seo_rule_not_found', __('This section no longer exists — re-open the outline.', 'power-creatives'), array('status' => 404));
+        }
+        $units = PCM_Text_Matcher::parse_replacement_units((string) $row['replacement']);
+        if ($from >= count($units)) {
+            return new WP_Error('pcm_seo_heading_stale', __('This page changed since it was scanned — re-open the outline.', 'power-creatives'), array('status' => 409));
+        }
+        $to  = min($to, count($units) - 1);
+        $new = '';
+        foreach ($units as $i => $u) {
+            if ($i < $from || $i > $to) {
+                $new .= $u['html'];
+            } elseif ($i === $from) {
+                $new .= $replacement;
+            }
+        }
+        $rule_post = (int) $row['postId'];
+        $snapshot  = self::post_rule_rows($user_id, (int) $site->id, $rule_post);
+        $removed   = false;
+        if (trim(PCM_Text_Matcher::visible_text($new)) === '') {
+            if ((string) $row['target'] !== 'sectionInsert') {
+                return new WP_Error('pcm_seo_rule_empty', __('The replacement section is empty.', 'power-creatives'), array('status' => 400));
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->delete($table, array('id' => (int) $row['id']), array('%d'));
+            $removed = true;
+        } else {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->update($table, array('replacement' => $new), array('id' => (int) $row['id']), array('%s'), array('%d'));
+        }
+        $push = self::push_current_rules_or_rollback($user_id, $site, $rule_post, $snapshot);
+        if ($push instanceof WP_Error) {
+            return $push;
+        }
+        if (!$removed && (string) $row['target'] === 'section') {
+            self::record_section_version($user_id, (int) $site->id, $rule_post, (string) $row['matchText'], (int) $row['occurrence'], $new);
+        }
+        $out = array('stored' => (int) ($push['stored'] ?? 0));
+        if ($removed) {
+            $out['removed'] = true;
+        }
+        return $out;
     }
 
     /**

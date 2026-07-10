@@ -466,8 +466,10 @@ class PCM_REST_SEO extends PCM_REST_Base
 
     /**
      * POST /seo/sites/{id}/content/{post}/section-rule — save a section's dynamic
-     * rule (contracts v2). `kind:'replace'` (default) swaps a whole existing
-     * section; `kind:'insert'` adds a NEW section anchored to an existing heading.
+     * rule (contracts v2/v2.2). `kind:'replace'` (default) swaps a whole existing
+     * section; `kind:'insert'` adds a NEW section anchored to an existing heading;
+     * `kind:'slice'` edits ONE unit range of an owning rule's replacement (the
+     * served-truth editor's path for rule-born sections).
      */
     public function remote_save_section_rule(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
@@ -477,8 +479,15 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $params = $request->get_json_params() ?: array();
-        $kind   = ((string) ($params['kind'] ?? 'replace')) === 'insert' ? 'insert' : 'replace';
-        if ($kind === 'insert') {
+        $kind   = in_array((string) ($params['kind'] ?? 'replace'), array('insert', 'slice'), true) ? (string) $params['kind'] : 'replace';
+        if ($kind === 'slice') {
+            $result = $this->service->save_section_slice((int) $user->id, $site, absint($request->get_param('post')), array(
+                'ruleId'      => (int) ($params['ruleId'] ?? 0),
+                'unitFrom'    => (int) ($params['unitFrom'] ?? 0),
+                'unitTo'      => (int) ($params['unitTo'] ?? 0),
+                'replacement' => (string) ($params['replacement'] ?? ''),
+            ));
+        } elseif ($kind === 'insert') {
             $result = $this->service->save_section_insert((int) $user->id, $site, absint($request->get_param('post')), array(
                 'anchorText'       => (string) ($params['anchorText'] ?? ''),
                 'anchorLevel'      => (int) ($params['anchorLevel'] ?? 2),

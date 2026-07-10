@@ -430,7 +430,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteSaveSectionRule": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-rule`, body: { kind: input.kind, headingText: input.headingText, headingLevel: input.headingLevel, headingOccurrence: input.headingOccurrence, paragraphs: input.paragraphs, anchorText: input.anchorText, anchorLevel: input.anchorLevel, anchorOccurrence: input.anchorOccurrence, position: input.position, ruleId: input.ruleId, replacement: input.replacement } }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-rule`, body: { kind: input.kind, headingText: input.headingText, headingLevel: input.headingLevel, headingOccurrence: input.headingOccurrence, paragraphs: input.paragraphs, anchorText: input.anchorText, anchorLevel: input.anchorLevel, anchorOccurrence: input.anchorOccurrence, position: input.position, ruleId: input.ruleId, unitFrom: input.unitFrom, unitTo: input.unitTo, replacement: input.replacement } }),
     },
     "seo.remoteSectionVersions": {
         endpoint: "seo/sites",

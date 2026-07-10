@@ -55,6 +55,9 @@ export interface SectionData {
   paragraphs: SectionParagraph[];
   /** Active `section` rule serving this section, when one exists. */
   sectionRuleReplacement?: string | null;
+  /** Served-truth editor (contracts v2.2): this section is a SLICE of an
+   *  owning rule's replacement — saves splice that unit range of the rule. */
+  slice?: { ruleId: number; unitFrom: number; unitTo: number };
 }
 
 export interface SectionAnchor { text: string; level: number; occurrence: number }
@@ -249,6 +252,15 @@ export function SectionModal({
           siteId: siteId as number, postId, kind: 'insert',
           anchorText: anchor.text, anchorLevel: anchor.level, anchorOccurrence: anchor.occurrence,
           position, replacement, ruleId: insert?.ruleId,
+        });
+      } else if (section?.slice) {
+        // Rule-born section (served-truth): the edit splices the owning rule.
+        res = await saveMutation.mutateAsync({
+          siteId: siteId as number, postId, kind: 'slice',
+          ruleId: section.slice.ruleId,
+          unitFrom: section.slice.unitFrom,
+          unitTo: section.slice.unitTo,
+          replacement,
         });
       } else if (section) {
         res = await saveMutation.mutateAsync({

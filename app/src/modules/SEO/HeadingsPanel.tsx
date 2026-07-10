@@ -35,6 +35,17 @@ import {
 import { TableRow, TableCell } from './seo-table';
 import { SectionModal, type SectionData, type SectionAnchor, type InsertData, type SectionParagraph } from './SectionModal';
 
+/** The rule that produced a SERVED row (attribution, contracts v2.2). */
+export interface RowRule {
+  id: number;
+  target: 'section' | 'sectionInsert' | 'heading';
+  unitFrom?: number;
+  unitTo?: number;
+  whole?: boolean;
+  /** The unit range's HTML — the editor's content for rule-born sections. */
+  sliceHtml?: string;
+}
+
 export interface HeadingItem {
   index: number;
   level: number;
@@ -48,6 +59,10 @@ export interface HeadingItem {
    *  block) rendered on many pages — `sourceLabel` names it; editing changes every page using it. */
   sourceLabel?: string;
   sourcePostId?: number;
+  /** v2.2: 'site' = chrome (edits are site-wide), 'post' = this page only. */
+  scope?: 'site' | 'post';
+  occurrence?: number;
+  rule?: RowRule;
 }
 
 /** One ordered page-content node (heading or paragraph) — mirrors get_post_content_nodes. */
@@ -68,15 +83,19 @@ export interface ContentNode {
   sourcePostId?: number;
   occurrence?: number;
   anchor?: { level: number; text: string } | null;
+  scope?: 'site' | 'post';
+  rule?: RowRule;
 }
 
-/** One raw paragraph from the connector scan (scan-content v1) — scan order. */
+/** One raw paragraph from the snapshot parse — served order. */
 interface RawPara {
   text: string;
   html: string;
   occurrence: number;
   /** Nearest preceding rendered heading — SECTION MEMBERSHIP (normalized text). */
   anchor: { level: number; text: string } | null;
+  /** Served view: a paragraph rule produced this text. */
+  optimized?: boolean;
 }
 
 /** One hub-stored dynamic rule (the UI overlay's source of truth). */
@@ -143,6 +162,9 @@ export function HeadingRows({
     { enabled: !isLocal, staleTime: 0, refetchOnMount: 'always' },
   );
   const query = isLocal ? localQuery : remoteQuery;
+  /** SERVED-truth view (contracts v2.2): rows already show what a visitor sees
+   *  and carry rule attribution — the legacy rule overlays must not re-apply. */
+  const served = !isLocal && (remoteQuery.data as any)?.view === 'served';
 
   const [nodes, setNodes] = useState<ContentNode[]>([]);
   /** Remote: the RAW scan paragraphs in scan order — section membership's source of truth. */
@@ -170,6 +192,7 @@ export function HeadingRows({
       anchor: p?.anchor && typeof p.anchor.text === 'string'
         ? { level: Number(p.anchor.level) || 0, text: String(p.anchor.text) }
         : null,
+      optimized: Boolean(p?.optimized),
     })));
     if (meta && meta.supported === false) {
       setRemoteParaNote('Sections need connector v2.7.0+ on this site — update it from the Sites module.');
@@ -330,6 +353,22 @@ export function HeadingRows({
   };
 
   const openSection = (s: PanelSection, at: { x: number; y: number }) => {
+    if (served) {
+      // Served rows are final; a rule-born section edits its owning rule's slice.
+      const att = s.headingNode?.rule;
+      const owned = att && (att.target === 'section' || att.target === 'sectionInsert');
+      setSectionModal({
+        mode: 'section',
+        at,
+        section: {
+          heading: s.heading,
+          paragraphs: s.paragraphs.map((p) => ({ text: p.text, occurrence: p.occurrence, html: p.html })),
+          sectionRuleReplacement: owned ? (att.sliceHtml ?? null) : null,
+          slice: owned ? { ruleId: att.id, unitFrom: att.unitFrom ?? 0, unitTo: att.unitTo ?? 0 } : undefined,
+        },
+      });
+      return;
+    }
     const sRule = !isLocal ? sectionRuleOf(s) : undefined;
     const paragraphs: SectionParagraph[] = s.paragraphs.map((p) => {
       const pr = !isLocal ? paraRuleFor(p) : undefined;
@@ -435,13 +474,19 @@ export function HeadingRows({
 
   /** ONE ¶ row per section — the editor's opener; shows the SERVED state. */
   const sectionRow = (s: PanelSection, indent: number, opts?: { muted?: boolean; readOnly?: boolean }) => {
-    const sRule = !isLocal ? sectionRuleOf(s) : undefined;
-    const preview = sRule
-      ? textOf(sRule.replacement)
-      : s.paragraphs.map((p) => {
-        const pr = !isLocal ? paraRuleFor(p) : undefined;
+    const att = served ? s.headingNode?.rule : undefined;
+    const sRule = !isLocal && !served ? sectionRuleOf(s) : undefined;
+    const optimized = served
+      ? Boolean(att && att.target !== 'heading') || s.paragraphs.some((p) => p.optimized)
+      : Boolean(sRule);
+    // Served rows ARE the truth — the preview is the paragraphs, never the
+    // raw replacement (which would concatenate the heading into it).
+    const preview = served || !sRule
+      ? s.paragraphs.map((p) => {
+        const pr = !isLocal && !served ? paraRuleFor(p) : undefined;
         return pr ? textOf(pr.replacement) : p.text;
-      }).join(' · ');
+      }).join(' · ')
+      : textOf(sRule.replacement);
     return (
       <TableRow key={`sec-${s.key}`} className="bg-muted/30 hover:bg-muted/50">
         <TableCell className="px-2 text-center">
@@ -456,8 +501,8 @@ export function HeadingRows({
                 <span className="inline-flex h-5 min-w-[40px] shrink-0 items-center justify-center rounded-[3px] border border-border bg-muted/60 px-1 text-[10px] font-semibold leading-none text-muted-foreground">
                   P
                 </span>
-                {sRule && (
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="Optimized — a section rule serves this content" />
+                {optimized && (
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="Optimized — a dynamic rule serves this content" />
                 )}
                 <button
                   type="button"
@@ -538,7 +583,8 @@ export function HeadingRows({
       {headingNodes.map((n) => {
         const s = sectionFor(n);
         const indent = indentFor(n.level ?? 2);
-        const inserts = !isLocal ? insertRulesOf(s) : [];
+        // Served view: added sections are REAL rows already — no synthetic rows.
+        const inserts = !isLocal && !served ? insertRulesOf(s) : [];
         const before = inserts.filter((r) => r.section?.position === 'before');
         const after = inserts.filter((r) => r.section?.position !== 'before');
 
@@ -549,7 +595,9 @@ export function HeadingRows({
         const readOnly = !n.editable || reason != null;
         const roTitle = reason ?? THEME_READONLY_REASON;
         const level = n.level ?? 2;
-        const hSecRule = !isLocal ? sectionRuleOf(s) : undefined;
+        const hSecRule = served
+          ? (n.rule && n.rule.target !== 'heading' ? n.rule : undefined)
+          : (!isLocal ? sectionRuleOf(s) : undefined);
 
         return (
           <Fragment key={`h-${n.index}`}>
