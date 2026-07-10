@@ -24,7 +24,7 @@
  */
 
 import { Fragment, useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react';
-import { Loader2, Sparkles, Check, X, RefreshCw, CornerDownRight, Lock, Maximize2, Plus } from 'lucide-react';
+import { Loader2, Sparkles, Check, X, RefreshCw, ChevronDown, CornerDownRight, Lock, Maximize2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -33,7 +33,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from '@/components/ui/select';
 import { TableRow, TableCell } from './seo-table';
-import { Pill, pillVariants, type PillVariant } from '@/components/ui/pill';
+import { Pill, type PillVariant } from '@/components/ui/pill';
 import { SectionModal, type SectionData, type SectionAnchor, type InsertData, type SectionParagraph } from './SectionModal';
 
 /** The rule that produced a SERVED row (attribution, contracts v2.2). */
@@ -604,11 +604,12 @@ export function HeadingRows({
                     <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
                       {!readOnly && suggestion == null ? (
                         <Select value={String(level)} onValueChange={(v) => saveHeading(n, { level: Number(v) })} disabled={busy}>
-                          <SelectTrigger
-                            className={`${pillVariants({ variant: levelVariant(level) })} !h-auto w-auto shrink-0 border-0 gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50`}
-                            title="Change heading level"
-                          >
-                            {`H${level}`}
+                          {/* The pill IS the trigger (composition, no style overrides). */}
+                          <SelectTrigger asChild>
+                            <Pill variant={levelVariant(level)} className="shrink-0 cursor-pointer outline-none" title="Change heading level" role="combobox">
+                              {`H${level}`}
+                              <ChevronDown />
+                            </Pill>
                           </SelectTrigger>
                           <SelectContent className="min-w-[56px] w-[56px]">
                             {[1, 2, 3, 4, 5, 6].map((num) => (

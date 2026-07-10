@@ -16,7 +16,9 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 export const pillVariants = cva(
-  'inline-flex items-center rounded-full px-1.5 py-0 text-[9px] font-medium whitespace-nowrap',
+  // Icon law: an icon inside a pill is 10px, muted, non-interactive — defined
+  // here once so pill-shaped triggers need zero call-site overrides.
+  'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[9px] font-medium whitespace-nowrap [&_svg]:pointer-events-none [&_svg]:size-2.5 [&_svg]:shrink-0 [&_svg]:opacity-50',
   {
     variants: {
       variant: {
