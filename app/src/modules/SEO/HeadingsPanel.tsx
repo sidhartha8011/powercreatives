@@ -32,7 +32,8 @@ import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from '@/components/ui/select';
-import { TableRow, TableCell, Pill, PILL_CLASS } from './seo-table';
+import { TableRow, TableCell } from './seo-table';
+import { Pill, pillVariants, type PillVariant } from '@/components/ui/pill';
 import { SectionModal, type SectionData, type SectionAnchor, type InsertData, type SectionParagraph } from './SectionModal';
 
 /** The rule that produced a SERVED row (attribution, contracts v2.2). */
@@ -125,15 +126,8 @@ const THEME_READONLY_REASON =
 const HARDCODED_CODES = new Set(['pcm_seo_heading_not_found', 'pcm_seo_heading_not_editable']);
 const STALE_CODE = 'pcm_seo_heading_stale';
 
-/** H1–H6 pill colors — the SEO table's soft single-select palette (house pill). */
-const TAG_STYLE: Record<number, string> = {
-  1: 'bg-blue-100 text-blue-700',
-  2: 'bg-green-100 text-green-700',
-  3: 'bg-amber-100 text-amber-700',
-  4: 'bg-orange-100 text-orange-700',
-  5: 'bg-rose-100 text-rose-700',
-  6: 'bg-violet-100 text-violet-700',
-};
+/** Heading level → global Pill variant (colors live in the Pill, never here). */
+const levelVariant = (level: number): PillVariant => `h${Math.min(6, Math.max(1, level))}` as PillVariant;
 
 const indentFor = (level: number): number => 18 + Math.max(0, level - 1) * 14;
 
@@ -499,7 +493,7 @@ export function HeadingRows({
             <TableCell key={col}>
               <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
                 {/* The regular P chip — the house pill, same family as H1–H6. */}
-                <Pill className="shrink-0 bg-muted text-muted-foreground">P</Pill>
+                <Pill variant="p" className="shrink-0">P</Pill>
                 {optimized && (
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="Optimized — a dynamic rule serves this content" />
                 )}
@@ -532,7 +526,7 @@ export function HeadingRows({
         return (
           <TableCell key={col}>
             <div className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${indent}px` }}>
-              <Pill className="shrink-0 bg-primary/10 text-primary">NEW</Pill>
+              <Pill variant="new" className="shrink-0">NEW</Pill>
               <button
                 type="button"
                 onClick={(e) => openInsert(rule, s, clickPoint(e))}
@@ -611,7 +605,7 @@ export function HeadingRows({
                       {!readOnly && suggestion == null ? (
                         <Select value={String(level)} onValueChange={(v) => saveHeading(n, { level: Number(v) })} disabled={busy}>
                           <SelectTrigger
-                            className={`${PILL_CLASS} !h-auto w-auto shrink-0 border-0 gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}
+                            className={`${pillVariants({ variant: levelVariant(level) })} !h-auto w-auto shrink-0 border-0 gap-0.5 shadow-none [&>svg]:w-2.5 [&>svg]:h-2.5 [&>svg]:opacity-50`}
                             title="Change heading level"
                           >
                             {`H${level}`}
@@ -627,7 +621,7 @@ export function HeadingRows({
                           </SelectContent>
                         </Select>
                       ) : (
-                        <Pill className={`shrink-0 ${TAG_STYLE[level] ?? TAG_STYLE[2]}`}>{`H${level}`}</Pill>
+                        <Pill variant={levelVariant(level)} className="shrink-0">{`H${level}`}</Pill>
                       )}
                       {/* ONE status dot per row (same family as the ¶ rows):
                           sky = site-wide element (edits change every page),

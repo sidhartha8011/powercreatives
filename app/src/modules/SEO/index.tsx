@@ -57,7 +57,8 @@ import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { LinksPopup, type LinkKind } from './LinksPopup';
 import { HeadingRows } from './HeadingsPanel';
-import { SEO_TABLE_GRID, Pill } from './seo-table';
+import { SEO_TABLE_GRID } from './seo-table';
+import { Pill, type PillVariant } from '@/components/ui/pill';
 import { SEO_TEXT_FIELDS, type SeoRow } from './types';
 
 // WordPress media library global (wp_enqueue_media() is called in class-pcm-admin.php).
@@ -232,16 +233,11 @@ const FIELD_ICONS: Record<string, LucideIcon> = {
   metaKeywords: Tags,
 };
 
-/** Status → single-select chip colors (Airtable-style). */
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case 'publish': return 'bg-green-100 text-green-700';
-    case 'pending': return 'bg-amber-100 text-amber-700';
-    case 'private': return 'bg-purple-100 text-purple-700';
-    case 'future': return 'bg-blue-100 text-blue-700';
-    case 'draft':
-    default: return 'bg-muted text-muted-foreground';
-  }
+/** Status → Pill variant (colors live in the global Pill, never here). */
+function statusPillVariant(status: string): PillVariant {
+  return (['publish', 'pending', 'private', 'future'] as const).includes(status as any)
+    ? (status as PillVariant)
+    : 'draft';
 }
 
 /** Columns that can be shown/hidden + saved in a View (selection col is fixed). */
@@ -1076,7 +1072,7 @@ export function SEOModule() {
           <TableCell key={key}>
             <Select value={row.status} onValueChange={(v) => saveCell(row.id, 'status', v)}>
               <SelectTrigger className="h-full w-full border-0 rounded-none bg-transparent px-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
-                <Pill className={`capitalize ${statusBadgeClass(row.status)}`}>{row.status}</Pill>
+                <Pill variant={statusPillVariant(row.status)} className="capitalize">{row.status}</Pill>
               </SelectTrigger>
               <SelectContent>
                 {(options?.statuses ?? ['publish', 'draft', 'pending', 'private', 'future']).map((s) => (
