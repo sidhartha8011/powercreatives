@@ -104,6 +104,21 @@ export interface SectionModalProps {
 
 const WIDTH = 440;
 
+/** Page mode's OWN reading scale (owner order U2): the document must read
+ *  like the live page — real paragraph air, stepped heading sizes — while
+ *  section mode keeps the compact scale above, byte-identical. */
+const PAGE_TYPE_SCALE =
+  'text-sm leading-relaxed text-slate-800 break-words ' +
+  '[&_h1]:text-xl [&_h1]:font-semibold [&_h1]:mt-6 [&_h1]:mb-2 ' +
+  '[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 ' +
+  '[&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1.5 ' +
+  '[&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-1 ' +
+  '[&_h5]:text-sm [&_h5]:font-medium [&_h5]:mt-3 [&_h5]:mb-1 ' +
+  '[&_h6]:text-sm [&_h6]:font-medium [&_h6]:mt-3 [&_h6]:mb-1 ' +
+  '[&_p]:my-3 [&_ul]:my-3 [&_ul]:pl-5 [&_ul]:list-disc [&_ol]:my-3 [&_ol]:pl-5 [&_ol]:list-decimal ' +
+  '[&_li]:my-1 [&_a]:text-primary [&_a]:underline [&_a]:decoration-dotted ' +
+  '[&_.ProseMirror>*:first-child]:mt-0';
+
 /** Page-mode images: locked context — visible, atomic, never draggable; the
  *  hub strips every image from saves (F9 law), so the live page's images are
  *  untouched by construction. `data-pcm-locked` survives the round-trip only
@@ -414,7 +429,7 @@ export function SectionModal({
       ref={rootRef}
       className="fixed z-40 flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl"
       style={isPage
-        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: '90vw', height: '85vh', maxWidth: '90vw' }
+        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: '58vw', minWidth: 720, height: '85vh', maxWidth: 'calc(100vw - 32px)' }
         : { left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
       role="dialog"
       aria-label={title}
@@ -562,7 +577,7 @@ export function SectionModal({
              lives in the SELECT-TEXT popover (owner correction — no permanent
              toolbar): select text → the floating B/I/U/Link/H1/H2/• menu. ── */}
       <div
-        className={`${isPage ? 'min-h-0 flex-1' : 'h-[280px]'} overflow-auto bg-white px-3 py-2`}
+        className={`${isPage ? 'min-h-0 flex-1 px-8 py-4' : 'h-[280px] px-3 py-2'} overflow-auto bg-white`}
         title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}
       >
         {isPage && pageQuery.isLoading && (
@@ -601,9 +616,9 @@ export function SectionModal({
         {(!isPage || pageReady) && (
           <EditorContent
             editor={editor}
-            className={`${TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
+            className={`${isPage ? PAGE_TYPE_SCALE : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
               // Locked context images: visible, clearly not editable.
-              + (isPage ? ' [&_img]:my-1 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
+              + (isPage ? ' [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
           />
         )}
       </div>
