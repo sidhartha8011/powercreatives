@@ -87,6 +87,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-rule', 'remote_save_paragraph_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-optimize', 'remote_optimize_paragraph', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-rule', 'remote_save_section_rule', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-edits', 'remote_save_page_edits', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions/(?P<vid>\d+)/delete', 'remote_delete_section_version', array(), 'manage_options'),
@@ -505,6 +506,30 @@ class PCM_REST_SEO extends PCM_REST_Base
                 'replacement'       => (string) ($params['replacement'] ?? ''),
             ));
         }
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/page-edits — save the full-page
+     *  editor's document: sliced back into sections and routed through the
+     *  EXISTING section save paths (replace / slice / insert); raw units are
+     *  stripped from replacements (the F9 law — images stay untouched). */
+    public function remote_save_page_edits(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = $this->service->save_page_edits(
+            (int) $user->id,
+            $site,
+            absint($request->get_param('post')),
+            wp_kses_post((string) ($params['html'] ?? ''))
+        );
         if ($result instanceof WP_Error) {
             return $result;
         }

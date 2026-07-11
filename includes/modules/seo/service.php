@@ -2864,21 +2864,54 @@ class PCM_SEO_Service
     }
 
     /**
-     * ATTRIBUTION (served-truth law, contracts v2.2): map every served row to
-     * the rule that produced it. Section/sectionInsert replacements are split
-     * into UNIT-SECTIONS (each heading unit starts one); a served section
-     * matches a unit-section on (normalized heading, level, paragraph
-     * fingerprint) — the row then carries `rule: {id, target, unitFrom,
-     * unitTo, whole, sliceHtml}` and the editor edits that slice. Heading
-     * rules attribute by their output (replacement text + newLevel);
-     * paragraph rules mark their node `optimized`. Unmatched rows are
-     * ORIGINAL content — their identity fields (computed from the served
-     * parse) equal the rules-input identity by definition.
+     * Split an ordered unit list (parse_replacement_units) into UNIT-SECTIONS:
+     * each heading unit starts one; every following non-heading unit (p or
+     * raw) extends it. Units before the first heading belong to NO section
+     * (the leading no-heading zone — callers decide what it means).
+     *
+     * @return array<int,array{from:int,to:int,level:int,norm:string,
+     *                         ptexts:array<int,string>}>
+     *         from/to = unit indexes; norm = normalized heading visible text;
+     *         ptexts = the section's paragraph visible texts (fingerprint input).
      */
-    private static function attribute_inventory(array $headings, array $nodes, array $rules): array
+    private static function split_unit_sections(array $units): array
     {
-        // Display sections: contiguous same-anchor runs; the k-th run belongs
-        // to the k-th heading with that key (the owner-locked grouping law).
+        $secs = array();
+        $cur  = null;
+        foreach ($units as $ui => $u) {
+            if (preg_match('/^h([1-6])$/', (string) $u['tag'], $m)) {
+                if ($cur !== null) {
+                    $secs[] = $cur;
+                }
+                $cur = array(
+                    'from'   => $ui,
+                    'to'     => $ui,
+                    'level'  => (int) $m[1],
+                    'norm'   => PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text((string) $u['inner'])),
+                    'ptexts' => array(),
+                );
+            } elseif ($cur !== null) {
+                $cur['to'] = $ui;
+                if ((string) $u['tag'] === 'p') {
+                    $cur['ptexts'][] = PCM_Text_Matcher::visible_text((string) $u['inner']);
+                }
+            }
+        }
+        if ($cur !== null) {
+            $secs[] = $cur;
+        }
+        return $secs;
+    }
+
+    /**
+     * Display-section pairing (the owner-locked grouping law): contiguous
+     * same-anchor RUNS of paragraph nodes; the k-th run of a key belongs to
+     * the k-th CONTENT heading with that key.
+     *
+     * @return array<int,array> heading index → its paragraph nodes.
+     */
+    private static function section_runs(array $headings, array $nodes): array
+    {
         $runs = array();
         foreach ($nodes as $n) {
             $key  = (isset($n['anchor']) && is_array($n['anchor'])) ? ($n['anchor']['level'] . '|' . $n['anchor']['text']) : '';
@@ -2908,6 +2941,24 @@ class PCM_SEO_Service
                 $run_for[$heads_by_key[$r['key']][$occ]] = $r['paras'];
             }
         }
+        return $run_for;
+    }
+
+    /**
+     * ATTRIBUTION (served-truth law, contracts v2.2): map every served row to
+     * the rule that produced it. Section/sectionInsert replacements are split
+     * into UNIT-SECTIONS (each heading unit starts one); a served section
+     * matches a unit-section on (normalized heading, level, paragraph
+     * fingerprint) — the row then carries `rule: {id, target, unitFrom,
+     * unitTo, whole, sliceHtml}` and the editor edits that slice. Heading
+     * rules attribute by their output (replacement text + newLevel);
+     * paragraph rules mark their node `optimized`. Unmatched rows are
+     * ORIGINAL content — their identity fields (computed from the served
+     * parse) equal the rules-input identity by definition.
+     */
+    private static function attribute_inventory(array $headings, array $nodes, array $rules): array
+    {
+        $run_for = self::section_runs($headings, $nodes);
         // Rule outputs.
         $unitmaps  = array();
         $headrules = array();
@@ -2915,32 +2966,8 @@ class PCM_SEO_Service
         foreach ($rules as $r) {
             $t = (string) ($r['target'] ?? '');
             if ($t === 'section' || $t === 'sectionInsert') {
-                $units = PCM_Text_Matcher::parse_replacement_units((string) $r['replacement']);
-                $secs  = array();
-                $cur   = null;
-                foreach ($units as $ui => $u) {
-                    if (preg_match('/^h([1-6])$/', (string) $u['tag'], $m)) {
-                        if ($cur !== null) {
-                            $secs[] = $cur;
-                        }
-                        $cur = array(
-                            'from'   => $ui,
-                            'to'     => $ui,
-                            'level'  => (int) $m[1],
-                            'norm'   => PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text((string) $u['inner'])),
-                            'ptexts' => array(),
-                        );
-                    } elseif ($cur !== null) {
-                        $cur['to'] = $ui;
-                        if ((string) $u['tag'] === 'p') {
-                            $cur['ptexts'][] = PCM_Text_Matcher::visible_text((string) $u['inner']);
-                        }
-                    }
-                }
-                if ($cur !== null) {
-                    $secs[] = $cur;
-                }
-                $unitmaps[] = array('rule' => $r, 'sections' => $secs, 'unitCount' => count($units), 'units' => $units);
+                $units      = PCM_Text_Matcher::parse_replacement_units((string) $r['replacement']);
+                $unitmaps[] = array('rule' => $r, 'sections' => self::split_unit_sections($units), 'unitCount' => count($units), 'units' => $units);
             } elseif ($t === 'heading') {
                 $ctx         = json_decode((string) ($r['anchorContext'] ?? ''), true);
                 $ctx         = is_array($ctx) ? $ctx : array();
@@ -3036,7 +3063,16 @@ class PCM_SEO_Service
             if ($user_id) {
                 $parsed = self::attribute_inventory($parsed['headings'], $parsed['nodes'], self::rule_rows_for_display((int) $user_id, (int) $site->id, $post_id));
             }
-            return array('view' => 'served', 'tier' => $served['tier'], 'headings' => $parsed['headings'], 'nodes' => $parsed['nodes'], 'error' => '');
+            return array(
+                'view'        => 'served',
+                'tier'        => $served['tier'],
+                'headings'    => $parsed['headings'],
+                'nodes'       => $parsed['nodes'],
+                // The full-page editor's document (G2) — assembled from the
+                // SAME parse the rows come from, never raw builder soup.
+                'contentHtml' => self::assemble_content_html($served['html'], $parsed['headings']),
+                'error'       => '',
+            );
         }
         $in = self::remote_fetch_snapshot($site, $post_id, 'input');
         if ($in !== null && $in['html'] !== '') {
@@ -3045,6 +3081,117 @@ class PCM_SEO_Service
             return array('view' => 'input', 'tier' => $in['tier'], 'headings' => $parsed['headings'], 'nodes' => $parsed['nodes'], 'error' => '');
         }
         return array('view' => 'served', 'tier' => (string) $served['tier'], 'headings' => array(), 'nodes' => array(), 'error' => (string) ($served['error'] !== '' ? $served['error'] : 'loopback_blocked'));
+    }
+
+    /**
+     * Extract every <img> tag from an HTML fragment.
+     *
+     * @return array{0:string,1:array<int,string>} [fragment without imgs, img tags in order].
+     */
+    private static function extract_imgs(string $fragment): array
+    {
+        $imgs = array();
+        $rest = (string) preg_replace_callback('#<img\b[^>]*>#i', static function ($m) use (&$imgs) {
+            $imgs[] = (string) $m[0];
+            return '';
+        }, $fragment);
+        return array($rest, $imgs);
+    }
+
+    /**
+     * The full-page editor's document (G2): a CLEAN block-level assembly of
+     * the served CONTENT region — never raw builder soup.
+     *
+     * - ORIGINAL sections emit bare <hN>/<p> blocks (inner HTML kept, wrapper
+     *   attrs dropped — serving keeps the original block's attrs on the
+     *   equal-count mapping, and the editor drops unknown attrs anyway).
+     * - RULE-OWNED sections emit their owning rule's unit range (sliceHtml)
+     *   so the rule's own lists/raw units survive the editor round-trip; the
+     *   section's page blocks are skipped (they ARE that slice, served).
+     * - EVERY <img> — between blocks, inside a block's inner HTML, or inside
+     *   a slice — is extracted as a standalone locked block (data-pcm-locked):
+     *   visible context in the editor, stripped again on save (F9 law —
+     *   images persist as untouched between-content). Chrome regions are
+     *   excluded from gap extraction (a header logo is not page content).
+     * - Empty-text paragraphs are dropped (the parse's own empty-p law), so
+     *   an untouched round-trip stays fingerprint-identical.
+     */
+    private static function assemble_content_html(string $html, array $headings): string
+    {
+        $blocks = PCM_Text_Matcher::content_blocks($html);
+        $spans  = PCM_Text_Matcher::chrome_spans($html);
+        // Content heading rows in document order — same skip laws as the parse,
+        // so the cursor below stays aligned with the block walk.
+        $rows = array_values(array_filter($headings, static fn($h) => ((string) ($h['scope'] ?? 'post')) !== 'site'));
+        $lock = static fn(string $img): string => (string) preg_replace('#^<img\b#i', '<img data-pcm-locked="1"', $img);
+        $gap_imgs = static function (int $from, int $to) use ($html, $spans): array {
+            if ($to <= $from) {
+                return array();
+            }
+            $imgs = array();
+            if (preg_match_all('#<img\b[^>]*>#i', substr($html, $from, $to - $from), $mm, PREG_OFFSET_CAPTURE)) {
+                foreach ($mm[0] as $m) {
+                    $abs = $from + (int) $m[1];
+                    foreach ($spans as $s) {
+                        if ($abs >= $s[0] && $abs < $s[1]) {
+                            continue 2;
+                        }
+                    }
+                    $imgs[] = (string) $m[0];
+                }
+            }
+            return $imgs;
+        };
+        $out      = array();
+        $ci       = 0;     // content-heading row cursor
+        $in_slice = false; // inside a rule-owned section: its blocks live in the emitted slice
+        $prev_end = null;  // gaps BETWEEN content blocks only
+        foreach ($blocks as $b) {
+            if ($prev_end !== null) {
+                foreach ($gap_imgs($prev_end, (int) $b['start']) as $img) {
+                    $out[] = $lock($img);
+                }
+            }
+            $prev_end = (int) $b['start'] + (int) $b['len'];
+            if ($b['tag'] !== 'p') {
+                if (trim((string) $b['text']) === '') {
+                    continue; // parse law: empty headings are not rows — keep the cursor aligned
+                }
+                $row = $rows[$ci] ?? null;
+                $ci++;
+                $att = ($row && isset($row['rule']) && is_array($row['rule'])
+                    && in_array((string) ($row['rule']['target'] ?? ''), array('section', 'sectionInsert'), true))
+                    ? $row['rule'] : null;
+                if ($att !== null) {
+                    list($slice, $imgs) = self::extract_imgs((string) ($att['sliceHtml'] ?? ''));
+                    $out[]    = trim($slice);
+                    foreach ($imgs as $img) {
+                        $out[] = $lock($img);
+                    }
+                    $in_slice = true;
+                    continue;
+                }
+                $in_slice = false;
+                list($inner, $imgs) = self::extract_imgs((string) $b['inner']);
+                $out[] = '<h' . (int) $b['level'] . '>' . $inner . '</h' . (int) $b['level'] . '>';
+                foreach ($imgs as $img) {
+                    $out[] = $lock($img);
+                }
+                continue;
+            }
+            if ($in_slice) {
+                continue;
+            }
+            list($inner, $imgs) = self::extract_imgs((string) $b['inner']);
+            $plain = trim(html_entity_decode(trim(PCM_Text_Matcher::visible_text($inner)), ENT_QUOTES | ENT_HTML5, 'UTF-8'), " \t\n\r\0\x0B\xC2\xA0");
+            if ($plain !== '') {
+                $out[] = '<p>' . $inner . '</p>';
+            }
+            foreach ($imgs as $img) {
+                $out[] = $lock($img);
+            }
+        }
+        return implode("\n", array_filter($out, static fn($u) => trim((string) $u) !== ''));
     }
 
     /**
@@ -3251,6 +3398,9 @@ class PCM_SEO_Service
                 'headings'  => $inv['headings'],
                 'nodes'     => $inv['nodes'],
             );
+            if (isset($inv['contentHtml'])) {
+                $out['contentHtml'] = (string) $inv['contentHtml'];
+            }
             if ($inv['error'] !== '') {
                 $out['error'] = $inv['error'];
             }
@@ -4216,6 +4366,329 @@ class PCM_SEO_Service
             $out['removed'] = true;
         }
         return $out;
+    }
+
+    /**
+     * Save the FULL-PAGE editor's document (G3): slice the edited HTML back
+     * into unit-sections with the SAME parser that defines identity, align
+     * them against the served baseline (1:1 by order when counts match; LCS
+     * on level|norm(heading) keys as fallback), and route every changed pair
+     * through the EXISTING save paths — page-level editing, section-level
+     * storage, engine untouched:
+     *
+     * - unchanged (heading text+level, paragraph fingerprint AND raw-unit
+     *   visible text identical) → skip;
+     * - changed + attributed to a WHOLE section rule → save_section_rule
+     *   keyed on the RULE's OWN stored identity (matchText/level/occurrence/
+     *   paragraphs from its anchorContext) — the existing UPSERT and CLEAN
+     *   REVERT laws apply, so editing a section back to its original deletes
+     *   the rule exactly like the section editor;
+     * - changed + attributed to a partial slice or an insert →
+     *   save_section_slice on the owning rule;
+     * - changed + original → save_section_rule with the row's identity
+     *   (matchText/matchLevel/matchOccurrence — for a heading-ruled row the
+     *   served identity IS the rule's output, so the absorb law rewires it to
+     *   the original and the one-owner law holds);
+     * - EXTRA edited sections → save_section_insert anchored to the preceding
+     *   section's served heading;
+     * - FEWER sections → honest error BEFORE any write (removal unsupported).
+     *
+     * F9 LANDMINE (defused here + in assemble_content_html): the editor's
+     * document NEVER contains the page's original between-content as
+     * editable units — images enter only as locked context and are stripped
+     * from every save (they persist as untouched between-content); original
+     * lists never enter at all. Any remaining non-img raw unit is therefore
+     * either the owning rule's own content (slices) or user-created — both
+     * engine-legal (the expand/swap mapping the section editor already
+     * allows) — so they are KEPT.
+     *
+     * Each routed save pushes and rolls itself back (existing atomicity law);
+     * a mid-sequence failure stops honestly, reporting what already saved.
+     *
+     * @return array{saved:int,inserted:int,skipped:int,notes:array<int,string>}|\WP_Error
+     */
+    public function save_page_edits(int $user_id, object $site, int $post_id, string $html)
+    {
+        $inv = self::served_inventory($site, $post_id, $user_id);
+        if ($inv === null || $inv['view'] !== 'served') {
+            return new WP_Error(
+                'pcm_seo_page_edit_unavailable',
+                __('Page editing needs the served page view (connector 3.0.1+) — update the connector from the Sites module, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+        // ── Baseline: the served content sections, exactly as the editor was assembled. ──
+        $run_for  = self::section_runs($inv['headings'], $inv['nodes']);
+        $baseline = array();
+        foreach ($inv['headings'] as $i => $h) {
+            if (((string) ($h['scope'] ?? 'post')) === 'site') {
+                continue;
+            }
+            $paras = isset($run_for[$i]) ? $run_for[$i] : array();
+            $att   = (isset($h['rule']) && is_array($h['rule'])
+                && in_array((string) ($h['rule']['target'] ?? ''), array('section', 'sectionInsert'), true))
+                ? $h['rule'] : null;
+            $baseline[] = array(
+                'key'             => (int) $h['level'] . '|' . PCM_Text_Matcher::normalize((string) $h['text']),
+                'text'            => (string) $h['text'],
+                'level'           => (int) $h['level'],
+                'occurrence'      => (int) ($h['occurrence'] ?? 0),
+                'matchText'       => (string) ($h['matchText'] ?? PCM_Text_Matcher::normalize((string) $h['text'])),
+                'matchLevel'      => (int) ($h['matchLevel'] ?? $h['level']),
+                'matchOccurrence' => (int) ($h['matchOccurrence'] ?? 0),
+                'fp'              => PCM_Text_Matcher::fingerprint(array_map(static fn($p) => (string) $p['text'], $paras)),
+                'paras'           => array_map(static fn($p) => array('text' => (string) $p['text'], 'occurrence' => (int) ($p['occurrence'] ?? 0)), $paras),
+                'slice'           => $att ? array(
+                    'ruleId'   => (int) $att['id'],
+                    'unitFrom' => (int) ($att['unitFrom'] ?? 0),
+                    'unitTo'   => (int) ($att['unitTo'] ?? 0),
+                    'whole'    => !empty($att['whole']),
+                    'target'   => (string) ($att['target'] ?? ''),
+                    'html'     => (string) ($att['sliceHtml'] ?? ''),
+                ) : null,
+            );
+        }
+        if (empty($baseline)) {
+            return new WP_Error(
+                'pcm_seo_page_edit_no_sections',
+                __('This page has no editable sections (no content headings were found).', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+
+        // ── The edited document, sliced by the SAME parser that defines identity. ──
+        $units = PCM_Text_Matcher::parse_replacement_units($html);
+        $secs  = self::split_unit_sections($units);
+        $notes = array();
+        // Empty-p law (mirrors the parse): visible-text-empty paragraphs never
+        // count toward a section's fingerprint — a trailing editor paragraph
+        // must not make an untouched section look changed.
+        $nonempty = static fn(array $texts): array => array_values(array_filter($texts, static fn($t) => PCM_Text_Matcher::normalize((string) $t) !== ''));
+        $edited   = array();
+        foreach ($secs as $s) {
+            $edited[] = array(
+                'key'   => $s['level'] . '|' . $s['norm'],
+                'level' => (int) $s['level'],
+                'norm'  => (string) $s['norm'],
+                'label' => PCM_Text_Matcher::visible_text((string) $units[$s['from']]['inner']),
+                'fp'    => PCM_Text_Matcher::fingerprint($nonempty($s['ptexts'])),
+                'units' => array_slice($units, $s['from'], $s['to'] - $s['from'] + 1),
+            );
+        }
+        if (empty($edited)) {
+            return new WP_Error(
+                'pcm_seo_page_edit_removed',
+                __('The edited page has no sections left — removing whole sections isn’t supported yet, nothing was saved.', 'power-creatives'),
+                array('status' => 400)
+            );
+        }
+
+        // ── Leading no-heading zone: skipped by design, honestly noted when it changed. ──
+        $first_from   = $secs[0]['from'];
+        $orphan_texts = array();
+        for ($ui = 0; $ui < $first_from; $ui++) {
+            if ((string) $units[$ui]['tag'] === 'p') {
+                $orphan_texts[] = PCM_Text_Matcher::visible_text((string) $units[$ui]['inner']);
+            }
+        }
+        $base_orphans = array();
+        foreach ($inv['nodes'] as $n) {
+            if (!isset($n['anchor']) || !is_array($n['anchor'])) {
+                $base_orphans[] = (string) $n['text'];
+            }
+        }
+        if (PCM_Text_Matcher::fingerprint($nonempty($orphan_texts)) !== PCM_Text_Matcher::fingerprint($nonempty($base_orphans))) {
+            $notes[] = __('Content before the first heading can’t be edited yet — those changes weren’t saved.', 'power-creatives');
+        }
+
+        // ── Replacement builder (the image law): every <img> is locked context
+        //    — stripped from EVERY save, so the live page's images stay
+        //    untouched between-content. Everything else is kept (see docblock).
+        $strip_img_tags = static function (array $unit_list): array {
+            $out = array();
+            foreach ($unit_list as $u) {
+                if ((string) $u['tag'] !== '') {
+                    $out[] = $u;
+                    continue;
+                }
+                list($rest, ) = self::extract_imgs((string) $u['html']);
+                if (trim($rest) !== '') {
+                    $out[] = array('tag' => '', 'inner' => '', 'html' => trim($rest));
+                }
+            }
+            return $out;
+        };
+        $join = static fn(array $unit_list): string => implode('', array_map(static fn($u) => (string) $u['html'], $unit_list));
+        // Raw-unit visible text (normalized, img-stripped) — the fingerprint is
+        // paragraph-only, so list edits need their own unchanged-check input.
+        $rawtext = static function (array $unit_list) use ($strip_img_tags): string {
+            $texts = array();
+            foreach ($strip_img_tags($unit_list) as $u) {
+                if ((string) $u['tag'] === '') {
+                    $texts[] = PCM_Text_Matcher::visible_text((string) $u['html']);
+                }
+            }
+            return PCM_Text_Matcher::normalize(implode(' ', $texts));
+        };
+
+        // ── Alignment: 1:1 by order when counts match; LCS on keys otherwise. ──
+        $pairs  = array();
+        $extras = array();
+        if (count($edited) === count($baseline)) {
+            foreach ($baseline as $bi => $unused) {
+                $pairs[] = array($bi, $bi);
+            }
+        } else {
+            $n  = count($baseline);
+            $m  = count($edited);
+            $dp = array_fill(0, $n + 1, array_fill(0, $m + 1, 0));
+            for ($i = $n - 1; $i >= 0; $i--) {
+                for ($j = $m - 1; $j >= 0; $j--) {
+                    $dp[$i][$j] = ($baseline[$i]['key'] === $edited[$j]['key'])
+                        ? $dp[$i + 1][$j + 1] + 1
+                        : max($dp[$i + 1][$j], $dp[$i][$j + 1]);
+                }
+            }
+            $removed = array();
+            $i       = 0;
+            $j       = 0;
+            while ($i < $n && $j < $m) {
+                if ($baseline[$i]['key'] === $edited[$j]['key']) {
+                    $pairs[] = array($i, $j);
+                    $i++;
+                    $j++;
+                } elseif ($dp[$i + 1][$j] >= $dp[$i][$j + 1]) {
+                    $removed[] = $i;
+                    $i++;
+                } else {
+                    $extras[] = $j;
+                    $j++;
+                }
+            }
+            while ($i < $n) {
+                $removed[] = $i++;
+            }
+            while ($j < $m) {
+                $extras[] = $j++;
+            }
+            if (!empty($removed)) {
+                return new WP_Error(
+                    'pcm_seo_page_edit_removed',
+                    sprintf(
+                        /* translators: %s: section heading */
+                        __('Removing whole sections isn’t supported yet — “%s” is missing from the edited page. Nothing was saved.', 'power-creatives'),
+                        $baseline[$removed[0]]['text']
+                    ),
+                    array('status' => 400)
+                );
+            }
+        }
+
+        // ── Route every pair through the existing save paths, document order. ──
+        $saved    = 0;
+        $inserted = 0;
+        $skipped  = 0;
+        $fail     = static fn(string $label, WP_Error $err, int $done): WP_Error => new WP_Error(
+            $err->get_error_code(),
+            sprintf(
+                /* translators: 1: sections already saved, 2: section heading, 3: reason */
+                __('Saved %1$d section(s), then “%2$s” failed: %3$s The remaining sections were not attempted — re-open the editor to continue.', 'power-creatives'),
+                $done,
+                $label,
+                rtrim($err->get_error_message()) . (str_ends_with(rtrim($err->get_error_message()), '.') ? '' : '.')
+            ),
+            $err->get_error_data()
+        );
+        global $wpdb;
+        $rules_table = PCM_Schema::table('seo_dynamic_rules');
+        foreach ($pairs as $pair) {
+            list($bi, $ej) = $pair;
+            $b = $baseline[$bi];
+            $e = $edited[$ej];
+            // Baseline raw text: a slice's own units for owned sections;
+            // original sections enter the editor with NO raw units at all.
+            $base_raw = $b['slice'] !== null
+                ? $rawtext(PCM_Text_Matcher::parse_replacement_units($b['slice']['html']))
+                : '';
+            if ($e['level'] === $b['level'] && $e['norm'] === PCM_Text_Matcher::normalize($b['text'])
+                && $e['fp'] === $b['fp'] && $rawtext($e['units']) === $base_raw) {
+                $skipped++;
+                continue;
+            }
+            $replacement = $join($strip_img_tags($e['units']));
+            $res         = null;
+            if ($b['slice'] !== null && $b['slice']['whole'] && $b['slice']['target'] === 'section') {
+                // WHOLE section rule: route through save_section_rule keyed on
+                // the rule's OWN stored identity — UPSERT updates it, and the
+                // clean-revert law deletes it when the edit reproduces the
+                // original (the slice path could never revert).
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+                $rrow = $wpdb->get_row($wpdb->prepare(
+                    "SELECT id, matchText, occurrence, anchorContext FROM {$rules_table} WHERE id = %d AND userId = %d AND siteId = %d AND target = 'section' AND active = 1",
+                    $b['slice']['ruleId'],
+                    $user_id,
+                    (int) $site->id
+                ), ARRAY_A);
+                $rctx = $rrow ? json_decode((string) ($rrow['anchorContext'] ?? ''), true) : null;
+                if ($rrow && is_array($rctx) && !empty($rctx['level'])) {
+                    $res = $this->save_section_rule($user_id, $site, $post_id, array(
+                        'headingText'       => (string) $rrow['matchText'],
+                        'headingLevel'      => (int) $rctx['level'],
+                        'headingOccurrence' => (int) $rrow['occurrence'],
+                        'paragraphs'        => array_values(array_filter((array) ($rctx['paragraphs'] ?? array()), 'is_array')),
+                        'replacement'       => $replacement,
+                    ));
+                }
+            }
+            if ($res === null && $b['slice'] !== null) {
+                $res = $this->save_section_slice($user_id, $site, $post_id, array(
+                    'ruleId'      => $b['slice']['ruleId'],
+                    'unitFrom'    => $b['slice']['unitFrom'],
+                    'unitTo'      => $b['slice']['unitTo'],
+                    'replacement' => $replacement,
+                ));
+            } elseif ($res === null) {
+                $res = $this->save_section_rule($user_id, $site, $post_id, array(
+                    'headingText'       => $b['matchText'],
+                    'headingLevel'      => $b['matchLevel'],
+                    'headingOccurrence' => $b['matchOccurrence'],
+                    'paragraphs'        => $b['paras'],
+                    'replacement'       => $replacement,
+                ));
+            }
+            if ($res instanceof WP_Error) {
+                return $fail($b['text'], $res, $saved + $inserted);
+            }
+            $saved++;
+        }
+        // ── Extra edited sections → inserts anchored to the preceding section's served heading. ──
+        $anchor_for = static function (int $ej) use ($pairs, $baseline): array {
+            $prev = null;
+            foreach ($pairs as $pair) {
+                if ($pair[1] < $ej) {
+                    $prev = $baseline[$pair[0]];
+                }
+            }
+            return $prev !== null
+                ? array('section' => $prev, 'position' => 'after')
+                : array('section' => $baseline[0], 'position' => 'before');
+        };
+        foreach ($extras as $ej) {
+            $e      = $edited[$ej];
+            $anchor = $anchor_for($ej);
+            $res    = $this->save_section_insert($user_id, $site, $post_id, array(
+                'anchorText'       => $anchor['section']['text'],
+                'anchorLevel'      => $anchor['section']['level'],
+                'anchorOccurrence' => $anchor['section']['occurrence'],
+                'position'         => $anchor['position'],
+                'replacement'      => $join($strip_img_tags($e['units'])),
+            ));
+            if ($res instanceof WP_Error) {
+                return $fail($e['label'], $res, $saved + $inserted);
+            }
+            $inserted++;
+        }
+        return array('saved' => $saved, 'inserted' => $inserted, 'skipped' => $skipped, 'notes' => array_values(array_unique($notes)));
     }
 
     /**

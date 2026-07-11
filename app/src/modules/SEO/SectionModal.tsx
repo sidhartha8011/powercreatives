@@ -25,6 +25,15 @@
  * Saving creates/updates ONE dynamic rule (UPSERT; editing back to the
  * original deletes it; push-fail rolls back — phase-1 engine). LOCAL tab =
  * read-only formatted view (no rule engine on the hub's own site).
+ *
+ * PAGE MODE (full-page editor V1, 2026-07-10): the SAME component maximized
+ * (~90vw/85vh, centered) — self-fetches the inventory's `contentHtml` (served
+ * content region, hub-assembled) and saves the whole document through
+ * `seo.remoteSavePageEdits`, which slices it back into sections server-side
+ * and routes each change through the EXISTING rule paths. Images render as
+ * locked context (never persisted — the live page's images are untouched
+ * between-content by construction). Versions + Ask AI are section-mode only
+ * (V2 brings AI to page mode). Section/insert behavior is byte-identical.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -32,10 +41,11 @@ import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
+import Image from '@tiptap/extension-image';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List,
+  Heading1, Heading2, List, ExternalLink,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -79,9 +89,11 @@ export interface SectionModalProps {
   provider?: string;
   /** Local tab: read-only formatted view. */
   readOnly: boolean;
-  mode: 'section' | 'insert';
+  mode: 'section' | 'insert' | 'page';
   section?: SectionData;
   insert?: InsertData;
+  /** Page mode: the row's title + the demoted WP-editor escape hatch. */
+  page?: { title: string; editUrl?: string };
   /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
   /** Where the user clicked — the window opens right below it. */
@@ -91,6 +103,17 @@ export interface SectionModalProps {
 }
 
 const WIDTH = 440;
+
+/** Page-mode images: locked context — visible, atomic, never draggable; the
+ *  hub strips every image from saves (F9 law), so the live page's images are
+ *  untouched by construction. `data-pcm-locked` survives the round-trip only
+ *  to style the lock. */
+const LockedImage = Image.extend({
+  draggable: false,
+  addAttributes() {
+    return { ...this.parent?.(), 'data-pcm-locked': { default: null } };
+  },
+});
 /** Compact readable scale (no `prose` plugin in this build). */
 const TYPE_SCALE =
   'text-xs leading-relaxed text-slate-800 break-words ' +
@@ -132,10 +155,24 @@ function ToolButton({ onClick, active, title, children }: {
 }
 
 export function SectionModal({
-  siteId, postId, type, model, provider, readOnly, mode, section, insert, anchors, anchorPoint, onClose, onSaved,
+  siteId, postId, type, model, provider, readOnly, mode, section, insert, page, anchors, anchorPoint, onClose, onSaved,
 }: SectionModalProps) {
   const isInsert = mode === 'insert';
+  const isPage = mode === 'page';
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // ── Page mode: self-fetch the hub-assembled served content document. ──
+  const pageQuery = trpc.seo.remoteGetInventory.useQuery(
+    { siteId: siteId as number, postId, type },
+    { enabled: isPage && !readOnly, staleTime: 0, refetchOnMount: 'always' },
+  );
+  const pageHtml = isPage ? String((pageQuery.data as any)?.contentHtml ?? '') : '';
+  const pageReady = isPage && (pageQuery.data as any)?.view === 'served' && pageHtml !== '';
+  const pageError = isPage && !pageQuery.isLoading && !pageReady
+    ? ((pageQuery.data as any)?.error === 'loopback_blocked'
+      ? 'Page editing unavailable — the site blocked the connector’s content fetch.'
+      : 'Page editing needs the served page view (connector 3.0.1+ on this site) — update it from the Sites module, then re-open.')
+    : null;
 
   // ── Position: right below the click, draggable from the header. ──
   const [pos, setPos] = useState(() => ({
@@ -175,13 +212,15 @@ export function SectionModal({
     editable: !readOnly,
     extensions: [
       StarterKit.configure({
-        heading: { levels: [1, 2, 3, 4] },
+        // Page mode edits the whole served document — every legal level.
+        heading: { levels: isPage ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4] },
         link: {
           openOnClick: false, autolink: true, defaultProtocol: 'https',
           HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
         },
         codeBlock: false, blockquote: false, horizontalRule: false,
       }),
+      ...(isPage ? [LockedImage] : []),
     ],
     content: openedHtml,
     // Baseline for dirty-checks must be the EDITOR's normalized form of the
@@ -190,7 +229,17 @@ export function SectionModal({
     onCreate: ({ editor: ed }) => setSavedHtml(ed.getHTML()),
   });
 
+  // Page mode opens empty and loads the fetched document (dirty-baseline =
+  // the editor's normalized form of it, same law as onCreate).
+  useEffect(() => {
+    if (!isPage || !editor || !pageReady) return;
+    editor.commands.setContent(pageHtml);
+    setSavedHtml(editor.getHTML());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPage, editor, pageReady, pageHtml]);
+
   const saveMutation = trpc.seo.remoteSaveSectionRule.useMutation();
+  const savePageMutation = trpc.seo.remoteSavePageEdits.useMutation();
   const optimizeMutation = trpc.seo.remoteOptimizeSection.useMutation();
 
   // ── Version history (replace-sections only — inserts have no Original). ──
@@ -238,7 +287,32 @@ export function SectionModal({
 
   // ── Save (Acceptera / click outside): live rule, engine handles UPSERT/revert. ──
   const save = async (replacementOverride?: string): Promise<boolean> => {
-    if (readOnly || (!isInsert && !section)) return true;
+    if (readOnly) return true;
+    if (isPage) {
+      if (!pageReady) return true; // nothing loaded — nothing to save
+      const html = replacementOverride ?? (editor?.getHTML() ?? '');
+      setBusy(true);
+      try {
+        // The hub slices the document back into sections and routes each
+        // change through the existing rule paths — page-level editing,
+        // section-level storage.
+        const res: any = await savePageMutation.mutateAsync({ siteId: siteId as number, postId, html });
+        onSaved();
+        const changed = Number(res?.saved ?? 0) + Number(res?.inserted ?? 0);
+        toast.success(changed > 0
+          ? `Saved — ${changed} section${changed === 1 ? '' : 's'} now served dynamically (page/CDN caches may need a purge).`
+          : 'No content changes to save.');
+        (Array.isArray(res?.notes) ? res.notes : []).forEach((n: string) => toast.info(n));
+        setSavedHtml(html);
+        return true;
+      } catch (e: any) {
+        toast.error(e?.message ?? 'Could not save the page');
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    }
+    if (!isInsert && !section) return true;
     const replacement = replacementOverride ?? (editor?.getHTML() ?? '');
     setBusy(true);
     try {
@@ -328,35 +402,59 @@ export function SectionModal({
     }
   };
 
-  const title = isInsert
-    ? (insert?.ruleId ? '¶ Added section' : '¶ New section')
-    : `¶ ${section?.heading.text ?? ''}`;
-  const served = !isInsert && !!section?.sectionRuleReplacement;
+  const title = isPage
+    ? `📄 ${page?.title ?? 'Page'}`
+    : isInsert
+      ? (insert?.ruleId ? '¶ Added section' : '¶ New section')
+      : `¶ ${section?.heading.text ?? ''}`;
+  const served = !isInsert && !isPage && !!section?.sectionRuleReplacement;
 
   return createPortal(
     <div
       ref={rootRef}
       className="fixed z-40 flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl"
-      style={{ left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
+      style={isPage
+        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: '90vw', height: '85vh', maxWidth: '90vw' }
+        : { left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
       role="dialog"
       aria-label={title}
     >
-      {/* ── Header: ¶ title + [Ask AI] [Re-write] [X] — draggable ── */}
+      {/* ── Header: ¶ title + [Ask AI] [Re-write] [X] — draggable (page mode: fixed, centered) ── */}
       <div
-        className="flex cursor-grab select-none items-center gap-1.5 border-b border-slate-200 bg-white px-2.5 py-1.5 active:cursor-grabbing"
-        onPointerDown={onDragStart}
-        onPointerMove={onDragMove}
-        onPointerUp={onDragEnd}
+        className={`flex select-none items-center gap-1.5 border-b border-slate-200 bg-white px-2.5 py-1.5 ${isPage ? '' : 'cursor-grab active:cursor-grabbing'}`}
+        onPointerDown={isPage ? undefined : onDragStart}
+        onPointerMove={isPage ? undefined : onDragMove}
+        onPointerUp={isPage ? undefined : onDragEnd}
       >
         <div className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800" title={title}>
           {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
           {title}
         </div>
+        {/* Page mode: the image law + the demoted WP-editor escape hatch. */}
+        {isPage && (
+          <>
+            <span className="hidden shrink-0 text-[11px] text-slate-400 sm:inline">
+              Images are context — editable in a later version
+            </span>
+            {page?.editUrl && (
+              <a
+                href={page.editUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open this page in the site’s WP editor (source editing)"
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-foreground"
+              >
+                <ExternalLink className="h-3 w-3" /> Open in WP editor
+              </a>
+            )}
+          </>
+        )}
         {/* Version history: the button ALWAYS names the shown state (picked/latest/
             Original — never a counter). The list: Original (light-grey, undeletable)
             + each accepted save with date/time and a delete button. Picking one
-            loads it in the editor; Acceptera makes it the version the site serves. */}
-        {!readOnly && !isInsert && (
+            loads it in the editor; Acceptera makes it the version the site serves.
+            Section mode only — page saves version per touched section (G8). */}
+        {!readOnly && !isInsert && !isPage && (
           <div className="relative shrink-0">
             <button
               type="button"
@@ -402,7 +500,7 @@ export function SectionModal({
             )}
           </div>
         )}
-        {!readOnly && (
+        {!readOnly && !isPage && (
           <>
             <button
               type="button"
@@ -464,9 +562,17 @@ export function SectionModal({
              lives in the SELECT-TEXT popover (owner correction — no permanent
              toolbar): select text → the floating B/I/U/Link/H1/H2/• menu. ── */}
       <div
-        className="h-[280px] overflow-auto bg-white px-3 py-2"
+        className={`${isPage ? 'min-h-0 flex-1' : 'h-[280px]'} overflow-auto bg-white px-3 py-2`}
         title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}
       >
+        {isPage && pageQuery.isLoading && (
+          <div className="flex h-full items-center justify-center gap-2 text-xs text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading the served page…
+          </div>
+        )}
+        {isPage && pageError && (
+          <div className="flex h-full items-center justify-center px-8 text-center text-xs text-slate-500">{pageError}</div>
+        )}
         {!readOnly && editor && (
           <BubbleMenu
             editor={editor}
@@ -492,10 +598,14 @@ export function SectionModal({
             <ToolButton title="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-3.5 w-3.5" /></ToolButton>
           </BubbleMenu>
         )}
-        <EditorContent
-          editor={editor}
-          className={`${TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`}
-        />
+        {(!isPage || pageReady) && (
+          <EditorContent
+            editor={editor}
+            className={`${TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
+              // Locked context images: visible, clearly not editable.
+              + (isPage ? ' [&_img]:my-1 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
+          />
+        )}
       </div>
 
       {/* ── [✓ Acceptera] [↶ Ångra] (+ Remove for existing added sections) ── */}
@@ -504,7 +614,7 @@ export function SectionModal({
           <button
             type="button"
             onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
-            disabled={busy}
+            disabled={busy || (isPage && !pageReady)}
             className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
           >
             {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Acceptera
@@ -512,7 +622,7 @@ export function SectionModal({
           <button
             type="button"
             onClick={() => editor?.commands.setContent(savedHtml)}
-            disabled={busy}
+            disabled={busy || (isPage && !pageReady)}
             title="Restore the last saved state"
             className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >

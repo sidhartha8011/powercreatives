@@ -57,6 +57,7 @@ import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { LinksPopup, type LinkKind } from './LinksPopup';
 import { HeadingRows } from './HeadingsPanel';
+import { SectionModal } from './SectionModal';
 import { SEO_TABLE_GRID } from './seo-table';
 import { Pill, type PillVariant } from '@/components/ui/pill';
 import { SEO_TEXT_FIELDS, type SeoRow } from './types';
@@ -631,6 +632,9 @@ export function SEOModule() {
   const [schemaOverrides, setSchemaOverrides] = useState<Record<number, string[]>>({});
   const [optimizeRow, setOptimizeRow] = useState<SeoRow | null>(null);
   const [previewRow, setPreviewRow] = useState<SeoRow | null>(null);
+  // Full-page editor (dynamic rules) — the repurposed row pen. Connected sites
+  // only; local rows keep the plain WP-editor link (no rule engine locally).
+  const [pageEditRow, setPageEditRow] = useState<SeoRow | null>(null);
   // Connected-site preview: a direct cross-origin iframe renders logged-out (the
   // remote login cookie is a blocked third-party cookie) → no admin bar. So for a
   // connected site we fetch the page AUTHENTICATED via the connector (server-side)
@@ -1053,7 +1057,10 @@ export function SEOModule() {
                   <Eye className="w-3.5 h-3.5" />
                 </button>
               )}
-              {row.editUrl && (
+              {/* Connected sites: the pen opens the full-page DYNAMIC editor
+                  (page-level editing, section-level rules). Local rows keep
+                  the plain WP-editor link — no rule engine on the hub itself. */}
+              {isLocal ? (row.editUrl && (
                 <a
                   href={row.editUrl}
                   target="_blank"
@@ -1063,6 +1070,15 @@ export function SEOModule() {
                 >
                   <SquarePen className="w-3.5 h-3.5" />
                 </a>
+              )) : (
+                <button
+                  type="button"
+                  onClick={() => setPageEditRow(row)}
+                  title="Edit this page (dynamic rules — nothing is rewritten on the site)"
+                  className="shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:text-primary"
+                >
+                  <SquarePen className="w-3.5 h-3.5" />
+                </button>
               )}
             </div>
           </TableCell>
@@ -1691,6 +1707,22 @@ export function SEOModule() {
           type={linksPopup.type}
           isLocal={isLocal}
           siteId={typeof siteId === 'number' ? siteId : null}
+        />
+      )}
+
+      {/* Full-page editor (dynamic rules) — the repurposed row pen. Keyed per
+          post so switching pages never bleeds editor state. */}
+      {pageEditRow && typeof siteId === 'number' && (
+        <SectionModal
+          key={`page-${pageEditRow.id}`}
+          siteId={siteId}
+          postId={pageEditRow.id}
+          type={pageEditRow.type === 'page' ? 'page' : 'post'}
+          readOnly={false}
+          mode="page"
+          page={{ title: pageEditRow.title || 'Untitled', editUrl: pageEditRow.editUrl || undefined }}
+          onClose={() => setPageEditRow(null)}
+          onSaved={() => {}}
         />
       )}
 
