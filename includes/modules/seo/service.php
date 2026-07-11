@@ -4821,6 +4821,8 @@ class PCM_SEO_Service
         $out = array('stored' => (int) ($push['stored'] ?? 0));
         if ($reverted) {
             $out['reverted'] = true;
+            // The editor applies these in place — it never reloads the document.
+            $out['original'] = array('alt' => $orig_alt, 'title' => $orig_title);
         } else {
             $out['rule'] = array('src' => $src, 'occurrence' => $occurrence, 'alt' => $alt, 'title' => $title, 'active' => true);
         }

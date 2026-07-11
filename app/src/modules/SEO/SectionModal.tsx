@@ -46,7 +46,7 @@ import Image from '@tiptap/extension-image';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink,
+  Heading1, Heading2, List, ExternalLink, Save,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -96,8 +96,9 @@ export interface SectionModalProps {
   mode: 'section' | 'insert' | 'page';
   section?: SectionData;
   insert?: InsertData;
-  /** Page mode: the row's title + the demoted WP-editor escape hatch. */
-  page?: { title: string; editUrl?: string };
+  /** Page mode: the row's title, publish date (the Original row's label) +
+   *  the demoted WP-editor escape hatch. */
+  page?: { title: string; editUrl?: string; date?: string };
   /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
   /** Where the user clicked — the window opens right below it. */
@@ -302,10 +303,15 @@ export function SectionModal({
     onCreate: ({ editor: ed }) => setSavedHtml(ed.getHTML()),
   });
 
-  // Page mode opens empty and loads the fetched document (dirty-baseline =
-  // the editor's normalized form of it, same law as onCreate).
+  // Page mode opens empty and loads the fetched document ONCE (dirty-baseline
+  // = the editor's normalized form of it, same law as onCreate). The ref
+  // guard is the 2026-07-11 incident fix: the editor must NEVER auto-replace
+  // its content afterwards — a degraded refetch once clobbered a full
+  // document in front of the owner. Version picks load content explicitly.
+  const pageLoadedRef = useRef(false);
   useEffect(() => {
-    if (!isPage || !editor || !pageReady) return;
+    if (!isPage || !editor || !pageReady || pageLoadedRef.current) return;
+    pageLoadedRef.current = true;
     editor.commands.setContent(pageHtml);
     setSavedHtml(editor.getHTML());
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -326,33 +332,41 @@ export function SectionModal({
   const versionsData: any = isPage ? pageVersionsQuery.data : versionsQuery.data;
   const versions: Array<{ id: number; replacement: string; createdAt: string }> =
     Array.isArray(versionsData?.versions) ? versionsData.versions : [];
-  /** '' = viewing the current state; 'current' | 'original' | version id as string. */
+  /** '' = viewing the current state; 'original' | version id as string. */
   const [versionPick, setVersionPick] = useState('');
   const [versionsOpen, setVersionsOpen] = useState(false);
   const deleteVersionMutation = trpc.seo.remoteDeleteSectionVersion.useMutation();
   const pickVersion = (v: string) => {
     setVersionPick(v);
     setVersionsOpen(false);
-    if (v === 'current') editor?.commands.setContent(pageHtml);
-    else if (v === 'original') editor?.commands.setContent(originalHtml);
+    if (v === 'original') editor?.commands.setContent(originalHtml);
     else if (v !== '') {
       const row = versions.find((x) => String(x.id) === v);
       if (row) editor?.commands.setContent(row.replacement);
     }
   };
-  /** The dropdown ALWAYS names a state (owner law — never a counter):
-   *  the picked version, else page mode = Current (the live served doc),
-   *  else the latest saved one when a rule serves, else Original. */
+  /** Page rows (owner order 2026-07-11): NO separate Current choice — the
+   *  newest saved version IS what the site serves and carries the suffix;
+   *  the Original row shows the page's own date. */
+  const pageRowLabel = (v: { createdAt: string }, idx: number) =>
+    `${v.createdAt.slice(0, 16)}${idx === 0 ? ' (Current)' : ''}`;
+  const pageOriginalLabel = page?.date ? `${String(page.date).slice(0, 16)} (original)` : 'Original';
+  /** The dropdown ALWAYS names a state (owner law — never a counter). */
   const hasActiveRule = !isInsert && !isPage && !!section?.sectionRuleReplacement;
   const versionLabel = versionPick === 'original'
-    ? 'Original'
-    : versionPick === 'current'
-      ? 'Current'
-      : versionPick !== ''
-        ? (versions.find((v) => String(v.id) === versionPick)?.createdAt.slice(0, 16) ?? 'Version')
-        : isPage
-          ? 'Current'
-          : (hasActiveRule && versions.length > 0 ? versions[0].createdAt.slice(0, 16) : 'Original');
+    ? (isPage ? pageOriginalLabel : 'Original')
+    : versionPick !== ''
+      ? (isPage
+        ? (versions.some((x) => String(x.id) === versionPick)
+          ? pageRowLabel(
+            versions[versions.findIndex((x) => String(x.id) === versionPick)],
+            versions.findIndex((x) => String(x.id) === versionPick),
+          )
+          : 'Version')
+        : (versions.find((v) => String(v.id) === versionPick)?.createdAt.slice(0, 16) ?? 'Version'))
+      : isPage
+        ? (versions.length > 0 ? pageRowLabel(versions[0], 0) : pageOriginalLabel)
+        : (hasActiveRule && versions.length > 0 ? versions[0].createdAt.slice(0, 16) : 'Original');
   const deleteVersion = async (id: number) => {
     try {
       await deleteVersionMutation.mutateAsync({ siteId: siteId as number, postId, versionId: id });
@@ -390,9 +404,9 @@ export function SectionModal({
         (Array.isArray(res?.notes) ? res.notes : []).forEach((n: string) => toast.info(n));
         setSavedHtml(html);
         setVersionPick('');
-        // The accepted state is a new page version; Current = fresh served truth.
+        // Versions list only — the editor content is NEVER auto-replaced
+        // (incident fix 2026-07-11: a degraded refetch must not clobber the doc).
         void pageVersionsQuery.refetch();
-        void pageQuery.refetch();
         return true;
       } catch (e: any) {
         toast.error(e?.message ?? 'Could not save the page');
@@ -622,8 +636,13 @@ export function SectionModal({
         revert,
       });
       if (res?.reverted) {
+        // Apply the server-returned originals in place — the document is
+        // never auto-replaced (incident fix 2026-07-11).
+        editor?.commands.updateAttributes('image', {
+          alt: String(res?.original?.alt ?? ''),
+          title: String(res?.original?.title ?? '') || null,
+        });
         toast.success('Image metadata reverted — the original serves again.');
-        void pageQuery.refetch(); // reload served truth (selection clears with it)
       } else {
         editor?.commands.updateAttributes('image', { alt: imgForm.alt, title: imgForm.title });
         toast.success('Saved — the site serves the new image metadata.');
@@ -661,28 +680,29 @@ export function SectionModal({
         onPointerMove={isPage ? undefined : onDragMove}
         onPointerUp={isPage ? undefined : onDragEnd}
       >
-        <div className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800" title={title}>
-          {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
-          {title}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="min-w-0 truncate text-xs font-medium text-slate-800" title={title}>
+            {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
+            {title}
+          </span>
+          {/* The WP-editor escape hatch lives LEFT, beside the name (owner order). */}
+          {isPage && page?.editUrl && (
+            <a
+              href={page.editUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open this page in the site’s WP editor (source editing)"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-foreground"
+            >
+              <ExternalLink className="h-3 w-3" /> Open in WP editor
+            </a>
+          )}
         </div>
-        {/* Page mode: the image law + the demoted WP-editor escape hatch. */}
+        {/* Page mode: the image law, right side. */}
         {isPage && (
-          <>
-            <span className="hidden shrink-0 text-[11px] text-slate-400 sm:inline">
-              Click an image to edit its alt/title — images never move
-            </span>
-            {page?.editUrl && (
-              <a
-                href={page.editUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Open this page in the site’s WP editor (source editing)"
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-foreground"
-              >
-                <ExternalLink className="h-3 w-3" /> Open in WP editor
-              </a>
-            )}
-          </>
+          <span className="hidden shrink-0 text-[11px] text-slate-400 sm:inline">
+            Click an image to edit its alt/title — images never move
+          </span>
         )}
         {/* Version history: the button ALWAYS names the shown state (picked/
             Current/latest/Original — never a counter). The list: page mode adds
@@ -703,33 +723,24 @@ export function SectionModal({
               <span className="text-slate-400">▾</span>
             </button>
             {versionsOpen && (
-              <div className="absolute right-0 top-full z-10 mt-1 w-[190px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
-                {isPage && (
-                  <button
-                    type="button"
-                    onClick={() => pickVersion('current')}
-                    className="block w-full px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-100"
-                  >
-                    Current
-                  </button>
-                )}
+              <div className="absolute right-0 top-full z-10 mt-1 w-[210px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
                 {(!isPage || originalHtml !== '') && (
                 <button
                   type="button"
                   onClick={() => pickVersion('original')}
                   className="block w-full bg-slate-50 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-100"
                 >
-                  Original
+                  {isPage ? pageOriginalLabel : 'Original'}
                 </button>
                 )}
-                {versions.map((v) => (
+                {versions.map((v, idx) => (
                   <div key={v.id} className="flex items-center hover:bg-slate-50">
                     <button
                       type="button"
                       onClick={() => pickVersion(String(v.id))}
                       className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[11px] text-slate-700"
                     >
-                      {v.createdAt.slice(0, 16)}
+                      {isPage ? pageRowLabel(v, idx) : v.createdAt.slice(0, 16)}
                     </button>
                     <button
                       type="button"
@@ -1010,11 +1021,24 @@ export function SectionModal({
       {/* ── [✓ Acceptera] [↶ Ångra] (+ Remove for existing added sections) ── */}
       {!readOnly && (
         <div className="flex items-center gap-1.5 border-t border-slate-200 bg-white px-2.5 py-1.5">
+          {/* Page mode: Spara = save WITHOUT closing (owner order); Acceptera stays save-and-close. */}
+          {isPage && (
+            <button
+              type="button"
+              onClick={() => { void save(); }}
+              disabled={busy || !pageReady || !!review}
+              title="Save — the window stays open"
+              className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Spara
+            </button>
+          )}
           <button
             type="button"
             onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
             disabled={busy || (isPage && (!pageReady || !!review))}
-            className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
+            title={isPage ? 'Save and close' : undefined}
+            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium ${isPage ? 'border border-green-600 bg-white text-green-700 hover:bg-green-50' : 'bg-green-600 text-white hover:bg-green-700'} disabled:opacity-60`}
           >
             {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Acceptera
           </button>
