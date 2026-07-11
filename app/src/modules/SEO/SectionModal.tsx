@@ -40,6 +40,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
+import { Mark } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import {
@@ -50,6 +51,9 @@ import {
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
+import {
+  diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
+} from './word-diff';
 
 /** One paragraph of the section, from the SCAN (original text = rule identity). */
 export interface SectionParagraph {
@@ -129,6 +133,35 @@ const LockedImage = Image.extend({
     return { ...this.parent?.(), 'data-pcm-locked': { default: null } };
   },
 });
+
+/** AI-review marks (page mode only): PRESENTATION of the inline diff — green
+ *  added, red strikethrough removed. Never persisted: every page save runs
+ *  stripDiffHtml first (a guard, not a convention). */
+const DiffAdded = Mark.create({
+  name: 'diffAdded',
+  parseHTML() { return [{ tag: 'span[data-diff-added]' }]; },
+  renderHTML() { return ['span', { 'data-diff-added': '1', class: 'rounded-sm bg-green-100 text-green-900' }, 0]; },
+});
+const DiffRemoved = Mark.create({
+  name: 'diffRemoved',
+  parseHTML() { return [{ tag: 'span[data-diff-removed]' }]; },
+  renderHTML() { return ['span', { 'data-diff-removed': '1', class: 'rounded-sm bg-red-50 text-red-800 line-through decoration-red-400' }, 0]; },
+});
+
+/** One section under AI review. pending/diff block saving; the rest are resolved. */
+type ReviewStatus = 'pending' | 'diff' | 'accepted' | 'rejected' | 'clean' | 'failed';
+interface ReviewSection extends DocSection {
+  status: ReviewStatus;
+  ai?: string;
+  error?: string;
+}
+
+/** Visible text of an HTML fragment (whitespace-collapsed) — clean-result check. */
+function htmlText(html: string): string {
+  const el = document.createElement('div');
+  el.innerHTML = html;
+  return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
 /** Compact readable scale (no `prose` plugin in this build). */
 const TYPE_SCALE =
   'text-xs leading-relaxed text-slate-800 break-words ' +
@@ -244,7 +277,7 @@ export function SectionModal({
         },
         codeBlock: false, blockquote: false, horizontalRule: false,
       }),
-      ...(isPage ? [LockedImage] : []),
+      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved] : []),
     ],
     content: openedHtml,
     // Baseline for dirty-checks must be the EDITOR's normalized form of the
@@ -321,7 +354,12 @@ export function SectionModal({
     if (readOnly) return true;
     if (isPage) {
       if (!pageReady) return true; // nothing loaded — nothing to save
-      const html = replacementOverride ?? (editor?.getHTML() ?? '');
+      if (review) {
+        toast.info('Finish the AI review first — accept or reject each change.');
+        return false;
+      }
+      // Guard: diff marks are presentation and must NEVER reach a save.
+      const html = stripDiffHtml(replacementOverride ?? (editor?.getHTML() ?? ''));
       setBusy(true);
       try {
         // The hub slices the document back into sections and routes each
@@ -437,6 +475,82 @@ export function SectionModal({
     }
   };
 
+  // ── AI review (page mode, V2): per-section rewrites shown as an inline
+  //    red/green diff; Accept applies the AI's clean HTML, Reject restores the
+  //    original — the diff view itself is never what gets kept. The editor is
+  //    read-only while the review runs; saving is blocked until every section
+  //    is resolved. Locked images are lifted out per section (never sent to
+  //    the AI) and ride along untouched.
+  const [review, setReview] = useState<ReviewSection[] | null>(null);
+  const [reviewOrphan, setReviewOrphan] = useState('');
+
+  const startAiReview = async (topic: string) => {
+    if (!editor || !pageReady || busy || review) return;
+    const { orphanHtml, sections } = splitDocSections(editor.getHTML());
+    if (sections.length === 0) {
+      toast.info('No sections to optimize on this page.');
+      return;
+    }
+    setAskOpen(false);
+    setReviewOrphan(orphanHtml);
+    setReview(sections.map((s) => ({ ...s, status: 'pending' as ReviewStatus })));
+    editor.setEditable(false);
+    // Bounded pool: 4 sections in flight; a slow/failed section fails ALONE.
+    let next = 0;
+    const worker = async () => {
+      while (next < sections.length) {
+        const i = next++;
+        try {
+          const res: any = await optimizeMutation.mutateAsync({
+            siteId: siteId as number, postId, type,
+            html: sections[i].html, topic, model, provider,
+          });
+          const value = String(res?.value ?? '').trim();
+          const changed = value !== '' && htmlText(value) !== htmlText(sections[i].html);
+          setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
+            ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value } : { ...s, status: 'clean' as ReviewStatus })
+            : s)) ?? cur);
+        } catch (e: any) {
+          setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
+            ? { ...s, status: 'failed' as ReviewStatus, error: e?.message ?? 'AI failed on this section' }
+            : s)) ?? cur);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, sections.length) }, worker));
+  };
+
+  const resolveSection = (i: number, action: 'accept' | 'reject') =>
+    setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'diff'
+      ? { ...s, status: (action === 'accept' && s.ai ? 'accepted' : 'rejected') as ReviewStatus }
+      : s)) ?? cur);
+  const acceptAllDiffs = () =>
+    setReview((cur) => cur?.map((s) => (s.status === 'diff' && s.ai ? { ...s, status: 'accepted' as ReviewStatus } : s)) ?? cur);
+  const cancelReview = () =>
+    setReview((cur) => cur?.map((s) => (s.status === 'diff' || s.status === 'pending' ? { ...s, status: 'rejected' as ReviewStatus } : s)) ?? cur);
+
+  // Rebuild the document from the review state; when every section is
+  // resolved the review ends — the doc is final content, editing returns.
+  useEffect(() => {
+    if (!editor || !review) return;
+    const doc = reviewOrphan + review.map((s) => {
+      const content = s.status === 'diff' && s.ai
+        ? diffBlocksHtml(s.html, s.ai)
+        : (s.status === 'accepted' && s.ai ? s.ai : s.html);
+      return content + s.imgs.join('');
+    }).join('');
+    editor.commands.setContent(doc);
+    if (review.every((s) => s.status !== 'pending' && s.status !== 'diff')) {
+      const accepted = review.filter((s) => s.status === 'accepted').length;
+      setReview(null);
+      editor.setEditable(true);
+      if (accepted > 0) toast.success(`AI review done — ${accepted} section${accepted === 1 ? '' : 's'} updated. Press Acceptera to save.`);
+      else if (review.some((s) => s.status === 'rejected' || s.status === 'failed')) toast.info('AI review closed — nothing was changed.');
+      else toast.info('The page already looks optimized.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [review]);
+
   const title = isPage
     ? `📄 ${page?.title ?? 'Page'}`
     : isInsert
@@ -491,7 +605,7 @@ export function SectionModal({
             input view is unavailable); each accepted save with date/time and a
             delete button. Picking one loads it in the editor; Acceptera makes
             it live (page mode: through the normal per-section save). */}
-        {!readOnly && !isInsert && (
+        {!readOnly && !isInsert && !review && (
           <div className="relative shrink-0">
             <button
               type="button"
@@ -548,6 +662,30 @@ export function SectionModal({
             )}
           </div>
         )}
+        {/* Page mode AI (V2): Ask AI feeds one instruction to every section;
+            AI Optimize runs the whole-page review. Hidden while reviewing. */}
+        {!readOnly && isPage && pageReady && !review && (
+          <>
+            <button
+              type="button"
+              onClick={() => setAskOpen((v) => !v)}
+              disabled={busy}
+              title="Tell the AI what to do with this page"
+              className={`inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 disabled:opacity-60 ${askOpen ? 'text-primary border-primary/40' : 'text-slate-600'}`}
+            >
+              <MessageSquarePlus className="h-3 w-3" /> Ask AI
+            </button>
+            <button
+              type="button"
+              onClick={() => { void startAiReview(instruction.trim()); }}
+              disabled={busy}
+              title="Rewrite the whole page with AI — every change shows as red/green for you to accept or reject"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
+            >
+              <Sparkles className="h-3 w-3" /> AI Optimize
+            </button>
+          </>
+        )}
         {!readOnly && !isPage && (
           <>
             <button
@@ -583,7 +721,11 @@ export function SectionModal({
             autoFocus
             value={instruction}
             onChange={(e) => setInstruction(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && instruction.trim()) void runAi(instruction.trim()); }}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || !instruction.trim()) return;
+              if (isPage) void startAiReview(instruction.trim());
+              else void runAi(instruction.trim());
+            }}
             placeholder="e.g. “make it shorter and add a price example” — Enter to run"
             className="h-6 w-full rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-800 outline-none focus:border-primary"
           />
@@ -609,6 +751,7 @@ export function SectionModal({
       {/* ── The text: ONE fixed-shape, directly editable surface. Formatting
              lives in the SELECT-TEXT popover (owner correction — no permanent
              toolbar): select text → the floating B/I/U/Link/H1/H2/• menu. ── */}
+      <div className={isPage ? 'flex min-h-0 flex-1' : 'contents'}>
       <div
         className={`${isPage ? 'min-h-0 flex-1 px-8 py-4' : 'h-[280px] px-3 py-2'} overflow-auto bg-white`}
         title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}
@@ -656,13 +799,80 @@ export function SectionModal({
         )}
       </div>
 
+      {/* ── AI review rail (code-review style): one row per section — Accept /
+             Reject per diff, Accept all, Reject all. The editor is read-only
+             until every section is resolved. ── */}
+      {isPage && review && (
+        <aside className="flex w-[250px] shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
+          <div className="border-b border-slate-200 px-2.5 py-1.5">
+            <div className="text-[11px] font-medium text-slate-700">
+              AI review — {review.filter((s) => s.status === 'pending' || s.status === 'diff').length} of {review.length} left
+            </div>
+            <div className="mt-1 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={acceptAllDiffs}
+                disabled={!review.some((s) => s.status === 'diff')}
+                className="inline-flex items-center gap-1 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                <Check className="h-3 w-3" /> Accept all
+              </button>
+              <button
+                type="button"
+                onClick={cancelReview}
+                className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100"
+              >
+                <X className="h-3 w-3" /> Reject all
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto py-1">
+            {review.map((s, i) => (
+              <div key={`${s.heading}-${i}`} className="border-b border-slate-100 px-2.5 py-1.5">
+                <div className="truncate text-[11px] font-medium text-slate-700" title={s.heading}>{s.heading || '(untitled section)'}</div>
+                {s.status === 'pending' && (
+                  <div className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-slate-500">
+                    <Loader2 className="h-3 w-3 animate-spin text-primary" /> Rewriting…
+                  </div>
+                )}
+                {s.status === 'diff' && (
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => resolveSection(i, 'accept')}
+                      className="inline-flex items-center gap-1 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700"
+                    >
+                      <Check className="h-3 w-3" /> Accept
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => resolveSection(i, 'reject')}
+                      className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100"
+                    >
+                      <X className="h-3 w-3" /> Reject
+                    </button>
+                  </div>
+                )}
+                {s.status === 'accepted' && <div className="mt-0.5 text-[10px] font-medium text-green-700">✓ Accepted</div>}
+                {s.status === 'rejected' && <div className="mt-0.5 text-[10px] text-slate-500">Rejected — original kept</div>}
+                {s.status === 'clean' && <div className="mt-0.5 text-[10px] text-slate-500">No change suggested</div>}
+                {s.status === 'failed' && (
+                  <div className="mt-0.5 text-[10px] text-red-600" title={s.error}>AI failed — original kept</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </aside>
+      )}
+      </div>
+
       {/* ── [✓ Acceptera] [↶ Ångra] (+ Remove for existing added sections) ── */}
       {!readOnly && (
         <div className="flex items-center gap-1.5 border-t border-slate-200 bg-white px-2.5 py-1.5">
           <button
             type="button"
             onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
-            disabled={busy || (isPage && !pageReady)}
+            disabled={busy || (isPage && (!pageReady || !!review))}
             className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
           >
             {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Acceptera
@@ -670,7 +880,7 @@ export function SectionModal({
           <button
             type="button"
             onClick={() => editor?.commands.setContent(savedHtml)}
-            disabled={busy || (isPage && !pageReady)}
+            disabled={busy || (isPage && (!pageReady || !!review))}
             title="Restore the last saved state"
             className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
