@@ -56,6 +56,17 @@ class PCM_Text_Matcher
     }
 
     /**
+     * Image-src identity (engine v2.3): entity-decode + trim ONLY. NO case
+     * fold (URL paths are case-sensitive), query string KEPT (it is
+     * identity). The connector's pcm_conn_normalize_src is harness-pinned
+     * behavior-identical.
+     */
+    public static function normalize_src(string $src): string
+    {
+        return trim(html_entity_decode($src, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    }
+
+    /**
      * Occurrence index (0-based) of $needle_html's block among blocks with the
      * same normalized visible text — computed at RULE-CREATION time so the
      * rule targets the exact block the user edited, not just the first twin.

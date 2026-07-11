@@ -88,6 +88,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-optimize', 'remote_optimize_paragraph', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-rule', 'remote_save_section_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-edits', 'remote_save_page_edits', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/image-rule', 'remote_save_image_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-versions', 'remote_page_versions', array(), 'manage_options'),
@@ -553,6 +554,32 @@ class PCM_REST_SEO extends PCM_REST_Base
             (string) $request->get_param('text'),
             absint($request->get_param('occurrence'))
         )));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/image-rule — save an image METADATA
+     *  rule (engine v2.3): alt/title rewritten at render time, never the image
+     *  itself. Editing back to the originals (or revert:true) deletes it. */
+    public function remote_save_image_rule(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = $this->service->save_image_rule((int) $user->id, $site, absint($request->get_param('post')), array(
+            'src'           => (string) ($params['src'] ?? ''),
+            'occurrence'    => (int) ($params['occurrence'] ?? 0),
+            'alt'           => (string) ($params['alt'] ?? ''),
+            'title'         => (string) ($params['title'] ?? ''),
+            'originalAlt'   => (string) ($params['originalAlt'] ?? ''),
+            'originalTitle' => (string) ($params['originalTitle'] ?? ''),
+            'revert'        => !empty($params['revert']),
+        ));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** GET /seo/sites/{id}/content/{post}/page-versions — the page editor's

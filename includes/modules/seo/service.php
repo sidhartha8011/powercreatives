@@ -3466,6 +3466,7 @@ class PCM_SEO_Service
         // regression on un-updated connectors).
         $needs_v2 = false;
         $needs_v3 = ($post_id === 0); // site scope exists only in v3
+        $needs_v4 = false;            // image target exists only in v4 (3.0.2+)
         foreach ($rules as $r) {
             $t = (string) ($r['target'] ?? '');
             if ($t === 'section' || $t === 'sectionInsert') {
@@ -3474,12 +3475,22 @@ class PCM_SEO_Service
             if ($t === 'heading') {
                 $needs_v3 = true; // SERVED heading rules exist only in v3
             }
+            if ($t === 'image') {
+                $needs_v4 = true;
+            }
         }
         $accepts = self::connector_rules_schema_version($site);
         if ($accepts < 1) {
             return new WP_Error(
                 'pcm_seo_connector_no_rules',
                 __('This site’s connector doesn’t support dynamic rules yet (needs v2.7.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+        if ($needs_v4 && $accepts < 4) {
+            return new WP_Error(
+                'pcm_seo_connector_no_image_rules',
+                __('This site’s connector doesn’t support image metadata rules yet (needs v3.0.2+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
                 array('status' => 409)
             );
         }
@@ -3498,7 +3509,7 @@ class PCM_SEO_Service
             );
         }
         $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/rules', array(), array(
-            'schemaVersion' => $needs_v3 ? 3 : ($needs_v2 ? 2 : 1),
+            'schemaVersion' => $needs_v4 ? 4 : ($needs_v3 ? 3 : ($needs_v2 ? 2 : 1)),
             'postId'        => $post_id,
             'rules'         => array_values($rules),
         ), 60);
@@ -4727,6 +4738,93 @@ class PCM_SEO_Service
             self::record_version($user_id, (int) $site->id, $post_id, 'page', '', 0, $html);
         }
         return array('saved' => $saved, 'inserted' => $inserted, 'skipped' => $skipped, 'notes' => array_values(array_unique($notes)));
+    }
+
+    /**
+     * Save an IMAGE metadata rule (engine v2.3, connector 3.0.2): identity =
+     * normalized src + occurrence among same-src CONTENT images; replacement
+     * = attribute set {alt,title} served as an attr rewrite ONLY (never
+     * src/position/existence). anchorContext stores the ORIGINAL alt/title —
+     * captured ONCE at rule creation (for an unruled image the editor's
+     * current attrs ARE the originals) and never overwritten by re-edits.
+     * CLEAN REVERT: editing both attrs back to the originals (or the explicit
+     * revert flag) deletes the rule. Same atomicity laws as every save:
+     * capability BEFORE any write, push-fail ROLLS BACK.
+     *
+     * @param array{src:string,occurrence:int,alt:string,title:string,
+     *              originalAlt?:string,originalTitle?:string,revert?:bool} $input
+     * @return array|\WP_Error
+     */
+    public function save_image_rule(int $user_id, object $site, int $post_id, array $input)
+    {
+        global $wpdb;
+        $table      = PCM_Schema::table('seo_dynamic_rules');
+        $site_id    = (int) $site->id;
+        $src        = PCM_Text_Matcher::normalize_src((string) ($input['src'] ?? ''));
+        $occurrence = max(0, (int) ($input['occurrence'] ?? 0));
+        $alt        = sanitize_text_field((string) ($input['alt'] ?? ''));
+        $title      = sanitize_text_field((string) ($input['title'] ?? ''));
+        $revert     = !empty($input['revert']);
+        if ($src === '') {
+            return new WP_Error('pcm_seo_rule_no_match', __('The image has no usable src to match on.', 'power-creatives'), array('status' => 400));
+        }
+        if (self::connector_rules_schema_version($site) < 4) {
+            return new WP_Error(
+                'pcm_seo_connector_no_image_rules',
+                __('This site’s connector doesn’t support image metadata rules yet (needs v3.0.2+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $prev = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, anchorContext FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'image' AND matchText = %s AND occurrence = %d",
+            $user_id,
+            $site_id,
+            $post_id,
+            $src,
+            $occurrence
+        ), ARRAY_A);
+        $prev_ctx = $prev ? json_decode((string) ($prev['anchorContext'] ?? ''), true) : null;
+        $prev_ctx = is_array($prev_ctx) ? $prev_ctx : array();
+        // Originals: the stored ones for an existing rule; for a NEW rule the
+        // caller's current attrs (no rule has touched them = they ARE original).
+        $orig_alt   = $prev ? (string) ($prev_ctx['originalAlt'] ?? '') : sanitize_text_field((string) ($input['originalAlt'] ?? ''));
+        $orig_title = $prev ? (string) ($prev_ctx['originalTitle'] ?? '') : sanitize_text_field((string) ($input['originalTitle'] ?? ''));
+        $reverted   = $revert || ($alt === $orig_alt && $title === $orig_title);
+
+        $snapshot = self::post_rule_rows($user_id, $site_id, $post_id);
+        if ($reverted) {
+            if (!$prev) {
+                return array('reverted' => true, 'stored' => count($snapshot)); // nothing to do — no push needed
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->delete($table, array('id' => (int) $prev['id']), array('%d'));
+        } else {
+            $replacement = (string) wp_json_encode(array('alt' => $alt, 'title' => $title));
+            $ctx         = (string) wp_json_encode(array('originalAlt' => $orig_alt, 'originalTitle' => $orig_title));
+            if ($prev) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update($table, array('replacement' => $replacement, 'active' => 1), array('id' => (int) $prev['id']), array('%s', '%d'), array('%d'));
+            } else {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->insert($table, array(
+                    'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
+                    'target' => 'image', 'matchText' => $src, 'occurrence' => $occurrence,
+                    'replacement' => $replacement, 'anchorContext' => $ctx, 'active' => 1,
+                ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
+            }
+        }
+        $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
+        if ($push instanceof WP_Error) {
+            return $push;
+        }
+        $out = array('stored' => (int) ($push['stored'] ?? 0));
+        if ($reverted) {
+            $out['reverted'] = true;
+        } else {
+            $out['rule'] = array('src' => $src, 'occurrence' => $occurrence, 'alt' => $alt, 'title' => $title, 'active' => true);
+        }
+        return $out;
     }
 
     /**

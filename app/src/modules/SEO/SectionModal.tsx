@@ -162,6 +162,22 @@ function htmlText(html: string): string {
   el.innerHTML = html;
   return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
+
+/** Image-src identity (mirrors PCM_Text_Matcher::normalize_src): entity-decode
+ *  + trim only — no case fold, query kept. */
+function normSrc(src: string): string {
+  const el = document.createElement('textarea');
+  el.innerHTML = src;
+  return el.value.trim();
+}
+
+/** The selected image's identity + attrs as found (= originals when unruled). */
+interface ImgSelection {
+  src: string;
+  occurrence: number;
+  alt: string;
+  title: string;
+}
 /** Compact readable scale (no `prose` plugin in this build). */
 const TYPE_SCALE =
   'text-xs leading-relaxed text-slate-800 break-words ' +
@@ -551,6 +567,76 @@ export function SectionModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [review]);
 
+  // ── Image metadata (page mode, V3): click a locked image → side panel
+  //    edits its alt/title as a dynamic IMAGE rule (attr rewrite at render
+  //    time — the image itself never moves). Server keeps the ORIGINAL attrs
+  //    from rule creation; editing back (or Revert) deletes the rule.
+  const [imgSel, setImgSel] = useState<ImgSelection | null>(null);
+  const [imgForm, setImgForm] = useState({ alt: '', title: '' });
+  const imageRulesQuery = trpc.seo.remoteGetParagraphRules.useQuery(
+    { siteId: siteId as number, postId },
+    { enabled: isPage && !readOnly, staleTime: 0 },
+  );
+  const imageRules: Array<{ target: string; matchText: string; occurrence: number; active: boolean }> =
+    Array.isArray((imageRulesQuery.data as any)?.rules) ? (imageRulesQuery.data as any).rules : [];
+  const imgHasRule = imgSel != null && imageRules.some((r) =>
+    r.target === 'image' && r.active && r.occurrence === imgSel.occurrence && r.matchText === normSrc(imgSel.src));
+  const saveImageMutation = trpc.seo.remoteSaveImageRule.useMutation();
+
+  useEffect(() => {
+    if (!isPage || !editor) return;
+    const onSel = () => {
+      const sel: any = editor.state.selection;
+      const node = sel?.node;
+      if (node?.type?.name !== 'image') {
+        setImgSel(null);
+        return;
+      }
+      const src = String(node.attrs?.src ?? '');
+      // Occurrence among same-src images in document order — the rule identity.
+      let occ = 0;
+      editor.state.doc.descendants((n: any, pos: number) => {
+        if (n.type?.name === 'image' && pos < sel.from && normSrc(String(n.attrs?.src ?? '')) === normSrc(src)) occ++;
+        return true;
+      });
+      const alt = String(node.attrs?.alt ?? '');
+      const nodeTitle = String(node.attrs?.title ?? '');
+      setImgSel({ src, occurrence: occ, alt, title: nodeTitle });
+      setImgForm({ alt, title: nodeTitle });
+    };
+    editor.on('selectionUpdate', onSel);
+    return () => { editor.off('selectionUpdate', onSel); };
+  }, [isPage, editor]);
+
+  const saveImageMeta = async (revert: boolean) => {
+    if (!imgSel || busy) return;
+    setBusy(true);
+    try {
+      const res: any = await saveImageMutation.mutateAsync({
+        siteId: siteId as number, postId,
+        src: imgSel.src, occurrence: imgSel.occurrence,
+        alt: imgForm.alt, title: imgForm.title,
+        // For a NEW rule the attrs as selected ARE the originals; for an
+        // existing rule the server keeps its stored originals regardless.
+        originalAlt: imgSel.alt, originalTitle: imgSel.title,
+        revert,
+      });
+      if (res?.reverted) {
+        toast.success('Image metadata reverted — the original serves again.');
+        void pageQuery.refetch(); // reload served truth (selection clears with it)
+      } else {
+        editor?.commands.updateAttributes('image', { alt: imgForm.alt, title: imgForm.title });
+        toast.success('Saved — the site serves the new image metadata.');
+      }
+      void imageRulesQuery.refetch();
+      setImgSel(null);
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Could not save the image metadata');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const title = isPage
     ? `📄 ${page?.title ?? 'Page'}`
     : isInsert
@@ -583,7 +669,7 @@ export function SectionModal({
         {isPage && (
           <>
             <span className="hidden shrink-0 text-[11px] text-slate-400 sm:inline">
-              Images are context — editable in a later version
+              Click an image to edit its alt/title — images never move
             </span>
             {page?.editUrl && (
               <a
@@ -861,6 +947,61 @@ export function SectionModal({
                 )}
               </div>
             ))}
+          </div>
+        </aside>
+      )}
+
+      {/* ── Image metadata panel (V3): alt/title as a dynamic rule — the image
+             itself is locked (position/existence never change). ── */}
+      {isPage && !review && !readOnly && imgSel && (
+        <aside className="flex w-[250px] shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
+          <div className="border-b border-slate-200 px-2.5 py-1.5">
+            <div className="text-[11px] font-medium text-slate-700">Image metadata</div>
+            <div className="truncate text-[10px] text-slate-400" title={imgSel.src}>{imgSel.src}</div>
+          </div>
+          <div className="space-y-2 px-2.5 py-2">
+            <label className="block">
+              <span className="text-[10px] font-medium text-slate-500">Alt text</span>
+              <input
+                value={imgForm.alt}
+                onChange={(e) => setImgForm((f) => ({ ...f, alt: e.target.value }))}
+                placeholder="Describe the image"
+                className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-medium text-slate-500">Title</span>
+              <input
+                value={imgForm.title}
+                onChange={(e) => setImgForm((f) => ({ ...f, title: e.target.value }))}
+                placeholder="Tooltip title (optional)"
+                className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
+              />
+            </label>
+            <div className="flex items-center gap-1.5 pt-0.5">
+              <button
+                type="button"
+                onClick={() => { void saveImageMeta(false); }}
+                disabled={busy}
+                className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
+              >
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save
+              </button>
+              {imgHasRule && (
+                <button
+                  type="button"
+                  onClick={() => { void saveImageMeta(true); }}
+                  disabled={busy}
+                  title="Delete this image's metadata rule — the original alt/title serve again"
+                  className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+                >
+                  <Undo2 className="h-3 w-3" /> Revert to original
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] leading-relaxed text-slate-400">
+              Served dynamically — the image itself never moves or changes. Saved separately from page text.
+            </p>
           </div>
         </aside>
       )}

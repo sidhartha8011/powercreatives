@@ -123,6 +123,11 @@ $ru = '<h2>FAQ</h2><p>Intro.</p><ul><li>Ett</li></ul><p>Utro.</p>';
 check('parse_replacement_units parity', PCM_Text_Matcher::parse_replacement_units($ru) === pcm_conn_parse_replacement_units($ru));
 check('replacement units keep lists', pcm_conn_parse_replacement_units($ru)[2]['html'] === '<ul><li>Ett</li></ul>');
 
+// normalize_src (v2.3): entity-decode + trim, NO case fold, query kept.
+$src_in = '  /Media/Bild.JPG?v=2&amp;x=1 ';
+check('normalize_src parity', PCM_Text_Matcher::normalize_src($src_in) === pcm_conn_normalize_src($src_in), pcm_conn_normalize_src($src_in));
+check('normalize_src keeps case + query', pcm_conn_normalize_src($src_in) === '/Media/Bild.JPG?v=2&x=1', pcm_conn_normalize_src($src_in));
+
 // ═════ 2. APPLY — the connector engine (the ONLY implementation) ═════
 echo "-- apply engine (extracted connector) --\n";
 
@@ -246,6 +251,50 @@ check('ORDERING: heading pass before sections', $out === '<h2>New title</h2><p>R
 // handles a merged array with both scopes without interference.
 $out = pcm_conn_apply_rules('<h2>T</h2><p>Old para.</p>', array($hr('T', 2, 2, 'T2'), $pr('Old para.', 0, 'New para.')), 1);
 check('merged site+post rules coexist', $out === '<h2>T2</h2><p>New para.</p>', $out);
+
+// ═════ 4. v2.3 IMAGE pass (attr rewrite ONLY; content-region identity) ═════
+$ir = static fn(string $src, int $occ, array $attrs): array => array(
+    'id' => 20, 'target' => 'image', 'active' => true,
+    'match' => array('text' => pcm_conn_normalize_src($src), 'occurrence' => $occ),
+    'replacement' => json_encode($attrs),
+);
+// Attr swap: alt+title replaced, everything else (class/srcset/order) kept,
+// sibling images untouched.
+$imgpage = '<p>x</p><img class="hero" srcset="a.jpg 2x" src="/img/a.jpg" alt="old alt" title="old"><img src="/img/b.jpg" alt="b">';
+$out = pcm_conn_apply_rules($imgpage, array($ir('/img/a.jpg', 0, array('alt' => 'New alt', 'title' => 'New title'))), 1);
+check('image attr swap keeps everything else', $out === '<p>x</p><img class="hero" srcset="a.jpg 2x" src="/img/a.jpg" alt="New alt" title="New title"><img src="/img/b.jpg" alt="b">', $out);
+// Missing attrs are ADDED (never duplicated), position/src untouched.
+$out = pcm_conn_apply_rules('<img src="/img/a.jpg">', array($ir('/img/a.jpg', 0, array('alt' => 'Added', 'title' => 'T'))), 1);
+check('image adds absent alt/title', $out === '<img title="T" alt="Added" src="/img/a.jpg">', $out);
+// Occurrence targets the occurrence-th same-src twin only.
+$out = pcm_conn_apply_rules('<img src="/img/a.jpg" alt="1"><img src="/img/a.jpg" alt="2">', array($ir('/img/a.jpg', 1, array('alt' => 'second'))), 1);
+check('image occurrence second twin', $out === '<img src="/img/a.jpg" alt="1"><img src="/img/a.jpg" alt="second">', $out);
+// Chrome images: neither counted nor touched (the frame law) — occurrence 0
+// is the first CONTENT copy.
+$out = pcm_conn_apply_rules('<header><img src="/logo.png" alt="chrome"></header><img src="/logo.png" alt="content">', array($ir('/logo.png', 0, array('alt' => 'edited'))), 1);
+check('image chrome twin neither counted nor touched', $out === '<header><img src="/logo.png" alt="chrome"></header><img src="/logo.png" alt="edited">', $out);
+// src miss = inert, original serves.
+$out = pcm_conn_apply_rules('<img src="/img/other.jpg" alt="keep">', array($ir('/img/gone.jpg', 0, array('alt' => 'X'))), 1);
+check('image src miss serves original', $out === '<img src="/img/other.jpg" alt="keep">', $out);
+// Values are esc_attr-ed — a quote can never break out of the attribute.
+$out = pcm_conn_apply_rules('<img src="/img/a.jpg" alt="old">', array($ir('/img/a.jpg', 0, array('alt' => 'He said "hi" & left'))), 1);
+check('image attr value is esc_attr-ed', $out === '<img src="/img/a.jpg" alt="He said &quot;hi&quot; &amp; left">', $out);
+// data-alt is NOT the alt attribute (word-boundary guard).
+$out = pcm_conn_apply_rules('<img data-alt="keep" src="/img/a.jpg" alt="old">', array($ir('/img/a.jpg', 0, array('alt' => 'new'))), 1);
+check('image data-alt attr never confused with alt', $out === '<img data-alt="keep" src="/img/a.jpg" alt="new">', $out);
+// ORDERING LAW: the image pass runs LAST — it reaches images that only exist
+// in a SECTION rule's output.
+$rules = array(
+    array(
+        'id' => 21, 'target' => 'section', 'active' => true,
+        'match' => array('text' => pcm_conn_normalize_text('Bild'), 'occurrence' => 0),
+        'replacement' => '<h2>Bild</h2><p>Text.</p><img src="/img/new.jpg" alt="raw">',
+        'section' => array('level' => 2, 'fingerprint' => pcm_conn_section_fingerprint(array('Gammal text.'))),
+    ),
+    $ir('/img/new.jpg', 0, array('alt' => 'polished')),
+);
+$out = pcm_conn_apply_rules('<h2>Bild</h2><p>Gammal text.</p>', $rules, 1);
+check('ORDERING: image pass after sections', is_string($out) && strpos($out, '<img src="/img/new.jpg" alt="polished">') !== false, $out);
 
 // ═════ summary ═════
 echo "\n" . ($FAIL === 0 ? "ALL GREEN" : "FAILURES: $FAIL") . " — $PASS passed, $FAIL failed\n";

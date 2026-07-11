@@ -378,6 +378,30 @@ Companion: `docs/GAP-ANALYSIS-DYNAMIC-ALIGNMENT-20260710.md`.
 - v2.1 semantics (site scope storage/serving, heading-pass-first ordering,
   schemaVersion 3) are unchanged.
 
+### Engine v2.3 — image metadata target (FROZEN 2026-07-11 — ADDITIVE; connector 3.0.2, schemaVersion 4)
+
+Companion: `docs/GAP-ANALYSIS-PAGE-EDITOR-V23-20260711.md`.
+
+- **Target `image`** — attribute rewrite ONLY: serving rewrites `alt`/`title`
+  on the matched `<img>`, never src/position/existence. Add/move/delete stays
+  out of scope by law (F9 + builder wrappers).
+- **Identity:** `matchText` = normalized src (`normalize_src`: entity-decode +
+  trim ONLY — NO case fold, query string KEPT) + `occurrence` among
+  same-normalized-src CONTENT-region images. Chrome images are neither
+  counted nor touched (the frame law — a header logo is not page content).
+  `normalize_src` exists in both brains (PCM_Text_Matcher + pcm_conn_*) and
+  is harness-pinned behavior-identical.
+- **Payload:** `replacement` = JSON `{alt, title}` (connector whitelists +
+  re-encodes exactly those keys, values sanitize_text_field + esc_attr at
+  serve — a quote can never break out of the attribute). `anchorContext` (hub
+  only) = `{originalAlt, originalTitle}` captured ONCE at rule creation —
+  clean revert (editing both back, or revert:true) deletes the rule.
+- **Ordering law:** the image pass runs LAST over the final buffer — it also
+  reaches images that exist only inside rule output. src miss = inert,
+  original serves, stale counted.
+- **Capability:** wire schemaVersion 4; posts without image rules keep
+  pushing v1/v2/v3 byte-identical; hub gates with an honest 409 pre-3.0.2.
+
 ### Deletions ledger (C3 — nothing else changes behavior)
 
 1. Connector: `/scan-headings`, `/scan-content` routes + `pcm_conn_parse_paragraph_nodes`.

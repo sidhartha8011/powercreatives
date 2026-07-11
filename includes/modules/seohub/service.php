@@ -452,7 +452,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — four dumb jobs: page snapshot (the hub does ALL parsing), builder-aware storage writers (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), guarded render-time apply of hub-precomputed instructions (refuse-if-unsure), and hub-pushed config. Also: SEO meta in REST, fallback meta tags, robots.txt + JSON-LD, /llms.txt + /llm-info/, cache flush on edit, self-update, one-paste connection code.
- * Version: 3.0.1
+ * Version: 3.0.2
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1668,6 +1668,12 @@ function pcm_conn_visible_text($html) {
     $html = (string) preg_replace('#<(script|style)[^>]*>.*?</\1>#is', '', (string) $html);
     return strip_tags($html);
 }
+/** Image-src identity (v2.3) — mirror of PCM_Text_Matcher::normalize_src():
+ *  entity-decode + trim ONLY. NO case fold (URL paths are case-sensitive),
+ *  query string KEPT (it is identity). */
+function pcm_conn_normalize_src($src) {
+    return trim(html_entity_decode((string) $src, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+}
 // --- Section engine (3.0.0: the ONLY apply implementation — the hub's serving
 // mirror is gone; these functions are exercised directly by the committed
 // extraction harness in tests/standalone/, which also pins the parsing
@@ -1979,6 +1985,61 @@ function pcm_conn_apply_rules($html, $rules, $pid) {
         }, $html);
         if (is_string($out) && $done) { $html = $out; $applied++; } else { $missed++; }
     }
+    // Pass 3 (v2.3): IMAGE metadata rules — rewrite ONLY alt/title on the
+    // matched <img>, never src/position/existence. Runs LAST over the final
+    // buffer so it also reaches images inside rule output. Identity space =
+    // CONTENT-region images (chrome images neither counted nor touched — the
+    // frame law); occurrence among same-normalized-src content images.
+    // src miss = inert, original serves, counted.
+    foreach ($rules as $r) {
+        if (empty($r['active']) || (string) ($r['target'] ?? '') !== 'image') { continue; }
+        $want = pcm_conn_normalize_src((string) ($r['match']['text'] ?? ''));
+        $attrs = json_decode((string) ($r['replacement'] ?? ''), true);
+        if ($want === '' || !is_array($attrs)) { $missed++; continue; }
+        $occ   = max(0, (int) ($r['match']['occurrence'] ?? 0));
+        $spans = pcm_conn_chrome_spans($html);
+        $seen  = 0; $done = false;
+        if (preg_match_all('#<img\b[^>]*>#i', $html, $mm, PREG_OFFSET_CAPTURE)) {
+            foreach ($mm[0] as $m) {
+                $start = (int) $m[1];
+                $chrome = false;
+                foreach ($spans as $s) {
+                    if ($start >= $s[0] && $start < $s[1]) { $chrome = true; break; }
+                }
+                if ($chrome) { continue; }
+                $tag = (string) $m[0];
+                if (!preg_match('#(?<![\w-])src\s*=\s*("([^"]*)"|\'([^\']*)\')#i', $tag, $sm)) { continue; }
+                $src = pcm_conn_normalize_src($sm[2] !== '' ? $sm[2] : (isset($sm[3]) ? $sm[3] : ''));
+                if ($src === '' || $src !== $want) { continue; }
+                if ($seen++ !== $occ) { continue; }
+                $new = $tag;
+                foreach (array('alt', 'title') as $a) {
+                    if (!array_key_exists($a, $attrs)) { continue; }
+                    $val = esc_attr((string) $attrs[$a]);
+                    if (preg_match('#(?<![\w-])' . $a . '\s*=\s*("[^"]*"|\'[^\']*\')#i', $new)) {
+                        // Callback: the value is literal, never backref-processed.
+                        $new = (string) preg_replace_callback(
+                            '#(?<![\w-])' . $a . '\s*=\s*("[^"]*"|\'[^\']*\')#i',
+                            function () use ($a, $val) { return $a . '="' . $val . '"'; },
+                            $new,
+                            1
+                        );
+                    } else {
+                        $new = (string) preg_replace_callback(
+                            '#^<img\b#i',
+                            function () use ($a, $val) { return '<img ' . $a . '="' . $val . '"'; },
+                            $new,
+                            1
+                        );
+                    }
+                }
+                if ($new !== $tag) { $html = substr_replace($html, $new, $start, strlen($tag)); }
+                $done = true;
+                break;
+            }
+        }
+        if ($done) { $applied++; } else { $missed++; }
+    }
     if ($applied > 0 || $missed > 0) { pcm_conn_rules_bump_stats($pid, $applied, $missed); }
     return $html;
 }
@@ -2026,7 +2087,7 @@ add_action('rest_api_init', function () {
                 $idx = get_option('pcm_conn_rules_index', array());
                 return array(
                     'supported'     => true,
-                    'schemaVersion' => 3,
+                    'schemaVersion' => 4,
                     'posts'         => is_array($idx) ? array_map('intval', $idx) : array(),
                     'siteRules'     => pcm_conn_rules_site(),
                     'killSwitch'    => get_option('pcm_conn_rules_off') === '1',
@@ -2034,7 +2095,7 @@ add_action('rest_api_init', function () {
             }
             return array(
                 'supported'     => true,
-                'schemaVersion' => 3,
+                'schemaVersion' => 4,
                 'rules'         => pcm_conn_rules_for($pid),
                 'stats'         => (array) get_option('pcm_conn_rules_stats_' . $pid, array()),
             );
@@ -2042,20 +2103,22 @@ add_action('rest_api_init', function () {
         array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) {
             $p = $req->get_json_params();
             $schema = is_array($p) ? (int) ($p['schemaVersion'] ?? 0) : 0;
-            if ($schema !== 1 && $schema !== 2 && $schema !== 3) {
-                return new WP_REST_Response(array('error' => 'unsupported_schema', 'accepts' => 3), 400);
+            if ($schema < 1 || $schema > 4) {
+                return new WP_REST_Response(array('error' => 'unsupported_schema', 'accepts' => 4), 400);
             }
             $pid = absint($p['postId'] ?? 0);
             $site_scope = ($pid === 0 && $schema >= 3 && array_key_exists('postId', (array) $p));
             if (!$site_scope && (!$pid || !get_post($pid))) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
-            // v2 adds the section targets; v3 adds SERVED heading rules + site scope.
-            // A v1/v2 payload keeps exactly its old shape. Site scope accepts ONLY
+            // v2 adds the section targets; v3 adds SERVED heading rules + site
+            // scope; v4 adds the image target (attr rewrite only). A v1/v2/v3
+            // payload keeps exactly its old shape. Site scope accepts ONLY
             // heading targets (a site-wide paragraph/section rule is undefined).
             if ($schema >= 2) {
                 $targets = array('paragraph', 'heading', 'anchorText', 'href', 'section', 'sectionInsert');
             } else {
                 $targets = array('paragraph', 'heading', 'anchorText', 'href');
             }
+            if ($schema >= 4) { $targets[] = 'image'; }
             if ($site_scope) { $targets = array('heading'); }
             $clean = array();
             foreach ((array) ($p['rules'] ?? array()) as $r) {
@@ -2066,7 +2129,11 @@ add_action('rest_api_init', function () {
                     'id'             => (int) ($r['id'] ?? 0),
                     'target'         => $target,
                     'match'          => array(
-                        'text'       => pcm_conn_normalize_text((string) ($r['match']['text'] ?? '')),
+                        // Image identity is a URL (case/query significant) —
+                        // src normalization, never the text fold.
+                        'text'       => $target === 'image'
+                            ? pcm_conn_normalize_src((string) ($r['match']['text'] ?? ''))
+                            : pcm_conn_normalize_text((string) ($r['match']['text'] ?? '')),
                         'occurrence' => (int) ($r['match']['occurrence'] ?? 0),
                     ),
                     'replacement'    => wp_kses_post((string) ($r['replacement'] ?? '')),
@@ -2075,6 +2142,17 @@ add_action('rest_api_init', function () {
                     'sourceChangeId' => isset($r['sourceChangeId']) ? (int) $r['sourceChangeId'] : null,
                     'anchor'         => (isset($r['anchor']) && is_array($r['anchor'])) ? $r['anchor'] : null,
                 );
+                if ($target === 'image') {
+                    // Whitelist + re-encode: replacement is EXACTLY {alt?,title?}.
+                    $set = json_decode((string) ($r['replacement'] ?? ''), true);
+                    $set = is_array($set) ? $set : array();
+                    $img = array();
+                    foreach (array('alt', 'title') as $a) {
+                        if (array_key_exists($a, $set)) { $img[$a] = sanitize_text_field((string) $set[$a]); }
+                    }
+                    if (empty($img)) { continue; } // nothing rewritable — not a rule
+                    $row['replacement'] = (string) wp_json_encode($img);
+                }
                 if ($target === 'section' || $target === 'sectionInsert' || ($target === 'heading' && $schema >= 3)) {
                     $sec = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
                     $row['section'] = array('level' => max(0, min(6, (int) ($sec['level'] ?? 0))));
