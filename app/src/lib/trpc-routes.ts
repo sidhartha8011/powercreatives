@@ -437,6 +437,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-versions?text=${encodeURIComponent(input.text)}&occurrence=${input.occurrence ?? 0}` }),
     },
+    "seo.remotePageVersions": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-versions` }),
+    },
     "seo.remoteDeleteSectionVersion": {
         endpoint: "seo/sites",
         method: "POST",

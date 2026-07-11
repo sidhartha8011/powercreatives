@@ -727,9 +727,11 @@ class PCM_Schema
         dbDelta($sql);
 
         // ── SEO section version history (DB 1.38.0) ──
-        // One row per ACCEPTED section save — the editor's version dropdown.
-        // Keyed by the SECTION IDENTITY (matchText + occurrence), NOT the rule
-        // id: a clean revert DELETES the rule row, and history must survive it.
+        // One row per ACCEPTED save — the editors' version dropdowns. Keyed by
+        // IDENTITY (target + matchText + occurrence), NOT the rule id: a clean
+        // revert DELETES the rule row, and history must survive it. Targets:
+        // 'section' (matchText = heading key) and 'page' (matchText = '',
+        // replacement = the whole page document as saved).
         // "Original" is never stored — it is always read live from the scan.
         // NOT the changeset system (phase 2 deployment grouping) — this is
         // pure per-section edit history; the two layers stay separate.

@@ -188,6 +188,12 @@ export function SectionModal({
       ? 'Page editing unavailable — the site blocked the connector’s content fetch.'
       : 'Page editing needs the served page view (connector 3.0.1+ on this site) — update it from the Sites module, then re-open.')
     : null;
+  // Page versions: saved page documents + the true no-rules Original
+  // (rules-input snapshot, hub-assembled) — one read.
+  const pageVersionsQuery = trpc.seo.remotePageVersions.useQuery(
+    { siteId: siteId as number, postId },
+    { enabled: isPage && !readOnly, staleTime: 0 },
+  );
 
   // ── Position: right below the click, draggable from the header. ──
   const [pos, setPos] = useState(() => ({
@@ -211,11 +217,14 @@ export function SectionModal({
 
   // ── Content: ONE state — the editor. `savedHtml` = last saved/opened state. ──
   const openedHtml = isInsert ? (insert?.replacement ?? '') : (section ? composeSectionHtml(section) : '');
-  /** The section's TRUE original (no rules applied) — always live from the scan. */
-  const originalHtml = !isInsert && section
-    ? (section.heading.html || `<h${section.heading.level}>${escapeHtml(section.heading.text)}</h${section.heading.level}>`)
-      + section.paragraphs.map((p) => p.html).join('')
-    : '';
+  /** The TRUE original (no rules applied): section mode = live from the scan;
+   *  page mode = the hub-assembled rules-input document ('' = honest unavailable). */
+  const originalHtml = isPage
+    ? String((pageVersionsQuery.data as any)?.originalHtml ?? '')
+    : !isInsert && section
+      ? (section.heading.html || `<h${section.heading.level}>${escapeHtml(section.heading.text)}</h${section.heading.level}>`)
+        + section.paragraphs.map((p) => p.html).join('')
+      : '';
   const [savedHtml, setSavedHtml] = useState(openedHtml);
   const [busy, setBusy] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
@@ -265,34 +274,41 @@ export function SectionModal({
     },
     { enabled: !readOnly && !isInsert && !!section, staleTime: 0 },
   );
+  const versionsData: any = isPage ? pageVersionsQuery.data : versionsQuery.data;
   const versions: Array<{ id: number; replacement: string; createdAt: string }> =
-    Array.isArray((versionsQuery.data as any)?.versions) ? (versionsQuery.data as any).versions : [];
-  /** '' = viewing the current state; 'original' | version id as string. */
+    Array.isArray(versionsData?.versions) ? versionsData.versions : [];
+  /** '' = viewing the current state; 'current' | 'original' | version id as string. */
   const [versionPick, setVersionPick] = useState('');
   const [versionsOpen, setVersionsOpen] = useState(false);
   const deleteVersionMutation = trpc.seo.remoteDeleteSectionVersion.useMutation();
   const pickVersion = (v: string) => {
     setVersionPick(v);
     setVersionsOpen(false);
-    if (v === 'original') editor?.commands.setContent(originalHtml);
+    if (v === 'current') editor?.commands.setContent(pageHtml);
+    else if (v === 'original') editor?.commands.setContent(originalHtml);
     else if (v !== '') {
       const row = versions.find((x) => String(x.id) === v);
       if (row) editor?.commands.setContent(row.replacement);
     }
   };
   /** The dropdown ALWAYS names a state (owner law — never a counter):
-   *  the picked version, else the latest saved one when a rule serves, else Original. */
-  const hasActiveRule = !isInsert && !!section?.sectionRuleReplacement;
+   *  the picked version, else page mode = Current (the live served doc),
+   *  else the latest saved one when a rule serves, else Original. */
+  const hasActiveRule = !isInsert && !isPage && !!section?.sectionRuleReplacement;
   const versionLabel = versionPick === 'original'
     ? 'Original'
-    : versionPick !== ''
-      ? (versions.find((v) => String(v.id) === versionPick)?.createdAt.slice(0, 16) ?? 'Version')
-      : (hasActiveRule && versions.length > 0 ? versions[0].createdAt.slice(0, 16) : 'Original');
+    : versionPick === 'current'
+      ? 'Current'
+      : versionPick !== ''
+        ? (versions.find((v) => String(v.id) === versionPick)?.createdAt.slice(0, 16) ?? 'Version')
+        : isPage
+          ? 'Current'
+          : (hasActiveRule && versions.length > 0 ? versions[0].createdAt.slice(0, 16) : 'Original');
   const deleteVersion = async (id: number) => {
     try {
       await deleteVersionMutation.mutateAsync({ siteId: siteId as number, postId, versionId: id });
       if (versionPick === String(id)) setVersionPick('');
-      await versionsQuery.refetch();
+      await (isPage ? pageVersionsQuery : versionsQuery).refetch();
     } catch (e: any) {
       toast.error(e?.message ?? 'Could not delete the version');
     }
@@ -319,6 +335,10 @@ export function SectionModal({
           : 'No content changes to save.');
         (Array.isArray(res?.notes) ? res.notes : []).forEach((n: string) => toast.info(n));
         setSavedHtml(html);
+        setVersionPick('');
+        // The accepted state is a new page version; Current = fresh served truth.
+        void pageVersionsQuery.refetch();
+        void pageQuery.refetch();
         return true;
       } catch (e: any) {
         toast.error(e?.message ?? 'Could not save the page');
@@ -464,12 +484,14 @@ export function SectionModal({
             )}
           </>
         )}
-        {/* Version history: the button ALWAYS names the shown state (picked/latest/
-            Original — never a counter). The list: Original (light-grey, undeletable)
-            + each accepted save with date/time and a delete button. Picking one
-            loads it in the editor; Acceptera makes it the version the site serves.
-            Section mode only — page saves version per touched section (G8). */}
-        {!readOnly && !isInsert && !isPage && (
+        {/* Version history: the button ALWAYS names the shown state (picked/
+            Current/latest/Original — never a counter). The list: page mode adds
+            Current (the live served document); Original (light-grey,
+            undeletable — page mode: the rules-input document, hidden when the
+            input view is unavailable); each accepted save with date/time and a
+            delete button. Picking one loads it in the editor; Acceptera makes
+            it live (page mode: through the normal per-section save). */}
+        {!readOnly && !isInsert && (
           <div className="relative shrink-0">
             <button
               type="button"
@@ -482,6 +504,16 @@ export function SectionModal({
             </button>
             {versionsOpen && (
               <div className="absolute right-0 top-full z-10 mt-1 w-[190px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
+                {isPage && (
+                  <button
+                    type="button"
+                    onClick={() => pickVersion('current')}
+                    className="block w-full px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-100"
+                  >
+                    Current
+                  </button>
+                )}
+                {(!isPage || originalHtml !== '') && (
                 <button
                   type="button"
                   onClick={() => pickVersion('original')}
@@ -489,6 +521,7 @@ export function SectionModal({
                 >
                   Original
                 </button>
+                )}
                 {versions.map((v) => (
                   <div key={v.id} className="flex items-center hover:bg-slate-50">
                     <button

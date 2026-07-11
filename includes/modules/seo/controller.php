@@ -90,6 +90,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-edits', 'remote_save_page_edits', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-versions', 'remote_page_versions', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions/(?P<vid>\d+)/delete', 'remote_delete_section_version', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)', 'remote_update_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)/optimize', 'remote_optimize_heading', array(), 'manage_options'),
@@ -552,6 +553,19 @@ class PCM_REST_SEO extends PCM_REST_Base
             (string) $request->get_param('text'),
             absint($request->get_param('occurrence'))
         )));
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/page-versions — the page editor's
+     *  version dropdown: saved page documents (newest first) + the true
+     *  no-rules Original (rules-input snapshot, hub-assembled). */
+    public function remote_page_versions(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success($this->service->list_page_versions((int) $user->id, $site, absint($request->get_param('post'))));
     }
 
     /** POST /seo/sites/{id}/content/{post}/section-versions/{vid}/delete — delete one saved version. */

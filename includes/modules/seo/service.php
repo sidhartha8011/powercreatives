@@ -3930,7 +3930,7 @@ class PCM_SEO_Service
         // save must never leave a ghost version). Reverts record nothing — the
         // Original is always in the dropdown, read live from the scan.
         if (!$reverted) {
-            self::record_section_version($user_id, $site_id, $post_id, $match_text, $occurrence, $replacement);
+            self::record_version($user_id, $site_id, $post_id, 'section', $match_text, $occurrence, $replacement);
         }
         $out = array('stored' => (int) ($push['stored'] ?? 0));
         if ($reverted) {
@@ -3941,25 +3941,27 @@ class PCM_SEO_Service
         return $out;
     }
 
-    /** Cap per section — same runaway-guard pattern as the heading overrides list. */
-    private const SECTION_VERSION_CAP = 20;
+    /** Cap per identity — same runaway-guard pattern as the heading overrides list. */
+    private const VERSION_CAP = 20;
 
     /**
-     * Record one accepted section state in the version history. Keyed by the
-     * SECTION IDENTITY (matchText + occurrence) — history survives the rule
-     * row's deletion on clean revert. Consecutive duplicates are skipped;
-     * history is capped (oldest rows dropped).
+     * Record one accepted state in the version history. Keyed by the row
+     * IDENTITY (target + matchText + occurrence: a section's heading key, or
+     * target='page' + '' for the whole-page document) — history survives the
+     * rule row's deletion on clean revert. Consecutive duplicates are
+     * skipped; history is capped (oldest rows dropped).
      */
-    private static function record_section_version(int $user_id, int $site_id, int $post_id, string $match_text, int $occurrence, string $replacement): void
+    private static function record_version(int $user_id, int $site_id, int $post_id, string $target, string $match_text, int $occurrence, string $replacement): void
     {
         global $wpdb;
         $table = PCM_Schema::table('seo_rule_versions');
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
         $last = $wpdb->get_var($wpdb->prepare(
-            "SELECT replacement FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d ORDER BY id DESC LIMIT 1",
+            "SELECT replacement FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = %s AND matchText = %s AND occurrence = %d ORDER BY id DESC LIMIT 1",
             $user_id,
             $site_id,
             $post_id,
+            $target,
             $match_text,
             $occurrence
         ));
@@ -3969,19 +3971,20 @@ class PCM_SEO_Service
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $wpdb->insert($table, array(
             'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
-            'target' => 'section', 'matchText' => $match_text, 'occurrence' => $occurrence,
+            'target' => $target, 'matchText' => $match_text, 'occurrence' => $occurrence,
             'replacement' => $replacement,
         ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s'));
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
         $ids = $wpdb->get_col($wpdb->prepare(
-            "SELECT id FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d ORDER BY id DESC",
+            "SELECT id FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = %s AND matchText = %s AND occurrence = %d ORDER BY id DESC",
             $user_id,
             $site_id,
             $post_id,
+            $target,
             $match_text,
             $occurrence
         ));
-        foreach (array_slice(array_map('intval', $ids), self::SECTION_VERSION_CAP) as $old_id) {
+        foreach (array_slice(array_map('intval', $ids), self::VERSION_CAP) as $old_id) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->delete($table, array('id' => $old_id), array('%d'));
         }
@@ -4001,22 +4004,18 @@ class PCM_SEO_Service
         return array('deleted' => true);
     }
 
-    /**
-     * A section's saved versions, newest first — the editor's dropdown.
-     *
-     * @return array[] [{id, replacement, createdAt}, …]
-     */
-    public function list_section_versions(int $user_id, int $site_id, int $post_id, string $heading_text, int $occurrence): array
+    /** Saved versions for one identity (target + matchText + occurrence), newest first. */
+    private static function list_versions(int $user_id, int $site_id, int $post_id, string $target, string $match_text, int $occurrence): array
     {
         global $wpdb;
-        $table      = PCM_Schema::table('seo_rule_versions');
-        $match_text = PCM_Text_Matcher::normalize($heading_text);
+        $table = PCM_Schema::table('seo_rule_versions');
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
         $rows = (array) $wpdb->get_results($wpdb->prepare(
-            "SELECT id, replacement, createdAt FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'section' AND matchText = %s AND occurrence = %d ORDER BY id DESC",
+            "SELECT id, replacement, createdAt FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = %s AND matchText = %s AND occurrence = %d ORDER BY id DESC",
             $user_id,
             $site_id,
             $post_id,
+            $target,
             $match_text,
             $occurrence
         ), ARRAY_A);
@@ -4025,6 +4024,40 @@ class PCM_SEO_Service
             'replacement' => (string) $r['replacement'],
             'createdAt'   => (string) $r['createdAt'],
         ), $rows);
+    }
+
+    /**
+     * A section's saved versions, newest first — the editor's dropdown.
+     *
+     * @return array[] [{id, replacement, createdAt}, …]
+     */
+    public function list_section_versions(int $user_id, int $site_id, int $post_id, string $heading_text, int $occurrence): array
+    {
+        return self::list_versions($user_id, $site_id, $post_id, 'section', PCM_Text_Matcher::normalize($heading_text), $occurrence);
+    }
+
+    /**
+     * The PAGE editor's version dropdown in one read: every saved page
+     * document (newest first) + the true no-rules ORIGINAL — the rules-INPUT
+     * snapshot assembled with the same law as the editor's document. An
+     * empty originalHtml is honest (input view unavailable), never a guess.
+     *
+     * @return array{versions:array[],originalHtml:string}
+     */
+    public function list_page_versions(int $user_id, object $site, int $post_id): array
+    {
+        $original = '';
+        $in       = self::remote_fetch_snapshot($site, $post_id, 'input');
+        if ($in !== null && $in['html'] !== '') {
+            // No rules passed → no attribution → every section assembles as
+            // original content, which is exactly what "Original" means.
+            $parsed   = self::parse_page_snapshot($in['html']);
+            $original = self::assemble_content_html($in['html'], $parsed['headings']);
+        }
+        return array(
+            'versions'     => self::list_versions($user_id, (int) $site->id, $post_id, 'page', '', 0),
+            'originalHtml' => $original,
+        );
     }
 
     /**
@@ -4297,7 +4330,7 @@ class PCM_SEO_Service
             return $push;
         }
         if ((string) $row['target'] === 'section') {
-            self::record_section_version($user_id, (int) $site->id, $rule_post, (string) $row['matchText'], (int) $row['occurrence'], $replacement);
+            self::record_version($user_id, (int) $site->id, $rule_post, 'section', (string) $row['matchText'], (int) $row['occurrence'], $replacement);
         }
         return array('stored' => (int) ($push['stored'] ?? 0));
     }
@@ -4359,7 +4392,7 @@ class PCM_SEO_Service
             return $push;
         }
         if (!$removed && (string) $row['target'] === 'section') {
-            self::record_section_version($user_id, (int) $site->id, $rule_post, (string) $row['matchText'], (int) $row['occurrence'], $new);
+            self::record_version($user_id, (int) $site->id, $rule_post, 'section', (string) $row['matchText'], (int) $row['occurrence'], $new);
         }
         $out = array('stored' => (int) ($push['stored'] ?? 0));
         if ($removed) {
@@ -4687,6 +4720,11 @@ class PCM_SEO_Service
                 return $fail($e['label'], $res, $saved + $inserted);
             }
             $inserted++;
+        }
+        // Page version: ONE row per changing save — the document as submitted
+        // (duplicate-skip + cap ride record_version). No-op saves record nothing.
+        if ($saved + $inserted > 0) {
+            self::record_version($user_id, (int) $site->id, $post_id, 'page', '', 0, $html);
         }
         return array('saved' => $saved, 'inserted' => $inserted, 'skipped' => $skipped, 'notes' => array_values(array_unique($notes)));
     }
