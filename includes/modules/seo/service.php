@@ -3145,12 +3145,14 @@ class PCM_SEO_Service
         $out      = array();
         $ci       = 0;     // content-heading row cursor
         $in_slice = false; // inside a rule-owned section: its blocks live in the emitted slice
-        $prev_end = null;  // gaps BETWEEN content blocks only
+        // Gap scanning covers the WHOLE non-chrome document — before the first
+        // block, between blocks, and after the last (identity-completeness law:
+        // the editor's image set must equal the connector's counting set, or
+        // occurrence indexes diverge and edge images stay invisible/uneditable).
+        $prev_end = 0;
         foreach ($blocks as $b) {
-            if ($prev_end !== null) {
-                foreach ($gap_imgs($prev_end, (int) $b['start']) as $img) {
-                    $out[] = $lock($img);
-                }
+            foreach ($gap_imgs($prev_end, (int) $b['start']) as $img) {
+                $out[] = $lock($img);
             }
             $prev_end = (int) $b['start'] + (int) $b['len'];
             if ($b['tag'] !== 'p') {
@@ -3190,6 +3192,10 @@ class PCM_SEO_Service
             foreach ($imgs as $img) {
                 $out[] = $lock($img);
             }
+        }
+        // Tail gap: images after the last content block (footer stays chrome-excluded).
+        foreach ($gap_imgs($prev_end, strlen($html)) as $img) {
+            $out[] = $lock($img);
         }
         return implode("\n", array_filter($out, static fn($u) => trim((string) $u) !== ''));
     }

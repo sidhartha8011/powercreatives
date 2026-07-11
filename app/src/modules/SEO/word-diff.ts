@@ -63,12 +63,36 @@ const parseBlocks = (html: string): HTMLElement[] => {
 
 const blockText = (b: HTMLElement): string => (b.textContent ?? '').replace(/\s+/g, ' ').trim();
 
+/** Tags whose content model is inline text — safe wrappers for diff runs. */
+const isTextTag = (t: string): boolean => t === 'p' || /^h[1-6]$/.test(t);
+
+/** A whole block shown as ADDED — lists mark per <li> (text directly inside
+ *  <ul> is invalid and the editor would drop it); other structural blocks
+ *  render verbatim (the resolved states carry the truth, never this view). */
+const addedBlock = (b: HTMLElement): string => {
+  const tag = b.tagName.toLowerCase();
+  if (tag === 'ul' || tag === 'ol') {
+    const el = b.cloneNode(true) as HTMLElement;
+    el.querySelectorAll('li').forEach((li) => {
+      li.innerHTML = `<span data-diff-added="1">${escapeHtml((li.textContent ?? '').replace(/\s+/g, ' ').trim())}</span>`;
+    });
+    return el.outerHTML;
+  }
+  if (isTextTag(tag)) return `<${tag}><span data-diff-added="1">${escapeHtml(blockText(b))}</span></${tag}>`;
+  return b.outerHTML;
+};
+
+/** A whole block shown as REMOVED — always a valid paragraph wrapper. */
+const removedBlock = (b: HTMLElement): string =>
+  `<p><span data-diff-removed="1">${escapeHtml(blockText(b))}</span></p>`;
+
 /**
  * The inline red/green VIEW of one section: original vs AI blocks paired 1:1
- * by order; paired blocks diff word-wise on visible text (formatting shows
- * plain during review — Accept applies the AI's clean HTML, Reject restores
- * the original verbatim, so the diff view itself is never kept). Extra AI
- * blocks render all-green; blocks the AI dropped render all-red.
+ * by order; SAME-TAG text blocks (p/h) diff word-wise inside their tag —
+ * structural pairs (list↔paragraph etc.) render as a removed line + the new
+ * block with valid added marks, never text nodes inside list wrappers.
+ * (Formatting shows plain during review — Accept applies the AI's clean
+ * HTML, Reject restores the original verbatim; this view is never kept.)
  */
 export function diffBlocksHtml(originalHtml: string, aiHtml: string): string {
   const oldBlocks = parseBlocks(originalHtml);
@@ -79,16 +103,21 @@ export function diffBlocksHtml(originalHtml: string, aiHtml: string): string {
     const o = oldBlocks[k];
     const nw = newBlocks[k];
     if (o && nw) {
-      const tag = nw.tagName.toLowerCase();
+      const oTag = o.tagName.toLowerCase();
+      const nTag = nw.tagName.toLowerCase();
       const oText = blockText(o);
       const nText = blockText(nw);
-      out.push(oText === nText
-        ? nw.outerHTML // untouched block — keep its real formatting
-        : `<${tag}>${runsToHtml(wordDiff(oText, nText))}</${tag}>`);
+      if (oText === nText && oTag === nTag) {
+        out.push(nw.outerHTML); // untouched block — keep its real formatting
+      } else if (oTag === nTag && isTextTag(nTag)) {
+        out.push(`<${nTag}>${runsToHtml(wordDiff(oText, nText))}</${nTag}>`);
+      } else {
+        out.push(removedBlock(o) + addedBlock(nw));
+      }
     } else if (nw) {
-      out.push(`<${nw.tagName.toLowerCase()}><span data-diff-added="1">${escapeHtml(blockText(nw))}</span></${nw.tagName.toLowerCase()}>`);
+      out.push(addedBlock(nw));
     } else if (o) {
-      out.push(`<${o.tagName.toLowerCase()}><span data-diff-removed="1">${escapeHtml(blockText(o))}</span></${o.tagName.toLowerCase()}>`);
+      out.push(removedBlock(o));
     }
   }
   return out.join('');
