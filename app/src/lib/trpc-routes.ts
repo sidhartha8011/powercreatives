@@ -416,17 +416,9 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/rules` }),
     },
-    "seo.remoteSaveParagraphRule": {
-        endpoint: "seo/sites",
-        method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/paragraph-rule`, body: { text: input.text, occurrence: input.occurrence, replacement: input.replacement, anchor: input.anchor } }),
-    },
-    "seo.remoteOptimizeParagraph": {
-        endpoint: "seo/sites",
-        method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/paragraph-optimize`, body: { type: input.type, text: input.text, model: input.model, provider: input.provider, templateId: input.templateId } }),
-    },
     // ── Section editor (contracts v2) — remote (connected sites) ──
+    // (paragraph-rule / paragraph-optimize routes deleted 2026-07-11 — dead
+    //  creation paths; the page + section editors superseded them.)
     "seo.remoteSaveSectionRule": {
         endpoint: "seo/sites",
         method: "POST",

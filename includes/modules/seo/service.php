@@ -3619,127 +3619,12 @@ class PCM_SEO_Service
         }, $rows);
     }
 
-    /**
-     * Save a paragraph rule for a connected post and push the post's complete
-     * rule set to its connector — ATOMICALLY from the caller's perspective:
-     * capability is checked BEFORE any write, and a failed push ROLLS BACK the
-     * DB change, so hub state and connector state never diverge silently.
-     *
-     * UPSERT semantics (by siteId+postId+matchText+occurrence): editing the
-     * same paragraph again updates its one rule — rules never pile up.
-     * CLEAN REVERT: a replacement whose visible text normalizes back to the
-     * original deletes the rule entirely (mirrors the shipped override
-     * behavior — no dead rules).
-     *
-     * @param array{text:string,occurrence:int,replacement:string,anchor?:array} $input
-     * @return array{reverted?:bool,rule?:array,stored:int}|\WP_Error
-     */
-    public function save_paragraph_rule(int $user_id, object $site, int $post_id, array $input)
-    {
-        global $wpdb;
-        $table       = PCM_Schema::table('seo_dynamic_rules');
-        $site_id     = (int) $site->id;
-        $match_text  = PCM_Text_Matcher::normalize((string) ($input['text'] ?? ''));
-        $occurrence  = max(0, (int) ($input['occurrence'] ?? 0));
-        $replacement = wp_kses_post((string) ($input['replacement'] ?? ''));
-        $anchor      = (isset($input['anchor']) && is_array($input['anchor'])) ? $input['anchor'] : null;
-        if ($match_text === '') {
-            return new WP_Error('pcm_seo_rule_no_match', __('The paragraph has no matchable text.', 'power-creatives'), array('status' => 400));
-        }
-        if (trim(PCM_Text_Matcher::visible_text($replacement)) === '') {
-            return new WP_Error('pcm_seo_rule_empty', __('The replacement text is empty.', 'power-creatives'), array('status' => 400));
-        }
-        // Capability BEFORE any write — an old connector fails honestly, nothing half-done.
-        if (!self::connector_supports_rules($site)) {
-            return new WP_Error(
-                'pcm_seo_connector_no_rules',
-                __('This site’s connector doesn’t support dynamic rules yet (needs v2.7.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
-                array('status' => 409)
-            );
-        }
-
-        // The paragraph's ONE existing rule, if any (upsert identity).
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
-        $prev = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, replacement, active FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'paragraph' AND matchText = %s AND occurrence = %d",
-            $user_id,
-            $site_id,
-            $post_id,
-            $match_text,
-            $occurrence
-        ), ARRAY_A);
-
-        // CLEAN REVERT: replacement normalizes back to the original → delete the rule.
-        $reverted = PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text($replacement)) === $match_text;
-        if ($reverted) {
-            if ($prev) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                $wpdb->delete($table, array('id' => (int) $prev['id']), array('%d'));
-            }
-        } elseif ($prev) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $wpdb->update(
-                $table,
-                array('replacement' => $replacement, 'anchorContext' => $anchor ? wp_json_encode($anchor) : null, 'active' => 1),
-                array('id' => (int) $prev['id']),
-                array('%s', '%s', '%d'),
-                array('%d')
-            );
-        } else {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $wpdb->insert($table, array(
-                'userId'        => $user_id,
-                'siteId'        => $site_id,
-                'postId'        => $post_id,
-                'target'        => 'paragraph',
-                'matchText'     => $match_text,
-                'occurrence'    => $occurrence,
-                'replacement'   => $replacement,
-                'anchorContext' => $anchor ? wp_json_encode($anchor) : null,
-                'active'        => 1,
-            ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
-        }
-
-        // Push the post's COMPLETE current set (schema v1 replaces the set).
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
-        $rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT id, target, matchText, occurrence, replacement, anchorContext, active FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d",
-            $user_id,
-            $site_id,
-            $post_id
-        ), ARRAY_A);
-        $push = self::push_rules($site, $post_id, self::rules_to_schema((array) $rows));
-        if ($push instanceof WP_Error) {
-            // ROLLBACK — hub DB must mirror what the connector actually serves.
-            if ($reverted && $prev) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                $wpdb->insert($table, array(
-                    'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
-                    'target' => 'paragraph', 'matchText' => $match_text, 'occurrence' => $occurrence,
-                    'replacement' => (string) $prev['replacement'],
-                    'anchorContext' => $anchor ? wp_json_encode($anchor) : null,
-                    'active' => (int) $prev['active'],
-                ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
-            } elseif (!$reverted && $prev) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                $wpdb->update($table, array('replacement' => (string) $prev['replacement'], 'active' => (int) $prev['active']), array('id' => (int) $prev['id']), array('%s', '%d'), array('%d'));
-            } elseif (!$reverted && !$prev) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                $wpdb->delete($table, array(
-                    'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
-                    'target' => 'paragraph', 'matchText' => $match_text, 'occurrence' => $occurrence,
-                ), array('%d', '%d', '%d', '%s', '%s', '%d'));
-            }
-            return $push;
-        }
-        $out = array('stored' => (int) ($push['stored'] ?? 0));
-        if ($reverted) {
-            $out['reverted'] = true;
-        } else {
-            $out['rule'] = array('matchText' => $match_text, 'occurrence' => $occurrence, 'replacement' => $replacement, 'active' => true);
-        }
-        return $out;
-    }
+    // NOTE (consolidation, 2026-07-11): save_paragraph_rule was DELETED with
+    // its endpoints — paragraph-rule CREATION had zero UI callers (the page +
+    // section editors superseded it). Existing paragraph rules keep serving
+    // and displaying; each dies via the absorb law on the next save touching
+    // its section. The connector's paragraph pass follows in the owner-gated
+    // fleet-convergence cleanup (deletions ledger).
 
     // =====================================================================
     // SECTION RULES (contracts v2, FROZEN 2026-07-09) — section editor phase 1.
@@ -3802,7 +3687,7 @@ class PCM_SEO_Service
 
     /**
      * Save a SECTION replace rule (contracts v2) — same atomicity law as
-     * save_paragraph_rule: capability BEFORE any write, push-fail ROLLS BACK.
+     * every rule save: capability BEFORE any write, push-fail ROLLS BACK.
      *
      * UPSERT identity: siteId+postId+target='section'+matchText(heading)+occurrence.
      * CLEAN REVERT: a replacement that reproduces the original section exactly
@@ -3898,14 +3783,29 @@ class PCM_SEO_Service
                     'replacement' => $replacement, 'anchorContext' => $ctx, 'active' => 1,
                 ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
             }
-            // ABSORB: covered paragraph rules die with this push (their served text
-            // was folded into the section's initial state by the caller/UI first).
-            foreach ($paragraphs as $p) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                $wpdb->delete($table, array(
-                    'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
-                    'target' => 'paragraph', 'matchText' => $p['text'], 'occurrence' => $p['occurrence'],
-                ), array('%d', '%d', '%d', '%s', '%s', '%d'));
+            // ABSORB (one-owner, tightened 2026-07-11): covered paragraph rules
+            // die with this push. A caller may know a paragraph by its ORIGINAL
+            // text (unruled display) or by the rule's SERVED OUTPUT (the rule was
+            // serving when the section was captured) — matching only the original
+            // let a serving paragraph rule survive beside its new section owner
+            // (observed live: rules #2 + #21 coexisting). Both forms match now.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+            $p_rows = (array) $wpdb->get_results($wpdb->prepare(
+                "SELECT id, matchText, occurrence, replacement FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'paragraph'",
+                $user_id,
+                $site_id,
+                $post_id
+            ), ARRAY_A);
+            foreach ($p_rows as $p_row) {
+                $served_out = PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text((string) $p_row['replacement']));
+                foreach ($paragraphs as $p) {
+                    if (((string) $p_row['matchText'] === $p['text'] && (int) $p_row['occurrence'] === $p['occurrence'])
+                        || ($served_out !== '' && $served_out === $p['text'])) {
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        $wpdb->delete($table, array('id' => (int) $p_row['id']), array('%d'));
+                        break;
+                    }
+                }
             }
             // ABSORB (one-owner law, v2.2): a post-scope heading rule whose OUTPUT
             // is this section's heading dies here — its ORIGINAL identity (text,
@@ -4993,21 +4893,6 @@ class PCM_SEO_Service
             return $val;
         }
         return array('value' => wp_kses_post((string) $val));
-    }
-
-    /** AI-optimize a connected post's paragraph text (NOT saved — staged). Returns { value }. */
-    public static function remote_optimize_paragraph(object $site, int $post_id, string $type, string $text, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
-    {
-        self::ensure_sites_service();
-        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
-        $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'id,title,slug,link,author,meta'));
-        $row   = (!is_wp_error($res) && is_array($res['body'] ?? null)) ? self::remote_row($res['body'], $type, $site) : array();
-        $vars  = self::remote_field_vars($site, $row);
-        $vars['current_value'] = $text;
-        $mode  = ($text !== '') ? 'optimize' : 'generate';
-        $max   = (int) (self::field_prompts()['paragraph']['max'] ?? 400);
-        $val   = self::run_prompt_section('paragraph', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
-        return ($val instanceof WP_Error) ? $val : array('value' => $val);
     }
 
     /**

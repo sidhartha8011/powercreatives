@@ -84,8 +84,6 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/migrate-overrides', 'remote_migrate_overrides', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/push-config', 'remote_push_config', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/rules', 'remote_list_rules', array(), 'manage_options'),
-            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-rule', 'remote_save_paragraph_rule', array(), 'manage_options'),
-            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/paragraph-optimize', 'remote_optimize_paragraph', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-rule', 'remote_save_section_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-edits', 'remote_save_page_edits', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/image-rule', 'remote_save_image_rule', array(), 'manage_options'),
@@ -422,49 +420,6 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         return $this->success(array('rules' => $this->service->list_dynamic_rules((int) $user->id, (int) $site->id, absint($request->get_param('post')))));
-    }
-
-    /** POST /seo/sites/{id}/content/{post}/paragraph-rule — save a paragraph's dynamic rule
-     *  (upsert; replacement identical to original = clean revert) + push the set. */
-    public function remote_save_paragraph_rule(WP_REST_Request $request): WP_REST_Response|WP_Error
-    {
-        $user = $this->get_current_pcm_user();
-        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
-        if (!$site) {
-            return $this->not_found('Site');
-        }
-        $params = $request->get_json_params() ?: array();
-        $result = $this->service->save_paragraph_rule((int) $user->id, $site, absint($request->get_param('post')), array(
-            'text'        => (string) ($params['text'] ?? ''),
-            'occurrence'  => (int) ($params['occurrence'] ?? 0),
-            'replacement' => (string) ($params['replacement'] ?? ''),
-            'anchor'      => (isset($params['anchor']) && is_array($params['anchor'])) ? $params['anchor'] : null,
-        ));
-        if ($result instanceof WP_Error) {
-            return $result;
-        }
-        return $this->success($result);
-    }
-
-    /** POST /seo/sites/{id}/content/{post}/paragraph-optimize — AI-suggest a paragraph rewrite (not saved). */
-    public function remote_optimize_paragraph(WP_REST_Request $request): WP_REST_Response|WP_Error
-    {
-        $user = $this->get_current_pcm_user();
-        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
-        if (!$site) {
-            return $this->not_found('Site');
-        }
-        $params      = $request->get_json_params() ?: array();
-        $type        = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
-        $text        = sanitize_textarea_field((string) ($params['text'] ?? ''));
-        $model       = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
-        $provider    = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
-        $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
-        $result = PCM_SEO_Service::remote_optimize_paragraph($site, absint($request->get_param('post')), $type, $text, $model, (int) $user->id, $provider, $template_id);
-        if ($result instanceof WP_Error) {
-            return $result;
-        }
-        return $this->success($result);
     }
 
     /**
