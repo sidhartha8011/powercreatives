@@ -452,7 +452,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — four dumb jobs: page snapshot (the hub does ALL parsing), builder-aware storage writers (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), guarded render-time apply of hub-precomputed instructions (refuse-if-unsure), and hub-pushed config. Also: SEO meta in REST, fallback meta tags, robots.txt + JSON-LD, /llms.txt + /llm-info/, cache flush on edit, self-update, one-paste connection code.
- * Version: 3.0.3
+ * Version: 3.0.4
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1809,11 +1809,44 @@ function pcm_conn_apply_section_rule($html, $match_text, $level, $fingerprint, $
     foreach ($edits as $e) { $html = substr_replace($html, $e['html'], $e['start'], $e['len']); }
     return $html;
 }
+// --- Content-region primitive (engine v2.4.1): WordPress's OWN the_content
+// pipeline defines where page content begins and ends — the engine OBSERVES
+// it instead of guessing. The recorder is a pure observer at the last filter
+// position; the locator is an exact substring match on the output buffer.
+// Not recorded / not found → null → callers keep legacy behavior (never worse).
+if (!defined('PCM_CONN_CE')) { define('PCM_CONN_CE', '<!--pcm-ce-7f3a-->'); }
+/** Remember a post's FINAL the_content output (first non-empty win per request). */
+function pcm_conn_content_remember($pid, $html) {
+    if (!isset($GLOBALS['pcm_conn_content_rec'][(int) $pid]) && trim((string) $html) !== '') {
+        $GLOBALS['pcm_conn_content_rec'][(int) $pid] = (string) $html;
+    }
+    return (string) $html;
+}
+add_filter('the_content', function ($html) {
+    if (is_singular() && in_the_loop() && is_main_query()) {
+        pcm_conn_content_remember((int) get_queried_object_id(), (string) $html);
+    }
+    return $html;
+}, PHP_INT_MAX);
+/** Exact [start, end) span of the recorded content inside a buffer, or null. */
+function pcm_conn_content_span($buffer, $pid) {
+    $rec = isset($GLOBALS['pcm_conn_content_rec'][(int) $pid]) ? (string) $GLOBALS['pcm_conn_content_rec'][(int) $pid] : '';
+    if ($rec === '') { return null; }
+    $at = strpos((string) $buffer, $rec);
+    return ($at === false) ? null : array($at, $at + strlen($rec));
+}
 /**
  * Apply one `sectionInsert` rule: new section before the anchor heading, or
  * after the anchor section ('after' = before the NEXT heading block when one
  * exists — top-level, outside builder wrappers; only the page's LAST section
  * falls back to after-its-last-block). Anchor missing → null (nothing inserted).
+ *
+ * v2.4.1 PLACEMENT LAW: when the buffer carries the content-end sentinel
+ * (injected by the serving callback) and the anchor lies INSIDE the content
+ * region, the insertion point may NEVER exceed the region's end — an insert
+ * after the last section lands at the true end of the content, never past
+ * trailing theme furniture (comment forms etc.). Anchors outside the region
+ * (comment-area headings) keep legacy semantics.
  */
 function pcm_conn_apply_section_insert($html, $match_text, $level, $position, $occurrence, $replacement) {
     if ((string) $match_text === '' || trim((string) $replacement) === '') { return null; }
@@ -1837,6 +1870,8 @@ function pcm_conn_apply_section_insert($html, $match_text, $level, $position, $o
             $at   = $last['start'] + $last['len'];
         }
     }
+    $ce = strpos($html, PCM_CONN_CE);
+    if ($ce !== false && $blocks[$i]['start'] < $ce && $at > $ce) { $at = $ce; }
     return substr_replace($html, $replacement, $at, 0);
 }
 /**
@@ -1987,22 +2022,42 @@ function pcm_conn_apply_rules($html, $rules, $pid) {
     // per post, cheap). Removes run before inserts so an insert anchored on a
     // surviving neighbor still lands; one anchored on a removed heading goes
     // honestly inert + stale.
-    foreach (array('section', 'sectionRemove', 'sectionInsert') as $phase) {
+    foreach (array('section', 'sectionRemove') as $phase) {
         foreach ($rules as $r) {
             if (empty($r['active']) || (string) ($r['target'] ?? '') !== $phase) { continue; }
             $want = (string) ($r['match']['text'] ?? '');
             $occ  = (int) ($r['match']['occurrence'] ?? 0);
             $sec  = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
             $lvl  = (int) ($sec['level'] ?? 0);
-            if ($phase === 'section') {
-                $out = pcm_conn_apply_section_rule($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ, (string) ($r['replacement'] ?? ''));
-            } elseif ($phase === 'sectionRemove') {
-                $out = pcm_conn_apply_section_remove($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ);
-            } else {
-                $out = pcm_conn_apply_section_insert($html, $want, $lvl, (string) ($sec['position'] ?? 'after'), $occ, (string) ($r['replacement'] ?? ''));
-            }
+            $out  = ($phase === 'section')
+                ? pcm_conn_apply_section_rule($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ, (string) ($r['replacement'] ?? ''))
+                : pcm_conn_apply_section_remove($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ);
             if (is_string($out)) { $html = $out; $applied++; } else { $missed++; }
         }
+    }
+    // Inserts (v2.4.1 ORDERING LAW): 'before' rules apply in rule order (each
+    // lands at the anchor's start, above the previous — creation flow already);
+    // 'after' rules apply in REVERSE rule order — each earlier rule then lands
+    // above the later ones, so the page reads in creation order (fixture-pinned;
+    // forward order provably served THREE,TWO,ONE for created ONE,TWO,THREE).
+    $ins_before = array();
+    $ins_after  = array();
+    foreach ($rules as $r) {
+        if (empty($r['active']) || (string) ($r['target'] ?? '') !== 'sectionInsert') { continue; }
+        $sec = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
+        if (((string) ($sec['position'] ?? 'after')) === 'before') { $ins_before[] = $r; } else { $ins_after[] = $r; }
+    }
+    foreach (array_merge($ins_before, array_reverse($ins_after)) as $r) {
+        $sec = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
+        $out = pcm_conn_apply_section_insert(
+            $html,
+            (string) ($r['match']['text'] ?? ''),
+            (int) ($sec['level'] ?? 0),
+            (string) ($sec['position'] ?? 'after'),
+            (int) ($r['match']['occurrence'] ?? 0),
+            (string) ($r['replacement'] ?? '')
+        );
+        if (is_string($out)) { $html = $out; $applied++; } else { $missed++; }
     }
     // Pass 2 (v1, byte-identical behavior): paragraph rules.
     foreach ($rules as $r) {
@@ -2127,10 +2182,17 @@ add_action('template_redirect', function () {
     $post_rules = $pid ? pcm_conn_rules_for($pid) : array();
     if (empty($site_rules) && empty($post_rules)) { return; }
     ob_start(function ($html) use ($site_rules, $post_rules, $pid) {
+        $original = $html; // fail-to-original must return the PRISTINE buffer
         try {
-            return pcm_conn_apply_rules($html, array_merge($site_rules, $post_rules), $pid);
+            // Content-region sentinel (v2.4.1): mark the true end of the
+            // content BEFORE the passes run — earlier passes shift offsets,
+            // a sentinel survives every mutation. Stripped before output.
+            $span = pcm_conn_content_span($html, $pid);
+            if ($span !== null) { $html = substr_replace($html, PCM_CONN_CE, $span[1], 0); }
+            $html = pcm_conn_apply_rules($html, array_merge($site_rules, $post_rules), $pid);
+            return str_replace(PCM_CONN_CE, '', $html);
         } catch (\Throwable $e) {
-            return $html; // fail-to-original, always
+            return $original; // fail-to-original, always
         }
     });
 }, 0);

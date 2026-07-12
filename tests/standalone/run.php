@@ -351,6 +351,46 @@ check('image hidden chrome isolation', $out === '<header><img src="/l.png" alt="
 $out = pcm_conn_apply_rules('<img src="/a.jpg" alt="1"><img src="/a.jpg" alt="2">', array($ih('/a.jpg', 0), $ir('/a.jpg', 1, array('alt' => 'kept+renamed'))), 1);
 check('image single-scan hide+rewrite stability', $out === '<img src="/a.jpg" alt="kept+renamed">', $out);
 
+// ═════ 6. v2.4.1 content-region primitive + insert placement/ordering ═════
+pcm_conn_content_remember(5, '<h2>X</h2><p>base</p>');
+$page5 = '<html><body><div class="entry"><h2>X</h2><p>base</p></div><p>furniture</p></body></html>';
+$span  = pcm_conn_content_span($page5, 5);
+check('content span exact', is_array($span) && substr($page5, $span[0], $span[1] - $span[0]) === '<h2>X</h2><p>base</p>', $span);
+check('content span null when unrecorded', pcm_conn_content_span($page5, 6) === null);
+check('content span null when not found', pcm_conn_content_span('<p>other page</p>', 5) === null);
+
+$ins = static fn(int $id, string $body, string $pos = 'after', string $anchor = 'X'): array => array(
+    'id' => $id, 'target' => 'sectionInsert', 'active' => true,
+    'match' => array('text' => pcm_conn_normalize_text($anchor), 'occurrence' => 0),
+    'replacement' => "<h2>$body</h2><p>p$body</p>",
+    'section' => array('level' => 2, 'position' => $pos),
+);
+// The I1 case turned green: with the sentinel, an 'after' insert on the LAST
+// section lands at the content end — trailing theme furniture stays after it.
+$buf = '<h2>X</h2><p>base</p>' . PCM_CONN_CE . '<p>furniture-1</p><p>furniture-2</p>';
+$out = pcm_conn_apply_rules($buf, array($ins(1, 'NEW')), 1);
+check('insert clamps to content end (furniture stays after)', is_string($out)
+    && strpos($out, 'base</p><h2>NEW</h2>') !== false && strpos($out, '<h2>NEW</h2>') < strpos($out, 'furniture-1'), $out);
+// A heading BEYOND the region (comments title) must not pull the insert out either.
+$buf = '<h2>X</h2><p>base</p>' . PCM_CONN_CE . '<p>f</p><h2>Comments</h2>';
+$out = pcm_conn_apply_rules($buf, array($ins(1, 'NEW')), 1);
+check('insert never crosses the region toward a comments heading', is_string($out) && strpos($out, 'base</p><h2>NEW</h2>') !== false, $out);
+// Anchors OUTSIDE the region keep legacy semantics.
+$buf = '<p>content</p>' . PCM_CONN_CE . '<h2>Outside</h2><p>a</p><p>b</p>';
+$out = pcm_conn_apply_rules($buf, array($ins(1, 'NEW', 'after', 'Outside')), 1);
+check('anchor outside region keeps legacy fallback', is_string($out) && strpos($out, 'b</p><h2>NEW</h2>') !== false, $out);
+// Sentinel integrity: apply_rules must never eat or duplicate the marker
+// (the serving callback strips it after the passes).
+check('sentinel survives passes exactly once', substr_count((string) $out, PCM_CONN_CE) === 1, $out);
+// ORDERING LAW: after-inserts serve in creation order now…
+$out = pcm_conn_apply_rules('<h2>X</h2><p>base</p><h2>End</h2>', array($ins(1, 'ONE'), $ins(2, 'TWO'), $ins(3, 'THREE')), 1);
+preg_match_all('/<h2>(\w+)<\/h2>/', (string) $out, $mm);
+check('after-inserts serve in creation order', implode(',', $mm[1]) === 'X,ONE,TWO,THREE,End', implode(',', $mm[1]));
+// …and before-inserts keep their (already correct) forward order.
+$out = pcm_conn_apply_rules('<h2>X</h2><p>base</p>', array($ins(1, 'A', 'before'), $ins(2, 'B', 'before')), 1);
+preg_match_all('/<h2>(\w+)<\/h2>/', (string) $out, $mm);
+check('before-inserts keep forward order', implode(',', $mm[1]) === 'A,B,X', implode(',', $mm[1]));
+
 // ═════ summary ═════
 echo "\n" . ($FAIL === 0 ? "ALL GREEN" : "FAILURES: $FAIL") . " — $PASS passed, $FAIL failed\n";
 exit($FAIL === 0 ? 0 : 1);

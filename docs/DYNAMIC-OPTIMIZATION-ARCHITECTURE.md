@@ -431,6 +431,35 @@ any target page state is expressible.
 - **Capability:** wire schemaVersion 5; `sectionRemove` and `hidden` exist
   only in v5 payloads — a 3.0.2 site never receives either; v1..v4 payloads
   stay byte-identical; hub gates with an honest 409 pre-3.0.3.
+
+### Engine v2.4.1 — the content-region primitive (FROZEN 2026-07-12 — connector 3.0.4, serving only, NO schema/hub change)
+
+Companion: `docs/GAP-ANALYSIS-INSERT-PLACEMENT-20260712.md`.
+
+- **The primitive:** WordPress's own `the_content` pipeline defines the
+  content region. A pure observer at the last filter position records each
+  singular main-query post's FINAL content string; an exact substring match
+  locates its `[start, end)` span in the output buffer. No heuristics, no
+  theme knowledge. Unrecorded/unfound → null → legacy behavior (never worse).
+- **The sentinel:** the serving callback injects a comment marker at the
+  region's end BEFORE the passes run (earlier passes shift offsets — a
+  sentinel survives every mutation) and strips it before output; the
+  exception path returns the pristine original buffer.
+- **Placement law:** an insert whose anchor lies INSIDE the region may never
+  land past the region's end — one clamp covering both the next-heading and
+  after-last-block branches (an insert after the last section lands at the
+  true content end, never past comment forms/theme furniture). Anchors
+  outside the region (comment-area headings) keep legacy semantics.
+- **Ordering law:** 'before' inserts apply in rule order; 'after' inserts in
+  REVERSE rule order — pages read in creation order (forward order provably
+  served THREE,TWO,ONE for created ONE,TWO,THREE).
+- **Fingerprinting the anchor was REJECTED** for inserts: it would bind an
+  insert's survival to text it never touches (a client typo would kill an
+  unrelated added section). Insert identity remains anchor text+level+
+  occurrence; only PLACEMENT gained precision.
+- Rule schema untouched — every existing insert rule heals on connector
+  update. Wider content-span scoping of other passes is explicitly NOT done
+  (identity spaces are frozen; a future major-version discussion).
 - **Consolidation note (2026-07-12):** paragraph-rule CREATION is deleted
   hub-side (endpoints + service; zero UI callers); the absorb law consumes
   paragraph rules by original identity OR served output; the connector's
