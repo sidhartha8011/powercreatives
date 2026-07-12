@@ -3473,6 +3473,7 @@ class PCM_SEO_Service
         $needs_v2 = false;
         $needs_v3 = ($post_id === 0); // site scope exists only in v3
         $needs_v4 = false;            // image target exists only in v4 (3.0.2+)
+        $needs_v5 = false;            // sectionRemove + image hidden exist only in v5 (3.0.3+)
         foreach ($rules as $r) {
             $t = (string) ($r['target'] ?? '');
             if ($t === 'section' || $t === 'sectionInsert') {
@@ -3481,8 +3482,15 @@ class PCM_SEO_Service
             if ($t === 'heading') {
                 $needs_v3 = true; // SERVED heading rules exist only in v3
             }
+            if ($t === 'sectionRemove') {
+                $needs_v5 = true;
+            }
             if ($t === 'image') {
                 $needs_v4 = true;
+                $set = json_decode((string) ($r['replacement'] ?? ''), true);
+                if (is_array($set) && !empty($set['hidden'])) {
+                    $needs_v5 = true;
+                }
             }
         }
         $accepts = self::connector_rules_schema_version($site);
@@ -3490,6 +3498,13 @@ class PCM_SEO_Service
             return new WP_Error(
                 'pcm_seo_connector_no_rules',
                 __('This site’s connector doesn’t support dynamic rules yet (needs v2.7.0+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+        if ($needs_v5 && $accepts < 5) {
+            return new WP_Error(
+                'pcm_seo_connector_no_removal',
+                __('This site’s connector doesn’t support section removal / image hiding yet (needs v3.0.3+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
                 array('status' => 409)
             );
         }
@@ -3515,7 +3530,7 @@ class PCM_SEO_Service
             );
         }
         $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/rules', array(), array(
-            'schemaVersion' => $needs_v4 ? 4 : ($needs_v3 ? 3 : ($needs_v2 ? 2 : 1)),
+            'schemaVersion' => $needs_v5 ? 5 : ($needs_v4 ? 4 : ($needs_v3 ? 3 : ($needs_v2 ? 2 : 1))),
             'postId'        => $post_id,
             'rules'         => array_values($rules),
         ), 60);
@@ -3562,7 +3577,7 @@ class PCM_SEO_Service
                 // Section rules: {level, fingerprint, paragraphs} / {level, position}
                 // (the phase-2 overlay + absorb read these; null on paragraph rules
                 // whose anchorContext is display-anchor data, not section identity).
-                'section'     => in_array((string) $r['target'], array('section', 'sectionInsert'), true) ? $ctx : null,
+                'section'     => in_array((string) $r['target'], array('section', 'sectionInsert', 'sectionRemove'), true) ? $ctx : null,
             );
         }, (array) $rows);
     }
@@ -3586,12 +3601,12 @@ class PCM_SEO_Service
                 'replacement' => (string) $r['replacement'],
                 'active'      => (bool) (int) $r['active'],
             );
-            if (in_array($target, array('section', 'sectionInsert'), true)) {
-                // v2: anchorContext IS the section identity {level, fingerprint|position}.
+            if (in_array($target, array('section', 'sectionInsert', 'sectionRemove'), true)) {
+                // v2/v2.4: anchorContext IS the section identity {level, fingerprint|position}.
                 $out['section'] = array(
                     'level' => (int) ($ctx['level'] ?? 0),
                 );
-                if ($target === 'section') {
+                if ($target === 'section' || $target === 'sectionRemove') {
                     $out['section']['fingerprint'] = (string) ($ctx['fingerprint'] ?? '');
                 } else {
                     $out['section']['position'] = (string) ($ctx['position'] ?? 'after');
@@ -4339,9 +4354,24 @@ class PCM_SEO_Service
      *   (matchText/matchLevel/matchOccurrence — for a heading-ruled row the
      *   served identity IS the rule's output, so the absorb law rewires it to
      *   the original and the one-owner law holds);
-     * - EXTRA edited sections → save_section_insert anchored to the preceding
-     *   section's served heading;
-     * - FEWER sections → honest error BEFORE any write (removal unsupported).
+     * - EXTRA edited sections → checked against ACTIVE sectionRemove rules
+     *   first (a restored section DELETES its remove rule — clean revert),
+     *   else save_section_insert anchored to the preceding served heading;
+     * - FEWER sections (v2.4) → RENAME PAIRING first (leftovers pair
+     *   positionally inside the same gap between matched anchors — a renamed
+     *   heading is a replace, never remove+add), then per missing section:
+     *   insert-born → its rule deletes; rule-owned → the rule deletes AND a
+     *   sectionRemove lands on the ORIGINAL identity; original →
+     *   sectionRemove on the row identity;
+     * - IMAGES (v2.4) reconcile per normalized src: fewer copies in the doc
+     *   than served → hide rules (from the tail of the visible original
+     *   occurrences); more copies (a restored version) → hide rules delete.
+     *   Images inside removed sections vanish from the doc and are hidden by
+     *   the same reconciliation — the owner's "goes with the section" law.
+     * - CONFIRM GATE (v2.4): any save that would remove sections or hide
+     *   images writes NOTHING until it carries confirm — it returns the
+     *   pending lists instead. A truncated/degraded document can never
+     *   confirm itself (the 2026-07-11 incident stays impossible).
      *
      * F9 LANDMINE (defused here + in assemble_content_html): the editor's
      * document NEVER contains the page's original between-content as
@@ -4357,7 +4387,7 @@ class PCM_SEO_Service
      *
      * @return array{saved:int,inserted:int,skipped:int,notes:array<int,string>}|\WP_Error
      */
-    public function save_page_edits(int $user_id, object $site, int $post_id, string $html)
+    public function save_page_edits(int $user_id, object $site, int $post_id, string $html, bool $confirm = false)
     {
         $inv = self::served_inventory($site, $post_id, $user_id);
         if ($inv === null || $inv['view'] !== 'served') {
@@ -4482,8 +4512,9 @@ class PCM_SEO_Service
         };
 
         // ── Alignment: 1:1 by order when counts match; LCS on keys otherwise. ──
-        $pairs  = array();
-        $extras = array();
+        $pairs   = array();
+        $extras  = array();
+        $removed = array();
         if (count($edited) === count($baseline)) {
             foreach ($baseline as $bi => $unused) {
                 $pairs[] = array($bi, $bi);
@@ -4499,9 +4530,8 @@ class PCM_SEO_Service
                         : max($dp[$i + 1][$j], $dp[$i][$j + 1]);
                 }
             }
-            $removed = array();
-            $i       = 0;
-            $j       = 0;
+            $i = 0;
+            $j = 0;
             while ($i < $n && $j < $m) {
                 if ($baseline[$i]['key'] === $edited[$j]['key']) {
                     $pairs[] = array($i, $j);
@@ -4521,17 +4551,171 @@ class PCM_SEO_Service
             while ($j < $m) {
                 $extras[] = $j++;
             }
-            if (!empty($removed)) {
-                return new WP_Error(
-                    'pcm_seo_page_edit_removed',
-                    sprintf(
-                        /* translators: %s: section heading */
-                        __('Removing whole sections isn’t supported yet — “%s” is missing from the edited page. Nothing was saved.', 'power-creatives'),
-                        $baseline[$removed[0]]['text']
-                    ),
-                    array('status' => 400)
-                );
+            // RENAME PAIRING (v2.4): leftovers pair positionally IN ORDER when
+            // they sit in the SAME gap between matched anchors — a renamed
+            // heading is a replace, never remove+add. Only the true count
+            // difference stays removed/extra.
+            if (!empty($removed) && !empty($extras)) {
+                $segment_of = static function (int $idx, array $prs, int $side): int {
+                    $seg = 0;
+                    foreach ($prs as $pr) {
+                        if ($pr[$side] < $idx) {
+                            $seg++;
+                        }
+                    }
+                    return $seg;
+                };
+                $still_removed = array();
+                foreach ($removed as $bi) {
+                    $seg    = $segment_of($bi, $pairs, 0);
+                    $paired = false;
+                    foreach ($extras as $k => $ej) {
+                        if ($segment_of($ej, $pairs, 1) === $seg) {
+                            $pairs[] = array($bi, $ej);
+                            unset($extras[$k]);
+                            $paired = true;
+                            break;
+                        }
+                    }
+                    if (!$paired) {
+                        $still_removed[] = $bi;
+                    }
+                }
+                $removed = $still_removed;
+                $extras  = array_values($extras);
+                usort($pairs, static fn($a, $b) => $a[0] <=> $b[0]);
             }
+        }
+
+        global $wpdb;
+        $rules_table = PCM_Schema::table('seo_dynamic_rules');
+
+        // ── RESTORE detection (v2.4): an extra section matching an ACTIVE
+        //    sectionRemove rule's identity is a restore — its rule deletes. ──
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $remove_rows = (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT id, matchText, occurrence, anchorContext FROM {$rules_table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'sectionRemove' AND active = 1",
+            $user_id,
+            (int) $site->id,
+            $post_id
+        ), ARRAY_A);
+        $restores    = array();
+        $true_extras = array();
+        foreach ($extras as $ej) {
+            $e   = $edited[$ej];
+            $hit = null;
+            foreach ($remove_rows as $rk => $rrow) {
+                $rctx = json_decode((string) ($rrow['anchorContext'] ?? ''), true);
+                $rctx = is_array($rctx) ? $rctx : array();
+                if ((string) $rrow['matchText'] === $e['norm'] && (int) ($rctx['level'] ?? 0) === $e['level']
+                    && (string) ($rctx['fingerprint'] ?? '') === $e['fp']) {
+                    $hit = $rrow;
+                    unset($remove_rows[$rk]); // one restore per rule
+                    break;
+                }
+            }
+            if ($hit !== null) {
+                $restores[] = $hit;
+            } else {
+                $true_extras[] = $ej;
+            }
+        }
+        $extras = $true_extras;
+
+        // ── IMAGE reconciliation (v2.4): per normalized src, doc vs baseline.
+        //    Fewer copies in the doc → hide rules (tail of the visible original
+        //    occurrences); more copies (a restored version) → hide rules delete.
+        //    Images inside removed sections are simply missing from the doc —
+        //    the same arithmetic hides them (the "goes with the section" law). ──
+        $img_list = static function (string $doc): array {
+            $out = array();
+            if (preg_match_all('#<img\b[^>]*>#i', $doc, $mm)) {
+                foreach ($mm[0] as $tag) {
+                    if (!preg_match('#(?<![\w-])src\s*=\s*("([^"]*)"|\'([^\']*)\')#i', $tag, $sm)) {
+                        continue;
+                    }
+                    $src = PCM_Text_Matcher::normalize_src($sm[2] !== '' ? $sm[2] : (isset($sm[3]) ? $sm[3] : ''));
+                    if ($src === '') {
+                        continue;
+                    }
+                    $attr = static function (string $name) use ($tag): string {
+                        if (!preg_match('#(?<![\w-])' . $name . '\s*=\s*("([^"]*)"|\'([^\']*)\')#i', $tag, $am)) {
+                            return '';
+                        }
+                        return html_entity_decode($am[2] !== '' ? $am[2] : (isset($am[3]) ? $am[3] : ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    };
+                    $out[] = array('src' => $src, 'alt' => $attr('alt'), 'title' => $attr('title'));
+                }
+            }
+            return $out;
+        };
+        $per_src = static function (array $imgs): array {
+            $by = array();
+            foreach ($imgs as $im) {
+                $by[$im['src']][] = $im;
+            }
+            return $by;
+        };
+        $base_by = $per_src($img_list((string) ($inv['contentHtml'] ?? '')));
+        $doc_by  = $per_src($img_list($html));
+        // Active hide rules per src (occurrences live in ORIGINAL space).
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $img_rows = (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT id, matchText, occurrence, replacement FROM {$rules_table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'image' AND active = 1",
+            $user_id,
+            (int) $site->id,
+            $post_id
+        ), ARRAY_A);
+        $hidden_by = array();
+        foreach ($img_rows as $ir) {
+            $set = json_decode((string) $ir['replacement'], true);
+            if (is_array($set) && !empty($set['hidden'])) {
+                $hidden_by[(string) $ir['matchText']][] = (int) $ir['occurrence'];
+            }
+        }
+        $hides   = array();
+        $unhides = array();
+        foreach (array_unique(array_merge(array_keys($base_by), array_keys($doc_by))) as $src) {
+            $v_list = isset($base_by[$src]) ? $base_by[$src] : array();
+            $v      = count($v_list);
+            $d      = isset($doc_by[$src]) ? count($doc_by[$src]) : 0;
+            $h_occs = isset($hidden_by[$src]) ? $hidden_by[$src] : array();
+            sort($h_occs);
+            if ($d < $v) {
+                // Visible original occurrences = [0 .. v+|h|-1] minus the hidden set.
+                $vis = array();
+                for ($o = 0, $total = $v + count($h_occs); $o < $total; $o++) {
+                    if (!in_array($o, $h_occs, true)) {
+                        $vis[] = $o;
+                    }
+                }
+                for ($k = $v - 1; $k >= $d; $k--) {
+                    $hides[] = array(
+                        'src'        => $src,
+                        'occurrence' => $vis[$k],
+                        'alt'        => (string) ($v_list[$k]['alt'] ?? ''),
+                        'title'      => (string) ($v_list[$k]['title'] ?? ''),
+                    );
+                }
+            } elseif ($d > $v && !empty($h_occs)) {
+                foreach (array_slice(array_reverse($h_occs), 0, min($d - $v, count($h_occs))) as $occ) {
+                    $unhides[] = array('src' => $src, 'occurrence' => (int) $occ);
+                }
+            }
+        }
+
+        // ── CONFIRM GATE (v2.4): destructive saves write NOTHING until confirmed.
+        //    A truncated/degraded document can never confirm itself. ──
+        if ((!empty($removed) || !empty($hides)) && !$confirm) {
+            return array(
+                'needsConfirm' => true,
+                'removals'     => array_values(array_map(static fn($bi) => (string) $baseline[$bi]['text'], $removed)),
+                'hiddenImages' => array_values(array_unique(array_map(static fn($hh) => (string) $hh['src'], $hides))),
+                'saved'        => 0,
+                'inserted'     => 0,
+                'skipped'      => 0,
+                'notes'        => array(),
+            );
         }
 
         // ── Route every pair through the existing save paths, document order. ──
@@ -4549,8 +4733,6 @@ class PCM_SEO_Service
             ),
             $err->get_error_data()
         );
-        global $wpdb;
-        $rules_table = PCM_Schema::table('seo_dynamic_rules');
         foreach ($pairs as $pair) {
             list($bi, $ej) = $pair;
             $b = $baseline[$bi];
@@ -4638,12 +4820,246 @@ class PCM_SEO_Service
             }
             $inserted++;
         }
+
+        // ── CONFIRMED removals (v2.4), per kind. Whole-rule groups collapse to
+        //    ONE removal of the rule's ORIGINAL section (the rule expanded that
+        //    one original — deleting the rule + removing the original erases
+        //    everything it produced). ──
+        $removed_count = 0;
+        $rule_total    = array(); // section-rule id → sections it owns in the baseline
+        foreach ($baseline as $bb) {
+            if ($bb['slice'] !== null && $bb['slice']['target'] === 'section') {
+                $rid              = $bb['slice']['ruleId'];
+                $rule_total[$rid] = ($rule_total[$rid] ?? 0) + 1;
+            }
+        }
+        $rule_removing = array();
+        foreach ($removed as $bi) {
+            $b = $baseline[$bi];
+            if ($b['slice'] !== null && $b['slice']['target'] === 'section') {
+                $rule_removing[$b['slice']['ruleId']][] = $bi;
+            }
+        }
+        $rules_done = array();
+        foreach ($removed as $bi) {
+            $b   = $baseline[$bi];
+            $res = null;
+            if ($b['slice'] !== null && $b['slice']['target'] === 'sectionInsert') {
+                // Content WE added — its rule simply dies (existing removal law).
+                $res = $this->save_section_insert($user_id, $site, $post_id, array(
+                    'anchorText'       => $b['text'],
+                    'anchorLevel'      => $b['level'],
+                    'anchorOccurrence' => 0,
+                    'position'         => 'after',
+                    'replacement'      => '',
+                    'ruleId'           => $b['slice']['ruleId'],
+                ));
+            } elseif ($b['slice'] !== null) {
+                $rid = $b['slice']['ruleId'];
+                if (count($rule_removing[$rid] ?? array()) >= ($rule_total[$rid] ?? PHP_INT_MAX)) {
+                    // EVERY section of this rule is going: delete the rule and
+                    // remove its ORIGINAL section in one push.
+                    if (isset($rules_done[$rid])) {
+                        continue; // handled with the group's first member
+                    }
+                    $rules_done[$rid] = true;
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+                    $rrow = $wpdb->get_row($wpdb->prepare(
+                        "SELECT id, matchText, occurrence, anchorContext FROM {$rules_table} WHERE id = %d AND userId = %d AND siteId = %d AND target = 'section' AND active = 1",
+                        $rid,
+                        $user_id,
+                        (int) $site->id
+                    ), ARRAY_A);
+                    $rctx = $rrow ? json_decode((string) ($rrow['anchorContext'] ?? ''), true) : null;
+                    if ($rrow && is_array($rctx) && !empty($rctx['level'])) {
+                        $res = $this->save_section_remove($user_id, $site, $post_id, array(
+                            'headingText'       => (string) $rrow['matchText'],
+                            'headingLevel'      => (int) $rctx['level'],
+                            'headingOccurrence' => (int) $rrow['occurrence'],
+                            'paragraphs'        => array_values(array_filter((array) ($rctx['paragraphs'] ?? array()), 'is_array')),
+                            'absorbRuleId'      => (int) $rrow['id'],
+                        ));
+                    }
+                } else {
+                    // Part of a bigger rule: splice this section's units out.
+                    $res = $this->save_section_slice($user_id, $site, $post_id, array(
+                        'ruleId'      => $rid,
+                        'unitFrom'    => $b['slice']['unitFrom'],
+                        'unitTo'      => $b['slice']['unitTo'],
+                        'replacement' => '',
+                    ));
+                }
+            } else {
+                // Original page section: the new sectionRemove rule.
+                $res = $this->save_section_remove($user_id, $site, $post_id, array(
+                    'headingText'       => $b['matchText'],
+                    'headingLevel'      => $b['matchLevel'],
+                    'headingOccurrence' => $b['matchOccurrence'],
+                    'paragraphs'        => $b['paras'],
+                ));
+            }
+            if ($res instanceof WP_Error) {
+                return $fail($b['text'], $res, $saved + $inserted + $removed_count);
+            }
+            if ($res !== null) {
+                $removed_count++;
+            }
+        }
+
+        // ── Restores: the section is back in the doc — its remove rule dies. ──
+        $restored = 0;
+        foreach ($restores as $rrow) {
+            $rctx = json_decode((string) ($rrow['anchorContext'] ?? ''), true);
+            $rctx = is_array($rctx) ? $rctx : array();
+            $res  = $this->save_section_remove($user_id, $site, $post_id, array(
+                'headingText'       => (string) $rrow['matchText'],
+                'headingLevel'      => (int) ($rctx['level'] ?? 2),
+                'headingOccurrence' => (int) $rrow['occurrence'],
+                'restore'           => true,
+            ));
+            if ($res instanceof WP_Error) {
+                return $fail((string) $rrow['matchText'], $res, $saved + $inserted + $removed_count);
+            }
+            $restored++;
+        }
+
+        // ── Image visibility (v2.4): hides from the doc diff, un-hides from restores. ──
+        $hidden_count = 0;
+        foreach ($hides as $hh) {
+            $res = $this->save_image_rule($user_id, $site, $post_id, array(
+                'src'           => $hh['src'],
+                'occurrence'    => $hh['occurrence'],
+                'hidden'        => true,
+                'originalAlt'   => $hh['alt'],
+                'originalTitle' => $hh['title'],
+            ));
+            if ($res instanceof WP_Error) {
+                return $fail($hh['src'], $res, $saved + $inserted + $removed_count);
+            }
+            $hidden_count++;
+        }
+        $unhidden = 0;
+        foreach ($unhides as $uh) {
+            $res = $this->save_image_rule($user_id, $site, $post_id, array(
+                'src'        => $uh['src'],
+                'occurrence' => $uh['occurrence'],
+                'revert'     => true,
+            ));
+            if ($res instanceof WP_Error) {
+                return $fail($uh['src'], $res, $saved + $inserted + $removed_count);
+            }
+            $unhidden++;
+        }
+
         // Page version: ONE row per changing save — the document as submitted
         // (duplicate-skip + cap ride record_version). No-op saves record nothing.
-        if ($saved + $inserted > 0) {
+        $changed = $saved + $inserted + $removed_count + $restored + $hidden_count + $unhidden;
+        if ($changed > 0) {
             self::record_version($user_id, (int) $site->id, $post_id, 'page', '', 0, $html);
         }
-        return array('saved' => $saved, 'inserted' => $inserted, 'skipped' => $skipped, 'notes' => array_values(array_unique($notes)));
+        return array(
+            'saved'    => $saved,
+            'inserted' => $inserted,
+            'skipped'  => $skipped,
+            'removed'  => $removed_count,
+            'restored' => $restored,
+            'hidden'   => $hidden_count,
+            'unhidden' => $unhidden,
+            'notes'    => array_values(array_unique($notes)),
+        );
+    }
+
+    /**
+     * Save (or restore) a SECTION REMOVE rule (engine v2.4, connector 3.0.3):
+     * identity = the section identity (normalized heading + level + occurrence
+     * + paragraph fingerprint); serving verify-first locates like a replace
+     * and removes the section's blocks — between-content stays, image
+     * visibility is the image rule's job. `restore: true` DELETES the rule
+     * (the section is present again — clean revert). Same atomicity laws as
+     * every save: capability BEFORE any write, push-fail ROLLS BACK.
+     * `absorbRuleId` deletes the section's owning rule in the same push (a
+     * removed rule-born section = the rule dies AND its original is removed).
+     *
+     * @param array{headingText:string,headingLevel:int,headingOccurrence:int,
+     *              paragraphs:array<int,array{text:string,occurrence:int}>,
+     *              restore?:bool,absorbRuleId?:int} $input
+     * @return array|\WP_Error
+     */
+    public function save_section_remove(int $user_id, object $site, int $post_id, array $input)
+    {
+        global $wpdb;
+        $table      = PCM_Schema::table('seo_dynamic_rules');
+        $site_id    = (int) $site->id;
+        $match_text = PCM_Text_Matcher::normalize((string) ($input['headingText'] ?? ''));
+        $level      = max(1, min(6, (int) ($input['headingLevel'] ?? 2)));
+        $occurrence = max(0, (int) ($input['headingOccurrence'] ?? 0));
+        $restore    = !empty($input['restore']);
+        $absorb_id  = isset($input['absorbRuleId']) ? absint($input['absorbRuleId']) : 0;
+        $para_texts = array();
+        $paragraphs = array();
+        foreach ((array) ($input['paragraphs'] ?? array()) as $p) {
+            if (!is_array($p) || !isset($p['text'])) {
+                continue;
+            }
+            $paragraphs[] = array('text' => PCM_Text_Matcher::normalize((string) $p['text']), 'occurrence' => max(0, (int) ($p['occurrence'] ?? 0)));
+            $para_texts[] = (string) $p['text'];
+        }
+        $fingerprint = PCM_Text_Matcher::fingerprint($para_texts);
+        if ($match_text === '') {
+            return new WP_Error('pcm_seo_rule_no_match', __('The section has no matchable heading text.', 'power-creatives'), array('status' => 400));
+        }
+        if (self::connector_rules_schema_version($site) < 5) {
+            return new WP_Error(
+                'pcm_seo_connector_no_removal',
+                __('This site’s connector doesn’t support section removal yet (needs v3.0.3+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                array('status' => 409)
+            );
+        }
+        $snapshot = self::post_rule_rows($user_id, $site_id, $post_id);
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $prev = $wpdb->get_row($wpdb->prepare(
+            "SELECT id FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'sectionRemove' AND matchText = %s AND occurrence = %d",
+            $user_id,
+            $site_id,
+            $post_id,
+            $match_text,
+            $occurrence
+        ), ARRAY_A);
+        if ($restore) {
+            if (!$prev) {
+                return array('restored' => true, 'stored' => count($snapshot)); // nothing to do — no push needed
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->delete($table, array('id' => (int) $prev['id']), array('%d'));
+        } else {
+            $ctx = wp_json_encode(array('level' => $level, 'fingerprint' => $fingerprint, 'paragraphs' => $paragraphs));
+            if ($prev) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update($table, array('anchorContext' => $ctx, 'active' => 1), array('id' => (int) $prev['id']), array('%s', '%d'), array('%d'));
+            } else {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->insert($table, array(
+                    'userId' => $user_id, 'siteId' => $site_id, 'postId' => $post_id,
+                    'target' => 'sectionRemove', 'matchText' => $match_text, 'occurrence' => $occurrence,
+                    'replacement' => '', 'anchorContext' => $ctx, 'active' => 1,
+                ), array('%d', '%d', '%d', '%s', '%s', '%d', '%s', '%s', '%d'));
+            }
+            if ($absorb_id > 0) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->delete($table, array('id' => $absorb_id, 'userId' => $user_id, 'siteId' => $site_id), array('%d', '%d', '%d'));
+            }
+        }
+        $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
+        if ($push instanceof WP_Error) {
+            return $push;
+        }
+        $out = array('stored' => (int) ($push['stored'] ?? 0));
+        if ($restore) {
+            $out['restored'] = true;
+        } else {
+            $out['rule'] = array('matchText' => $match_text, 'occurrence' => $occurrence, 'level' => $level, 'active' => true);
+        }
+        return $out;
     }
 
     /**
@@ -4671,13 +5087,17 @@ class PCM_SEO_Service
         $alt        = sanitize_text_field((string) ($input['alt'] ?? ''));
         $title      = sanitize_text_field((string) ($input['title'] ?? ''));
         $revert     = !empty($input['revert']);
+        $hidden     = !empty($input['hidden']); // v2.4: hide at render (never storage/media)
         if ($src === '') {
             return new WP_Error('pcm_seo_rule_no_match', __('The image has no usable src to match on.', 'power-creatives'), array('status' => 400));
         }
-        if (self::connector_rules_schema_version($site) < 4) {
+        $min_schema = $hidden ? 5 : 4;
+        if (self::connector_rules_schema_version($site) < $min_schema) {
             return new WP_Error(
-                'pcm_seo_connector_no_image_rules',
-                __('This site’s connector doesn’t support image metadata rules yet (needs v3.0.2+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
+                $hidden ? 'pcm_seo_connector_no_removal' : 'pcm_seo_connector_no_image_rules',
+                $hidden
+                    ? __('This site’s connector doesn’t support image hiding yet (needs v3.0.3+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives')
+                    : __('This site’s connector doesn’t support image metadata rules yet (needs v3.0.2+) — update it from the Sites module’s Connector column, then retry.', 'power-creatives'),
                 array('status' => 409)
             );
         }
@@ -4696,7 +5116,9 @@ class PCM_SEO_Service
         // caller's current attrs (no rule has touched them = they ARE original).
         $orig_alt   = $prev ? (string) ($prev_ctx['originalAlt'] ?? '') : sanitize_text_field((string) ($input['originalAlt'] ?? ''));
         $orig_title = $prev ? (string) ($prev_ctx['originalTitle'] ?? '') : sanitize_text_field((string) ($input['originalTitle'] ?? ''));
-        $reverted   = $revert || ($alt === $orig_alt && $title === $orig_title);
+        // A hide request is never an accidental revert — only the explicit
+        // flag or an attrs-back-to-original METADATA save deletes the rule.
+        $reverted = $revert || (!$hidden && $alt === $orig_alt && $title === $orig_title);
 
         $snapshot = self::post_rule_rows($user_id, $site_id, $post_id);
         if ($reverted) {
@@ -4706,7 +5128,7 @@ class PCM_SEO_Service
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->delete($table, array('id' => (int) $prev['id']), array('%d'));
         } else {
-            $replacement = (string) wp_json_encode(array('alt' => $alt, 'title' => $title));
+            $replacement = (string) wp_json_encode($hidden ? array('hidden' => true) : array('alt' => $alt, 'title' => $title));
             $ctx         = (string) wp_json_encode(array('originalAlt' => $orig_alt, 'originalTitle' => $orig_title));
             if ($prev) {
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -4730,7 +5152,7 @@ class PCM_SEO_Service
             // The editor applies these in place — it never reloads the document.
             $out['original'] = array('alt' => $orig_alt, 'title' => $orig_title);
         } else {
-            $out['rule'] = array('src' => $src, 'occurrence' => $occurrence, 'alt' => $alt, 'title' => $title, 'active' => true);
+            $out['rule'] = array('src' => $src, 'occurrence' => $occurrence, 'alt' => $alt, 'title' => $title, 'hidden' => $hidden, 'active' => true);
         }
         return $out;
     }

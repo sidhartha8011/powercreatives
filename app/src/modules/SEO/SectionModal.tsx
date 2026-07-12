@@ -379,8 +379,12 @@ export function SectionModal({
 
   const isDirty = () => !readOnly && !!editor && editor.getHTML() !== savedHtml;
 
+  // ── Destructive-save confirmation (v2.4): the hub saves NOTHING until the
+  //    user confirms the listed removals/hidden images. ──
+  const [pendingConfirm, setPendingConfirm] = useState<{ html: string; removals: string[]; hiddenImages: string[] } | null>(null);
+
   // ── Save (Acceptera / click outside): live rule, engine handles UPSERT/revert. ──
-  const save = async (replacementOverride?: string): Promise<boolean> => {
+  const save = async (replacementOverride?: string, confirmRemovals = false): Promise<boolean> => {
     if (readOnly) return true;
     if (isPage) {
       if (!pageReady) return true; // nothing loaded — nothing to save
@@ -388,6 +392,7 @@ export function SectionModal({
         toast.info('Finish the AI review first — accept or reject each change.');
         return false;
       }
+      if (pendingConfirm && !confirmRemovals) return false; // the dialog owns the decision
       // Guard: diff marks are presentation and must NEVER reach a save.
       const html = stripDiffHtml(replacementOverride ?? (editor?.getHTML() ?? ''));
       setBusy(true);
@@ -395,13 +400,29 @@ export function SectionModal({
         // The hub slices the document back into sections and routes each
         // change through the existing rule paths — page-level editing,
         // section-level storage.
-        const res: any = await savePageMutation.mutateAsync({ siteId: siteId as number, postId, html });
+        const res: any = await savePageMutation.mutateAsync({ siteId: siteId as number, postId, html, confirm: confirmRemovals });
+        if (res?.needsConfirm) {
+          setPendingConfirm({
+            html,
+            removals: Array.isArray(res.removals) ? res.removals : [],
+            hiddenImages: Array.isArray(res.hiddenImages) ? res.hiddenImages : [],
+          });
+          return false; // nothing saved yet — the dialog takes over
+        }
+        setPendingConfirm(null);
         onSaved();
-        const changed = Number(res?.saved ?? 0) + Number(res?.inserted ?? 0);
-        toast.success(changed > 0
-          ? `Saved — ${changed} section${changed === 1 ? '' : 's'} now served dynamically (page/CDN caches may need a purge).`
+        const parts: string[] = [];
+        const n = (k: string) => Number(res?.[k] ?? 0);
+        if (n('saved') > 0) parts.push(`${n('saved')} section${n('saved') === 1 ? '' : 's'} updated`);
+        if (n('inserted') > 0) parts.push(`${n('inserted')} added`);
+        if (n('removed') > 0) parts.push(`${n('removed')} removed`);
+        if (n('restored') > 0) parts.push(`${n('restored')} restored`);
+        if (n('hidden') > 0) parts.push(`${n('hidden')} image${n('hidden') === 1 ? '' : 's'} hidden`);
+        if (n('unhidden') > 0) parts.push(`${n('unhidden')} image${n('unhidden') === 1 ? '' : 's'} back`);
+        toast.success(parts.length > 0
+          ? `Saved — ${parts.join(', ')} (page/CDN caches may need a purge).`
           : 'No content changes to save.');
-        (Array.isArray(res?.notes) ? res.notes : []).forEach((n: string) => toast.info(n));
+        (Array.isArray(res?.notes) ? res.notes : []).forEach((nn: string) => toast.info(nn));
         setSavedHtml(html);
         setVersionPick('');
         // Versions list only — the editor content is NEVER auto-replaced
@@ -622,7 +643,7 @@ export function SectionModal({
     return () => { editor.off('selectionUpdate', onSel); };
   }, [isPage, editor]);
 
-  const saveImageMeta = async (revert: boolean) => {
+  const saveImageMeta = async (mode: 'save' | 'revert' | 'hide') => {
     if (!imgSel || busy) return;
     setBusy(true);
     try {
@@ -633,9 +654,15 @@ export function SectionModal({
         // For a NEW rule the attrs as selected ARE the originals; for an
         // existing rule the server keeps its stored originals regardless.
         originalAlt: imgSel.alt, originalTitle: imgSel.title,
-        revert,
+        revert: mode === 'revert',
+        hidden: mode === 'hide',
       });
-      if (res?.reverted) {
+      if (mode === 'hide') {
+        // Reflect the hide in the doc — the live page stops serving the tag;
+        // the media library is untouched. Un-hide = restore a version.
+        editor?.chain().focus().deleteSelection().run();
+        toast.success('Image hidden — the site serves without it (the file stays in the media library).');
+      } else if (res?.reverted) {
         // Apply the server-returned originals in place — the document is
         // never auto-replaced (incident fix 2026-07-11).
         editor?.commands.updateAttributes('image', {
@@ -989,19 +1016,28 @@ export function SectionModal({
                 className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
               />
             </label>
-            <div className="flex items-center gap-1.5 pt-0.5">
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
               <button
                 type="button"
-                onClick={() => { void saveImageMeta(false); }}
+                onClick={() => { void saveImageMeta('save'); }}
                 disabled={busy}
                 className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
               >
                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save
               </button>
+              <button
+                type="button"
+                onClick={() => { void saveImageMeta('hide'); }}
+                disabled={busy}
+                title="Stop serving this image — it stays in the media library; restore it via the versions dropdown"
+                className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-[10px] text-red-600 hover:bg-red-50 disabled:opacity-60"
+              >
+                <Trash2 className="h-3 w-3" /> Hide image
+              </button>
               {imgHasRule && (
                 <button
                   type="button"
-                  onClick={() => { void saveImageMeta(true); }}
+                  onClick={() => { void saveImageMeta('revert'); }}
                   disabled={busy}
                   title="Delete this image's metadata rule — the original alt/title serve again"
                   className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-600 hover:bg-slate-100 disabled:opacity-60"
@@ -1011,7 +1047,7 @@ export function SectionModal({
               )}
             </div>
             <p className="text-[10px] leading-relaxed text-slate-400">
-              Served dynamically — the image itself never moves or changes. Saved separately from page text.
+              Served dynamically — the image file is never touched. Hiding stops it serving; deleting it in the text (or with its section) does the same on save.
             </p>
           </div>
         </aside>
@@ -1063,6 +1099,48 @@ export function SectionModal({
               <Trash2 className="h-3 w-3" /> Remove
             </button>
           )}
+        </div>
+      )}
+
+      {/* ── Destructive-save confirmation (v2.4): the save wrote NOTHING yet —
+             the user sees exactly what disappears before anything is stored.
+             Everything is reversible via the versions dropdown afterwards. ── */}
+      {pendingConfirm && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/30 p-6">
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-4 shadow-xl">
+            <div className="text-sm font-semibold text-slate-800">Confirm removal</div>
+            <p className="mt-1 text-xs text-slate-500">
+              This save removes content from the live page (nothing is deleted on the site — it stops serving and any earlier version restores it):
+            </p>
+            {pendingConfirm.removals.length > 0 && (
+              <ul className="mt-2 max-h-32 list-disc overflow-auto pl-5 text-xs text-slate-700">
+                {pendingConfirm.removals.map((r, i) => <li key={`s-${i}`}>Section: {r || '(untitled)'}</li>)}
+              </ul>
+            )}
+            {pendingConfirm.hiddenImages.length > 0 && (
+              <ul className="mt-1 max-h-24 list-disc overflow-auto pl-5 text-xs text-slate-700">
+                {pendingConfirm.hiddenImages.map((s, i) => <li key={`i-${i}`} className="truncate" title={s}>Image: {s}</li>)}
+              </ul>
+            )}
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingConfirm(null)}
+                disabled={busy}
+                className="rounded border border-slate-200 px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => { void save(pendingConfirm.html, true); }}
+                disabled={busy}
+                className="inline-flex items-center gap-1 rounded bg-red-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Remove & save
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>,
