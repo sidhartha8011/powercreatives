@@ -447,7 +447,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteSavePageEdits": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-edits`, body: { html: input.html, confirm: input.confirm } }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-edits`, body: { html: input.html } }),
     },
     "seo.remoteOptimizeSection": {
         endpoint: "seo/sites",

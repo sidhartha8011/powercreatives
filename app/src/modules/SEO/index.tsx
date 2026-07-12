@@ -1720,7 +1720,7 @@ export function SEOModule() {
           type={pageEditRow.type === 'page' ? 'page' : 'post'}
           readOnly={false}
           mode="page"
-          page={{ title: pageEditRow.title || 'Untitled', editUrl: pageEditRow.editUrl || undefined, date: pageEditRow.date || undefined }}
+          page={{ title: pageEditRow.title || 'Untitled', editUrl: pageEditRow.editUrl || undefined, date: pageEditRow.date || undefined, permalink: pageEditRow.permalink || undefined }}
           onClose={() => setPageEditRow(null)}
           onSaved={() => {}}
         />

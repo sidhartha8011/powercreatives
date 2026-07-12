@@ -485,8 +485,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             (int) $user->id,
             $site,
             absint($request->get_param('post')),
-            wp_kses_post((string) ($params['html'] ?? '')),
-            !empty($params['confirm']) // v2.4: destructive saves need explicit confirmation
+            wp_kses_post((string) ($params['html'] ?? ''))
         );
         if ($result instanceof WP_Error) {
             return $result;

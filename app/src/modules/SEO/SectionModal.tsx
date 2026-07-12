@@ -9,12 +9,12 @@
  *   │ (optional Ask-AI instruction input)  │
  *   │ formatted, DIRECTLY editable text    │  ← fixed-height TipTap, white
  *   │ [B][I][U][Link] [H1][H2][•]          │  ← persistent toolbar
- *   │ [✓ Acceptera]  [↶ Ångra]             │
+ *   │ [✓ Save]  [↶ Undo]             │
  *   └──────────────────────────────────────┘
  *
  * Laws (owner-set): opens BELOW the clicked row · editable on FIRST click
  * (no Edit button, no read mode, the shape never changes) · white background,
- * compact text · Acceptera OR clicking outside SAVES · Ångra restores the
+ * compact text · Save OR clicking outside SAVES · Undo restores the
  * last saved state · Esc closes without saving.
  *
  * SECTION IDENTITY (the root-cause fix): the paragraphs this modal saves
@@ -96,9 +96,9 @@ export interface SectionModalProps {
   mode: 'section' | 'insert' | 'page';
   section?: SectionData;
   insert?: InsertData;
-  /** Page mode: the row's title, publish date (the Original row's label) +
-   *  the demoted WP-editor escape hatch. */
-  page?: { title: string; editUrl?: string; date?: string };
+  /** Page mode: the row's title, publish date (the Original row's label),
+   *  the WP-editor escape hatch + the live permalink. */
+  page?: { title: string; editUrl?: string; date?: string; permalink?: string };
   /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
   /** Where the user clicked — the window opens right below it. */
@@ -379,12 +379,8 @@ export function SectionModal({
 
   const isDirty = () => !readOnly && !!editor && editor.getHTML() !== savedHtml;
 
-  // ── Destructive-save confirmation (v2.4): the hub saves NOTHING until the
-  //    user confirms the listed removals/hidden images. ──
-  const [pendingConfirm, setPendingConfirm] = useState<{ html: string; removals: string[]; hiddenImages: string[] } | null>(null);
-
-  // ── Save (Acceptera / click outside): live rule, engine handles UPSERT/revert. ──
-  const save = async (replacementOverride?: string, confirmRemovals = false): Promise<boolean> => {
+  // ── Save (save buttons / click outside): live rules, engine handles UPSERT/revert. ──
+  const save = async (replacementOverride?: string): Promise<boolean> => {
     if (readOnly) return true;
     if (isPage) {
       if (!pageReady) return true; // nothing loaded — nothing to save
@@ -392,24 +388,14 @@ export function SectionModal({
         toast.info('Finish the AI review first — accept or reject each change.');
         return false;
       }
-      if (pendingConfirm && !confirmRemovals) return false; // the dialog owns the decision
       // Guard: diff marks are presentation and must NEVER reach a save.
       const html = stripDiffHtml(replacementOverride ?? (editor?.getHTML() ?? ''));
       setBusy(true);
       try {
         // The hub slices the document back into sections and routes each
         // change through the existing rule paths — page-level editing,
-        // section-level storage.
-        const res: any = await savePageMutation.mutateAsync({ siteId: siteId as number, postId, html, confirm: confirmRemovals });
-        if (res?.needsConfirm) {
-          setPendingConfirm({
-            html,
-            removals: Array.isArray(res.removals) ? res.removals : [],
-            hiddenImages: Array.isArray(res.hiddenImages) ? res.hiddenImages : [],
-          });
-          return false; // nothing saved yet — the dialog takes over
-        }
-        setPendingConfirm(null);
+        // section-level storage. Removals/hides are reversible via versions.
+        const res: any = await savePageMutation.mutateAsync({ siteId: siteId as number, postId, html });
         onSaved();
         const parts: string[] = [];
         const n = (k: string) => Number(res?.[k] ?? 0);
@@ -595,7 +581,7 @@ export function SectionModal({
       const accepted = review.filter((s) => s.status === 'accepted').length;
       setReview(null);
       editor.setEditable(true);
-      if (accepted > 0) toast.success(`AI review done — ${accepted} section${accepted === 1 ? '' : 's'} updated. Press Acceptera to save.`);
+      if (accepted > 0) toast.success(`AI review done — ${accepted} section${accepted === 1 ? '' : 's'} updated. Press Save to make it live.`);
       else if (review.some((s) => s.status === 'rejected' || s.status === 'failed')) toast.info('AI review closed — nothing was changed.');
       else toast.info('The page already looks optimized.');
     }
@@ -712,7 +698,8 @@ export function SectionModal({
             {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
             {title}
           </span>
-          {/* The WP-editor escape hatch lives LEFT, beside the name (owner order). */}
+          {/* Escape hatches live LEFT, beside the name (owner order):
+              Edit = the site's WP editor, Open = the live page. */}
           {isPage && page?.editUrl && (
             <a
               href={page.editUrl}
@@ -721,29 +708,34 @@ export function SectionModal({
               title="Open this page in the site’s WP editor (source editing)"
               className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-foreground"
             >
-              <ExternalLink className="h-3 w-3" /> Open in WP editor
+              <ExternalLink className="h-3 w-3" /> Edit
+            </a>
+          )}
+          {isPage && page?.permalink && (
+            <a
+              href={page.permalink}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open the live page in a new tab"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-foreground"
+            >
+              <ExternalLink className="h-3 w-3" /> Open
             </a>
           )}
         </div>
-        {/* Page mode: the image law, right side. */}
-        {isPage && (
-          <span className="hidden shrink-0 text-[11px] text-slate-400 sm:inline">
-            Click an image to edit its alt/title — images never move
-          </span>
-        )}
         {/* Version history: the button ALWAYS names the shown state (picked/
             Current/latest/Original — never a counter). The list: page mode adds
             Current (the live served document); Original (light-grey,
             undeletable — page mode: the rules-input document, hidden when the
             input view is unavailable); each accepted save with date/time and a
-            delete button. Picking one loads it in the editor; Acceptera makes
+            delete button. Picking one loads it in the editor; saving makes
             it live (page mode: through the normal per-section save). */}
         {!readOnly && !isInsert && !review && (
           <div className="relative shrink-0">
             <button
               type="button"
               onClick={() => setVersionsOpen((v) => !v)}
-              title="Versions — pick one to view it; Acceptera makes it live"
+              title="Versions — pick one to view it — saving makes it live"
               className="inline-flex h-6 max-w-[140px] items-center gap-1 truncate rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 hover:bg-slate-50"
             >
               <span className="truncate">{versionLabel}</span>
@@ -1054,30 +1046,30 @@ export function SectionModal({
       )}
       </div>
 
-      {/* ── [✓ Acceptera] [↶ Ångra] (+ Remove for existing added sections) ── */}
+      {/* ── [✓ Save] [↶ Undo] (+ Remove for existing added sections) ── */}
       {!readOnly && (
         <div className="flex items-center gap-1.5 border-t border-slate-200 bg-white px-2.5 py-1.5">
-          {/* Page mode: Spara = save WITHOUT closing (owner order); Acceptera stays save-and-close. */}
+          {/* Order (owner): Save & close → Save (page mode, stays open) → Undo. */}
+          <button
+            type="button"
+            onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
+            disabled={busy || (isPage && (!pageReady || !!review))}
+            title="Save and close"
+            className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
+          >
+            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} {isPage ? 'Save & close' : 'Save'}
+          </button>
           {isPage && (
             <button
               type="button"
               onClick={() => { void save(); }}
               disabled={busy || !pageReady || !!review}
               title="Save — the window stays open"
-              className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
+              className="inline-flex items-center gap-1 rounded border border-green-600 bg-white px-2 py-1 text-[11px] font-medium text-green-700 hover:bg-green-50 disabled:opacity-60"
             >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Spara
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
-            disabled={busy || (isPage && (!pageReady || !!review))}
-            title={isPage ? 'Save and close' : undefined}
-            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium ${isPage ? 'border border-green-600 bg-white text-green-700 hover:bg-green-50' : 'bg-green-600 text-white hover:bg-green-700'} disabled:opacity-60`}
-          >
-            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Acceptera
-          </button>
           <button
             type="button"
             onClick={() => editor?.commands.setContent(savedHtml)}
@@ -1085,7 +1077,7 @@ export function SectionModal({
             title="Restore the last saved state"
             className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
-            <Undo2 className="h-3 w-3" /> Ångra
+            <Undo2 className="h-3 w-3" /> Undo
           </button>
           <div className="flex-1" />
           {isInsert && !!insert?.ruleId && (
@@ -1102,47 +1094,6 @@ export function SectionModal({
         </div>
       )}
 
-      {/* ── Destructive-save confirmation (v2.4): the save wrote NOTHING yet —
-             the user sees exactly what disappears before anything is stored.
-             Everything is reversible via the versions dropdown afterwards. ── */}
-      {pendingConfirm && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/30 p-6">
-          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-4 shadow-xl">
-            <div className="text-sm font-semibold text-slate-800">Confirm removal</div>
-            <p className="mt-1 text-xs text-slate-500">
-              This save removes content from the live page (nothing is deleted on the site — it stops serving and any earlier version restores it):
-            </p>
-            {pendingConfirm.removals.length > 0 && (
-              <ul className="mt-2 max-h-32 list-disc overflow-auto pl-5 text-xs text-slate-700">
-                {pendingConfirm.removals.map((r, i) => <li key={`s-${i}`}>Section: {r || '(untitled)'}</li>)}
-              </ul>
-            )}
-            {pendingConfirm.hiddenImages.length > 0 && (
-              <ul className="mt-1 max-h-24 list-disc overflow-auto pl-5 text-xs text-slate-700">
-                {pendingConfirm.hiddenImages.map((s, i) => <li key={`i-${i}`} className="truncate" title={s}>Image: {s}</li>)}
-              </ul>
-            )}
-            <div className="mt-3 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPendingConfirm(null)}
-                disabled={busy}
-                className="rounded border border-slate-200 px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => { void save(pendingConfirm.html, true); }}
-                disabled={busy}
-                className="inline-flex items-center gap-1 rounded bg-red-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-red-700 disabled:opacity-60"
-              >
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Remove & save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>,
     document.body,
   );

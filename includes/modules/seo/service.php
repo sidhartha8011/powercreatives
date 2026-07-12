@@ -4368,10 +4368,10 @@ class PCM_SEO_Service
      *   occurrences); more copies (a restored version) → hide rules delete.
      *   Images inside removed sections vanish from the doc and are hidden by
      *   the same reconciliation — the owner's "goes with the section" law.
-     * - CONFIRM GATE (v2.4): any save that would remove sections or hide
-     *   images writes NOTHING until it carries confirm — it returns the
-     *   pending lists instead. A truncated/degraded document can never
-     *   confirm itself (the 2026-07-11 incident stays impossible).
+     * - An EMPTY document is a legal FULL WIPE (owner order 2026-07-12):
+     *   every section removes, every image hides — reversible via versions.
+     *   (The former confirm gate is deleted by owner order: a broken load
+     *   cannot reach a save since the load-once fix, so it only cost a click.)
      *
      * F9 LANDMINE (defused here + in assemble_content_html): the editor's
      * document NEVER contains the page's original between-content as
@@ -4387,7 +4387,7 @@ class PCM_SEO_Service
      *
      * @return array{saved:int,inserted:int,skipped:int,notes:array<int,string>}|\WP_Error
      */
-    public function save_page_edits(int $user_id, object $site, int $post_id, string $html, bool $confirm = false)
+    public function save_page_edits(int $user_id, object $site, int $post_id, string $html)
     {
         $inv = self::served_inventory($site, $post_id, $user_id);
         if ($inv === null || $inv['view'] !== 'served') {
@@ -4428,13 +4428,11 @@ class PCM_SEO_Service
                 ) : null,
             );
         }
-        if (empty($baseline)) {
-            return new WP_Error(
-                'pcm_seo_page_edit_no_sections',
-                __('This page has no editable sections (no content headings were found).', 'power-creatives'),
-                array('status' => 409)
-            );
-        }
+        // NOTE: an EMPTY baseline is legal — a fully wiped page serves no
+        // sections, and restoring one arrives here with every edited section
+        // as an "extra" that matches its sectionRemove rule (wipe must never
+        // be a one-way door — live-caught 2026-07-12). The nothing-to-do case
+        // is guarded after the edited document is parsed.
 
         // ── The edited document, sliced by the SAME parser that defines identity. ──
         $units = PCM_Text_Matcher::parse_replacement_units($html);
@@ -4455,16 +4453,19 @@ class PCM_SEO_Service
                 'units' => array_slice($units, $s['from'], $s['to'] - $s['from'] + 1),
             );
         }
-        if (empty($edited)) {
+        // An EMPTY edited document is a legal full wipe (owner order 2026-07-12):
+        // every baseline section removes, every image hides — all reversible
+        // via the versions dropdown.
+        if (empty($baseline) && empty($edited)) {
             return new WP_Error(
-                'pcm_seo_page_edit_removed',
-                __('The edited page has no sections left — removing whole sections isn’t supported yet, nothing was saved.', 'power-creatives'),
-                array('status' => 400)
+                'pcm_seo_page_edit_no_sections',
+                __('This page has no editable sections (no content headings were found).', 'power-creatives'),
+                array('status' => 409)
             );
         }
 
         // ── Leading no-heading zone: skipped by design, honestly noted when it changed. ──
-        $first_from   = $secs[0]['from'];
+        $first_from   = !empty($secs) ? $secs[0]['from'] : count($units);
         $orphan_texts = array();
         for ($ui = 0; $ui < $first_from; $ui++) {
             if ((string) $units[$ui]['tag'] === 'p') {
@@ -4704,20 +4705,6 @@ class PCM_SEO_Service
             }
         }
 
-        // ── CONFIRM GATE (v2.4): destructive saves write NOTHING until confirmed.
-        //    A truncated/degraded document can never confirm itself. ──
-        if ((!empty($removed) || !empty($hides)) && !$confirm) {
-            return array(
-                'needsConfirm' => true,
-                'removals'     => array_values(array_map(static fn($bi) => (string) $baseline[$bi]['text'], $removed)),
-                'hiddenImages' => array_values(array_unique(array_map(static fn($hh) => (string) $hh['src'], $hides))),
-                'saved'        => 0,
-                'inserted'     => 0,
-                'skipped'      => 0,
-                'notes'        => array(),
-            );
-        }
-
         // ── Route every pair through the existing save paths, document order. ──
         $saved    = 0;
         $inserted = 0;
@@ -4806,7 +4793,17 @@ class PCM_SEO_Service
                 : array('section' => $baseline[0], 'position' => 'before');
         };
         foreach ($extras as $ej) {
-            $e      = $edited[$ej];
+            $e = $edited[$ej];
+            if (empty($baseline)) {
+                // Nothing on the page to anchor a NEW section to (restores
+                // above need no anchor — this is a genuinely new section on a
+                // fully wiped page).
+                return $fail($e['label'], new WP_Error(
+                    'pcm_seo_page_edit_no_anchor',
+                    __('Adding a new section needs at least one existing section to anchor to — restore a version first.', 'power-creatives'),
+                    array('status' => 409)
+                ), $saved + $inserted);
+            }
             $anchor = $anchor_for($ej);
             $res    = $this->save_section_insert($user_id, $site, $post_id, array(
                 'anchorText'       => $anchor['section']['text'],
@@ -5047,6 +5044,28 @@ class PCM_SEO_Service
             if ($absorb_id > 0) {
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->delete($table, array('id' => $absorb_id, 'userId' => $user_id, 'siteId' => $site_id), array('%d', '%d', '%d'));
+            }
+            // ABSORB (one-owner, 2026-07-12): paragraph rules covering the
+            // removed section could never serve again (their blocks are gone)
+            // and would stale-leak forever — they die here, matched by
+            // ORIGINAL identity OR served output (the tightened law).
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+            $p_rows = (array) $wpdb->get_results($wpdb->prepare(
+                "SELECT id, matchText, occurrence, replacement FROM {$table} WHERE userId = %d AND siteId = %d AND postId = %d AND target = 'paragraph'",
+                $user_id,
+                $site_id,
+                $post_id
+            ), ARRAY_A);
+            foreach ($p_rows as $p_row) {
+                $served_out = PCM_Text_Matcher::normalize(PCM_Text_Matcher::visible_text((string) $p_row['replacement']));
+                foreach ($paragraphs as $p) {
+                    if (((string) $p_row['matchText'] === $p['text'] && (int) $p_row['occurrence'] === $p['occurrence'])
+                        || ($served_out !== '' && $served_out === $p['text'])) {
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        $wpdb->delete($table, array('id' => (int) $p_row['id']), array('%d'));
+                        break;
+                    }
+                }
             }
         }
         $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
