@@ -296,6 +296,61 @@ $rules = array(
 $out = pcm_conn_apply_rules('<h2>Bild</h2><p>Gammal text.</p>', $rules, 1);
 check('ORDERING: image pass after sections', is_string($out) && strpos($out, '<img src="/img/new.jpg" alt="polished">') !== false, $out);
 
+// ═════ 5. v2.4 sectionRemove + image hidden (engine v2.4, schema 5) ═════
+$rr = static fn(string $text, int $lvl, string $fp, int $occ = 0): array => array(
+    'id' => 30, 'target' => 'sectionRemove', 'active' => true,
+    'match' => array('text' => pcm_conn_normalize_text($text), 'occurrence' => $occ),
+    'replacement' => '',
+    'section' => array('level' => $lvl, 'fingerprint' => $fp),
+);
+// Remove hit: heading + body gone; between-content + neighbors survive.
+$fp3 = pcm_conn_section_fingerprint(array('Första stycket.', 'Andra stycket.', 'Tredje stycket.'));
+$out = pcm_conn_apply_rules($fixture, array($rr('Våra tjänster', 2, $fp3)), 1);
+check('remove deletes heading + body', is_string($out)
+    && strpos($out, 'Våra tjänster') === false && strpos($out, 'Första stycket') === false && strpos($out, 'Tredje stycket') === false, $out);
+check('remove keeps between-content + neighbors', is_string($out)
+    && strpos($out, '<img src="between.jpg" alt="">') !== false && strpos($out, '<h2>Kontakt</h2><p>Ring oss.</p>') !== false, $out);
+// Fingerprint miss (client changed the section) = inert, original serves.
+$out = pcm_conn_apply_rules($fixture, array($rr('Våra tjänster', 2, 'stale-fingerprint')), 1);
+check('remove fingerprint miss serves original', $out === $fixture, $out);
+// Occurrence among VERIFIED twins: only the second identical section dies.
+$twins = '<h2>Twin</h2><p>a</p><h2>Twin</h2><p>a</p><h2>End</h2>';
+$fpA   = pcm_conn_section_fingerprint(array('a'));
+$out   = pcm_conn_apply_rules($twins, array($rr('Twin', 2, $fpA, 1)), 1);
+check('remove occurrence second twin', $out === '<h2>Twin</h2><p>a</p><h2>End</h2>', $out);
+// Empty-bodied section (heading only) removes cleanly.
+$out = pcm_conn_apply_rules('<h2>Lonely</h2><h2>Next</h2><p>x</p>', array($rr('Lonely', 2, pcm_conn_section_fingerprint(array()))), 1);
+check('remove empty-body section', $out === '<h2>Next</h2><p>x</p>', $out);
+// ORDERING: removes run BEFORE inserts — an insert anchored on a surviving
+// neighbor lands after the removal reshaped the page.
+$rules = array(
+    $rr('Twin', 2, $fpA, 0),
+    array(
+        'id' => 31, 'target' => 'sectionInsert', 'active' => true,
+        'match' => array('text' => pcm_conn_normalize_text('End'), 'occurrence' => 0),
+        'replacement' => '<h2>New</h2><p>n</p>',
+        'section' => array('level' => 2, 'position' => 'before'),
+    ),
+);
+$out = pcm_conn_apply_rules('<h2>Twin</h2><p>a</p><h2>End</h2>', $rules, 1);
+check('ORDERING: remove before insert', $out === '<h2>New</h2><p>n</p><h2>End</h2>', $out);
+// Image hidden: the tag is removed at render — siblings untouched.
+$ih = static fn(string $src, int $occ): array => array(
+    'id' => 32, 'target' => 'image', 'active' => true,
+    'match' => array('text' => pcm_conn_normalize_src($src), 'occurrence' => $occ),
+    'replacement' => json_encode(array('hidden' => true)),
+);
+$out = pcm_conn_apply_rules('<p>x</p><img src="/a.jpg" alt="1"><img src="/b.jpg" alt="keep">', array($ih('/a.jpg', 0)), 1);
+check('image hidden removes the tag', $out === '<p>x</p><img src="/b.jpg" alt="keep">', $out);
+$out = pcm_conn_apply_rules('<img src="/a.jpg" alt="1"><img src="/a.jpg" alt="2">', array($ih('/a.jpg', 1)), 1);
+check('image hidden occurrence second twin', $out === '<img src="/a.jpg" alt="1">', $out);
+$out = pcm_conn_apply_rules('<header><img src="/l.png" alt="logo"></header><img src="/l.png" alt="content">', array($ih('/l.png', 0)), 1);
+check('image hidden chrome isolation', $out === '<header><img src="/l.png" alt="logo"></header>', $out);
+// SINGLE-SCAN stability: hide occ 0 AND rewrite occ 1 in the same pass —
+// occurrence indexes never shift mid-scan (the v2.4 one-scan law).
+$out = pcm_conn_apply_rules('<img src="/a.jpg" alt="1"><img src="/a.jpg" alt="2">', array($ih('/a.jpg', 0), $ir('/a.jpg', 1, array('alt' => 'kept+renamed'))), 1);
+check('image single-scan hide+rewrite stability', $out === '<img src="/a.jpg" alt="kept+renamed">', $out);
+
 // ═════ summary ═════
 echo "\n" . ($FAIL === 0 ? "ALL GREEN" : "FAILURES: $FAIL") . " — $PASS passed, $FAIL failed\n";
 exit($FAIL === 0 ? 0 : 1);

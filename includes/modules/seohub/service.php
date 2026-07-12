@@ -452,7 +452,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — four dumb jobs: page snapshot (the hub does ALL parsing), builder-aware storage writers (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), guarded render-time apply of hub-precomputed instructions (refuse-if-unsure), and hub-pushed config. Also: SEO meta in REST, fallback meta tags, robots.txt + JSON-LD, /llms.txt + /llm-info/, cache flush on edit, self-update, one-paste connection code.
- * Version: 3.0.2
+ * Version: 3.0.3
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1839,6 +1839,38 @@ function pcm_conn_apply_section_insert($html, $match_text, $level, $position, $o
     }
     return substr_replace($html, $replacement, $at, 0);
 }
+/**
+ * Apply one `sectionRemove` rule (engine v2.4): locate EXACTLY like a replace
+ * (fingerprint-verified candidates; occurrence = hint among verified twins —
+ * a changed section can never cause a wrong removal), then remove the
+ * section's blocks (heading + body) whole. Between-content (images, forms,
+ * builder wrappers) stays — image visibility is its own rule (`hidden`).
+ * Returns new HTML or null (miss → original serves + stale count).
+ */
+function pcm_conn_apply_section_remove($html, $match_text, $level, $fingerprint, $occurrence) {
+    if ((string) $match_text === '') { return null; }
+    $blocks = pcm_conn_content_blocks($html); // chrome-excluded (scan parity, 2.8.1)
+    $verified = array();
+    foreach ($blocks as $i => $b) {
+        if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) { continue; }
+        if (pcm_conn_normalize_text($b['text']) !== $match_text) { continue; }
+        $body  = pcm_conn_section_body($blocks, $i);
+        $texts = array();
+        foreach ($body as $j) { $texts[] = $blocks[$j]['text']; }
+        if (pcm_conn_section_fingerprint($texts) === (string) $fingerprint) {
+            $verified[] = array('heading' => $i, 'body' => $body);
+        }
+    }
+    if (empty($verified)) { return null; }
+    $hit   = $verified[min(max(0, (int) $occurrence), count($verified) - 1)];
+    $edits = array();
+    foreach (array_merge(array($hit['heading']), $hit['body']) as $k) {
+        $edits[] = array('start' => $blocks[$k]['start'], 'len' => $blocks[$k]['len']);
+    }
+    usort($edits, function ($a, $b) { return $b['start'] - $a['start']; });
+    foreach ($edits as $e) { $html = substr_replace($html, '', $e['start'], $e['len']); }
+    return $html;
+}
 // Snapshot cache: busted whenever the post changes — a stale snapshot must
 // never outlive an edit (rules POST also busts it, see the /rules route).
 // The served view is version-stamped; bumping the version retires it too.
@@ -1950,18 +1982,25 @@ function pcm_conn_apply_rules($html, $rules, $pid) {
         }
         if ($done) { $applied++; } else { $missed++; }
     }
-    // Pass 1 (v2): section replaces, then section inserts — each rule re-parses
-    // the current buffer (offsets shift between rules; a few rules per post, cheap).
-    foreach (array('section', 'sectionInsert') as $phase) {
+    // Pass 1 (v2/v2.4): section replaces → REMOVES → inserts — each rule
+    // re-parses the current buffer (offsets shift between rules; a few rules
+    // per post, cheap). Removes run before inserts so an insert anchored on a
+    // surviving neighbor still lands; one anchored on a removed heading goes
+    // honestly inert + stale.
+    foreach (array('section', 'sectionRemove', 'sectionInsert') as $phase) {
         foreach ($rules as $r) {
             if (empty($r['active']) || (string) ($r['target'] ?? '') !== $phase) { continue; }
             $want = (string) ($r['match']['text'] ?? '');
             $occ  = (int) ($r['match']['occurrence'] ?? 0);
             $sec  = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
             $lvl  = (int) ($sec['level'] ?? 0);
-            $out  = ($phase === 'section')
-                ? pcm_conn_apply_section_rule($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ, (string) ($r['replacement'] ?? ''))
-                : pcm_conn_apply_section_insert($html, $want, $lvl, (string) ($sec['position'] ?? 'after'), $occ, (string) ($r['replacement'] ?? ''));
+            if ($phase === 'section') {
+                $out = pcm_conn_apply_section_rule($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ, (string) ($r['replacement'] ?? ''));
+            } elseif ($phase === 'sectionRemove') {
+                $out = pcm_conn_apply_section_remove($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ);
+            } else {
+                $out = pcm_conn_apply_section_insert($html, $want, $lvl, (string) ($sec['position'] ?? 'after'), $occ, (string) ($r['replacement'] ?? ''));
+            }
             if (is_string($out)) { $html = $out; $applied++; } else { $missed++; }
         }
     }
@@ -1985,23 +2024,28 @@ function pcm_conn_apply_rules($html, $rules, $pid) {
         }, $html);
         if (is_string($out) && $done) { $html = $out; $applied++; } else { $missed++; }
     }
-    // Pass 3 (v2.3): IMAGE metadata rules — rewrite ONLY alt/title on the
-    // matched <img>, never src/position/existence. Runs LAST over the final
-    // buffer so it also reaches images inside rule output. Identity space =
-    // CONTENT-region images (chrome images neither counted nor touched — the
-    // frame law); occurrence among same-normalized-src content images.
-    // src miss = inert, original serves, counted.
+    // Pass 3 (v2.3/v2.4): IMAGE rules — ONE buffer scan so indexes stay
+    // stable across multiple rules and removals. Every content-region <img>
+    // gets an occurrence per normalized src; a matching rule either HIDES it
+    // (`hidden`: the tag is removed at render — media/storage untouched) or
+    // rewrites ONLY alt/title. Chrome images are neither counted nor touched
+    // (the frame law). A rule matching no image = inert, original serves,
+    // counted. Runs LAST so it also reaches images inside rule output.
+    $img_rules = array();
     foreach ($rules as $r) {
         if (empty($r['active']) || (string) ($r['target'] ?? '') !== 'image') { continue; }
-        $want = pcm_conn_normalize_src((string) ($r['match']['text'] ?? ''));
+        $want  = pcm_conn_normalize_src((string) ($r['match']['text'] ?? ''));
         $attrs = json_decode((string) ($r['replacement'] ?? ''), true);
         if ($want === '' || !is_array($attrs)) { $missed++; continue; }
-        $occ   = max(0, (int) ($r['match']['occurrence'] ?? 0));
+        $img_rules[] = array('src' => $want, 'occ' => max(0, (int) ($r['match']['occurrence'] ?? 0)), 'attrs' => $attrs, 'hit' => false);
+    }
+    if (!empty($img_rules)) {
         $spans = pcm_conn_chrome_spans($html);
-        $seen  = 0; $done = false;
+        $seen  = array();
+        $edits = array();
         if (preg_match_all('#<img\b[^>]*>#i', $html, $mm, PREG_OFFSET_CAPTURE)) {
             foreach ($mm[0] as $m) {
-                $start = (int) $m[1];
+                $start  = (int) $m[1];
                 $chrome = false;
                 foreach ($spans as $s) {
                     if ($start >= $s[0] && $start < $s[1]) { $chrome = true; break; }
@@ -2010,35 +2054,49 @@ function pcm_conn_apply_rules($html, $rules, $pid) {
                 $tag = (string) $m[0];
                 if (!preg_match('#(?<![\w-])src\s*=\s*("([^"]*)"|\'([^\']*)\')#i', $tag, $sm)) { continue; }
                 $src = pcm_conn_normalize_src($sm[2] !== '' ? $sm[2] : (isset($sm[3]) ? $sm[3] : ''));
-                if ($src === '' || $src !== $want) { continue; }
-                if ($seen++ !== $occ) { continue; }
-                $new = $tag;
-                foreach (array('alt', 'title') as $a) {
-                    if (!array_key_exists($a, $attrs)) { continue; }
-                    $val = esc_attr((string) $attrs[$a]);
-                    if (preg_match('#(?<![\w-])' . $a . '\s*=\s*("[^"]*"|\'[^\']*\')#i', $new)) {
-                        // Callback: the value is literal, never backref-processed.
-                        $new = (string) preg_replace_callback(
-                            '#(?<![\w-])' . $a . '\s*=\s*("[^"]*"|\'[^\']*\')#i',
-                            function () use ($a, $val) { return $a . '="' . $val . '"'; },
-                            $new,
-                            1
-                        );
-                    } else {
-                        $new = (string) preg_replace_callback(
-                            '#^<img\b#i',
-                            function () use ($a, $val) { return '<img ' . $a . '="' . $val . '"'; },
-                            $new,
-                            1
-                        );
+                if ($src === '') { continue; }
+                $occ        = isset($seen[$src]) ? $seen[$src] : 0;
+                $seen[$src] = $occ + 1;
+                foreach ($img_rules as $ri => $ir) {
+                    if ($ir['hit'] || $ir['src'] !== $src || $ir['occ'] !== $occ) { continue; }
+                    $img_rules[$ri]['hit'] = true;
+                    if (!empty($ir['attrs']['hidden'])) {
+                        $edits[] = array('start' => $start, 'len' => strlen($tag), 'html' => '');
+                        break;
                     }
+                    $new = $tag;
+                    foreach (array('alt', 'title') as $a) {
+                        if (!array_key_exists($a, $ir['attrs'])) { continue; }
+                        $val = esc_attr((string) $ir['attrs'][$a]);
+                        if (preg_match('#(?<![\w-])' . $a . '\s*=\s*("[^"]*"|\'[^\']*\')#i', $new)) {
+                            // Callback: the value is literal, never backref-processed.
+                            $new = (string) preg_replace_callback(
+                                '#(?<![\w-])' . $a . '\s*=\s*("[^"]*"|\'[^\']*\')#i',
+                                function () use ($a, $val) { return $a . '="' . $val . '"'; },
+                                $new,
+                                1
+                            );
+                        } else {
+                            $new = (string) preg_replace_callback(
+                                '#^<img\b#i',
+                                function () use ($a, $val) { return '<img ' . $a . '="' . $val . '"'; },
+                                $new,
+                                1
+                            );
+                        }
+                    }
+                    if ($new !== $tag) { $edits[] = array('start' => $start, 'len' => strlen($tag), 'html' => $new); }
+                    break;
                 }
-                if ($new !== $tag) { $html = substr_replace($html, $new, $start, strlen($tag)); }
-                $done = true;
-                break;
             }
         }
-        if ($done) { $applied++; } else { $missed++; }
+        if (!empty($edits)) {
+            usort($edits, function ($a, $b) { return $b['start'] - $a['start']; });
+            foreach ($edits as $e) { $html = substr_replace($html, $e['html'], $e['start'], $e['len']); }
+        }
+        foreach ($img_rules as $ir) {
+            if ($ir['hit']) { $applied++; } else { $missed++; }
+        }
     }
     if ($applied > 0 || $missed > 0) { pcm_conn_rules_bump_stats($pid, $applied, $missed); }
     return $html;
@@ -2087,7 +2145,7 @@ add_action('rest_api_init', function () {
                 $idx = get_option('pcm_conn_rules_index', array());
                 return array(
                     'supported'     => true,
-                    'schemaVersion' => 4,
+                    'schemaVersion' => 5,
                     'posts'         => is_array($idx) ? array_map('intval', $idx) : array(),
                     'siteRules'     => pcm_conn_rules_site(),
                     'killSwitch'    => get_option('pcm_conn_rules_off') === '1',
@@ -2095,7 +2153,7 @@ add_action('rest_api_init', function () {
             }
             return array(
                 'supported'     => true,
-                'schemaVersion' => 4,
+                'schemaVersion' => 5,
                 'rules'         => pcm_conn_rules_for($pid),
                 'stats'         => (array) get_option('pcm_conn_rules_stats_' . $pid, array()),
             );
@@ -2103,22 +2161,24 @@ add_action('rest_api_init', function () {
         array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) {
             $p = $req->get_json_params();
             $schema = is_array($p) ? (int) ($p['schemaVersion'] ?? 0) : 0;
-            if ($schema < 1 || $schema > 4) {
-                return new WP_REST_Response(array('error' => 'unsupported_schema', 'accepts' => 4), 400);
+            if ($schema < 1 || $schema > 5) {
+                return new WP_REST_Response(array('error' => 'unsupported_schema', 'accepts' => 5), 400);
             }
             $pid = absint($p['postId'] ?? 0);
             $site_scope = ($pid === 0 && $schema >= 3 && array_key_exists('postId', (array) $p));
             if (!$site_scope && (!$pid || !get_post($pid))) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
             // v2 adds the section targets; v3 adds SERVED heading rules + site
-            // scope; v4 adds the image target (attr rewrite only). A v1/v2/v3
-            // payload keeps exactly its old shape. Site scope accepts ONLY
-            // heading targets (a site-wide paragraph/section rule is undefined).
+            // scope; v4 adds the image target (attr rewrite only); v5 adds
+            // sectionRemove + the image hidden flag. A v1..v4 payload keeps
+            // exactly its old shape. Site scope accepts ONLY heading targets
+            // (a site-wide paragraph/section rule is undefined).
             if ($schema >= 2) {
                 $targets = array('paragraph', 'heading', 'anchorText', 'href', 'section', 'sectionInsert');
             } else {
                 $targets = array('paragraph', 'heading', 'anchorText', 'href');
             }
             if ($schema >= 4) { $targets[] = 'image'; }
+            if ($schema >= 5) { $targets[] = 'sectionRemove'; }
             if ($site_scope) { $targets = array('heading'); }
             $clean = array();
             foreach ((array) ($p['rules'] ?? array()) as $r) {
@@ -2143,24 +2203,27 @@ add_action('rest_api_init', function () {
                     'anchor'         => (isset($r['anchor']) && is_array($r['anchor'])) ? $r['anchor'] : null,
                 );
                 if ($target === 'image') {
-                    // Whitelist + re-encode: replacement is EXACTLY {alt?,title?}.
+                    // Whitelist + re-encode: replacement is EXACTLY {alt?,title?,hidden?}.
+                    // `hidden` exists only in schema 5 (a 3.0.2 hub payload never carries it).
                     $set = json_decode((string) ($r['replacement'] ?? ''), true);
                     $set = is_array($set) ? $set : array();
                     $img = array();
                     foreach (array('alt', 'title') as $a) {
                         if (array_key_exists($a, $set)) { $img[$a] = sanitize_text_field((string) $set[$a]); }
                     }
+                    if ($schema >= 5 && !empty($set['hidden'])) { $img = array('hidden' => true); }
                     if (empty($img)) { continue; } // nothing rewritable — not a rule
                     $row['replacement'] = (string) wp_json_encode($img);
                 }
-                if ($target === 'section' || $target === 'sectionInsert' || ($target === 'heading' && $schema >= 3)) {
+                if ($target === 'section' || $target === 'sectionInsert' || $target === 'sectionRemove' || ($target === 'heading' && $schema >= 3)) {
                     $sec = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
                     $row['section'] = array('level' => max(0, min(6, (int) ($sec['level'] ?? 0))));
-                    if ($target === 'section') {
+                    if ($target === 'section' || $target === 'sectionRemove') {
                         // Fingerprint is stored as-is: the hub computed it via the SAME
                         // normalization (harness-pinned) — re-normalizing per line here
                         // would be redundant, and the compare side normalizes live text.
                         $row['section']['fingerprint'] = (string) ($sec['fingerprint'] ?? '');
+                        if ($target === 'sectionRemove') { $row['replacement'] = ''; } // removal carries no content
                     } elseif ($target === 'sectionInsert') {
                         $row['section']['position'] = ((string) ($sec['position'] ?? 'after')) === 'before' ? 'before' : 'after';
                     } else {

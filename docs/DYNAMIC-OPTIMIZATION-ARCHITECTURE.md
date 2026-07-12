@@ -402,6 +402,40 @@ Companion: `docs/GAP-ANALYSIS-PAGE-EDITOR-V23-20260711.md`.
 - **Capability:** wire schemaVersion 4; posts without image rules keep
   pushing v1/v2/v3 byte-identical; hub gates with an honest 409 pre-3.0.2.
 
+### Engine v2.4 — sectionRemove + image hidden (FROZEN 2026-07-12 — ADDITIVE; connector 3.0.3, schemaVersion 5)
+
+Companion: `docs/GAP-ANALYSIS-PAGE-FREEDOM-20260711.md`. With this, the rule
+algebra {replace, insert, remove} is CLOSED over block-level transformations —
+any target page state is expressible.
+
+- **Target `sectionRemove`** — identity = the section identity (normalized
+  heading + level + occurrence-among-verified + paragraph fingerprint);
+  locate EXACTLY like a replace (fingerprint-verified candidates — a changed
+  section can never cause a wrong removal), then remove the section's blocks
+  whole. `replacement` is empty by definition. Between-content (images,
+  forms, wrappers) stays — visibility is the image rule's job.
+- **Image `hidden`** — the image-rule replacement JSON accepts
+  `{"hidden": true}`: serving REMOVES the matched `<img>` tag from the buffer.
+  Storage and the media library are NEVER touched; deleting the rule restores
+  the image (v2.3's "never existence" is amended to "existence only by
+  explicit hide rule, never in storage"). Originals in `anchorContext` keep
+  powering clean revert.
+- **One-scan law (image pass):** ALL image rules apply in ONE buffer scan —
+  occurrence counting per normalized src over content-region images with
+  stable indexes; edits collected, applied in reverse offset order. Multiple
+  hides/rewrites on the same src can never shift each other's identity.
+- **Pass order:** heading → section replaces → **removes** → inserts →
+  paragraphs → images (removes before inserts: an insert anchored on a
+  surviving neighbor lands; one anchored on a removed heading goes honestly
+  inert + stale).
+- **Capability:** wire schemaVersion 5; `sectionRemove` and `hidden` exist
+  only in v5 payloads — a 3.0.2 site never receives either; v1..v4 payloads
+  stay byte-identical; hub gates with an honest 409 pre-3.0.3.
+- **Consolidation note (2026-07-12):** paragraph-rule CREATION is deleted
+  hub-side (endpoints + service; zero UI callers); the absorb law consumes
+  paragraph rules by original identity OR served output; the connector's
+  paragraph pass survives until fleet convergence (deletions ledger).
+
 ### Deletions ledger (C3 — nothing else changes behavior)
 
 1. Connector: `/scan-headings`, `/scan-content` routes + `pcm_conn_parse_paragraph_nodes`.
