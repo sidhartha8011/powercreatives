@@ -3136,6 +3136,13 @@ class PCM_SEO_Service
             $imgs = array();
             if (preg_match_all('#<img\b[^>]*>#i', substr($html, $from, $to - $from), $mm, PREG_OFFSET_CAPTURE)) {
                 foreach ($mm[0] as $m) {
+                    // A SERVED platform-added img is rule content already
+                    // emitted in place by its slice — lifting it as locked
+                    // context would duplicate it (F9 genus, live-caught
+                    // 2026-07-12: the duplicate even defeats unchanged-skip).
+                    if (stripos((string) $m[0], 'data-pcm-added') !== false) {
+                        continue;
+                    }
                     $abs = $from + (int) $m[1];
                     foreach ($spans as $s) {
                         if ($abs >= $s[0] && $abs < $s[1]) {
@@ -4510,6 +4517,12 @@ class PCM_SEO_Service
             if ($site_host === '' || stripos($tag, 'data-pcm-added') === false) {
                 return false;
             }
+            // A locked tag is assembly-produced CONTEXT even if it carries the
+            // added marker (defense in depth with the gap-scan skip): keeping
+            // it would clone the image into the rule on every save.
+            if (stripos($tag, 'data-pcm-locked') !== false) {
+                return false;
+            }
             if (!preg_match('#(?<![\w-])src\s*=\s*("([^"]*)"|\'([^\']*)\')#i', $tag, $m)) {
                 return false;
             }
@@ -4545,6 +4558,29 @@ class PCM_SEO_Service
                 }
             }
             return PCM_Text_Matcher::normalize(implode(' ', $texts));
+        };
+        // Kept-image identity (the skip law's fifth input, 2026-07-12): the
+        // four text inputs above are image-blind by construction (visible
+        // text, paragraph fingerprint) — so adding OR deleting a platform-
+        // placed image is invisible to them and the section would skip.
+        // Ordered normalized srcs of KEPT imgs per side close that hole.
+        // Section IDENTITY (keys/rename pairing/restore match) stays
+        // image-blind by design: images don't define WHAT a section is,
+        // only WHETHER it changed.
+        $kept_imgs = static function (array $unit_list) use ($keep_img): string {
+            $srcs = array();
+            foreach ($unit_list as $u) {
+                if (!preg_match_all('#<img\b[^>]*>#i', (string) $u['html'], $mm)) {
+                    continue;
+                }
+                foreach ($mm[0] as $tag) {
+                    if ($keep_img((string) $tag)
+                        && preg_match('#(?<![\w-])src\s*=\s*("([^"]*)"|\'([^\']*)\')#i', (string) $tag, $m)) {
+                        $srcs[] = PCM_Text_Matcher::normalize_src($m[2] !== '' ? $m[2] : (isset($m[3]) ? $m[3] : ''));
+                    }
+                }
+            }
+            return implode('|', $srcs);
         };
 
         // ── Alignment: 1:1 by order when counts match; LCS on keys otherwise. ──
@@ -4762,13 +4798,15 @@ class PCM_SEO_Service
             list($bi, $ej) = $pair;
             $b = $baseline[$bi];
             $e = $edited[$ej];
-            // Baseline raw text: a slice's own units for owned sections;
-            // original sections enter the editor with NO raw units at all.
-            $base_raw = $b['slice'] !== null
-                ? $rawtext(PCM_Text_Matcher::parse_replacement_units($b['slice']['html']))
-                : '';
+            // Baseline units: a slice's own for owned sections; original
+            // sections enter the editor with NO raw units and can never
+            // contain kept imgs (added imgs exist only in rule content).
+            $base_units = $b['slice'] !== null
+                ? PCM_Text_Matcher::parse_replacement_units((string) $b['slice']['html'])
+                : array();
             if ($e['level'] === $b['level'] && $e['norm'] === PCM_Text_Matcher::normalize($b['text'])
-                && $e['fp'] === $b['fp'] && $rawtext($e['units']) === $base_raw) {
+                && $e['fp'] === $b['fp'] && $rawtext($e['units']) === $rawtext($base_units)
+                && $kept_imgs($e['units']) === $kept_imgs($base_units)) {
                 $skipped++;
                 continue;
             }
