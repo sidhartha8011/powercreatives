@@ -216,6 +216,8 @@ class PCM_Schema
             canGenerateText tinyint(1) DEFAULT 0 NOT NULL,
             canVision tinyint(1) DEFAULT 0 NOT NULL,
             costTier varchar(20) DEFAULT 'standard' NOT NULL,
+            inputPrice decimal(12,4) DEFAULT NULL,
+            outputPrice decimal(12,4) DEFAULT NULL,
             status varchar(50) DEFAULT 'auto' NOT NULL,
             isEnabled tinyint(1) DEFAULT 1 NOT NULL,
             isAvailable tinyint(1) DEFAULT 1 NOT NULL,
