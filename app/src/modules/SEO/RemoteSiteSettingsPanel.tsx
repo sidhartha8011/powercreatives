@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { Loader2, Save, Sparkles, AlertTriangle } from 'lucide-react';
+import { Loader2, Save, Sparkles, AlertTriangle, Trash2, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -37,6 +37,9 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
   // site's url/name as the {{website.url}} / {{business.*}} context (so robots Sitemap +
   // schema url point to the remote site). We then save it to the connected site.
   const generateMutation = trpc.seo.remoteSiteGenerate.useMutation();
+  // Cleanup C4: converts the site's legacy render-time heading overrides into
+  // hub-managed heading instructions (verified on the connector, then cleared).
+  const migrateMutation = trpc.seo.remoteMigrateOverrides.useMutation();
 
   const { data: brandsRaw } = trpc.brands.list.useQuery();
   const brands = useMemo(
@@ -226,6 +229,42 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
         />
       </section>
 
+      {/* Redirects (connector 3.0.5+) — created from the slug-change offer; managed here. */}
+      <RedirectsSection siteId={siteId} />
+
+      {/* Legacy override migration (cleanup C4) — connector 3.0.0+ */}
+      <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <Label className="text-sm font-medium">Migrate legacy heading overrides</Label>
+            <p className="text-xs text-muted-foreground">
+              Converts this site’s render-time heading overrides into hub-managed heading
+              instructions (connector 3.0.0+). Verified on the site before the old list is
+              cleared — the pages serve identically. Safe to re-run.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className="shrink-0"
+            disabled={migrateMutation.isPending}
+            onClick={() => {
+              migrateMutation.mutate({ siteId }, {
+                onSuccess: (res: any) => {
+                  const n = Number(res?.migrated ?? 0);
+                  toast.success(n > 0
+                    ? `Migrated ${n} override${n === 1 ? '' : 's'} — legacy list cleared.`
+                    : 'No legacy overrides on this site — nothing to migrate.');
+                },
+                onError: (e: any) => { toast.error(e?.message ?? 'Migration failed — nothing was changed on the live site.'); },
+              });
+            }}
+          >
+            {migrateMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            Migrate
+          </Button>
+        </div>
+      </section>
+
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={busy}>
           {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
@@ -233,5 +272,74 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
         </Button>
       </div>
     </div>
+  );
+}
+
+interface RedirectRow {
+  id: number;
+  fromPath: string;
+  toUrl: string;
+  code: number;
+}
+
+/** The site's redirect list (from → to, type, delete) — every redirect the
+ *  slug-change offer created is visible and removable here, never a black box. */
+function RedirectsSection({ siteId }: { siteId: number }) {
+  const { data, refetch } = trpc.seo.remoteRedirects.useQuery(
+    { siteId },
+    { retry: false },
+  ) as { data?: { supported?: boolean; redirects?: RedirectRow[] }; refetch: () => void };
+  const deleteMutation = trpc.seo.remoteDeleteRedirect.useMutation();
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const supported = data?.supported === true;
+  const redirects = Array.isArray(data?.redirects) ? data.redirects : [];
+
+  const remove = (id: number) => {
+    setDeletingId(id);
+    deleteMutation
+      .mutateAsync({ siteId, redirectId: id })
+      .then(() => { toast.success('Redirect removed'); refetch(); })
+      .catch((err: unknown) => { toast.error(err instanceof Error ? err.message : 'Failed to remove the redirect'); })
+      .finally(() => setDeletingId(null));
+  };
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-4 space-y-3">
+      <div>
+        <Label className="text-sm font-medium">Redirects</Label>
+        <p className="text-xs text-muted-foreground">
+          {supported
+            ? 'Served by the connected site before WordPress answers a missing URL (connector 3.0.5+).'
+            : 'Needs connector 3.0.5+ — update the connector from the Sites module.'}
+        </p>
+      </div>
+      {supported && (
+        redirects.length === 0 ? (
+          <p className="text-xs text-muted-foreground/70">No redirects yet — they’re offered when a published page’s slug changes.</p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {redirects.map((r) => (
+              <li key={r.id} className="flex items-center gap-2 py-2 text-xs">
+                <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{Number(r.code)}</span>
+                <span className="min-w-0 truncate font-mono" title={r.fromPath}>{r.fromPath}</span>
+                <ArrowRight className="size-3 shrink-0 text-muted-foreground/60" />
+                <span className="min-w-0 flex-1 truncate font-mono" title={r.toUrl}>{r.toUrl}</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                  title="Remove redirect"
+                  disabled={deletingId === Number(r.id)}
+                  onClick={() => remove(Number(r.id))}
+                >
+                  {deletingId === Number(r.id) ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )
+      )}
+    </section>
   );
 }

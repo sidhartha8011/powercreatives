@@ -22,12 +22,23 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, Maximize2, Plus, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Maximize2, Plus, Trash2, X } from 'lucide-react';
 
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import type { FilterDef } from '@/hooks/useColumnFilters';
-import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { BulkActionBar } from '@/components/shared/BulkActionBar';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -43,6 +54,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import {
+  CELL_EDIT_INPUT,
+  CELL_EMPTY_TEXT,
+  CELL_PILL,
+  CELL_PILL_NEUTRAL,
+  CELL_VIEW_TEXT,
+} from '@/components/ui/table-cell-recipes';
 import { relTime } from '@/components/shared/EntityCard';
 import { cn } from '@/lib/utils';
 import { trpc } from '@/lib/trpc';
@@ -50,7 +69,7 @@ import { getIsAdmin } from '@/lib/pcmConfig';
 import { toast } from 'sonner';
 import { useApp } from '@/contexts/AppContext';
 
-import { AddProjectMenu, useDeliveryProjects, type DeliveryProject } from '../DeliveryProjects';
+import { ProjectAddActions, useDeliveryProjects, type DeliveryProject } from '../DeliveryProjects';
 import { deliveryColumns, type DeliveryColumn } from '../kanban/deliveryColumns';
 import { useDeliveries, type UpdateDeliveryInput } from '../hooks/useDeliveries';
 import { useTypePresets } from '../hooks/useTypePresets';
@@ -68,10 +87,7 @@ function StatusPill({ status }: { status: DeliveryStatus }) {
   const lane = STATUS_LANES[status];
   if (!lane) return <span>{status}</span>;
   return (
-    <span
-      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-none font-medium"
-      style={{ background: lane.accentColor, color: lane.accentText }}
-    >
+    <span className={CELL_PILL} style={{ background: lane.accentColor, color: lane.accentText }}>
       {lane.label}
     </span>
   );
@@ -93,7 +109,7 @@ const TYPE_PALETTE: ReadonlyArray<{ bg: string; text: string }> = [
   { bg: '#f1f5f9', text: '#334155' }, // slate
 ];
 
-function typeColors(typeKey: string): { bg: string; text: string } {
+export function typeColors(typeKey: string): { bg: string; text: string } {
   let h = 0;
   for (let i = 0; i < typeKey.length; i++) h = (h * 31 + typeKey.charCodeAt(i)) >>> 0;
   return TYPE_PALETTE[h % TYPE_PALETTE.length];
@@ -102,10 +118,7 @@ function typeColors(typeKey: string): { bg: string; text: string } {
 function TypePill({ typeKey, label }: { typeKey: string; label: string }) {
   const colors = typeColors(typeKey);
   return (
-    <span
-      className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-none font-medium"
-      style={{ background: colors.bg, color: colors.text }}
-    >
+    <span className={CELL_PILL} style={{ background: colors.bg, color: colors.text }}>
       {label}
     </span>
   );
@@ -115,8 +128,10 @@ function TypePill({ typeKey, label }: { typeKey: string; label: string }) {
 const NONE_VALUE = '__none__';
 
 /**
- * Borderless in-place text editor — the cell IS the input. Card auto-save
- * contract: commit on blur/Enter, Esc cancels, revert the draft on failure.
+ * Click-to-edit text cell — the SEO table's cell design (view text with
+ * dotted-underline hover affordance; compact Input while editing), with the
+ * delivery card's save contract kept: commit on blur/Enter (only when
+ * changed), Esc cancels, revert the draft on failure.
  */
 function InlineTextCell({
   value,
@@ -134,20 +149,14 @@ function InlineTextCell({
   className?: string;
   onSave: (next: string) => Promise<unknown>;
 }) {
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
-  // Esc must skip the commit that its own blur fires (blur reads a stale
-  // closure otherwise) — flagged via ref, not state.
-  const cancelled = useRef(false);
   useEffect(() => {
     setDraft(value);
   }, [value]);
 
   const commit = () => {
-    if (cancelled.current) {
-      cancelled.current = false;
-      setDraft(value);
-      return;
-    }
+    setEditing(false);
     const next = draft.trim();
     if (next === value) return;
     if (required && next.length === 0) {
@@ -157,25 +166,42 @@ function InlineTextCell({
     onSave(next).catch(() => setDraft(value));
   };
 
+  if (editing) {
+    return (
+      <Input
+        autoFocus
+        value={draft}
+        aria-label={ariaLabel}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+          }
+          if (e.key === 'Escape') {
+            setDraft(value);
+            setEditing(false);
+          }
+        }}
+        className={cn(CELL_EDIT_INPUT, className)}
+      />
+    );
+  }
+
   return (
-    <input
-      value={draft}
-      placeholder={placeholder}
+    <button
+      type="button"
       aria-label={ariaLabel}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur();
-        if (e.key === 'Escape') {
-          cancelled.current = true;
-          e.currentTarget.blur();
-        }
+      onClick={() => {
+        setDraft(value);
+        setEditing(true);
       }}
-      className={cn(
-        'h-7 w-full rounded bg-transparent px-1 outline-none placeholder:text-muted-foreground/60 hover:bg-slate-50 focus:bg-white focus:ring-1 focus:ring-ring',
-        className
-      )}
-    />
+      className={cn(CELL_VIEW_TEXT, className)}
+      title={value || placeholder}
+    >
+      {value || <span className={CELL_EMPTY_TEXT}>{placeholder ?? '—'}</span>}
+    </button>
   );
 }
 
@@ -280,17 +306,13 @@ function InlineModulesCell({
         >
           {/* Chips, not a sentence — same 2-chips-then-overflow rule as the card. */}
           <span className="flex min-w-0 items-center gap-1">
-            {selected.length === 0 && <span className="text-muted-foreground">None</span>}
+            {selected.length === 0 && <span className={CELL_EMPTY_TEXT}>None</span>}
             {selected.slice(0, 2).map((o) => (
-              <Badge key={o.id} variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
+              <span key={o.id} className={CELL_PILL_NEUTRAL}>
                 {o.label}
-              </Badge>
+              </span>
             ))}
-            {selected.length > 2 && (
-              <Badge variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
-                +{selected.length - 2}
-              </Badge>
-            )}
+            {selected.length > 2 && <span className={CELL_PILL_NEUTRAL}>+{selected.length - 2}</span>}
           </span>
           <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
         </Button>
@@ -317,25 +339,21 @@ function InlineModulesCell({
 /** Read-only module chips — the non-admin rendering of the Modules cell. */
 function ModulesChips({ values }: { values: string[] }) {
   const selected = GRANTABLE_MODULES.filter((o) => values.includes(o.id));
-  if (selected.length === 0) return <span className="px-1 text-muted-foreground">None</span>;
+  if (selected.length === 0) return <span className={`px-1 ${CELL_EMPTY_TEXT}`}>None</span>;
   return (
     <span className="flex min-w-0 items-center gap-1 px-1">
       {selected.slice(0, 2).map((o) => (
-        <Badge key={o.id} variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
+        <span key={o.id} className={CELL_PILL_NEUTRAL}>
           {o.label}
-        </Badge>
+        </span>
       ))}
-      {selected.length > 2 && (
-        <Badge variant="secondary" className="px-1.5 py-0.5 text-[10px] leading-none">
-          +{selected.length - 2}
-        </Badge>
-      )}
+      {selected.length > 2 && <span className={CELL_PILL_NEUTRAL}>+{selected.length - 2}</span>}
     </span>
   );
 }
 
 /** The delivery's lead among its assignees (role='lead'; single by contract). */
-function leadOf(d: Delivery): { id: number; name: string } | null {
+export function leadOf(d: Delivery): { id: number; name: string } | null {
   const lead = d.assignees?.find((a) => a.role === 'lead');
   return lead ? { id: lead.id, name: lead.name } : null;
 }
@@ -401,11 +419,23 @@ function LeadSelect({ delivery, onSaved }: { delivery: Delivery; onSaved: () => 
  * site select | Images | Copy | Videos | Approvals counts | spacer | ✕. The
  * sub-header row above labels these cells. Count cells carry a "+" that opens
  * the matching module with brand/delivery/project pre-selected
- * (AppContext.navigateToCreate). Trailing row = the same AddProjectMenu the
- * delivery card has.
+ * (AppContext.navigateToCreate). Trailing row = the shared connect/create
+ * actions (ProjectAddActions), same as the delivery card.
  */
-function ProjectSubRows({ delivery }: { delivery: Delivery }) {
+function ProjectSubRows({
+  delivery,
+  hasSelectionCol,
+  selectedProjects,
+  onToggleProject,
+}: {
+  delivery: Delivery;
+  /** True when the parent table renders the selection column (admins). */
+  hasSelectionCol: boolean;
+  selectedProjects: ReadonlySet<number>;
+  onToggleProject: (projectId: number) => void;
+}) {
   const { navigateToProjectTab, navigateToCreate } = useApp();
+  const projectsState = useDeliveryProjects(delivery);
   // Approvals count = frontend join on the sets list (approval_sets.projectId)
   // — the assets module must never read the approvals tables server-side.
   const { data: setsRaw } = trpc.approvals.listSets.useQuery();
@@ -432,13 +462,13 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
     renameProject,
     sitePending,
     isLoading,
-  } = useDeliveryProjects(delivery);
+  } = projectsState;
 
   if (isLoading) {
     return (
       <tr>
-        <td />
-        <td colSpan={8} className="text-muted-foreground">
+        {hasSelectionCol && <td />}
+        <td colSpan={9} className="text-muted-foreground">
           Loading projects…
         </td>
       </tr>
@@ -501,7 +531,7 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
   return (
     <>
       <tr aria-hidden="true">
-        <td className={subHead} />
+        {hasSelectionCol && <td className={subHead} />}
         <td className={subHead}>
           <span className="block pl-4">Project</span>
         </td>
@@ -522,10 +552,19 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
         </td>
         <td className={subHead} />
         <td className={subHead} />
+        <td className={subHead} />
       </tr>
       {inDelivery.map((p) => (
-        <tr key={`project-${p.id}`}>
-          <td />
+        <tr key={`project-${p.id}`} className={`group ${selectedProjects.has(p.id) ? 'bg-primary/5' : ''}`}>
+          {hasSelectionCol && (
+            <td className="text-center">
+              <Checkbox
+                checked={selectedProjects.has(p.id)}
+                onCheckedChange={() => onToggleProject(p.id)}
+                aria-label={`Select project ${p.name}`}
+              />
+            </td>
+          )}
           <td>
             {/* Indent = hierarchy; edits rename the ACTUAL project (card
                 auto-save contract — revert on failure via rethrow). */}
@@ -562,12 +601,13 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
             </span>
           </td>
           <td />
+          <td />
           <td className="text-right">
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="h-7 w-7 p-0 text-muted-foreground/60 hover:text-destructive"
+              className="h-6 w-6 p-0 text-muted-foreground/50 opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
               title="Remove from this delivery"
               aria-label={`Remove ${p.name} from this delivery`}
               onClick={() => void unassignProject(p.id, p.name)}
@@ -578,22 +618,13 @@ function ProjectSubRows({ delivery }: { delivery: Delivery }) {
         </tr>
       ))}
       <tr>
-        <td />
-        <td colSpan={8}>
-          <AddProjectMenu
-            available={available}
-            onAssign={(id, name) => void assignProject(id, name)}
-            trigger={
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1 pl-4 text-xs text-muted-foreground"
-              >
-                <Plus className="h-3.5 w-3.5" /> Add project
-              </Button>
-            }
-          />
+        {hasSelectionCol && <td />}
+        <td colSpan={9}>
+          {/* Connect an existing project / create a new one — same actions as
+              the delivery card, one shared component. */}
+          <span className="inline-flex pl-3">
+            <ProjectAddActions state={projectsState} />
+          </span>
         </td>
       </tr>
     </>
@@ -618,9 +649,78 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
   trpc.approvals.listSets.useQuery();
 
   const isAdmin = getIsAdmin();
-  const { updateDelivery, refetch } = useDeliveries();
+  const { updateDelivery, deleteDelivery, refetch } = useDeliveries();
   const patch = (id: number, input: Omit<UpdateDeliveryInput, 'id'>) =>
     updateDelivery({ id, ...input });
+
+  // ── Multi-select + bulk actions (admin-only — all bulk ops are writes) ──
+  const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const toggleProject = (projectId: number) => {
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setSelectedProjectIds(new Set());
+  };
+
+  const bulkSetStatus = async (status: DeliveryStatus) => {
+    setBulkBusy(true);
+    try {
+      await Promise.all([...selectedIds].map((id) => updateDelivery({ id: Number(id), status })));
+      toast.success(`Status updated for ${selectedIds.size} deliver${selectedIds.size === 1 ? 'y' : 'ies'}`);
+      setSelectedIds(new Set());
+    } catch {
+      // Per-call errors already toast via useDeliveries.
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const bulkDelete = async () => {
+    setBulkDeleteOpen(false);
+    setBulkBusy(true);
+    try {
+      // Sequential: deleteDelivery is optimistic per-row; parallel deletes
+      // would race the shared cache snapshots it restores on failure.
+      for (const id of selectedIds) {
+        await deleteDelivery(Number(id));
+      }
+      setSelectedIds(new Set());
+    } catch {
+      // Per-call errors already toast + roll back via useDeliveries.
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation() as any;
+  const projectsUtils = trpc.assets.getProjects.useUtils();
+  const bulkRemoveProjects = async () => {
+    setBulkBusy(true);
+    try {
+      for (const projectId of selectedProjectIds) {
+        await setProjectDeliveryMutation.mutateAsync({ id: projectId, deliveryId: null });
+      }
+      toast.success(`${selectedProjectIds.size} project${selectedProjectIds.size === 1 ? '' : 's'} removed from their delivery`);
+      setSelectedProjectIds(new Set());
+      projectsUtils.invalidate();
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to remove some projects');
+      projectsUtils.invalidate();
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const { data: brandsRaw } = trpc.brands.list.useQuery();
   const brandOptions = useMemo(() => {
@@ -646,8 +746,24 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
         header: 'Delivery',
         width: 220,
         sortAccessor: (d) => d.name.toLowerCase(),
-        cell: (d) => (
+        cell: (d, ctx) => (
           <div className="flex items-center gap-1">
+            {/* Expand lives INSIDE the name cell (SEO-table pattern). */}
+            {ctx?.canExpand && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  ctx.toggleExpanded();
+                }}
+                title={ctx.isExpanded ? 'Hide projects' : 'Show projects'}
+                aria-label={ctx.isExpanded ? `Hide projects of ${d.name}` : `Show projects of ${d.name}`}
+                aria-expanded={ctx.isExpanded}
+                className="shrink-0 text-muted-foreground/60 hover:text-foreground"
+              >
+                {ctx.isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              </button>
+            )}
             {isAdmin ? (
               <InlineTextCell
                 value={d.name}
@@ -659,31 +775,18 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
             ) : (
               <span className="block min-w-0 flex-1 truncate px-1 font-medium">{d.name}</span>
             )}
-            {/* Always visible (group-hover is a no-op on coarse pointers) — quiet at rest. */}
+            {/* Hover-only (PO 2026-07-07; CSS hover accepted) — row carries `group`. */}
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-muted-foreground/50 hover:text-foreground"
+              className="h-5 w-5 shrink-0 p-0 text-muted-foreground/50 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
               title="Open delivery card"
               aria-label={`Open ${d.name}`}
               onClick={() => onEdit(d)}
             >
-              <Maximize2 className="h-3.5 w-3.5" />
+              <Maximize2 className="h-3 w-3" />
             </Button>
-            {isAdmin && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 shrink-0 p-0 text-muted-foreground/40 hover:text-destructive"
-                title="Delete delivery"
-                aria-label={`Delete ${d.name}`}
-                onClick={() => onRequestDelete(d)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            )}
           </div>
         ),
       },
@@ -829,6 +932,27 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
         sortAccessor: (d) => d.updatedAt,
         cell: (d) => <span className="text-muted-foreground">{relTime(d.updatedAt)}</span>,
       },
+      {
+        key: 'actions',
+        header: '',
+        width: 44,
+        // Row actions live in their own far-right column (PO 2026-07-07);
+        // hover-revealed via the row's `group`.
+        cell: (d) =>
+          isAdmin ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 text-muted-foreground/50 opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+              title="Delete delivery"
+              aria-label={`Delete ${d.name}`}
+              onClick={() => onRequestDelete(d)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          ) : null,
+      },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps — patch/onEdit are stable enough per render
     [brandOptions, brandLabel, typeOptions, typePresets, onEdit, onRequestDelete, isAdmin, refetch]
@@ -878,24 +1002,93 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
   );
 
   return (
-    <DataTable<Delivery>
-      columns={columns}
-      data={[...items]}
-      rowKey={(d) => d.id}
-      defaultSortKey="updated"
-      defaultSortDir="desc"
-      renderSubRows={(d) => <ProjectSubRows delivery={d} />}
-      emptyMessage="No deliveries match your filters."
-      // SEO-style column layout: drag headers to reorder, drag edges to
-      // resize; persisted per browser. Header filter dots per filterDefs.
-      layoutKey={DELIVERIES_LAYOUT_KEY}
-      filterDefs={filterDefs}
-      // Deliveries-scoped chrome: hairline border does the separation (no
-      // shadow), slightly rounder corners, light-gray header band so the
-      // header reads as distinct from the white body rows. Global DataTable
-      // default untouched.
-      wrapperClassName="shadow-none rounded-lg"
-      className="[&>thead>tr>th]:bg-slate-50"
-    />
+    <>
+      <DataTable<Delivery>
+        columns={columns}
+        data={[...items]}
+        rowKey={(d) => d.id}
+        defaultSortKey="updated"
+        defaultSortDir="desc"
+        inlineExpand
+        renderSubRows={(d) => (
+          <ProjectSubRows
+            delivery={d}
+            hasSelectionCol={isAdmin}
+            selectedProjects={selectedProjectIds}
+            onToggleProject={toggleProject}
+          />
+        )}
+        emptyMessage="No deliveries match your filters."
+        // SEO-style column layout: drag headers to reorder, drag edges to
+        // resize; persisted per browser. Header filter dots per filterDefs.
+        layoutKey={DELIVERIES_LAYOUT_KEY}
+        filterDefs={filterDefs}
+        selection={isAdmin ? { selected: selectedIds, onChange: setSelectedIds } : undefined}
+        // Deliveries-scoped chrome: hairline border does the separation (no
+        // shadow), slightly rounder corners, light-gray header band so the
+        // header reads as distinct from the white body rows. Global DataTable
+        // default untouched.
+        wrapperClassName="shadow-none rounded-lg"
+        className="[&>thead>tr>th]:bg-slate-50"
+      />
+
+      {/* Bulk bar — one bar for both selection kinds; actions render per kind. */}
+      <BulkActionBar count={selectedIds.size + selectedProjectIds.size} onClear={clearSelection}>
+        {selectedIds.size > 0 && (
+          <>
+            <Select onValueChange={(v) => void bulkSetStatus(v as DeliveryStatus)} disabled={bulkBusy}>
+              <SelectTrigger className="h-8 w-[150px] text-xs" aria-label="Set status for selected deliveries">
+                <SelectValue placeholder="Set status…" />
+              </SelectTrigger>
+              <SelectContent>
+                {DELIVERY_STATUSES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {STATUS_LANES[s]?.label ?? s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <BulkActionBar.Action
+              icon={Trash2}
+              label={`Delete ${selectedIds.size}`}
+              variant="destructive"
+              loading={bulkBusy}
+              onClick={() => setBulkDeleteOpen(true)}
+            />
+          </>
+        )}
+        {selectedProjectIds.size > 0 && (
+          <BulkActionBar.Action
+            icon={X}
+            label={`Remove ${selectedProjectIds.size} from delivery`}
+            loading={bulkBusy}
+            onClick={() => void bulkRemoveProjects()}
+          />
+        )}
+      </BulkActionBar>
+
+      {/* Bulk delete confirmation — mirrors the board's single-delete dialog. */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={(open) => { if (!open) setBulkDeleteOpen(false); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {selectedIds.size} deliver{selectedIds.size === 1 ? 'y' : 'ies'}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. The selected deliveries will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setBulkDeleteOpen(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void bulkDelete()}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

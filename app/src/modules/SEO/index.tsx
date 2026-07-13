@@ -44,6 +44,7 @@ import { useColumnFilters } from '@/hooks/useColumnFilters';
 import { useViews, type SeoView } from './hooks/useViews';
 import { useColumnLayout } from '@/hooks/useColumnLayout';
 import { ColumnHead } from '@/components/ui/column-head';
+import { CELL_PILL_NEUTRAL } from '@/components/ui/table-cell-recipes';
 import { ViewsToolbar } from './ViewsToolbar';
 import { buildFilterDefs, type FilterDef, type FilterOption } from './seoFilters';
 import { AIReadinessPanel } from './AIReadinessPanel';
@@ -55,8 +56,11 @@ import { BusinessPanel } from './BusinessPanel';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { LinksPopup, type LinkKind } from './LinksPopup';
+import { RedirectPopup } from './RedirectPopup';
 import { HeadingRows } from './HeadingsPanel';
+import { SectionModal } from './SectionModal';
 import { SEO_TABLE_GRID } from './seo-table';
+import { Pill, type PillVariant } from '@/components/ui/pill';
 import { SEO_TEXT_FIELDS, type SeoRow } from './types';
 
 // WordPress media library global (wp_enqueue_media() is called in class-pcm-admin.php).
@@ -231,16 +235,11 @@ const FIELD_ICONS: Record<string, LucideIcon> = {
   metaKeywords: Tags,
 };
 
-/** Status → single-select chip colors (Airtable-style). */
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case 'publish': return 'bg-green-100 text-green-700';
-    case 'pending': return 'bg-amber-100 text-amber-700';
-    case 'private': return 'bg-purple-100 text-purple-700';
-    case 'future': return 'bg-blue-100 text-blue-700';
-    case 'draft':
-    default: return 'bg-muted text-muted-foreground';
-  }
+/** Status → Pill variant (colors live in the global Pill, never here). */
+function statusPillVariant(status: string): PillVariant {
+  return (['publish', 'pending', 'private', 'future'] as const).includes(status as any)
+    ? (status as PillVariant)
+    : 'draft';
 }
 
 /** Columns that can be shown/hidden + saved in a View (selection col is fixed). */
@@ -634,6 +633,9 @@ export function SEOModule() {
   const [schemaOverrides, setSchemaOverrides] = useState<Record<number, string[]>>({});
   const [optimizeRow, setOptimizeRow] = useState<SeoRow | null>(null);
   const [previewRow, setPreviewRow] = useState<SeoRow | null>(null);
+  // Full-page editor (dynamic rules) — the repurposed row pen. Connected sites
+  // only; local rows keep the plain WP-editor link (no rule engine locally).
+  const [pageEditRow, setPageEditRow] = useState<SeoRow | null>(null);
   // Connected-site preview: a direct cross-origin iframe renders logged-out (the
   // remote login cookie is a blocked third-party cookie) → no admin bar. So for a
   // connected site we fetch the page AUTHENTICATED via the connector (server-side)
@@ -687,16 +689,38 @@ export function SEOModule() {
     return next;
   }), []);
 
+  // Slug saves on CONNECTED published pages offer a redirect from the old
+  // permalink (the popup writes nothing unless the user says yes). Drafts
+  // have no public URL to preserve; the local tab has no serving engine.
+  const [redirectOffer, setRedirectOffer] = useState<{ fromUrl: string; toUrl: string } | null>(null);
+  const saveSlug = useCallback((id: number, value: string | number): Promise<void> => {
+    const row = rows.find((r) => Number(r.id) === id);
+    const oldSlug = String(row?.slug ?? '');
+    const oldPermalink = String(row?.permalink ?? '');
+    return saveCell(id, 'slug', value).then(() => {
+      const newSlug = String(value).trim();
+      if (isLocal || typeof siteId !== 'number' || !row || row.status !== 'publish'
+        || oldPermalink === '' || newSlug === '' || newSlug === oldSlug) return;
+      try {
+        const u = new URL(oldPermalink);
+        const parts = u.pathname.split('/').filter(Boolean);
+        if (parts.length === 0) return;
+        parts[parts.length - 1] = newSlug;
+        setRedirectOffer({ fromUrl: oldPermalink, toUrl: `${u.origin}/${parts.join('/')}/` });
+      } catch { /* malformed permalink — nothing to offer */ }
+    });
+  }, [rows, saveCell, isLocal, siteId]);
+
   const acceptStaged = useCallback((id: number, field: string) => {
     const key = `${id}:${field}`;
     setStaged((s) => {
       const v = s[key];
-      if (v !== undefined) void saveCell(id, field, v);
+      if (v !== undefined) void (field === 'slug' ? saveSlug(id, v) : saveCell(id, field, v));
       const next = { ...s };
       delete next[key];
       return next;
     });
-  }, [saveCell]);
+  }, [saveCell, saveSlug]);
 
   const rejectStaged = useCallback((id: number, field: string) => {
     setStaged((s) => { const next = { ...s }; delete next[`${id}:${field}`]; return next; });
@@ -1011,7 +1035,7 @@ export function SEOModule() {
       case 'type':
         return (
           <TableCell key={key}>
-            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] capitalize bg-muted/60 text-muted-foreground">{row.type}</span>
+            <span className={`${CELL_PILL_NEUTRAL} capitalize`}>{row.type}</span>
           </TableCell>
         );
       case 'title':
@@ -1043,16 +1067,41 @@ export function SEOModule() {
                   onReject={() => rejectStaged(row.id, 'title')}
                 />
               </div>
-              {row.editUrl && (
+              {/* Row-hover-revealed quick actions (rest = clean title; the TableRow
+                  carries `group`). Eye = the existing preview modal (authenticated
+                  remote fetch, shows served dynamic rules, has open-in-new-tab). */}
+              {row.permalink && (
+                <button
+                  type="button"
+                  onClick={() => setPreviewRow(row)}
+                  title="Preview page"
+                  className="shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:text-primary"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {/* Connected sites: the pen opens the full-page DYNAMIC editor
+                  (page-level editing, section-level rules). Local rows keep
+                  the plain WP-editor link — no rule engine on the hub itself. */}
+              {isLocal ? (row.editUrl && (
                 <a
                   href={row.editUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title="Edit on site"
-                  className="shrink-0 text-muted-foreground/50 hover:text-foreground"
+                  title="Edit on site (WP editor)"
+                  className="shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
                 >
                   <SquarePen className="w-3.5 h-3.5" />
                 </a>
+              )) : (
+                <button
+                  type="button"
+                  onClick={() => setPageEditRow(row)}
+                  title="Edit this page (dynamic rules — nothing is rewritten on the site)"
+                  className="shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:text-primary"
+                >
+                  <SquarePen className="w-3.5 h-3.5" />
+                </button>
               )}
             </div>
           </TableCell>
@@ -1062,7 +1111,7 @@ export function SEOModule() {
           <TableCell key={key}>
             <Select value={row.status} onValueChange={(v) => saveCell(row.id, 'status', v)}>
               <SelectTrigger className="h-full w-full border-0 rounded-none bg-transparent px-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
-                <span className={`inline-flex items-center rounded-full px-1.5 py-0 text-[9px] font-medium capitalize ${statusBadgeClass(row.status)}`}>{row.status}</span>
+                <Pill variant={statusPillVariant(row.status)} className="capitalize">{row.status}</Pill>
               </SelectTrigger>
               <SelectContent>
                 {(options?.statuses ?? ['publish', 'draft', 'pending', 'private', 'future']).map((s) => (
@@ -1092,7 +1141,7 @@ export function SEOModule() {
             <EditableCell
               value={row.slug}
               placeholder="slug"
-              onSave={(v) => saveCell(row.id, 'slug', v)}
+              onSave={(v) => saveSlug(row.id, v)}
               onGenerate={() => handleGenerate(row.id, 'slug')}
               generating={genKey === ckey}
               suggestion={staged[ckey] ?? null}
@@ -1375,8 +1424,9 @@ export function SEOModule() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Toolbar buttons rest GRAY, hover BLUE (PO 2026-07-08) — default
+              variant; 'active' (blue at rest) is reserved for pressed states. */}
           <PillButton
-            variant="active"
             icon={scanningAll ? <Loader2 className="animate-spin" /> : <Link2 />}
             onClick={handleScanAll}
             disabled={busy || scanningAll || sortedData.length === 0}
@@ -1385,7 +1435,6 @@ export function SEOModule() {
           </PillButton>
           {/* Pulls clicks / impressions / CTR / position / top queries (last 28 days). */}
           <PillButton
-            variant="active"
             icon={gscPulling ? <Loader2 className="animate-spin" /> : <TrendingUp />}
             onClick={handlePullGsc}
             disabled={busy || gscPulling}
@@ -1394,17 +1443,16 @@ export function SEOModule() {
           </PillButton>
           {/* Pulls ProRankTracker rank of each row's Primary Keyword → "Pos (PRT)" column. */}
           <PillButton
-            variant="active"
             icon={prtPulling ? <Loader2 className="animate-spin" /> : <Target />}
             onClick={handlePullPrt}
             disabled={busy || prtPulling}
           >
             {prtPulling ? 'Pulling…' : 'PRT ranks'}
           </PillButton>
-          <PillButton variant="active" icon={<Plus />} onClick={() => handleCreate('post')} disabled={busy}>
+          <PillButton icon={<Plus />} onClick={() => handleCreate('post')} disabled={busy}>
             Post
           </PillButton>
-          <PillButton variant="active" icon={<Plus />} onClick={() => handleCreate('page')} disabled={busy}>
+          <PillButton icon={<Plus />} onClick={() => handleCreate('page')} disabled={busy}>
             Page
           </PillButton>
           <Select
@@ -1682,6 +1730,34 @@ export function SEOModule() {
           type={linksPopup.type}
           isLocal={isLocal}
           siteId={typeof siteId === 'number' ? siteId : null}
+        />
+      )}
+
+      {/* Redirect offer — appears once after a real slug change on a connected
+          published page; writes nothing unless confirmed. */}
+      {redirectOffer && typeof siteId === 'number' && (
+        <RedirectPopup
+          open
+          onClose={() => setRedirectOffer(null)}
+          siteId={siteId}
+          fromUrl={redirectOffer.fromUrl}
+          toUrl={redirectOffer.toUrl}
+        />
+      )}
+
+      {/* Full-page editor (dynamic rules) — the repurposed row pen. Keyed per
+          post so switching pages never bleeds editor state. */}
+      {pageEditRow && typeof siteId === 'number' && (
+        <SectionModal
+          key={`page-${pageEditRow.id}`}
+          siteId={siteId}
+          postId={pageEditRow.id}
+          type={pageEditRow.type === 'page' ? 'page' : 'post'}
+          readOnly={false}
+          mode="page"
+          page={{ title: pageEditRow.title || 'Untitled', editUrl: pageEditRow.editUrl || undefined, date: pageEditRow.date || undefined, permalink: pageEditRow.permalink || undefined }}
+          onClose={() => setPageEditRow(null)}
+          onSaved={() => {}}
         />
       )}
 

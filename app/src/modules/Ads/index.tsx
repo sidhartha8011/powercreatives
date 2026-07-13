@@ -91,6 +91,13 @@ export function AdsModule() {
   const [autoOptimizeBrief, setAutoOptimizeBrief] = useState(false);
   const [numVersions, setNumVersions] = useState<number>(1);
 
+  // ── Enabled outputs state (toggles) ──
+  const [enabledOutputs, setEnabledOutputs] = useState<Record<string, boolean>>({
+    copy: false,
+    image: false,
+    video: false,
+  });
+
   // ── Selection State (Client Board) ──
   const [selectedVisualIds, setSelectedVisualIds] = useState<string[]>([]);
   const [selectedCopyIds, setSelectedCopyIds] = useState<string[]>([]);
@@ -137,11 +144,11 @@ export function AdsModule() {
     
     orchestration.generate({
       brief,
-      textModelId,
-      imageModelIds: selectedImageModels,
-      videoModelId,
+      textModelId: enabledOutputs.copy ? textModelId : '',
+      imageModelIds: enabledOutputs.image ? selectedImageModels : [],
+      videoModelId: enabledOutputs.video ? videoModelId : '',
       // Pass dynamic generation settings instead of hardcoded values
-      copyTypes: activeTypes,
+      copyTypes: enabledOutputs.copy ? activeTypes : [],
       audiences: {
         mode: genSettings.audiencesMode,
         items: audiences,
@@ -159,7 +166,7 @@ export function AdsModule() {
       autoOptimizeBrief,
       numVersions,
     });
-  }, [brief, textModelId, selectedImageModels, videoModelId, activeTypes, genSettings, audiences, angles, imageVariations, formValues, contextData, sessionReferenceImages, autoOptimizeBrief, numVersions, orchestration]);
+  }, [brief, textModelId, selectedImageModels, videoModelId, activeTypes, genSettings, audiences, angles, imageVariations, formValues, contextData, sessionReferenceImages, autoOptimizeBrief, numVersions, orchestration, enabledOutputs]);
 
   const handleGenerateAudiences = useCallback(async () => {
     return orchestration.generateAudiences({
@@ -222,9 +229,21 @@ export function AdsModule() {
   }, [selectionCount, selectedCopyIds, selectedVisualIds, orchestration.textSlots, orchestration.mediaSlots, clearSelection]);
 
   // ── canGenerate (used in header) ──
-  const canGenerate = (brief.trim().length > 0
-    && textModelId
-    && selectedImageModels.length > 0) || orchestration.isGenerating;
+  const canGenerate = useMemo(() => {
+    if (orchestration.isGenerating) return false;
+    if (!brief.trim()) return false;
+
+    const runCopy = enabledOutputs.copy;
+    const runImage = enabledOutputs.image;
+    const runVideo = enabledOutputs.video;
+
+    if (!runCopy && !runImage && !runVideo) return false;
+
+    if (runCopy && !textModelId) return false;
+    if (runImage && selectedImageModels.length === 0) return false;
+
+    return true;
+  }, [brief, textModelId, selectedImageModels, enabledOutputs, orchestration.isGenerating]);
 
   // ── Render ──
   return (
@@ -286,6 +305,8 @@ export function AdsModule() {
       <div className="flex flex-1 overflow-hidden">
       {/* Sidebar — input controls */}
       <AdsSidebar
+        enabledOutputs={enabledOutputs}
+        onEnabledOutputsChange={setEnabledOutputs}
         contextData={contextData}
         onContextChange={handleContextChange}
         onUrlFetched={handleUrlFetched}

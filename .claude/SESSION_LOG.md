@@ -7179,3 +7179,484 @@ declarations, 49k PHP + 76k TS lines, 291 tests, ~24 AI features, 5 providers, 6
 Wrote docs/PLATFORM-REFERENCE-2026-07.md (internal, technical, honest maturity notes) and
 docs/CASE-STUDY-power-creatives.md (client-facing: stats table, Challenge→Approach→What We
 Built→Why It Matters→Outcomes; no internal identifiers; every claim traced to verified research).
+## 2026-07-07 — quiet header icons (deliveries) [columnhead-quiet-icons]
+- Shared ColumnHead gains OPT-IN `quietIcons`: filter dot + sort icon opacity-0
+  at rest → revealed on header group-hover/group-focus-within → active = always
+  visible + primary blue (dot bg-primary as before; sort icon now text-primary).
+  Default OFF — SEO table pixel-identical; adopting later = one flag.
+- DataTable passes it through as `quietHeaderIcons`; DeliveriesTable opts in.
+- CSS variant chosen by PO (JS-hover alternative declined); coarse-pointer
+  hover gotcha explicitly accepted and documented on the prop.
+- Verified: tsc 56 = baseline, build OK. Live pass pending user.
+  BEFORE feb8015 → AFTER (this commit).
+
+## 2026-07-07 — FIX: + buttons crashed on click [fix-pending-create-brand-fetch]
+- User live-test: TypeError utils.client.brands.getById.query is not a function.
+  ROOT CAUSE: the hand-rolled trpc proxy's useUtils() supports ONLY
+  invalidate/refetch/setData — there is NO tRPC-style .client.*.query()
+  imperative fetch. I copied the pattern from Copy's handleBrandSaved, whose
+  identical call is a DORMANT PRE-EXISTING BUG masked by its silent catch
+  ("brand saved → refresh contextData" has never worked). Flagged to PO, not
+  fixed (unapproved).
+- FIX: all three create-from-delivery consumers now use the exported
+  apiFetch(`brands/{id}`) (the sanctioned imperative path; success() returns
+  the raw payload, same shape useQuery consumers get).
+- LESSON: in this codebase, imperative fetches = apiFetch; trpc proxy is
+  hooks-only. Verified: tsc 56 = baseline, build OK.
+  BEFORE 689b501 → AFTER (this commit).
+
+## 2026-07-08 — deliveries batch of five [kanban-compact-cards + deliveries-name-cell-actions + deliveries-universal-search + deliveries-multiselect-bulk + kanban-dynamic-lanes]
+- Compact Kanban via shared TOKENS only (all boards). Name-cell: open icon
+  hover-only+smaller; delete → new far-right actions column; sub-rows +1 cell.
+- Universal search: buildDeliveryFilters walks every row value dynamically
+  (future fields free) + brand-name/type-label resolvers from the board.
+- DataTable controlled `selection` prop (leading checkbox col, select-all
+  visible); deliveries + project sub-row selection; shared BulkActionBar:
+  status select + Delete N (confirm; sequential — optimistic snapshots race
+  in parallel) / Remove N projects.
+- Dynamic lanes: Lanes dropdown (status/type/brand/lead/client, persisted);
+  lanes derived live + "No X" clear-lane; drops WRITE via new optimistic
+  helpers updateFieldsOptimistic/setLeadOptimistic (flushSync contract from
+  updateStatus — dnd snap-back autopsy). Modules/Updated excluded (multi-value
+  / derived).
+- Verified: tsc 56 baseline after each pair; build OK. Live pass pending.
+  BEFOREs e78bee5/e58bfe9/daf788a/a7d27b2/a204baf → AFTER f0e964c (last).
+
+## 2026-07-08 — minimal header chrome for BOTH tables [columnhead-title-filter]
+- ColumnHead redesigned (single shared behavior — SEO + Deliveries at once):
+  left filter DOT deleted (no reserved left space); at rest the header is just
+  the label. Hover/focus reveals the sort arrow (title click sorts, arrow blue
+  when active) + a ListFilter funnel right of the title (click opens the same
+  filter menu). ACTIVE FILTER = title text lights primary blue (the persistent
+  indicator). Yesterday's quietIcons/quietHeaderIcons opt-in REMOVED — this is
+  now the one behavior (DataTable + DeliveriesTable pass-throughs dropped).
+- Verified: tsc 56 = baseline, build OK. Live pass pending user (both tables:
+  hover reveal, title-click sort, funnel filter, blue title when filtered).
+  BEFORE 2b27aba → AFTER (this commit).
+
+## 2026-07-08 — batch of five + dynamic-optimization architecture doc
+- [datatable-inline-expand]: cell renderers get ctx {canExpand,isExpanded,
+  toggleExpanded}; inlineExpand prop kills the chevron column; Deliveries
+  chevron now INSIDE the name cell (SEO pattern); sub-rows −1 cell.
+- [table-cell-recipe-unify]: NEW components/ui/table-cell-recipes.ts sourced
+  verbatim from SEO (CELL_VIEW_TEXT/EDIT_INPUT/PILL/PILL_NEUTRAL/EMPTY_TEXT);
+  SEO swapped literals (zero visual change); Deliveries adopted: pills lose
+  rounded-full (SEO shape, semantic colors kept), InlineTextCell is now
+  CLICK-TO-EDIT (SEO look + card revert contract), chips → neutral pills.
+- [columnhead-generate-hover]: ✦ joins the hover choreography (busy stays
+  visible), sits in sequence after the funnel.
+- [kanban-lane-reorder]: KanbanBoard opt-in onColumnReorder — native HTML5
+  drag on lane headers (custom MIME so foreign drags never trigger; coexists
+  with hello-pangea card DnD); DeliveriesBoard persists PER-FIELD lane order
+  (pcm:deliveries:lane-order:v1, reconciled); "Lanes:" prefix dropped.
+- [headings-tag-select-compact]: H-tag dropdown menu ~30% smaller (56px wide,
+  centered 10px items, check-indicator hidden).
+- docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md: full phased architecture (point-5
+  content rows = phase 0 inventory; routing law; connector rule engine; three-
+  state switches; heartbeat licensing; AI optimizer last; open PO decisions).
+- Verified per pair: tsc 56 = baseline; final build OK. Live pass pending.
+  BEFOREs 631ca67/129bd71/299358e/0298f0c/6ebadad → AFTERs through c1fb5a1.
+
+## 2026-07-08 — pill hover, connect/create projects, brand-mapping bug
+- [pillbutton-blue-hover]: shared PillButton default/subtle hover → BLUE
+  (primaryLight bg + primary text/icon; hover previews the active palette).
+  Applies everywhere PillButton renders (SEO toolbar, Copy, Writer).
+- [project-connect-create]: delivery projects surface split into TWO actions —
+  Connect (Link2 → searchable non-portal Command popover, ApprovalSetPicker
+  pattern; search input on top) + Create (Plus → NEW shared
+  modules/Projects/CreateProjectDialog.tsx on the EntityCard primitive: inline
+  title, wp.media multi-image picker with thumbnail strip, Cancel/Create).
+  New POST /assets/projects/{id}/images (ownership-checked, esc_url_raw, cap
+  50) registers uploaded media-library URLs as project image assets (type
+  'image', provider 'upload'). onCreated chains assignProject → the new
+  project lands connected to the delivery. AddProjectMenu replaced by
+  ProjectAddActions in all three surfaces (card header, empty state, table
+  add-row). php -l clean.
+- [pending-create-context-mapping] BUG FIX (user live-report: "+ flow picks 2
+  brand properties, manual pick fills ~7"): the consume effect set contextData
+  RAW, bypassing each module's handleContextChange → mapBrandToFormValues
+  never ran. Fix: Image + Copy consumers now call handleContextChange (the
+  exact manual-selection code path). Video unchanged — it has no such mapping
+  (ContextPanel gets setContextData directly).
+- PILL-SIZE PARITY (user report): investigated — Deliveries and SEO pills now
+  share the SAME constant (CELL_PILL, unified earlier tonight); no code
+  difference remains. Most likely a stale bundle → hard-refresh; if still
+  bigger after refresh, next suspect is the Select-trigger wrapper around the
+  Status/Type pills (chevron + h-7 hit area) — measure in DevTools first.
+- Verified: tsc 56 = baseline throughout; build OK. Live pass pending.
+  BEFOREs a1fceeb/5ea6dc3/9180e21 → AFTERs (this batch).
+
+## 2026-07-08 — FIX after PO re-report: toolbar still blue + pills still unequal
+- User was RIGHT on both; previous answers were incomplete:
+  (1) SEO toolbar buttons hardcoded PillButton variant="active" (blue AT
+  REST) — the hover change never applied to them. All five (Scan links / GSC
+  stats / PRT ranks / Post / Page) now default variant: gray rest, blue hover.
+  (2) Pill size root cause MEASURED in source: text-[11px] sets font-size
+  only; Deliveries pills sit inside SelectTrigger (text-sm → line-height 20px)
+  vs SEO pills in text-xs cells (16px) → taller pills despite identical
+  classes. CELL_PILL now pins `leading-4` (16px): SEO pixel-identical,
+  Deliveries drops to parity. LESSON: arbitrary font-size utilities inherit
+  line-height — pin leading in shared recipes.
+- Verified: tsc 56 = baseline; build OK. BEFORE 0c246dc → AFTER (this commit).
+
+## 2026-07-08 07:24 - [seo-paragraph-rows-readonly] (pair 1 of phase-1 build)
+- FEATURE: paragraphs become visible rows in the SEO outline (LOCAL, read-only).
+  parse_content_nodes() + get_post_content_nodes() in PCM_SEO_Service (combined
+  heading+<p> parse, document order, wpautop only when content has no <p>;
+  heading skip rule byte-identical to parse_heading_details so headingIndex
+  aligns with the headings-only list). New GET /seo/content/{id}/content-nodes
+  -> { nodes } + trpc seo.getContentNodes.
+- NODE IDENTITY CONTRACT v1 frozen (architecture doc): { kind, index, text };
+  headings ALSO carry headingIndex = the EXISTING heading endpoints' handle,
+  so heading edit/optimize flows are unchanged. After a local heading save the
+  panel refetches nodes (heading endpoint returns headings-only list).
+- UI: HeadingsPanel renders ContentNode list. Paragraph rows: neutral P chip,
+  indent one step under nearest heading (flush when orphaned), one-line
+  preview, click -> Dialog with the paragraph's escaped HTML. Heading rows
+  pixel-identical to before. REMOTE left 100% untouched (connector heading
+  scan) - remote paragraphs arrive with pair 2 scan-content; a raw-body parse
+  here would order falsely against builder headings (honest gap, not silent).
+- VERIFIED: php -l x2 OK; tsc = 59 on HEAD and 59 with changes -> ZERO new
+  (baseline drifted 56->59 from other machine: SaveBrandButton dup, streamdown,
+  Templates unknown[] - NOT this pair); build OK. Ctrl+F5 needed.
+- BEFORE 4342ef8 -> AFTER 27a7d4f. Owner live-verify pending.
+
+## 2026-07-08 07:45 - [sites-connector-version-column]
+- FEATURE: Sites table gains a "Connector" column: each connected site's
+  INSTALLED connector version, read live via its /wp/v2/plugins (cached 5 min
+  per row). Up to date -> muted "vX.Y.Z". Behind the hub's latest -> amber
+  version + inline update button in the SAME column (per PO: version text AND
+  the small button both trigger the update). Unreadable -> honest em dash +
+  reason tooltip. Per-site update = POST /sites/{id}/update-connector (twin of
+  the bulk update-connectors; same /pcm-conn/v1/update-now channel; 404 ->
+  honest "predates self-update, reinstall once" error; version RE-READ after
+  update so the UI shows what is actually installed).
+- ZERO-DEBT REFACTOR: connector-version reader moved to
+  PCM_Sites_Service::remote_connector_version() (single reader); SEO module's
+  private copy now delegates. Hub's latest = PCM_SEOHub_Service::
+  connector_artifact() version (cached artifact; no seohub changes).
+- Routes: GET /sites/{id}/connector-version -> {version, latest, upToDate};
+  trpc sites.connectorVersion + sites.updateConnector. Column widths trimmed
+  (name 16, url 18, projects 13, user 8, method 9, status 7, connector 11,
+  added 8, actions 10 = 100).
+- VERIFIED: php -l x3 OK; tsc 59 = baseline (zero new); build OK. Ctrl+F5.
+- BEFORE 929587d -> AFTER (this commit). Owner live-verify pending.
+
+## 2026-07-08 12:11 - [dynamic-rules-engine-pair2]
+- Pair 2 shipped: connector 2.7.0 (render-time rule engine + scan-content
+  paragraph inventory), seo_dynamic_rules table (DB 1.37.0), PCM_Text_Matcher
+  (pure, fixture-tested) + push/capability path, remote paragraph rows
+  interleaved in the outline. Full detail: docs/CHANGELOG-20260708-1211.md.
+- Contracts frozen FIRST (744ff66): normalization spec v1, rule schema v1
+  (+re-anchor context), serving mechanism v1, scan-content v1. VERIFIED
+  correction: WP_HTML_Tag_Processor cannot swap block inner HTML (core API
+  fact) -> boundary matching on non-nestable tags; core parser reserved for
+  future href/attribute targets.
+- Matcher smoke on real PHP CLI: 9/9 logic pass; this CLI lacks mbstring ->
+  case-fold degradation documented (safe: mismatch = miss = original serves).
+- php -l x7 OK; tsc 59 = baseline (zero new, zero in touched files); build OK.
+- BEFORE 9bac3a8 -> AFTER fba6797. Owner verification steps in the changelog.
+- NOTE: unapproved sites-fix working-tree edits from earlier were REVERTED
+  before this pair started (never committed) - tree was clean at BEFORE.
+
+## 2026-07-09 - [connector-scan-resilience] (pair 2.5, connector 2.7.1)
+- ROOT-CAUSE fix for loopback fragility (LocalWP worker starvation diagnosed
+  from owner symptoms; scan-content answered honestly loopback_blocked):
+  (1) scan-content result CACHED per post (transient 10 min; busted on
+  save_post + every rules push), (2) site-wide SINGLE-FLIGHT loopback lock -
+  max one self-request at a time regardless of caller; heading scan's
+  rendered pass now shares lock + helper, (3) honest fallback tiers when
+  loopback fails: the_content in-process render (source content-rendered) ->
+  raw+wpautop (source content); rendered scan w/ ZERO paragraphs is TRUSTED
+  (no fallback-invented nodes), (4) loopback timeout 20s -> 8s, (5) panel
+  serializes content-nodes AFTER headings resolve. Occurrence-order caveat of
+  tier 2/3 documented in code (stale-flag is the safety net).
+- NEW MANDATORY VERIFY STEP executed: extracted the GENERATED connector
+  source from the template (109,685 chars) and php-lint'ed it - OK (lesson:
+  hub-file lint does NOT cover the nowdoc template).
+- php -l OK; tsc 59 = baseline; build OK.
+- BEFORE 56e0579 -> AFTER (this commit). Owner: reinstall/update connector to
+  2.7.1 on powerstock, then paragraphs appear via tier 3 even without loopback.
+
+## 2026-07-09 - [paragraph-edit-optimize] (pair 3)
+- FEATURE: remote paragraph rows are now EDITABLE via dynamic rules. Click a
+  paragraph -> textarea edit (Enter saves, Shift+Enter newline, Esc cancels);
+  hover ✦ -> AI optimize with the staged Accept/Reject UI. Accept ->
+  seo_dynamic_rules UPSERT (identity siteId+postId+matchText+occurrence -
+  re-edits update ONE rule, never pile up) -> push schema-v1 set to connector
+  -> live. Edit back to the original text = rule DELETED server-side (clean
+  revert). Push failure ROLLS BACK the DB write - hub state never diverges
+  silently from what the connector serves. Capability check BEFORE any write.
+- Overlay truth: panel fetches the hub rule set; a served paragraph shows the
+  REPLACEMENT text + a primary dot (tooltip carries the original). Optimize
+  runs on the SERVED text. P chip now opens the HTML popup (text click =
+  edit). LOCAL paragraphs stay read-only w/ honest tooltip (no engine on hub).
+- TEMPLATE LAW: new 'paragraph' prompt section (generate+optimize) in
+  prompts.php -> auto-seeded as user-editable Templates. run_prompt_section
+  gained a multiline mode (single-line sanitize would silently DROP sentences
+  from wrapped model output - paragraphs collapse whitespace instead).
+- Endpoints: GET .../rules, POST .../paragraph-rule, POST
+  .../paragraph-optimize (+ trpc map x3).
+- php -l x3 OK; tsc 59 = baseline; build OK. Connector UNTOUCHED this pair.
+- BEFORE ecd0c68 -> AFTER 2ea70e3. Verify: edit a paragraph on powerstock ->
+  live page serves it -> edit back -> rule gone, original serves.
+
+## 2026-07-09 - [seo-title-preview-icon]
+- Title column: NEW Eye icon (before the edit pen) opens the EXISTING preview
+  modal - authenticated remote fetch, so served dynamic paragraph rules are
+  visible in it, and it already has open-in-new-tab. BOTH title-cell icons now
+  rest-hidden, revealed on row hover (group-hover; TableRow already carries
+  `group`; accepted coarse-pointer caveat). Edit pen kept (it opens the WP
+  editor - on remote sites it lands on their login unless already logged in,
+  which is why it felt dead; retitled "Edit on site (WP editor)").
+- tsc 59 = baseline; build OK. BEFORE 859f3f9 -> AFTER (this commit).
+
+## 2026-07-09 - [section-engine-phase1] (section editor, phase 1 of 2)
+- ENGINE shipped per approved spec (docs/SECTION-EDITOR-PLAN-20260709.md):
+  every header owns its section; two new rule targets end-to-end. `section`
+  replace = swap a whole section (merge/delete/add paragraphs, headings,
+  lists) guarded by a FINGERPRINT of the original paragraph texts - any
+  client edit inside -> miss -> original serves + stale (occurrence is only
+  a hint; chrome-duplicate headings can never cause a wrong swap).
+  `sectionInsert` = complete NEW section (FAQ case) anchored before/after an
+  existing heading ('after' lands top-level before the next section's
+  heading; last section falls back inside-wrapper, documented).
+- Contracts v2 frozen FIRST (a62d058, architecture doc). Reference impl in
+  PCM_Text_Matcher (fingerprint/parse_blocks/parse_replacement_units/
+  apply_section_rule/apply_section_insert; same-tag block swaps KEEP original
+  attrs so builder styling survives; lists in rewrites never dropped) + 14
+  new fixture tests.
+- Hub: save_section_rule (UPSERT by heading identity, CLEAN REVERT deletes,
+  ABSORB covered paragraph rules in the same push, capability BEFORE write,
+  push-fail rollback via full snapshot/restore w/ preserved ids),
+  save_section_insert (UPSERT by rule id; empty replacement = clean removal),
+  remote_optimize_section (staged; new 'section' prompt seeded as Template),
+  RE-KEY on remote heading edit (remote_update_heading gained trailing
+  $user_id; core extracted to remote_update_heading_apply, behavior
+  identical), connector_rules_schema_version + push v2 ONLY when section
+  targets present (paragraph-only posts push v1 byte-identical - zero
+  regression on old connectors; v2-needing push vs old connector = honest
+  2.8.0 error). Routes section-rule (kind replace|insert) + section-optimize
+  + trpc map x2.
+- Connector 2.7.1 -> 2.8.0: GET /rules schemaVersion 2, POST accepts v1+v2,
+  mirrored section engine (SYNC CONTRACT), apply = sections -> inserts ->
+  v1 paragraph pass byte-identical; same fail-to-original/kill-switch/purge.
+- VERIFIED: php -l x6 OK; GENERATED connector source extracted + linted
+  (118,845 chars, the mandatory step); matcher smoke 22/22; PARITY smoke
+  17/17 (extracted connector functions === PCM_Text_Matcher on every
+  fixture); tsc 59 = baseline (zero new); build OK.
+- Phase 2 = the floating modal UI (separate go). Owner verify steps in
+  docs/CHANGELOG-20260709-0330.md.
+- BEFORE ff07e56 -> AFTER (this commit).
+
+## 2026-07-09 - [section-modal-phase2] (section editor, phase 2 of 2)
+- THE EDITOR UI shipped (frontend only; rides phase 1's engine, connector
+  untouched). NEW SEO/SectionModal.tsx: draggable NON-blocking floating panel
+  (custom portal, no overlay - the table behind stays interactive; Esc steps
+  back suggestion->edit->close; zero new dependencies). Read view = whole
+  section as formatted HTML (served state when a section rule is active,
+  else original w/ paragraph rules folded in) + raw-HTML toggle. Edit view =
+  TipTap (h1-4, p, lists, b/i/u/s, links) w/ SELECTION bubble toolbar -
+  merge/split/delete/add paragraphs freely. AI Re-write staged
+  Accept/Reject/Re-generate via section-optimize; accepting lands in the
+  editor. Save = ONE section rule (UPSERT/clean-revert/rollback from phase 1).
+  Create mode: anchor picker (before/after any heading, default after last),
+  AI topic->Generate or manual; existing added sections re-open w/ Remove.
+- HeadingsPanel wiring: P chip opens the paragraph's SECTION (orphans keep
+  the HTML popup); text click keeps inline quick-edit; heading rows get
+  hover expand icon + primary dot when section-served; paragraph rows inside
+  a section-served section route into the editor (honest - row rule would
+  miss); sectionInsert rules render as NEW rows at their served spot
+  (before-anchor / section-end); "+ Add section" outline row (remote only);
+  LOCAL tab opens the modal as read-only formatted view (routing law).
+- VERIFIED: tsc 59 = baseline (zero new, zero in touched files); build OK.
+  No PHP touched. Owner steps in docs/CHANGELOG-20260709-0700.md (Ctrl+F5!).
+- BEFORE f83070e -> AFTER (this commit).
+
+## 2026-07-09 - [section-editor-review-fixes] (adversarial self-review of phases 1+2)
+- REVIEW FINDING 1 (correctness, hub): the heading-edit re-key ran on EVERY
+  successful edit - but OVERRIDE-layer edits (rendered-only headings, widget/
+  content fallbacks) leave the RAW html untouched (the override rewrites at
+  render AFTER rules run, outer buffer), so re-keying the section rule to the
+  new text would make it MISS -> wrongly stale. FIX: remote_update_heading_
+  apply reports its layer via by-ref $via ('source'|'override'); re-key runs
+  ONLY on 'source'. No-op edits ($via '') never re-key.
+- FIX 2 (frontend): SectionModal now REMOUNTS per target (key on heading
+  text+occurrence / insert ruleId) - switching sections while the floating
+  panel is open no longer bleeds the previous section's editor state.
+- FIX 3 (frontend): new currentHtml state = "what the site serves NOW";
+  read view/HTML toggle/cancel/Esc all use it and save success updates it
+  (revert -> plain original) - the modal never flips back to stale pre-save
+  content after Accept.
+- FIX 4 (frontend): drag start ignores header buttons (closest('button')) -
+  Re-write/Edit/HTML/X always click, never drag. + save() guards the
+  no-section edge instead of falsely toasting success.
+- Reviewed clean (no change needed): matcher/connector parity (fixture-
+  locked), absorb/revert interplay, v1 push byte-parity, rollback snapshot
+  id preservation, buffer nesting order (rules inner, overrides outer),
+  orphan-paragraph fallback, occurrence round-trip.
+- VERIFIED: php -l OK; tsc 59 = baseline; build OK. Connector UNTOUCHED.
+- BEFORE a5f9a17 -> AFTER (this commit).
+
+## 2026-07-09 - [section-ux-redo-and-serving-parity]
+- ROOT CAUSE of "saved but page unchanged" FACT-TRACED on the owner's own
+  failing edit: hub row OK -> connector store OK -> serving refused (stats
+  applied 0 / missed 2) -> live diff: saved fingerprint 4 paragraphs vs real
+  section 3 (display interleave folded a comments-area <p> into the section).
+  FIX: section membership from the SCAN's anchors (contracts v2 amended;
+  runs-of-same-anchor -> k-th run = k-th matching heading). RELATED fix:
+  serving compares CHROME-EXCLUDED blocks (2.8.1 + chrome_spans/
+  content_blocks + cookie-banner regression test). LIVE PROOF script: fixed
+  membership = 3 paragraphs -> serve APPLIED on the real page w/ the real
+  replacement; old broken fingerprint still refused.
+- SectionModal v2 per owner sketch EXACTLY: opens below the click, ONE
+  constant shape (no Edit button/read mode), white/compact (440px, 12px
+  scale, fixed-height editor), header = title + Ask AI (instruction ->
+  {{topic}}, runtime-append for pre-existing templates) + Re-write + X,
+  persistent B/I/U/Link/H1/H2/bullet toolbar, Acceptera/Angra footer,
+  CLICK-OUTSIDE SAVES (dirty-checked against the editor's normalized
+  baseline - no phantom saves), Esc closes without saving, stale-onClose
+  guard + per-target remount key.
+- HeadingsPanel: P rows REMOVED (owner call) -> one "para N" row per section
+  (served text preview, dot, opens editor below click); unlisted-anchor
+  sections (comments title etc.) = muted standalone rows (addressable,
+  never silently mis-grouped); orphans = read-only row; dead code deleted
+  (ParagraphText, paragraph optimize, HTML popup, mergeRemoteNodes).
+- DRAFT/PUBLISH PAUSED by owner mid-pair - half-built code reverted cleanly
+  (service/schema/version untouched vs HEAD); spec retained for later.
+- VERIFIED: php -l x5; generated-source lint; matcher 22/22; parity 17/17;
+  LIVE PROOF passed; tsc 59 = baseline; build OK.
+- BEFORE 917bac6 -> AFTER (this commit). Owner: connector -> 2.8.1, Ctrl+F5,
+  re-save the Hello! section once (old broken rule stays refused until then).
+
+## 2026-07-09 - [section-versions-and-ui-restore]
+- SECTION VERSION HISTORY: new seo_rule_versions table (DB 1.38.0) - one row
+  per ACCEPTED save, keyed by SECTION IDENTITY (matchText+occurrence) so
+  history SURVIVES the rule row's deletion on clean revert; version written
+  ONLY after a successful save+push (rolled-back saves leave no ghost);
+  consecutive duplicates skipped; capped 20/section (heading-overrides
+  runaway-guard pattern). "Original" never stored - always live from scan.
+  NOT the phase-2 changeset system (deployment grouping) - pure edit
+  history; boundary documented in the schema comment.
+- Editor: Versions dropdown in the header (Original + each save w/ date/
+  time); pick -> loads in the editor; Acceptera makes it live; Original +
+  Acceptera = the existing clean revert (one mechanism, no new path).
+  GET .../section-versions + trpc seo.remoteSectionVersions.
+- OWNER CORRECTIONS: toolbar back to SELECT-TEXT popover (BubbleMenu, same
+  proven pattern as Writer; permanent toolbar row removed); section row chip
+  back to the regular P (same family as H1-H6 chips).
+- VERIFIED: php -l x4 OK; tsc 59 = baseline; build OK; RUNTIME: db version
+  1.38.0 migrated, versions table EXISTS, section-versions route registered
+  on the live local site. Connector UNTOUCHED. NO PUSH (owner law).
+- BEFORE 251bcc1 -> AFTER (this commit).
+
+## 2026-07-09 - [section-serving-order-and-editor-ux]
+- ROOT CAUSE (second live miss) PROVEN by order_proof.php with the INSTALLED
+  connector code + stored rule + stored heading override + real page: the
+  rules buffer (prio 2, inner) ran BEFORE the heading-override layer (prio 1,
+  outer) -> rules matched the RAW page while the scan (and the user)
+  inventoried the OVERRIDE-TRANSFORMED page ("Hello world!" raw vs "Hello!"
+  displayed) -> permanent honest miss. Order alone flips miss->serve
+  (applied=1 offline).
+- FIX: connector 2.8.2 - rules hook prio 2 -> 0 (rules buffer OUTER, callback
+  runs AFTER overrides; rules now match exactly what the scan sees and what
+  the user sees). Contract amended (5b, architecture doc). Hub: heading edits
+  through EITHER layer (source OR override) now re-key section rules
+  ($via !== '' instead of === 'source' - the override layer changes what
+  rules match since 2.8.2).
+- EDITOR UX (owner corrections): Acceptera SAVES AND CLOSES; the versions
+  dropdown is a custom popover whose button always NAMES the shown state
+  (picked version / latest saved / Original - never a counter); each version
+  row has a delete button (ownership-checked endpoint POST
+  .../section-versions/{vid}/delete + trpc; Original is never a row = never
+  deletable); Original row has the light-grey background.
+- VERIFIED: php -l x3; generated connector source extracted + linted; matcher
+  22/22; parity 17/17; prio-0 present in generated source; tsc 59 = baseline;
+  build OK; delete route registered on the live local site. NO PUSH.
+- Owner: update the powerleads connector to 2.8.2 (Sites -> Connector column),
+  Ctrl+F5, open the Hello! section -> Acceptera -> live page serves.
+- BEFORE 1197dcb -> AFTER (this commit).
+
+## 2026-07-09 - [heading-scan-rule-exclusion] (connector 2.8.3, appended to the open pair)
+- LIVE INSTRUMENTATION on powerleads (temporary mu-plugin logger, removed
+  after) nailed the remaining incoherence: the HEADING scan's loopback
+  (?pcm_hscan) was NOT excluded from rule serving (only ?pcm_cscan was) ->
+  heading rows displayed SERVED text while paragraph anchors carried ORIGINAL
+  text -> section grouping keys mismatched (the owner's screenshot: main
+  section stranded at the bottom as an unlisted row) AND a re-save while a
+  rule serves would have re-anchored the rule onto its own output (chaining).
+  Logger also proved order 2.8.2 is correct live (raw h1 'Hello world!' ->
+  overrides -> rules input h1 'Hello!').
+- FIX: serving skips BOTH scan params (pcm_cscan + pcm_hscan) - connector
+  2.8.3. Both inventories now see the ORIGINAL page, the identity rules match.
+- Owner's latest test rule targets comment-area content (his click during the
+  broken grouping); he reverts it via Original + Acceptera after updating.
+- VERIFIED: php -l hub file + extracted generated source OK.
+
+## 2026-07-09 (evening) - [THE CLEANUP C1-C5] (one brain in the hub, connector 3.0.0)
+- Owner GO on docs/CLEANUP-GAP-ANALYSIS-20260709.md. Deep pre-read found 7 facts
+  beyond the gap analysis, all folded into the frozen contracts: fossil v1.0.1
+  tenant template (6th debt), NO read path for overrides (C4 data gap), override
+  scope is SITE-wide vs rules per-post (scope added to stream), serving had no
+  heading pass, the 17/17 parity harness was never committed (scratchpad-only),
+  override buffer self-disables on empty list (migration = clear, no code flip),
+  heading edit handles come from the storage scan (writers keep the walkers).
+- C1 (3e25bfc): contracts v3 frozen - snapshot v1 (page-as-rules-input, tiers
+  kept, connector never parses), instruction stream v2.1 (heading target =
+  compiled override, site scope, heading-pass-FIRST, schemaVersion 3), config
+  schema v1, handle-resolution law, deletions ledger.
+- C2 (2e36774): hub parse_page_snapshot() + remote_get_inventory() + GET
+  .../inventory; HeadingsPanel: ONE query replaces the serialized two-query chain.
+- C3 (eb0d70e): connector 3.0.0 - snapshot + config endpoints, cfg() for every
+  tunable, heading pass, site-scope rules (every front-end render), identity-only
+  /replace-heading (writer-side resolution), BOTH scanners deleted, HMAC handshake
+  folded into the one template, fossil template deleted. Hub: v3 snapshot reads,
+  writer-first heading edits, save_heading_rule() (site-scope instruction with
+  exact-original revert). Matcher: serving mirror DELETED (zero hub callers,
+  verified). tests/standalone/run.php COMMITTED: 37 fixtures against the REAL
+  extracted template (parity + apply corpus + heading pass + ordering law).
+  INCIDENT: PowerShell splices double-encoded UTF-8 in 2 files; recovered
+  byte-faithfully (cp1252 reverse map), verified via diff-hunk audit. LESSON:
+  never Get-Content/Set-Content a UTF-8 source file - use Edit or iconv.
+- C4 (aca3b29): migrate_site_overrides() - config GET -> upsert instructions ->
+  one push w/ rollback -> VERIFY siteRules round-trip -> clearOverrides. Endpoint
+  + trpc + Migrate section in RemoteSiteSettingsPanel. Idempotent, per-site.
+- C5 (5457e23): hub config store + push_connector_config() auto-riding
+  remote_site_save + on-demand endpoint. D1-D5 + D6 all dead in code.
+- VERIFIED (all green, this box): harness 37/37 - php -l every touched file +
+  extracted generated template - tsc 59 = baseline throughout - build OK x3.
+- NOT in this go (gated): owner installs 3.0.0 on powerleads (Sites -> Connector)
+  -> live e2e -> run Migrate per site -> after the WHOLE fleet reads 3.0.0, the
+  follow-up commit drops pre-3.0 hub fallbacks + the legacy override buffer +
+  /override-heading + remote_apply_heading_override. NO PUSH (owner law).
+
+## 2026-07-10 - [DYNAMIC ALIGNMENT P1-P3] (headings fully dynamic + served-truth editor)
+- Owner GO on GAP-ANALYSIS-DYNAMIC-ALIGNMENT-20260710.md (which superseded+
+  deleted the headings-only analysis). Contracts v2.2 frozen (additive).
+- P1 (1c69e63->3d14da1) scope+flip: inventory tags chrome/content scope;
+  content twins NEVER deduped (own occurrence, individually editable); dual
+  identity spaces (original=rule matching, display=section keys); heading
+  edits are ALWAYS dynamic rules on v3 (writer-first source-write path
+  DELETED); save_heading_rule identity-based (postId 0/N + occurrence);
+  connector 3.0.1 occurrence-aware heading pass (content-blocks identity,
+  allOccurrences keeps override semantics); /replace-heading + 6 heading
+  walkers DELETED; C4 migration writes allOccurrences.
+- P2 (e1a82b1->4089012) one-owner: heading edit on a section-owned heading
+  rewrites the rule's FIRST unit (update_section_owned_heading ->
+  update_owned_heading_unit); save_section_rule absorbs the feeding heading
+  rule (its original identity becomes the section's match key). Chains
+  impossible to create.
+- P3 (2d3540f->efbe63e) served-truth editor: snapshot mode=served (explicit
+  view marker - a 3.0.0 connector can never pass off the input view; tier-2/3
+  fallbacks apply stored rules; served cache version-stamped, bumped on every
+  rules push + save_post); hub attributes every served row to its producing
+  rule (unit-section split, SLICES included); slice edits via kind:slice
+  (save_section_slice); frontend rows = served truth, rule-born sections open
+  their slice, previews from paragraphs only (concatenation bug dead),
+  synthetic NEW rows off in served view.
+- VERIFIED (this box): harness 39/39 (occurrence twins, chrome isolation,
+  ordering) - php -l every touched file + extracted generated template - tsc
+  59 baseline throughout - build OK x3.
+- OWNER: update powerleads to 3.0.1, test per handover product checklist. The
+  stale test rules (2,5,9 + 6/7 chain) now VISIBLE correctly in the outline;
+  chain resolves on next save of that section or manual cleanup. NO PUSH.

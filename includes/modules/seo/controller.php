@@ -51,6 +51,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)', 'update_link'),
             array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)/remove', 'remove_link'),
             array('GET',  '/seo/content/(?P<id>\d+)/headings', 'get_headings'),
+            array('GET',  '/seo/content/(?P<id>\d+)/content-nodes', 'get_content_nodes'),
             array('POST', '/seo/content/(?P<id>\d+)/headings/(?P<idx>\d+)', 'update_heading'),
             array('POST', '/seo/content/(?P<id>\d+)/headings/(?P<idx>\d+)/optimize', 'optimize_heading'),
             array('GET',  '/seo/content/(?P<id>\d+)/body',     'get_body'),
@@ -78,6 +79,23 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)', 'remote_update_link', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/remove', 'remote_remove_link', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings', 'remote_get_headings', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/content-nodes', 'remote_get_content_nodes', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/inventory', 'remote_get_inventory', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/migrate-overrides', 'remote_migrate_overrides', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/push-config', 'remote_push_config', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/rules', 'remote_list_rules', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-rule', 'remote_save_section_rule', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-edits', 'remote_save_page_edits', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/image-rule', 'remote_save_image_rule', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/media', 'remote_add_media', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/redirects', 'remote_list_redirects', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/redirects', 'remote_save_redirect', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/redirects/(?P<rid>\d+)/delete', 'remote_delete_redirect', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/url-usage', 'remote_url_usage', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-versions', 'remote_page_versions', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions/(?P<vid>\d+)/delete', 'remote_delete_section_version', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)', 'remote_update_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)/optimize', 'remote_optimize_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/featured', 'remote_set_featured', array(), 'manage_options'),
@@ -341,7 +359,322 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
-        return $this->success(array('headings' => PCM_SEO_Service::remote_get_headings($site, absint($request->get_param('post')), $type)));
+        return $this->success(array('headings' => PCM_SEO_Service::remote_get_headings($site, absint($request->get_param('post')), $type, (int) $user->id)));
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/content-nodes — the connected post's paragraph
+     *  inventory (scan-content v1) in rendered document order, with display anchors. */
+    public function remote_get_content_nodes(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(PCM_SEO_Service::remote_get_content_nodes($site, absint($request->get_param('post'))));
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/inventory — the outline's ONE read (cleanup C2):
+     *  heading rows + paragraph nodes from a single hub-side snapshot parse on v3
+     *  connectors; honest legacy-scan composition on the pre-3.0 fleet. */
+    public function remote_get_inventory(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
+        return $this->success(PCM_SEO_Service::remote_get_inventory($site, absint($request->get_param('post')), $type, (int) $user->id));
+    }
+
+    /** POST /seo/sites/{id}/migrate-overrides — cleanup C4: convert the site's legacy
+     *  heading overrides into site-scope heading instructions (verified, then cleared). */
+    public function remote_migrate_overrides(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $result = PCM_SEO_Service::migrate_site_overrides((int) $user->id, $site);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/push-config — cleanup C5: push the hub-controlled
+     *  connector tunables to the site (v3+; pushed:false honestly on older). */
+    public function remote_push_config(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(PCM_SEO_Service::push_connector_config($site));
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/rules — the hub's dynamic rules for the post (UI overlay). */
+    public function remote_list_rules(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(array('rules' => $this->service->list_dynamic_rules((int) $user->id, (int) $site->id, absint($request->get_param('post')))));
+    }
+
+    /**
+     * POST /seo/sites/{id}/content/{post}/section-rule — save a section's dynamic
+     * rule (contracts v2/v2.2). `kind:'replace'` (default) swaps a whole existing
+     * section; `kind:'insert'` adds a NEW section anchored to an existing heading;
+     * `kind:'slice'` edits ONE unit range of an owning rule's replacement (the
+     * served-truth editor's path for rule-born sections).
+     */
+    public function remote_save_section_rule(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $kind   = in_array((string) ($params['kind'] ?? 'replace'), array('insert', 'slice'), true) ? (string) $params['kind'] : 'replace';
+        if ($kind === 'slice') {
+            $result = $this->service->save_section_slice((int) $user->id, $site, absint($request->get_param('post')), array(
+                'ruleId'      => (int) ($params['ruleId'] ?? 0),
+                'unitFrom'    => (int) ($params['unitFrom'] ?? 0),
+                'unitTo'      => (int) ($params['unitTo'] ?? 0),
+                'replacement' => (string) ($params['replacement'] ?? ''),
+            ));
+        } elseif ($kind === 'insert') {
+            $result = $this->service->save_section_insert((int) $user->id, $site, absint($request->get_param('post')), array(
+                'anchorText'       => (string) ($params['anchorText'] ?? ''),
+                'anchorLevel'      => (int) ($params['anchorLevel'] ?? 2),
+                'anchorOccurrence' => (int) ($params['anchorOccurrence'] ?? 0),
+                'position'         => (string) ($params['position'] ?? 'after'),
+                'replacement'      => (string) ($params['replacement'] ?? ''),
+                'ruleId'           => (int) ($params['ruleId'] ?? 0),
+            ));
+        } else {
+            $result = $this->service->save_section_rule((int) $user->id, $site, absint($request->get_param('post')), array(
+                'headingText'       => (string) ($params['headingText'] ?? ''),
+                'headingLevel'      => (int) ($params['headingLevel'] ?? 2),
+                'headingOccurrence' => (int) ($params['headingOccurrence'] ?? 0),
+                'paragraphs'        => (isset($params['paragraphs']) && is_array($params['paragraphs'])) ? $params['paragraphs'] : array(),
+                'replacement'       => (string) ($params['replacement'] ?? ''),
+            ));
+        }
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/page-edits — save the full-page
+     *  editor's document: sliced back into sections and routed through the
+     *  EXISTING section save paths (replace / slice / insert); raw units are
+     *  stripped from replacements (the F9 law — images stay untouched). */
+    public function remote_save_page_edits(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = $this->service->save_page_edits(
+            (int) $user->id,
+            $site,
+            absint($request->get_param('post')),
+            wp_kses_post((string) ($params['html'] ?? ''))
+        );
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/section-versions — a section's saved
+     *  version history (newest first) for the editor's version dropdown. */
+    public function remote_section_versions(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(array('versions' => $this->service->list_section_versions(
+            (int) $user->id,
+            (int) $site->id,
+            absint($request->get_param('post')),
+            (string) $request->get_param('text'),
+            absint($request->get_param('occurrence'))
+        )));
+    }
+
+    /** POST /seo/sites/{id}/media — deliver an image (by hub URL) into the
+     *  connected site's own media library; returns the client-native {id, url}.
+     *  The page editor inserts THAT url — client sites stay autonomous. */
+    public function remote_add_media(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $url    = esc_url_raw((string) ($params['url'] ?? ''));
+        if ($url === '') {
+            return new WP_Error('pcm_seo_media_no_url', __('No image URL to deliver.', 'power-creatives'), array('status' => 400));
+        }
+        $result = PCM_SEO_Service::remote_add_media($site, $url);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** GET /seo/sites/{id}/redirects — the site's redirect list + capability flag. */
+    public function remote_list_redirects(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success($this->service->list_redirects((int) $user->id, $site));
+    }
+
+    /** POST /seo/sites/{id}/redirects — save (UPSERT on from-path) + push. */
+    public function remote_save_redirect(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = $this->service->save_redirect((int) $user->id, $site, array(
+            'from'        => (string) ($params['from'] ?? ''),
+            'to'          => (string) ($params['to'] ?? ''),
+            'code'        => (int) ($params['code'] ?? 301),
+            'updateLinks' => !empty($params['updateLinks']),
+        ));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/redirects/{rid}/delete — delete + push. */
+    public function remote_delete_redirect(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $result = $this->service->delete_redirect((int) $user->id, $site, absint($request->get_param('rid')));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** GET /seo/sites/{id}/url-usage?url= — posts linking to a URL (the popup's N). */
+    public function remote_url_usage(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $url = esc_url_raw((string) $request->get_param('url'));
+        if ($url === '') {
+            return new WP_Error('pcm_seo_usage_no_url', __('No URL to search for.', 'power-creatives'), array('status' => 400));
+        }
+        return $this->success(PCM_SEO_Service::remote_url_usage($site, $url));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/image-rule — save an image METADATA
+     *  rule (engine v2.3): alt/title rewritten at render time, never the image
+     *  itself. Editing back to the originals (or revert:true) deletes it. */
+    public function remote_save_image_rule(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = $this->service->save_image_rule((int) $user->id, $site, absint($request->get_param('post')), array(
+            'src'           => (string) ($params['src'] ?? ''),
+            'occurrence'    => (int) ($params['occurrence'] ?? 0),
+            'alt'           => (string) ($params['alt'] ?? ''),
+            'title'         => (string) ($params['title'] ?? ''),
+            'originalAlt'   => (string) ($params['originalAlt'] ?? ''),
+            'originalTitle' => (string) ($params['originalTitle'] ?? ''),
+            'revert'        => !empty($params['revert']),
+        ));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/page-versions — the page editor's
+     *  version dropdown: saved page documents (newest first) + the true
+     *  no-rules Original (rules-input snapshot, hub-assembled). */
+    public function remote_page_versions(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success($this->service->list_page_versions((int) $user->id, $site, absint($request->get_param('post'))));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/section-versions/{vid}/delete — delete one saved version. */
+    public function remote_delete_section_version(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $result = $this->service->delete_section_version((int) $user->id, absint($request->get_param('vid')));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/section-optimize — AI-rewrite a whole
+     *  section / draft a new one (block HTML, NOT saved — staged). */
+    public function remote_optimize_section(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params      = $request->get_json_params() ?: array();
+        $type        = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $html        = wp_kses_post((string) ($params['html'] ?? '')); // section HTML — kses, NOT textarea-stripped
+        $topic       = sanitize_textarea_field((string) ($params['topic'] ?? ''));
+        $model       = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
+        $provider    = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
+        $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
+        $result = PCM_SEO_Service::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** POST /seo/sites/{id}/content/{post}/headings/{idx} — edit a connected post's heading. */
@@ -356,7 +689,9 @@ class PCM_REST_SEO extends PCM_REST_Base
         $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
         $text   = array_key_exists('text', $params) ? wp_kses_post((string) $params['text']) : null;
         $level  = array_key_exists('level', $params) ? absint($params['level']) : null;
-        $result = PCM_SEO_Service::remote_update_heading($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $text, $level);
+        // user id rides along so a successful edit RE-KEYS any section rules
+        // anchored to this heading (interaction law, contracts v2).
+        $result = PCM_SEO_Service::remote_update_heading($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $text, $level, (int) $user->id);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -761,6 +1096,16 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Content');
         }
         return $this->success(array('headings' => $this->service->get_post_headings($id)));
+    }
+
+    /** GET /seo/content/{id}/content-nodes — ordered headings + paragraphs for the outline. */
+    public function get_content_nodes(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        return $this->success(array('nodes' => $this->service->get_post_content_nodes($id)));
     }
 
     /** POST /seo/content/{id}/headings/{idx} — change a heading's text and/or tag level. */

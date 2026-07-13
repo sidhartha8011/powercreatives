@@ -338,7 +338,10 @@ class PCM_SEOHub_Service
         $hub_url  = $hub_base . '/?rest_route=/pcm/v1/seohub/connector/hello';
         /** @param string $hub_url Baked connector→hub endpoint. @param object $tenant */
         $hub_url = (string) apply_filters('pcm_seohub_connector_hub_url', $hub_url, $tenant);
-        $php = self::connector_php($hub_url, (string) $tenant->clientId, (string) $tenant->clientSecret);
+        // ONE template for both flows (3.0.0): the per-tenant build is the REAL
+        // connector with the handshake credentials baked (the old separate v1.0.1
+        // tenant template shipped a connector with none of the current features).
+        $php = self::connector_php_simple($hub_url, (string) $tenant->clientId, (string) $tenant->clientSecret);
 
         $zip = new ZipArchive();
         if ($zip->open($zip_path, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
@@ -420,9 +423,10 @@ class PCM_SEOHub_Service
         return array('version' => $ver, 'sha256' => $sha, 'zip' => $bytes);
     }
 
-    /** The generic connector plugin source (pairing-code only; no handshake), with the self-update
-     *  placeholders baked to this hub's manifest URL + host + the header version. */
-    private static function connector_php_simple(): string
+    /** The connector plugin source with self-update placeholders baked to this hub's
+     *  manifest URL + host + header version. Tenant args bake the HMAC handshake
+     *  (per-site download); the generic pairing-code build bakes '' (handshake inert). */
+    private static function connector_php_simple(string $hub_url = '', string $client_id = '', string $secret = ''): string
     {
         $php = self::connector_php_simple_raw();
         $manifest = rest_url('pcm/v1/seohub/connector-manifest');
@@ -430,10 +434,13 @@ class PCM_SEOHub_Service
         $host     = (string) (wp_parse_url($manifest, PHP_URL_HOST) ?: wp_parse_url(home_url('/'), PHP_URL_HOST));
         $version  = preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
         return strtr($php, array(
-            '__PCM_CONN_MANIFEST_URL__' => $manifest,
-            '__PCM_CONN_UPDATE_URI__'   => $scheme . '://' . $host . '/pcm-connector',
-            '__PCM_CONN_UPDATE_HOST__'  => $host,
-            '__PCM_CONN_VERSION__'      => $version,
+            '__PCM_CONN_MANIFEST_URL__'  => $manifest,
+            '__PCM_CONN_UPDATE_URI__'    => $scheme . '://' . $host . '/pcm-connector',
+            '__PCM_CONN_UPDATE_HOST__'   => $host,
+            '__PCM_CONN_VERSION__'       => $version,
+            '__PCM_CONN_HUB_URL__'       => $hub_url,
+            '__PCM_CONN_CLIENT_ID__'     => $client_id,
+            '__PCM_CONN_CLIENT_SECRET__' => $secret,
         ));
     }
 
@@ -444,8 +451,8 @@ class PCM_SEOHub_Service
 <?php
 /**
  * Plugin Name: Power Creatives Connector
- * Description: Connects this site to a Power Creatives hub — exposes SEO meta in REST, renders fallback SEO meta tags when no SEO plugin is active, manages site-wide robots.txt + JSON-LD, serves /llms.txt + /llm-info/, performs builder-aware link + heading replacement (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), flushes page caches on edit, self-updates from the hub, and shows a one-paste connection code.
- * Version: 2.6.3
+ * Description: Connects this site to a Power Creatives hub — four dumb jobs: page snapshot (the hub does ALL parsing), builder-aware storage writers (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), guarded render-time apply of hub-precomputed instructions (refuse-if-unsure), and hub-pushed config. Also: SEO meta in REST, fallback meta tags, robots.txt + JSON-LD, /llms.txt + /llm-info/, cache flush on edit, self-update, one-paste connection code.
+ * Version: 3.0.5
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -460,6 +467,136 @@ if (!defined('PCM_CONN_VERSION'))  { define('PCM_CONN_VERSION', '__PCM_CONN_VERS
 if (!defined('PCM_CONN_MANIFEST')) { define('PCM_CONN_MANIFEST', '__PCM_CONN_MANIFEST_URL__'); }
 if (!defined('PCM_CONN_HOST'))     { define('PCM_CONN_HOST', '__PCM_CONN_UPDATE_HOST__'); }
 if (!defined('PCM_CONN_FILE'))     { define('PCM_CONN_FILE', plugin_basename(__FILE__)); }
+// Per-site downloads bake hub URL + HMAC credentials for the automatic handshake;
+// the generic pairing-code build bakes '' and the handshake block below is inert.
+// (ONE template for both flows — the old separate v1.0.1 tenant template is gone.)
+if (!defined('PCM_CONN_HUB_URL'))       { define('PCM_CONN_HUB_URL', '__PCM_CONN_HUB_URL__'); }
+if (!defined('PCM_CONN_CLIENT_ID'))     { define('PCM_CONN_CLIENT_ID', '__PCM_CONN_CLIENT_ID__'); }
+if (!defined('PCM_CONN_CLIENT_SECRET')) { define('PCM_CONN_CLIENT_SECRET', '__PCM_CONN_CLIENT_SECRET__'); }
+
+// Register with the hub via an HMAC-signed handshake (creates an Application Password for
+// the current admin + pings the hub). Runs on activation AND, as a self-heal, on each admin
+// load until registered. Capped to avoid endless app passwords if the hub is unreachable.
+// A self-update replaces baked credentials with '' — harmless: registration is one-time and
+// pcm_conn_status/app-password persist in the DB.
+function pcm_conn_register() {
+    if (PCM_CONN_CLIENT_ID === '' || get_option('pcm_conn_status') === 'registered') { return; }
+    $user = wp_get_current_user();
+    if (!$user || !$user->ID || !current_user_can('manage_options')) { return; }
+    $attempts = (int) get_option('pcm_conn_attempts', 0);
+    if ($attempts >= 6) { return; }
+    update_option('pcm_conn_attempts', $attempts + 1);
+    $app = null;
+    if (class_exists('WP_Application_Passwords')) {
+        $created = WP_Application_Passwords::create_new_application_password($user->ID, array('name' => 'Power Creatives Hub'));
+        if (!is_wp_error($created)) { $app = $created[0]; }
+    }
+    if ($app) {
+        update_option('pcm_conn_app_password', str_replace(' ', '', $app));
+        update_option('pcm_conn_app_user', $user->user_login);
+    }
+    $body = wp_json_encode(array(
+        'site_url'    => home_url('/'),
+        'site_name'   => get_bloginfo('name'),
+        'admin_email' => get_option('admin_email'),
+        'wp_version'  => get_bloginfo('version'),
+        'php_version' => PHP_VERSION,
+        'app_user'    => $user->user_login,
+        'app_password'=> $app ? str_replace(' ', '', $app) : '',
+    ));
+    $ts = (string) time();
+    $nonce = wp_generate_uuid4();
+    $sig = hash_hmac('sha256', $ts . '.' . $nonce . '.' . $body, PCM_CONN_CLIENT_SECRET);
+    $args = array(
+        'timeout' => 20,
+        'headers' => array(
+            'Content-Type'     => 'application/json',
+            'X-Hub-Client-Id'  => PCM_CONN_CLIENT_ID,
+            'X-Hub-Timestamp'  => $ts,
+            'X-Hub-Nonce'      => $nonce,
+            'X-Hub-Signature'  => $sig,
+        ),
+        'body' => $body,
+    );
+    // Try the baked URL, then BOTH permalink forms, so the handshake lands whether or not
+    // the hub serves pretty /wp-json/ (LiteSpeed/shared hosting often only serves the
+    // ?rest_route= form). Record the outcome in pcm_conn_status for debugging.
+    $candidates = array(PCM_CONN_HUB_URL);
+    $p = wp_parse_url(PCM_CONN_HUB_URL);
+    if ($p && !empty($p['scheme']) && !empty($p['host'])) {
+        $origin = $p['scheme'] . '://' . $p['host'] . (empty($p['port']) ? '' : ':' . $p['port']);
+        foreach (array($origin . '/?rest_route=/pcm/v1/seohub/connector/hello', $origin . '/wp-json/pcm/v1/seohub/connector/hello') as $alt) {
+            if (!in_array($alt, $candidates, true)) { $candidates[] = $alt; }
+        }
+    }
+    $status = 'failed';
+    foreach ($candidates as $u) {
+        $resp = wp_remote_post($u, $args);
+        $code = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+        if ($code >= 200 && $code < 300) { $status = 'registered'; break; }
+        $status = 'failed:' . $code;
+    }
+    update_option('pcm_conn_status', $status);
+}
+register_activation_hook(__FILE__, 'pcm_conn_register');
+add_action('admin_init', 'pcm_conn_register');
+
+// ── Hub-pushed config (config schema v1) ─────────────────────────────────────────────────────
+// Every tunable is hub-controlled data; the literals below are only the DEFAULTS a connector
+// uses until the hub pushes values (a connector that never received config behaves exactly
+// like the shipped code). Read via pcm_conn_cfg(key); stored in the pcm_conn_config option.
+function pcm_conn_cfg($key) {
+    static $defaults = array(
+        'snapshotCacheTtl' => 600,  // sec — snapshot transient TTL
+        'loopbackTimeout'  => 8,    // sec — self-request budget
+        'loopbackLockTtl'  => 15,   // sec — single-flight lock cover
+        'chromeRegions'    => array('header', 'nav', 'footer', 'aside'),
+        'statsThrottle'    => 300,  // sec — min gap between counter writes
+        'overridesCap'     => 200,  // legacy overrides runaway backstop
+    );
+    $cfg = get_option('pcm_conn_config', array());
+    if (is_array($cfg) && array_key_exists($key, $cfg) && $cfg[$key] !== null && $cfg[$key] !== '') {
+        return $cfg[$key];
+    }
+    return isset($defaults[$key]) ? $defaults[$key] : null;
+}
+add_action('rest_api_init', function () {
+    $perm = function () { return current_user_can('manage_options'); };
+    $read = function () {
+        $effective = array();
+        foreach (array('snapshotCacheTtl', 'loopbackTimeout', 'loopbackLockTtl', 'chromeRegions', 'statsThrottle', 'overridesCap') as $k) {
+            $effective[$k] = pcm_conn_cfg($k);
+        }
+        return array(
+            'config'    => $effective,
+            // The legacy override list is EXPOSED here for the hub's one-time
+            // override→instruction migration (nothing else could read it).
+            'overrides' => function_exists('pcm_conn_heading_overrides') ? pcm_conn_heading_overrides() : array(),
+            'version'   => PCM_CONN_VERSION,
+        );
+    };
+    register_rest_route('pcm-conn/v1', '/config', array(
+        array('methods' => 'GET', 'permission_callback' => $perm, 'callback' => $read),
+        array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) use ($read) {
+            $p = $req->get_json_params();
+            if (is_array($p)) {
+                $cfg = get_option('pcm_conn_config', array());
+                if (!is_array($cfg)) { $cfg = array(); }
+                foreach (array('snapshotCacheTtl', 'loopbackTimeout', 'loopbackLockTtl', 'statsThrottle', 'overridesCap') as $k) {
+                    if (array_key_exists($k, $p)) { $cfg[$k] = max(1, absint($p[$k])); }
+                }
+                if (array_key_exists('chromeRegions', $p) && is_array($p['chromeRegions'])) {
+                    $cfg['chromeRegions'] = array_values(array_filter(array_map('sanitize_key', $p['chromeRegions'])));
+                }
+                update_option('pcm_conn_config', $cfg, true);
+                // Executed ONLY by the hub's migration after per-site verification: an
+                // empty override list makes the legacy buffer a no-op (its early-return).
+                if (!empty($p['clearOverrides'])) { delete_option('pcm_conn_heading_overrides'); }
+            }
+            return call_user_func($read);
+        }),
+    ));
+});
 
 // 1. Point WordPress at the hub's manifest. The filter name is update_plugins_<Update-URI host>.
 add_filter('update_plugins___PCM_CONN_UPDATE_HOST__', function ($update, $plugin_data, $plugin_file) {
@@ -1111,295 +1248,6 @@ class PCM_Conn_Builder_Manager {
         return $node;
     }
 
-    // ── Headings (H1–H6) — the SEO table's expandable heading editor ──────────────────────────
-    // Meta tag keys page builders use to store a heading's level (Elementor 'header_size'/'title_size',
-    // Bricks 'tag', generic 'html_tag'/'tag'/'size'). Used to read + rewrite builder-field headings.
-    private static $heading_tag_keys = array('header_size', 'html_tag', 'tag', 'size', 'heading_tag', 'title_tag', 'title_size');
-    // Keys that carry a heading's TEXT inside a builder heading widget.
-    private static $heading_text_keys = array('title', 'heading', 'heading_title', 'text', 'title_text');
-    // Elementor stores ONLY non-default widget settings, so a heading-bearing widget left at its
-    // DEFAULT tag has no tag key at all and was silently missed. Detect those by widgetType and fall
-    // back to the widget's default level + the key that would store it (for retagging).
-    // widgetType => [default_tag, size_key].
-    private static $heading_widget_defaults = array(
-        'heading'        => array('h2', 'header_size'), // Elementor Heading widget
-        'icon-box'       => array('h3', 'title_size'),
-        'image-box'      => array('h3', 'title_size'),
-        'call-to-action' => array('h2', 'title_tag'),
-        'price-table'    => array('h3', 'heading_tag'),
-    );
-
-    /** List every heading (H1–H6) on a post for the hub: <hN> in post_content + inline <hN> inside
-     *  builder data, PLUS builder heading widgets whose text+level live in separate meta fields
-     *  (Elementor/Bricks). Returns [{index,level,text,html,source,elId}] in document order. */
-    public function scan_headings($post_id) {
-        $out = array();
-        $source_keys = array();
-        foreach ($this->detect($post_id) as $h) {
-            foreach ((array) $h->source_keys() as $k) { $source_keys[] = (string) $k; }
-        }
-        $meta_based = !empty($source_keys);
-
-        if (!$meta_based) {
-            self::collect_headings_html((string) get_post_field('post_content', $post_id), $out, 'content', '');
-        }
-        global $wpdb;
-        if ($meta_based) {
-            $ph   = implode(',', array_fill(0, count($source_keys), '%s'));
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-            $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key IN ($ph)", (int) $post_id, ...$source_keys));
-        } else {
-            $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", (int) $post_id));
-        }
-        foreach ((array) $rows as $row) {
-            $raw = (string) $row->meta_value;
-            $val = maybe_unserialize($raw);
-            if (is_string($val) && $val !== '' && ($val[0] === '[' || $val[0] === '{')) {
-                $j = json_decode($val, true);
-                if (is_array($j)) { $val = $j; }
-            }
-            self::collect_headings($val, $out);
-        }
-        // De-dupe: a builder renders each heading into post_content AND, for base64 builders (Brizy),
-        // into BOTH its editor-JSON and compiled-HTML metas — so the same heading is captured several
-        // times. Drop (a) a post_content heading that duplicates a builder heading, and (b) repeat
-        // builder copies that carry no element id (Brizy's compiled/source pair). Keep every elId'd
-        // heading distinct — those are separate on-page elements (e.g. two identical Elementor widgets).
-        $builder_keys = array();
-        foreach ($out as $h) {
-            if (($h['source'] ?? '') !== 'content' && (string) $h['text'] !== '') {
-                $builder_keys[$h['level'] . '|' . $h['text']] = 1;
-            }
-        }
-        $result = array();
-        $seen_builder = array();
-        foreach ($out as $h) {
-            if ((string) $h['text'] === '') { continue; }
-            $key = $h['level'] . '|' . $h['text'];
-            if (($h['source'] ?? '') === 'content' && isset($builder_keys[$key])) { continue; }
-            if (($h['source'] ?? '') !== 'content' && (string) ($h['elId'] ?? '') === '') {
-                if (isset($seen_builder[$key])) { continue; }
-                $seen_builder[$key] = 1;
-            }
-            $h['index'] = count($result);
-            $result[] = $h;
-        }
-        return $result;
-    }
-    /** Headings that live in SHARED sources rendered on many pages but NOT stored in the page
-     *  itself — Elementor Theme Builder templates (header/footer/single/archive… = elementor_library
-     *  posts) and Gutenberg reusable blocks (wp_block). Each is tagged with the OWNING post id
-     *  (`sourcePostId`) so the hub routes the edit to that template/block, plus a human `sourceLabel`
-     *  + `source` ('template'|'block') so the UI can warn it changes every page using that source.
-     *  These are DB-backed and editable; headings truly hardcoded in theme PHP are not returned
-     *  (they never reach here → stay read-only on the hub). */
-    public function scan_template_headings() {
-        $out = array();
-        // Only site-wide Elementor LOCATION templates (header/footer/single/archive/…), keyed by TYPE.
-        // Anything not in this allow-list — saved sections/pages/popups/global kit, OR an empty/unknown
-        // type — is skipped (those don't render site-wide as their own heading source).
-        $labels = array(
-            'header' => 'Header template', 'footer' => 'Footer template',
-            'single' => 'Single template', 'single-post' => 'Single Post template',
-            'single-page' => 'Single Page template', 'archive' => 'Archive template',
-            'loop-item' => 'Loop Item template', 'error-404' => '404 template',
-            'search-results' => 'Search Results template',
-        );
-        if (post_type_exists('elementor_library')) {
-            $tpls = get_posts(array('post_type' => 'elementor_library', 'post_status' => 'publish', 'numberposts' => 100, 'fields' => 'ids', 'suppress_filters' => true));
-            foreach ((array) $tpls as $tid) {
-                $ttype = (string) get_post_meta($tid, '_elementor_template_type', true);
-                if ($ttype === '') { // older/imported saves store the type only in the taxonomy term
-                    $terms = function_exists('get_the_terms') ? get_the_terms($tid, 'elementor_library_type') : false;
-                    if (is_array($terms) && !empty($terms)) { $ttype = (string) $terms[0]->slug; }
-                }
-                if (!isset($labels[$ttype])) { continue; } // not a site-wide location template
-                $data = get_post_meta($tid, '_elementor_data', true);
-                $val  = is_string($data) ? json_decode($data, true) : $data;
-                if (!is_array($val)) { continue; }
-                $before = count($out);
-                self::collect_headings($val, $out);
-                $label = $labels[$ttype] . ': ' . get_the_title($tid);
-                for ($i = $before, $n = count($out); $i < $n; $i++) {
-                    $out[$i]['source']       = 'template';
-                    $out[$i]['sourcePostId'] = (int) $tid;
-                    $out[$i]['sourceType']   = $ttype;
-                    $out[$i]['sourceLabel']  = $label;
-                }
-            }
-        }
-        // Gutenberg reusable blocks (wp_block) — one block can appear on many pages.
-        if (post_type_exists('wp_block')) {
-            $blocks = get_posts(array('post_type' => 'wp_block', 'post_status' => 'publish', 'numberposts' => 200, 'fields' => 'ids', 'suppress_filters' => true));
-            foreach ((array) $blocks as $bid) {
-                $before = count($out);
-                self::collect_headings_html((string) get_post_field('post_content', $bid), $out, 'block', '');
-                $label = 'Reusable block: ' . get_the_title($bid);
-                for ($i = $before, $n = count($out); $i < $n; $i++) {
-                    $out[$i]['source']       = 'block';
-                    $out[$i]['sourcePostId'] = (int) $bid;
-                    $out[$i]['sourceType']   = 'wp_block';
-                    $out[$i]['sourceLabel']  = $label;
-                }
-            }
-        }
-        $res = array();
-        foreach ($out as $h) { if ((string) ($h['text'] ?? '') !== '') { $res[] = $h; } }
-        return $res;
-    }
-    /** Parse literal <h1>..<h6> tags out of an HTML string into the heading list. */
-    private static function collect_headings_html($html, &$out, $source, $el_id) {
-        if (!is_string($html) || stripos($html, '<h') === false) { return; }
-        if (preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>#is', $html, $m, PREG_SET_ORDER)) {
-            foreach ($m as $mm) {
-                $text = trim(wp_strip_all_tags($mm[3]));
-                if ($text === '') { continue; }
-                $out[] = array('level' => (int) $mm[1], 'text' => $text, 'html' => $mm[0], 'source' => $source, 'elId' => $el_id, 'field' => '', 'tagKey' => '', 'textKey' => '');
-            }
-        }
-    }
-    /** Recursively pull headings out of decoded builder data: heading WIDGETS (a text field paired
-     *  with an h1–h6 tag field) and inline <hN> HTML inside string values. */
-    private static function collect_headings($val, &$out, $el_id = '', $widget_type = '') {
-        if (is_array($val)) {
-            if (isset($val['id'], $val['elType']) && is_string($val['id'])) { $el_id = $val['id']; }
-            if (isset($val['widgetType']) && is_string($val['widgetType'])) { $widget_type = $val['widgetType']; }
-            // Builder heading WIDGET: a text key + the tag. Prefer an explicit h1–h6 tag key; if none
-            // is present (Elementor omits a default tag) fall back to the widget's known default so a
-            // heading left at the default level is still detected.
-            $tag = ''; $tag_key = '';
-            foreach (self::$heading_tag_keys as $tk) {
-                if (isset($val[$tk]) && is_string($val[$tk]) && preg_match('/^h([1-6])$/i', trim($val[$tk]))) { $tag = strtolower(trim($val[$tk])); $tag_key = $tk; break; }
-            }
-            if ($tag === '' && isset(self::$heading_widget_defaults[$widget_type])) {
-                $tag     = self::$heading_widget_defaults[$widget_type][0];
-                $tag_key = self::$heading_widget_defaults[$widget_type][1];
-            }
-            if ($tag !== '') {
-                foreach (self::$heading_text_keys as $xk) {
-                    if (!empty($val[$xk]) && is_string($val[$xk])) {
-                        $text = trim(wp_strip_all_tags($val[$xk]));
-                        if ($text !== '') {
-                            $out[] = array('level' => (int) substr($tag, 1), 'text' => $text, 'html' => '', 'source' => 'builder', 'elId' => $el_id, 'field' => 'widget', 'tagKey' => $tag_key, 'textKey' => $xk);
-                        }
-                        break;
-                    }
-                }
-            }
-            foreach ($val as $v) { self::collect_headings($v, $out, $el_id, $widget_type); }
-            return;
-        }
-        if (is_object($val)) { foreach (get_object_vars($val) as $v) { self::collect_headings($v, $out, $el_id, $widget_type); } return; }
-        if (is_string($val)) {
-            if (stripos($val, '<h') !== false) { self::collect_headings_html($val, $out, 'builder', $el_id); return; }
-            // Builders like Brizy keep their page (editor JSON + compiled HTML) as a BASE64 blob, so
-            // headings are invisible to the plain scan. Decode and recurse — mirrors collect_links():
-            // JSON → array walk; HTML → inline <hN> extraction. Guarded on a clean UTF-8 decode so
-            // ordinary base64-ish / binary strings are never misread.
-            if (strlen($val) >= 24 && preg_match('/^[A-Za-z0-9+\/]+={0,2}$/', $val)) {
-                $dec = base64_decode($val, true);
-                if ($dec !== false && $dec !== '' && preg_match('//u', $dec)) {
-                    $t = ltrim($dec);
-                    if ($t !== '' && ($t[0] === '{' || $t[0] === '[')) {
-                        $j = json_decode($dec, true);
-                        if (is_array($j)) { self::collect_headings($j, $out, $el_id, $widget_type); return; }
-                    }
-                    if (stripos($dec, '<h') !== false) { self::collect_headings_html($dec, $out, 'builder', $el_id); }
-                }
-            }
-        }
-    }
-    /** Rewrite a builder-FIELD heading widget (Elementor/Bricks): inside element $el_id, set the text
-     *  field (matching $old_text) to $new_text and the tag field to h$new_level. Returns a report. */
-    public function replace_heading_field($post_id, $el_id, $old_text, $new_text, $new_level, $text_key, $tag_key) {
-        $report = array('replaced' => 0, 'where' => array(), 'builders' => array(), 'steps' => array(), 'verified' => false);
-        $el_id = (string) $el_id; $old_text = (string) $old_text;
-        $new_text = sanitize_text_field((string) $new_text);
-        $new_level = max(1, min(6, (int) $new_level));
-        if ($el_id === '' || $old_text === '') { return $report; }
-        global $wpdb;
-        $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
-        foreach ((array) $rows as $row) {
-            $raw = (string) $row->meta_value;
-            if (strpos($raw, $el_id) === false) { continue; }
-            $val = maybe_unserialize($raw); $is_json = false;
-            if (is_string($val) && $val !== '' && ($val[0] === '[' || $val[0] === '{')) {
-                $j = json_decode($val, true);
-                if (is_array($j)) { $val = $j; $is_json = true; }
-            }
-            if (!is_array($val) && !is_object($val)) { continue; }
-            $cnt = 0; $newVal = self::set_heading_in_element($val, $el_id, $old_text, $new_text, 'h' . $new_level, (string) $text_key, (string) $tag_key, false, $cnt);
-            if ($cnt > 0) {
-                $store = $is_json ? wp_json_encode($newVal) : (is_scalar($newVal) ? (string) $newVal : maybe_serialize($newVal));
-                $wpdb->update($wpdb->postmeta, array('meta_value' => $store), array('meta_id' => (int) $row->meta_id));
-                wp_cache_delete($post_id, 'post_meta');
-                $report['replaced'] += $cnt; $report['where'][] = (string) $row->meta_key;
-            }
-        }
-        foreach ($this->detect($post_id) as $h) {
-            try { $h->regenerate($post_id); $report['builders'][] = $h->label(); }
-            catch (\Throwable $e) {}
-        }
-        pcm_conn_purge_caches($post_id);
-        $report['verified'] = $report['replaced'] > 0;
-        $report['where'] = array_values(array_unique($report['where']));
-        return $report;
-    }
-    /** Recursively set a heading widget's text + tag inside the target element. Matches the text field
-     *  by value (=== $old_text) among the known text keys, and updates the tag field to $new_tag. */
-    private static function set_heading_in_element($node, $target, $old_text, $new_text, $new_tag, $text_key, $tag_key, $inside, &$count) {
-        if (is_array($node)) {
-            $here = $inside || (isset($node['id']) && (string) $node['id'] === (string) $target);
-            if ($here) {
-                $keys = ($text_key !== '') ? array($text_key) : self::$heading_text_keys;
-                foreach ($keys as $xk) {
-                    if (isset($node[$xk]) && is_string($node[$xk]) && trim(wp_strip_all_tags($node[$xk])) === $old_text) {
-                        $node[$xk] = $new_text;
-                        if ($tag_key !== '') {
-                            // Explicit tag key (incl. a defaulted widget whose tag was omitted) — set it
-                            // even if absent so retagging a default-level heading persists.
-                            $node[$tag_key] = $new_tag;
-                        } else {
-                            foreach (self::$heading_tag_keys as $tk) {
-                                if (isset($node[$tk]) && is_string($node[$tk]) && preg_match('/^h[1-6]$/i', trim($node[$tk]))) { $node[$tk] = $new_tag; break; }
-                            }
-                        }
-                        $count++;
-                        return $node;
-                    }
-                }
-            }
-            foreach ($node as $k => $v) {
-                if (is_array($v) || is_object($v)) { $node[$k] = self::set_heading_in_element($v, $target, $old_text, $new_text, $new_tag, $text_key, $tag_key, $here, $count); }
-            }
-            return $node;
-        }
-        if (is_object($node)) {
-            $here = $inside || (isset($node->id) && (string) $node->id === (string) $target);
-            if ($here) {
-                $keys = ($text_key !== '') ? array($text_key) : self::$heading_text_keys;
-                foreach ($keys as $xk) {
-                    if (isset($node->$xk) && is_string($node->$xk) && trim(wp_strip_all_tags($node->$xk)) === $old_text) {
-                        $node->$xk = $new_text;
-                        if ($tag_key !== '') {
-                            $node->$tag_key = $new_tag; // set even if absent (defaulted heading)
-                        } else {
-                            foreach (self::$heading_tag_keys as $tk) {
-                                if (isset($node->$tk) && is_string($node->$tk) && preg_match('/^h[1-6]$/i', trim($node->$tk))) { $node->$tk = $new_tag; break; }
-                            }
-                        }
-                        $count++;
-                        return $node;
-                    }
-                }
-            }
-            foreach (get_object_vars($node) as $k => $v) {
-                if (is_array($v) || is_object($v)) { $node->$k = self::set_heading_in_element($v, $target, $old_text, $new_text, $new_tag, $text_key, $tag_key, $here, $count); }
-            }
-            return $node;
-        }
-        return $node;
-    }
 }
 function pcm_conn_builder_manager() {
     static $mgr = null;
@@ -1560,123 +1408,6 @@ add_action('rest_api_init', function () {
             return new WP_REST_Response(array('links' => pcm_conn_builder_manager()->scan_links($pid)), 200);
         },
     ));
-    // Builder-aware heading scan: every H1–H6 on the post (post_content + inline <hN> in builder
-    // data + builder heading widgets whose text+level live in separate meta fields).
-    register_rest_route('pcm-conn/v1', '/scan-headings', array(
-        'methods' => 'GET',
-        'permission_callback' => function () { return current_user_can('edit_posts'); },
-        'callback' => function ($req) {
-            $pid = absint($req->get_param('post_id'));
-            if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
-            $mgr = pcm_conn_builder_manager();
-            // Page's own headings first, then shared template/block headings (each tagged with its own
-            // sourcePostId so the hub can route edits there). A reusable block inlined into the page is
-            // captured by BOTH scans — drop the shared copy when the page already has that heading
-            // (keep the page copy so its edit stays local); key by level|text. Re-index the result.
-            $page   = $mgr->scan_headings($pid);
-            $shared = $mgr->scan_template_headings();
-            $page_keys = array();
-            foreach ($page as $ph) { $page_keys[$ph['level'] . '|' . $ph['text']] = 1; }
-            $headings = $page;
-            foreach ($shared as $sh) {
-                if (isset($page_keys[$sh['level'] . '|' . $sh['text']])) { continue; }
-                $headings[] = $sh;
-            }
-            $ovr = function_exists('pcm_conn_heading_overrides') ? pcm_conn_heading_overrides() : array();
-            // Apply active render-time overrides to the SCANNED (builder/content) headings. A heading
-            // edited via the override layer (e.g. a Brizy heading whose stored form the string-replace
-            // couldn't reach) still shows its ORIGINAL text in the builder data — collapse it to the
-            // overridden value here so it appears ONCE with the current text (tagged 'override', still
-            // editable), instead of the stale stored text here + the overridden text from the rendered
-            // scan below. Match on the override's ORIGINAL (level|text); re-index-safe.
-            if (!empty($ovr)) {
-                foreach ($headings as $i => $hh) {
-                    foreach ($ovr as $o) {
-                        if ((int) ($o['oldLevel'] ?? 0) === (int) $hh['level'] && (string) ($o['oldText'] ?? '') === (string) $hh['text']) {
-                            $headings[$i]['text']        = (string) $o['newText'];
-                            $headings[$i]['level']       = (int) $o['newLevel'];
-                            $headings[$i]['html']        = '';   // stored markup no longer matches; edits route via override
-                            $headings[$i]['field']       = '';
-                            $headings[$i]['source']      = 'override';
-                            $headings[$i]['sourceType']  = 'override';
-                            $headings[$i]['sourceLabel'] = 'Site-wide override (render-time)';
-                            break;
-                        }
-                    }
-                }
-            }
-            // Headings that exist ONLY in the RENDERED page (theme PHP, menus, widget titles — no DB
-            // source anywhere) become editable through the render-time override layer (see
-            // /override-heading below). Loopback-fetch the live page; overrides already apply on that
-            // request, so an overridden heading shows its CURRENT text and stays re-editable. If the
-            // host blocks loopback requests this scan is skipped and behaviour is unchanged.
-            $seen_all = array();
-            foreach ($headings as $hh) { $seen_all[$hh['level'] . '|' . $hh['text']] = 1; }
-            // Hardened loopback: a real browser UA (security plugins/WAFs serve a near-empty
-            // challenge page to unknown agents → the scan would see "only a few"), a cache-busting
-            // query arg (skip a stale full-page cache that predates recent edits), redirect follow,
-            // and a longer timeout for heavy builder pages. Add ?pcm_hscan so page caches treat it
-            // as a distinct URL; strip nothing else. `blocking` GET so we actually read the body.
-            $scan_url = add_query_arg('pcm_hscan', (string) time(), get_permalink($pid));
-            $resp = wp_remote_get($scan_url, array(
-                'timeout'     => 20,
-                'redirection' => 3,
-                'sslverify'   => apply_filters('https_local_ssl_verify', false),
-                'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreativesConnector/2.6; +heading-scan)',
-                'headers'     => array('Accept' => 'text/html', 'Cache-Control' => 'no-cache'),
-            ));
-            if (!is_wp_error($resp) && (int) wp_remote_retrieve_response_code($resp) === 200) {
-                $live = (string) wp_remote_retrieve_body($resp);
-                // Only scan the <body> (drop <head>: <title>, OG/twitter meta, JSON-LD headline
-                // strings never contain <hN>, but a defensive trim keeps the match set page-visible).
-                if (($bpos = stripos($live, '<body')) !== false) { $live = substr($live, $bpos); }
-                if (preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>#is', $live, $mm, PREG_SET_ORDER)) {
-                    foreach ($mm as $hm) {
-                        $lvl = (int) $hm[1];
-                        $txt = trim(wp_strip_all_tags($hm[3]));
-                        $key = $lvl . '|' . $txt;
-                        if ($txt === '' || isset($seen_all[$key])) { continue; }
-                        $seen_all[$key] = 1;
-                        $is_ovr = false;
-                        foreach ($ovr as $o) {
-                            if ((int) ($o['newLevel'] ?? 0) === $lvl && (string) ($o['newText'] ?? '') === $txt) { $is_ovr = true; break; }
-                        }
-                        $headings[] = array(
-                            'level' => $lvl, 'text' => $txt, 'html' => $hm[0],
-                            'source' => $is_ovr ? 'override' : 'rendered',
-                            'elId' => '', 'field' => '', 'tagKey' => '', 'textKey' => '',
-                            'sourcePostId' => 0,
-                            'sourceType'   => $is_ovr ? 'override' : 'rendered',
-                            'sourceLabel'  => $is_ovr ? 'Site-wide override (render-time)' : 'Theme / hardcoded (render-time override)',
-                        );
-                    }
-                }
-            }
-            foreach ($headings as $i => $unused) { $headings[$i]['index'] = $i; }
-            return new WP_REST_Response(array('headings' => $headings), 200);
-        },
-    ));
-    // Builder-aware heading edit for builder-FIELD headings (Elementor/Bricks heading widgets store
-    // text + level in separate meta fields — post_content replace can't reach them). Content-stored
-    // and inline-HTML headings are edited by the hub via /replace-url (oldHtml → newHtml) instead.
-    register_rest_route('pcm-conn/v1', '/replace-heading', array(
-        'methods' => 'POST',
-        'permission_callback' => $perm,
-        'callback' => function ($req) {
-            $p       = $req->get_json_params();
-            $pid     = is_array($p) && isset($p['post_id']) ? absint($p['post_id']) : 0;
-            $el_id   = (is_array($p) && isset($p['elId'])) ? (string) $p['elId'] : '';
-            $old_t   = (is_array($p) && isset($p['oldText'])) ? (string) $p['oldText'] : '';
-            $new_t   = (is_array($p) && isset($p['newText'])) ? (string) $p['newText'] : '';
-            $level   = (is_array($p) && isset($p['newLevel'])) ? absint($p['newLevel']) : 0;
-            $text_key = (is_array($p) && isset($p['textKey'])) ? (string) $p['textKey'] : '';
-            $tag_key  = (is_array($p) && isset($p['tagKey'])) ? (string) $p['tagKey'] : '';
-            if (!$pid || $el_id === '' || $old_t === '' || $level < 1 || $level > 6) { return new WP_REST_Response(array('replaced' => 0, 'error' => 'bad_params'), 400); }
-            if (!get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
-            if (!current_user_can('edit_post', $pid)) { return new WP_REST_Response(array('error' => 'forbidden'), 403); }
-            return new WP_REST_Response(pcm_conn_builder_manager()->replace_heading_field($pid, $el_id, $old_t, ($new_t !== '' ? $new_t : $old_t), $level, $text_key, $tag_key), 200);
-        },
-    ));
 });
 add_filter('robots_txt', function ($output) {
     $extra = trim((string) get_option('pcm_conn_robots', ''));
@@ -1741,7 +1472,8 @@ add_action('rest_api_init', function () {
                 return (string) ($o['oldText'] ?? '') !== (string) ($o['newText'] ?? '')
                     || (int) ($o['oldLevel'] ?? 0) !== (int) ($o['newLevel'] ?? 0);
             }));
-            if (count($list) > 200) { $list = array_slice($list, -200); } // runaway-list backstop
+            $cap = max(1, (int) pcm_conn_cfg('overridesCap'));
+            if (count($list) > $cap) { $list = array_slice($list, -$cap); } // runaway-list backstop
             update_option('pcm_conn_heading_overrides', $list, true);
             $pid = is_array($p) ? absint($p['post_id'] ?? 0) : 0;
             if ($pid) { pcm_conn_purge_caches($pid); }
@@ -1882,153 +1614,889 @@ add_action('wp_head', function () {
     if ($desc !== '') { echo '<meta name="description" content="' . esc_attr($desc) . '">' . "\n"; }
     if ($kw !== '')   { echo '<meta name="keywords" content="' . esc_attr($kw) . '">' . "\n"; }
 }, 1);
-PHP;
-    }
 
-    /** The single-file connector plugin source (placeholders baked at build). */
-    private static function connector_php(string $hub_url, string $client_id, string $secret): string
-    {
-        $tpl = <<<'PHP'
-<?php
+// ═══ Dynamic content rules (rule schema v1) — render-time paragraph optimization ═══
+// Pushed by the hub, stored locally per post, applied to the final HTML on every
+// front-end render. Builder-agnostic by construction (operates AFTER the builder).
+// Contracts: docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md (hub repo). SYNC CONTRACT:
+// pcm_conn_normalize_text / the boundary matcher below MUST stay behavior-identical
+// to the hub's fixture-tested PCM_Text_Matcher.
+
 /**
- * Plugin Name: Power Creatives Connector
- * Description: Connects this site to a Power Creatives SEO Hub.
- * Version: 1.0.1
+ * Site-wide SINGLE-FLIGHT loopback lock (2.7.1): at most ONE self-request runs at a
+ * time, no matter who asks (two hub tabs, two users, heading + content scan at once).
+ * Rationale: on worker-limited hosts (LocalWP, small shared hosting) concurrent
+ * loopbacks starve the PHP workers and time EVERYTHING out. Transients aren't CAS —
+ * a rare race admits a second loopback, which is exactly today's behavior (no worse).
  */
-if (!defined('ABSPATH')) { exit; }
-
-// Let the hub authenticate FRONT-END page loads via the Application Password, so its
-// authenticated page preview renders the WP admin bar. WordPress normally limits
-// app-password auth to REST/XML-RPC; this only affects requests that carry a
-// Basic-auth header, so normal visitors are unaffected.
-add_filter('application_password_is_api_request', '__return_true');
-
-define('PCM_CONN_HUB_URL', '__HUB_URL__');
-define('PCM_CONN_CLIENT_ID', '__CLIENT_ID__');
-define('PCM_CONN_CLIENT_SECRET', '__CLIENT_SECRET__');
-
-// Register with the hub via an HMAC-signed handshake (creates an Application Password for
-// the current admin + pings the hub). Runs on activation AND, as a self-heal, on each admin
-// load until registered — so a plugin UPDATE/replace (which does NOT fire the activation
-// hook) or a transient network blip still completes the handshake. Capped to avoid creating
-// endless app passwords if the hub is permanently unreachable; outcome -> pcm_conn_status.
-function pcm_conn_register() {
-    if (get_option('pcm_conn_status') === 'registered') { return; }
-    $user = wp_get_current_user();
-    if (!$user || !$user->ID || !current_user_can('manage_options')) { return; }
-    $attempts = (int) get_option('pcm_conn_attempts', 0);
-    if ($attempts >= 6) { return; }
-    update_option('pcm_conn_attempts', $attempts + 1);
-    $app = null;
-    if (class_exists('WP_Application_Passwords')) {
-        $created = WP_Application_Passwords::create_new_application_password($user->ID, array('name' => 'Power Creatives Hub'));
-        if (!is_wp_error($created)) { $app = $created[0]; }
-    }
-    if ($app) {
-        update_option('pcm_conn_app_password', str_replace(' ', '', $app));
-        update_option('pcm_conn_app_user', $user->user_login);
-    }
-    $body = wp_json_encode(array(
-        'site_url'    => home_url('/'),
-        'site_name'   => get_bloginfo('name'),
-        'admin_email' => get_option('admin_email'),
-        'wp_version'  => get_bloginfo('version'),
-        'php_version' => PHP_VERSION,
-        'app_user'    => $user->user_login,
-        'app_password'=> $app ? str_replace(' ', '', $app) : '',
-    ));
-    $ts = (string) time();
-    $nonce = wp_generate_uuid4();
-    $sig = hash_hmac('sha256', $ts . '.' . $nonce . '.' . $body, PCM_CONN_CLIENT_SECRET);
-    $args = array(
-        'timeout' => 20,
-        'headers' => array(
-            'Content-Type'     => 'application/json',
-            'X-Hub-Client-Id'  => PCM_CONN_CLIENT_ID,
-            'X-Hub-Timestamp'  => $ts,
-            'X-Hub-Nonce'      => $nonce,
-            'X-Hub-Signature'  => $sig,
-        ),
-        'body' => $body,
-    );
-    // Try the baked URL, then BOTH permalink forms, so the handshake lands whether or not
-    // the hub serves pretty /wp-json/ (LiteSpeed/shared hosting often only serves the
-    // ?rest_route= form). Record the outcome in pcm_conn_status for debugging.
-    $candidates = array(PCM_CONN_HUB_URL);
-    $p = wp_parse_url(PCM_CONN_HUB_URL);
-    if ($p && !empty($p['scheme']) && !empty($p['host'])) {
-        $origin = $p['scheme'] . '://' . $p['host'] . (empty($p['port']) ? '' : ':' . $p['port']);
-        foreach (array($origin . '/?rest_route=/pcm/v1/seohub/connector/hello', $origin . '/wp-json/pcm/v1/seohub/connector/hello') as $alt) {
-            if (!in_array($alt, $candidates, true)) { $candidates[] = $alt; }
-        }
-    }
-    $status = 'failed';
-    foreach ($candidates as $u) {
-        $resp = wp_remote_post($u, $args);
-        $code = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
-        if ($code >= 200 && $code < 300) { $status = 'registered'; break; }
-        $status = 'failed:' . $code;
-    }
-    update_option('pcm_conn_status', $status);
+function pcm_conn_loopback_acquire() {
+    if (get_transient('pcm_conn_loopback_lock')) { return false; }
+    set_transient('pcm_conn_loopback_lock', 1, (int) pcm_conn_cfg('loopbackLockTtl')); // covers the timeout + margin
+    return true;
 }
-register_activation_hook(__FILE__, 'pcm_conn_register');
-add_action('admin_init', 'pcm_conn_register');
+function pcm_conn_loopback_release() { delete_transient('pcm_conn_loopback_lock'); }
+/**
+ * Fetch this site's own page (loopback) under the single-flight lock, budgeted
+ * (2.7.1: fail fast and honestly — callers MUST have a non-loopback fallback
+ * path). Timeout is hub-pushed config. Returns the HTML body, or '' when
+ * locked/failed.
+ */
+function pcm_conn_loopback_fetch($pid, $bust_arg, $agent_tag) {
+    if (!pcm_conn_loopback_acquire()) { return ''; }
+    $resp = wp_remote_get(add_query_arg($bust_arg, (string) time(), get_permalink($pid)), array(
+        'timeout'     => (int) pcm_conn_cfg('loopbackTimeout'),
+        'redirection' => 3,
+        'sslverify'   => apply_filters('https_local_ssl_verify', false),
+        'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreativesConnector/2.7; +' . $agent_tag . ')',
+        'headers'     => array('Accept' => 'text/html', 'Cache-Control' => 'no-cache'),
+    ));
+    pcm_conn_loopback_release();
+    if (is_wp_error($resp) || (int) wp_remote_retrieve_response_code($resp) !== 200) { return ''; }
+    return (string) wp_remote_retrieve_body($resp);
+}
 
-// Expose SEO meta over the standard REST API so the hub can read/write it.
-add_action('init', function () {
-    $keys = array(
-        '_yoast_wpseo_title', '_yoast_wpseo_metadesc', '_yoast_wpseo_focuskw',
-        'rank_math_title', 'rank_math_description', 'rank_math_focus_keyword',
-        '_seopress_titles_title', '_seopress_titles_desc', '_seopress_analysis_target_kw',
-        'pcm_seo_meta_title', 'pcm_seo_meta_description', 'pcm_seo_primary_keyword', 'pcm_seo_meta_keywords',
-        'pcm_seo_supporting_keyword', 'pcm_seo_cluster_label', 'pcm_seo_schema',
-    );
-    foreach (array('post', 'page') as $type) {
-        foreach ($keys as $k) {
-            register_post_meta($type, $k, array('show_in_rest' => true, 'single' => true, 'type' => 'string', 'auth_callback' => function () { return current_user_can('edit_posts'); }));
+/** Normalization spec v1 — mirror of PCM_Text_Matcher::normalize(). */
+function pcm_conn_normalize_text($text) {
+    $text = html_entity_decode((string) $text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $text = str_replace("\xC2\xA0", ' ', $text);
+    $text = (string) preg_replace('/\s+/u', ' ', $text);
+    $text = trim($text);
+    return function_exists('mb_strtolower') ? mb_strtolower($text, 'UTF-8') : strtolower($text);
+}
+/** Visible text of an HTML fragment — mirror of PCM_Text_Matcher::visible_text(). */
+function pcm_conn_visible_text($html) {
+    $html = (string) preg_replace('#<(script|style)[^>]*>.*?</\1>#is', '', (string) $html);
+    return strip_tags($html);
+}
+/** Image-src identity (v2.3) — mirror of PCM_Text_Matcher::normalize_src():
+ *  entity-decode + trim ONLY. NO case fold (URL paths are case-sensitive),
+ *  query string KEPT (it is identity). */
+function pcm_conn_normalize_src($src) {
+    return trim(html_entity_decode((string) $src, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+}
+// --- Section engine (3.0.0: the ONLY apply implementation — the hub's serving
+// mirror is gone; these functions are exercised directly by the committed
+// extraction harness in tests/standalone/, which also pins the parsing
+// primitives behavior-identical to the hub's PCM_Text_Matcher reference. ---
+/** Section fingerprint v2: normalized paragraph texts joined with "\n". */
+function pcm_conn_section_fingerprint($texts) {
+    $out = array();
+    foreach ((array) $texts as $t) { $out[] = pcm_conn_normalize_text((string) $t); }
+    return implode("\n", $out);
+}
+/** Top-level <h1-6>/<p> blocks with offsets (level 0 = <p>). */
+function pcm_conn_parse_blocks($html) {
+    $out = array();
+    if (!preg_match_all('#<(h[1-6]|p)(\s[^>]*)?>(.*?)</\1>#is', (string) $html, $mm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) { return $out; }
+    foreach ($mm as $m) {
+        $tag   = strtolower($m[1][0]);
+        $out[] = array(
+            'tag'   => $tag,
+            'level' => ($tag === 'p') ? 0 : (int) substr($tag, 1),
+            'attrs' => isset($m[2][0]) ? (string) $m[2][0] : '',
+            'inner' => (string) $m[3][0],
+            'text'  => pcm_conn_visible_text((string) $m[3][0]),
+            'html'  => (string) $m[0][0],
+            'start' => (int) $m[0][1],
+            'len'   => strlen((string) $m[0][0]),
+        );
+    }
+    return $out;
+}
+/** Chrome spans (pre-<body> + the config-driven region list; defaults =
+ *  header/nav/footer/aside) — behavior-identical to PCM_Text_Matcher::chrome_spans
+ *  under default config (2.8.1 scan-parity fix; harness-pinned). */
+function pcm_conn_chrome_spans($html) {
+    $spans = array();
+    $body  = stripos((string) $html, '<body');
+    if ($body !== false && $body > 0) { $spans[] = array(0, $body); }
+    $regions = function_exists('pcm_conn_cfg') ? (array) pcm_conn_cfg('chromeRegions') : array('header', 'nav', 'footer', 'aside');
+    foreach ($regions as $tag) {
+        if (preg_match_all('#<' . $tag . '(\s[^>]*)?>.*?</' . $tag . '>#is', (string) $html, $mm, PREG_OFFSET_CAPTURE)) {
+            foreach ($mm[0] as $m) { $spans[] = array((int) $m[1], (int) $m[1] + strlen((string) $m[0])); }
         }
     }
+    return $spans;
+}
+/** parse_blocks filtered to CONTENT blocks — the set the scan fingerprinted. */
+function pcm_conn_content_blocks($html) {
+    $spans = pcm_conn_chrome_spans($html);
+    $blocks = pcm_conn_parse_blocks($html);
+    if (empty($spans)) { return $blocks; }
+    $out = array();
+    foreach ($blocks as $b) {
+        $inside = false;
+        foreach ($spans as $s) {
+            if ($b['start'] >= $s[0] && $b['start'] < $s[1]) { $inside = true; break; }
+        }
+        if (!$inside) { $out[] = $b; }
+    }
+    return array_values($out);
+}
+/** A replacement's ordered units: h/p blocks + raw chunks (lists etc.) between them. */
+function pcm_conn_parse_replacement_units($html) {
+    $units = array(); $pos = 0; $html = (string) $html;
+    if (preg_match_all('#<(h[1-6]|p)(\s[^>]*)?>(.*?)</\1>#is', $html, $mm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+        foreach ($mm as $m) {
+            $start = (int) $m[0][1];
+            $gap   = substr($html, $pos, $start - $pos);
+            if (trim($gap) !== '') { $units[] = array('tag' => '', 'inner' => '', 'html' => trim($gap)); }
+            $units[] = array('tag' => strtolower($m[1][0]), 'inner' => (string) $m[3][0], 'html' => (string) $m[0][0]);
+            $pos = $start + strlen((string) $m[0][0]);
+        }
+    }
+    $tail = substr($html, $pos);
+    if (trim($tail) !== '') { $units[] = array('tag' => '', 'inner' => '', 'html' => trim($tail)); }
+    return $units;
+}
+/** The section body owned by the heading block at $i: following <p> block indices. */
+function pcm_conn_section_body($blocks, $i) {
+    $body = array();
+    for ($j = $i + 1, $n = count($blocks); $j < $n; $j++) {
+        if ($blocks[$j]['tag'] !== 'p') { break; }
+        $body[] = $j;
+    }
+    return $body;
+}
+/**
+ * Apply one `section` replace rule — all-or-nothing, wrapper-safe (contracts v2):
+ * candidates verify their body FINGERPRINT (occurrence is only a hint among
+ * verified twins, so chrome-duplicate headings can never cause a wrong swap);
+ * replacement units map 1:1 onto original blocks (same tag keeps the ORIGINAL
+ * attributes), surplus new units ride as siblings, surplus originals are removed
+ * whole. Returns new HTML or null (miss → caller serves original + stale count).
+ */
+function pcm_conn_apply_section_rule($html, $match_text, $level, $fingerprint, $occurrence, $replacement) {
+    if ((string) $match_text === '') { return null; }
+    $blocks = pcm_conn_content_blocks($html); // chrome-excluded (scan parity, 2.8.1)
+    $verified = array();
+    foreach ($blocks as $i => $b) {
+        if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) { continue; }
+        if (pcm_conn_normalize_text($b['text']) !== $match_text) { continue; }
+        $body  = pcm_conn_section_body($blocks, $i);
+        $texts = array();
+        foreach ($body as $j) { $texts[] = $blocks[$j]['text']; }
+        if (pcm_conn_section_fingerprint($texts) === (string) $fingerprint) {
+            $verified[] = array('heading' => $i, 'body' => $body);
+        }
+    }
+    if (empty($verified)) { return null; }
+    $hit      = $verified[min(max(0, (int) $occurrence), count($verified) - 1)];
+    $orig_idx = array_merge(array($hit['heading']), $hit['body']);
+    $units    = pcm_conn_parse_replacement_units($replacement);
+    if (empty($units)) { return null; }
+    $edits  = array();
+    $shared = min(count($orig_idx), count($units));
+    for ($k = 0; $k < $shared; $k++) {
+        $o = $blocks[$orig_idx[$k]];
+        $n = $units[$k];
+        $new_html = ($n['tag'] !== '' && $o['tag'] === $n['tag'])
+            ? '<' . $o['tag'] . $o['attrs'] . '>' . $n['inner'] . '</' . $o['tag'] . '>'
+            : $n['html'];
+        $edits[] = array('start' => $o['start'], 'len' => $o['len'], 'html' => $new_html);
+    }
+    if (count($units) > $shared) {
+        $last  = $blocks[$orig_idx[$shared - 1]];
+        $extra = '';
+        for ($k = $shared; $k < count($units); $k++) { $extra .= $units[$k]['html']; }
+        $edits[] = array('start' => $last['start'] + $last['len'], 'len' => 0, 'html' => $extra);
+    }
+    for ($k = $shared; $k < count($orig_idx); $k++) {
+        $o       = $blocks[$orig_idx[$k]];
+        $edits[] = array('start' => $o['start'], 'len' => $o['len'], 'html' => '');
+    }
+    usort($edits, function ($a, $b) { return $b['start'] - $a['start']; });
+    foreach ($edits as $e) { $html = substr_replace($html, $e['html'], $e['start'], $e['len']); }
+    return $html;
+}
+// --- Content-region primitive (engine v2.4.1): WordPress's OWN the_content
+// pipeline defines where page content begins and ends — the engine OBSERVES
+// it instead of guessing. The recorder is a pure observer at the last filter
+// position; the locator is an exact substring match on the output buffer.
+// Not recorded / not found → null → callers keep legacy behavior (never worse).
+if (!defined('PCM_CONN_CE')) { define('PCM_CONN_CE', '<!--pcm-ce-7f3a-->'); }
+/** Remember a post's FINAL the_content output (first non-empty win per request). */
+function pcm_conn_content_remember($pid, $html) {
+    if (!isset($GLOBALS['pcm_conn_content_rec'][(int) $pid]) && trim((string) $html) !== '') {
+        $GLOBALS['pcm_conn_content_rec'][(int) $pid] = (string) $html;
+    }
+    return (string) $html;
+}
+add_filter('the_content', function ($html) {
+    if (is_singular() && in_the_loop() && is_main_query()) {
+        pcm_conn_content_remember((int) get_queried_object_id(), (string) $html);
+    }
+    return $html;
+}, PHP_INT_MAX);
+/** Exact [start, end) span of the recorded content inside a buffer, or null. */
+function pcm_conn_content_span($buffer, $pid) {
+    $rec = isset($GLOBALS['pcm_conn_content_rec'][(int) $pid]) ? (string) $GLOBALS['pcm_conn_content_rec'][(int) $pid] : '';
+    if ($rec === '') { return null; }
+    $at = strpos((string) $buffer, $rec);
+    return ($at === false) ? null : array($at, $at + strlen($rec));
+}
+/**
+ * Apply one `sectionInsert` rule: new section before the anchor heading, or
+ * after the anchor section ('after' = before the NEXT heading block when one
+ * exists — top-level, outside builder wrappers; only the page's LAST section
+ * falls back to after-its-last-block). Anchor missing → null (nothing inserted).
+ *
+ * v2.4.1 PLACEMENT LAW: when the buffer carries the content-end sentinel
+ * (injected by the serving callback) and the anchor lies INSIDE the content
+ * region, the insertion point may NEVER exceed the region's end — an insert
+ * after the last section lands at the true end of the content, never past
+ * trailing theme furniture (comment forms etc.). Anchors outside the region
+ * (comment-area headings) keep legacy semantics.
+ */
+function pcm_conn_apply_section_insert($html, $match_text, $level, $position, $occurrence, $replacement) {
+    if ((string) $match_text === '' || trim((string) $replacement) === '') { return null; }
+    $blocks = pcm_conn_content_blocks($html); // chrome-excluded (scan parity, 2.8.1)
+    $candidates = array();
+    foreach ($blocks as $i => $b) {
+        if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) { continue; }
+        if (pcm_conn_normalize_text($b['text']) === $match_text) { $candidates[] = $i; }
+    }
+    if (empty($candidates)) { return null; }
+    $i = $candidates[min(max(0, (int) $occurrence), count($candidates) - 1)];
+    if ($position === 'before') {
+        $at = $blocks[$i]['start'];
+    } else {
+        $body = pcm_conn_section_body($blocks, $i);
+        $next = empty($body) ? $i + 1 : $body[count($body) - 1] + 1;
+        if (isset($blocks[$next]) && $blocks[$next]['tag'] !== 'p') {
+            $at = $blocks[$next]['start'];
+        } else {
+            $last = empty($body) ? $blocks[$i] : $blocks[$body[count($body) - 1]];
+            $at   = $last['start'] + $last['len'];
+        }
+    }
+    $ce = strpos($html, PCM_CONN_CE);
+    if ($ce !== false && $blocks[$i]['start'] < $ce && $at > $ce) { $at = $ce; }
+    return substr_replace($html, $replacement, $at, 0);
+}
+/**
+ * Apply one `sectionRemove` rule (engine v2.4): locate EXACTLY like a replace
+ * (fingerprint-verified candidates; occurrence = hint among verified twins —
+ * a changed section can never cause a wrong removal), then remove the
+ * section's blocks (heading + body) whole. Between-content (images, forms,
+ * builder wrappers) stays — image visibility is its own rule (`hidden`).
+ * Returns new HTML or null (miss → original serves + stale count).
+ */
+function pcm_conn_apply_section_remove($html, $match_text, $level, $fingerprint, $occurrence) {
+    if ((string) $match_text === '') { return null; }
+    $blocks = pcm_conn_content_blocks($html); // chrome-excluded (scan parity, 2.8.1)
+    $verified = array();
+    foreach ($blocks as $i => $b) {
+        if ($b['tag'] === 'p' || ($level >= 1 && $b['level'] !== $level)) { continue; }
+        if (pcm_conn_normalize_text($b['text']) !== $match_text) { continue; }
+        $body  = pcm_conn_section_body($blocks, $i);
+        $texts = array();
+        foreach ($body as $j) { $texts[] = $blocks[$j]['text']; }
+        if (pcm_conn_section_fingerprint($texts) === (string) $fingerprint) {
+            $verified[] = array('heading' => $i, 'body' => $body);
+        }
+    }
+    if (empty($verified)) { return null; }
+    $hit   = $verified[min(max(0, (int) $occurrence), count($verified) - 1)];
+    $edits = array();
+    foreach (array_merge(array($hit['heading']), $hit['body']) as $k) {
+        $edits[] = array('start' => $blocks[$k]['start'], 'len' => $blocks[$k]['len']);
+    }
+    usort($edits, function ($a, $b) { return $b['start'] - $a['start']; });
+    foreach ($edits as $e) { $html = substr_replace($html, '', $e['start'], $e['len']); }
+    return $html;
+}
+// Snapshot cache: busted whenever the post changes — a stale snapshot must
+// never outlive an edit (rules POST also busts it, see the /rules route).
+// The served view is version-stamped; bumping the version retires it too.
+add_action('save_post', function ($pid) {
+    delete_transient('pcm_conn_snap_' . (int) $pid);
+    update_option('pcm_conn_view_ver', (int) get_option('pcm_conn_view_ver', 0) + 1, false);
 });
-
-// Admin page: shows a single "connection code" (this site URL + a WP username + an
-// Application Password). Paste it into the Power Creatives hub and it connects OUTBOUND
-// with those credentials — reliable on any host, no remote->hub handshake required.
-add_action('admin_menu', function () {
-    add_menu_page('Power Creatives', 'Power Creatives', 'manage_options', 'pcm-connector', 'pcm_conn_page', 'dashicons-rest-api', 80);
-});
-function pcm_conn_page() {
-    if (!current_user_can('manage_options')) { return; }
-    if (isset($_POST['pcm_conn_gen']) && check_admin_referer('pcm_conn_gen')) {
-        $u = wp_get_current_user();
-        if (class_exists('WP_Application_Passwords')) {
-            $c = WP_Application_Passwords::create_new_application_password($u->ID, array('name' => 'Power Creatives Hub'));
-            if (!is_wp_error($c)) {
-                update_option('pcm_conn_app_password', str_replace(' ', '', $c[0]));
-                update_option('pcm_conn_app_user', $u->user_login);
+/** The post's stored rule set (rule schema v1 rows), [] when none. */
+function pcm_conn_rules_for($pid) {
+    $r = get_option('pcm_conn_rules_' . (int) $pid, array());
+    return is_array($r) ? array_values(array_filter($r, 'is_array')) : array();
+}
+/** SITE-SCOPE rules (instruction stream v2.1: heading instructions — the
+ *  compiled legacy overrides). Served on EVERY front-end render. */
+function pcm_conn_rules_site() {
+    $r = get_option('pcm_conn_rules_site', array());
+    return is_array($r) ? array_values(array_filter($r, 'is_array')) : array();
+}
+/** Replace a post's rule set + maintain the index of posts that have rules. */
+function pcm_conn_rules_save($pid, $rules) {
+    $pid = (int) $pid;
+    $idx = get_option('pcm_conn_rules_index', array());
+    if (!is_array($idx)) { $idx = array(); }
+    if (empty($rules)) {
+        delete_option('pcm_conn_rules_' . $pid);
+        delete_option('pcm_conn_rules_stats_' . $pid);
+        $idx = array_values(array_diff(array_map('intval', $idx), array($pid)));
+    } else {
+        update_option('pcm_conn_rules_' . $pid, array_values($rules), false); // autoload OFF
+        if (!in_array($pid, array_map('intval', $idx), true)) { $idx[] = $pid; }
+    }
+    update_option('pcm_conn_rules_index', $idx, false);
+}
+/** Per-post serve/miss counters (throttled writes — min gap is hub-pushed config). */
+function pcm_conn_rules_bump_stats($pid, $applied, $missed) {
+    $key = 'pcm_conn_rules_stats_' . (int) $pid;
+    $s = get_option($key, array());
+    if (!is_array($s)) { $s = array(); }
+    $now = time();
+    if (isset($s['lastAt']) && ($now - (int) $s['lastAt']) < (int) pcm_conn_cfg('statsThrottle') && $missed <= (int) ($s['lastMissed'] ?? -1)) { return; }
+    $s['applied']    = (int) ($s['applied'] ?? 0) + (int) $applied;
+    $s['missed']     = (int) ($s['missed'] ?? 0) + (int) $missed;
+    $s['lastMissed'] = (int) $missed;
+    $s['lastAt']     = $now;
+    update_option($key, $s, false);
+}
+/**
+ * Apply active rules to a full HTML response. Boundary matching on NON-NESTABLE
+ * tags (<p>/<hN> cannot legally nest — same proven pattern as the heading
+ * overrides above). Miss → block left untouched (the original serves) + counted.
+ * v1 serves target 'paragraph'; the engine is target-agnostic by design.
+ */
+function pcm_conn_apply_rules($html, $rules, $pid) {
+    $applied = 0; $missed = 0;
+    // Pass 0 (v2.2): HEADING rules — attributes preserved, text esc_html'd,
+    // normalized visible-text compare (spec v1). Runs FIRST because section/
+    // paragraph identities are computed by the hub on the DISPLAY state
+    // (headings as instructed) — the 2.8.2 ordering law's successor.
+    // `section.allOccurrences` = compiled-override semantics (EVERY match,
+    // whole buffer — chrome included); without it the rule targets exactly the
+    // occurrence-th matching CONTENT heading (chrome-excluded — the same
+    // identity space the hub's inventory computes).
+    foreach ($rules as $r) {
+        if (empty($r['active']) || (string) ($r['target'] ?? '') !== 'heading') { continue; }
+        $want = (string) ($r['match']['text'] ?? '');
+        if ($want === '') { $missed++; continue; }
+        $sec = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
+        $ol  = max(1, min(6, (int) ($sec['level'] ?? 0)));
+        $nl  = max(1, min(6, (int) ($sec['newLevel'] ?? $ol)));
+        $nt  = (string) ($r['replacement'] ?? '');
+        if (!empty($sec['allOccurrences'])) {
+            // frameOnly (site/frame edits): apply ONLY inside chrome spans —
+            // identical text in page CONTENT is never touched. Rules without
+            // the flag (migrated legacy overrides) keep whole-page semantics.
+            $frame_only = !empty($sec['frameOnly']);
+            $spans = $frame_only ? pcm_conn_chrome_spans($html) : array();
+            $edits = array();
+            if (preg_match_all('#<h' . $ol . '(\s[^>]*)?>(.*?)</h' . $ol . '>#is', $html, $mm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+                foreach ($mm as $m) {
+                    $start = (int) $m[0][1];
+                    if ($frame_only) {
+                        $inside = false;
+                        foreach ($spans as $s) {
+                            if ($start >= $s[0] && $start < $s[1]) { $inside = true; break; }
+                        }
+                        if (!$inside) { continue; }
+                    }
+                    if (pcm_conn_normalize_text(pcm_conn_visible_text((string) $m[2][0])) !== $want) { continue; }
+                    $edits[] = array('start' => $start, 'len' => strlen((string) $m[0][0]), 'html' => '<h' . $nl . (isset($m[1][0]) ? $m[1][0] : '') . '>' . esc_html($nt) . '</h' . $nl . '>');
+                }
+            }
+            if (!empty($edits)) {
+                usort($edits, function ($a, $b) { return $b['start'] - $a['start']; });
+                foreach ($edits as $e) { $html = substr_replace($html, $e['html'], $e['start'], $e['len']); }
+                $applied++;
+            } else { $missed++; }
+            continue;
+        }
+        $occ  = max(0, (int) ($r['match']['occurrence'] ?? 0));
+        $seen = 0;
+        $done = false;
+        foreach (pcm_conn_content_blocks($html) as $b) {
+            if ($b['tag'] === 'p' || (int) $b['level'] !== $ol) { continue; }
+            if (pcm_conn_normalize_text($b['text']) !== $want) { continue; }
+            if ($seen++ !== $occ) { continue; }
+            $html = substr_replace($html, '<h' . $nl . $b['attrs'] . '>' . esc_html($nt) . '</h' . $nl . '>', $b['start'], $b['len']);
+            $done = true;
+            break;
+        }
+        if ($done) { $applied++; } else { $missed++; }
+    }
+    // Pass 1 (v2/v2.4): section replaces → REMOVES → inserts — each rule
+    // re-parses the current buffer (offsets shift between rules; a few rules
+    // per post, cheap). Removes run before inserts so an insert anchored on a
+    // surviving neighbor still lands; one anchored on a removed heading goes
+    // honestly inert + stale.
+    foreach (array('section', 'sectionRemove') as $phase) {
+        foreach ($rules as $r) {
+            if (empty($r['active']) || (string) ($r['target'] ?? '') !== $phase) { continue; }
+            $want = (string) ($r['match']['text'] ?? '');
+            $occ  = (int) ($r['match']['occurrence'] ?? 0);
+            $sec  = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
+            $lvl  = (int) ($sec['level'] ?? 0);
+            $out  = ($phase === 'section')
+                ? pcm_conn_apply_section_rule($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ, (string) ($r['replacement'] ?? ''))
+                : pcm_conn_apply_section_remove($html, $want, $lvl, (string) ($sec['fingerprint'] ?? ''), $occ);
+            if (is_string($out)) { $html = $out; $applied++; } else { $missed++; }
+        }
+    }
+    // Inserts (v2.4.1 ORDERING LAW): 'before' rules apply in rule order (each
+    // lands at the anchor's start, above the previous — creation flow already);
+    // 'after' rules apply in REVERSE rule order — each earlier rule then lands
+    // above the later ones, so the page reads in creation order (fixture-pinned;
+    // forward order provably served THREE,TWO,ONE for created ONE,TWO,THREE).
+    $ins_before = array();
+    $ins_after  = array();
+    foreach ($rules as $r) {
+        if (empty($r['active']) || (string) ($r['target'] ?? '') !== 'sectionInsert') { continue; }
+        $sec = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
+        if (((string) ($sec['position'] ?? 'after')) === 'before') { $ins_before[] = $r; } else { $ins_after[] = $r; }
+    }
+    foreach (array_merge($ins_before, array_reverse($ins_after)) as $r) {
+        $sec = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
+        $out = pcm_conn_apply_section_insert(
+            $html,
+            (string) ($r['match']['text'] ?? ''),
+            (int) ($sec['level'] ?? 0),
+            (string) ($sec['position'] ?? 'after'),
+            (int) ($r['match']['occurrence'] ?? 0),
+            (string) ($r['replacement'] ?? '')
+        );
+        if (is_string($out)) { $html = $out; $applied++; } else { $missed++; }
+    }
+    // Pass 2 (v1, byte-identical behavior): paragraph rules.
+    foreach ($rules as $r) {
+        if (empty($r['active'])) { continue; }
+        $target = (string) ($r['target'] ?? '');
+        $tag = ($target === 'paragraph') ? 'p' : '';
+        if ($tag === '') { continue; } // heading/anchorText/href reserved — never guessed at
+        $want = (string) ($r['match']['text'] ?? '');
+        $occ  = (int) ($r['match']['occurrence'] ?? 0);
+        $replacement = (string) ($r['replacement'] ?? '');
+        if ($want === '') { $missed++; continue; }
+        $seen = 0; $done = false;
+        $out = preg_replace_callback('#<' . $tag . '(\s[^>]*)?>(.*?)</' . $tag . '>#is', function ($m) use (&$seen, &$done, $want, $occ, $replacement, $tag) {
+            if ($done) { return $m[0]; }
+            if (pcm_conn_normalize_text(pcm_conn_visible_text($m[2])) !== $want) { return $m[0]; }
+            if ($seen++ !== $occ) { return $m[0]; }
+            $done = true;
+            return '<' . $tag . (isset($m[1]) ? $m[1] : '') . '>' . $replacement . '</' . $tag . '>';
+        }, $html);
+        if (is_string($out) && $done) { $html = $out; $applied++; } else { $missed++; }
+    }
+    // Pass 3 (v2.3/v2.4): IMAGE rules — ONE buffer scan so indexes stay
+    // stable across multiple rules and removals. Every content-region <img>
+    // gets an occurrence per normalized src; a matching rule either HIDES it
+    // (`hidden`: the tag is removed at render — media/storage untouched) or
+    // rewrites ONLY alt/title. Chrome images are neither counted nor touched
+    // (the frame law). A rule matching no image = inert, original serves,
+    // counted. Runs LAST so it also reaches images inside rule output.
+    $img_rules = array();
+    foreach ($rules as $r) {
+        if (empty($r['active']) || (string) ($r['target'] ?? '') !== 'image') { continue; }
+        $want  = pcm_conn_normalize_src((string) ($r['match']['text'] ?? ''));
+        $attrs = json_decode((string) ($r['replacement'] ?? ''), true);
+        if ($want === '' || !is_array($attrs)) { $missed++; continue; }
+        $img_rules[] = array('src' => $want, 'occ' => max(0, (int) ($r['match']['occurrence'] ?? 0)), 'attrs' => $attrs, 'hit' => false);
+    }
+    if (!empty($img_rules)) {
+        $spans = pcm_conn_chrome_spans($html);
+        $seen  = array();
+        $edits = array();
+        if (preg_match_all('#<img\b[^>]*>#i', $html, $mm, PREG_OFFSET_CAPTURE)) {
+            foreach ($mm[0] as $m) {
+                $start  = (int) $m[1];
+                $chrome = false;
+                foreach ($spans as $s) {
+                    if ($start >= $s[0] && $start < $s[1]) { $chrome = true; break; }
+                }
+                if ($chrome) { continue; }
+                $tag = (string) $m[0];
+                if (!preg_match('#(?<![\w-])src\s*=\s*("([^"]*)"|\'([^\']*)\')#i', $tag, $sm)) { continue; }
+                $src = pcm_conn_normalize_src($sm[2] !== '' ? $sm[2] : (isset($sm[3]) ? $sm[3] : ''));
+                if ($src === '') { continue; }
+                $occ        = isset($seen[$src]) ? $seen[$src] : 0;
+                $seen[$src] = $occ + 1;
+                foreach ($img_rules as $ri => $ir) {
+                    if ($ir['hit'] || $ir['src'] !== $src || $ir['occ'] !== $occ) { continue; }
+                    $img_rules[$ri]['hit'] = true;
+                    if (!empty($ir['attrs']['hidden'])) {
+                        $edits[] = array('start' => $start, 'len' => strlen($tag), 'html' => '');
+                        break;
+                    }
+                    $new = $tag;
+                    foreach (array('alt', 'title') as $a) {
+                        if (!array_key_exists($a, $ir['attrs'])) { continue; }
+                        $val = esc_attr((string) $ir['attrs'][$a]);
+                        if (preg_match('#(?<![\w-])' . $a . '\s*=\s*("[^"]*"|\'[^\']*\')#i', $new)) {
+                            // Callback: the value is literal, never backref-processed.
+                            $new = (string) preg_replace_callback(
+                                '#(?<![\w-])' . $a . '\s*=\s*("[^"]*"|\'[^\']*\')#i',
+                                function () use ($a, $val) { return $a . '="' . $val . '"'; },
+                                $new,
+                                1
+                            );
+                        } else {
+                            $new = (string) preg_replace_callback(
+                                '#^<img\b#i',
+                                function () use ($a, $val) { return '<img ' . $a . '="' . $val . '"'; },
+                                $new,
+                                1
+                            );
+                        }
+                    }
+                    if ($new !== $tag) { $edits[] = array('start' => $start, 'len' => strlen($tag), 'html' => $new); }
+                    break;
+                }
             }
         }
+        if (!empty($edits)) {
+            usort($edits, function ($a, $b) { return $b['start'] - $a['start']; });
+            foreach ($edits as $e) { $html = substr_replace($html, $e['html'], $e['start'], $e['len']); }
+        }
+        foreach ($img_rules as $ir) {
+            if ($ir['hit']) { $applied++; } else { $missed++; }
+        }
     }
-    $pass = (string) get_option('pcm_conn_app_password', '');
-    $user = (string) get_option('pcm_conn_app_user', '');
-    $code = ($pass && $user) ? base64_encode(wp_json_encode(array('url' => home_url('/'), 'user' => $user, 'pass' => $pass))) : '';
-    echo '<div class="wrap"><h1>Power Creatives &mdash; Connection</h1>';
-    echo '<p>Copy this code and paste it into your Power Creatives hub at <strong>Sites &rarr; Add Site &rarr; Paste connection code</strong>.</p>';
-    if ($code !== '') {
-        echo '<textarea id="pcmcode" readonly rows="4" style="width:100%;max-width:640px;font-family:monospace" onclick="this.select()">' . esc_textarea($code) . '</textarea>';
-        echo '<p><button class="button" type="button" onclick="var t=document.getElementById(\'pcmcode\');t.select();document.execCommand(\'copy\');this.textContent=\'Copied!\'">Copy code</button></p>';
-    } else {
-        echo '<p><em>No code yet &mdash; click below to generate one.</em></p>';
-    }
-    echo '<form method="post" style="margin-top:1em">';
-    wp_nonce_field('pcm_conn_gen');
-    echo '<button class="button button-primary" type="submit" name="pcm_conn_gen" value="1">' . ($code !== '' ? 'Regenerate code' : 'Generate code') . '</button>';
-    echo '</form></div>';
+    if ($applied > 0 || $missed > 0) { pcm_conn_rules_bump_stats($pid, $applied, $missed); }
+    return $html;
 }
+// Serving: front-end singular renders only. The ENTIRE callback is fail-safe —
+// any throwable serves the ORIGINAL buffer (a rule can never break a page).
+// pcm_cscan requests (the hub's content inventory) are EXCLUDED on purpose: the
+// inventory must show the ORIGINAL rendered text, because that is exactly what
+// rules match against (matching post-rule text would chain rules on themselves).
+// PRIORITY 0 (2.8.2, PROVEN fix): this buffer must be the OUTER one so its
+// callback runs AFTER the heading-override layer (prio 1) — rules then match
+// the OVERRIDE-TRANSFORMED page, which is exactly what the scan inventoried
+// and what the user sees. At prio 2 (inner) rules saw the RAW page: a section
+// whose heading had a render-time override could NEVER match (identity built
+// on the displayed text, raw text still the old one — permanent honest miss).
+add_action('template_redirect', function () {
+    if (is_admin() || is_feed() || (defined('REST_REQUEST') && REST_REQUEST)) { return; }
+    // The snapshot loopback is excluded from rule serving (snapshot = the page
+    // as RULES-INPUT — the exact identity rules match; serving rules into it
+    // would chain rules onto their own output). The legacy scan params stay
+    // excluded for the transition window.
+    if (isset($_GET['pcm_snap']) || isset($_GET['pcm_cscan']) || isset($_GET['pcm_hscan'])) { return; }
+    if (get_option('pcm_conn_rules_off') === '1') { return; } // site kill switch (hub-managed)
+    // SITE-scope rules (heading instructions) serve on EVERY front-end render —
+    // the legacy override layer's reach; post rules stay singular-only.
+    $site_rules = pcm_conn_rules_site();
+    $pid        = is_singular() ? (int) get_queried_object_id() : 0;
+    $post_rules = $pid ? pcm_conn_rules_for($pid) : array();
+    if (empty($site_rules) && empty($post_rules)) { return; }
+    ob_start(function ($html) use ($site_rules, $post_rules, $pid) {
+        $original = $html; // fail-to-original must return the PRISTINE buffer
+        try {
+            // Content-region sentinel (v2.4.1): mark the true end of the
+            // content BEFORE the passes run — earlier passes shift offsets,
+            // a sentinel survives every mutation. Stripped before output.
+            $span = pcm_conn_content_span($html, $pid);
+            if ($span !== null) { $html = substr_replace($html, PCM_CONN_CE, $span[1], 0); }
+            $html = pcm_conn_apply_rules($html, array_merge($site_rules, $post_rules), $pid);
+            return str_replace(PCM_CONN_CE, '', $html);
+        } catch (\Throwable $e) {
+            return $original; // fail-to-original, always
+        }
+    });
+}, 0);
+// ── Slug-change redirects (3.0.5): hub-managed EXACT-PATH redirect store. ──
+// The hub pushes the COMPLETE set (same replace-the-set law as rules). The
+// handler answers ONLY requests WordPress would otherwise 404 — a working
+// page can never be hijacked, normal views cost one is_404() check, and
+// deleting a redirect honestly falls back to core's own old-slug behavior
+// where core covers it. Query strings pass through to the target untouched.
+// Both decision functions are pure (harness-pinned).
+function pcm_conn_redirect_norm_path($path) {
+    $p = (string) $path;
+    if ($p === '') { return '/'; }
+    if (preg_match('#^([a-z][a-z0-9+.-]*:)?//#i', $p)) {
+        $p = (string) (wp_parse_url($p, PHP_URL_PATH) ?: '/');
+    } else {
+        $cut = strcspn($p, '?#');
+        $p   = substr($p, 0, $cut);
+    }
+    $p = rawurldecode($p);
+    if ($p === '' || $p[0] !== '/') { $p = '/' . $p; }
+    $p = rtrim($p, '/');
+    return $p === '' ? '/' : $p;
+}
+function pcm_conn_redirect_match($request_uri, $redirects) {
+    if (!is_array($redirects) || empty($redirects)) { return null; }
+    $uri   = (string) $request_uri;
+    $qpos  = strpos($uri, '?');
+    $query = $qpos !== false ? substr($uri, $qpos + 1) : '';
+    $path  = pcm_conn_redirect_norm_path($uri);
+    foreach ($redirects as $r) {
+        if (!is_array($r) || (string) ($r['from'] ?? '') !== $path) { continue; }
+        $to = (string) ($r['to'] ?? '');
+        if ($to === '') { continue; }
+        if ($query !== '') { $to .= (strpos($to, '?') === false ? '?' : '&') . $query; }
+        $code = (int) ($r['code'] ?? 301);
+        return array('to' => $to, 'code' => in_array($code, array(301, 302, 307, 308), true) ? $code : 301);
+    }
+    return null;
+}
+function pcm_conn_redirect_sanitize($rows) {
+    $clean = array();
+    $seen  = array();
+    foreach ((array) $rows as $r) {
+        if (!is_array($r)) { continue; }
+        $from = pcm_conn_redirect_norm_path((string) ($r['from'] ?? ''));
+        $to   = esc_url_raw((string) ($r['to'] ?? ''));
+        $code = (int) ($r['code'] ?? 301);
+        // Never the front page, never empty/unsafe targets, one rule per path.
+        if ($from === '/' || $to === '' || isset($seen[$from])) { continue; }
+        $seen[$from] = true;
+        $clean[] = array('from' => $from, 'to' => $to, 'code' => in_array($code, array(301, 302, 307, 308), true) ? $code : 301);
+    }
+    return $clean;
+}
+add_action('template_redirect', function () {
+    if (!is_404()) { return; } // only URLs WordPress can no longer answer
+    if (get_option('pcm_conn_rules_off') === '1') { return; } // same kill switch as rules
+    $store = get_option('pcm_conn_redirects', array());
+    if (!is_array($store) || empty($store)) { return; }
+    $hit = pcm_conn_redirect_match((string) ($_SERVER['REQUEST_URI'] ?? ''), $store);
+    if ($hit === null) { return; }
+    wp_redirect($hit['to'], $hit['code'], 'pcm-connector');
+    exit;
+}, 0);
+add_action('rest_api_init', function () {
+    $perm = function () { return current_user_can('manage_options'); };
+    // GET's existence = the hub's capability handle (honest 404 pre-3.0.5).
+    register_rest_route('pcm-conn/v1', '/redirects', array(
+        array('methods' => 'GET', 'permission_callback' => $perm, 'callback' => function () {
+            $store = get_option('pcm_conn_redirects', array());
+            return array('supported' => true, 'redirects' => is_array($store) ? array_values($store) : array());
+        }),
+        array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) {
+            $p     = $req->get_json_params();
+            $clean = pcm_conn_redirect_sanitize(is_array($p) ? ($p['redirects'] ?? array()) : array());
+            if (empty($clean)) { delete_option('pcm_conn_redirects'); }
+            else { update_option('pcm_conn_redirects', $clean, true); } // autoloaded: read on 404s
+            return array('stored' => count($clean));
+        }),
+    ));
+    // Site-wide "who links to this URL" (powers the hub's update-N-internal-links
+    // offer). Plain-text LIKE over content + custom fields — the same surface the
+    // universal replace pass edits; base64-stored builder data (Brizy) is invisible
+    // to SEARCH but still handled by replace when its post is found another way.
+    register_rest_route('pcm-conn/v1', '/url-usage', array(
+        'methods' => 'GET', 'permission_callback' => $perm, 'callback' => function ($req) {
+            global $wpdb;
+            $url = trim((string) $req->get_param('url'));
+            if ($url === '') { return new WP_REST_Response(array('error' => 'bad_params'), 400); }
+            $like = '%' . $wpdb->esc_like($url) . '%';
+            $ids  = array_map('intval', (array) $wpdb->get_col($wpdb->prepare(
+                "SELECT ID FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_type NOT IN ('revision','attachment','nav_menu_item') AND post_content LIKE %s LIMIT 50",
+                $like
+            )));
+            $meta_ids = array_map('intval', (array) $wpdb->get_col($wpdb->prepare(
+                "SELECT DISTINCT pm.post_id FROM {$wpdb->postmeta} pm INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                 WHERE p.post_status = 'publish' AND p.post_type NOT IN ('revision','attachment','nav_menu_item') AND pm.meta_value LIKE %s LIMIT 50",
+                $like
+            )));
+            $posts = array();
+            foreach (array_unique(array_merge($ids, $meta_ids)) as $pid) {
+                $post = get_post($pid);
+                if (!$post) { continue; }
+                $posts[] = array(
+                    'id'    => $pid,
+                    'title' => (string) $post->post_title,
+                    'count' => max(1, substr_count((string) $post->post_content, $url)),
+                );
+            }
+            return array('url' => $url, 'posts' => $posts, 'total' => array_sum(array_column($posts, 'count')));
+        },
+    ));
+});
+
+// Rules API: GET = capability answer + a post's rules & counters; POST = replace
+// a post's (or the SITE's, postId 0) rule set — schema-validated, rejected honestly.
+add_action('rest_api_init', function () {
+    $perm = function () { return current_user_can('manage_options'); };
+    register_rest_route('pcm-conn/v1', '/rules', array(
+        array('methods' => 'GET', 'permission_callback' => $perm, 'callback' => function ($req) {
+            $pid = absint($req->get_param('post_id'));
+            if (!$pid) {
+                $idx = get_option('pcm_conn_rules_index', array());
+                return array(
+                    'supported'     => true,
+                    'schemaVersion' => 5,
+                    'posts'         => is_array($idx) ? array_map('intval', $idx) : array(),
+                    'siteRules'     => pcm_conn_rules_site(),
+                    'killSwitch'    => get_option('pcm_conn_rules_off') === '1',
+                );
+            }
+            return array(
+                'supported'     => true,
+                'schemaVersion' => 5,
+                'rules'         => pcm_conn_rules_for($pid),
+                'stats'         => (array) get_option('pcm_conn_rules_stats_' . $pid, array()),
+            );
+        }),
+        array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) {
+            $p = $req->get_json_params();
+            $schema = is_array($p) ? (int) ($p['schemaVersion'] ?? 0) : 0;
+            if ($schema < 1 || $schema > 5) {
+                return new WP_REST_Response(array('error' => 'unsupported_schema', 'accepts' => 5), 400);
+            }
+            $pid = absint($p['postId'] ?? 0);
+            $site_scope = ($pid === 0 && $schema >= 3 && array_key_exists('postId', (array) $p));
+            if (!$site_scope && (!$pid || !get_post($pid))) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            // v2 adds the section targets; v3 adds SERVED heading rules + site
+            // scope; v4 adds the image target (attr rewrite only); v5 adds
+            // sectionRemove + the image hidden flag. A v1..v4 payload keeps
+            // exactly its old shape. Site scope accepts ONLY heading targets
+            // (a site-wide paragraph/section rule is undefined).
+            if ($schema >= 2) {
+                $targets = array('paragraph', 'heading', 'anchorText', 'href', 'section', 'sectionInsert');
+            } else {
+                $targets = array('paragraph', 'heading', 'anchorText', 'href');
+            }
+            if ($schema >= 4) { $targets[] = 'image'; }
+            if ($schema >= 5) { $targets[] = 'sectionRemove'; }
+            if ($site_scope) { $targets = array('heading'); }
+            $clean = array();
+            foreach ((array) ($p['rules'] ?? array()) as $r) {
+                if (!is_array($r)) { continue; }
+                $target = (string) ($r['target'] ?? '');
+                if (!in_array($target, $targets, true)) { continue; }
+                $row = array(
+                    'id'             => (int) ($r['id'] ?? 0),
+                    'target'         => $target,
+                    'match'          => array(
+                        // Image identity is a URL (case/query significant) —
+                        // src normalization, never the text fold.
+                        'text'       => $target === 'image'
+                            ? pcm_conn_normalize_src((string) ($r['match']['text'] ?? ''))
+                            : pcm_conn_normalize_text((string) ($r['match']['text'] ?? '')),
+                        'occurrence' => (int) ($r['match']['occurrence'] ?? 0),
+                    ),
+                    'replacement'    => wp_kses_post((string) ($r['replacement'] ?? '')),
+                    'active'         => !empty($r['active']),
+                    'changesetId'    => isset($r['changesetId']) ? (int) $r['changesetId'] : null,
+                    'sourceChangeId' => isset($r['sourceChangeId']) ? (int) $r['sourceChangeId'] : null,
+                    'anchor'         => (isset($r['anchor']) && is_array($r['anchor'])) ? $r['anchor'] : null,
+                );
+                if ($target === 'image') {
+                    // Whitelist + re-encode: replacement is EXACTLY {alt?,title?,hidden?}.
+                    // `hidden` exists only in schema 5 (a 3.0.2 hub payload never carries it).
+                    $set = json_decode((string) ($r['replacement'] ?? ''), true);
+                    $set = is_array($set) ? $set : array();
+                    $img = array();
+                    foreach (array('alt', 'title') as $a) {
+                        if (array_key_exists($a, $set)) { $img[$a] = sanitize_text_field((string) $set[$a]); }
+                    }
+                    if ($schema >= 5 && !empty($set['hidden'])) { $img = array('hidden' => true); }
+                    if (empty($img)) { continue; } // nothing rewritable — not a rule
+                    $row['replacement'] = (string) wp_json_encode($img);
+                }
+                if ($target === 'section' || $target === 'sectionInsert' || $target === 'sectionRemove' || ($target === 'heading' && $schema >= 3)) {
+                    $sec = (isset($r['section']) && is_array($r['section'])) ? $r['section'] : array();
+                    $row['section'] = array('level' => max(0, min(6, (int) ($sec['level'] ?? 0))));
+                    if ($target === 'section' || $target === 'sectionRemove') {
+                        // Fingerprint is stored as-is: the hub computed it via the SAME
+                        // normalization (harness-pinned) — re-normalizing per line here
+                        // would be redundant, and the compare side normalizes live text.
+                        $row['section']['fingerprint'] = (string) ($sec['fingerprint'] ?? '');
+                        if ($target === 'sectionRemove') { $row['replacement'] = ''; } // removal carries no content
+                    } elseif ($target === 'sectionInsert') {
+                        $row['section']['position'] = ((string) ($sec['position'] ?? 'after')) === 'before' ? 'before' : 'after';
+                    } else {
+                        // Heading instruction (v2.2): allOccurrences keeps the
+                        // compiled-override semantics; else occurrence-targeted.
+                        $row['section']['newLevel']       = max(1, min(6, (int) ($sec['newLevel'] ?? ($sec['level'] ?? 2))));
+                        $row['section']['allOccurrences'] = !empty($sec['allOccurrences']);
+                        $row['section']['frameOnly']      = !empty($sec['frameOnly']);
+                        $row['replacement'] = sanitize_text_field((string) ($r['replacement'] ?? ''));
+                    }
+                }
+                $clean[] = $row;
+            }
+            update_option('pcm_conn_view_ver', (int) get_option('pcm_conn_view_ver', 0) + 1, false); // served views are stale
+            if ($site_scope) {
+                if (empty($clean)) { delete_option('pcm_conn_rules_site'); }
+                else { update_option('pcm_conn_rules_site', array_values($clean), true); }
+                return array('stored' => count($clean), 'schemaVersion' => 3, 'scope' => 'site');
+            }
+            pcm_conn_rules_save($pid, $clean);
+            delete_transient('pcm_conn_snap_' . $pid); // rules changed → snapshot cache is stale
+            pcm_conn_purge_caches($pid);
+            return array('stored' => count($clean), 'schemaVersion' => 1);
+        }),
+    ));
+    // Page snapshot v1 (3.0.0 — replaces BOTH scanners' parsing): the connector
+    // does NOT parse — the hub does all of it from this one document. TWO views
+    // (v2.2): mode=input (default) = the page as RULES-INPUT (?pcm_snap is
+    // serving-excluded — exactly what rules match against); mode=served = what
+    // a visitor sees (?pcm_view is NOT excluded, rules apply). Tiers preserved
+    // verbatim from scan-content (WAF/host survival): rendered loopback →
+    // in-process the_content → raw storage + wpautop → honest loopback_blocked.
+    // Served-mode tier-2/3 fallbacks apply the stored rules to the fallback
+    // render so WAF-blocked sites stay honest.
+    register_rest_route('pcm-conn/v1', '/snapshot', array(
+        'methods' => 'GET',
+        'permission_callback' => $perm,
+        'callback' => function ($req) {
+            $pid = absint($req->get_param('post_id'));
+            if (!$pid || !get_post($pid)) { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            $served = ((string) $req->get_param('mode')) === 'served';
+            // Cache first: repeat outline-opens must not cost a loopback.
+            // Input view busts on save_post + the post's rules push. The SERVED
+            // view is version-stamped instead: ANY rules push (site rules touch
+            // every page) bumps pcm_conn_view_ver, old entries expire by TTL.
+            $cache_key = $served
+                ? 'pcm_conn_snap_served_' . (int) get_option('pcm_conn_view_ver', 0) . '_' . $pid
+                : 'pcm_conn_snap_' . $pid;
+            $cached = get_transient($cache_key);
+            if (is_array($cached)) { return $cached; }
+            $result = null;
+            // Tier 1 — rendered page via the LOCKED loopback (TRUE serving order,
+            // incl. builder output).
+            $live = $served
+                ? pcm_conn_loopback_fetch($pid, 'pcm_view', 'snapshot-served')
+                : pcm_conn_loopback_fetch($pid, 'pcm_snap', 'snapshot');
+            if ($live !== '') {
+                $result = array('html' => $live, 'tier' => 'rendered');
+            } else {
+                // Tier 2 — in-process render via the_content (Divi/WPBakery/shortcode
+                // builders hook it; no HTTP, no workers consumed). Fail-safe to tier 3.
+                $html = '';
+                try {
+                    $html = (string) apply_filters('the_content', (string) get_post($pid)->post_content);
+                } catch (\Throwable $e) {
+                    $html = '';
+                }
+                if (trim($html) !== '') {
+                    $result = array('html' => $html, 'tier' => 'content-rendered');
+                } else {
+                    // Tier 3 — raw storage (wpautop for classic content): plain WP/Gutenberg.
+                    // NOTE (documented limitation): tier-2/3 document order can differ from
+                    // rendered order in edge cases — the serving stale-flag is the safety
+                    // net; never a wrong swap, at worst a flagged miss.
+                    $raw = (string) get_post($pid)->post_content;
+                    if (stripos($raw, '<p') === false && trim($raw) !== '') { $raw = wpautop($raw); }
+                    $result = array('html' => $raw, 'tier' => 'content');
+                    if (trim($raw) === '') {
+                        // Loopback failed AND storage has nothing — say exactly that.
+                        $result['error'] = 'loopback_blocked';
+                    }
+                }
+                if ($served && trim((string) $result['html']) !== '' && get_option('pcm_conn_rules_off') !== '1') {
+                    try {
+                        $result['html'] = pcm_conn_apply_rules((string) $result['html'], array_merge(pcm_conn_rules_site(), pcm_conn_rules_for($pid)), $pid);
+                    } catch (\Throwable $e) {
+                        // Fail-to-fallback-render — a display view must never error.
+                    }
+                }
+            }
+            // Explicit view marker: a pre-3.0.1 connector ignores ?mode and would
+            // answer with the INPUT view — the hub requires this marker before
+            // trusting a response as served.
+            $result['view'] = $served ? 'served' : 'input';
+            set_transient($cache_key, $result, max(1, (int) pcm_conn_cfg('snapshotCacheTtl')));
+            return $result;
+        },
+    ));
+});
 PHP;
-        return str_replace(
-            array('__HUB_URL__', '__CLIENT_ID__', '__CLIENT_SECRET__'),
-            array($hub_url, $client_id, $secret),
-            $tpl
-        );
     }
 }

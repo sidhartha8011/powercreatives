@@ -711,6 +711,82 @@ class PCM_Schema
             KEY userId (userId)
         ) $charset_collate;";
         dbDelta($sql);
+
+        // ── SEO Dynamic Rules (v1.37.0) ──
+        // The hub's source of truth for render-time content rules served by the
+        // connector (rule schema v1 — docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md).
+        // A rule swaps ONE block's visible text on ONE remote post at render
+        // time; matchText is stored ALREADY normalized (normalization spec v1).
+        // changesetId is NULLABLE ON PURPOSE: the approval/version machine
+        // (pair 5) groups rules into changesets — the column exists from day
+        // one so that lands additively, never as a migration of meaning.
+        $sql = "CREATE TABLE {$prefix}seo_dynamic_rules (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            siteId int(11) NOT NULL,
+            postId int(11) NOT NULL,
+            target varchar(20) DEFAULT 'paragraph' NOT NULL,
+            matchText text NOT NULL,
+            occurrence int(11) DEFAULT 0 NOT NULL,
+            replacement longtext NOT NULL,
+            anchorContext text DEFAULT NULL,
+            active tinyint(1) DEFAULT 1 NOT NULL,
+            staleCount int(11) DEFAULT 0 NOT NULL,
+            changesetId bigint(20) unsigned DEFAULT NULL,
+            sourceChangeId bigint(20) unsigned DEFAULT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_site_post (siteId, postId),
+            KEY idx_changesetId (changesetId),
+            KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // ── SEO section version history (DB 1.38.0) ──
+        // One row per ACCEPTED save — the editors' version dropdowns. Keyed by
+        // IDENTITY (target + matchText + occurrence), NOT the rule id: a clean
+        // revert DELETES the rule row, and history must survive it. Targets:
+        // 'section' (matchText = heading key) and 'page' (matchText = '',
+        // replacement = the whole page document as saved).
+        // "Original" is never stored — it is always read live from the scan.
+        // NOT the changeset system (phase 2 deployment grouping) — this is
+        // pure per-section edit history; the two layers stay separate.
+        $sql = "CREATE TABLE {$prefix}seo_rule_versions (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            siteId int(11) NOT NULL,
+            postId int(11) NOT NULL,
+            target varchar(20) DEFAULT 'section' NOT NULL,
+            matchText text NOT NULL,
+            occurrence int(11) DEFAULT 0 NOT NULL,
+            replacement longtext NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_section (siteId, postId),
+            KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // ── SEO slug-change redirects (DB 1.39.0) ──
+        // Hub-owned store; the connector serves a pushed COPY (full-set replace,
+        // same law as rules). UPSERT identity = siteId + fromPath (normalized via
+        // PCM_Text_Matcher::normalize_path — harness-pinned to the connector's
+        // matcher). code is whitelisted 301/302/307/308 at every boundary.
+        $sql = "CREATE TABLE {$prefix}seo_redirects (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            siteId int(11) NOT NULL,
+            fromPath text NOT NULL,
+            toUrl text NOT NULL,
+            code smallint(5) unsigned DEFAULT 301 NOT NULL,
+            active tinyint(1) DEFAULT 1 NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_site (siteId),
+            KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
     }
 
     /**
@@ -1133,6 +1209,7 @@ class PCM_Schema
             'approval_sets',
             'notifications',
             'seo_views',
+            'seo_dynamic_rules',
             'seo_tenants',
             'seo_hmac_nonces',
             'delivery_assignments',

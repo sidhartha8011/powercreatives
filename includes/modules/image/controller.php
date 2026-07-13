@@ -25,6 +25,7 @@ if (!defined('ABSPATH')) {
 
 class PCM_REST_Image extends PCM_REST_Base
 {
+    // BEFORE UPLOAD ROUTE MISMATCH FIX
     // Work module — usable by non-admin team members (assigned access).
     protected string $default_capability = 'edit_posts';
     // Per-delivery module grant ids (see PCM_REST_Base::$module_grant_keys).
@@ -70,6 +71,7 @@ class PCM_REST_Image extends PCM_REST_Base
                 array('POST', '/image/suggestions', 'generate_suggestions'),
                 array('POST', '/image/context-suggestions', 'generate_context_suggestions'),
                 array('POST', '/image/optimize-brief', 'optimize_brief'),
+                array('POST', '/image/session-upload', 'session_upload'),
         );
     }
 
@@ -648,5 +650,62 @@ class PCM_REST_Image extends PCM_REST_Base
         catch (\Exception $e) {
             return $this->error($e->getMessage(), 500, 'pcm_optimize_error');
         }
+    }
+
+    /**
+     * POST /image/session-upload — Upload a session-only reference image.
+     *
+     * Input: { fileData, filename, mimeType }
+     *
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response
+     */
+    public function session_upload(WP_REST_Request $request): WP_REST_Response
+    {
+        // 1. Authorization Capability Check
+        if (!current_user_can($this->default_capability)) {
+            return $this->error('Unauthorized to upload files.', 403, 'pcm_unauthorized_upload');
+        }
+
+        $params = $request->get_json_params() ?? array();
+        $file_data = $params['fileData'] ?? '';
+        $filename  = sanitize_file_name($params['filename'] ?? '');
+        $mime_type = sanitize_text_field($params['mimeType'] ?? '');
+
+        if (empty($file_data) || empty($filename)) {
+            return $this->error('Missing file data or filename.', 400, 'pcm_missing_upload_params');
+        }
+
+        // 2. Validate MIME type and file extension safety
+        $wp_filetype = wp_check_filetype($filename);
+        $allowed_mimes = array(
+            'jpg'  => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png'  => 'image/png',
+            'webp' => 'image/webp',
+            'gif'  => 'image/gif'
+        );
+
+        if (!in_array($wp_filetype['type'], $allowed_mimes, true) || !in_array($mime_type, $allowed_mimes, true)) {
+            return $this->error('Unsupported file format. Please upload JPEG, PNG, WebP, or GIF.', 400, 'pcm_invalid_file_type');
+        }
+
+        // 3. Decode base64 contents
+        $decoded = base64_decode($file_data);
+        if ($decoded === false) {
+            return $this->error('Invalid base64 encoding.', 400, 'pcm_invalid_base64');
+        }
+
+        // 4. Safe write using WordPress core wp_upload_bits()
+        $upload = wp_upload_bits($filename, null, $decoded);
+
+        if (!empty($upload['error'])) {
+            return $this->error($upload['error'], 500, 'pcm_upload_write_failed');
+        }
+
+        return $this->success(array(
+            'url'      => $upload['url'],
+            'filename' => $filename,
+        ));
     }
 }

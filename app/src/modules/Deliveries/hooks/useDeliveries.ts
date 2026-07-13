@@ -69,6 +69,19 @@ export interface UseDeliveriesResult {
   updateDelivery: (input: UpdateDeliveryInput) => Promise<Delivery>;
   /** Move a delivery to a new status (optimistic). Resolves on server ack. */
   updateStatus: (id: number, next: DeliveryStatus) => Promise<void>;
+  /**
+   * Optimistically patch editable fields (the dynamic-lane DnD path for
+   * type/brand/client lanes). Same flushSync contract as updateStatus.
+   */
+  updateFieldsOptimistic: (
+    id: number,
+    fields: { type?: string | null; brandId?: number | null; clientName?: string | null }
+  ) => Promise<void>;
+  /**
+   * Optimistically set the delivery's lead (the dynamic-lane DnD path for
+   * lead lanes). Patches assignees in cache, then PATCH /deliveries/{id}/lead.
+   */
+  setLeadOptimistic: (id: number, userId: number | null, userName: string | null) => Promise<void>;
   /** Delete a single delivery (optimistic). Resolves on server ack. */
   deleteDelivery: (id: number) => Promise<void>;
 }
@@ -211,6 +224,88 @@ export function useDeliveries(): UseDeliveriesResult {
     [queryClient, statusMutation]
   );
 
+  // Dynamic-lane drops (type/brand/client) — same synchronous optimistic
+  // write as updateStatus so @hello-pangea/dnd's IDLE paint never snaps the
+  // card back; the server re-normalizes (e.g. a type change re-applies the
+  // module preset), so ack is followed by an invalidate.
+  const fieldsMutation = trpc.deliveries.update.useMutation();
+  const updateFieldsOptimistic = useCallback(
+    (
+      id: number,
+      fields: { type?: string | null; brandId?: number | null; clientName?: string | null }
+    ): Promise<void> => {
+      const filter = { queryKey: LIST_QUERY_PREFIX } as const;
+      const snapshots = queryClient.getQueriesData<Delivery[]>(filter);
+
+      flushSync(() => {
+        queryClient.setQueriesData<Delivery[]>(filter, (prev) => {
+          if (!prev) return prev;
+          return prev.map((d) => (Number(d.id) === id ? { ...d, ...fields } : d));
+        });
+      });
+
+      return fieldsMutation
+        .mutateAsync({ id, ...fields })
+        .then(() => {
+          void invalidateList();
+        })
+        .catch((err: unknown) => {
+          flushSync(() => {
+            for (const [key, data] of snapshots) {
+              if (data !== undefined) queryClient.setQueryData(key, data);
+            }
+          });
+          toast.error(err instanceof Error ? err.message : 'Failed to move delivery');
+          throw err;
+        });
+    },
+    [queryClient, fieldsMutation, invalidateList]
+  );
+
+  // Lead-lane drops — optimistic assignees patch (demote current lead, mark
+  // the target user lead; append if not yet assigned), then the lead route.
+  const leadMutation = trpc.deliveries.setLead.useMutation();
+  const setLeadOptimistic = useCallback(
+    (id: number, userId: number | null, userName: string | null): Promise<void> => {
+      const filter = { queryKey: LIST_QUERY_PREFIX } as const;
+      const snapshots = queryClient.getQueriesData<Delivery[]>(filter);
+
+      flushSync(() => {
+        queryClient.setQueriesData<Delivery[]>(filter, (prev) => {
+          if (!prev) return prev;
+          return prev.map((d) => {
+            if (Number(d.id) !== id) return d;
+            const demoted = (d.assignees ?? []).map((a) =>
+              a.role === 'lead' ? { ...a, role: 'member' } : a
+            );
+            if (userId == null) return { ...d, assignees: demoted };
+            const existing = demoted.find((a) => Number(a.id) === userId);
+            const assignees = existing
+              ? demoted.map((a) => (Number(a.id) === userId ? { ...a, role: 'lead' } : a))
+              : [...demoted, { id: userId, name: userName ?? `User #${userId}`, role: 'lead' }];
+            return { ...d, assignees };
+          });
+        });
+      });
+
+      return leadMutation
+        .mutateAsync({ id, userId })
+        .then(() => {
+          void invalidateList();
+        })
+        .catch((err: unknown) => {
+          flushSync(() => {
+            for (const [key, data] of snapshots) {
+              if (data !== undefined) queryClient.setQueryData(key, data);
+            }
+          });
+          toast.error(err instanceof Error ? err.message : 'Failed to set the lead');
+          throw err;
+        });
+    },
+    [queryClient, leadMutation, invalidateList]
+  );
+
   const deleteDelivery = useCallback(
     (id: number): Promise<void> => {
       const filter = { queryKey: LIST_QUERY_PREFIX } as const;
@@ -249,6 +344,8 @@ export function useDeliveries(): UseDeliveriesResult {
     createDelivery,
     updateDelivery,
     updateStatus,
+    updateFieldsOptimistic,
+    setLeadOptimistic,
     deleteDelivery,
   };
 }

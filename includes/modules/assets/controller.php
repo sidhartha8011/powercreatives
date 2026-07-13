@@ -63,6 +63,9 @@ class PCM_REST_Assets extends PCM_REST_Base
                 array('POST', '/assets/projects/(?P<id>\d+)/duplicate', 'duplicate_project'),
                 array('PATCH', '/assets/projects/(?P<id>\d+)/delivery', 'set_project_delivery'),
                 array('PATCH', '/assets/projects/(?P<id>\d+)/site', 'set_project_site'),
+                // Register already-uploaded media-library images as project
+                // image assets (the create-project dialog's upload step).
+                array('POST',  '/assets/projects/(?P<id>\d+)/images', 'add_project_images'),
         );
     }
 
@@ -577,6 +580,65 @@ class PCM_REST_Assets extends PCM_REST_Base
      *
      * Body: { name: string }
      */
+    /**
+     * Register uploaded images as project assets.
+     *
+     * Body: { urls: string[] } — media-library URLs picked via wp.media (the
+     * upload itself already happened through WordPress). Each URL becomes an
+     * `assets` row (type 'image') owned by the caller, linked to the project.
+     *
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response|WP_Error
+     */
+    public function add_project_images(WP_REST_Request $request)
+    {
+        global $wpdb;
+
+        $user = $this->get_current_pcm_user();
+        $id   = (int) $request->get_param('id');
+
+        $table = PCM_Schema::table('projects');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $project = $wpdb->get_row($wpdb->prepare(
+            "SELECT id FROM $table WHERE id = %d AND userId = %d",
+            $id,
+            $user->id
+        ));
+        if (!$project) {
+            return $this->not_found('Project');
+        }
+
+        $params = $request->get_json_params() ?: array();
+        $urls   = isset($params['urls']) && is_array($params['urls']) ? $params['urls'] : array();
+        // Sane cap — the dialog picks from the media library, not a bulk importer.
+        $urls = array_slice($urls, 0, 50);
+
+        $asset_table = PCM_Schema::table('assets');
+        $now      = current_time('mysql');
+        $inserted = 0;
+        foreach ($urls as $raw_url) {
+            $url = esc_url_raw((string) $raw_url);
+            if ($url === '') {
+                continue;
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->insert($asset_table, array(
+                'projectId' => $id,
+                'userId'    => (int) $user->id,
+                'type'      => 'image',
+                'url'       => $url,
+                'provider'  => 'upload',
+                'metadata'  => wp_json_encode(array('source' => 'media-library')),
+                'createdAt' => $now,
+            ), array('%d', '%d', '%s', '%s', '%s', '%s', '%s'));
+            if ($wpdb->insert_id) {
+                $inserted++;
+            }
+        }
+
+        return $this->success(array('inserted' => $inserted));
+    }
+
     public function rename_project(WP_REST_Request $request)
     {
         global $wpdb;

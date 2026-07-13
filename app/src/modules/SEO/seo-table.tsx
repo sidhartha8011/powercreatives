@@ -11,6 +11,7 @@
 
 import { useState, type KeyboardEvent, type TableHTMLAttributes, type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes } from 'react';
 import { Input } from '@/components/ui/input';
+import { CELL_EDIT_INPUT, CELL_EMPTY_TEXT, CELL_VIEW_TEXT } from '@/components/ui/table-cell-recipes';
 
 /** Gridlines on every cell, compact h-9 single-line cells, and a sticky header row. */
 export const SEO_TABLE_GRID =
@@ -46,16 +47,16 @@ export function EditableTextCell({ value, placeholder, onSave }: {
     if (e.key === 'Escape') { setDraft(value); setEditing(false); }
   };
   if (editing) {
-    return <Input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={onKey} className="h-7 text-xs" />;
+    return <Input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={onKey} className={CELL_EDIT_INPUT} />;
   }
   return (
     <button
       type="button"
       onClick={() => { setDraft(value); setEditing(true); }}
-      className="block w-full min-w-0 truncate text-left text-xs leading-snug hover:underline decoration-dotted"
+      className={CELL_VIEW_TEXT}
       title={value || placeholder}
     >
-      {value || <span className="text-muted-foreground/60">{placeholder ?? '—'}</span>}
+      {value || <span className={CELL_EMPTY_TEXT}>{placeholder ?? '—'}</span>}
     </button>
   );
 }

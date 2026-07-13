@@ -42,12 +42,23 @@ function SelectTrigger({
   className,
   variant,
   size = "default",
+  asChild = false,
   children,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Trigger> &
   VariantProps<typeof selectTriggerVariants> & {
     size?: "sm" | "default";
   }) {
+  // asChild: COMPOSITION escape hatch — the trigger lends its behavior to the
+  // single child element (e.g. a Pill) and renders NO chrome of its own; the
+  // child owns its entire look, chevron included. No base-style overrides.
+  if (asChild) {
+    return (
+      <SelectPrimitive.Trigger data-slot="select-trigger" asChild {...props}>
+        {children}
+      </SelectPrimitive.Trigger>
+    );
+  }
   return (
     <SelectPrimitive.Trigger
       data-slot="select-trigger"

@@ -1,5 +1,7 @@
 /**
- * USE ADS ORCHESTRATION HOOK
+ * BEFORE ADS ORCHESTRATION FALLBACK FIX
+ *
+ * ADS ORCHESTRATION HOOK
  *
  * Central orchestrator for the Ads module. Manages the full pipeline:
  *   1. Text phase:  POST /copy/generate (SSE) → TextSlot[]
@@ -281,7 +283,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       try {
         const optimized = await optimizeBriefMutation.mutateAsync({
           brief: brief,
-          modelId: settings?.defaultImageTextModel || '',
+          modelId: settings?.defaultImageTextModel || settings?.defaultCopyMenuIntelligence || params.textModelId || '',
           brandContext: brandCtx,
         });
         briefToUse = (optimized as any).optimizedBrief ?? brief;
@@ -308,7 +310,7 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
         const conceptsResult = await generateConceptsMutation.mutateAsync({
           prompt: briefToUse,
           count: params.numVersions - 1,
-          modelId: settings?.defaultImageTextModel || '',
+          modelId: settings?.defaultImageTextModel || settings?.defaultCopyMenuIntelligence || params.textModelId || '',
           brandContext: brandCtx,
           referenceImages: toggles.useReferenceSubjects
             ? sessionReferenceImages.map((img) => ({ url: img.url, intent: img.intent }))
@@ -494,17 +496,29 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
       toast.error('Please enter a creative brief');
       return;
     }
-    if (!params.textModelId) {
+
+    const runCopy = params.copyTypes && params.copyTypes.length > 0;
+    const runImage = params.imageModelIds && params.imageModelIds.length > 0;
+    const runVideo = !!params.videoModelId;
+
+    if (!runCopy && !runImage && !runVideo) {
+      toast.error('Please enable at least one output type (Copy, Image, or Video)');
+      return;
+    }
+
+    if (runCopy && !params.textModelId) {
       toast.error('Please select a text model');
       return;
     }
-    if (params.imageModelIds.length === 0) {
+
+    if (runImage && params.imageModelIds.length === 0) {
       toast.error('Please select at least one image model');
       return;
     }
-    if (params.autoOptimizeBrief || params.numVersions > 1) {
-      if (!settings?.defaultImageTextModel) {
-        toast.error('Menu Intelligence saknas. Välj en modell i Settings → Module Defaults.');
+
+    if ((runCopy || runImage) && (params.autoOptimizeBrief || params.numVersions > 1)) {
+      if (!settings?.defaultImageTextModel && !settings?.defaultCopyMenuIntelligence && !params.textModelId) {
+        toast.error('Menu Intelligence saknas. Vänligen välj en textmodell i sidopanelen eller ställ in en standardmodell (t.ex. under Image Module eller Copy Module) i Inställningar → Module Defaults.');
         return;
       }
     }
@@ -520,30 +534,41 @@ export function useAdsOrchestration(): UseAdsOrchestrationReturn {
     abortRef.current = controller;
 
     try {
-      // Phase 1: Generate text
-      const texts = await runTextPhase(params, controller.signal);
-
-      if (texts.length === 0) {
-        throw new Error('No copy was generated. Check your text model and try again.');
+      let texts: TextSlot[] = [];
+      // Phase 1: Generate text (only if Copy is enabled)
+      if (runCopy) {
+        texts = await runTextPhase(params, controller.signal);
+        if (texts.length === 0) {
+          throw new Error('No copy was generated. Check your text model and try again.');
+        }
       }
 
-      // Phase 2: Generate images
-      const images = await runImagePhase(params, controller.signal);
-
-      if (images.length === 0) {
-        throw new Error('No images were generated. Check your image models and try again.');
+      let images: any[] = [];
+      // Phase 2: Generate images (only if Image is enabled)
+      if (runImage) {
+        images = await runImagePhase(params, controller.signal);
+        if (images.length === 0) {
+          throw new Error('No images were generated. Check your image models and try again.');
+        }
       }
 
       // Composition phase removed - assets are kept decoupled
 
       // Phase 4: Video (fishbone — skip for now)
-      // if (params.videoModelId) {
+      // if (runVideo) {
       //   composed = await runVideoPhase(composed, params.videoModelId, controller.signal);
       //   setCreatives(composed);
       // }
 
       setPhase('complete');
-      toast.success(`${images.length} visuals and ${texts.length} copy variants generated!`);
+      
+      if (runCopy && runImage) {
+        toast.success(`${images.length} visuals and ${texts.length} copy variants generated!`);
+      } else if (runCopy) {
+        toast.success(`${texts.length} copy variants generated!`);
+      } else if (runImage) {
+        toast.success(`${images.length} visuals generated!`);
+      }
     } catch (err) {
       if (controller.signal.aborted) return; // User cancelled
 

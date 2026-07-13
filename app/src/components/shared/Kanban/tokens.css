@@ -48,16 +48,16 @@
 
   /* ── Spacing ── */
   --pck-gap-board:        8px;
-  --pck-gap-column:       6px;
+  --pck-gap-column:       4px;
 
   /* ── Lane (column container) ── */
   --pck-lane-width:       240px;
-  --pck-lane-padding:     8px;
+  --pck-lane-padding:     6px;
 
-  /* ── Card sizing ── */
-  --pck-card-min-h:       32px;
-  --pck-card-pad-y:       6px;
-  --pck-card-pad-x:       10px;
+  /* ── Card sizing (compact per PO 2026-07-07 — one line, tight) ── */
+  --pck-card-min-h:       28px;
+  --pck-card-pad-y:       4px;
+  --pck-card-pad-x:       8px;
 
   /* ── Pill (hugs text, inline) ── */
   --pck-pill-pad-y:       2px;
@@ -70,7 +70,7 @@
 
   /* ── Radii ── */
   --pck-radius-sm:        6px;
-  --pck-radius-card:      10px;
+  --pck-radius-card:      8px;
   --pck-radius-column:    10px;
   --pck-radius-pill:      999px;
   --pck-radius-input:     8px;

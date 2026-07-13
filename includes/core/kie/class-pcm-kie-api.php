@@ -65,6 +65,7 @@ class PCM_Kie_Api {
         }
 
         if ( isset( self::DEDICATED_MODELS[ $model_id ] ) ) {
+            $params['model_id'] = $model_id;
             return self::create_dedicated_task( $api_key, self::DEDICATED_MODELS[ $model_id ], $params );
         }
 

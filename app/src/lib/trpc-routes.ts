@@ -335,6 +335,16 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `sites/${input.id}/gsc-preview` }),
     },
     "sites.updateConnectors": { endpoint: "sites/update-connectors", method: "POST" },
+    "sites.connectorVersion": {
+        endpoint: "sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `sites/${input.id}/connector-version` }),
+    },
+    "sites.updateConnector": {
+        endpoint: "sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `sites/${input.id}/update-connector` }),
+    },
     "sites.test": {
         endpoint: "sites",
         method: "POST",
@@ -419,6 +429,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `seo/content/${input.id}/headings` }),
     },
+    "seo.getContentNodes": {
+        endpoint: "seo/content",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/content-nodes` }),
+    },
     "seo.updateHeading": {
         endpoint: "seo/content",
         method: "POST",
@@ -430,6 +445,94 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `seo/content/${input.id}/headings/${input.index}/optimize`, body: { text: input.text, brandId: input.brandId, model: input.model, provider: input.provider, templateId: input.templateId } }),
     },
     // ── Heading editor — remote (connected sites) ──
+    "seo.remoteGetInventory": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/inventory?type=${input.type ?? 'post'}` }),
+    },
+    "seo.remoteGetContentNodes": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/content-nodes` }),
+    },
+    "seo.remoteMigrateOverrides": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/migrate-overrides`, body: {} }),
+    },
+    "seo.remotePushConfig": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/push-config`, body: {} }),
+    },
+    "seo.remoteGetParagraphRules": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/rules` }),
+    },
+    // ── Section editor (contracts v2) — remote (connected sites) ──
+    // (paragraph-rule / paragraph-optimize routes deleted 2026-07-11 — dead
+    //  creation paths; the page + section editors superseded them.)
+    "seo.remoteSaveSectionRule": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-rule`, body: { kind: input.kind, headingText: input.headingText, headingLevel: input.headingLevel, headingOccurrence: input.headingOccurrence, paragraphs: input.paragraphs, anchorText: input.anchorText, anchorLevel: input.anchorLevel, anchorOccurrence: input.anchorOccurrence, position: input.position, ruleId: input.ruleId, unitFrom: input.unitFrom, unitTo: input.unitTo, replacement: input.replacement } }),
+    },
+    "seo.remoteSectionVersions": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-versions?text=${encodeURIComponent(input.text)}&occurrence=${input.occurrence ?? 0}` }),
+    },
+    "seo.remoteUploadMedia": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/media`, body: { url: input.url } }),
+    },
+    "seo.remoteRedirects": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/redirects` }),
+    },
+    "seo.remoteSaveRedirect": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/redirects`, body: { from: input.from, to: input.to, code: input.code, updateLinks: input.updateLinks } }),
+    },
+    "seo.remoteDeleteRedirect": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/redirects/${input.redirectId}/delete` }),
+    },
+    "seo.remoteUrlUsage": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/url-usage?url=${encodeURIComponent(input.url)}` }),
+    },
+    "seo.remoteSaveImageRule": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/image-rule`, body: { src: input.src, occurrence: input.occurrence, alt: input.alt, title: input.title, originalAlt: input.originalAlt, originalTitle: input.originalTitle, revert: input.revert } }),
+    },
+    "seo.remotePageVersions": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-versions` }),
+    },
+    "seo.remoteDeleteSectionVersion": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-versions/${input.versionId}/delete` }),
+    },
+    "seo.remoteSavePageEdits": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-edits`, body: { html: input.html } }),
+    },
+    "seo.remoteOptimizeSection": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-optimize`, body: { type: input.type, html: input.html, topic: input.topic, model: input.model, provider: input.provider, templateId: input.templateId } }),
+    },
     "seo.remoteGetHeadings": {
         endpoint: "seo/sites",
         method: "GET",
@@ -730,6 +833,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "PATCH",
         transform: (input: any) => ({ url: `assets/projects/${input.id}/site`, body: { siteId: input.siteId } }),
     },
+    "assets.addProjectImages": {
+        endpoint: "assets/projects",
+        method: "POST",
+        transform: (input: any) => ({ url: `assets/projects/${input.id}/images`, body: { urls: input.urls } }),
+    },
 
     // ── Copy ──
     "copy.generate": { endpoint: "copy/generate", method: "POST" },
@@ -770,6 +878,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "image.generateSuggestions": { endpoint: "image/suggestions", method: "POST" },
     "image.generateContextSuggestions": { endpoint: "image/context-suggestions", method: "POST" },
     "image.optimizeBrief": { endpoint: "image/optimize-brief", method: "POST" },
+    "image.sessionUpload": { endpoint: "image/session-upload", method: "POST" },
 
     // ── Video ──
     "video.suggestConcepts": { endpoint: "video/concepts", method: "POST" },

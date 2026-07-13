@@ -321,6 +321,13 @@ class PCM_Activator
             // migration method needed (same precedent as scheduledDate v1.37.0 and
             // setId v1.38.0 in this same table).
 
+            // v1.40.0: CONVERGENCE bump after merging two parallel lines of work
+            // that both used 1.37–1.39 for different additive changes (strategy
+            // item columns on one side; SEO dynamic-rules/redirects tables on the
+            // other). An install stamped 1.39.0 by either build re-runs the
+            // create_tables() dbDelta once here and picks up whichever side it
+            // missed. Purely additive — no bespoke migration method.
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }
