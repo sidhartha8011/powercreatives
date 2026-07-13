@@ -3180,7 +3180,12 @@ class PCM_SEO_Service
                     // Platform-added images stay in place (content); everything
                     // else lifts out as locked context.
                     list($slice, $imgs) = self::extract_imgs((string) ($att['sliceHtml'] ?? ''), true);
-                    $out[]    = trim($slice);
+                    // Section ORIGIN (frames, 2026-07-13): the attribution this
+                    // walk already computed, carried on the section's heading so
+                    // the editor can tell owned/inserted/original apart. Emit-
+                    // only metadata: save_page_edits strips it on entry.
+                    $origin = ((string) ($att['target'] ?? '')) === 'sectionInsert' ? 'insert' : 'owned';
+                    $out[]  = (string) preg_replace('#<h([1-6])(\b[^>]*)>#i', '<h$1$2 data-pcm-origin="' . $origin . '">', trim($slice), 1);
                     foreach ($imgs as $img) {
                         $out[] = $lock($img);
                     }
@@ -3189,7 +3194,7 @@ class PCM_SEO_Service
                 }
                 $in_slice = false;
                 list($inner, $imgs) = self::extract_imgs((string) $b['inner']);
-                $out[] = '<h' . (int) $b['level'] . '>' . $inner . '</h' . (int) $b['level'] . '>';
+                $out[] = '<h' . (int) $b['level'] . ' data-pcm-origin="original">' . $inner . '</h' . (int) $b['level'] . '>';
                 foreach ($imgs as $img) {
                     $out[] = $lock($img);
                 }
@@ -4604,6 +4609,9 @@ class PCM_SEO_Service
      */
     public function save_page_edits(int $user_id, object $site, int $post_id, string $html)
     {
+        // Section-origin marker (frames): emit-only editor metadata — content
+        // identity, rules and version snapshots must never carry it.
+        $html = (string) preg_replace('#\s*data-pcm-origin="[^"]*"#i', '', $html);
         $inv = self::served_inventory($site, $post_id, $user_id);
         if ($inv === null || $inv['view'] !== 'served') {
             return new WP_Error(

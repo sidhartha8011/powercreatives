@@ -40,9 +40,12 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
-import { Mark } from '@tiptap/core';
+import { Extension, Mark } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import type { Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
@@ -158,6 +161,97 @@ const DiffRemoved = Mark.create({
   parseHTML() { return [{ tag: 'span[data-diff-removed]' }]; },
   renderHTML() { return ['span', { 'data-diff-removed': '1', class: 'rounded-sm bg-red-50 text-red-800 line-through decoration-red-400' }, 0]; },
 });
+
+/** SECTION FRAMES (page mode): the page drawn as what it IS — a stack of
+ *  sections. Pure ProseMirror decorations — they can never enter a save by
+ *  construction. Per section: a left rail colored by ORIGIN (slate = the
+ *  site's own content, amber = platform-edited, sky = platform-added; a
+ *  heading with no origin attribute — typed or pasted this session — is
+ *  platform-added by definition), plus an active tint on the section under
+ *  the cursor. Blocks ABOVE the first heading are the server-refused dead
+ *  zone and lock (contenteditable=false) so the refusal can never be
+ *  reached; a doc with NO headings locks nothing — wiped pages must accept
+ *  typing. The origin rides as a heading attribute (survives edits and
+ *  reordering): the server emits it on load and strips it from every save.
+ *  Version-row loads carry no origins, so their sections draw sky — a saved
+ *  version IS platform-authored content, the color states a fact. */
+const FRAME_CLASS: Record<string, string> = {
+  original: 'pcm-frame-original',
+  owned: 'pcm-frame-owned',
+  insert: 'pcm-frame-added',
+};
+function frameDecorations(doc: PMNode, selFrom: number): DecorationSet {
+  const blocks: Array<{ pos: number; end: number; heading: boolean; origin: string | null }> = [];
+  doc.forEach((node, pos) => {
+    blocks.push({
+      pos,
+      end: pos + node.nodeSize,
+      heading: node.type.name === 'heading',
+      origin: node.type.name === 'heading' ? ((node.attrs['data-pcm-origin'] as string | null) ?? null) : null,
+    });
+  });
+  const ranges: Array<{ from: number; to: number; origin: string }> = [];
+  for (const b of blocks) {
+    if (b.heading) ranges.push({ from: b.pos, to: b.end, origin: b.origin ?? 'new' });
+    else if (ranges.length > 0) ranges[ranges.length - 1].to = b.end;
+  }
+  if (ranges.length === 0) return DecorationSet.empty;
+  const activeIdx = ranges.findIndex((r) => selFrom >= r.from && selFrom < r.to);
+  const decos: Decoration[] = [];
+  for (const b of blocks) {
+    if (b.end <= ranges[0].from) {
+      decos.push(Decoration.node(b.pos, b.end, { class: 'pcm-deadzone', contenteditable: 'false' }));
+    }
+  }
+  ranges.forEach((r, i) => {
+    const cls = `pcm-frame ${FRAME_CLASS[r.origin] ?? 'pcm-frame-added'}${i === activeIdx ? ' pcm-frame-active' : ''}`;
+    for (const b of blocks) {
+      if (b.pos >= r.from && b.end <= r.to) decos.push(Decoration.node(b.pos, b.end, { class: cls }));
+    }
+  });
+  return DecorationSet.create(doc, decos);
+}
+const SectionFrames = Extension.create({
+  name: 'pcmSectionFrames',
+  addGlobalAttributes() {
+    return [
+      {
+        types: ['heading'],
+        attributes: {
+          'data-pcm-origin': {
+            default: null,
+            keepOnSplit: false,
+            parseHTML: (el: HTMLElement) => el.getAttribute('data-pcm-origin'),
+            renderHTML: (attrs: Record<string, unknown>) =>
+              attrs['data-pcm-origin'] ? { 'data-pcm-origin': String(attrs['data-pcm-origin']) } : {},
+          },
+        },
+      },
+    ];
+  },
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey('pcmSectionFrames'),
+        props: {
+          decorations: (state) => frameDecorations(state.doc, state.selection.from),
+        },
+      }),
+    ];
+  },
+});
+
+/** The frames' looks, scoped to the page editor (rails + active tint + dead zone). */
+const FRAME_STYLES =
+  '[&_.pcm-frame]:border-l-2 [&_.pcm-frame]:pl-3 ' +
+  '[&_.pcm-frame-original]:border-slate-200 ' +
+  '[&_.pcm-frame-owned]:border-amber-300 ' +
+  '[&_.pcm-frame-added]:border-sky-300 ' +
+  '[&_.pcm-frame-active]:bg-slate-50 ' +
+  '[&_.pcm-frame-active.pcm-frame-original]:border-slate-400 ' +
+  '[&_.pcm-frame-active.pcm-frame-owned]:border-amber-500 ' +
+  '[&_.pcm-frame-active.pcm-frame-added]:border-sky-500 ' +
+  '[&_.pcm-deadzone]:opacity-60';
 
 /** One section under AI review. pending/diff block saving; the rest are resolved. */
 type ReviewStatus = 'pending' | 'diff' | 'accepted' | 'rejected' | 'clean' | 'failed';
@@ -304,7 +398,7 @@ export function SectionModal({
         },
         codeBlock: false, blockquote: false, horizontalRule: false,
       }),
-      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved] : []),
+      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved, SectionFrames] : []),
     ],
     content: openedHtml,
     // Baseline for dirty-checks must be the EDITOR's normalized form of the
@@ -964,7 +1058,7 @@ export function SectionModal({
         {(!isPage || pageReady) && (
           <EditorContent
             editor={editor}
-            className={`${isPage ? PAGE_TYPE_SCALE : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
+            className={`${isPage ? `${PAGE_TYPE_SCALE} ${FRAME_STYLES}` : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
               // Locked context images: visible, clearly not editable.
               + (isPage ? ' [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
           />
