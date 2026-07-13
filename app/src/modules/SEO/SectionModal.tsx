@@ -54,7 +54,7 @@ import {
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
-import { ModelDropdown, PillSplitButton } from '@/components/shared';
+import { ModelDropdown, PillButton, PillSplitButton } from '@/components/shared';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import {
   diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
@@ -184,7 +184,7 @@ const BLOCK_ORIGIN_CLASS: Record<string, string> = {
   owned: 'pcm-blk-owned',
   insert: 'pcm-blk-added',
 };
-function blockDecorations(doc: PMNode): DecorationSet {
+function blockDecorations(doc: PMNode, flash: number | null): DecorationSet {
   const blocks: Array<{ pos: number; end: number; heading: boolean; origin: string | null }> = [];
   doc.forEach((node, pos) => {
     blocks.push({
@@ -206,18 +206,24 @@ function blockDecorations(doc: PMNode): DecorationSet {
       decos.push(Decoration.node(b.pos, b.end, { class: 'pcm-deadzone', contenteditable: 'false' }));
     }
   }
-  for (const r of ranges) {
+  ranges.forEach((r, ri) => {
     const origin = BLOCK_ORIGIN_CLASS[r.origin] ?? 'pcm-blk-added';
+    // FOCUS FLASH (owner 2026-07-13): a clicked rail card scrolls here and the
+    // section pulses (dark-blue lane + soft wash) so you always see the landing.
+    const pulse = ri === flash ? ' pcm-blk-flash' : '';
     const inside = blocks.filter((b) => b.pos >= r.from && b.end <= r.to);
     inside.forEach((b, i) => {
       const role = `${i === 0 ? ' pcm-blk-start' : ''}${i === inside.length - 1 ? ' pcm-blk-end' : ''}`;
-      decos.push(Decoration.node(b.pos, b.end, { class: `pcm-blk ${origin}${role}` }));
+      decos.push(Decoration.node(b.pos, b.end, { class: `pcm-blk ${origin}${role}${pulse}` }));
     });
-  }
+  });
   return DecorationSet.create(doc, decos);
 }
 const SectionBlocks = Extension.create({
   name: 'pcmSectionBlocks',
+  addStorage() {
+    return { flash: null as number | null };
+  },
   addGlobalAttributes() {
     return [
       {
@@ -235,11 +241,72 @@ const SectionBlocks = Extension.create({
     ];
   },
   addProseMirrorPlugins() {
+    const ext = this;
     return [
       new Plugin({
         key: new PluginKey('pcmSectionBlocks'),
         props: {
-          decorations: (state) => blockDecorations(state.doc),
+          decorations: (state) => blockDecorations(state.doc, ext.storage.flash),
+        },
+      }),
+    ];
+  },
+});
+
+/** INLINE REVIEW CONTROLS (owner-picked GitHub/Cursor pattern, 2026-07-13):
+ *  during an AI review every CHANGED section carries its own floating
+ *  ✓ Accept / ✕ chip at the top-right of its heading — you decide where you
+ *  read; the rail stays as overview + bulk. Widget decorations only (never
+ *  content); handlers ride the SAME resolveSection the rail uses. */
+const ReviewControls = Extension.create({
+  name: 'pcmReviewControls',
+  addStorage() {
+    return {
+      sections: [] as string[],
+      resolve: null as null | ((i: number, action: 'accept' | 'reject') => void),
+    };
+  },
+  addProseMirrorPlugins() {
+    const ext = this;
+    return [
+      new Plugin({
+        key: new PluginKey('pcmReviewControls'),
+        props: {
+          decorations: (state) => {
+            const { sections, resolve } = ext.storage;
+            if (!sections.length || !resolve) return DecorationSet.empty;
+            const decos: Decoration[] = [];
+            let h = -1;
+            state.doc.forEach((node, pos) => {
+              if (node.type.name !== 'heading') return;
+              h++;
+              const i = h;
+              if (sections[i] !== 'diff') return;
+              decos.push(Decoration.widget(pos + 1, () => {
+                const wrap = document.createElement('span');
+                wrap.className = 'pcm-review-chip';
+                const mk = (label: string, cls: string, action: 'accept' | 'reject', title: string) => {
+                  const b = document.createElement('button');
+                  b.type = 'button';
+                  b.textContent = label;
+                  b.className = cls;
+                  b.title = title;
+                  b.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    ext.storage.resolve?.(i, action);
+                  });
+                  return b;
+                };
+                wrap.append(
+                  mk('✓ Accept', 'pcm-chip-accept', 'accept', 'Keep the AI version of this section'),
+                  mk('✕', 'pcm-chip-reject', 'reject', 'Keep the original'),
+                );
+                return wrap;
+              }, { side: 1 }));
+            });
+            return DecorationSet.create(state.doc, decos);
+          },
         },
       }),
     ];
@@ -324,7 +391,14 @@ const BLOCK_STYLES =
   '[&_.pcm-blk-end]:border-b [&_.pcm-blk-end]:border-b-slate-100 [&_.pcm-blk-end]:rounded-br-xl [&_.pcm-blk-end]:pb-3 ' +
   '[&_.pcm-blk-original]:border-l-slate-300 [&_.pcm-blk-owned]:border-l-amber-400 [&_.pcm-blk-added]:border-l-sky-400 ' +
   '[&_img.pcm-blk]:block [&_img.pcm-blk]:border-y-0 [&_img.pcm-blk]:border-r-0 [&_img.pcm-blk]:rounded-none ' +
-  '[&_summary]:list-none [&_summary]:!cursor-text [&_.pcm-deadzone]:opacity-60';
+  '[&_summary]:list-none [&_summary]:!cursor-text [&_.pcm-deadzone]:opacity-60 ' +
+  // Focus flash (click a rail card): dark-blue lane + soft wash, eased both ways.
+  '[&_.pcm-blk]:transition-colors [&_.pcm-blk]:duration-500 ' +
+  '[&_.pcm-blk-flash]:!border-l-blue-600 [&_.pcm-blk-flash]:bg-blue-50/70 ' +
+  // Inline review chips: float on the changed section's first line.
+  '[&_.pcm-review-chip]:float-right [&_.pcm-review-chip]:ml-2 [&_.pcm-review-chip]:inline-flex [&_.pcm-review-chip]:gap-1 [&_.pcm-review-chip]:align-middle ' +
+  '[&_.pcm-chip-accept]:rounded-full [&_.pcm-chip-accept]:bg-green-600 [&_.pcm-chip-accept]:px-2 [&_.pcm-chip-accept]:py-0.5 [&_.pcm-chip-accept]:text-[10px] [&_.pcm-chip-accept]:font-medium [&_.pcm-chip-accept]:text-white hover:[&_.pcm-chip-accept]:bg-green-700 ' +
+  '[&_.pcm-chip-reject]:rounded-full [&_.pcm-chip-reject]:border [&_.pcm-chip-reject]:border-slate-200 [&_.pcm-chip-reject]:bg-white [&_.pcm-chip-reject]:px-2 [&_.pcm-chip-reject]:py-0.5 [&_.pcm-chip-reject]:text-[10px] [&_.pcm-chip-reject]:text-slate-500 hover:[&_.pcm-chip-reject]:bg-slate-100';
 
 /** One section under AI review. pending/diff block saving; the rest are resolved. */
 type ReviewStatus = 'pending' | 'diff' | 'accepted' | 'rejected' | 'clean' | 'failed';
@@ -473,7 +547,7 @@ export function SectionModal({
         },
         codeBlock: false, blockquote: false, horizontalRule: false,
       }),
-      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved, SectionBlocks, FaqItem, FaqSummary] : []),
+      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved, SectionBlocks, ReviewControls, FaqItem, FaqSummary] : []),
     ],
     content: openedHtml,
     // Baseline for dirty-checks must be the EDITOR's normalized form of the
@@ -854,6 +928,38 @@ export function SectionModal({
   const finishReview = () =>
     setReview((cur) => cur?.map((s) => (s.status === 'diff' || s.status === 'pending' ? { ...s, status: 'rejected' as ReviewStatus } : s)) ?? cur);
 
+  // ── Inline chips + focus flash (owner-picked combo 2026-07-13): the chips
+  //    ride the SAME resolveSection as the rail (one machinery); clicking a
+  //    rail card scrolls to its section and pulses it for ~2s. ──
+  const [flashIdx, setFlashIdx] = useState<number | null>(null);
+  useEffect(() => {
+    if (!editor || !isPage) return;
+    (editor.storage as any).pcmReviewControls.sections = review?.map((s) => s.status) ?? [];
+    (editor.storage as any).pcmReviewControls.resolve = resolveSection;
+    editor.view.dispatch(editor.state.tr); // refresh widget decorations
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, isPage, review]);
+  useEffect(() => {
+    if (!editor || !isPage) return;
+    (editor.storage as any).pcmSectionBlocks.flash = flashIdx;
+    editor.view.dispatch(editor.state.tr); // refresh block decorations
+  }, [editor, isPage, flashIdx]);
+  const focusSection = (i: number) => {
+    if (!editor) return;
+    let h = -1;
+    let target: number | null = null;
+    editor.state.doc.forEach((node, pos) => {
+      if (node.type.name === 'heading') {
+        h++;
+        if (h === i && target === null) target = pos;
+      }
+    });
+    if (target === null) return;
+    (editor.view.nodeDOM(target) as HTMLElement | null)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setFlashIdx(i);
+    window.setTimeout(() => setFlashIdx((cur) => (cur === i ? null : cur)), 2000);
+  };
+
   // Rebuild the document from the review state; when every section is
   // resolved the review ends — the doc is final content, editing returns.
   useEffect(() => {
@@ -1173,7 +1279,7 @@ export function SectionModal({
                 onClick={() => setInsertOpen((v) => !v)}
                 disabled={busy}
                 title="Insert content at the cursor"
-                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-slate-100 disabled:opacity-60 ${insertOpen ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium hover:bg-slate-100 disabled:opacity-60 ${insertOpen ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
               >
                 <Plus className="h-3 w-3" /> Insert <span className="text-slate-400">▾</span>
               </button>
@@ -1380,7 +1486,12 @@ export function SectionModal({
           </div>
           <div className="min-h-0 flex-1 overflow-auto py-1">
             {review.map((s, i) => s.status === 'clean' ? null : (
-              <div key={`${s.heading}-${i}`} className="border-b border-slate-100 px-2.5 py-1.5">
+              <div
+                key={`${s.heading}-${i}`}
+                onClick={() => focusSection(i)}
+                title="Click to jump to this section"
+                className="cursor-pointer border-b border-slate-100 px-2.5 py-1.5 hover:bg-slate-100/60"
+              >
                 <div className="truncate text-[11px] font-medium text-slate-700" title={s.heading}>{s.heading || '(untitled section)'}</div>
                 {s.genModel && (
                   <div className="truncate text-[9px] text-slate-400" title={`Generated by ${s.genModel}`}>{s.genModel}</div>
@@ -1487,23 +1598,25 @@ export function SectionModal({
       {/* ── [✓ Save] [↶ Undo] (+ Remove for existing added sections) ── */}
       {!readOnly && (
         <div className="flex items-center gap-1.5 border-t border-slate-200 bg-white px-2.5 py-1.5">
-          {/* Order (owner): Save & close → Save (page mode, stays open) → Undo. */}
-          <button
-            type="button"
-            onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
+          {/* Order (owner): Save & close → Save (page mode, stays open) → Undo.
+              The pill family (owner 2026-07-13): Save & close = the SHARED
+              green success pill; the rest are rounded siblings, same height. */}
+          <PillButton
+            variant="success"
+            icon={<Check />}
+            loading={busy}
             disabled={busy || (isPage && (!pageReady || !!review))}
-            title="Save and close"
-            className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
+            onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
           >
-            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} {isPage ? 'Save & close' : 'Save'}
-          </button>
+            {isPage ? 'Save & close' : 'Save'}
+          </PillButton>
           {isPage && (
             <button
               type="button"
               onClick={() => { void save(); }}
               disabled={busy || !pageReady || !!review}
               title="Save — the window stays open"
-              className="inline-flex items-center gap-1 rounded border border-green-600 bg-white px-2 py-1 text-[11px] font-medium text-green-700 hover:bg-green-50 disabled:opacity-60"
+              className="inline-flex items-center gap-1 rounded-full border border-green-600 bg-white px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-60"
             >
               {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save
             </button>
@@ -1513,7 +1626,7 @@ export function SectionModal({
             onClick={() => editor?.commands.setContent(savedHtml)}
             disabled={busy || (isPage && (!pageReady || !!review))}
             title="Restore the last saved state"
-            className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
             <Undo2 className="h-3 w-3" /> Undo
           </button>

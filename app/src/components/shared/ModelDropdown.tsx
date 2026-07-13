@@ -24,9 +24,10 @@ interface ModelDropdownProps {
 }
 
 // Thin pill on a SOLID white surface (owner 2026-07-13: transparent triggers
-// leaked the background through).
+// leaked the background through). Metrics = PillButton's = the sidebar
+// nav-item family (owner order: one button size everywhere).
 const TRIGGER_STYLE = {
-  padding: '3px 10px',
+  padding: '4px 10px',
   borderRadius: '9999px',
   fontSize: typography.xs,
   fontWeight: typography.medium,

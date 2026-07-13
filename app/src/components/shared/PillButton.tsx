@@ -18,7 +18,7 @@ import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { colors, typography, spacing } from './design-tokens';
 
-export type PillButtonVariant = 'active' | 'default' | 'subtle';
+export type PillButtonVariant = 'active' | 'default' | 'subtle' | 'success';
 
 interface PillButtonProps {
   children: React.ReactNode;
@@ -61,6 +61,16 @@ const variantStyles: Record<
     weight: typography.regular,
     hoverBg: colors.primaryLight,
     hoverColor: colors.primary,
+  },
+  // The SAVE semantic (owner 2026-07-13): solid green, white text — ONE
+  // shared look for every save-class action app-wide.
+  success: {
+    bg: '#16a34a',
+    color: '#ffffff',
+    iconColor: '#ffffff',
+    weight: typography.semibold,
+    hoverBg: '#15803d',
+    hoverColor: '#ffffff',
   },
 };
 
