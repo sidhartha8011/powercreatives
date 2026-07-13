@@ -38,7 +38,20 @@ const TRIGGER_STYLE = {
 
 export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disabled }: ModelDropdownProps) {
   const [open, setOpen] = useState(false);
+  // Window-aware panel side (owner 2026-07-13: panels opened blind and got
+  // clipped by overflow-hidden containers): a trigger on the LEFT half of
+  // the window grows its panel rightward, one on the RIGHT half leftward —
+  // the panel always opens toward the room.
+  const [alignLeft, setAlignLeft] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  const toggleOpen = () => {
+    if (!open && ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      setAlignLeft(r.left + r.width / 2 < window.innerWidth / 2);
+    }
+    setOpen((v) => !v);
+  };
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -53,13 +66,13 @@ export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disab
 
   return (
     <div className="relative" ref={ref}>
-      <button type="button" disabled={disabled} onClick={() => setOpen(!open)} style={TRIGGER_STYLE} className="flex items-center gap-1.5 disabled:opacity-60">
+      <button type="button" disabled={disabled} onClick={toggleOpen} style={TRIGGER_STYLE} className="flex items-center gap-1.5 disabled:opacity-60">
         <span className="truncate max-w-[120px]">{selectedName}</span>
         <ChevronDown className="w-3 h-3 shrink-0" />
       </button>
       {open && (
         <div
-          className="absolute right-0 top-full mt-1 z-50 rounded-lg py-1 max-h-60 overflow-y-auto"
+          className={`absolute ${alignLeft ? 'left-0' : 'right-0'} top-full mt-1 z-50 rounded-lg py-1 max-h-60 overflow-y-auto`}
           style={{
             background: colors.bgSurface,
             border: `1px solid ${colors.border}`,

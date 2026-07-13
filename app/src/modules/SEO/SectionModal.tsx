@@ -1009,7 +1009,7 @@ export function SectionModal({
         type="button"
         onClick={() => setVersionsOpen((v) => !v)}
         title="Versions — pick one to view it — saving makes it live"
-        className="inline-flex h-6 max-w-[170px] items-center gap-1 truncate rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 hover:bg-slate-50"
+        className="inline-flex max-w-[190px] items-center gap-1.5 truncate rounded-full border border-slate-200 bg-white px-2.5 py-[3px] text-xs font-medium text-slate-500 hover:bg-slate-50"
       >
         <span className="truncate">{versionLabel}</span>
         <span className="text-slate-400">▾</span>
@@ -1103,11 +1103,11 @@ export function SectionModal({
               <FileText className="h-4 w-4 text-blue-600" />
             </span>
             <span className="min-w-0">
-              <span className="block truncate text-[13px] font-medium leading-4 text-slate-800" title={page?.title ?? 'Page'}>
+              <span className="block truncate text-[13px] font-medium leading-[1.4] text-slate-800" title={page?.title ?? 'Page'}>
                 {page?.title ?? 'Page'}
               </span>
               {page?.date && (
-                <span className="block truncate text-[10px] leading-3 text-slate-400">{String(page.date).slice(0, 10)}</span>
+                <span className="mt-0.5 block truncate text-[10px] leading-none text-slate-400">{String(page.date).slice(0, 10)}</span>
               )}
             </span>
             {page?.editUrl && (
