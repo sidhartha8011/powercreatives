@@ -40,7 +40,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
-import { Extension, Mark } from '@tiptap/core';
+import { Extension, Mark, Node } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
@@ -49,7 +49,7 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -241,6 +241,58 @@ const SectionFrames = Extension.create({
   },
 });
 
+/** FAQ BLOCK (native <details>/<summary>): the browser provides the
+ *  accordion — ZERO JavaScript ships to client sites, and both tags survive
+ *  content sanitization on the hub AND the connector (core-allowlisted,
+ *  verified). The skeleton carries STRUCTURAL inline styles only —
+ *  border/spacing/weight, sanitizer-safe, no CSS functions — while fonts
+ *  and colors INHERIT from the site: that inheritance is what makes it look
+ *  native anywhere. To the engine it is ordinary section content. */
+const FaqItem = Node.create({
+  name: 'faqItem',
+  group: 'block',
+  content: 'faqSummary block+',
+  defining: true,
+  addAttributes() {
+    return {
+      open: {
+        default: true,
+        parseHTML: (el: HTMLElement) => el.hasAttribute('open'),
+        renderHTML: (attrs: Record<string, unknown>) => (attrs.open ? { open: '' } : {}),
+      },
+      style: { default: null },
+    };
+  },
+  parseHTML() { return [{ tag: 'details' }]; },
+  renderHTML({ HTMLAttributes }) { return ['details', HTMLAttributes, 0]; },
+});
+const FaqSummary = Node.create({
+  name: 'faqSummary',
+  content: 'inline*',
+  defining: true,
+  addAttributes() { return { style: { default: null } }; },
+  parseHTML() { return [{ tag: 'summary' }]; },
+  renderHTML({ HTMLAttributes }) { return ['summary', HTMLAttributes, 0]; },
+  addKeyboardShortcuts() {
+    return {
+      // Enter inside a question moves into its answer — a summary never splits.
+      Enter: () => {
+        const { $from } = this.editor.state.selection;
+        if ($from.parent.type.name !== 'faqSummary') return false;
+        return this.editor.commands.setTextSelection($from.after() + 1);
+      },
+    };
+  },
+});
+const FAQ_ITEM_STYLE = 'border:1px solid #dcdcdc;border-radius:8px;padding:10px 16px;margin:10px 0';
+const FAQ_SUMMARY_STYLE = 'font-weight:600;cursor:pointer';
+/** The inserted skeleton — a normal section (heading + items) the user edits in place. */
+const faqTemplate = (): string =>
+  '<h2>Frequently asked questions</h2>' +
+  [1, 2, 3].map((n) =>
+    `<details style="${FAQ_ITEM_STYLE}" open><summary style="${FAQ_SUMMARY_STYLE}">Question ${n}</summary><p>Answer ${n}.</p></details>`,
+  ).join('');
+
 /** The frames' looks, scoped to the page editor (rails + active tint + dead zone). */
 const FRAME_STYLES =
   '[&_.pcm-frame]:border-l-2 [&_.pcm-frame]:pl-3 ' +
@@ -398,7 +450,7 @@ export function SectionModal({
         },
         codeBlock: false, blockquote: false, horizontalRule: false,
       }),
-      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved, SectionFrames] : []),
+      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved, SectionFrames, FaqItem, FaqSummary] : []),
     ],
     content: openedHtml,
     // Baseline for dirty-checks must be the EDITOR's normalized form of the
@@ -931,6 +983,15 @@ export function SectionModal({
               className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
             >
               <ImagePlus className="h-3 w-3" /> Add image
+            </button>
+            <button
+              type="button"
+              onClick={() => editor?.chain().focus().insertContent(faqTemplate()).run()}
+              disabled={busy}
+              title="Add an FAQ section — a native accordion styled by the site itself"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
+            >
+              <MessageCircleQuestion className="h-3 w-3" /> Add FAQ
             </button>
             <button
               type="button"
