@@ -216,6 +216,68 @@ class PCM_Models_Service
     }
 
     /**
+     * SELF-REFRESHING REGISTRY (2026-07-13): reading the registry keeps it
+     * fresh. For every ACTIVE integration whose provider has a live models
+     * API, if that provider's registry rows are older than a day (or it has
+     * none), a background resync is scheduled — non-blocking, once per
+     * window (transient lock). The list mirrors what providers actually
+     * offer BECAUSE it is used: no cron babysitting, no manual ritual.
+     * The one-time key-add sync stopped being the registry's last word
+     * (live-found: a May snapshot served as "the" model list for months).
+     */
+    public function maybe_schedule_refresh(int $user_id): void
+    {
+        global $wpdb;
+        // Providers with a live /models API — mirrors the endpoint map in
+        // PCM_Providers::validate_api_key (the single validation authority).
+        $live = array('openai', 'anthropic', 'google', 'fal');
+        $table = PCM_Schema::table('models');
+        foreach ((array) PCM_DB::get_user_integrations($user_id) as $integration) {
+            $provider = (string) ($integration->provider ?? '');
+            if (empty($integration->isActive) || empty($integration->apiKey) || !in_array($provider, $live, true)) {
+                continue;
+            }
+            $lock = 'pcm_models_refresh_' . $user_id . '_' . $provider;
+            if (get_transient($lock)) {
+                continue;
+            }
+            $newest = $wpdb->get_var($wpdb->prepare(
+                "SELECT MAX(updatedAt) FROM {$table} WHERE userId = %d AND provider = %s",
+                $user_id,
+                $provider
+            ));
+            if ($newest !== null && (time() - (int) strtotime((string) $newest)) < DAY_IN_SECONDS) {
+                continue;
+            }
+            set_transient($lock, 1, 6 * HOUR_IN_SECONDS);
+            wp_schedule_single_event(time(), 'pcm_models_refresh', array($user_id, $provider));
+        }
+    }
+
+    /**
+     * The background refresh (wp-cron): validate the stored key against the
+     * provider's LIVE models API, then the normal sync (adds new models,
+     * marks vanished ones unavailable). Failures are logged, never fatal —
+     * the registry simply stays as-is until the next window.
+     */
+    public function run_refresh(int $user_id, string $provider): void
+    {
+        foreach ((array) PCM_DB::get_user_integrations($user_id) as $integration) {
+            if ((string) ($integration->provider ?? '') !== $provider || empty($integration->apiKey)) {
+                continue;
+            }
+            $validation = PCM_Providers::validate_api_key($provider, $integration->apiKey);
+            if (empty($validation['valid'])) {
+                error_log(sprintf('[PCM Models] Background refresh for "%s" failed: %s', $provider, (string) ($validation['error'] ?? 'unknown')));
+                return;
+            }
+            $results = $this->sync_models($user_id, $provider, (array) ($validation['models'] ?? array()), true);
+            error_log(sprintf('[PCM Models] Background refresh for "%s": %d of %d models synced.', $provider, (int) $results['created'], (int) $results['total']));
+            return;
+        }
+    }
+
+    /**
      * Mark models that are no longer available from the provider's API.
      * Sets isAvailable=0 for models that weren't in the latest sync.
      *

@@ -32,6 +32,8 @@ export { colors, typography, spacing, shadows, statusColors } from './design-tok
 export type { StatusKey } from './design-tokens';
 export { default as tokens } from './design-tokens';
 export { KeywordPicker } from './KeywordPicker';
+export { ModelDropdown } from './ModelDropdown';
+export type { ModelDropdownGroup } from './ModelDropdown';
 export { AsyncSelectField, UNSELECTED } from './AsyncSelectField';
 export * from './BrandAssetGrid';
 export * from './ThemeSelector';

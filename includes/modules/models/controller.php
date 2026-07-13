@@ -133,6 +133,7 @@ class PCM_REST_Models extends PCM_REST_Base
     {
         $user = $this->get_current_pcm_user();
         $type = sanitize_text_field($request->get_param('type'));
+        $this->service->maybe_schedule_refresh((int) $user->id); // reading keeps the registry fresh
         $models = $this->service->get_by_capability($user->id, $type, 'generate');
 
         return $this->success(array_map(array($this->service, 'format_model'), $models));
@@ -143,6 +144,7 @@ class PCM_REST_Models extends PCM_REST_Base
     {
         $user = $this->get_current_pcm_user();
         $type = sanitize_text_field($request->get_param('type'));
+        $this->service->maybe_schedule_refresh((int) $user->id); // reading keeps the registry fresh
         $models = $this->service->get_by_capability($user->id, $type, 'edit');
 
         return $this->success(array_map(array($this->service, 'format_model'), $models));

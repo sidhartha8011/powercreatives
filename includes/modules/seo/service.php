@@ -712,6 +712,12 @@ class PCM_SEO_Service
             if (!empty($user_id))  { $opts['user_id'] = $user_id; }
             $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
             $raw    = (string) ($result['content'] ?? '');
+            // What ACTUALLY answered (the API's own report, not the request) —
+            // callers surface it so the UI never claims one model and runs another.
+            $meta = array(
+                'model'    => (string) ($result['model'] ?? ($model ?? '')),
+                'provider' => (string) ($result['provider'] ?? ($provider ?? '')),
+            );
             if ($single_line) {
                 $value = self::sanitize_ai_output($raw);
             } else {
@@ -725,7 +731,7 @@ class PCM_SEO_Service
             if ($value === '') {
                 return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
             }
-            return $value;
+            return array('value' => $value, 'model' => $meta['model'], 'provider' => $meta['provider']);
         } catch (\Throwable $e) {
             return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
         }
@@ -738,8 +744,8 @@ class PCM_SEO_Service
         $vars['current_value'] = $text;
         $mode = ($text !== '') ? 'optimize' : 'generate';
         $max  = (int) (self::field_prompts()['heading']['max'] ?? 80);
-        $val  = self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
-        return ($val instanceof WP_Error) ? $val : array('value' => $val);
+        // run_prompt_section returns {value, model, provider} — pass it through.
+        return self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
     }
 
     /** Count internal vs external <a href> links in content. */
@@ -2769,8 +2775,8 @@ class PCM_SEO_Service
         $vars['current_value'] = $text;
         $mode  = ($text !== '') ? 'optimize' : 'generate';
         $max   = (int) (self::field_prompts()['heading']['max'] ?? 80);
-        $val   = self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
-        return ($val instanceof WP_Error) ? $val : array('value' => $val);
+        // run_prompt_section returns {value, model, provider} — pass it through.
+        return self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
     }
 
     // =====================================================================
@@ -5613,7 +5619,8 @@ class PCM_SEO_Service
         if ($val instanceof WP_Error) {
             return $val;
         }
-        return array('value' => wp_kses_post((string) $val));
+        // The UI shows what ACTUALLY generated (the API's own report).
+        return array('value' => wp_kses_post((string) $val['value']), 'model' => (string) $val['model'], 'provider' => (string) $val['provider']);
     }
 
     /**
