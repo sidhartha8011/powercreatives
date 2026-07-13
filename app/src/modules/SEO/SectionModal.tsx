@@ -157,7 +157,9 @@ const LockedImage = Image.extend({
 const DiffAdded = Mark.create({
   name: 'diffAdded',
   parseHTML() { return [{ tag: 'span[data-diff-added]' }]; },
-  renderHTML() { return ['span', { 'data-diff-added': '1', class: 'rounded-sm bg-green-100 text-green-900' }, 0]; },
+  // ONE green (owner 2026-07-13): the same green-600 family as the shared
+  // save/Accept buttons — never a second green.
+  renderHTML() { return ['span', { 'data-diff-added': '1', class: 'rounded-sm bg-green-600/15 text-green-800' }, 0]; },
 });
 const DiffRemoved = Mark.create({
   name: 'diffRemoved',
@@ -264,6 +266,7 @@ const ReviewControls = Extension.create({
     return {
       sections: [] as string[],
       resolve: null as null | ((i: number, action: 'accept' | 'reject') => void),
+      revise: null as null | ((i: number) => void),
     };
   },
   addProseMirrorPlugins() {
@@ -285,7 +288,7 @@ const ReviewControls = Extension.create({
               decos.push(Decoration.widget(pos + 1, () => {
                 const wrap = document.createElement('span');
                 wrap.className = 'pcm-review-chip';
-                const mk = (label: string, cls: string, action: 'accept' | 'reject', title: string) => {
+                const mk = (label: string, cls: string, title: string, onClick: () => void) => {
                   const b = document.createElement('button');
                   b.type = 'button';
                   b.textContent = label;
@@ -294,13 +297,14 @@ const ReviewControls = Extension.create({
                   b.addEventListener('mousedown', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    ext.storage.resolve?.(i, action);
+                    onClick();
                   });
                   return b;
                 };
                 wrap.append(
-                  mk('✓ Accept', 'pcm-chip-accept', 'accept', 'Keep the AI version of this section'),
-                  mk('✕', 'pcm-chip-reject', 'reject', 'Keep the original'),
+                  mk('✓ Accept', 'pcm-chip-accept', 'Keep this section as it reads right now (your edits included)', () => ext.storage.resolve?.(i, 'accept')),
+                  mk('↻ Revise', 'pcm-chip-ghost', 'Send this section back to the AI with an adjustment', () => ext.storage.revise?.(i)),
+                  mk('✕', 'pcm-chip-ghost', 'Keep the original', () => ext.storage.resolve?.(i, 'reject')),
                 );
                 return wrap;
               }, { side: 1 }));
@@ -398,7 +402,7 @@ const BLOCK_STYLES =
   // Inline review chips: float on the changed section's first line.
   '[&_.pcm-review-chip]:float-right [&_.pcm-review-chip]:ml-2 [&_.pcm-review-chip]:inline-flex [&_.pcm-review-chip]:gap-1 [&_.pcm-review-chip]:align-middle ' +
   '[&_.pcm-chip-accept]:rounded-full [&_.pcm-chip-accept]:bg-green-600 [&_.pcm-chip-accept]:px-2 [&_.pcm-chip-accept]:py-0.5 [&_.pcm-chip-accept]:text-[10px] [&_.pcm-chip-accept]:font-medium [&_.pcm-chip-accept]:text-white hover:[&_.pcm-chip-accept]:bg-green-700 ' +
-  '[&_.pcm-chip-reject]:rounded-full [&_.pcm-chip-reject]:border [&_.pcm-chip-reject]:border-slate-200 [&_.pcm-chip-reject]:bg-white [&_.pcm-chip-reject]:px-2 [&_.pcm-chip-reject]:py-0.5 [&_.pcm-chip-reject]:text-[10px] [&_.pcm-chip-reject]:text-slate-500 hover:[&_.pcm-chip-reject]:bg-slate-100';
+  '[&_.pcm-chip-ghost]:rounded-full [&_.pcm-chip-ghost]:border [&_.pcm-chip-ghost]:border-slate-200 [&_.pcm-chip-ghost]:bg-white [&_.pcm-chip-ghost]:px-2 [&_.pcm-chip-ghost]:py-0.5 [&_.pcm-chip-ghost]:text-[10px] [&_.pcm-chip-ghost]:text-slate-500 hover:[&_.pcm-chip-ghost]:bg-slate-100';
 
 /** One section under AI review. pending/diff block saving; the rest are resolved. */
 type ReviewStatus = 'pending' | 'diff' | 'accepted' | 'rejected' | 'clean' | 'failed';
@@ -857,11 +861,49 @@ export function SectionModal({
   //    is resolved. Locked images are lifted out per section (never sent to
   //    the AI) and ride along untouched.
   const [review, setReview] = useState<ReviewSection[] | null>(null);
-  const [reviewOrphan, setReviewOrphan] = useState('');
+  // Live mirror for async workers (their results must be dropped when the
+  // user already decided a section — e.g. OK'd the review mid-flight).
+  const reviewRef = useRef<ReviewSection[] | null>(null);
+  // (the old whole-doc rebuilder's orphan buffer died with it — the orphan
+  // zone is simply never touched by surgery)
+
+  // ── SURGERY ENGINE (review-edit-revise, 2026-07-13): during a review the
+  //    DOCUMENT is the single source of truth for content; review state owns
+  //    only statuses + originals. ONE writer touches the doc — every
+  //    transition (suggestion lands / accept / reject / revise result) goes
+  //    through applySection on its OWN range. The old whole-doc rebuilder is
+  //    dead: it overwrote the source of truth from stale copies, which would
+  //    wipe the user's manual edits (and reset cursor/scroll on every event).
+  const sectionRange = (i: number): { from: number; to: number } | null => {
+    if (!editor) return null;
+    let h = -1;
+    let from = -1;
+    let to = editor.state.doc.content.size;
+    editor.state.doc.forEach((node, pos) => {
+      if (node.type.name !== 'heading') return;
+      h++;
+      if (h === i) from = pos;
+      if (h === i + 1) to = pos;
+    });
+    return from >= 0 ? { from, to: Math.max(from, to) } : null;
+  };
+  const applySection = (i: number, html: string) => {
+    const r = sectionRange(i);
+    if (!editor || !r) return;
+    // No .focus(): a landing suggestion must never steal the user's caret.
+    editor.chain().insertContentAt({ from: r.from, to: r.to }, html).run();
+  };
+  /** The section's LIVE content — diff marks stripped (the same guard every
+   *  save runs), lifted images returned separately for re-attachment. */
+  const liveSection = (i: number): { clean: string; imgs: string } | null => {
+    if (!editor) return null;
+    const s = splitDocSections(editor.getHTML()).sections[i];
+    return s ? { clean: stripDiffHtml(s.html), imgs: s.imgs.join('') } : null;
+  };
 
   const startAiReview = async (topic: string, scope?: { from: number; to: number } | null) => {
     if (!editor || !pageReady || busy || review) return;
-    const { orphanHtml, sections } = splitDocSections(editor.getHTML());
+    const { sections } = splitDocSections(editor.getHTML());
     if (sections.length === 0) {
       toast.info('No sections to optimize on this page.');
       return;
@@ -884,9 +926,11 @@ export function SectionModal({
     }
     const skip = (i: number): boolean => !!scope && !inScope.has(i);
     setAskOpen(false);
-    setReviewOrphan(orphanHtml);
-    setReview(sections.map((s, i) => ({ ...s, status: (skip(i) ? 'clean' : 'pending') as ReviewStatus })));
-    editor.setEditable(false);
+    const initial = sections.map((s, i) => ({ ...s, status: (skip(i) ? 'clean' : 'pending') as ReviewStatus }));
+    reviewRef.current = initial; // workers may resolve before the sync effect runs
+    setReview(initial);
+    // The editor stays EDITABLE (owner F1): the doc is the source of truth,
+    // suggestions land by surgery — nothing rebuilds, nothing locks.
     // Bounded pool: 4 sections in flight; a slow/failed section fails ALONE.
     let next = 0;
     const worker = async () => {
@@ -902,6 +946,10 @@ export function SectionModal({
           const value = String(res?.value ?? '').trim();
           const genModel = String(res?.model ?? '');
           const changed = value !== '' && htmlText(value) !== htmlText(sections[i].html);
+          if (reviewRef.current?.[i]?.status !== 'pending') continue; // user already finished — drop the result
+          if (changed) {
+            applySection(i, diffBlocksHtml(sections[i].html, value) + sections[i].imgs.join(''));
+          }
           setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
             ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value, genModel } : { ...s, status: 'clean' as ReviewStatus })
             : s)) ?? cur);
@@ -915,18 +963,83 @@ export function SectionModal({
     await Promise.all(Array.from({ length: Math.min(4, sections.length) }, worker));
   };
 
-  const resolveSection = (i: number, action: 'accept' | 'reject') =>
-    setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'diff'
-      ? { ...s, status: (action === 'accept' && s.ai ? 'accepted' : 'rejected') as ReviewStatus }
-      : s)) ?? cur);
+  /** THE single decision path (chips, rail rows, Accept all, OK — all of
+   *  them). Accept = keep what the section SAYS RIGHT NOW (marks stripped:
+   *  the AI text plus every manual edit the user typed into it — F1 by
+   *  construction). Reject = the original back, byte-identical. */
+  const resolveSection = (i: number, action: 'accept' | 'reject') => {
+    const s = reviewRef.current?.[i];
+    if (!s || s.status !== 'diff') return;
+    const live = liveSection(i);
+    const imgs = live && live.imgs !== '' ? live.imgs : s.imgs.join('');
+    applySection(i, (action === 'accept' ? (live?.clean ?? (s.ai ?? s.html)) : s.html) + imgs);
+    setReview((cur) => cur?.map((x, k) => (k === i && x.status === 'diff'
+      ? { ...x, status: (action === 'accept' ? 'accepted' : 'rejected') as ReviewStatus }
+      : x)) ?? cur);
+  };
   const acceptAllDiffs = () =>
-    setReview((cur) => cur?.map((s) => (s.status === 'diff' && s.ai ? { ...s, status: 'accepted' as ReviewStatus } : s)) ?? cur);
-  /** OK — finish the review NOW: decisions already made stay (accepted stays
-   *  accepted), everything undecided keeps its original. The rebuild effect
-   *  then closes the rail and unlocks the editor. Shared by page + selection
-   *  runs by construction (one review state). */
-  const finishReview = () =>
-    setReview((cur) => cur?.map((s) => (s.status === 'diff' || s.status === 'pending' ? { ...s, status: 'rejected' as ReviewStatus } : s)) ?? cur);
+    (reviewRef.current ?? []).forEach((s, i) => { if (s.status === 'diff') resolveSection(i, 'accept'); });
+  /** OK — finish the review NOW: decisions already made stay, every undecided
+   *  section keeps its original (still-generating ones too — late results are
+   *  dropped by the workers' status guard). */
+  const finishReview = () => {
+    (reviewRef.current ?? []).forEach((s, i) => { if (s.status === 'diff') resolveSection(i, 'reject'); });
+    setReview((cur) => cur?.map((s) => (s.status === 'pending' ? { ...s, status: 'rejected' as ReviewStatus } : s)) ?? cur);
+  };
+
+  // ── REVISE (owner F2): send a section BACK to the AI with an adjustment
+  //    note. The AI receives the ORIGINAL (as the optimize target), the
+  //    CURRENT draft — including the user's manual edits — and the note.
+  //    Revise-all runs the same path for every still-undecided section. ──
+  const [reviseTarget, setReviseTarget] = useState<number | 'all' | null>(null);
+  const [reviseNote, setReviseNote] = useState('');
+  const reviseSection = async (i: number, note: string) => {
+    const s = reviewRef.current?.[i];
+    if (!s || s.status !== 'diff') return;
+    const draft = liveSection(i)?.clean ?? (s.ai ?? '');
+    setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'pending' as ReviewStatus } : x)) ?? cur);
+    try {
+      const res: any = await optimizeMutation.mutateAsync({
+        siteId: siteId as number, postId, type,
+        html: s.html,
+        topic: `${note}\n\nThe current suggested rewrite (it may already include the user's own edits — build on it and apply the request above):\n${draft}`,
+        model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
+      });
+      const value = String(res?.value ?? '').trim();
+      const genModel = String(res?.model ?? '');
+      if (reviewRef.current?.[i]?.status !== 'pending') return; // decided meanwhile — drop
+      if (value && htmlText(value) !== htmlText(s.html)) {
+        applySection(i, diffBlocksHtml(s.html, value) + s.imgs.join(''));
+        setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'diff' as ReviewStatus, ai: value, genModel } : x)) ?? cur);
+      } else {
+        applySection(i, s.html + s.imgs.join(''));
+        setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'clean' as ReviewStatus } : x)) ?? cur);
+      }
+    } catch (e: any) {
+      // The draft stays on screen — only the status returns to reviewable.
+      setReview((cur) => cur?.map((x, k) => (k === i && x.status === 'pending' ? { ...x, status: 'diff' as ReviewStatus } : x)) ?? cur);
+      toast.error(e?.message ?? 'Revise failed — the current draft was kept.');
+    }
+  };
+  const reviseAll = async (note: string) => {
+    const targets = (reviewRef.current ?? []).map((s, i) => (s.status === 'diff' ? i : -1)).filter((i) => i >= 0);
+    let next = 0;
+    const worker = async () => {
+      while (next < targets.length) {
+        await reviseSection(targets[next++], note);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, targets.length) }, worker));
+  };
+  const runRevise = () => {
+    const note = reviseNote.trim();
+    const target = reviseTarget;
+    if (!note || target === null) return;
+    setReviseTarget(null);
+    setReviseNote('');
+    if (target === 'all') void reviseAll(note);
+    else void reviseSection(target, note);
+  };
 
   // ── Inline chips + focus flash (owner-picked combo 2026-07-13): the chips
   //    ride the SAME resolveSection as the rail (one machinery); clicking a
@@ -936,6 +1049,7 @@ export function SectionModal({
     if (!editor || !isPage) return;
     (editor.storage as any).pcmReviewControls.sections = review?.map((s) => s.status) ?? [];
     (editor.storage as any).pcmReviewControls.resolve = resolveSection;
+    (editor.storage as any).pcmReviewControls.revise = (i: number) => { setReviseTarget(i); setReviseNote(''); };
     editor.view.dispatch(editor.state.tr); // refresh widget decorations
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, isPage, review]);
@@ -960,21 +1074,16 @@ export function SectionModal({
     window.setTimeout(() => setFlashIdx((cur) => (cur === i ? null : cur)), 2000);
   };
 
-  // Rebuild the document from the review state; when every section is
-  // resolved the review ends — the doc is final content, editing returns.
+  // Completion watcher (the surgery engine replaced the old whole-doc
+  // rebuilder here — the doc is already correct at every moment): keep the
+  // workers' live mirror in sync and close the review when every section is
+  // resolved. Editing was never locked, so nothing to unlock.
   useEffect(() => {
+    reviewRef.current = review;
     if (!editor || !review) return;
-    const doc = reviewOrphan + review.map((s) => {
-      const content = s.status === 'diff' && s.ai
-        ? diffBlocksHtml(s.html, s.ai)
-        : (s.status === 'accepted' && s.ai ? s.ai : s.html);
-      return content + s.imgs.join('');
-    }).join('');
-    editor.commands.setContent(doc);
     if (review.every((s) => s.status !== 'pending' && s.status !== 'diff')) {
       const accepted = review.filter((s) => s.status === 'accepted').length;
       setReview(null);
-      editor.setEditable(true);
       if (accepted > 0) toast.success(`AI review done — ${accepted} section${accepted === 1 ? '' : 's'} updated. Press Save to make it live.`);
       else if (review.some((s) => s.status === 'rejected' || s.status === 'failed')) toast.info('AI review closed — nothing was changed.');
       else toast.info('The page already looks optimized.');
@@ -1476,14 +1585,62 @@ export function SectionModal({
               </button>
               <button
                 type="button"
+                onClick={() => { setReviseTarget('all'); setReviseNote(''); }}
+                disabled={!review.some((s) => s.status === 'diff')}
+                title="Send every undecided section back to the AI with ONE adjustment"
+                className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                ↻ Revise all
+              </button>
+              <button
+                type="button"
                 onClick={finishReview}
                 title="Finish — accepted changes stay, everything undecided keeps its original"
-                className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-100"
+                className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-100"
               >
                 <Check className="h-3 w-3" /> OK
               </button>
             </div>
           </div>
+          {/* The Revise box (owner F2): one note, Adjust sends it. Serves both
+              a single section (chip or rail Revise) and Revise-all. */}
+          {reviseTarget !== null && (
+            <div className="border-b border-slate-200 bg-white px-2.5 py-1.5">
+              <div className="mb-1 truncate text-[10px] font-medium text-slate-500">
+                {reviseTarget === 'all'
+                  ? 'Revise all undecided sections'
+                  : `Revise: ${review[reviseTarget]?.heading || '(untitled section)'}`}
+              </div>
+              <input
+                autoFocus
+                value={reviseNote}
+                onChange={(e) => setReviseNote(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') runRevise();
+                  if (e.key === 'Escape') setReviseTarget(null);
+                }}
+                placeholder="e.g. “shorter, and mention the guarantee”"
+                className="h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
+              />
+              <div className="mt-1 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={runRevise}
+                  disabled={!reviseNote.trim()}
+                  className="inline-flex items-center gap-1 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  Adjust
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReviseTarget(null)}
+                  className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-auto py-1">
             {review.map((s, i) => s.status === 'clean' ? null : (
               <div
@@ -1505,15 +1662,23 @@ export function SectionModal({
                   <div className="mt-1 flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => resolveSection(i, 'accept')}
-                      className="inline-flex items-center gap-1 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700"
+                      onClick={(e) => { e.stopPropagation(); resolveSection(i, 'accept'); }}
+                      className="inline-flex items-center gap-1 rounded-full bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700"
                     >
                       <Check className="h-3 w-3" /> Accept
                     </button>
                     <button
                       type="button"
-                      onClick={() => resolveSection(i, 'reject')}
-                      className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100"
+                      onClick={(e) => { e.stopPropagation(); setReviseTarget(i); setReviseNote(''); }}
+                      title="Send this section back to the AI with an adjustment"
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100"
+                    >
+                      ↻ Revise
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); resolveSection(i, 'reject'); }}
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100"
                     >
                       <X className="h-3 w-3" /> Reject
                     </button>
