@@ -434,6 +434,26 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/media`, body: { url: input.url } }),
     },
+    "seo.remoteRedirects": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/redirects` }),
+    },
+    "seo.remoteSaveRedirect": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/redirects`, body: { from: input.from, to: input.to, code: input.code, updateLinks: input.updateLinks } }),
+    },
+    "seo.remoteDeleteRedirect": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/redirects/${input.redirectId}/delete` }),
+    },
+    "seo.remoteUrlUsage": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/url-usage?url=${encodeURIComponent(input.url)}` }),
+    },
     "seo.remoteSaveImageRule": {
         endpoint: "seo/sites",
         method: "POST",

@@ -452,7 +452,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — four dumb jobs: page snapshot (the hub does ALL parsing), builder-aware storage writers (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), guarded render-time apply of hub-precomputed instructions (refuse-if-unsure), and hub-pushed config. Also: SEO meta in REST, fallback meta tags, robots.txt + JSON-LD, /llms.txt + /llm-info/, cache flush on edit, self-update, one-paste connection code.
- * Version: 3.0.4
+ * Version: 3.0.5
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -2196,6 +2196,118 @@ add_action('template_redirect', function () {
         }
     });
 }, 0);
+// ── Slug-change redirects (3.0.5): hub-managed EXACT-PATH redirect store. ──
+// The hub pushes the COMPLETE set (same replace-the-set law as rules). The
+// handler answers ONLY requests WordPress would otherwise 404 — a working
+// page can never be hijacked, normal views cost one is_404() check, and
+// deleting a redirect honestly falls back to core's own old-slug behavior
+// where core covers it. Query strings pass through to the target untouched.
+// Both decision functions are pure (harness-pinned).
+function pcm_conn_redirect_norm_path($path) {
+    $p = (string) $path;
+    if ($p === '') { return '/'; }
+    if (preg_match('#^([a-z][a-z0-9+.-]*:)?//#i', $p)) {
+        $p = (string) (wp_parse_url($p, PHP_URL_PATH) ?: '/');
+    } else {
+        $cut = strcspn($p, '?#');
+        $p   = substr($p, 0, $cut);
+    }
+    $p = rawurldecode($p);
+    if ($p === '' || $p[0] !== '/') { $p = '/' . $p; }
+    $p = rtrim($p, '/');
+    return $p === '' ? '/' : $p;
+}
+function pcm_conn_redirect_match($request_uri, $redirects) {
+    if (!is_array($redirects) || empty($redirects)) { return null; }
+    $uri   = (string) $request_uri;
+    $qpos  = strpos($uri, '?');
+    $query = $qpos !== false ? substr($uri, $qpos + 1) : '';
+    $path  = pcm_conn_redirect_norm_path($uri);
+    foreach ($redirects as $r) {
+        if (!is_array($r) || (string) ($r['from'] ?? '') !== $path) { continue; }
+        $to = (string) ($r['to'] ?? '');
+        if ($to === '') { continue; }
+        if ($query !== '') { $to .= (strpos($to, '?') === false ? '?' : '&') . $query; }
+        $code = (int) ($r['code'] ?? 301);
+        return array('to' => $to, 'code' => in_array($code, array(301, 302, 307, 308), true) ? $code : 301);
+    }
+    return null;
+}
+function pcm_conn_redirect_sanitize($rows) {
+    $clean = array();
+    $seen  = array();
+    foreach ((array) $rows as $r) {
+        if (!is_array($r)) { continue; }
+        $from = pcm_conn_redirect_norm_path((string) ($r['from'] ?? ''));
+        $to   = esc_url_raw((string) ($r['to'] ?? ''));
+        $code = (int) ($r['code'] ?? 301);
+        // Never the front page, never empty/unsafe targets, one rule per path.
+        if ($from === '/' || $to === '' || isset($seen[$from])) { continue; }
+        $seen[$from] = true;
+        $clean[] = array('from' => $from, 'to' => $to, 'code' => in_array($code, array(301, 302, 307, 308), true) ? $code : 301);
+    }
+    return $clean;
+}
+add_action('template_redirect', function () {
+    if (!is_404()) { return; } // only URLs WordPress can no longer answer
+    if (get_option('pcm_conn_rules_off') === '1') { return; } // same kill switch as rules
+    $store = get_option('pcm_conn_redirects', array());
+    if (!is_array($store) || empty($store)) { return; }
+    $hit = pcm_conn_redirect_match((string) ($_SERVER['REQUEST_URI'] ?? ''), $store);
+    if ($hit === null) { return; }
+    wp_redirect($hit['to'], $hit['code'], 'pcm-connector');
+    exit;
+}, 0);
+add_action('rest_api_init', function () {
+    $perm = function () { return current_user_can('manage_options'); };
+    // GET's existence = the hub's capability handle (honest 404 pre-3.0.5).
+    register_rest_route('pcm-conn/v1', '/redirects', array(
+        array('methods' => 'GET', 'permission_callback' => $perm, 'callback' => function () {
+            $store = get_option('pcm_conn_redirects', array());
+            return array('supported' => true, 'redirects' => is_array($store) ? array_values($store) : array());
+        }),
+        array('methods' => 'POST', 'permission_callback' => $perm, 'callback' => function ($req) {
+            $p     = $req->get_json_params();
+            $clean = pcm_conn_redirect_sanitize(is_array($p) ? ($p['redirects'] ?? array()) : array());
+            if (empty($clean)) { delete_option('pcm_conn_redirects'); }
+            else { update_option('pcm_conn_redirects', $clean, true); } // autoloaded: read on 404s
+            return array('stored' => count($clean));
+        }),
+    ));
+    // Site-wide "who links to this URL" (powers the hub's update-N-internal-links
+    // offer). Plain-text LIKE over content + custom fields — the same surface the
+    // universal replace pass edits; base64-stored builder data (Brizy) is invisible
+    // to SEARCH but still handled by replace when its post is found another way.
+    register_rest_route('pcm-conn/v1', '/url-usage', array(
+        'methods' => 'GET', 'permission_callback' => $perm, 'callback' => function ($req) {
+            global $wpdb;
+            $url = trim((string) $req->get_param('url'));
+            if ($url === '') { return new WP_REST_Response(array('error' => 'bad_params'), 400); }
+            $like = '%' . $wpdb->esc_like($url) . '%';
+            $ids  = array_map('intval', (array) $wpdb->get_col($wpdb->prepare(
+                "SELECT ID FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_type NOT IN ('revision','attachment','nav_menu_item') AND post_content LIKE %s LIMIT 50",
+                $like
+            )));
+            $meta_ids = array_map('intval', (array) $wpdb->get_col($wpdb->prepare(
+                "SELECT DISTINCT pm.post_id FROM {$wpdb->postmeta} pm INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                 WHERE p.post_status = 'publish' AND p.post_type NOT IN ('revision','attachment','nav_menu_item') AND pm.meta_value LIKE %s LIMIT 50",
+                $like
+            )));
+            $posts = array();
+            foreach (array_unique(array_merge($ids, $meta_ids)) as $pid) {
+                $post = get_post($pid);
+                if (!$post) { continue; }
+                $posts[] = array(
+                    'id'    => $pid,
+                    'title' => (string) $post->post_title,
+                    'count' => max(1, substr_count((string) $post->post_content, $url)),
+                );
+            }
+            return array('url' => $url, 'posts' => $posts, 'total' => array_sum(array_column($posts, 'count')));
+        },
+    ));
+});
+
 // Rules API: GET = capability answer + a post's rules & counters; POST = replace
 // a post's (or the SITE's, postId 0) rule set — schema-validated, rejected honestly.
 add_action('rest_api_init', function () {

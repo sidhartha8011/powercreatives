@@ -88,6 +88,10 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-edits', 'remote_save_page_edits', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/image-rule', 'remote_save_image_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/media', 'remote_add_media', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/redirects', 'remote_list_redirects', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/redirects', 'remote_save_redirect', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/redirects/(?P<rid>\d+)/delete', 'remote_delete_redirect', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/url-usage', 'remote_url_usage', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-versions', 'remote_page_versions', array(), 'manage_options'),
@@ -532,6 +536,68 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success($result);
+    }
+
+    /** GET /seo/sites/{id}/redirects — the site's redirect list + capability flag. */
+    public function remote_list_redirects(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success($this->service->list_redirects((int) $user->id, $site));
+    }
+
+    /** POST /seo/sites/{id}/redirects — save (UPSERT on from-path) + push. */
+    public function remote_save_redirect(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = $this->service->save_redirect((int) $user->id, $site, array(
+            'from'        => (string) ($params['from'] ?? ''),
+            'to'          => (string) ($params['to'] ?? ''),
+            'code'        => (int) ($params['code'] ?? 301),
+            'updateLinks' => !empty($params['updateLinks']),
+        ));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/redirects/{rid}/delete — delete + push. */
+    public function remote_delete_redirect(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $result = $this->service->delete_redirect((int) $user->id, $site, absint($request->get_param('rid')));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** GET /seo/sites/{id}/url-usage?url= — posts linking to a URL (the popup's N). */
+    public function remote_url_usage(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $url = esc_url_raw((string) $request->get_param('url'));
+        if ($url === '') {
+            return new WP_Error('pcm_seo_usage_no_url', __('No URL to search for.', 'power-creatives'), array('status' => 400));
+        }
+        return $this->success(PCM_SEO_Service::remote_url_usage($site, $url));
     }
 
     /** POST /seo/sites/{id}/content/{post}/image-rule — save an image METADATA

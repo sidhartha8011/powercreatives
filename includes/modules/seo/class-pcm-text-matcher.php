@@ -67,6 +67,32 @@ class PCM_Text_Matcher
     }
 
     /**
+     * Redirect-path identity (connector 3.0.5): URL or path → decoded path,
+     * query/fragment stripped, case PRESERVED, no trailing slash, '/' floor.
+     * The connector's pcm_conn_redirect_norm_path is harness-pinned
+     * behavior-identical — the hub's UPSERT identity and the connector's
+     * request matching MUST agree byte-for-byte.
+     */
+    public static function normalize_path(string $path): string
+    {
+        $p = $path;
+        if ($p === '') {
+            return '/';
+        }
+        if (preg_match('#^([a-z][a-z0-9+.-]*:)?//#i', $p)) {
+            $p = (string) (parse_url($p, PHP_URL_PATH) ?: '/');
+        } else {
+            $p = substr($p, 0, strcspn($p, '?#'));
+        }
+        $p = rawurldecode($p);
+        if ($p === '' || $p[0] !== '/') {
+            $p = '/' . $p;
+        }
+        $p = rtrim($p, '/');
+        return $p === '' ? '/' : $p;
+    }
+
+    /**
      * Occurrence index (0-based) of $needle_html's block among blocks with the
      * same normalized visible text — computed at RULE-CREATION time so the
      * rule targets the exact block the user edited, not just the first twin.

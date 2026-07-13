@@ -39,6 +39,7 @@ function esc_html($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'
 function esc_attr($t) { return esc_html($t); }
 function wp_strip_all_tags($t) { return trim(strip_tags((string) $t)); }
 function wp_kses_post($t) { return (string) $t; }
+function esc_url_raw($u) { $u = trim((string) $u); return preg_match('#^https?://#i', $u) ? $u : ''; }
 function sanitize_key($t) { return preg_replace('/[^a-z0-9_\-]/', '', strtolower((string) $t)); }
 function sanitize_text_field($t) { return trim(strip_tags((string) $t)); }
 function absint($n) { return abs((int) $n); }
@@ -390,6 +391,42 @@ check('after-inserts serve in creation order', implode(',', $mm[1]) === 'X,ONE,T
 $out = pcm_conn_apply_rules('<h2>X</h2><p>base</p>', array($ins(1, 'A', 'before'), $ins(2, 'B', 'before')), 1);
 preg_match_all('/<h2>(\w+)<\/h2>/', (string) $out, $mm);
 check('before-inserts keep forward order', implode(',', $mm[1]) === 'A,B,X', implode(',', $mm[1]));
+
+// ═════ 7. v3.0.5 slug-change redirects (pure decision functions) ═════
+echo "-- redirects (3.0.5) --\n";
+$np = 'pcm_conn_redirect_norm_path';
+foreach (array('https://s.example/Old-Slug/?q=1#f', '/rel%20path/', '', '/', 'bare', '//host.example/p/') as $i => $in) {
+    check("normalize_path parity #$i", PCM_Text_Matcher::normalize_path($in) === $np($in), array(PCM_Text_Matcher::normalize_path($in), $np($in)));
+}
+check('norm_path absolute URL to path', $np('https://site.example/old-slug/?a=1#frag') === '/old-slug', $np('https://site.example/old-slug/?a=1#frag'));
+check('norm_path relative keeps case, strips query+hash', $np('/Old-Slug?x=1#y') === '/Old-Slug', $np('/Old-Slug?x=1#y'));
+check('norm_path decodes + leading slash', $np('v%C3%A5ra-tj%C3%A4nster/') === '/våra-tjänster', $np('v%C3%A5ra-tj%C3%A4nster/'));
+check('norm_path empty and root are root', $np('') === '/' && $np('https://site.example/') === '/', array($np(''), $np('https://site.example/')));
+$store = array(
+    array('from' => '/old-slug', 'to' => 'https://site.example/new-slug/', 'code' => 301),
+    array('from' => '/moved', 'to' => 'https://elsewhere.example/target', 'code' => 302),
+);
+$hit = pcm_conn_redirect_match('/old-slug/', $store);
+check('match exact (trailing slash tolerated)', is_array($hit) && $hit['to'] === 'https://site.example/new-slug/' && $hit['code'] === 301, $hit);
+$hit = pcm_conn_redirect_match('/old-slug?utm=x&b=2', $store);
+check('match passes the query through', is_array($hit) && $hit['to'] === 'https://site.example/new-slug/?utm=x&b=2', $hit);
+$hit = pcm_conn_redirect_match('/moved?q=1', array(array('from' => '/moved', 'to' => 'https://t.example/?keep=1', 'code' => 302)));
+check('query passthrough appends with & when target has one', is_array($hit) && $hit['to'] === 'https://t.example/?keep=1&q=1' && $hit['code'] === 302, $hit);
+check('match is case-sensitive exact', pcm_conn_redirect_match('/OLD-SLUG', $store) === null);
+check('no match returns null', pcm_conn_redirect_match('/unrelated', $store) === null);
+check('empty store returns null', pcm_conn_redirect_match('/old-slug', array()) === null);
+$hit = pcm_conn_redirect_match('/old-slug', array(array('from' => '/old-slug', 'to' => 'https://x.example/a', 'code' => 999)));
+check('illegal stored code answers 301', is_array($hit) && $hit['code'] === 301, $hit);
+$clean = pcm_conn_redirect_sanitize(array(
+    array('from' => 'https://site.example/keep/', 'to' => 'https://site.example/kept', 'code' => '302'),
+    array('from' => '/keep', 'to' => 'https://site.example/dupe', 'code' => 301),      // dupe path — first wins
+    array('from' => '/', 'to' => 'https://site.example/never', 'code' => 301),          // front page — refused
+    array('from' => '/bad-target', 'to' => 'javascript:alert(1)', 'code' => 301),       // unsafe target — dropped
+    array('from' => '/bad-code', 'to' => 'https://site.example/x', 'code' => 500),      // whitelisted down to 301
+));
+check('sanitize: dedupe + front-page refusal + unsafe target dropped', count($clean) === 2
+    && $clean[0] === array('from' => '/keep', 'to' => 'https://site.example/kept', 'code' => 302)
+    && $clean[1] === array('from' => '/bad-code', 'to' => 'https://site.example/x', 'code' => 301), $clean);
 
 // ═════ summary ═════
 echo "\n" . ($FAIL === 0 ? "ALL GREEN" : "FAILURES: $FAIL") . " — $PASS passed, $FAIL failed\n";

@@ -750,6 +750,26 @@ class PCM_Schema
             KEY idx_userId (userId)
         ) $charset_collate;";
         dbDelta($sql);
+
+        // ── SEO slug-change redirects (DB 1.39.0) ──
+        // Hub-owned store; the connector serves a pushed COPY (full-set replace,
+        // same law as rules). UPSERT identity = siteId + fromPath (normalized via
+        // PCM_Text_Matcher::normalize_path — harness-pinned to the connector's
+        // matcher). code is whitelisted 301/302/307/308 at every boundary.
+        $sql = "CREATE TABLE {$prefix}seo_redirects (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            siteId int(11) NOT NULL,
+            fromPath text NOT NULL,
+            toUrl text NOT NULL,
+            code smallint(5) unsigned DEFAULT 301 NOT NULL,
+            active tinyint(1) DEFAULT 1 NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_site (siteId),
+            KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
     }
 
     /**

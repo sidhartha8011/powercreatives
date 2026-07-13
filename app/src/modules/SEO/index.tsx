@@ -56,6 +56,7 @@ import { BusinessPanel } from './BusinessPanel';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { LinksPopup, type LinkKind } from './LinksPopup';
+import { RedirectPopup } from './RedirectPopup';
 import { HeadingRows } from './HeadingsPanel';
 import { SectionModal } from './SectionModal';
 import { SEO_TABLE_GRID } from './seo-table';
@@ -688,16 +689,38 @@ export function SEOModule() {
     return next;
   }), []);
 
+  // Slug saves on CONNECTED published pages offer a redirect from the old
+  // permalink (the popup writes nothing unless the user says yes). Drafts
+  // have no public URL to preserve; the local tab has no serving engine.
+  const [redirectOffer, setRedirectOffer] = useState<{ fromUrl: string; toUrl: string } | null>(null);
+  const saveSlug = useCallback((id: number, value: string | number): Promise<void> => {
+    const row = rows.find((r) => Number(r.id) === id);
+    const oldSlug = String(row?.slug ?? '');
+    const oldPermalink = String(row?.permalink ?? '');
+    return saveCell(id, 'slug', value).then(() => {
+      const newSlug = String(value).trim();
+      if (isLocal || typeof siteId !== 'number' || !row || row.status !== 'publish'
+        || oldPermalink === '' || newSlug === '' || newSlug === oldSlug) return;
+      try {
+        const u = new URL(oldPermalink);
+        const parts = u.pathname.split('/').filter(Boolean);
+        if (parts.length === 0) return;
+        parts[parts.length - 1] = newSlug;
+        setRedirectOffer({ fromUrl: oldPermalink, toUrl: `${u.origin}/${parts.join('/')}/` });
+      } catch { /* malformed permalink — nothing to offer */ }
+    });
+  }, [rows, saveCell, isLocal, siteId]);
+
   const acceptStaged = useCallback((id: number, field: string) => {
     const key = `${id}:${field}`;
     setStaged((s) => {
       const v = s[key];
-      if (v !== undefined) void saveCell(id, field, v);
+      if (v !== undefined) void (field === 'slug' ? saveSlug(id, v) : saveCell(id, field, v));
       const next = { ...s };
       delete next[key];
       return next;
     });
-  }, [saveCell]);
+  }, [saveCell, saveSlug]);
 
   const rejectStaged = useCallback((id: number, field: string) => {
     setStaged((s) => { const next = { ...s }; delete next[`${id}:${field}`]; return next; });
@@ -1118,7 +1141,7 @@ export function SEOModule() {
             <EditableCell
               value={row.slug}
               placeholder="slug"
-              onSave={(v) => saveCell(row.id, 'slug', v)}
+              onSave={(v) => saveSlug(row.id, v)}
               onGenerate={() => handleGenerate(row.id, 'slug')}
               generating={genKey === ckey}
               suggestion={staged[ckey] ?? null}
@@ -1707,6 +1730,18 @@ export function SEOModule() {
           type={linksPopup.type}
           isLocal={isLocal}
           siteId={typeof siteId === 'number' ? siteId : null}
+        />
+      )}
+
+      {/* Redirect offer — appears once after a real slug change on a connected
+          published page; writes nothing unless confirmed. */}
+      {redirectOffer && typeof siteId === 'number' && (
+        <RedirectPopup
+          open
+          onClose={() => setRedirectOffer(null)}
+          siteId={siteId}
+          fromUrl={redirectOffer.fromUrl}
+          toUrl={redirectOffer.toUrl}
         />
       )}
 
