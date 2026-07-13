@@ -45,7 +45,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
-import type { Node as PMNode } from '@tiptap/pm/model';
+import { DOMSerializer, type Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
@@ -121,15 +121,15 @@ const WIDTH = 440;
  *  like the live page — real paragraph air, stepped heading sizes — while
  *  section mode keeps the compact scale above, byte-identical. */
 const PAGE_TYPE_SCALE =
-  'text-[15px] leading-7 text-slate-800 break-words ' +
-  '[&_h1]:font-serif [&_h1]:text-[27px] [&_h1]:leading-9 [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-3 ' +
-  '[&_h2]:text-[21px] [&_h2]:leading-8 [&_h2]:font-semibold [&_h2]:mt-9 [&_h2]:mb-2.5 ' +
-  '[&_h3]:text-[17px] [&_h3]:font-semibold [&_h3]:mt-7 [&_h3]:mb-2 ' +
-  '[&_h4]:text-[15px] [&_h4]:font-semibold [&_h4]:mt-6 [&_h4]:mb-1.5 ' +
-  '[&_h5]:text-[15px] [&_h5]:font-medium [&_h5]:mt-5 [&_h5]:mb-1 ' +
-  '[&_h6]:text-[15px] [&_h6]:font-medium [&_h6]:mt-5 [&_h6]:mb-1 ' +
-  '[&_p]:my-4 [&_ul]:my-4 [&_ul]:pl-6 [&_ul]:list-disc [&_ol]:my-4 [&_ol]:pl-6 [&_ol]:list-decimal ' +
-  '[&_li]:my-1.5 [&_a]:text-primary [&_a]:underline [&_a]:decoration-dotted ' +
+  'text-sm leading-relaxed text-slate-800 break-words ' +
+  '[&_h1]:font-serif [&_h1]:text-[22px] [&_h1]:leading-8 [&_h1]:font-bold [&_h1]:mt-7 [&_h1]:mb-2 ' +
+  '[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-6 [&_h2]:mb-2 ' +
+  '[&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-5 [&_h3]:mb-1.5 ' +
+  '[&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-1 ' +
+  '[&_h5]:text-sm [&_h5]:font-medium [&_h5]:mt-3 [&_h5]:mb-1 ' +
+  '[&_h6]:text-sm [&_h6]:font-medium [&_h6]:mt-3 [&_h6]:mb-1 ' +
+  '[&_p]:my-3 [&_ul]:my-3 [&_ul]:pl-5 [&_ul]:list-disc [&_ol]:my-3 [&_ol]:pl-5 [&_ol]:list-decimal ' +
+  '[&_li]:my-1 [&_a]:text-primary [&_a]:underline [&_a]:decoration-dotted ' +
   '[&_.ProseMirror>*:first-child]:mt-0';
 
 /** Page-mode images: locked context — visible, atomic, never draggable; the
@@ -317,9 +317,9 @@ const faqTemplate = (): string =>
  *  fold cursor neutralized: FAQ items EDIT as plain open text. */
 const BLOCK_STYLES =
   '[&_.pcm-blk]:border-l-[3px] [&_.pcm-blk]:border-r [&_.pcm-blk]:border-r-slate-100 ' +
-  '[&_.pcm-blk]:px-6 [&_.pcm-blk]:my-0 [&_.pcm-blk]:py-2 ' +
-  '[&_.pcm-blk-start]:border-t [&_.pcm-blk-start]:border-t-slate-100 [&_.pcm-blk-start]:rounded-tr-lg [&_.pcm-blk-start]:pt-5 [&_.pcm-blk-start]:mt-8 ' +
-  '[&_.pcm-blk-end]:border-b [&_.pcm-blk-end]:border-b-slate-100 [&_.pcm-blk-end]:rounded-br-lg [&_.pcm-blk-end]:pb-5 ' +
+  '[&_.pcm-blk]:px-4 [&_.pcm-blk]:my-0 [&_.pcm-blk]:py-1 ' +
+  '[&_.pcm-blk-start]:border-t [&_.pcm-blk-start]:border-t-slate-100 [&_.pcm-blk-start]:rounded-tr-xl [&_.pcm-blk-start]:pt-3 [&_.pcm-blk-start]:mt-5 ' +
+  '[&_.pcm-blk-end]:border-b [&_.pcm-blk-end]:border-b-slate-100 [&_.pcm-blk-end]:rounded-br-xl [&_.pcm-blk-end]:pb-3 ' +
   '[&_.pcm-blk-original]:border-l-slate-300 [&_.pcm-blk-owned]:border-l-amber-400 [&_.pcm-blk-added]:border-l-sky-400 ' +
   '[&_img.pcm-blk]:block [&_img.pcm-blk]:border-y-0 [&_img.pcm-blk]:border-r-0 [&_img.pcm-blk]:rounded-none ' +
   '[&_summary]:list-none [&_summary]:!cursor-text [&_.pcm-deadzone]:opacity-60';
@@ -476,7 +476,16 @@ export function SectionModal({
     // opened content (TipTap reorders attrs etc.) — otherwise an untouched
     // window would "save" on every outside click.
     onCreate: ({ editor: ed }) => setSavedHtml(ed.getHTML()),
+    // Re-render on edits + selection moves: the Draft (unsaved) label and the
+    // Optimize button's scope ("selected" vs whole page) are live states.
+    onUpdate: () => setEditorTick((t) => t + 1),
+    onSelectionUpdate: () => setEditorTick((t) => t + 1),
   });
+  const [, setEditorTick] = useState(0);
+  /** Unsaved edits in page mode — the versions dropdown's Draft state. */
+  const pageDirty = isPage && pageReady && !!editor && editor.getHTML() !== savedHtml;
+  /** A real text selection — the Optimize button's scope. */
+  const hasSelection = !!editor && !editor.state.selection.empty && !(editor.state.selection as any).node;
 
   // Page mode opens empty and loads the fetched document ONCE (dirty-baseline
   // = the editor's normalized form of it, same law as onCreate). The ref
@@ -572,6 +581,8 @@ export function SectionModal({
           )
           : 'Version')
         : (versions.find((v) => String(v.id) === versionPick)?.createdAt.slice(0, 16) ?? 'Version'))
+      : isPage && pageDirty
+        ? 'Draft (unsaved)'
       : isPage
         ? (versions.length > 0 ? pageRowLabel(versions[0], 0) : pageOriginalLabel)
         : (hasActiveRule && versions.length > 0 ? versions[0].createdAt.slice(0, 16) : 'Original');
@@ -729,6 +740,38 @@ export function SectionModal({
   //    the AI) and ride along untouched.
   const [review, setReview] = useState<ReviewSection[] | null>(null);
   const [reviewOrphan, setReviewOrphan] = useState('');
+
+  // ── Selection optimize (owner order 2026-07-13): with a text selection the
+  //    Optimize button touches ONLY the selection — same endpoint, the
+  //    instruction rides along, the answer replaces the selected range in
+  //    place (Undo + versions stay the safety net). ──
+  const optimizeSelection = async () => {
+    if (!editor || busy) return;
+    const { from, to } = editor.state.selection;
+    if (from >= to) return;
+    const div = document.createElement('div');
+    div.appendChild(DOMSerializer.fromSchema(editor.schema).serializeFragment(editor.state.doc.slice(from, to).content));
+    const selHtml = div.innerHTML;
+    setBusy(true);
+    try {
+      const res: any = await optimizeMutation.mutateAsync({
+        siteId: siteId as number, postId, type,
+        html: selHtml, topic: instruction.trim(),
+        model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
+      });
+      const value = String(res?.value ?? '').trim();
+      if (value && htmlText(value) !== htmlText(selHtml)) {
+        editor.chain().focus().insertContentAt({ from, to }, value).run();
+        setAskOpen(false);
+      } else {
+        toast.info('The selection already looks optimized.');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'AI failed — the selection was kept.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const startAiReview = async (topic: string) => {
     if (!editor || !pageReady || busy || review) return;
@@ -924,9 +967,13 @@ export function SectionModal({
   const served = !isInsert && !isPage && !!section?.sectionRuleReplacement;
 
   return createPortal(
+    <>
+    {/* Page mode: dimmed + blurred backdrop (clicks bubble to the document —
+        the existing outside-click flow is untouched). */}
+    {isPage && <div className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-sm" />}
     <div
       ref={rootRef}
-      className={`fixed z-40 flex flex-col overflow-hidden border border-slate-200 bg-white ${isPage ? 'rounded-xl shadow-2xl' : 'rounded-lg shadow-xl'}`}
+      className={`fixed z-40 flex flex-col overflow-hidden bg-white ${isPage ? 'rounded-2xl shadow-2xl' : 'rounded-lg border border-slate-200 shadow-xl'}`}
       style={isPage
         ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 'min(980px, 94vw)', minWidth: 720, height: '90vh', maxWidth: 'calc(100vw - 32px)' }
         : { left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
@@ -935,7 +982,7 @@ export function SectionModal({
     >
       {/* ── Header: ¶ title + [Ask AI] [Re-write] [X] — draggable (page mode: fixed, centered) ── */}
       <div
-        className={`flex select-none items-center border-b border-slate-100 bg-white ${isPage ? 'gap-2 px-4 py-2.5' : 'gap-1.5 border-slate-200 px-2.5 py-1.5 cursor-grab active:cursor-grabbing'}`}
+        className={`flex select-none items-center border-b border-slate-100 bg-white ${isPage ? 'gap-3 px-5 py-3.5' : 'gap-1.5 border-slate-200 px-2.5 py-1.5 cursor-grab active:cursor-grabbing'}`}
         onPointerDown={isPage ? undefined : onDragStart}
         onPointerMove={isPage ? undefined : onDragMove}
         onPointerUp={isPage ? undefined : onDragEnd}
@@ -1006,12 +1053,23 @@ export function SectionModal({
             </button>
             {versionsOpen && (
               <div className="absolute right-0 top-full z-10 mt-1 w-[210px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
+                {isPage && pageDirty && (
+                  <button
+                    type="button"
+                    onClick={() => { setVersionPick(''); setVersionsOpen(false); }}
+                    className="block w-full px-2 py-1 text-left text-[11px] font-medium text-slate-800 hover:bg-slate-50"
+                  >
+                    {versionPick === '' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
+                    Draft (unsaved)
+                  </button>
+                )}
                 {(!isPage || originalHtml !== '') && (
                 <button
                   type="button"
                   onClick={() => pickVersion('original')}
-                  className="block w-full bg-slate-50 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-100"
+                  className="block w-full px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
                 >
+                  {versionPick === 'original' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
                   {isPage ? pageOriginalLabel : 'Original'}
                 </button>
                 )}
@@ -1022,6 +1080,9 @@ export function SectionModal({
                       onClick={() => pickVersion(String(v.id))}
                       className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[11px] text-slate-700"
                     >
+                      {(versionPick === String(v.id) || (versionPick === '' && !pageDirty && isPage && idx === 0)) && (
+                        <Check className="mr-1 inline h-3 w-3 text-primary" />
+                      )}
                       {isPage ? pageRowLabel(v, idx) : v.createdAt.slice(0, 16)}
                     </button>
                     <button
@@ -1064,24 +1125,32 @@ export function SectionModal({
             >
               <MessageCircleQuestion className="h-3 w-3" /> Add FAQ
             </button>
-            <button
-              type="button"
-              onClick={() => setAskOpen((v) => !v)}
-              disabled={busy}
-              title="Tell the AI what to do with this page"
-              className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-slate-100 disabled:opacity-60 ${askOpen ? 'text-primary bg-primary/5' : 'text-slate-500 hover:text-slate-800'}`}
-            >
-              <MessageSquarePlus className="h-3 w-3" /> Ask AI
-            </button>
-            <button
-              type="button"
-              onClick={() => { void startAiReview(instruction.trim()); }}
-              disabled={busy}
-              title="Rewrite the whole page with AI — every change shows as red/green for you to accept or reject"
-              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-60"
-            >
-              <Sparkles className="h-3 w-3" /> AI Optimize
-            </button>
+            {/* ONE AI entry point (split control): the main button states its
+                scope — a text selection narrows it to the selection; the caret
+                opens the instruction field that steers either run. */}
+            <div className="flex shrink-0 items-stretch overflow-hidden rounded-md border border-slate-200">
+              <button
+                type="button"
+                onClick={() => { if (hasSelection) { void optimizeSelection(); } else { void startAiReview(instruction.trim()); } }}
+                disabled={busy}
+                title={hasSelection
+                  ? 'Rewrite ONLY the selected text with AI (your instruction applies)'
+                  : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject'}
+                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-60"
+              >
+                {busy ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
+                {hasSelection ? 'Optimize selected' : 'Optimize (whole page)'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAskOpen((v) => !v)}
+                disabled={busy}
+                title="Write instructions for the AI (e.g. “optimize for keyword X”)"
+                className={`inline-flex items-center border-l border-slate-200 px-1 text-[11px] hover:bg-slate-100 disabled:opacity-60 ${askOpen ? 'bg-primary/5 text-primary' : 'text-slate-500'}`}
+              >
+                ▾
+              </button>
+            </div>
           </>
         )}
         {!readOnly && !isPage && (
@@ -1122,10 +1191,11 @@ export function SectionModal({
             onChange={(e) => setInstruction(e.target.value)}
             onKeyDown={(e) => {
               if (e.key !== 'Enter' || !instruction.trim()) return;
-              if (isPage) void startAiReview(instruction.trim());
-              else void runAi(instruction.trim());
+              if (!isPage) void runAi(instruction.trim());
+              else if (hasSelection) void optimizeSelection();
+              else void startAiReview(instruction.trim());
             }}
-            placeholder="e.g. “make it shorter and add a price example” — Enter to run"
+            placeholder="e.g. “optimize for keyword X” or “inject keyword Y five times” — Enter to run"
             className="h-6 w-full rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-800 outline-none focus:border-primary"
           />
         </div>
@@ -1379,7 +1449,8 @@ export function SectionModal({
         </div>
       )}
 
-    </div>,
+    </div>
+    </>,
     document.body,
   );
 }
