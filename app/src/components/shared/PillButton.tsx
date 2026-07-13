@@ -129,3 +129,85 @@ export function PillButton({
     </button>
   );
 }
+
+/**
+ * PILL SPLIT BUTTON — the shared blue pill with a dropdown zone on the right
+ * (owner order 2026-07-13: the Generate pill, split — main zone runs the
+ * action, the caret zone opens its options). Same tokens as PillButton's
+ * 'active' variant so every generate-class action looks identical.
+ */
+interface PillSplitButtonProps {
+  children: React.ReactNode;
+  icon?: React.ReactNode;
+  onClick?: () => void;
+  onCaretClick?: () => void;
+  caretActive?: boolean;
+  loading?: boolean;
+  disabled?: boolean;
+  title?: string;
+  caretTitle?: string;
+}
+
+export function PillSplitButton({
+  children,
+  icon,
+  onClick,
+  onCaretClick,
+  caretActive = false,
+  loading = false,
+  disabled = false,
+  title,
+  caretTitle,
+}: PillSplitButtonProps) {
+  const isDisabled = disabled || loading;
+  const zone = {
+    background: 'transparent',
+    border: 'none',
+    color: colors.primary,
+    fontSize: typography.xs,
+    fontWeight: typography.semibold,
+    cursor: isDisabled ? 'not-allowed' : 'pointer',
+  } as const;
+  return (
+    <div
+      className="flex shrink-0 items-stretch overflow-hidden"
+      style={{
+        borderRadius: spacing.radiusPill,
+        background: colors.primaryLight,
+        opacity: isDisabled ? 0.5 : 1,
+      }}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={isDisabled}
+        title={title}
+        className="flex items-center"
+        style={{ ...zone, padding: '4px 8px 4px 12px', gap: spacing.gap }}
+      >
+        {loading ? (
+          <Loader2 style={{ width: spacing.iconSm, height: spacing.iconSm }} className="animate-spin" />
+        ) : icon ? (
+          <span
+            style={{ display: 'flex', alignItems: 'center', width: spacing.iconSm, height: spacing.iconSm }}
+            className="[&>svg]:w-full [&>svg]:h-full"
+          >
+            {icon}
+          </span>
+        ) : null}
+        {children}
+      </button>
+      <span aria-hidden style={{ width: 1, background: 'rgba(0, 123, 255, 0.25)', margin: '5px 0' }} />
+      <button
+        type="button"
+        onClick={onCaretClick}
+        disabled={isDisabled}
+        title={caretTitle}
+        className="flex items-center"
+        style={{ ...zone, padding: '4px 8px', background: caretActive ? 'rgba(0, 123, 255, 0.12)' : 'transparent' }}
+      >
+        ▾
+      </button>
+    </div>
+  );
+}

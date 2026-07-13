@@ -49,13 +49,12 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye,
-  Briefcase, Tag, Plus,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
-import { ModelDropdown } from '@/components/shared';
+import { ModelDropdown, PillSplitButton } from '@/components/shared';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import {
   diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
@@ -1152,24 +1151,20 @@ export function SectionModal({
             type), the tools right (Insert ▸ model ▸ Optimize — reads like a
             sentence: insert things; optimize with this model). */}
         {isPage && !readOnly && pageReady && !review && (
-          <div className="flex items-center gap-1.5 border-t border-slate-100 bg-slate-50/60 px-5 py-1.5">
+          <div className="flex items-center gap-1.5 border-t border-slate-100 bg-white px-5 py-1.5">
             <ModelDropdown
               modelGroups={[{
                 label: 'Business',
                 models: [{ id: '0', name: 'No business' }, ...brands.map((b) => ({ id: String(b.id), name: b.name }))],
               }]}
-              selectedModel={brandId > 0 ? String(brandId) : ''}
+              selectedModel={String(brandId)}
               onModelChange={pickBrand}
-              icon={<Briefcase className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
-              placeholder="Business"
             />
             <ModelDropdown
               modelGroups={[{ label: 'Page type', models: PAGE_TYPE_OPTIONS }]}
-              selectedModel={pageType === 'general' ? '' : pageType}
+              selectedModel={pageType}
               onModelChange={pickPageType}
               disabled={busy}
-              icon={<Tag className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
-              placeholder="Page type"
             />
             <div className="flex-1" />
             <div className="relative shrink-0">
@@ -1202,39 +1197,29 @@ export function SectionModal({
               )}
             </div>
             {aiModelSelect}
-            {/* ONE AI entry point: EVERY run goes through the red/green review
-                — no AI text ever lands without Accept/Reject. A text selection
-                only narrows the SCOPE (the sections it touches); the label
-                always states the scope. The caret opens the instruction field
-                that steers the run. */}
-            <div className="flex shrink-0 items-stretch overflow-hidden rounded-md border border-slate-200 bg-white">
-              <button
-                type="button"
-                onClick={() => {
-                  void startAiReview(
-                    instruction.trim(),
-                    hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
-                  );
-                }}
-                disabled={busy}
-                title={hasSelection
-                  ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
-                  : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject'}
-                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-60"
-              >
-                {busy ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
-                {hasSelection ? 'Optimize (selected text)' : 'Optimize page'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setAskOpen((v) => !v)}
-                disabled={busy}
-                title="Write instructions for the AI (e.g. “optimize for keyword X”)"
-                className={`inline-flex items-center border-l border-slate-200 px-1 text-[11px] hover:bg-slate-100 disabled:opacity-60 ${askOpen ? 'bg-primary/5 text-primary' : 'text-slate-500'}`}
-              >
-                ▾
-              </button>
-            </div>
+            {/* ONE AI entry point (the shared blue generate pill, split): EVERY
+                run goes through the red/green review — no AI text ever lands
+                without Accept/Reject. A text selection only narrows the SCOPE;
+                the label always states it. The caret opens the instruction
+                field that steers the run. */}
+            <PillSplitButton
+              icon={<Sparkles />}
+              loading={busy}
+              onClick={() => {
+                void startAiReview(
+                  instruction.trim(),
+                  hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
+                );
+              }}
+              onCaretClick={() => setAskOpen((v) => !v)}
+              caretActive={askOpen}
+              title={hasSelection
+                ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
+                : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject'}
+              caretTitle="Write instructions for the AI (e.g. “optimize for keyword X”)"
+            >
+              {hasSelection ? 'Optimize (selected text)' : 'Optimize page'}
+            </PillSplitButton>
           </div>
         )}
         {!isPage && (

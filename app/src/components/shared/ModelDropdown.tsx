@@ -6,7 +6,7 @@
  * Feed it `groups` from useTextModels (or any {label, models} grouping).
  */
 
-import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 import { colors, typography } from './design-tokens';
@@ -21,25 +21,22 @@ interface ModelDropdownProps {
   selectedModel: string;
   onModelChange: (id: string) => void;
   disabled?: boolean;
-  /** Small leading icon — a 14px label that never bloats the text. */
-  icon?: ReactNode;
-  /** Shown while nothing is selected — the control names its ROLE exactly
-   *  when introduction is needed, then the value takes over. */
-  placeholder?: string;
 }
 
+// Thin pill on a SOLID white surface (owner 2026-07-13: transparent triggers
+// leaked the background through).
 const TRIGGER_STYLE = {
-  padding: '6px 12px',
+  padding: '3px 10px',
   borderRadius: '9999px',
-  fontSize: typography.sm,
+  fontSize: typography.xs,
   fontWeight: typography.medium,
   color: colors.textMuted,
-  background: 'transparent',
+  background: colors.bgSurface,
   border: `1px solid ${colors.border}`,
   cursor: 'pointer',
 } as const;
 
-export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disabled, icon, placeholder }: ModelDropdownProps) {
+export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disabled }: ModelDropdownProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -52,14 +49,13 @@ export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disab
   }, [open]);
 
   const allModels = modelGroups.flatMap((g) => g.models);
-  const selectedName = allModels.find((m) => m.id === selectedModel)?.name ?? placeholder ?? 'Select model';
+  const selectedName = allModels.find((m) => m.id === selectedModel)?.name ?? 'Select model';
 
   return (
     <div className="relative" ref={ref}>
       <button type="button" disabled={disabled} onClick={() => setOpen(!open)} style={TRIGGER_STYLE} className="flex items-center gap-1.5 disabled:opacity-60">
-        {icon}
         <span className="truncate max-w-[120px]">{selectedName}</span>
-        <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+        <ChevronDown className="w-3 h-3 shrink-0" />
       </button>
       {open && (
         <div
