@@ -54,6 +54,7 @@ import {
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
+import { useTextModels } from '@/modules/Copy/useTextModels';
 import {
   diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
 } from './word-diff';
@@ -495,6 +496,39 @@ export function SectionModal({
   const savePageMutation = trpc.seo.remoteSavePageEdits.useMutation();
   const optimizeMutation = trpc.seo.remoteOptimizeSection.useMutation();
 
+  // ── AI model choice (owner order 2026-07-13): ONE dropdown in the modal;
+  //    every AI action here uses it. Resolution: the user's saved pick →
+  //    the prop-passed model → the FIRST registry model (registry = models
+  //    with active keys, so the resolved model always WORKS — the old
+  //    hardcoded server default pointed at a provider without a key and
+  //    failed every call). Persisted per browser; visible in the select. ──
+  const { textModels, groups: modelGroups } = useTextModels();
+  const [aiModelId, setAiModelId] = useState<string>(() => {
+    try { return localStorage.getItem('pcm-seo-ai-model') ?? ''; } catch { return ''; }
+  });
+  const aiPick = textModels.find((m) => m.id === aiModelId)
+    ?? textModels.find((m) => m.id === model)
+    ?? textModels[0];
+  const pickAiModel = (id: string) => {
+    setAiModelId(id);
+    try { localStorage.setItem('pcm-seo-ai-model', id); } catch { /* private mode */ }
+  };
+  const aiModelSelect = textModels.length > 0 ? (
+    <select
+      value={aiPick?.id ?? ''}
+      onChange={(e) => pickAiModel(e.target.value)}
+      disabled={busy}
+      title="AI model used by this editor's AI actions"
+      className="h-[23px] max-w-[150px] shrink-0 truncate rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600 outline-none hover:bg-slate-50 disabled:opacity-60"
+    >
+      {modelGroups.map((g) => (
+        <optgroup key={g.tier} label={g.label}>
+          {g.models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  ) : null;
+
   // ── Version history (replace-sections only — inserts have no Original). ──
   const versionsQuery = trpc.seo.remoteSectionVersions.useQuery(
     {
@@ -674,7 +708,8 @@ export function SectionModal({
       const current = editor?.getText().trim() ? (editor?.getHTML() ?? '') : '';
       const res: any = await optimizeMutation.mutateAsync({
         siteId: siteId as number, postId, type,
-        html: current, topic: withInstruction, model, provider,
+        html: current, topic: withInstruction,
+        model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
       });
       const value = String(res?.value ?? '').trim();
       if (value) { editor?.commands.setContent(value); setAskOpen(false); }
@@ -714,7 +749,8 @@ export function SectionModal({
         try {
           const res: any = await optimizeMutation.mutateAsync({
             siteId: siteId as number, postId, type,
-            html: sections[i].html, topic, model, provider,
+            html: sections[i].html, topic,
+            model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
           });
           const value = String(res?.value ?? '').trim();
           const changed = value !== '' && htmlText(value) !== htmlText(sections[i].html);
@@ -993,6 +1029,7 @@ export function SectionModal({
             AI Optimize runs the whole-page review. Hidden while reviewing. */}
         {!readOnly && isPage && pageReady && !review && (
           <>
+            {aiModelSelect}
             <button
               type="button"
               onClick={addImage}
@@ -1033,6 +1070,7 @@ export function SectionModal({
         )}
         {!readOnly && !isPage && (
           <>
+            {aiModelSelect}
             <button
               type="button"
               onClick={() => setAskOpen((v) => !v)}

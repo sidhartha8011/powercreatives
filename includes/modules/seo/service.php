@@ -707,6 +707,9 @@ class PCM_SEO_Service
             $opts = array('max_tokens' => $max);
             if (!empty($model))    { $opts['model'] = $model; }
             if (!empty($provider)) { $opts['provider'] = $provider; }
+            // The caller's user owns the API keys — without this, key lookup
+            // silently leaned on the WP session user (absent in cron/CLI).
+            if (!empty($user_id))  { $opts['user_id'] = $user_id; }
             $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
             $raw    = (string) ($result['content'] ?? '');
             if ($single_line) {
