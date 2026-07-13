@@ -45,7 +45,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
-import { DOMSerializer, type Node as PMNode } from '@tiptap/pm/model';
+import type { Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
@@ -477,14 +477,15 @@ export function SectionModal({
     // window would "save" on every outside click.
     onCreate: ({ editor: ed }) => setSavedHtml(ed.getHTML()),
     // Re-render on edits + selection moves: the Draft (unsaved) label and the
-    // Optimize button's scope ("selected" vs whole page) are live states.
+    // Optimize button's scope wording are live states.
     onUpdate: () => setEditorTick((t) => t + 1),
     onSelectionUpdate: () => setEditorTick((t) => t + 1),
   });
   const [, setEditorTick] = useState(0);
   /** Unsaved edits in page mode — the versions dropdown's Draft state. */
   const pageDirty = isPage && pageReady && !!editor && editor.getHTML() !== savedHtml;
-  /** A real text selection — the Optimize button's scope. */
+  /** A real text selection — narrows the AI review's SCOPE (never its safety:
+   *  every path shows red/green and waits for Accept/Reject). */
   const hasSelection = !!editor && !editor.state.selection.empty && !(editor.state.selection as any).node;
 
   // Page mode opens empty and loads the fetched document ONCE (dirty-baseline
@@ -741,54 +742,40 @@ export function SectionModal({
   const [review, setReview] = useState<ReviewSection[] | null>(null);
   const [reviewOrphan, setReviewOrphan] = useState('');
 
-  // ── Selection optimize (owner order 2026-07-13): with a text selection the
-  //    Optimize button touches ONLY the selection — same endpoint, the
-  //    instruction rides along, the answer replaces the selected range in
-  //    place (Undo + versions stay the safety net). ──
-  const optimizeSelection = async () => {
-    if (!editor || busy) return;
-    const { from, to } = editor.state.selection;
-    if (from >= to) return;
-    const div = document.createElement('div');
-    div.appendChild(DOMSerializer.fromSchema(editor.schema).serializeFragment(editor.state.doc.slice(from, to).content));
-    const selHtml = div.innerHTML;
-    setBusy(true);
-    try {
-      const res: any = await optimizeMutation.mutateAsync({
-        siteId: siteId as number, postId, type,
-        html: selHtml, topic: instruction.trim(),
-        model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
-      });
-      const value = String(res?.value ?? '').trim();
-      if (value && htmlText(value) !== htmlText(selHtml)) {
-        editor.chain().focus().insertContentAt({ from, to }, value).run();
-        setAskOpen(false);
-      } else {
-        toast.info('The selection already looks optimized.');
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'AI failed — the selection was kept.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const startAiReview = async (topic: string) => {
+  const startAiReview = async (topic: string, scope?: { from: number; to: number } | null) => {
     if (!editor || !pageReady || busy || review) return;
     const { orphanHtml, sections } = splitDocSections(editor.getHTML());
     if (sections.length === 0) {
       toast.info('No sections to optimize on this page.');
       return;
     }
+    // SCOPE (owner order 2026-07-13): a text selection narrows the SAME
+    // review to the sections it touches — out-of-scope sections resolve
+    // 'clean' up front (never sent to the AI, invisible in the rail). One
+    // pipeline: rail, red/green, Accept/Reject/OK are shared by construction.
+    const inScope = new Set<number>();
+    if (scope) {
+      let idx = -1;
+      editor.state.doc.forEach((node, pos) => {
+        if (node.type.name === 'heading') idx++;
+        if (idx >= 0 && pos < scope.to && pos + node.nodeSize > scope.from) inScope.add(idx);
+      });
+      if (inScope.size === 0) {
+        toast.info('Select text inside a section to optimize it.');
+        return;
+      }
+    }
+    const skip = (i: number): boolean => !!scope && !inScope.has(i);
     setAskOpen(false);
     setReviewOrphan(orphanHtml);
-    setReview(sections.map((s) => ({ ...s, status: 'pending' as ReviewStatus })));
+    setReview(sections.map((s, i) => ({ ...s, status: (skip(i) ? 'clean' : 'pending') as ReviewStatus })));
     editor.setEditable(false);
     // Bounded pool: 4 sections in flight; a slow/failed section fails ALONE.
     let next = 0;
     const worker = async () => {
       while (next < sections.length) {
         const i = next++;
+        if (skip(i)) continue;
         try {
           const res: any = await optimizeMutation.mutateAsync({
             siteId: siteId as number, postId, type,
@@ -816,7 +803,11 @@ export function SectionModal({
       : s)) ?? cur);
   const acceptAllDiffs = () =>
     setReview((cur) => cur?.map((s) => (s.status === 'diff' && s.ai ? { ...s, status: 'accepted' as ReviewStatus } : s)) ?? cur);
-  const cancelReview = () =>
+  /** OK — finish the review NOW: decisions already made stay (accepted stays
+   *  accepted), everything undecided keeps its original. The rebuild effect
+   *  then closes the rail and unlocks the editor. Shared by page + selection
+   *  runs by construction (one review state). */
+  const finishReview = () =>
     setReview((cur) => cur?.map((s) => (s.status === 'diff' || s.status === 'pending' ? { ...s, status: 'rejected' as ReviewStatus } : s)) ?? cur);
 
   // Rebuild the document from the review state; when every section is
@@ -1125,21 +1116,28 @@ export function SectionModal({
             >
               <MessageCircleQuestion className="h-3 w-3" /> Add FAQ
             </button>
-            {/* ONE AI entry point (split control): the main button states its
-                scope — a text selection narrows it to the selection; the caret
-                opens the instruction field that steers either run. */}
+            {/* ONE AI entry point: EVERY run goes through the red/green review
+                — no AI text ever lands without Accept/Reject. A text selection
+                only narrows the SCOPE (the sections it touches); the label
+                always states the scope. The caret opens the instruction field
+                that steers the run. */}
             <div className="flex shrink-0 items-stretch overflow-hidden rounded-md border border-slate-200">
               <button
                 type="button"
-                onClick={() => { if (hasSelection) { void optimizeSelection(); } else { void startAiReview(instruction.trim()); } }}
+                onClick={() => {
+                  void startAiReview(
+                    instruction.trim(),
+                    hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
+                  );
+                }}
                 disabled={busy}
                 title={hasSelection
-                  ? 'Rewrite ONLY the selected text with AI (your instruction applies)'
+                  ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
                   : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject'}
                 className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-60"
               >
                 {busy ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
-                {hasSelection ? 'Optimize selected' : 'Optimize (whole page)'}
+                {hasSelection ? 'Optimize (selected text)' : 'Optimize page'}
               </button>
               <button
                 type="button"
@@ -1191,9 +1189,11 @@ export function SectionModal({
             onChange={(e) => setInstruction(e.target.value)}
             onKeyDown={(e) => {
               if (e.key !== 'Enter' || !instruction.trim()) return;
-              if (!isPage) void runAi(instruction.trim());
-              else if (hasSelection) void optimizeSelection();
-              else void startAiReview(instruction.trim());
+              if (!isPage) { void runAi(instruction.trim()); return; }
+              void startAiReview(
+                instruction.trim(),
+                hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
+              );
             }}
             placeholder="e.g. “optimize for keyword X” or “inject keyword Y five times” — Enter to run"
             className="h-6 w-full rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-800 outline-none focus:border-primary"
@@ -1277,7 +1277,7 @@ export function SectionModal({
         <aside className="flex w-[250px] shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
           <div className="border-b border-slate-200 px-2.5 py-1.5">
             <div className="text-[11px] font-medium text-slate-700">
-              AI review — {review.filter((s) => s.status === 'pending' || s.status === 'diff').length} of {review.length} left
+              AI review — {review.filter((s) => s.status === 'pending' || s.status === 'diff').length} of {review.filter((s) => s.status !== 'clean').length} left
             </div>
             <div className="mt-1 flex items-center gap-1.5">
               <button
@@ -1290,15 +1290,16 @@ export function SectionModal({
               </button>
               <button
                 type="button"
-                onClick={cancelReview}
-                className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100"
+                onClick={finishReview}
+                title="Finish — accepted changes stay, everything undecided keeps its original"
+                className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-100"
               >
-                <X className="h-3 w-3" /> Reject all
+                <Check className="h-3 w-3" /> OK
               </button>
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-auto py-1">
-            {review.map((s, i) => (
+            {review.map((s, i) => s.status === 'clean' ? null : (
               <div key={`${s.heading}-${i}`} className="border-b border-slate-100 px-2.5 py-1.5">
                 <div className="truncate text-[11px] font-medium text-slate-700" title={s.heading}>{s.heading || '(untitled section)'}</div>
                 {s.status === 'pending' && (
@@ -1326,7 +1327,6 @@ export function SectionModal({
                 )}
                 {s.status === 'accepted' && <div className="mt-0.5 text-[10px] font-medium text-green-700">✓ Accepted</div>}
                 {s.status === 'rejected' && <div className="mt-0.5 text-[10px] text-slate-500">Rejected — original kept</div>}
-                {s.status === 'clean' && <div className="mt-0.5 text-[10px] text-slate-500">No change suggested</div>}
                 {s.status === 'failed' && (
                   <div className="mt-0.5 text-[10px] text-red-600" title={s.error}>AI failed — original kept</div>
                 )}
