@@ -49,7 +49,7 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -121,15 +121,15 @@ const WIDTH = 440;
  *  like the live page — real paragraph air, stepped heading sizes — while
  *  section mode keeps the compact scale above, byte-identical. */
 const PAGE_TYPE_SCALE =
-  'text-sm leading-relaxed text-slate-800 break-words ' +
-  '[&_h1]:text-xl [&_h1]:font-semibold [&_h1]:mt-6 [&_h1]:mb-2 ' +
-  '[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 ' +
-  '[&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1.5 ' +
-  '[&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-1 ' +
-  '[&_h5]:text-sm [&_h5]:font-medium [&_h5]:mt-3 [&_h5]:mb-1 ' +
-  '[&_h6]:text-sm [&_h6]:font-medium [&_h6]:mt-3 [&_h6]:mb-1 ' +
-  '[&_p]:my-3 [&_ul]:my-3 [&_ul]:pl-5 [&_ul]:list-disc [&_ol]:my-3 [&_ol]:pl-5 [&_ol]:list-decimal ' +
-  '[&_li]:my-1 [&_a]:text-primary [&_a]:underline [&_a]:decoration-dotted ' +
+  'text-[15px] leading-7 text-slate-800 break-words ' +
+  '[&_h1]:font-serif [&_h1]:text-[27px] [&_h1]:leading-9 [&_h1]:font-bold [&_h1]:mt-10 [&_h1]:mb-3 ' +
+  '[&_h2]:text-[21px] [&_h2]:leading-8 [&_h2]:font-semibold [&_h2]:mt-9 [&_h2]:mb-2.5 ' +
+  '[&_h3]:text-[17px] [&_h3]:font-semibold [&_h3]:mt-7 [&_h3]:mb-2 ' +
+  '[&_h4]:text-[15px] [&_h4]:font-semibold [&_h4]:mt-6 [&_h4]:mb-1.5 ' +
+  '[&_h5]:text-[15px] [&_h5]:font-medium [&_h5]:mt-5 [&_h5]:mb-1 ' +
+  '[&_h6]:text-[15px] [&_h6]:font-medium [&_h6]:mt-5 [&_h6]:mb-1 ' +
+  '[&_p]:my-4 [&_ul]:my-4 [&_ul]:pl-6 [&_ul]:list-disc [&_ol]:my-4 [&_ol]:pl-6 [&_ol]:list-decimal ' +
+  '[&_li]:my-1.5 [&_a]:text-primary [&_a]:underline [&_a]:decoration-dotted ' +
   '[&_.ProseMirror>*:first-child]:mt-0';
 
 /** Page-mode images: locked context — visible, atomic, never draggable; the
@@ -316,10 +316,10 @@ const faqTemplate = (): string =>
  *  their natural width) but keep the origin edge. Summary markers hidden +
  *  fold cursor neutralized: FAQ items EDIT as plain open text. */
 const BLOCK_STYLES =
-  '[&_.pcm-blk]:border-l-[3px] [&_.pcm-blk]:border-r [&_.pcm-blk]:border-r-slate-200 ' +
-  '[&_.pcm-blk]:px-4 [&_.pcm-blk]:my-0 [&_.pcm-blk]:py-1.5 ' +
-  '[&_.pcm-blk-start]:border-t [&_.pcm-blk-start]:border-t-slate-200 [&_.pcm-blk-start]:rounded-tr-md [&_.pcm-blk-start]:pt-3 [&_.pcm-blk-start]:mt-5 ' +
-  '[&_.pcm-blk-end]:border-b [&_.pcm-blk-end]:border-b-slate-200 [&_.pcm-blk-end]:rounded-br-md [&_.pcm-blk-end]:pb-3 ' +
+  '[&_.pcm-blk]:border-l-[3px] [&_.pcm-blk]:border-r [&_.pcm-blk]:border-r-slate-100 ' +
+  '[&_.pcm-blk]:px-6 [&_.pcm-blk]:my-0 [&_.pcm-blk]:py-2 ' +
+  '[&_.pcm-blk-start]:border-t [&_.pcm-blk-start]:border-t-slate-100 [&_.pcm-blk-start]:rounded-tr-lg [&_.pcm-blk-start]:pt-5 [&_.pcm-blk-start]:mt-8 ' +
+  '[&_.pcm-blk-end]:border-b [&_.pcm-blk-end]:border-b-slate-100 [&_.pcm-blk-end]:rounded-br-lg [&_.pcm-blk-end]:pb-5 ' +
   '[&_.pcm-blk-original]:border-l-slate-300 [&_.pcm-blk-owned]:border-l-amber-400 [&_.pcm-blk-added]:border-l-sky-400 ' +
   '[&_img.pcm-blk]:block [&_img.pcm-blk]:border-y-0 [&_img.pcm-blk]:border-r-0 [&_img.pcm-blk]:rounded-none ' +
   '[&_summary]:list-none [&_summary]:!cursor-text [&_.pcm-deadzone]:opacity-60';
@@ -926,25 +926,41 @@ export function SectionModal({
   return createPortal(
     <div
       ref={rootRef}
-      className="fixed z-40 flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl"
+      className={`fixed z-40 flex flex-col overflow-hidden border border-slate-200 bg-white ${isPage ? 'rounded-xl shadow-2xl' : 'rounded-lg shadow-xl'}`}
       style={isPage
-        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: '58vw', minWidth: 720, height: '85vh', maxWidth: 'calc(100vw - 32px)' }
+        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 'min(980px, 94vw)', minWidth: 720, height: '90vh', maxWidth: 'calc(100vw - 32px)' }
         : { left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
       role="dialog"
       aria-label={title}
     >
       {/* ── Header: ¶ title + [Ask AI] [Re-write] [X] — draggable (page mode: fixed, centered) ── */}
       <div
-        className={`flex select-none items-center gap-1.5 border-b border-slate-200 bg-white px-2.5 py-1.5 ${isPage ? '' : 'cursor-grab active:cursor-grabbing'}`}
+        className={`flex select-none items-center border-b border-slate-100 bg-white ${isPage ? 'gap-2 px-4 py-2.5' : 'gap-1.5 border-slate-200 px-2.5 py-1.5 cursor-grab active:cursor-grabbing'}`}
         onPointerDown={isPage ? undefined : onDragStart}
         onPointerMove={isPage ? undefined : onDragMove}
         onPointerUp={isPage ? undefined : onDragEnd}
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="min-w-0 truncate text-xs font-medium text-slate-800" title={title}>
-            {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
-            {title}
-          </span>
+          {isPage ? (
+            <>
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-50">
+                <FileText className="h-4 w-4 text-blue-600" />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-[13px] font-medium leading-4 text-slate-800" title={page?.title ?? 'Page'}>
+                  {page?.title ?? 'Page'}
+                </span>
+                {page?.date && (
+                  <span className="block truncate text-[11px] leading-4 text-slate-400">{String(page.date).slice(0, 16)}</span>
+                )}
+              </span>
+            </>
+          ) : (
+            <span className="min-w-0 truncate text-xs font-medium text-slate-800" title={title}>
+              {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
+              {title}
+            </span>
+          )}
           {/* Escape hatches live LEFT, beside the name (owner order):
               Edit = the site's WP editor, Open = the live page. */}
           {isPage && page?.editUrl && (
@@ -953,7 +969,7 @@ export function SectionModal({
               target="_blank"
               rel="noopener noreferrer"
               title="Open this page in the site’s WP editor (source editing)"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-foreground"
+              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
             >
               <ExternalLink className="h-3 w-3" /> Edit
             </a>
@@ -964,7 +980,7 @@ export function SectionModal({
               target="_blank"
               rel="noopener noreferrer"
               title="Open the live page in a new tab"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-foreground"
+              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
             >
               <ExternalLink className="h-3 w-3" /> Open
             </a>
@@ -1035,7 +1051,7 @@ export function SectionModal({
               onClick={addImage}
               disabled={busy}
               title="Add an image — delivered into the site’s own media library, placed at the cursor"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
+              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-60"
             >
               <ImagePlus className="h-3 w-3" /> Add image
             </button>
@@ -1044,7 +1060,7 @@ export function SectionModal({
               onClick={() => editor?.chain().focus().insertContent(faqTemplate()).run()}
               disabled={busy}
               title="Add an FAQ section — a native accordion styled by the site itself"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
+              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-60"
             >
               <MessageCircleQuestion className="h-3 w-3" /> Add FAQ
             </button>
@@ -1053,7 +1069,7 @@ export function SectionModal({
               onClick={() => setAskOpen((v) => !v)}
               disabled={busy}
               title="Tell the AI what to do with this page"
-              className={`inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 disabled:opacity-60 ${askOpen ? 'text-primary border-primary/40' : 'text-slate-600'}`}
+              className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-slate-100 disabled:opacity-60 ${askOpen ? 'text-primary bg-primary/5' : 'text-slate-500 hover:text-slate-800'}`}
             >
               <MessageSquarePlus className="h-3 w-3" /> Ask AI
             </button>
@@ -1062,7 +1078,7 @@ export function SectionModal({
               onClick={() => { void startAiReview(instruction.trim()); }}
               disabled={busy}
               title="Rewrite the whole page with AI — every change shows as red/green for you to accept or reject"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
+              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-60"
             >
               <Sparkles className="h-3 w-3" /> AI Optimize
             </button>
@@ -1173,12 +1189,14 @@ export function SectionModal({
           </BubbleMenu>
         )}
         {(!isPage || pageReady) && (
-          <EditorContent
-            editor={editor}
-            className={`${isPage ? `${PAGE_TYPE_SCALE} ${BLOCK_STYLES}` : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
-              // Locked context images: visible, clearly not editable.
-              + (isPage ? ' [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
-          />
+          <div className={isPage ? 'mx-auto w-full max-w-[820px] px-8 pb-16 pt-6' : 'contents'}>
+            <EditorContent
+              editor={editor}
+              className={`${isPage ? `${PAGE_TYPE_SCALE} ${BLOCK_STYLES}` : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
+                // Locked context images: visible, clearly not editable.
+                + (isPage ? ' [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
+            />
+          </div>
         )}
       </div>
 
