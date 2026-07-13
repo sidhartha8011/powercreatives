@@ -7660,3 +7660,15 @@ Built→Why It Matters→Outcomes; no internal identifiers; every claim traced t
 - OWNER: update powerleads to 3.0.1, test per handover product checklist. The
   stale test rules (2,5,9 + 6/7 chain) now VISIBLE correctly in the outline;
   chain resolves on next save of that section or manual cleanup. NO PUSH.
+
+## 2026-07-13 — Merged origin/feat/seo-suite-port (175 commits) into local parity work
+Committed the uncommitted parity work first (1310d28, 59 files), then merged the remote SEO-suite
+epic (engine v2.4, connector 3.0.x, dynamic rules/redirects/FAQ/section-frames — 75 files, +14.5k).
+Only 2 conflicts, both resolved as unions: sites/controller.php (our schedule routes + their
+connector-version/update routes) and SESSION_LOG. Critical reconciliation: both lines used DB
+versions 1.37–1.39 for different additive schema — bumped PCM_DB_VERSION to 1.40.0 as a convergence
+pass (documented in activator) and proved it live: an install stamped 1.39.0 by our side re-ran
+dbDelta and gained seo_dynamic_rules/seo_rule_versions/seo_redirects while keeping volume/difficulty.
+Verification on merged code: PHPUnit 299 tests — 3 failures, ALL pre-existing (our 1 known invariant
++ their 2, proven identical on a pure-remote worktree, so ZERO merge regressions); their standalone
+harness 88/88 green; tsc 59 (= their baseline, our changes add none); vite build clean. Not pushed.
