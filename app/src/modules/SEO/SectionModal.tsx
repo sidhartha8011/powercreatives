@@ -162,25 +162,26 @@ const DiffRemoved = Mark.create({
   renderHTML() { return ['span', { 'data-diff-removed': '1', class: 'rounded-sm bg-red-50 text-red-800 line-through decoration-red-400' }, 0]; },
 });
 
-/** SECTION FRAMES (page mode): the page drawn as what it IS — a stack of
- *  sections. Pure ProseMirror decorations — they can never enter a save by
- *  construction. Per section: a left rail colored by ORIGIN (slate = the
- *  site's own content, amber = platform-edited, sky = platform-added; a
- *  heading with no origin attribute — typed or pasted this session — is
- *  platform-added by definition), plus an active tint on the section under
- *  the cursor. Blocks ABOVE the first heading are the server-refused dead
- *  zone and lock (contenteditable=false) so the refusal can never be
+/** SECTION BLOCKS (page mode, owner UX ruling 2026-07-13): every section is
+ *  drawn as ONE always-visible bordered block — no hover states, no active
+ *  highlight, no rails; a static structure the eye reads in one pass. The
+ *  block's 3px LEFT EDGE carries the origin (slate = the site's own content,
+ *  amber = platform-edited, sky = platform-added; a heading with no origin
+ *  attribute — typed or pasted this session — is platform-added by
+ *  definition). Pure ProseMirror decorations — they can never enter a save
+ *  by construction. Blocks ABOVE the first heading are the server-refused
+ *  dead zone and lock (contenteditable=false) so the refusal can never be
  *  reached; a doc with NO headings locks nothing — wiped pages must accept
  *  typing. The origin rides as a heading attribute (survives edits and
  *  reordering): the server emits it on load and strips it from every save.
  *  Version-row loads carry no origins, so their sections draw sky — a saved
  *  version IS platform-authored content, the color states a fact. */
-const FRAME_CLASS: Record<string, string> = {
-  original: 'pcm-frame-original',
-  owned: 'pcm-frame-owned',
-  insert: 'pcm-frame-added',
+const BLOCK_ORIGIN_CLASS: Record<string, string> = {
+  original: 'pcm-blk-original',
+  owned: 'pcm-blk-owned',
+  insert: 'pcm-blk-added',
 };
-function frameDecorations(doc: PMNode, selFrom: number): DecorationSet {
+function blockDecorations(doc: PMNode): DecorationSet {
   const blocks: Array<{ pos: number; end: number; heading: boolean; origin: string | null }> = [];
   doc.forEach((node, pos) => {
     blocks.push({
@@ -196,23 +197,24 @@ function frameDecorations(doc: PMNode, selFrom: number): DecorationSet {
     else if (ranges.length > 0) ranges[ranges.length - 1].to = b.end;
   }
   if (ranges.length === 0) return DecorationSet.empty;
-  const activeIdx = ranges.findIndex((r) => selFrom >= r.from && selFrom < r.to);
   const decos: Decoration[] = [];
   for (const b of blocks) {
     if (b.end <= ranges[0].from) {
       decos.push(Decoration.node(b.pos, b.end, { class: 'pcm-deadzone', contenteditable: 'false' }));
     }
   }
-  ranges.forEach((r, i) => {
-    const cls = `pcm-frame ${FRAME_CLASS[r.origin] ?? 'pcm-frame-added'}${i === activeIdx ? ' pcm-frame-active' : ''}`;
-    for (const b of blocks) {
-      if (b.pos >= r.from && b.end <= r.to) decos.push(Decoration.node(b.pos, b.end, { class: cls }));
-    }
-  });
+  for (const r of ranges) {
+    const origin = BLOCK_ORIGIN_CLASS[r.origin] ?? 'pcm-blk-added';
+    const inside = blocks.filter((b) => b.pos >= r.from && b.end <= r.to);
+    inside.forEach((b, i) => {
+      const role = `${i === 0 ? ' pcm-blk-start' : ''}${i === inside.length - 1 ? ' pcm-blk-end' : ''}`;
+      decos.push(Decoration.node(b.pos, b.end, { class: `pcm-blk ${origin}${role}` }));
+    });
+  }
   return DecorationSet.create(doc, decos);
 }
-const SectionFrames = Extension.create({
-  name: 'pcmSectionFrames',
+const SectionBlocks = Extension.create({
+  name: 'pcmSectionBlocks',
   addGlobalAttributes() {
     return [
       {
@@ -232,9 +234,9 @@ const SectionFrames = Extension.create({
   addProseMirrorPlugins() {
     return [
       new Plugin({
-        key: new PluginKey('pcmSectionFrames'),
+        key: new PluginKey('pcmSectionBlocks'),
         props: {
-          decorations: (state) => frameDecorations(state.doc, state.selection.from),
+          decorations: (state) => blockDecorations(state.doc),
         },
       }),
     ];
@@ -253,18 +255,31 @@ const FaqItem = Node.create({
   group: 'block',
   content: 'faqSummary block+',
   defining: true,
-  addAttributes() {
-    return {
-      open: {
-        default: true,
-        parseHTML: (el: HTMLElement) => el.hasAttribute('open'),
-        renderHTML: (attrs: Record<string, unknown>) => (attrs.open ? { open: '' } : {}),
-      },
-      style: { default: null },
+  addAttributes() { return { style: { default: null } }; },
+  parseHTML() { return [{ tag: 'details' }]; },
+  // Serialized WITHOUT `open` — the LIVE page starts COLLAPSED (a real
+  // accordion). The node view below is the EDITOR's display: always open,
+  // fold neutralized — FAQ items edit as plain visible text (owner ruling).
+  renderHTML({ HTMLAttributes }) { return ['details', HTMLAttributes, 0]; },
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement('details');
+      if (node.attrs.style) dom.setAttribute('style', String(node.attrs.style));
+      dom.open = true;
+      dom.addEventListener('toggle', () => { if (!dom.open) dom.open = true; });
+      return {
+        dom,
+        contentDOM: dom,
+        update: (n) => {
+          if (n.type.name !== 'faqItem') return false;
+          if (n.attrs.style) dom.setAttribute('style', String(n.attrs.style));
+          else dom.removeAttribute('style');
+          dom.open = true;
+          return true;
+        },
+      };
     };
   },
-  parseHTML() { return [{ tag: 'details' }]; },
-  renderHTML({ HTMLAttributes }) { return ['details', HTMLAttributes, 0]; },
 });
 const FaqSummary = Node.create({
   name: 'faqSummary',
@@ -290,20 +305,23 @@ const FAQ_SUMMARY_STYLE = 'font-weight:600;cursor:pointer';
 const faqTemplate = (): string =>
   '<h2>Frequently asked questions</h2>' +
   [1, 2, 3].map((n) =>
-    `<details style="${FAQ_ITEM_STYLE}" open><summary style="${FAQ_SUMMARY_STYLE}">Question ${n}</summary><p>Answer ${n}.</p></details>`,
+    `<details style="${FAQ_ITEM_STYLE}"><summary style="${FAQ_SUMMARY_STYLE}">Question ${n}</summary><p>Answer ${n}.</p></details>`,
   ).join('');
 
-/** The frames' looks, scoped to the page editor (rails + active tint + dead zone). */
-const FRAME_STYLES =
-  '[&_.pcm-frame]:border-l-2 [&_.pcm-frame]:pl-3 ' +
-  '[&_.pcm-frame-original]:border-slate-200 ' +
-  '[&_.pcm-frame-owned]:border-amber-300 ' +
-  '[&_.pcm-frame-added]:border-sky-300 ' +
-  '[&_.pcm-frame-active]:bg-slate-50 ' +
-  '[&_.pcm-frame-active.pcm-frame-original]:border-slate-400 ' +
-  '[&_.pcm-frame-active.pcm-frame-owned]:border-amber-500 ' +
-  '[&_.pcm-frame-active.pcm-frame-added]:border-sky-500 ' +
-  '[&_.pcm-deadzone]:opacity-60';
+/** The blocks' looks, scoped to the page editor: one continuous bordered
+ *  block per section (start/middle/end roles join their borders; inter-block
+ *  margins become inner padding so the box never breaks), 3px origin left
+ *  edge, air between sections. Images pause the side borders (they keep
+ *  their natural width) but keep the origin edge. Summary markers hidden +
+ *  fold cursor neutralized: FAQ items EDIT as plain open text. */
+const BLOCK_STYLES =
+  '[&_.pcm-blk]:border-l-[3px] [&_.pcm-blk]:border-r [&_.pcm-blk]:border-r-slate-200 ' +
+  '[&_.pcm-blk]:px-4 [&_.pcm-blk]:my-0 [&_.pcm-blk]:py-1.5 ' +
+  '[&_.pcm-blk-start]:border-t [&_.pcm-blk-start]:border-t-slate-200 [&_.pcm-blk-start]:rounded-tr-md [&_.pcm-blk-start]:pt-3 [&_.pcm-blk-start]:mt-5 ' +
+  '[&_.pcm-blk-end]:border-b [&_.pcm-blk-end]:border-b-slate-200 [&_.pcm-blk-end]:rounded-br-md [&_.pcm-blk-end]:pb-3 ' +
+  '[&_.pcm-blk-original]:border-l-slate-300 [&_.pcm-blk-owned]:border-l-amber-400 [&_.pcm-blk-added]:border-l-sky-400 ' +
+  '[&_img.pcm-blk]:block [&_img.pcm-blk]:border-y-0 [&_img.pcm-blk]:border-r-0 [&_img.pcm-blk]:rounded-none ' +
+  '[&_summary]:list-none [&_summary]:!cursor-text [&_.pcm-deadzone]:opacity-60';
 
 /** One section under AI review. pending/diff block saving; the rest are resolved. */
 type ReviewStatus = 'pending' | 'diff' | 'accepted' | 'rejected' | 'clean' | 'failed';
@@ -450,7 +468,7 @@ export function SectionModal({
         },
         codeBlock: false, blockquote: false, horizontalRule: false,
       }),
-      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved, SectionFrames, FaqItem, FaqSummary] : []),
+      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved, SectionBlocks, FaqItem, FaqSummary] : []),
     ],
     content: openedHtml,
     // Baseline for dirty-checks must be the EDITOR's normalized form of the
@@ -1119,7 +1137,7 @@ export function SectionModal({
         {(!isPage || pageReady) && (
           <EditorContent
             editor={editor}
-            className={`${isPage ? `${PAGE_TYPE_SCALE} ${FRAME_STYLES}` : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
+            className={`${isPage ? `${PAGE_TYPE_SCALE} ${BLOCK_STYLES}` : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
               // Locked context images: visible, clearly not editable.
               + (isPage ? ' [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
           />
