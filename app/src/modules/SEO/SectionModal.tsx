@@ -46,7 +46,7 @@ import Image from '@tiptap/extension-image';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -54,6 +54,10 @@ import { trpc } from '@/lib/trpc';
 import {
   diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
 } from './word-diff';
+
+// The hub's native WP media library (wp_enqueue_media — same pattern as the
+// table's featured-image picker).
+declare const wp: any;
 
 /** One paragraph of the section, from the SCAN (original text = rule identity). */
 export interface SectionParagraph {
@@ -131,7 +135,13 @@ const PAGE_TYPE_SCALE =
 const LockedImage = Image.extend({
   draggable: false,
   addAttributes() {
-    return { ...this.parent?.(), 'data-pcm-locked': { default: null } };
+    return {
+      ...this.parent?.(),
+      'data-pcm-locked': { default: null },
+      // Platform-added images (delivered into the client's own media library)
+      // — the ONLY images that survive a save (marker + host, server-verified).
+      'data-pcm-added': { default: null },
+    };
   },
 });
 
@@ -629,6 +639,43 @@ export function SectionModal({
     return () => { editor.off('selectionUpdate', onSel); };
   }, [isPage, editor]);
 
+  // ── Add image (phase 1): pick from the hub's media library → the file is
+  //    delivered into the CLIENT site's own library (autonomy law) → the
+  //    client-native URL is inserted at the cursor, marked platform-added. ──
+  const uploadMediaMutation = trpc.seo.remoteUploadMedia.useMutation();
+  const addImage = () => {
+    if (typeof wp === 'undefined' || !wp.media) {
+      toast.error('The media library isn’t available on this screen.');
+      return;
+    }
+    const frame = wp.media({ title: 'Add image', multiple: false, library: { type: 'image' } });
+    frame.on('select', () => {
+      const att = frame.state().get('selection').first().toJSON();
+      void (async () => {
+        setBusy(true);
+        try {
+          const res: any = await uploadMediaMutation.mutateAsync({ siteId: siteId as number, url: String(att.url ?? '') });
+          const clientUrl = String(res?.url ?? '');
+          if (!clientUrl) throw new Error('The site did not return the delivered image’s URL.');
+          editor?.chain().focus().insertContent({
+            type: 'image',
+            attrs: {
+              src: clientUrl,
+              alt: String(att.alt || att.title || ''),
+              'data-pcm-added': String(res?.id ?? '1'),
+            },
+          }).run();
+          toast.success('Image added — it now lives in the site’s own media library.');
+        } catch (e: any) {
+          toast.error(e?.message ?? 'Could not deliver the image to the site');
+        } finally {
+          setBusy(false);
+        }
+      })();
+    });
+    frame.open();
+  };
+
   const saveImageMeta = async (mode: 'save' | 'revert' | 'hide') => {
     if (!imgSel || busy) return;
     setBusy(true);
@@ -782,6 +829,15 @@ export function SectionModal({
             AI Optimize runs the whole-page review. Hidden while reviewing. */}
         {!readOnly && isPage && pageReady && !review && (
           <>
+            <button
+              type="button"
+              onClick={addImage}
+              disabled={busy}
+              title="Add an image — delivered into the site’s own media library, placed at the cursor"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
+            >
+              <ImagePlus className="h-3 w-3" /> Add image
+            </button>
             <button
               type="button"
               onClick={() => setAskOpen((v) => !v)}

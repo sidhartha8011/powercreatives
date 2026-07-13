@@ -3084,14 +3084,19 @@ class PCM_SEO_Service
     }
 
     /**
-     * Extract every <img> tag from an HTML fragment.
+     * Extract <img> tags from an HTML fragment. With $skip_added, images the
+     * platform placed (`data-pcm-added`) stay IN PLACE — they are content,
+     * not context, and must never drift to a section's end on round-trips.
      *
-     * @return array{0:string,1:array<int,string>} [fragment without imgs, img tags in order].
+     * @return array{0:string,1:array<int,string>} [fragment without extracted imgs, extracted tags in order].
      */
-    private static function extract_imgs(string $fragment): array
+    private static function extract_imgs(string $fragment, bool $skip_added = false): array
     {
         $imgs = array();
-        $rest = (string) preg_replace_callback('#<img\b[^>]*>#i', static function ($m) use (&$imgs) {
+        $rest = (string) preg_replace_callback('#<img\b[^>]*>#i', static function ($m) use (&$imgs, $skip_added) {
+            if ($skip_added && stripos((string) $m[0], 'data-pcm-added') !== false) {
+                return (string) $m[0];
+            }
             $imgs[] = (string) $m[0];
             return '';
         }, $fragment);
@@ -3165,7 +3170,9 @@ class PCM_SEO_Service
                     && in_array((string) ($row['rule']['target'] ?? ''), array('section', 'sectionInsert'), true))
                     ? $row['rule'] : null;
                 if ($att !== null) {
-                    list($slice, $imgs) = self::extract_imgs((string) ($att['sliceHtml'] ?? ''));
+                    // Platform-added images stay in place (content); everything
+                    // else lifts out as locked context.
+                    list($slice, $imgs) = self::extract_imgs((string) ($att['sliceHtml'] ?? ''), true);
                     $out[]    = trim($slice);
                     foreach ($imgs as $img) {
                         $out[] = $lock($img);
@@ -3425,6 +3432,14 @@ class PCM_SEO_Service
             $out['error'] = (string) $meta['error'];
         }
         return $out;
+    }
+
+    /** Upload an image (by URL) into a connected site's media library — the
+     *  SINGLE existing channel in PCM_Sites_Service (delegation, never duplicate). */
+    public static function remote_add_media(object $site, string $image_url)
+    {
+        self::ensure_sites_service();
+        return PCM_Sites_Service::remote_upload_media($site, $image_url);
     }
 
     /** Whether a connected site's connector accepts rule schema v1 (capability check). */
@@ -4482,17 +4497,37 @@ class PCM_SEO_Service
             $notes[] = __('Content before the first heading can’t be edited yet — those changes weren’t saved.', 'power-creatives');
         }
 
-        // ── Replacement builder (the image law): every <img> is locked context
-        //    — stripped from EVERY save, so the live page's images stay
-        //    untouched between-content. Everything else is kept (see docblock).
-        $strip_img_tags = static function (array $unit_list): array {
+        // ── Replacement builder (the image KEEP LAW, 2026-07-12): an <img>
+        //    survives a save ONLY when the platform placed it — the
+        //    data-pcm-added marker AND a src on the client site's own host
+        //    (server-verified: a marker alone could ride in on pasted or AI
+        //    content, but only our delivery channel produces client-host
+        //    files). Locked originals and everything foreign strip exactly
+        //    as before — the live page's own images stay untouched
+        //    between-content.
+        $site_host = strtolower((string) (wp_parse_url((string) $site->url, PHP_URL_HOST) ?: ''));
+        $keep_img  = static function (string $tag) use ($site_host): bool {
+            if ($site_host === '' || stripos($tag, 'data-pcm-added') === false) {
+                return false;
+            }
+            if (!preg_match('#(?<![\w-])src\s*=\s*("([^"]*)"|\'([^\']*)\')#i', $tag, $m)) {
+                return false;
+            }
+            $src = PCM_Text_Matcher::normalize_src($m[2] !== '' ? $m[2] : (isset($m[3]) ? $m[3] : ''));
+            return strtolower((string) (wp_parse_url($src, PHP_URL_HOST) ?: '')) === $site_host;
+        };
+        $strip_img_tags = static function (array $unit_list) use ($keep_img): array {
             $out = array();
             foreach ($unit_list as $u) {
                 if ((string) $u['tag'] !== '') {
-                    $out[] = $u;
+                    // Block units keep platform-added inline images too (TipTap
+                    // emits added images top-level, but kses round-trips can
+                    // nest them) — same keep law, one discriminator.
+                    $html = (string) preg_replace_callback('#<img\b[^>]*>#i', static fn($m) => $keep_img((string) $m[0]) ? (string) $m[0] : '', (string) $u['html']);
+                    $out[] = array('tag' => $u['tag'], 'inner' => (string) preg_replace_callback('#<img\b[^>]*>#i', static fn($m) => $keep_img((string) $m[0]) ? (string) $m[0] : '', (string) $u['inner']), 'html' => $html);
                     continue;
                 }
-                list($rest, ) = self::extract_imgs((string) $u['html']);
+                $rest = (string) preg_replace_callback('#<img\b[^>]*>#i', static fn($m) => $keep_img((string) $m[0]) ? (string) $m[0] : '', (string) $u['html']);
                 if (trim($rest) !== '') {
                     $out[] = array('tag' => '', 'inner' => '', 'html' => trim($rest));
                 }
@@ -4632,6 +4667,9 @@ class PCM_SEO_Service
             $out = array();
             if (preg_match_all('#<img\b[^>]*>#i', $doc, $mm)) {
                 foreach ($mm[0] as $tag) {
+                    if (stripos($tag, 'data-pcm-added') !== false) {
+                        continue; // platform-added images live and die with their RULE content — never hide-reconciled
+                    }
                     if (!preg_match('#(?<![\w-])src\s*=\s*("([^"]*)"|\'([^\']*)\')#i', $tag, $sm)) {
                         continue;
                     }

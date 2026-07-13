@@ -87,6 +87,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-rule', 'remote_save_section_rule', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-edits', 'remote_save_page_edits', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/image-rule', 'remote_save_image_rule', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/media', 'remote_add_media', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-versions', 'remote_page_versions', array(), 'manage_options'),
@@ -509,6 +510,28 @@ class PCM_REST_SEO extends PCM_REST_Base
             (string) $request->get_param('text'),
             absint($request->get_param('occurrence'))
         )));
+    }
+
+    /** POST /seo/sites/{id}/media — deliver an image (by hub URL) into the
+     *  connected site's own media library; returns the client-native {id, url}.
+     *  The page editor inserts THAT url — client sites stay autonomous. */
+    public function remote_add_media(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $url    = esc_url_raw((string) ($params['url'] ?? ''));
+        if ($url === '') {
+            return new WP_Error('pcm_seo_media_no_url', __('No image URL to deliver.', 'power-creatives'), array('status' => 400));
+        }
+        $result = PCM_SEO_Service::remote_add_media($site, $url);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** POST /seo/sites/{id}/content/{post}/image-rule — save an image METADATA

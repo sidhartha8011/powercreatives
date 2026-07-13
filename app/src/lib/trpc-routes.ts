@@ -429,6 +429,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-versions?text=${encodeURIComponent(input.text)}&occurrence=${input.occurrence ?? 0}` }),
     },
+    "seo.remoteUploadMedia": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/media`, body: { url: input.url } }),
+    },
     "seo.remoteSaveImageRule": {
         endpoint: "seo/sites",
         method: "POST",
