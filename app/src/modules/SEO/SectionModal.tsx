@@ -49,7 +49,7 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -106,8 +106,9 @@ export interface SectionModalProps {
   section?: SectionData;
   insert?: InsertData;
   /** Page mode: the row's title, publish date (the Original row's label),
-   *  the WP-editor escape hatch + the live permalink. */
-  page?: { title: string; editUrl?: string; date?: string; permalink?: string };
+   *  the WP-editor escape hatch, the live permalink + the inline preview
+   *  opener (the table's own preview window). */
+  page?: { title: string; editUrl?: string; date?: string; permalink?: string; onPreview?: () => void };
   /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
   /** Where the user clicked — the window opens right below it. */
@@ -563,9 +564,14 @@ export function SectionModal({
   };
   /** Page rows (owner order 2026-07-11): NO separate Current choice — the
    *  newest saved version IS what the site serves and carries the suffix;
-   *  the Original row shows the page's own date. */
+   *  the Original row shows the page's own date. When the newest save IS a
+   *  restore of the original, the label SAYS so (2026-07-13, live-caught:
+   *  a perfect restore looked like "another version" and read as a bug). */
+  const normDoc = (h: string) => h.replace(/\s*data-pcm-origin="[^"]*"/g, '').replace(/\s+/g, ' ').trim();
+  const currentIsOriginal = versions.length > 0 && originalHtml !== ''
+    && normDoc(String((versions[0] as any).replacement ?? '')) === normDoc(originalHtml);
   const pageRowLabel = (v: { createdAt: string }, idx: number) =>
-    `${v.createdAt.slice(0, 16)}${idx === 0 ? ' (Current)' : ''}`;
+    `${v.createdAt.slice(0, 16)}${idx === 0 ? (currentIsOriginal ? ' (Current — original)' : ' (Current)') : ''}`;
   const pageOriginalLabel = page?.date ? `${String(page.date).slice(0, 16)} (original)` : 'Original';
   /** The dropdown ALWAYS names a state (owner law — never a counter). */
   const hasActiveRule = !isInsert && !isPage && !!section?.sectionRuleReplacement;
@@ -980,15 +986,15 @@ export function SectionModal({
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {isPage ? (
             <>
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-50">
-                <FileText className="h-4 w-4 text-blue-600" />
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-50">
+                <FileText className="h-3.5 w-3.5 text-blue-600" />
               </span>
-              <span className="min-w-0">
-                <span className="block truncate text-[13px] font-medium leading-4 text-slate-800" title={page?.title ?? 'Page'}>
+              <span className="flex min-w-0 items-baseline gap-1.5">
+                <span className="truncate text-xs font-medium text-slate-800" title={page?.title ?? 'Page'}>
                   {page?.title ?? 'Page'}
                 </span>
                 {page?.date && (
-                  <span className="block truncate text-[11px] leading-4 text-slate-400">{String(page.date).slice(0, 16)}</span>
+                  <span className="shrink-0 truncate text-[10px] text-slate-400">{String(page.date).slice(0, 10)}</span>
                 )}
               </span>
             </>
@@ -1021,6 +1027,16 @@ export function SectionModal({
             >
               <ExternalLink className="h-3 w-3" /> Open
             </a>
+          )}
+          {isPage && page?.onPreview && (
+            <button
+              type="button"
+              onClick={page.onPreview}
+              title="Preview the live page here, in the inline preview window"
+              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            >
+              <Eye className="h-3 w-3" /> Preview
+            </button>
           )}
         </div>
         {/* Version history: the button ALWAYS names the shown state (picked/
