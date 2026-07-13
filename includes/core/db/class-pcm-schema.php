@@ -459,6 +459,7 @@ class PCM_Schema
             appPassword text NOT NULL,
             status varchar(50) DEFAULT 'active' NOT NULL,
             connectMethod varchar(20) DEFAULT 'password' NOT NULL,
+            brandId int(11) DEFAULT NULL,
             lastSyncAt datetime DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,

@@ -538,6 +538,44 @@ export function SectionModal({
     />
   ) : null;
 
+  // ── Business + page type (owner order 2026-07-13): the site's linked brand
+  //    feeds real business details (phone/address/…) into every AI run, and
+  //    the page type tells the AI WHAT it's optimizing (local/blog/…). Both
+  //    visible in the header — you SEE the context the AI actually gets. ──
+  const brandsQuery = trpc.brands.list.useQuery(undefined, { enabled: isPage && !readOnly });
+  const brands = Array.isArray(brandsQuery.data)
+    ? (brandsQuery.data as any[]).map((b) => ({ id: Number(b.id), name: String(b.name) }))
+    : [];
+  const [brandId, setBrandId] = useState(0);
+  const [pageType, setPageType] = useState('general');
+  useEffect(() => {
+    if (!isPage || !pageQuery.data) return;
+    setBrandId(Number((pageQuery.data as any).brandId ?? 0));
+    setPageType(String((pageQuery.data as any).pageType ?? '') || 'general');
+  }, [isPage, pageQuery.data]);
+  const brandMutation = trpc.sites.update.useMutation();
+  const pageTypeMutation = trpc.seo.remoteSavePageType.useMutation();
+  const pickBrand = (id: string) => {
+    const n = Number(id);
+    setBrandId(n);
+    brandMutation.mutateAsync({ id: siteId, brandId: n })
+      .then(() => toast.success(n > 0 ? 'Business linked — the AI now uses its details' : 'Business unlinked'))
+      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : 'Failed to link the business'));
+  };
+  const pickPageType = (t: string) => {
+    setPageType(t);
+    pageTypeMutation.mutateAsync({ siteId, postId, type: t === 'general' ? '' : t })
+      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : 'Failed to save the page type'));
+  };
+  const PAGE_TYPE_OPTIONS = [
+    { id: 'general', name: 'General' },
+    { id: 'local', name: 'Local search' },
+    { id: 'blog', name: 'Blog article' },
+    { id: 'product', name: 'Product' },
+    { id: 'service', name: 'Service' },
+    { id: 'landing', name: 'Landing page' },
+  ];
+
   // ── Version history (replace-sections only — inserts have no Original). ──
   const versionsQuery = trpc.seo.remoteSectionVersions.useQuery(
     {
@@ -986,6 +1024,16 @@ export function SectionModal({
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {isPage ? (
             <>
+              {!readOnly && (
+                <ModelDropdown
+                  modelGroups={[{
+                    label: 'Business',
+                    models: [{ id: '0', name: 'No business' }, ...brands.map((b) => ({ id: String(b.id), name: b.name }))],
+                  }]}
+                  selectedModel={String(brandId)}
+                  onModelChange={pickBrand}
+                />
+              )}
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-50">
                 <FileText className="h-3.5 w-3.5 text-blue-600" />
               </span>
@@ -1112,6 +1160,12 @@ export function SectionModal({
             AI Optimize runs the whole-page review. Hidden while reviewing. */}
         {!readOnly && isPage && pageReady && !review && (
           <>
+            <ModelDropdown
+              modelGroups={[{ label: 'Page type', models: PAGE_TYPE_OPTIONS }]}
+              selectedModel={pageType}
+              onModelChange={pickPageType}
+              disabled={busy}
+            />
             {aiModelSelect}
             <button
               type="button"

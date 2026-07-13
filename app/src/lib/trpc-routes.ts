@@ -449,6 +449,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/redirects/${input.redirectId}/delete` }),
     },
+    "seo.remoteSavePageType": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-type`, body: { type: input.type } }),
+    },
     "seo.remoteUrlUsage": {
         endpoint: "seo/sites",
         method: "GET",
