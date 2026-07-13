@@ -50,6 +50,7 @@ import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
   Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye,
+  Briefcase, Tag, Plus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -553,6 +554,7 @@ export function SectionModal({
     setBrandId(Number((pageQuery.data as any).brandId ?? 0));
     setPageType(String((pageQuery.data as any).pageType ?? '') || 'general');
   }, [isPage, pageQuery.data]);
+  const [insertOpen, setInsertOpen] = useState(false);
   const brandMutation = trpc.sites.update.useMutation();
   const pageTypeMutation = trpc.seo.remoteSavePageType.useMutation();
   const pickBrand = (id: string) => {
@@ -1000,6 +1002,76 @@ export function SectionModal({
       : `¶ ${section?.heading.text ?? ''}`;
   const served = !isInsert && !isPage && !!section?.sectionRuleReplacement;
 
+  // ── Shared header controls: the page header's row 1 and the section
+  //    header render the SAME nodes (one definition, two placements). ──
+  const versionsControl = (!readOnly && !isInsert && !review) ? (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setVersionsOpen((v) => !v)}
+        title="Versions — pick one to view it — saving makes it live"
+        className="inline-flex h-6 max-w-[170px] items-center gap-1 truncate rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 hover:bg-slate-50"
+      >
+        <span className="truncate">{versionLabel}</span>
+        <span className="text-slate-400">▾</span>
+      </button>
+      {versionsOpen && (
+        <div className="absolute right-0 top-full z-10 mt-1 w-[230px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
+          {isPage && pageDirty && (
+            <button
+              type="button"
+              onClick={() => { setVersionPick(''); setVersionsOpen(false); }}
+              className="block w-full px-2 py-1 text-left text-[11px] font-medium text-slate-800 hover:bg-slate-50"
+            >
+              {versionPick === '' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
+              Draft (unsaved)
+            </button>
+          )}
+          {(!isPage || originalHtml !== '') && (
+            <button
+              type="button"
+              onClick={() => pickVersion('original')}
+              className="block w-full px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
+            >
+              {versionPick === 'original' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
+              {isPage ? pageOriginalLabel : 'Original'}
+            </button>
+          )}
+          {versions.map((v, idx) => (
+            <div key={v.id} className="flex items-center hover:bg-slate-50">
+              <button
+                type="button"
+                onClick={() => pickVersion(String(v.id))}
+                className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[11px] text-slate-700"
+              >
+                {(versionPick === String(v.id) || (versionPick === '' && !pageDirty && isPage && idx === 0)) && (
+                  <Check className="mr-1 inline h-3 w-3 text-primary" />
+                )}
+                {isPage ? pageRowLabel(v, idx) : v.createdAt.slice(0, 16)}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void deleteVersion(v.id); }}
+                title="Delete this version"
+                className="shrink-0 rounded p-1 text-slate-400 hover:text-destructive"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+          {versions.length === 0 && (
+            <div className="px-2 py-1 text-[11px] text-slate-400">No saved versions yet</div>
+          )}
+        </div>
+      )}
+    </div>
+  ) : null;
+  const closeButton = (
+    <button type="button" onClick={onClose} title="Close (Esc) — closes without saving" className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+      <X className="h-3.5 w-3.5" />
+    </button>
+  );
+
   return createPortal(
     <>
     {/* Page mode: dimmed + blurred backdrop (clicks bubble to the document —
@@ -1014,183 +1086,128 @@ export function SectionModal({
       role="dialog"
       aria-label={title}
     >
-      {/* ── Header: ¶ title + [Ask AI] [Re-write] [X] — draggable (page mode: fixed, centered) ── */}
+      {/* ── Header. PAGE mode (owner UX 2026-07-13): TWO rows — row 1 = the
+             document (identity, escape hatches, versions, close), row 2 = the
+             workbench (AI context left, tools right). The title keeps its
+             size; only the DATE is small, stacked underneath (owner order —
+             never on the same line). SECTION mode: the original draggable
+             single row. ── */}
       <div
-        className={`flex select-none items-center border-b border-slate-100 bg-white ${isPage ? 'gap-3 px-5 py-3.5' : 'gap-1.5 border-slate-200 px-2.5 py-1.5 cursor-grab active:cursor-grabbing'}`}
+        className={`select-none border-b bg-white ${isPage ? 'border-slate-100' : 'flex items-center gap-1.5 border-slate-200 px-2.5 py-1.5 cursor-grab active:cursor-grabbing'}`}
         onPointerDown={isPage ? undefined : onDragStart}
         onPointerMove={isPage ? undefined : onDragMove}
         onPointerUp={isPage ? undefined : onDragEnd}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          {isPage ? (
-            <>
-              {!readOnly && (
-                <ModelDropdown
-                  modelGroups={[{
-                    label: 'Business',
-                    models: [{ id: '0', name: 'No business' }, ...brands.map((b) => ({ id: String(b.id), name: b.name }))],
-                  }]}
-                  selectedModel={String(brandId)}
-                  onModelChange={pickBrand}
-                />
-              )}
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-50">
-                <FileText className="h-3.5 w-3.5 text-blue-600" />
-              </span>
-              <span className="flex min-w-0 items-baseline gap-1.5">
-                <span className="truncate text-xs font-medium text-slate-800" title={page?.title ?? 'Page'}>
-                  {page?.title ?? 'Page'}
-                </span>
-                {page?.date && (
-                  <span className="shrink-0 truncate text-[10px] text-slate-400">{String(page.date).slice(0, 10)}</span>
-                )}
-              </span>
-            </>
-          ) : (
-            <span className="min-w-0 truncate text-xs font-medium text-slate-800" title={title}>
-              {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
-              {title}
+        {isPage && (
+          <div className="flex items-center gap-2 px-5 pb-2 pt-3">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-50">
+              <FileText className="h-4 w-4 text-blue-600" />
             </span>
-          )}
-          {/* Escape hatches live LEFT, beside the name (owner order):
-              Edit = the site's WP editor, Open = the live page. */}
-          {isPage && page?.editUrl && (
-            <a
-              href={page.editUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Open this page in the site’s WP editor (source editing)"
-              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-            >
-              <ExternalLink className="h-3 w-3" /> Edit
-            </a>
-          )}
-          {isPage && page?.permalink && (
-            <a
-              href={page.permalink}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Open the live page in a new tab"
-              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-            >
-              <ExternalLink className="h-3 w-3" /> Open
-            </a>
-          )}
-          {isPage && page?.onPreview && (
-            <button
-              type="button"
-              onClick={page.onPreview}
-              title="Preview the live page here, in the inline preview window"
-              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-            >
-              <Eye className="h-3 w-3" /> Preview
-            </button>
-          )}
-        </div>
-        {/* Version history: the button ALWAYS names the shown state (picked/
-            Current/latest/Original — never a counter). The list: page mode adds
-            Current (the live served document); Original (light-grey,
-            undeletable — page mode: the rules-input document, hidden when the
-            input view is unavailable); each accepted save with date/time and a
-            delete button. Picking one loads it in the editor; saving makes
-            it live (page mode: through the normal per-section save). */}
-        {!readOnly && !isInsert && !review && (
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => setVersionsOpen((v) => !v)}
-              title="Versions — pick one to view it — saving makes it live"
-              className="inline-flex h-6 max-w-[140px] items-center gap-1 truncate rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 hover:bg-slate-50"
-            >
-              <span className="truncate">{versionLabel}</span>
-              <span className="text-slate-400">▾</span>
-            </button>
-            {versionsOpen && (
-              <div className="absolute right-0 top-full z-10 mt-1 w-[210px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
-                {isPage && pageDirty && (
-                  <button
-                    type="button"
-                    onClick={() => { setVersionPick(''); setVersionsOpen(false); }}
-                    className="block w-full px-2 py-1 text-left text-[11px] font-medium text-slate-800 hover:bg-slate-50"
-                  >
-                    {versionPick === '' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
-                    Draft (unsaved)
-                  </button>
-                )}
-                {(!isPage || originalHtml !== '') && (
-                <button
-                  type="button"
-                  onClick={() => pickVersion('original')}
-                  className="block w-full px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
-                >
-                  {versionPick === 'original' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
-                  {isPage ? pageOriginalLabel : 'Original'}
-                </button>
-                )}
-                {versions.map((v, idx) => (
-                  <div key={v.id} className="flex items-center hover:bg-slate-50">
-                    <button
-                      type="button"
-                      onClick={() => pickVersion(String(v.id))}
-                      className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[11px] text-slate-700"
-                    >
-                      {(versionPick === String(v.id) || (versionPick === '' && !pageDirty && isPage && idx === 0)) && (
-                        <Check className="mr-1 inline h-3 w-3 text-primary" />
-                      )}
-                      {isPage ? pageRowLabel(v, idx) : v.createdAt.slice(0, 16)}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { void deleteVersion(v.id); }}
-                      title="Delete this version"
-                      className="shrink-0 rounded p-1 text-slate-400 hover:text-destructive"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-                {versions.length === 0 && (
-                  <div className="px-2 py-1 text-[11px] text-slate-400">No saved versions yet</div>
-                )}
-              </div>
+            <span className="min-w-0">
+              <span className="block truncate text-[13px] font-medium leading-4 text-slate-800" title={page?.title ?? 'Page'}>
+                {page?.title ?? 'Page'}
+              </span>
+              {page?.date && (
+                <span className="block truncate text-[10px] leading-3 text-slate-400">{String(page.date).slice(0, 10)}</span>
+              )}
+            </span>
+            {page?.editUrl && (
+              <a
+                href={page.editUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open this page in the site’s WP editor (source editing)"
+                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                <ExternalLink className="h-3 w-3" /> Edit
+              </a>
             )}
+            {page?.permalink && (
+              <a
+                href={page.permalink}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open the live page in a new tab"
+                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                <ExternalLink className="h-3 w-3" /> Open
+              </a>
+            )}
+            {page?.onPreview && (
+              <button
+                type="button"
+                onClick={page.onPreview}
+                title="Preview the live page here, in the inline preview window"
+                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                <Eye className="h-3 w-3" /> Preview
+              </button>
+            )}
+            <div className="flex-1" />
+            {versionsControl}
+            {closeButton}
           </div>
         )}
-        {/* Page mode AI (V2): Ask AI feeds one instruction to every section;
-            AI Optimize runs the whole-page review. Hidden while reviewing. */}
-        {!readOnly && isPage && pageReady && !review && (
-          <>
+        {/* Row 2 — the workbench: the AI's context left (business, page
+            type), the tools right (Insert ▸ model ▸ Optimize — reads like a
+            sentence: insert things; optimize with this model). */}
+        {isPage && !readOnly && pageReady && !review && (
+          <div className="flex items-center gap-1.5 border-t border-slate-100 bg-slate-50/60 px-5 py-1.5">
+            <ModelDropdown
+              modelGroups={[{
+                label: 'Business',
+                models: [{ id: '0', name: 'No business' }, ...brands.map((b) => ({ id: String(b.id), name: b.name }))],
+              }]}
+              selectedModel={brandId > 0 ? String(brandId) : ''}
+              onModelChange={pickBrand}
+              icon={<Briefcase className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
+              placeholder="Business"
+            />
             <ModelDropdown
               modelGroups={[{ label: 'Page type', models: PAGE_TYPE_OPTIONS }]}
-              selectedModel={pageType}
+              selectedModel={pageType === 'general' ? '' : pageType}
               onModelChange={pickPageType}
               disabled={busy}
+              icon={<Tag className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
+              placeholder="Page type"
             />
+            <div className="flex-1" />
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setInsertOpen((v) => !v)}
+                disabled={busy}
+                title="Insert content at the cursor"
+                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-slate-100 disabled:opacity-60 ${insertOpen ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                <Plus className="h-3 w-3" /> Insert <span className="text-slate-400">▾</span>
+              </button>
+              {insertOpen && (
+                <div className="absolute right-0 top-full z-10 mt-1 w-[150px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
+                  <button
+                    type="button"
+                    onClick={() => { setInsertOpen(false); addImage(); }}
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
+                  >
+                    <ImagePlus className="h-3 w-3 text-slate-400" /> Image
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setInsertOpen(false); editor?.chain().focus().insertContent(faqTemplate()).run(); }}
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
+                  >
+                    <MessageCircleQuestion className="h-3 w-3 text-slate-400" /> FAQ
+                  </button>
+                </div>
+              )}
+            </div>
             {aiModelSelect}
-            <button
-              type="button"
-              onClick={addImage}
-              disabled={busy}
-              title="Add an image — delivered into the site’s own media library, placed at the cursor"
-              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-60"
-            >
-              <ImagePlus className="h-3 w-3" /> Add image
-            </button>
-            <button
-              type="button"
-              onClick={() => editor?.chain().focus().insertContent(faqTemplate()).run()}
-              disabled={busy}
-              title="Add an FAQ section — a native accordion styled by the site itself"
-              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-60"
-            >
-              <MessageCircleQuestion className="h-3 w-3" /> Add FAQ
-            </button>
             {/* ONE AI entry point: EVERY run goes through the red/green review
                 — no AI text ever lands without Accept/Reject. A text selection
                 only narrows the SCOPE (the sections it touches); the label
                 always states the scope. The caret opens the instruction field
                 that steers the run. */}
-            <div className="flex shrink-0 items-stretch overflow-hidden rounded-md border border-slate-200">
+            <div className="flex shrink-0 items-stretch overflow-hidden rounded-md border border-slate-200 bg-white">
               <button
                 type="button"
                 onClick={() => {
@@ -1218,35 +1235,44 @@ export function SectionModal({
                 ▾
               </button>
             </div>
-          </>
+          </div>
         )}
-        {!readOnly && !isPage && (
+        {!isPage && (
           <>
-            {aiModelSelect}
-            <button
-              type="button"
-              onClick={() => setAskOpen((v) => !v)}
-              disabled={busy}
-              title="Tell the AI what to do with this section"
-              className={`inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 disabled:opacity-60 ${askOpen ? 'text-primary border-primary/40' : 'text-slate-600'}`}
-            >
-              <MessageSquarePlus className="h-3 w-3" /> Ask AI
-            </button>
-            <button
-              type="button"
-              onClick={() => runAi('')}
-              disabled={busy}
-              title={isInsert ? 'Draft this section with AI' : 'Rewrite this section with AI'}
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
-            >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
-              {isInsert ? 'Generate' : 'Re-write'}
-            </button>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="min-w-0 truncate text-xs font-medium text-slate-800" title={title}>
+                {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
+                {title}
+              </span>
+            </div>
+            {versionsControl}
+            {!readOnly && (
+              <>
+                {aiModelSelect}
+                <button
+                  type="button"
+                  onClick={() => setAskOpen((v) => !v)}
+                  disabled={busy}
+                  title="Tell the AI what to do with this section"
+                  className={`inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 disabled:opacity-60 ${askOpen ? 'text-primary border-primary/40' : 'text-slate-600'}`}
+                >
+                  <MessageSquarePlus className="h-3 w-3" /> Ask AI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runAi('')}
+                  disabled={busy}
+                  title={isInsert ? 'Draft this section with AI' : 'Rewrite this section with AI'}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
+                >
+                  {busy ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
+                  {isInsert ? 'Generate' : 'Re-write'}
+                </button>
+              </>
+            )}
+            {closeButton}
           </>
         )}
-        <button type="button" onClick={onClose} title="Close (Esc) — closes without saving" className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-          <X className="h-3.5 w-3.5" />
-        </button>
       </div>
 
       {/* ── Ask-AI instruction (Enter runs it) ── */}
