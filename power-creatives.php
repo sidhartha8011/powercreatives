@@ -23,7 +23,7 @@ if (!defined('ABSPATH')) {
 
 // ── Plugin Constants ──
 define('PCM_VERSION', '1.7.0');
-define('PCM_DB_VERSION', '1.36.0');
+define('PCM_DB_VERSION', '1.39.0');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -150,6 +150,13 @@ function pcm_init(): void
     if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event')
         && !wp_next_scheduled('pcm_automation_check_pending_approvals')) {
         wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'pcm_automation_check_pending_approvals');
+    }
+
+    // Schedule the daily scheduled-strategy scan once. The hook itself is
+    // registered at file-load in includes/modules/strategy/service.php.
+    if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event')
+        && !wp_next_scheduled('pcm_strategy_scheduled_scan')) {
+        wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'pcm_strategy_scheduled_scan');
     }
 }
 add_action('plugins_loaded', 'pcm_init');

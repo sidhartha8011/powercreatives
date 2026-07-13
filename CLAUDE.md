@@ -9,7 +9,7 @@ Also authoritative (read before changing anything): `docs/ARCHITECTURE.md`,
 `docs/CHANGELOG-*` / `docs/HANDOVER-*`.
 
 ## What this is
-WordPress plugin (PHP 8.1+, slug/text-domain `power-creatives`, v1.7.0, DB v1.17.0)
+WordPress plugin (PHP 8.1+, slug/text-domain `power-creatives`, v1.7.0, DB v1.39.0)
 wrapping a React/TypeScript (Vite) SPA. Vertical-slice modular monolith: 18 REST
 modules auto-discovered from `includes/modules/*/config.php`; shared infra in
 `includes/core/`; frontend in `app/`. Includes a cross-module **Automations**

@@ -532,9 +532,19 @@ export function KeywordsModule() {
 
   const handlePerformCreateStrategy = useCallback((payload: StrategyPayload) => {
     const keywords = selectedKeywords.map(k => k.keyword);
+    // F3: carry the display-only SEO metrics (Ahrefs search volume + keyword
+    // difficulty) from the selected Keyword Explorer rows onto the strategy's
+    // items. `keywords` stays unchanged for backward compat; keywordMeta is
+    // additive — one entry per selected row, keyed by keyword on the backend.
+    const keywordMeta = selectedKeywords.map(k => ({
+      keyword: k.keyword,
+      volume: k.volume,
+      difficulty: k.difficulty,
+    }));
     createStrategyMutation.mutate({
       ...payload,
       keywords,
+      keywordMeta,
     });
   }, [selectedKeywords, createStrategyMutation]);
 

@@ -1003,22 +1003,41 @@ class PCM_DB
      * @param int   $strategy_id Strategy ID.
      * @param int   $user_id     User ID.
      * @param array $keywords    Array of keyword strings.
+     * @param array $meta        Optional display-only SEO metrics keyed by keyword
+     *                           string → array{volume?:int,difficulty?:int} (Task
+     *                           F3). When an entry exists for a keyword, its
+     *                           volume/difficulty are written onto that item's
+     *                           insert; absent/null values leave the column NULL.
      * @return int Number of items inserted.
      */
-    public static function create_strategy_items(int $strategy_id, int $user_id, array $keywords): int
+    public static function create_strategy_items(int $strategy_id, int $user_id, array $keywords, array $meta = array()): int
     {
         global $wpdb;
         $table = self::t('strategy_items');
         $count = 0;
 
         foreach ($keywords as $position => $keyword) {
-            $result = $wpdb->insert($table, array(
+            $row = array(
                 'strategyId' => $strategy_id,
                 'userId'     => $user_id,
                 'keyword'    => sanitize_text_field($keyword),
                 'position'   => $position,
                 'status'     => 'pending',
-            ));
+            );
+            // F3: carry the optional per-keyword search volume + difficulty onto
+            // the row when the caller supplied them (already sanitized upstream —
+            // keyed by the same keyword string). Only set present, non-null values
+            // so the nullable columns stay NULL for un-enriched keywords.
+            $km = $meta[$keyword] ?? null;
+            if (is_array($km)) {
+                if (isset($km['volume']) && $km['volume'] !== null) {
+                    $row['volume'] = (int) $km['volume'];
+                }
+                if (isset($km['difficulty']) && $km['difficulty'] !== null) {
+                    $row['difficulty'] = (int) $km['difficulty'];
+                }
+            }
+            $result = $wpdb->insert($table, $row);
             if ($result) {
                 $count++;
             }
@@ -1030,18 +1049,31 @@ class PCM_DB
     /**
      * Get all items for a strategy.
      *
+     * LEFT JOINs the linked article (when one exists) to additionally expose
+     * where it was actually published — `articlePublishedUrl`/`articleSiteId`,
+     * aliased to avoid colliding with strategy_items' own `id`/`status` columns
+     * when `si.*` is selected alongside them. Purely additive: every existing
+     * caller reads specific named strategy_items fields (status/keyword/
+     * articleId/position/setId/scheduledDate/...), never `a.*`, so the two new
+     * columns are simply ignored where unused (site-binding-visibility plan,
+     * Step 2 — the Strategies page needs these to show a "view on site" link).
+     *
      * @param int $strategy_id Strategy ID.
      * @return array Strategy item objects ordered by position.
      */
     public static function get_strategy_items(int $strategy_id): array
     {
         global $wpdb;
-        $table = self::t('strategy_items');
+        $items_table = self::t('strategy_items');
+        $articles_table = self::t('articles');
         return $wpdb->get_results(
             $wpdb->prepare(
-            "SELECT * FROM {$table} WHERE strategyId = %d ORDER BY position ASC",
-            $strategy_id
-        )
+                "SELECT si.*, a.publishedUrl AS articlePublishedUrl, a.siteId AS articleSiteId
+                 FROM {$items_table} si
+                 LEFT JOIN {$articles_table} a ON a.id = si.articleId
+                 WHERE si.strategyId = %d ORDER BY si.position ASC",
+                $strategy_id
+            )
         );
     }
 
@@ -1076,6 +1108,148 @@ class PCM_DB
         $data['updatedAt'] = current_time('mysql');
         $rows = $wpdb->update(self::t('strategy_items'), $data, array('id' => $id));
         return $rows !== false;
+    }
+
+    /**
+     * Distinct (strategyId, userId) pairs with at least one pending item whose
+     * scheduledDate is due. Used by the daily scheduled-strategy cron scan
+     * (PCM_Strategy_Service::run_scheduled_scan()) — a global, cross-user scan,
+     * unlike the other strategy_items methods above which are scoped to a single
+     * strategy already known to the caller.
+     *
+     * @param string $now MySQL DATETIME string ('Y-m-d H:i:s').
+     * @return object[] Rows with ->strategyId and ->userId.
+     */
+    public static function get_due_scheduled_strategies(string $now): array
+    {
+        global $wpdb;
+        $items_table = self::t('strategy_items');
+        $strategies_table = self::t('strategies');
+        // D2: a paused strategy is excluded from the daily scan — its due items
+        // must not kick off generation while paused (INNER JOIN so a stale item
+        // whose parent strategy no longer exists is dropped too).
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT DISTINCT si.strategyId, si.userId FROM {$items_table} si
+                 INNER JOIN {$strategies_table} s ON s.id = si.strategyId
+                 WHERE si.status = 'pending' AND si.scheduledDate IS NOT NULL
+                   AND si.scheduledDate <= %s AND s.status != 'paused'",
+                $now
+            )
+        );
+    }
+
+    /**
+     * Find the strategy item linked to an Approvals-module set. Scoped by
+     * userId (strategy_items carries its own owner column) so a set from a
+     * different user can never resolve here. Used by the strategy module's
+     * `approvals.set_fully_approved` action handler (Step 7) to advance the
+     * item once its set is fully approved.
+     *
+     * @param int $set_id  Approval set ID.
+     * @param int $user_id Owner ID.
+     * @return object|null The linked item, or null if no strategy item has this setId.
+     */
+    public static function get_strategy_item_by_set_id(int $set_id, int $user_id): ?object
+    {
+        global $wpdb;
+        $table = self::t('strategy_items');
+        return $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM {$table} WHERE setId = %d AND userId = %d LIMIT 1",
+                $set_id,
+                $user_id
+            )
+        );
+    }
+
+    /**
+     * Atomically claim an 'in_review' item as 'completed' — an UPDATE gated on
+     * `status = 'in_review'` in the SAME statement, so only one of two
+     * concurrently-delivered `approvals.set_fully_approved` events (e.g. a
+     * client double-clicking "approve all") can win. The caller (PCM_Strategy_
+     * Service::advance_item_on_approval()) must call this BEFORE publishing —
+     * a losing caller must see false and skip publish entirely, not just skip
+     * the status write, or a race still produces a duplicate live post.
+     *
+     * @param int $id Strategy item ID.
+     * @return bool True if this call won the claim (item was still in_review).
+     */
+    public static function advance_strategy_item_from_in_review(int $id): bool
+    {
+        global $wpdb;
+        $rows = $wpdb->update(
+            self::t('strategy_items'),
+            array('status' => 'completed', 'updatedAt' => current_time('mysql')),
+            array('id' => $id, 'status' => 'in_review')
+        );
+        return $rows === 1;
+    }
+
+    /**
+     * Delete a single strategy item row. The linked article (if any) is NOT
+     * touched — content outlives its work-queue row. Callers own the
+     * item-in-strategy/ownership checks (see PCM_Strategy_Service::delete_item).
+     *
+     * @param int $id Strategy item ID.
+     * @return bool True if a row was deleted.
+     */
+    public static function delete_strategy_item(int $id): bool
+    {
+        global $wpdb;
+        $rows = $wpdb->delete(self::t('strategy_items'), array('id' => $id), array('%d'));
+        return $rows > 0;
+    }
+
+    /**
+     * Atomically claim a 'pending' item for generation — an UPDATE gated on
+     * `status = 'pending'` in the SAME statement (same compare-and-set pattern
+     * as advance_strategy_item_from_in_review() above), so two concurrent
+     * generators (a browser Generate-All loop and a wp-cron queue tick) can
+     * never both pick up the same item and produce duplicate articles.
+     *
+     * @param int $id Strategy item ID.
+     * @return bool True if this call won the claim (item was still pending).
+     */
+    public static function claim_strategy_item(int $id): bool
+    {
+        global $wpdb;
+        $rows = $wpdb->update(
+            self::t('strategy_items'),
+            array('status' => 'generating', 'updatedAt' => current_time('mysql')),
+            array('id' => $id, 'status' => 'pending')
+        );
+        return $rows === 1;
+    }
+
+    /**
+     * Reset items stuck in 'generating' back to 'pending' when their last
+     * update is older than $minutes — a generator process killed mid-run (e.g.
+     * a gateway/PHP timeout) otherwise strands its claimed item forever: the
+     * strategy sticks at "In Progress" and the next-pending picker skips the
+     * wedged row while falsely reporting "all items generated".
+     *
+     * @param int $strategy_id Strategy ID.
+     * @param int $minutes     Staleness threshold (default 10 — comfortably
+     *                         above the LLM layer's worst-case retry chain).
+     * @return int Rows reclaimed.
+     */
+    public static function reclaim_stale_generating(int $strategy_id, int $minutes = 10): int
+    {
+        global $wpdb;
+        $table = self::t('strategy_items');
+        $cutoff = date('Y-m-d H:i:s', strtotime(current_time('mysql')) - ($minutes * 60));
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$table} SET status = 'pending', updatedAt = %s
+                 WHERE strategyId = %d AND status = 'generating' AND updatedAt < %s",
+                current_time('mysql'),
+                $strategy_id,
+                $cutoff
+            )
+        );
+        return is_numeric($rows) ? (int) $rows : 0;
     }
 
     // =========================================================================

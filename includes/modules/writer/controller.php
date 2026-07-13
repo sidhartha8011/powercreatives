@@ -36,6 +36,8 @@ class PCM_REST_Writer extends PCM_REST_Base
             array('DELETE', '/articles/(?P<id>\d+)', 'delete_article'),
             array('POST', '/articles/generate', 'generate_article'),
             array('POST', '/articles/upload-image', 'upload_image'),
+            array('POST', '/articles/(?P<id>\d+)/ai-review', 'ai_review'),
+            array('POST', '/articles/(?P<id>\d+)/ai-review/apply', 'ai_review_apply'),
         );
     }
 
@@ -235,6 +237,84 @@ class PCM_REST_Writer extends PCM_REST_Base
 
         // Satisfy PHP return type — execution usually exits via send_done/send_error.
         return new WP_REST_Response();
+    }
+
+    /**
+     * AI Review — return structured edit suggestions for an article.
+     *
+     * Optional `feedback` (textarea) steers the review; empty means a general
+     * editorial pass. Suggestions are pre-validated server-side: every `find`
+     * has a safe occurrence in the current content, so each row the UI shows
+     * is applyable via ai_review_apply().
+     */
+    public function ai_review(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user   = $this->get_current_pcm_user();
+        $article_id = (int) $request->get_param('id');
+
+        $article = PCM_DB::get_article($article_id, (int) $pcm_user->id);
+        if (!$article) {
+            return $this->not_found('Article');
+        }
+        if (trim((string) $article->content) === '') {
+            return $this->error('Article has no content to review.');
+        }
+
+        $params   = $request->get_json_params();
+        $feedback = sanitize_textarea_field((string) ($params['feedback'] ?? ''));
+
+        try {
+            require_once __DIR__ . '/class-pcm-article-review.php';
+            $suggestions = PCM_Article_Review::review((string) $article->content, $feedback, (int) $pcm_user->id);
+            return $this->success(array('suggestions' => $suggestions));
+        } catch (\Throwable $e) {
+            return $this->error('AI review failed: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Apply one AI-review suggestion: surgical first-safe-occurrence replace
+     * in the stored article HTML, then persist. Returns the updated article
+     * so the editor can re-sync its content.
+     *
+     * `find` is intentionally NOT run through sanitize_text_field — it is only
+     * a search needle (never stored or echoed) and must match the stored
+     * content byte-for-byte. `replacement` IS the security boundary (it lands
+     * in stored HTML) and goes through wp_kses_post like every other content
+     * write in this controller.
+     */
+    public function ai_review_apply(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user   = $this->get_current_pcm_user();
+        $article_id = (int) $request->get_param('id');
+
+        $article = PCM_DB::get_article($article_id, (int) $pcm_user->id);
+        if (!$article) {
+            return $this->not_found('Article');
+        }
+
+        $params = $request->get_json_params();
+        $find   = (string) wp_check_invalid_utf8((string) ($params['find'] ?? ''));
+        if (trim($find) === '') {
+            return $this->error('The text to replace is required.');
+        }
+        $replacement = wp_kses_post((string) ($params['replacement'] ?? ''));
+
+        require_once __DIR__ . '/class-pcm-article-review.php';
+        $updated_content = PCM_Article_Review::apply((string) $article->content, $find, $replacement);
+        if ($updated_content === null) {
+            return $this->error('That text could no longer be safely located in the article — it may have been edited since the review.', 409);
+        }
+
+        $success = PCM_DB::update_article($article_id, (int) $pcm_user->id, array(
+            'content' => wp_kses_post($updated_content),
+        ));
+        if (!$success) {
+            return $this->error('Failed to save the updated article.', 500);
+        }
+
+        $article = PCM_DB::get_article($article_id, (int) $pcm_user->id);
+        return $this->success($article);
     }
 
     /**

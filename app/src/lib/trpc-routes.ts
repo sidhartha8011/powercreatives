@@ -217,6 +217,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     // ── Strategy ──
     "strategy.create": { endpoint: "strategies", method: "POST" },
     "strategy.list": { endpoint: "strategies", method: "GET" },
+    "strategy.scheduleFeed": { endpoint: "strategies/schedule", method: "GET" },
     "strategy.get": {
         endpoint: "strategies",
         method: "GET",
@@ -240,6 +241,36 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
             body: input.itemId ? { itemId: input.itemId } : {},
         }),
     },
+    "strategy.duplicate": {
+        endpoint: "strategies",
+        method: "POST",
+        transform: (input: any) => ({ url: `strategies/${input.id}/duplicate` }),
+    },
+    "strategy.publishItem": {
+        endpoint: "strategies",
+        method: "POST",
+        transform: (input: any) => ({ url: `strategies/${input.id}/items/${input.itemId}/publish` }),
+    },
+    "strategy.injectInterlinks": {
+        endpoint: "strategies",
+        method: "POST",
+        transform: (input: any) => ({ url: `strategies/${input.id}/interlinks`, body: input }),
+    },
+    "strategy.syncStatus": {
+        endpoint: "strategies",
+        method: "POST",
+        transform: (input: any) => ({ url: `strategies/${input.id}/sync-status` }),
+    },
+    "strategy.updateItem": {
+        endpoint: "strategies",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `strategies/${input.id}/items/${input.itemId}`, body: input }),
+    },
+    "strategy.deleteItem": {
+        endpoint: "strategies",
+        method: "DELETE",
+        transform: (input: any) => ({ url: `strategies/${input.id}/items/${input.itemId}` }),
+    },
 
     // ── Writer ──
     "writer.list": { endpoint: "articles", method: "GET" },
@@ -261,6 +292,19 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     },
     "writer.generate": { endpoint: "articles/generate", method: "POST" },
     "writer.uploadImage": { endpoint: "articles/upload-image", method: "POST" },
+    "writer.aiReview": {
+        endpoint: "articles",
+        method: "POST",
+        transform: (input: any) => ({ url: `articles/${input.id}/ai-review`, body: { feedback: input.feedback } }),
+    },
+    "writer.aiReviewApply": {
+        endpoint: "articles",
+        method: "POST",
+        transform: (input: any) => ({
+            url: `articles/${input.id}/ai-review/apply`,
+            body: { find: input.find, replacement: input.replacement },
+        }),
+    },
 
     // ── Sites ──
     "sites.list": { endpoint: "sites", method: "GET" },
@@ -300,6 +344,16 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "sites",
         method: "POST",
         transform: (input: any) => ({ url: `sites/${input.id}/publish`, body: input }),
+    },
+    "sites.getSchedule": {
+        endpoint: "sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `sites/${input.id}/schedule` }),
+    },
+    "sites.setSchedule": {
+        endpoint: "sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `sites/${input.id}/schedule`, body: input }),
     },
 
     // ── Templates ──

@@ -55,7 +55,12 @@ class PCM_Providers
             'apiKeyUrl' => 'https://platform.openai.com/api-keys',
             'isBuiltIn' => false,
             'knownModels' => array(
-                // Image models — matches TS openai.ts knownModels
+                // Image models. gpt-image-* first — the current family; dall-e-3
+                // is retired on newer API accounts ("model does not exist",
+                // confirmed live on this install). The dall-e entries stay for
+                // legacy accounts that still have access.
+                    array('id' => 'gpt-image-1', 'name' => 'GPT Image 1', 'type' => 'image'),
+                    array('id' => 'gpt-image-1-mini', 'name' => 'GPT Image 1 Mini', 'type' => 'image'),
                     array('id' => 'dall-e-3', 'name' => 'DALL-E 3', 'type' => 'image'),
                     array('id' => 'dall-e-2', 'name' => 'DALL-E 2', 'type' => 'image'),
                     array('id' => 'gpt-4o-image', 'name' => 'GPT-4o Image', 'type' => 'image'),
@@ -967,11 +972,13 @@ class PCM_Providers
         }
         elseif ('openai' === $provider_id && isset($body['data'])) {
             // --- Port of openai.ts classifyOpenAIModel() ---
-            $image_ids = array('dall-e-3', 'dall-e-2', 'gpt-4o-image');
+            $image_ids = array('gpt-image-1', 'gpt-image-1-mini', 'dall-e-3', 'dall-e-2', 'gpt-4o-image');
             $image_names = array(
-                'dall-e-3' => 'DALL-E 3',
-                'dall-e-2' => 'DALL-E 2',
-                'gpt-4o-image' => 'GPT-4o Image',
+                'gpt-image-1'      => 'GPT Image 1',
+                'gpt-image-1-mini' => 'GPT Image 1 Mini',
+                'dall-e-3'         => 'DALL-E 3',
+                'dall-e-2'         => 'DALL-E 2',
+                'gpt-4o-image'     => 'GPT-4o Image',
             );
 
             // Text model patterns (order matters — first match wins)

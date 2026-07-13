@@ -82,6 +82,14 @@ class PCM_LLM
         $model = !empty($options['model']) ? $options['model'] : self::DEFAULT_MODEL;
         $provider = $options['provider'] ?? self::detect_provider($model);
         $max_tokens = $options['max_tokens'] ?? self::DEFAULT_MAX_TOKENS;
+
+        // Clamp to a previously discovered safe cap for this model, if smaller —
+        // avoids repeating the same context-overflow 400 on every call.
+        $remembered_cap = self::remembered_token_cap($model);
+        if ($remembered_cap !== null && $remembered_cap < $max_tokens) {
+            $max_tokens = $remembered_cap;
+        }
+
         $user_id = $options['user_id'] ?? get_current_user_id();
         $on_chunk = $options['on_chunk'] ?? null;
         $response_format = $options['response_format'] ?? null;
@@ -174,7 +182,36 @@ class PCM_LLM
             return self::stream_request($base_url, $payload, $headers, $on_chunk);
         }
 
-        return self::blocking_request($base_url, $payload, $headers);
+        try {
+            return self::blocking_request($base_url, $payload, $headers);
+        } catch (\RuntimeException $e) {
+            // Token-budget overflow: the requested completion budget is too large
+            // for the model's total context window OR its per-response output cap.
+            // The default/strategy max_tokens (8192–16384) overflows small-context
+            // models (e.g. an 8k-context gpt-4). Reduce the completion budget to
+            // the model's own stated limit and retry ONCE. Covers, all confirmed
+            // live: OpenAI context_length_exceeded, OpenAI "max_tokens is too
+            // large" output cap, and Anthropic "max_tokens: X > Y" output cap.
+            $token_key = isset($payload['max_completion_tokens']) ? 'max_completion_tokens' : 'max_tokens';
+            $current   = (int) ($payload[$token_key] ?? 0);
+            $budget    = self::reduced_token_budget($e->getMessage());
+
+            if ($budget === null || $budget <= 0 || ($current > 0 && $budget >= $current)) {
+                throw $e; // not a token-budget error, or reducing wouldn't help — propagate
+            }
+
+            error_log(sprintf(
+                '[PCM_LLM] token-budget overflow; retrying with %s=%d (was %d). (%s)',
+                $token_key,
+                $budget,
+                $current,
+                substr($e->getMessage(), 0, 160)
+            ));
+            $payload[$token_key] = $budget;
+            $retry_result = self::blocking_request($base_url, $payload, $headers);
+            self::remember_token_cap($model, $budget);
+            return $retry_result;
+        }
     }
 
     /**
@@ -188,55 +225,263 @@ class PCM_LLM
      */
     public static function invoke_json(array $messages, array $schema, array $options = array()): array
     {
-        $options['response_format'] = array(
-            'type' => 'json_schema',
-            'json_schema' => $schema,
-        );
+        $model = !empty($options['model']) ? $options['model'] : self::DEFAULT_MODEL;
 
-        $result = self::invoke($messages, $options);
-        $content = $result['content'] ?? '';
-        $clean_json = self::extract_json($content);
-        $parsed = json_decode($clean_json, true);
+        // Structured JSON is attempted in descending order of fidelity, falling
+        // through to the next tier whenever a model rejects the parameter (400)
+        // OR returns content we can't parse:
+        //   1. json_schema — native Structured Outputs (strict, schema-enforced).
+        //      Best, but only newer OpenAI/Google models support it.
+        //   2. json_object — API-GUARANTEED valid JSON syntax, supported by a far
+        //      wider set of models (gpt-4-turbo, gpt-4o, gpt-3.5-1106+, …). The
+        //      API handles escaping, so this is reliable for large HTML content
+        //      where prompt-only output would intermittently emit unescaped
+        //      control chars and fail to parse.
+        //   3. prompt-only — no response_format at all; last resort for models
+        //      with no JSON mode (some proxied/self-hosted endpoints).
 
-        if (json_last_error() === JSON_ERROR_NONE) {
-            return $parsed;
+        // ── Tier 1: json_schema ──
+        // Skipped entirely when this model has previously rejected it — avoids
+        // repeating the same rejected-parameter 400 on every call.
+        if (!self::json_schema_unsupported_remembered($model)) {
+            $schema_opts = $options;
+            $schema_opts['response_format'] = array('type' => 'json_schema', 'json_schema' => $schema);
+            try {
+                $parsed = self::parse_json_result(self::invoke($messages, $schema_opts));
+                if ($parsed !== null) {
+                    return $parsed;
+                }
+                error_log(sprintf('[PCM_LLM] json_schema parse failed (model=%s); trying json_object.', $model));
+            } catch (\RuntimeException $e) {
+                if (!self::is_response_format_unsupported($e->getMessage())) {
+                    throw $e; // genuine error (bad key, rate limit, context length) — propagate
+                }
+                self::remember_json_schema_unsupported($model);
+                error_log(sprintf('[PCM_LLM] model=%s rejected json_schema; trying json_object. (%s)', $model, substr($e->getMessage(), 0, 160)));
+            }
         }
 
-        // --- Retry: LLM returned non-JSON (common with Anthropic/Claude) ---
-        // Prepend an explicit JSON-only instruction to force structured output.
-        error_log(sprintf(
-            '[PCM_LLM] invoke_json failed on first attempt (model=%s). Retrying with explicit JSON instruction. Raw preview: %s',
-            $options['model'] ?? 'default',
-            substr($content, 0, 200)
-        ));
+        // ── Tier 2: json_object (API-enforced valid JSON) ──
+        try {
+            return self::invoke_json_fallback($messages, $schema, $options, true);
+        } catch (\RuntimeException $e) {
+            if (!self::is_response_format_unsupported($e->getMessage())) {
+                throw $e; // json_object parse failure (rare — truncation) is fatal, not a retry
+            }
+            error_log(sprintf('[PCM_LLM] model=%s rejected json_object; falling back to prompt-only. (%s)', $model, substr($e->getMessage(), 0, 160)));
+        }
 
+        // ── Tier 3: prompt-only ──
+        return self::invoke_json_fallback($messages, $schema, $options, false);
+    }
+
+    /**
+     * Parse an invoke() result's content into JSON, tolerating markdown fences /
+     * surrounding prose via extract_json(). Returns null (not an exception) when
+     * the content isn't valid JSON, so callers can fall through to another tier.
+     *
+     * @param array $result invoke() return value.
+     * @return array|null Parsed JSON, or null if unparseable.
+     */
+    private static function parse_json_result(array $result): ?array
+    {
+        $parsed = json_decode(self::extract_json($result['content'] ?? ''), true);
+        return (json_last_error() === JSON_ERROR_NONE && is_array($parsed)) ? $parsed : null;
+    }
+
+    /**
+     * Fallback JSON generation for models that don't support json_schema. Prepends
+     * a hard JSON-only instruction (which both satisfies json_object mode's "the
+     * prompt must mention json" requirement AND steers prompt-only output) plus a
+     * top-level-keys hint, then invokes either with `response_format: json_object`
+     * (API-enforced valid JSON — preferred) or with no response_format at all.
+     *
+     * @param array $messages       Original messages.
+     * @param array $schema         The json_schema wrapper (for the keys hint).
+     * @param array $options        Invoke options.
+     * @param bool  $use_json_object True → request json_object mode; false → prompt-only.
+     *
+     * @return array Parsed JSON.
+     * @throws \RuntimeException On a rejected response_format (caller falls through)
+     *   or genuinely unparseable output.
+     */
+    private static function invoke_json_fallback(array $messages, array $schema, array $options, bool $use_json_object): array
+    {
         $schema_hint = '';
-        if (!empty($schema['schema']['properties'])) {
-            $schema_hint = ' The JSON must contain these top-level keys: ' . implode(', ', array_keys($schema['schema']['properties'])) . '.';
+        if (!empty($schema['schema']['properties']) && is_array($schema['schema']['properties'])) {
+            $schema_hint = ' The JSON must contain these top-level keys: '
+                . implode(', ', array_keys($schema['schema']['properties'])) . '.';
         }
+        $json_instruction = 'CRITICAL: Respond with ONLY a single valid JSON object — no markdown, no code fences, no commentary.' . $schema_hint;
 
-        // Inject a hard JSON constraint into the first system message
-        $json_instruction = "CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no explanations, no code blocks. Output raw JSON only.{$schema_hint}";
-
-        $retry_messages = $messages;
-        if (!empty($retry_messages[0]) && ($retry_messages[0]['role'] ?? '') === 'system') {
-            $retry_messages[0]['content'] = $json_instruction . "\n\n" . $retry_messages[0]['content'];
+        $msgs = $messages;
+        if (!empty($msgs[0]) && ($msgs[0]['role'] ?? '') === 'system') {
+            $msgs[0]['content'] = $json_instruction . "\n\n" . $msgs[0]['content'];
         } else {
-            array_unshift($retry_messages, array('role' => 'system', 'content' => $json_instruction));
+            array_unshift($msgs, array('role' => 'system', 'content' => $json_instruction));
         }
 
-        $retry_result = self::invoke($retry_messages, $options);
-        $retry_content = $retry_result['content'] ?? '';
-        $retry_clean = self::extract_json($retry_content);
-        $retry_parsed = json_decode($retry_clean, true);
-
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new \RuntimeException(
-                sprintf('LLM returned invalid JSON after retry: %s — raw: %s', json_last_error_msg(), substr($retry_content, 0, 500))
-            );
+        if ($use_json_object) {
+            $options['response_format'] = array('type' => 'json_object');
+        } else {
+            unset($options['response_format']);
         }
 
-        return $retry_parsed;
+        $result = self::invoke($msgs, $options);
+        $content = $result['content'] ?? '';
+        $parsed = json_decode(self::extract_json($content), true);
+
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($parsed)) {
+            throw new \RuntimeException(sprintf(
+                'LLM returned invalid JSON (%s mode): %s — raw: %s',
+                $use_json_object ? 'json_object' : 'prompt-only',
+                json_last_error_msg(),
+                substr($content, 0, 500)
+            ));
+        }
+
+        return $parsed;
+    }
+
+    /**
+     * Whether an API error message indicates the model doesn't accept the
+     * response_format / json_schema Structured Outputs parameter — a 400 that
+     * should trigger a prompt-only fallback rather than a hard failure. Kept
+     * narrow (must mention the parameter AND an unsupported phrasing) so genuine
+     * errors (bad key, rate limit, etc.) still propagate.
+     *
+     * @param string $message API error message.
+     * @return bool
+     */
+    private static function is_response_format_unsupported(string $message): bool
+    {
+        $mentions_param = stripos($message, 'response_format') !== false
+            || stripos($message, 'json_schema') !== false
+            || stripos($message, 'structured output') !== false;
+
+        if (!$mentions_param) {
+            return false;
+        }
+
+        return stripos($message, 'not supported') !== false
+            || stripos($message, 'unsupported') !== false
+            || stripos($message, 'does not support') !== false
+            || stripos($message, 'invalid parameter') !== false;
+    }
+
+    /**
+     * From a token-budget API error, derive a safe completion-token budget to
+     * retry with — or null if the error isn't a recognizable token-limit error.
+     * Handles three confirmed-live formats:
+     *   - OpenAI context overflow: "maximum context length is 8192 tokens ...
+     *     (300 in the messages, 8192 in the completion)" → context − prompt − margin.
+     *   - OpenAI output cap: "This model supports at most 4096 completion tokens" → 4096.
+     *   - Anthropic output cap: "max_tokens: 200000 > 128000, which is the
+     *     maximum allowed number of output tokens ..." → 128000.
+     *
+     * @param string $message API error message.
+     * @return int|null Completion-token budget to retry with, or null.
+     */
+    private static function reduced_token_budget(string $message): ?int
+    {
+        // OpenAI: total-context overflow — leave the measured prompt intact and
+        // fit the completion into what remains (minus a small margin for role/
+        // formatting tokens the estimate doesn't include).
+        if (preg_match('/maximum context length is\s+(\d+)\s+tokens/i', $message, $m)) {
+            $max_context = (int) $m[1];
+            $prompt = 0;
+            if (preg_match('/(\d+)\s+in the messages/i', $message, $mm)) {
+                $prompt = (int) $mm[1];
+            }
+            $budget = $max_context - $prompt - 256;
+            return $budget > 0 ? $budget : null;
+        }
+
+        // OpenAI: per-response output cap.
+        if (preg_match('/supports at most\s+(\d+)\s+completion tokens/i', $message, $m)) {
+            return (int) $m[1];
+        }
+
+        // Anthropic: per-response output cap ("max_tokens: X > Y ...").
+        if (preg_match('/max_tokens:\s*\d+\s*>\s*(\d+)/i', $message, $m)) {
+            return (int) $m[1];
+        }
+
+        return null;
+    }
+
+    // ========================================
+    // Model limit memory (transient-backed)
+    // ========================================
+
+    /**
+     * Read a previously remembered safe token-budget cap for a model.
+     *
+     * Lets invoke() skip straight to a known-safe max_tokens instead of
+     * repeating the same context-overflow 400 on every call for this model.
+     *
+     * @param string $model Model ID.
+     * @return int|null Remembered cap, or null if none recorded (or WP isn't loaded).
+     */
+    private static function remembered_token_cap(string $model): ?int
+    {
+        if (!function_exists('get_transient')) {
+            return null;
+        }
+
+        $cap = get_transient('pcm_llm_tokcap_' . md5($model));
+        return (is_numeric($cap) && (int) $cap > 0) ? (int) $cap : null;
+    }
+
+    /**
+     * Remember a safe token-budget cap for a model for future invocations.
+     *
+     * @param string $model  Model ID.
+     * @param int    $budget Token budget that succeeded on retry.
+     * @return void
+     */
+    private static function remember_token_cap(string $model, int $budget): void
+    {
+        if (!function_exists('set_transient')) {
+            return;
+        }
+
+        $expiry = defined('WEEK_IN_SECONDS') ? WEEK_IN_SECONDS : 604800;
+        set_transient('pcm_llm_tokcap_' . md5($model), $budget, $expiry);
+    }
+
+    /**
+     * Whether this model has previously rejected response_format: json_schema.
+     *
+     * Lets invoke_json() skip straight to the json_object/prompt-only fallback
+     * instead of repeating the same rejected-parameter 400 on every call.
+     *
+     * @param string $model Model ID.
+     * @return bool True if remembered as unsupported.
+     */
+    private static function json_schema_unsupported_remembered(string $model): bool
+    {
+        if (!function_exists('get_transient')) {
+            return false;
+        }
+
+        return (bool) get_transient('pcm_llm_nojschema_' . md5($model));
+    }
+
+    /**
+     * Remember that this model rejects response_format: json_schema.
+     *
+     * @param string $model Model ID.
+     * @return void
+     */
+    private static function remember_json_schema_unsupported(string $model): void
+    {
+        if (!function_exists('set_transient')) {
+            return;
+        }
+
+        $expiry = defined('WEEK_IN_SECONDS') ? WEEK_IN_SECONDS : 604800;
+        set_transient('pcm_llm_nojschema_' . md5($model), 1, $expiry);
     }
 
     /**

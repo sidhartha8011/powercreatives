@@ -87,6 +87,8 @@ interface AppState {
   pendingProjectNav: PendingProjectNav | null;
   /** e.g. Delivery project row "+" → create in a module, pre-mapped (one-shot). */
   pendingCreate: PendingCreateContext | null;
+  /** e.g. Strategies list "View" → open one article in Writer (one-shot). */
+  pendingWriterArticleId: number | null;
 
   /** Event subscribers */
   eventListeners: Map<AppEventType, Set<(event: AppEvent) => void>>;
@@ -104,7 +106,8 @@ type AppAction =
   | { type: 'SET_PENDING_WRITER_DATA'; payload: PendingWriterData | null }
   | { type: 'SET_PENDING_APPROVAL_SET'; payload: number | null }
   | { type: 'SET_PENDING_PROJECT_NAV'; payload: PendingProjectNav | null }
-  | { type: 'SET_PENDING_CREATE'; payload: PendingCreateContext | null };
+  | { type: 'SET_PENDING_CREATE'; payload: PendingCreateContext | null }
+  | { type: 'SET_PENDING_WRITER_ARTICLE'; payload: number | null };
 
 // ============================================
 // Initial State
@@ -140,6 +143,7 @@ const initialState: AppState = {
   pendingApprovalSetId: null,
   pendingProjectNav: null,
   pendingCreate: null,
+  pendingWriterArticleId: null,
   eventListeners: new Map(),
 };
 
@@ -199,6 +203,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         pendingCreate: action.payload,
       };
 
+    case 'SET_PENDING_WRITER_ARTICLE':
+      return {
+        ...state,
+        pendingWriterArticleId: action.payload,
+      };
+
     default:
       return state;
   }
@@ -229,6 +239,8 @@ interface AppContextValue {
   consumePendingProjectNav: () => PendingProjectNav | null;
   navigateToCreate: (ctx: PendingCreateContext) => void;
   consumePendingCreate: (module: PendingCreateContext['module']) => PendingCreateContext | null;
+  navigateToWriterArticle: (articleId: number) => void;
+  consumePendingWriterArticleId: () => number | null;
 
   /** Event system */
   emit: (event: AppEvent) => void;
@@ -335,6 +347,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [state.pendingCreate]
   );
 
+  // Cross-module: open one article in Writer (e.g. the Strategies list "View"
+  // button on a completed item). Same one-shot pattern as navigateToProjectTab.
+  const navigateToWriterArticle = useCallback((articleId: number) => {
+    dispatch({ type: 'SET_PENDING_WRITER_ARTICLE', payload: articleId });
+    dispatch({ type: 'SET_ACTIVE_MODULE', payload: 'writer' });
+  }, []);
+
+  const consumePendingWriterArticleId = useCallback((): number | null => {
+    const id = state.pendingWriterArticleId;
+    if (id !== null) {
+      dispatch({ type: 'SET_PENDING_WRITER_ARTICLE', payload: null });
+    }
+    return id;
+  }, [state.pendingWriterArticleId]);
+
   // Event system
   const emit = useCallback(
     (event: AppEvent) => {
@@ -404,6 +431,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     consumePendingProjectNav,
     navigateToCreate,
     consumePendingCreate,
+    navigateToWriterArticle,
+    consumePendingWriterArticleId,
     emit,
     subscribe,
   };

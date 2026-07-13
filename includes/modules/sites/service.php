@@ -28,6 +28,58 @@ class PCM_Sites_Service
     private const CIPHER = 'aes-256-cbc';
 
     /**
+     * Option holding every per-site recurring content schedule, keyed by
+     * (string) site id. Stored as a WP option rather than a column because
+     * the sites table has no config JSON field and this plan's only schema
+     * change is elsewhere (F3) — an option is equally additive and the
+     * daily scan reads all rules in one get_option() anyway.
+     *
+     * Rule shape: {enabled: bool, frequency: 'daily'|'weekly'|'monthly',
+     * count: int, templateId: int, publishingMode: 'draft'|'publish'|'schedule',
+     * niche: string, userId: int, lastRunAt: 'Y-m-d H:i:s'|null}.
+     *
+     * @var string
+     */
+    public const SCHEDULES_OPTION = 'pcm_site_schedules';
+
+    /**
+     * Read one site's recurring-schedule rule, or null when none is set.
+     *
+     * @param int $site_id Site ID (ownership is the caller's job — the
+     *                     controller resolves the site through
+     *                     PCM_DB::get_site() before calling this).
+     * @return array|null
+     */
+    public static function get_site_schedule(int $site_id): ?array
+    {
+        $all  = get_option(self::SCHEDULES_OPTION, array());
+        $rule = is_array($all) ? ($all[(string) $site_id] ?? null) : null;
+        return is_array($rule) ? $rule : null;
+    }
+
+    /**
+     * Save (or replace) one site's recurring-schedule rule. The caller passes
+     * already-sanitized fields; this preserves the existing lastRunAt stamp so
+     * editing a rule doesn't make it immediately due again.
+     *
+     * @param int   $site_id Site ID.
+     * @param array $rule    Sanitized rule fields (without lastRunAt).
+     * @return array The stored rule.
+     */
+    public static function set_site_schedule(int $site_id, array $rule): array
+    {
+        $all = get_option(self::SCHEDULES_OPTION, array());
+        if (!is_array($all)) {
+            $all = array();
+        }
+        $existing            = is_array($all[(string) $site_id] ?? null) ? $all[(string) $site_id] : array();
+        $rule['lastRunAt']   = $existing['lastRunAt'] ?? null;
+        $all[(string) $site_id] = $rule;
+        update_option(self::SCHEDULES_OPTION, $all, false);
+        return $rule;
+    }
+
+    /**
      * Encrypt an Application Password for secure storage.
      *
      * Uses the WordPress AUTH_KEY salt as the encryption key, ensuring
@@ -202,31 +254,128 @@ class PCM_Sites_Service
     }
 
     /**
+     * D3 — pull a single remote post's current status (and permalink) from a
+     * connected site, for syncing our stored article record with reality (e.g.
+     * a post that was deleted or unpublished directly on WordPress).
+     *
+     * GET `/wp/v2/posts/{id}` (not `?context=edit`, which 401s for anyone but the
+     * post's own author) — the endpoint already includes `status`/`link` for the
+     * authenticated app-password user regardless of author. Wholly failure-
+     * isolated: every unexpected outcome (network error, non-200/404 status,
+     * unparseable body) degrades to `null` ("unknown — do nothing"), never a
+     * thrown exception.
+     *
+     * @param object $site           Site DB row.
+     * @param int    $remote_post_id The remote post ID to check.
+     * @return array{status:string,link?:string}|null `['status' => 'deleted']` on a
+     *   404, `['status' => ..., 'link' => ...]` on 200, or null on any other
+     *   failure/ambiguity.
+     */
+    public static function fetch_remote_post_status(object $site, int $remote_post_id): ?array
+    {
+        try {
+            $password = self::decrypt_password((string) $site->appPassword);
+            $auth = 'Basic ' . base64_encode($site->username . ':' . $password);
+            $url = rtrim((string) $site->url, '/') . '/?' . http_build_query(array(
+                'rest_route' => '/wp/v2/posts/' . $remote_post_id,
+            ));
+
+            $response = wp_remote_get($url, array(
+                'headers'   => array('Authorization' => $auth),
+                'timeout'   => 15,
+                'sslverify' => true,
+            ));
+
+            if (is_wp_error($response)) {
+                return null;
+            }
+
+            $status = (int) wp_remote_retrieve_response_code($response);
+            if ($status === 404) {
+                return array('status' => 'deleted');
+            }
+            if ($status === 200) {
+                $body = json_decode((string) wp_remote_retrieve_body($response), true);
+                if (!is_array($body)) {
+                    return null;
+                }
+                return array(
+                    'status' => (string) ($body['status'] ?? ''),
+                    'link'   => (string) ($body['link'] ?? ''),
+                );
+            }
+            return null; // any other status — unknown, do nothing
+        } catch (\Throwable $e) {
+            error_log('PCM fetch_remote_post_status failed: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Publish an article to a remote WordPress site.
      *
      * Uses POST /wp-json/wp/v2/posts with Basic Auth (Application Passwords).
      *
+     * Publish-time enrichments (each failure-ISOLATED — the post still publishes if
+     * any of them fails, they only error_log):
+     *   - schema:  embeds a JSON-LD @graph into the OUTGOING content (never the stored
+     *              hub article) when PCM_Article_Schema is loadable and the content does
+     *              not already carry an `application/ld+json` block.
+     *   - terms:   when $options['tags'] / $options['category'] are given, resolves them
+     *              on the remote site (find-or-create) and attaches the term ids.
+     *   - image:   when $article->featuredImage is set, sideloads it into the remote
+     *              media library and sets it as the new post's featured image.
+     *
      * @param object $site    Site DB row.
      * @param object $article Article DB row.
      * @param int    $user_id PCM user ID (for updating article record).
+     * @param array  $options Optional publish options: `tags` (string[]), `category` (string),
+     *   `schedule_date` (MySQL datetime string — a FUTURE date sends the post as a
+     *   native WP `status:'future'` scheduled post instead of publishing immediately;
+     *   a past/absent date publishes as before).
      *
      * @return array Publish result with post URL and ID.
      * @throws \RuntimeException On API failure.
      */
-    public static function publish_to_site(object $site, object $article, int $user_id): array
+    public static function publish_to_site(object $site, object $article, int $user_id, array $options = array()): array
     {
         $password = self::decrypt_password($site->appPassword);
+        $auth = 'Basic ' . base64_encode($site->username . ':' . $password);
         // `?rest_route=` form — works regardless of the remote's permalink settings
         // (pretty `/wp-json/...` 404s on plain-permalink hosts). See test_connection().
         $url = rtrim($site->url, '/') . '/?rest_route=/wp/v2/posts';
 
+        // A4-wire: embed JSON-LD schema into the content being SENT (not the stored
+        // hub article). Failure-isolated — returns the content unchanged on any error.
+        $content = self::maybe_embed_schema($site, $article, (string) $article->content);
+
+        // A6: sideload any in-content <figure.pcm-in-content-media> images (AI
+        // images AND quickchart.io charts) into the remote media library and
+        // rewrite their src to the remote URL, so the client site serves them
+        // locally. Failure-isolated — a broken/unreachable asset keeps its
+        // original src; publish never fails because of media.
+        $content = self::sideload_in_content_media($site, $content);
+
+        // D4: a FUTURE `schedule_date` posts as native WP 'future' status (AutoPress
+        // parity for manually publishing a not-yet-due scheduled item) instead of
+        // publishing immediately. A past/missing date keeps the historical behavior.
+        $schedule_date = !empty($options['schedule_date']) ? (string) $options['schedule_date'] : '';
+        $schedule_ts   = $schedule_date !== '' ? strtotime($schedule_date) : false;
+        $is_future     = $schedule_ts !== false && $schedule_ts > strtotime(current_time('mysql'));
+
         // Build the WP REST API post payload
         $post_data = array(
             'title'   => $article->title,
-            'content' => $article->content,
-            'status'  => 'publish',
+            'content' => $content,
+            'status'  => $is_future ? 'future' : 'publish',
             'slug'    => $article->slug,
         );
+        if ($is_future) {
+            // WP's REST API accepts ISO 8601 for `date`. The article row still
+            // records publishedUrl/publishedPostId as usual below — WP returns the
+            // permalink even for a future post.
+            $post_data['date'] = date('c', $schedule_ts);
+        }
 
         // Add meta if available
         if (!empty($article->metaTitle) || !empty($article->metaDescription)) {
@@ -239,9 +388,13 @@ class PCM_Sites_Service
             }
         }
 
+        // A5: resolve remote tags/category (find-or-create) and attach their ids.
+        // Failure-isolated — a term that can't be resolved is simply omitted.
+        self::apply_remote_terms($site, $options, $post_data);
+
         $response = wp_remote_post($url, array(
             'headers' => array(
-                'Authorization' => 'Basic ' . base64_encode($site->username . ':' . $password),
+                'Authorization' => $auth,
                 'Content-Type'  => 'application/json',
             ),
             'body'      => wp_json_encode($post_data),
@@ -264,6 +417,19 @@ class PCM_Sites_Service
         $post_url = $body['link'] ?? '';
         $post_id = $body['id'] ?? 0;
 
+        // A2/A3: sideload the featured image onto the just-CREATED post. Fully
+        // failure-isolated (error_log only) — a broken image must never fail publish.
+        if (!empty($article->featuredImage) && (int) $post_id > 0) {
+            self::push_featured_image(
+                $site,
+                $auth,
+                (string) $article->featuredImage,
+                (string) $article->slug,
+                (int) $post_id,
+                (string) $article->title
+            );
+        }
+
         // Update article record with publish info
         PCM_DB::update_article((int)$article->id, $user_id, array(
             'status'          => 'published',
@@ -279,6 +445,325 @@ class PCM_Sites_Service
             'postUrl' => $post_url,
             'siteId'  => (int)$site->id,
         );
+    }
+
+    /**
+     * A4-wire — best-effort JSON-LD schema embed for the OUTGOING post content only.
+     *
+     * Skips silently (returns $content unchanged) when the content already carries an
+     * `application/ld+json` block, when PCM_Article_Schema can't be loaded, or on any
+     * throwable. Never mutates the stored hub article.
+     *
+     * @param object $site    Site row (url/name).
+     * @param object $article Article row (title/metaDescription/slug/featuredImage).
+     * @param string $content The content about to be sent.
+     * @return string Content with the schema appended, or the original on skip/failure.
+     */
+    private static function maybe_embed_schema(object $site, object $article, string $content): string
+    {
+        try {
+            if (stripos($content, 'application/ld+json') !== false) {
+                return $content; // already carries a schema block — don't double-embed
+            }
+            if (!class_exists('PCM_Article_Schema')) {
+                $f = dirname(__DIR__) . '/strategy/class-pcm-article-schema.php';
+                if (file_exists($f)) {
+                    require_once $f;
+                }
+            }
+            if (!class_exists('PCM_Article_Schema')) {
+                return $content; // step A4 file not present yet — skip silently
+            }
+
+            $site_url  = rtrim((string) $site->url, '/');
+            $slug      = (string) ($article->slug ?? '');
+            $page_url  = $slug !== '' ? $site_url . '/' . ltrim($slug, '/') : $site_url;
+            $site_name = (string) ($site->name ?? '');
+
+            $args = array(
+                'title'         => (string) ($article->title ?? ''),
+                'description'   => (string) ($article->metaDescription ?? ''),
+                'url'           => $page_url,
+                'siteUrl'       => $site_url,
+                'siteName'      => $site_name,
+                'orgName'       => $site_name,
+                'keywords'      => array(),
+                'datePublished' => function_exists('current_time') ? current_time('mysql') : date('Y-m-d H:i:s'),
+            );
+            if (!empty($article->featuredImage)) {
+                $args['imageUrl'] = (string) $article->featuredImage;
+            }
+
+            $block = PCM_Article_Schema::render($args);
+            if (is_string($block) && $block !== '') {
+                return $content . "\n" . $block;
+            }
+        } catch (\Throwable $e) {
+            error_log('PCM publish schema embed failed: ' . $e->getMessage());
+        }
+        return $content;
+    }
+
+    /**
+     * A5 — resolve the requested tags/category on the remote site and attach their
+     * ids to the post payload. Each term is resolved independently; an unresolvable
+     * term is simply omitted. Wholly failure-isolated (error_log only).
+     *
+     * @param object $site      Site row.
+     * @param array  $options   `tags` (string[]) and/or `category` (string).
+     * @param array  $post_data Payload (by reference) to receive `tags`/`categories`.
+     */
+    private static function apply_remote_terms(object $site, array $options, array &$post_data): void
+    {
+        try {
+            $tag_ids = array();
+            if (!empty($options['tags']) && is_array($options['tags'])) {
+                foreach ($options['tags'] as $name) {
+                    $name = trim((string) $name);
+                    if ($name === '') {
+                        continue;
+                    }
+                    $id = self::resolve_remote_term($site, 'tags', $name);
+                    if ($id !== null) {
+                        $tag_ids[] = $id;
+                    }
+                }
+            }
+            if (!empty($tag_ids)) {
+                $post_data['tags'] = array_values(array_unique($tag_ids));
+            }
+
+            if (!empty($options['category'])) {
+                $cat = trim((string) $options['category']);
+                if ($cat !== '') {
+                    $cat_id = self::resolve_remote_term($site, 'categories', $cat);
+                    if ($cat_id !== null) {
+                        $post_data['categories'] = array($cat_id);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('PCM publish term resolution failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * A5 — find-or-create a term on the remote site's taxonomy, returning its id.
+     *
+     * GETs `/wp/v2/{route}?search=<name>&per_page=1` and reuses an exact (case-
+     * insensitive) name match; otherwise POSTs `/wp/v2/{route}` `{name}` and uses the
+     * new id (or the `term_exists` error's term_id on a race). Returns null on any failure.
+     *
+     * @param object $site           Site row (url/username/appPassword).
+     * @param string $taxonomy_route 'tags' | 'categories'.
+     * @param string $name           Term name to resolve.
+     * @return int|null Term id, or null when it can't be resolved.
+     */
+    private static function resolve_remote_term(object $site, string $taxonomy_route, string $name): ?int
+    {
+        try {
+            $password = self::decrypt_password((string) $site->appPassword);
+            $auth = 'Basic ' . base64_encode($site->username . ':' . $password);
+            $base = rtrim((string) $site->url, '/');
+
+            // 1. Search for an existing exact-name match.
+            $get_url = $base . '/?' . http_build_query(array(
+                'rest_route' => '/wp/v2/' . $taxonomy_route,
+                'search'     => $name,
+                'per_page'   => 1,
+            ));
+            $res = wp_remote_get($get_url, array(
+                'headers'   => array('Authorization' => $auth),
+                'timeout'   => 15,
+                'sslverify' => true,
+            ));
+            if (!is_wp_error($res)) {
+                $code = (int) wp_remote_retrieve_response_code($res);
+                $rows = json_decode((string) wp_remote_retrieve_body($res), true);
+                if ($code >= 200 && $code < 300 && is_array($rows)) {
+                    foreach ($rows as $row) {
+                        if (is_array($row) && isset($row['id'], $row['name'])
+                            && strcasecmp((string) $row['name'], $name) === 0
+                        ) {
+                            return (int) $row['id'];
+                        }
+                    }
+                }
+            }
+
+            // 2. No match → create it.
+            $post_url = $base . '/?' . http_build_query(array('rest_route' => '/wp/v2/' . $taxonomy_route));
+            $create = wp_remote_post($post_url, array(
+                'headers'   => array('Authorization' => $auth, 'Content-Type' => 'application/json'),
+                'body'      => wp_json_encode(array('name' => $name)),
+                'timeout'   => 15,
+                'sslverify' => true,
+            ));
+            if (!is_wp_error($create)) {
+                $code = (int) wp_remote_retrieve_response_code($create);
+                $body = json_decode((string) wp_remote_retrieve_body($create), true);
+                if ($code >= 200 && $code < 300 && is_array($body) && !empty($body['id'])) {
+                    return (int) $body['id'];
+                }
+                // A concurrent create loses with `term_exists` (HTTP 400) carrying the id.
+                if (is_array($body) && isset($body['data']['term_id']) && (int) $body['data']['term_id'] > 0) {
+                    return (int) $body['data']['term_id'];
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('PCM resolve_remote_term failed: ' . $e->getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * A2/A3 — sideload $image_url into the remote media library and set it as the
+     * post's featured image. Deterministic alt_text/title (the article title — no LLM
+     * call; a simplification over per-image generated copy). Wholly failure-isolated:
+     * every branch returns quietly (error_log only) so a bad image never fails publish.
+     *
+     * @param object $site           Site row.
+     * @param string $auth           Prebuilt `Basic …` Authorization header value.
+     * @param string $image_url      Source image URL to sideload.
+     * @param string $slug           Post slug (used for the uploaded filename).
+     * @param int    $remote_post_id The just-created remote post id.
+     * @param string $title          Article title (media alt_text + title).
+     */
+    private static function push_featured_image(object $site, string $auth, string $image_url, string $slug, int $remote_post_id, string $title): void
+    {
+        try {
+            // 1. Fetch the source image.
+            $img = wp_remote_get($image_url, array('timeout' => 30));
+            if (is_wp_error($img) || (int) wp_remote_retrieve_response_code($img) !== 200) {
+                return;
+            }
+            $bytes = wp_remote_retrieve_body($img);
+            if ($bytes === '' || $bytes === null) {
+                return;
+            }
+            $mime = (string) wp_remote_retrieve_header($img, 'content-type');
+            if ($mime === '') {
+                $mime = 'image/jpeg';
+            }
+            $ext      = self::ext_from_mime($mime);
+            $filename = ($slug !== '' ? $slug : ('featured-' . time())) . '.' . $ext;
+            $base     = rtrim((string) $site->url, '/');
+
+            // 2. Upload the raw bytes to the remote media library.
+            $media_url = $base . '/?' . http_build_query(array('rest_route' => '/wp/v2/media'));
+            $up = wp_remote_post($media_url, array(
+                'headers' => array(
+                    'Authorization'       => $auth,
+                    'Content-Type'        => $mime,
+                    'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                ),
+                'body'      => $bytes,
+                'timeout'   => 60,
+                'sslverify' => true,
+            ));
+            if (is_wp_error($up) || (int) wp_remote_retrieve_response_code($up) !== 201) {
+                return;
+            }
+            $media    = json_decode((string) wp_remote_retrieve_body($up), true);
+            $media_id = (is_array($media) && !empty($media['id'])) ? (int) $media['id'] : 0;
+            if ($media_id <= 0) {
+                return;
+            }
+
+            // 3. A3 — deterministic alt_text/title on the uploaded media.
+            wp_remote_post(
+                $base . '/?' . http_build_query(array('rest_route' => '/wp/v2/media/' . $media_id)),
+                array(
+                    'headers'   => array('Authorization' => $auth, 'Content-Type' => 'application/json'),
+                    'body'      => wp_json_encode(array('alt_text' => $title, 'title' => $title)),
+                    'timeout'   => 30,
+                    'sslverify' => true,
+                )
+            );
+
+            // 4. Attach the media as the post's featured image.
+            wp_remote_post(
+                $base . '/?' . http_build_query(array('rest_route' => '/wp/v2/posts/' . $remote_post_id)),
+                array(
+                    'headers'   => array('Authorization' => $auth, 'Content-Type' => 'application/json'),
+                    'body'      => wp_json_encode(array('featured_media' => $media_id)),
+                    'timeout'   => 30,
+                    'sslverify' => true,
+                )
+            );
+        } catch (\Throwable $e) {
+            error_log('PCM push_featured_image failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * A6 — sideload in-content media referenced by `<figure class="pcm-in-content-media">`
+     * blocks in the OUTGOING post content. Each such figure's `<img src>` that is
+     * NOT already on the target site (including quickchart.io chart URLs, which
+     * become static images on the client) is uploaded into the remote media
+     * library (reusing remote_upload_media()'s mechanics) and its src rewritten to
+     * the remote URL. Wholly failure-isolated: a fetch/upload failure leaves the
+     * original src untouched, and no branch throws — publish must never fatal
+     * because of media. No-ops instantly when the content has no such figure.
+     *
+     * @param object $site    Site row.
+     * @param string $content Outgoing post content.
+     * @return string Content with in-content media rewritten to remote URLs where possible.
+     */
+    private static function sideload_in_content_media(object $site, string $content): string
+    {
+        try {
+            if (strpos($content, 'pcm-in-content-media') === false) {
+                return $content; // nothing to sideload
+            }
+            $site_host = strtolower((string) wp_parse_url(rtrim((string) $site->url, '/'), PHP_URL_HOST));
+
+            return (string) preg_replace_callback(
+                '#(<figure\b[^>]*\bclass="[^"]*\bpcm-in-content-media\b[^"]*"[^>]*>.*?<img\b[^>]*\bsrc=")([^"]+)(")#is',
+                static function (array $m) use ($site, $site_host): string {
+                    // The src was esc_url()'d into the content — decode entities
+                    // (e.g. quickchart's &#038; separators) before fetching.
+                    $raw_src = html_entity_decode($m[2], ENT_QUOTES);
+                    $host    = strtolower((string) wp_parse_url($raw_src, PHP_URL_HOST));
+                    if ($host === '') {
+                        return $m[0]; // relative/opaque src — nothing to sideload
+                    }
+                    if ($site_host !== '' && $host === $site_host) {
+                        return $m[0]; // already on the target site — skip
+                    }
+                    $uploaded = self::remote_upload_media($site, $raw_src);
+                    if (is_wp_error($uploaded) || empty($uploaded['url'])) {
+                        return $m[0]; // sideload failed — keep the original src
+                    }
+                    return $m[1] . esc_url((string) $uploaded['url']) . $m[3];
+                },
+                $content
+            );
+        } catch (\Throwable $e) {
+            error_log('PCM sideload_in_content_media failed: ' . $e->getMessage());
+            return $content;
+        }
+    }
+
+    /**
+     * Map a content-type to a file extension (default 'jpg').
+     *
+     * @param string $mime Source content-type header.
+     * @return string Extension without a leading dot.
+     */
+    private static function ext_from_mime(string $mime): string
+    {
+        $mime = strtolower($mime);
+        if (str_contains($mime, 'png')) {
+            return 'png';
+        }
+        if (str_contains($mime, 'webp')) {
+            return 'webp';
+        }
+        if (str_contains($mime, 'gif')) {
+            return 'gif';
+        }
+        return 'jpg';
     }
 
     /**

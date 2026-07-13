@@ -40,7 +40,76 @@ class PCM_REST_Sites extends PCM_REST_Base
             array('POST',   '/sites/(?P<id>\d+)/gsc-verify',   'gsc_verify_site'),
             array('POST',   '/sites/(?P<id>\d+)/gsc-preview',  'gsc_preview'),
             array('POST',   '/sites/update-connectors',        'update_connectors'),
+            array('GET',    '/sites/(?P<id>\d+)/schedule',     'get_schedule'),
+            array('POST',   '/sites/(?P<id>\d+)/schedule',     'set_schedule'),
         );
+    }
+
+    /**
+     * GET /sites/{id}/schedule — the site's recurring content-schedule rule
+     * (Task I2), or null when none is configured.
+     */
+    public function get_schedule(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $site_id  = (int) $request->get_param('id');
+
+        $site = PCM_DB::get_site($site_id, (int) $pcm_user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+
+        require_once __DIR__ . '/service.php';
+        return $this->success(array('schedule' => PCM_Sites_Service::get_site_schedule($site_id)));
+    }
+
+    /**
+     * POST /sites/{id}/schedule — create/replace the site's recurring
+     * content-schedule rule. The daily strategy scan
+     * (PCM_Strategy_Service::run_site_schedules()) picks it up: on each due
+     * period it asks PCM_Topic_Suggester for `count` topics and creates a
+     * strategy targeting this site. Disable with enabled:false (the rule is
+     * kept so its settings survive re-enabling).
+     */
+    public function set_schedule(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $site_id  = (int) $request->get_param('id');
+
+        $site = PCM_DB::get_site($site_id, (int) $pcm_user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+
+        $params = $request->get_json_params();
+        if (!is_array($params)) {
+            $params = array();
+        }
+
+        $frequency = in_array($params['frequency'] ?? '', array('daily', 'weekly', 'monthly'), true)
+            ? (string) $params['frequency']
+            : 'weekly';
+        $mode = in_array($params['publishingMode'] ?? '', array('draft', 'publish', 'schedule'), true)
+            ? (string) $params['publishingMode']
+            : 'draft';
+        $template_id = absint($params['templateId'] ?? 0);
+        if (!empty($params['enabled']) && !$template_id) {
+            return $this->error('A template is required for an enabled schedule.');
+        }
+
+        require_once __DIR__ . '/service.php';
+        $rule = PCM_Sites_Service::set_site_schedule($site_id, array(
+            'enabled'        => !empty($params['enabled']),
+            'frequency'      => $frequency,
+            'count'          => min(10, max(1, absint($params['count'] ?? 5))),
+            'templateId'     => $template_id,
+            'publishingMode' => $mode,
+            'niche'          => sanitize_text_field((string) ($params['niche'] ?? '')),
+            // Owner stamp: the daily cron runs with no request user — the rule
+            // carries whose LLM key + site scope it must execute under.
+            'userId'         => (int) $pcm_user->id,
+        ));
+        return $this->success(array('schedule' => $rule));
     }
 
     /**

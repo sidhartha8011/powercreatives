@@ -57,8 +57,6 @@ class PCM_Provider_OpenAI implements PCM_Provider_Interface
     {
         $prompt = $params['prompt'] ?? '';
         $size = $this->resolve_size($params);
-        $quality = $params['quality'] ?? 'standard';
-        $style = $params['style'] ?? 'vivid';
 
         $body = [
             'model' => $model_id,
@@ -67,10 +65,17 @@ class PCM_Provider_OpenAI implements PCM_Provider_Interface
             'size' => $size,
         ];
 
-        // DALL-E 3 supports quality and style parameters
+        // Only forward quality/style when the CALLER explicitly asked for them.
+        // The API rejects unknown params on current image models ("Unknown
+        // parameter: 'style'"), so injecting defaults broke every dall-e-3 call
+        // from callers that never set them.
         if ($model_id === 'dall-e-3') {
-            $body['quality'] = $quality;
-            $body['style'] = $style;
+            if (!empty($params['quality'])) {
+                $body['quality'] = $params['quality'];
+            }
+            if (!empty($params['style'])) {
+                $body['style'] = $params['style'];
+            }
         }
 
         $response = wp_remote_post(self::API_URL, [
@@ -88,12 +93,27 @@ class PCM_Provider_OpenAI implements PCM_Provider_Interface
 
         $data = json_decode(wp_remote_retrieve_body($response), true);
 
-        if (empty($data['data'][0]['url'])) {
-            $error_msg = $data['error']['message'] ?? 'Unknown error';
-            throw new \RuntimeException("DALL-E generation failed: {$error_msg}");
+        // Legacy models (dall-e-*) return a hosted URL; current models
+        // (gpt-image-1 and successors) return ONLY base64 (b64_json). Persist
+        // base64 output into the uploads dir so every caller keeps getting a
+        // fetchable URL — without this, every gpt-image-* generation succeeded
+        // at the API yet surfaced as "Unknown error" here.
+        if (!empty($data['data'][0]['url'])) {
+            return ['url' => $data['data'][0]['url']];
         }
 
-        return ['url' => $data['data'][0]['url']];
+        if (!empty($data['data'][0]['b64_json']) && function_exists('wp_upload_bits')) {
+            $bytes = base64_decode($data['data'][0]['b64_json']);
+            if ($bytes !== false) {
+                $upload = wp_upload_bits('pcm-' . $model_id . '-' . time() . '.png', null, $bytes);
+                if (empty($upload['error']) && !empty($upload['url'])) {
+                    return ['url' => $upload['url']];
+                }
+            }
+        }
+
+        $error_msg = $data['error']['message'] ?? 'Unknown error';
+        throw new \RuntimeException("DALL-E generation failed: {$error_msg}");
     }
 
     /**
