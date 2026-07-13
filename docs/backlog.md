@@ -119,3 +119,14 @@ Fonts are set in 8 systems (~1,265 declarations): wp-admin CSS (81, neutralized 
    the delivery card + one Kanban board.
 Safe stopping point after every step. Context: CHANGELOG-20260707-0645 (layer war),
 SESSION_LOG 2026-07-07 entries.
+
+## Ask AI — the document advisor (owner-parked 2026-07-13)
+Ask AI returns as its OWN feature (not the optimize instruction field): a
+side panel where the user asks about the page ("why should this be
+optimized?", "what's weak for local search?") and the AI ANSWERS with
+analysis/advice — nothing touches the document. Each answer carries an
+"Apply as optimize instruction" action handing off to the existing red/green
+review. Mental model: Optimize = hands; Ask AI = advisor that can hand off
+to the hands. Lean build: one endpoint reusing the existing prompt/LLM
+plumbing (page content + business/page-type context already injected), one
+panel component; review machinery untouched.
