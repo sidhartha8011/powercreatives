@@ -947,6 +947,10 @@ export function SectionModal({
       if (rootRef.current?.contains(t)) return;
       if (drawerRef.current?.contains(t)) return; // the keyword drawer floats outside the card
       if (t.closest('[data-sonner-toaster]')) return; // toasts are not "outside"
+      // Radix portals every popper to document.body — the drawer's role
+      // menu and the column filter menus are INSIDE the editor by intent,
+      // now also by law (the toast exception's exact precedent).
+      if (t.closest('[data-radix-popper-content-wrapper]')) return;
       if (isDirty()) void save().then((ok) => { if (ok) onClose(); });
       else onClose();
     };
