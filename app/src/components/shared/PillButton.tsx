@@ -14,7 +14,7 @@
  *   <PillButton variant="active" icon={<Check />}>Selected</PillButton>
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { colors, typography, spacing } from './design-tokens';
 
@@ -87,6 +87,13 @@ export function PillButton({
   const [hovered, setHovered] = useState(false);
   const v = variantStyles[variant];
   const isDisabled = disabled || loading;
+
+  // A button disabled UNDER the cursor never fires mouseleave (browser
+  // fact), so the flag would stick and resurface as a phantom hover on
+  // re-enable — reset it the moment the button disables.
+  useEffect(() => {
+    if (isDisabled) setHovered(false);
+  }, [isDisabled]);
 
   const isHovering = hovered && !isDisabled && variant !== 'active';
   const bg = isHovering ? v.hoverBg : v.bg;
