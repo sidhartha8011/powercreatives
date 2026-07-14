@@ -63,6 +63,7 @@ export function KeywordsDrawer({
   const [hideNoise, setHideNoise] = useState(true);
   const [rows, setRows] = useState<KeywordRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [newKeyword, setNewKeyword] = useState('');
 
   // Field saves ride the EXISTING SEO cell route — one write path per field.
   const saveCell = trpc.seo.remoteSaveCell.useMutation();
@@ -126,7 +127,7 @@ export function KeywordsDrawer({
   ];
 
   return (
-    <aside className="flex h-full w-[300px] shrink-0 flex-col border border-r-0 border-slate-200 bg-white">
+    <aside className="flex h-full w-[360px] shrink-0 flex-col border border-r-0 border-slate-200 bg-white">
       <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5">
         <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700">Keywords</div>
         <button
@@ -162,10 +163,20 @@ export function KeywordsDrawer({
         </label>
         <div>
           <span className="text-[10px] font-medium text-slate-500">Additional keywords</span>
-          {bucket.keywords.length === 0 ? (
-            <div className="mt-0.5 text-[10px] text-slate-400">Add keywords from the list below with + — they ride every optimization.</div>
-          ) : (
-            <div className="mt-0.5 flex flex-wrap gap-1">
+          <input
+            value={newKeyword}
+            onChange={(e) => setNewKeyword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || newKeyword.trim() === '') return;
+              bucket.add(newKeyword);
+              setNewKeyword('');
+            }}
+            placeholder="Add keyword…"
+            title="Rides every optimization — Enter adds; + in the list below adds too"
+            className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
+          />
+          {bucket.keywords.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
               {bucket.keywords.map((kw) => (
                 <span key={kw} className="inline-flex items-center gap-0.5 rounded-full border border-primary/40 bg-white px-1.5 py-px text-[10px] text-primary">
                   {kw}
