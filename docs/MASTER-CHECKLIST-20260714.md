@@ -1,27 +1,75 @@
-# MASTER CHECKLIST — 2026-07-14 — two features, owner GO (build after this commit)
+# MASTER CHECKLIST — THE OPTIMIZATION EFFORT — updated 2026-07-14 (end of day)
 
-Gaps: GAP-ANALYSIS-REVIEW-SECTION-IDENTITY-20260714.md (d37f10d) ·
-GAP-ANALYSIS-KW-DRAWER-FILTERS-PAGEPICKER-20260714.md (b71d565).
-Each feature = its own verified commit pair.
+One document, whole truth: what is SHIPPED, what AWAITS the owner, what
+REMAINS. Details live in the per-feature gap docs (each named below);
+the guideline (checklists, evaluators, Part-2 AI workflow) is
+RESEARCH-CONTENT-ANALYSIS-20260713.md; the architecture is
+GAP-ANALYSIS-OPTIMIZER-ARCHITECTURE-20260713.md.
 
-## FEATURE A — review section identity (index → anchors)
-- [ ] A1 register `data-pcm-review-id` heading attribute (beside data-pcm-origin, same block)
-- [ ] A2 stamp anchors at review start — ONE transaction; the ordinal count is trusted only at t0
-- [ ] A3 `applySection` stamps the id on the first heading of EVERY write (one-writer choke point)
-- [ ] A4 `sectionRange` finds by id; range ends at the next ID-CARRYING heading (id-less = the section's own content)
-- [ ] A5 `splitReviewSections` (word-diff sibling, id-boundary walk) consumed by the oracle + both baseline captures
-- [ ] A6 chips decoration maps by the heading's id attribute (counter dies)
-- [ ] A7 `focusSection` (rail click) locates by id during review
-- [ ] A8 exit cleanup transaction on review completion + server strip belt (extend seo/service.php:4695 regex)
-- [ ] A9 deleted-anchor edge: decision no-ops honestly (status resolves + toast)
-- [ ] A-verify: php -l · harness 88 · tsc 59 · build · changelog · commit LOCAL ONLY
+## SHIPPED (all verified: php -l · harness 88/88 · tsc 59 · build — all LOCAL ONLY)
 
-## FEATURE B — drawer: per-column filters + page picker
-- [ ] B1 shared ModelDropdown gains optional `searchable` (filter input at panel top, additive, groups hide when emptied)
-- [ ] B2 drawer table: `layoutKey` + filterDefs (keyword contains · clicks/impressions ≥ N · position ≤ N); the ≥100 checkbox DIES
-- [ ] B3 page picker in the drawer (searchable ModelDropdown of the site's pages, default = the edited page); picking re-points {postId, pageUrl} and rescans; + always feeds the EDITED page's bucket
-- [ ] B4 index.tsx passes the pages list (id/title/permalink from the rows it already holds)
-- [ ] B-verify: tsc 59 · build · changelog · commit LOCAL ONLY
+### The Optimizer (the Analyze → tick → ONE optimization spine)
+- [x] I1 The spine + the SEARCH teacher (module, teacher registry, rail,
+      basket → red/green pipeline; Analyze outline-pill left of Optimize)
+- [x] JSON-contract fix (Anthropic prompt-schema law) — owner-verified live
+- [x] S1 Suggestions read as ACTIONS (positives law)
+- [x] S2 THE COMPILER (merge/collision/never-drop certainty check) +
+      purpose pills + compiled-order display in the review
+- [x] S4 The SUBTOPICS teacher (topic coverage — one file, zero frontend)
+- [x] Review SECTION IDENTITY: anchors instead of counted headings — the
+      Accept-All corruption killed at the root (AI-added sections belong
+      to their producer by construction)
 
-## Then
-- [ ] Owner live re-test: subtopics-ticked optimize → accept few → Accept All (Feature A) · column filters + page switching on seeded pages (Feature B)
+### The Keyword Drawer (left of the editor, the card tapers while open)
+- [x] Smart Keywords button (dropdown-family look, right of Page type:
+      primary · +count · live density%)
+- [x] TWO ZONES: SELECTED table (roles P/S/A with Primary-demotion law,
+      live uses/density per keystroke, Ahrefs volumes, remove) + ONE
+      FINDER with two tabs — RANKING (GSC, compare always on, Δ trend
+      columns, page picker, related) and IDEAS (seed → keyword engine
+      suggestions + volumes)
+- [x] Honest stored layer for GSC rows (labeled amber refresh, seedable —
+      the local test data rides it) + per-query GSC fetch + previous-period
+      compare merge
+- [x] Volumes: cache-first endpoint (30d), cachedOnly auto-fill on scans
+      (credit-free), ONE update button (refresh = cache bypass)
+- [x] Full table parity everywhere (sort · text/number filters with
+      above/below/between icons · drag-resize · drag-reorder · shared widths)
+- [x] Optimistic bucket (delete/add move instantly, failures revert + toast)
+- [x] Search honesty (Google-unreachable is an ERROR, never zero results)
+- [x] The keyword ride: primary + bucket join EVERY optimize run
+
+### Editor / platform fixes shipped today
+- [x] Remote delete 405 killed at the transport (POST + method override —
+      bulk delete works fleet-wide)
+- [x] Preview popup portals above the editor; Open opens drafts as
+      previews (never a dead ?page_id link)
+- [x] Radix-popper clicks no longer close the editor
+- [x] Branch merged with the other developer's arc + PUSHED (d1a3a86 →
+      00654e5); everything since is LOCAL, awaiting the next push order
+
+## AWAITING THE OWNER
+- [ ] GO: purpose-display cleanup — the compiled order shown ONCE at the
+      rail top, rows slim to pills (gap 6c9b3f9)
+- [ ] GO: load-speed levers R1–R3 (parallel list fetch · defer versions +
+      image-rules to first use · 60s row staleness) — gap 61dbf4e
+- [ ] DECISION (environment, owner's machine): R4 raise the hub's PHP pool
+      (2 → 6–8) — the multiplier on everything; also the Analyze-stall cause
+- [ ] Browser passes: section-identity re-test (tick subtopics → optimize →
+      accept few → Accept All) · drawer V2 round (roles, tabs, ×-delete,
+      volume update, preview/Open)
+- [ ] PUSH order for today's local commits
+
+## REMAINING ROADMAP (in order, each its own gap + pair)
+- [ ] S5 Client approval card (own gap; purpose-grouped; first slice of the
+      approvals rails)
+- [ ] S6 INTERLINKS teacher (in-context FROM-links via the existing GSC
+      per-page keyword map)
+- [ ] S7 AI-VISIBILITY teacher (web-grounded runs via the existing
+      invoke_with_grounding; citation controllability weighting)
+- [ ] S8 Per-change attribution (the rewriter reports applied directives →
+      exact pills/purposes per suggestion — kills the run-level repetition
+      for good)
+- [ ] Backlog (owner-gated): entity/Knowledge-Graph mapping · phrase-match
+      GSC discovery · reality-derivation for checklists · Part-2 extras
+      (multi-run sampling, mention-rate KPI)
