@@ -193,6 +193,22 @@ once, each feature plugs in. Value driver + MVP cut per feature:
    the reverse direction (links TO this page from other pages).
 **Build order by value: 1 → 3 → 4 → 6 → 5 → 2.**
 
+**THE ANALYZE RAIL UX LAW (owner correction 2026-07-13 — this is for the
+USER doing the optimization, inside the editor):**
+- The rail is organized PER PURPOSE, as sections: first "Search engine
+  optimization" with all its suggestions below it, then "AI
+  optimizations" with all its suggestions below it, and so on.
+- The items are SUGGESTIONS TO SEND INTO THE OPTIMIZATION — checkboxes,
+  NEVER accept/reject. (Accept/reject is wrong here: suggestions get
+  MERGED into one optimization run. Accept/reject stays where it belongs —
+  on the resulting red/green content changes AFTER the run.)
+- Each purpose-section is divided into WHAT WE FOUND (gaps/opportunities —
+  tickable) and WHAT WE did NOT find (nothing to fix — quiet).
+- Each purpose-section has its own RE-ANALYZE button: re-run that purpose
+  alone and get fresh suggestions for it.
+(The client approval card grouping the changes by the same purposes —
+feature 6 — stays as a bonus the owner sanctioned separately.)
+
 ## Client approval card for page changes (owner order 2026-07-13 — feature 6)
 Value driver: THE CLIENT SEES THE SAME RED/GREEN VIEW AND APPROVES. MVP: a
 shareable READ-ONLY link rendering this page's pending changes exactly as
