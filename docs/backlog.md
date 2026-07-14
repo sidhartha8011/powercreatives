@@ -167,6 +167,43 @@ keyword with 1,000 impressions = the opportunity; click + → it joins the
 additional-keywords bucket for this page/site and feeds optimization
 prompts.
 
+## Knowledge-graph insert (owner-approved spec 2026-07-13)
+A new Insert-menu item (beside Image and FAQ): insert a SUBTOPIC section
+for the page's topic — e.g. a "dentist" page gains a section covering 3–5
+subtopics of dentistry so the page covers the topic's important branches
+(placeable at the bottom as "Interested in reading more about…?").
+APPROVED IMPROVEMENTS: two modes chosen automatically PER SUBTOPIC — a
+supporting page EXISTS → short teaser + real link ("read more"); it does
+NOT exist → a short content block that actually SAYS something about the
+subtopic (bare link lists rank nothing; links to nowhere are impossible —
+NO dead links ever) and the missing subtopic is flagged as a
+supporting-page IDEA (a free content plan). Subtopics derive from REALITY,
+not invention: what winning pages for the term cover + what the site
+already surfaces for in GSC — reuses the winner-analysis engine and the
+keyword drawer (one machinery, three consumers). This insert is also the
+FIX ACTION for Content Analysis Part 1's "subtopic coverage" check.
+Generated content rides the red/green review like everything else.
+
+## Interlinking — Add Interlinks (owner-approved spec 2026-07-13)
+An "Add Interlinks" button beside Optimize. Owner core: scan the content
+minding the primary keyword (+ the other keywords found in it), look at
+all other site pages, find the relevant ones, build the linking strategy
+from this page — primarily ranking THIS page. APPROVED IMPROVEMENTS —
+the feature works BOTH DIRECTIONS (the honest SEO fact: outbound internal
+links mainly lift their TARGETS; what raises THIS page is links TO it):
+(1) FROM this page — natural phrases already in the text that match other
+pages' topics get linked IN PLACE (in-context links, never a bolted-on
+link list); (2) TO this page — scan the OTHER pages for mentions of this
+page's primary keyword and propose links FROM them TO here (the half that
+ranks this page; rides the same per-page rule machinery we already have).
+Relevance decided by what each page ACTUALLY ranks for (GSC data — Google
+already told us the association), not text-similarity guesses; flags
+keyword cannibalization (two pages competing for one term) instead of
+cross-linking blindly. Linking laws: descriptive anchors, one link per
+target per page, a stuffing cap, never self-link. EVERY proposed link is
+an accept/reject item in the red/green review; all reversible via
+versions.
+
 ## Ask AI — the document advisor (owner-parked 2026-07-13)
 Ask AI returns as its OWN feature (not the optimize instruction field): a
 side panel where the user asks about the page ("why should this be
