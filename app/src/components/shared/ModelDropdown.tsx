@@ -28,8 +28,9 @@ interface ModelDropdownProps {
 
 // Thin pill on a SOLID white surface (owner 2026-07-13: transparent triggers
 // leaked the background through). Metrics = PillButton's = the sidebar
-// nav-item family (owner order: one button size everywhere).
-const TRIGGER_STYLE = {
+// nav-item family (owner order: one button size everywhere). EXPORTED so
+// sibling triggers (the smart Keywords button) wear the same family look.
+export const DROPDOWN_TRIGGER_STYLE = {
   padding: '4px 10px',
   borderRadius: '9999px',
   fontSize: typography.xs,
@@ -78,7 +79,7 @@ export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disab
 
   return (
     <div className="relative" ref={ref}>
-      <button type="button" disabled={disabled} onClick={toggleOpen} style={TRIGGER_STYLE} className="flex items-center gap-1.5 disabled:opacity-60">
+      <button type="button" disabled={disabled} onClick={toggleOpen} style={DROPDOWN_TRIGGER_STYLE} className="flex items-center gap-1.5 disabled:opacity-60">
         <span className="truncate max-w-[120px]">{selectedName}</span>
         <ChevronDown className="w-3 h-3 shrink-0" />
       </button>

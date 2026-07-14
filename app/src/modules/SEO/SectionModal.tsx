@@ -62,7 +62,9 @@ import {
 import { OptimizerRail } from './optimizer/OptimizerRail';
 import { KeywordsDrawer } from './optimizer/KeywordsDrawer';
 import { useKeywordBucket } from './optimizer/useKeywordBucket';
+import { keywordUses } from './optimizer/keywordStats';
 import { TEACHER_PILLS, type CompiledDirective } from './optimizer/types';
+import { DROPDOWN_TRIGGER_STYLE } from '@/components/shared/ModelDropdown';
 
 // The hub's native WP media library (wp_enqueue_media — same pattern as the
 // table's featured-image picker).
@@ -745,6 +747,13 @@ export function SectionModal({
   const kwBucket = useKeywordBucket(typeof siteId === 'number' ? siteId : 0, postId, isPage && !readOnly);
   /** The drawer floats OUTSIDE the card — the outside-click save must know it. */
   const drawerRef = useRef<HTMLDivElement>(null);
+  // The smart button's LIVE values — recomputed on the existing edit tick.
+  const contentText = isPage && editor ? editor.getText() : '';
+  const kwExtraCount = new Set([
+    ...supportingKw.split(',').map((s) => s.trim()).filter(Boolean),
+    ...kwBucket.keywords,
+  ].filter((k) => k !== primaryKw.trim())).size;
+  const primaryDensity = keywordUses(contentText, primaryKw).density;
   const brandMutation = trpc.sites.update.useMutation();
   const pageTypeMutation = trpc.seo.remoteSavePageType.useMutation();
   const pickBrand = (id: string) => {
@@ -1517,6 +1526,7 @@ export function SectionModal({
         supportingKeywords={supportingKw}
         onSupportingChange={setSupportingKw}
         bucket={kwBucket}
+        contentText={contentText}
         onClose={() => setKeywordsOpen(false)}
       />
     </div>
@@ -1599,15 +1609,6 @@ export function SectionModal({
             sentence: insert things; optimize with this model). */}
         {isPage && !readOnly && pageReady && !review && (
           <div className="flex items-center gap-1.5 border-t border-slate-100 bg-white px-5 py-1.5">
-            {/* THE KEYWORD DRAWER toggle — the left drawer's one entry. */}
-            <button
-              type="button"
-              onClick={() => setKeywordsOpen((v) => !v)}
-              title="The page's keywords — primary, supporting, and the GSC-picked additional keywords that ride every optimization"
-              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium hover:bg-slate-100 ${keywordsOpen ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
-            >
-              <KeyRound className="h-3 w-3" /> Keywords
-            </button>
             <ModelDropdown
               modelGroups={[{
                 label: 'Business',
@@ -1621,6 +1622,23 @@ export function SectionModal({
               selectedModel={pageType}
               onModelChange={pickPageType}
             />
+            {/* THE SMART KEYWORDS BUTTON (owner 2026-07-14): the hierarchy's
+                third value — Business → Page type → Keywords. A LIVE display
+                in the dropdown-family look: primary · +count · density%. */}
+            <button
+              type="button"
+              onClick={() => setKeywordsOpen((v) => !v)}
+              title="The page's keywords — they ride every optimization; click to manage"
+              style={DROPDOWN_TRIGGER_STYLE}
+              className="flex items-center gap-1.5"
+            >
+              <KeyRound className="h-3 w-3 shrink-0" />
+              <span className="max-w-[140px] truncate">{primaryKw.trim() || 'Keywords'}</span>
+              {kwExtraCount > 0 && <span className="shrink-0 text-slate-400">+{kwExtraCount}</span>}
+              {primaryKw.trim() !== '' && (
+                <span className="shrink-0 font-semibold text-primary">{primaryDensity}%</span>
+              )}
+            </button>
             <div className="flex-1" />
             <div className="relative shrink-0">
               <button

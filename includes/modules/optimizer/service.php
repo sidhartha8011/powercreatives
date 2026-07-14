@@ -280,6 +280,64 @@ class PCM_Optimizer_Service
         update_option(self::KW_BUCKET_OPTION, $map, false);
     }
 
+    /** Search-volume cache: keyword → {volume, fetchedAt}. Ahrefs calls cost
+     *  credits — 30-day TTL, most-recent-capped, autoload off. */
+    private const KW_VOLUME_OPTION = 'pcm_optimizer_kw_volumes';
+    private const KW_VOLUME_TTL = 30 * DAY_IN_SECONDS;
+    private const KW_VOLUME_MAX = 500;
+
+    /**
+     * Search volumes for a keyword set — cache-first; misses go through
+     * $fetch_missing ONCE (batch). The callback returns kw→volume|null on
+     * success (null = Ahrefs doesn't know it — cacheable) or NULL on
+     * no-key/failure (nothing cached, retried next time — never a poisoned
+     * cache).
+     *
+     * @param string[] $keywords      Sanitized keyword list.
+     * @param callable $fetch_missing fn(string[] $missing): ?array
+     * @return array{volumes: array<string, int|null>, hasKey: bool}
+     */
+    public static function keyword_volumes(array $keywords, callable $fetch_missing): array
+    {
+        $map = get_option(self::KW_VOLUME_OPTION);
+        if (!is_array($map)) {
+            $map = array();
+        }
+        $now      = time();
+        $volumes  = array();
+        $missing  = array();
+        foreach ($keywords as $kw) {
+            $entry = $map[$kw] ?? null;
+            if (is_array($entry) && ($now - (int) ($entry['fetchedAt'] ?? 0)) < self::KW_VOLUME_TTL) {
+                $volumes[$kw] = $entry['volume'];
+            } else {
+                $missing[] = $kw;
+            }
+        }
+        $has_key = true;
+        if (!empty($missing)) {
+            $fetched = $fetch_missing($missing);
+            if ($fetched === null) {
+                $has_key = false;
+                foreach ($missing as $kw) {
+                    $volumes[$kw] = null;
+                }
+            } else {
+                foreach ($missing as $kw) {
+                    $volume        = isset($fetched[$kw]) && is_numeric($fetched[$kw]) ? (int) $fetched[$kw] : null;
+                    $volumes[$kw]  = $volume;
+                    $map[$kw]      = array('volume' => $volume, 'fetchedAt' => $now);
+                }
+                if (count($map) > self::KW_VOLUME_MAX) {
+                    uasort($map, static fn(array $a, array $b): int => ((int) ($b['fetchedAt'] ?? 0)) <=> ((int) ($a['fetchedAt'] ?? 0)));
+                    $map = array_slice($map, 0, self::KW_VOLUME_MAX, true);
+                }
+                update_option(self::KW_VOLUME_OPTION, $map, false);
+            }
+        }
+        return array('volumes' => $volumes, 'hasKey' => $has_key);
+    }
+
     /**
      * The stored keyword rows for one page, or null when never fetched.
      *

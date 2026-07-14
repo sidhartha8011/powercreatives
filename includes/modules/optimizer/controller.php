@@ -36,7 +36,59 @@ class PCM_REST_Optimizer extends PCM_REST_Base
             ['POST', '/optimizer/keywords/stats', 'keyword_stats'],
             ['GET',  '/optimizer/keywords', 'get_keywords'],
             ['POST', '/optimizer/keywords', 'save_keywords'],
+            ['POST', '/optimizer/keywords/volumes', 'keyword_volumes'],
         ];
+    }
+
+    /**
+     * POST /optimizer/keywords/volumes — search volumes for a keyword set.
+     *
+     * Input:  { keywords: string[] } (capped 20)
+     * Output: { volumes: {kw: int|null}, hasKey: bool }
+     *
+     * Cache-first (30-day option map); misses batch through the keyword
+     * engine's Ahrefs enrichment. No Ahrefs key → volumes come back null
+     * with hasKey=false — the drawer shows dashes, keywords stay usable.
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response
+     */
+    public function keyword_volumes(WP_REST_Request $request): WP_REST_Response
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $p        = $request->get_json_params();
+        $keywords = array();
+        foreach ((is_array($p) && is_array($p['keywords'] ?? null)) ? $p['keywords'] : array() as $kw) {
+            $clean = sanitize_text_field((string) $kw);
+            if ($clean !== '' && !in_array($clean, $keywords, true)) {
+                $keywords[] = $clean;
+            }
+        }
+        $keywords = array_slice($keywords, 0, 20);
+        if (empty($keywords)) {
+            return $this->success(array('volumes' => (object) array(), 'hasKey' => true));
+        }
+
+        $result = PCM_Optimizer_Service::keyword_volumes($keywords, function (array $missing) use ($pcm_user): ?array {
+            try {
+                $key = $this->get_provider_api_key('ahrefs', (int) $pcm_user->id);
+            } catch (\RuntimeException $e) {
+                return null; // no key — honest dashes, nothing cached
+            }
+            try {
+                $enriched = PCM_Keywords_Service::ahrefs_enrich($missing, $key);
+            } catch (\Throwable $e) {
+                error_log('[PCM_Optimizer] volume enrichment failed: ' . $e->getMessage());
+                return null; // transient failure — never poison the cache
+            }
+            $out = array();
+            foreach ($missing as $kw) {
+                $out[$kw] = isset($enriched[$kw]['volume']) ? (int) $enriched[$kw]['volume'] : null;
+            }
+            return $out;
+        });
+
+        return $this->success($result);
     }
 
     /**

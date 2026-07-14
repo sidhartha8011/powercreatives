@@ -233,6 +233,18 @@ SLICE of the already-specced approval-pipeline rails (Autonomy roadmap #1:
 seo_staged_changes + asset-type adapter registry + Before/After cards) —
 never a parallel machinery; nothing thrown away when the full rails land.
 
+## Entity / Knowledge-Graph mapping (owner idea 2026-07-14 — parked, belongs to the knowledge-graph feature)
+Map pages the way GOOGLE thinks: identify the page's TOP ENTITY and the
+sub-entities Google associates with it, so content completes the entity
+instead of guessing topics. FINISHED TOOLS EXIST: Google's Knowledge Graph
+Search API returns real KG entity ids; Google's Natural Language API
+extracts entities from text with salience + Wikipedia/KG links. Flow: page
+content → entity extraction → KG lookup for the canonical entity + its
+neighborhood → feed the subtopics/knowledge-graph feature (NOT the
+keywords module) → eventually an automated identify-and-generate flow with
+no manual steps. Also owner-logged: phrase-match keyword discovery in GSC
+(smarter than the v1 related-token heuristic).
+
 ## Knowledge-graph insert (owner-approved spec 2026-07-13)
 A new Insert-menu item (beside Image and FAQ): insert a SUBTOPIC section
 for the page's topic — e.g. a "dentist" page gains a section covering 3–5

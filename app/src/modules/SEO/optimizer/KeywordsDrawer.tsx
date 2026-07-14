@@ -1,22 +1,32 @@
 /**
- * THE KEYWORD DRAWER (owner spec 2026-07-13, MVP cut): the page editor's
- * LEFT drawer. Top: the page's primary + supporting keywords (the SEO
- * table's own fields, saved through the existing cell route). Middle: the
- * additional-keywords BUCKET — fills via + on rows, rides EVERY optimize
- * run. Bottom: the queries THIS page is already seen for (GSC), in the
- * shared DataTable — default sorted by impressions, noise filtered,
- * everything removable. Deferred per the MVP cut: the all-pages switcher,
- * the domain-wide related scan.
+ * THE KEYWORD DRAWER V2 (owner design 2026-07-14): TWO ZONES.
+ *
+ * TOP — SELECTED: the page's keywords as ONE table (role · live uses ·
+ * live density · search volume · remove) — a VIEW over the three stores
+ * that already exist (primary field, supporting field, the bucket); a
+ * role change is a MOVE between them through the same write paths.
+ *
+ * BOTTOM — THE FINDER: one table, two tabs. RANKING = what the page
+ * already ranks for (GSC, compare always on). IDEAS = the keyword
+ * engine's suggestions for a typed seed. Same anatomy, same + gesture,
+ * one destination: the selected zone. Cart on top, store below.
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Plus, RotateCw, X } from 'lucide-react';
+import { Loader2, Plus, RotateCw, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { trpc } from '@/lib/trpc';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { numberMatch, type FilterDef } from '@/hooks/useColumnFilters';
 import { ModelDropdown } from '@/components/shared';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import type { KeywordBucket } from './useKeywordBucket';
+import { keywordUses } from './keywordStats';
 
 interface KeywordRow {
   query: string;
@@ -24,11 +34,17 @@ interface KeywordRow {
   impressions: number;
   /** null = not seen this period (a vanished keyword under compare). */
   position: number | null;
-  /** Compare mode only: the previous period + the per-keyword deltas.
-   *  d.position null = no previous rank (a dash, never a fake zero). */
   prev?: { clicks: number; impressions: number; position: number } | null;
   d?: { clicks: number; impressions: number; position: number | null } | null;
 }
+
+type Role = 'primary' | 'supporting' | 'additional';
+interface SelectedRow {
+  kw: string;
+  role: Role;
+}
+const ROLE_TAG: Record<Role, string> = { primary: 'P', supporting: 'S', additional: 'A' };
+const ROLE_LABEL: Record<Role, string> = { primary: 'Primary', supporting: 'Supporting', additional: 'Additional' };
 
 interface KeywordsDrawerProps {
   siteId: number;
@@ -37,7 +53,7 @@ interface KeywordsDrawerProps {
   type: string;
   /** The page's live URL — the GSC filter ('' = GSC can't see this page). */
   pageUrl: string;
-  /** The site's pages — the picker's choices (the edited page is the default). */
+  /** The site's pages — the Ranking tab's picker (edited page = default). */
   pages: Array<{ id: number; title: string; permalink: string }>;
   primaryKeyword: string;
   onPrimaryChange: (value: string) => void;
@@ -45,6 +61,8 @@ interface KeywordsDrawerProps {
   supportingKeywords: string;
   onSupportingChange: (value: string) => void;
   bucket: KeywordBucket;
+  /** The editor's live text — uses/density recompute per keystroke. */
+  contentText: string;
   onClose: () => void;
 }
 
@@ -71,9 +89,8 @@ const deltaCell = (n: number | null | undefined, invert = false) => {
   return <span className={cls}>{n > 0 ? `+${n}` : String(n)}</span>;
 };
 
-/** Per-column header filters — explicit columns, explicit predicates
- *  (owner ruling 2026-07-14: you must always SEE what you sort/filter by). */
-const FILTER_DEFS: Record<string, FilterDef<KeywordRow>> = {
+/** Ranking-tab header filters (number kind: above / below / between icons). */
+const RANKING_FILTER_DEFS: Record<string, FilterDef<KeywordRow>> = {
   query: { key: 'query', kind: 'text', match: (r, v) => r.query.toLowerCase().includes(v.toLowerCase()) },
   clicks: { key: 'clicks', kind: 'number', match: numberMatch((r) => r.clicks) },
   impressions: { key: 'impressions', kind: 'number', match: numberMatch((r) => r.impressions) },
@@ -84,39 +101,155 @@ const FILTER_DEFS: Record<string, FilterDef<KeywordRow>> = {
 };
 
 export function KeywordsDrawer({
-  siteId, postId, type, pageUrl, pages, primaryKeyword, onPrimaryChange, supportingKeywords, onSupportingChange, bucket, onClose,
+  siteId, postId, type, pageUrl, pages, primaryKeyword, onPrimaryChange, supportingKeywords, onSupportingChange, bucket, contentText, onClose,
 }: KeywordsDrawerProps) {
-  const [days, setDays] = useState(30);
-  const [compare, setCompare] = useState(false);
-  const [relatedOnly, setRelatedOnly] = useState(false);
-  const [rows, setRows] = useState<KeywordRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [newKeyword, setNewKeyword] = useState('');
-  /** WHICH page the GSC data is pulled for — defaults to the edited page;
-   *  the bucket stays bound to the EDITED page regardless. */
-  const [target, setTarget] = useState({ postId, pageUrl });
+  // ── THE SELECTED ZONE: a view over the three existing stores. ──
+  const primary = primaryKeyword.trim();
+  const supportingList = useMemo(
+    () => supportingKeywords.split(',').map((s) => s.trim()).filter(Boolean),
+    [supportingKeywords],
+  );
+  const selectedRows = useMemo<SelectedRow[]>(() => [
+    ...(primary !== '' ? [{ kw: primary, role: 'primary' as Role }] : []),
+    ...supportingList.filter((k) => k !== primary).map((kw) => ({ kw, role: 'supporting' as Role })),
+    ...bucket.keywords
+      .filter((k) => k !== primary && !supportingList.includes(k))
+      .map((kw) => ({ kw, role: 'additional' as Role })),
+  ], [primary, supportingList, bucket.keywords]);
 
   // Field saves ride the EXISTING SEO cell route — one write path per field.
   const saveCell = trpc.seo.remoteSaveCell.useMutation();
   const saveField = (field: 'primaryKeyword' | 'supportingKeyword', value: string) => {
     saveCell.mutateAsync({ siteId, postId, field, value, type })
-      .then(() => toast.success(field === 'primaryKeyword' ? 'Primary keyword saved.' : 'Supporting keywords saved.'))
       .catch((e: unknown) => toast.error(e instanceof Error ? e.message : 'Could not save the keyword'));
   };
+  const savePrimary = (kw: string) => {
+    onPrimaryChange(kw);
+    saveField('primaryKeyword', kw);
+  };
+  const saveSupporting = (list: string[]) => {
+    onSupportingChange(list.join(', '));
+    saveField('supportingKeyword', list.join(', '));
+  };
+  const detach = (kw: string, from: Role) => {
+    if (from === 'primary') savePrimary('');
+    else if (from === 'supporting') saveSupporting(supportingList.filter((k) => k !== kw));
+    else bucket.remove(kw);
+  };
+  /** A role change is a MOVE between the three stores — the old primary is
+   *  never dropped, it demotes to Additional (owner spec). */
+  const setRole = (kw: string, from: Role, to: Role) => {
+    if (from === to) return;
+    const oldPrimary = primary;
+    detach(kw, from);
+    if (to === 'primary') {
+      if (oldPrimary !== '' && oldPrimary !== kw) bucket.add(oldPrimary);
+      savePrimary(kw);
+    } else if (to === 'supporting') {
+      saveSupporting([...supportingList.filter((k) => k !== kw), kw]);
+    } else {
+      bucket.add(kw);
+    }
+  };
 
+  // ── Search volumes: cache-first server endpoint (Ahrefs credits respected). ──
+  const volumesMutation = trpc.optimizer.keywordVolumes.useMutation();
+  const [volumes, setVolumes] = useState<Record<string, number | null>>({});
+  const [hasAhrefs, setHasAhrefs] = useState(true);
+  const fetchVolumes = (kws: string[]) => {
+    const missing = [...new Set(kws.map((k) => k.trim()).filter(Boolean))].filter((k) => !(k in volumes));
+    if (missing.length === 0) return;
+    volumesMutation.mutateAsync({ keywords: missing.slice(0, 20) })
+      .then((res: any) => {
+        setVolumes((v) => ({ ...v, ...(res?.volumes ?? {}) }));
+        if (res?.hasKey === false) setHasAhrefs(false);
+      })
+      .catch(() => { /* volumes are enrichment — their absence is visible as dashes */ });
+  };
+  const selectedKey = selectedRows.map((r) => r.kw).join('|');
+  useEffect(() => {
+    fetchVolumes(selectedRows.map((r) => r.kw));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey]);
+
+  const [newKeyword, setNewKeyword] = useState('');
+
+  const selectedColumns: DataTableColumn<SelectedRow>[] = [
+    { key: 'kw', header: 'Keyword', cell: (r) => <span title={r.kw}>{r.kw}</span>, sortAccessor: (r) => r.kw },
+    {
+      key: 'role',
+      header: 'Role',
+      width: 44,
+      cell: (r) => (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              title={ROLE_LABEL[r.role]}
+              className={`rounded px-1.5 py-px text-[10px] font-semibold ${
+                r.role === 'primary' ? 'bg-[#e7f5ff] text-primary' : r.role === 'supporting' ? 'bg-slate-100 text-slate-700' : 'bg-white text-slate-500 border border-slate-200'
+              }`}
+            >
+              {ROLE_TAG[r.role]}
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-32">
+            {(['primary', 'supporting', 'additional'] as Role[]).map((role) => (
+              <DropdownMenuItem key={role} onClick={() => setRole(r.kw, r.role, role)}>
+                {ROLE_LABEL[role]}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ),
+    },
+    { key: 'uses', header: 'Uses', width: 42, className: 'text-right', cell: (r) => keywordUses(contentText, r.kw).uses, sortAccessor: (r) => keywordUses(contentText, r.kw).uses },
+    { key: 'density', header: '%', width: 44, className: 'text-right', cell: (r) => `${keywordUses(contentText, r.kw).density}%`, sortAccessor: (r) => keywordUses(contentText, r.kw).density },
+    {
+      key: 'volume',
+      header: 'Vol.',
+      width: 52,
+      className: 'text-right',
+      cell: (r) => (volumes[r.kw] != null ? volumes[r.kw] : <span className="text-slate-300" title={hasAhrefs ? 'No volume data' : 'Add an Ahrefs key in Integrations for search volumes'}>—</span>),
+      sortAccessor: (r) => volumes[r.kw] ?? -1,
+    },
+    {
+      key: 'remove',
+      header: '',
+      width: 26,
+      cell: (r) => (
+        <button
+          type="button"
+          onClick={() => detach(r.kw, r.role)}
+          title="Remove this keyword from the page"
+          className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-destructive"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      ),
+    },
+  ];
+
+  // ── THE FINDER: one table, two sources. ──
+  const [tab, setTab] = useState<'ranking' | 'ideas'>('ranking');
+
+  // RANKING (GSC) — compare ALWAYS on (owner ruling).
+  const [days, setDays] = useState(30);
+  const [relatedOnly, setRelatedOnly] = useState(false);
+  const [rows, setRows] = useState<KeywordRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [target, setTarget] = useState({ postId, pageUrl });
   const statsMutation = trpc.optimizer.keywordStats.useMutation();
   const loading = statsMutation.isPending ?? false;
-  /** When the rows are STORED (Google unreachable), the drawer says so —
-   *  a status fact, never data passed off as live. */
   const [storedAt, setStoredAt] = useState<number | null>(null);
-  const scan = (t: { postId: number; pageUrl: string } = target, cmp: boolean = compare) => {
+  const scan = (t: { postId: number; pageUrl: string } = target) => {
     setError(null);
     if (t.pageUrl === '') {
       setError('This page has no public URL — Search Console has nothing to report.');
       setRows([]);
       return;
     }
-    statsMutation.mutateAsync({ siteId, postId: t.postId, pageUrl: t.pageUrl, days, compare: cmp })
+    statsMutation.mutateAsync({ siteId, postId: t.postId, pageUrl: t.pageUrl, days, compare: true })
       .then((res: any) => {
         setRows(Array.isArray(res?.rows) ? res.rows : []);
         setStoredAt(res?.source === 'stored' ? Number(res?.fetchedAt ?? 0) : null);
@@ -127,47 +260,71 @@ export function KeywordsDrawer({
         setError(e instanceof Error ? e.message : 'Search Console request failed');
       });
   };
-  // The drawer opens WITH data — one scan on mount; Days changes rescan
-  // via the button (explicit, never a surprise request per keystroke).
   useEffect(() => {
     scan();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   const visible = useMemo(() => {
     let out = rows ?? [];
-    if (relatedOnly && primaryKeyword.trim() !== '') out = out.filter((r) => isRelated(r.query, primaryKeyword));
+    if (relatedOnly && primary !== '') out = out.filter((r) => isRelated(r.query, primary));
     return out;
-  }, [rows, relatedOnly, primaryKeyword]);
+  }, [rows, relatedOnly, primary]);
 
-  const hasDeltas = (rows ?? []).some((r) => r.d != null);
-  const columns: DataTableColumn<KeywordRow>[] = [
-    {
-      key: 'add',
-      header: '',
-      width: 28,
-      cell: (r) => (
-        <button
-          type="button"
-          onClick={() => bucket.add(r.query)}
-          disabled={bucket.keywords.includes(r.query)}
-          title="Add to the additional keywords — rides every optimization"
-          className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary disabled:opacity-30"
-        >
-          <Plus className="h-3 w-3" />
-        </button>
-      ),
-    },
+  const addButton = (kw: string) => (
+    <button
+      type="button"
+      onClick={() => bucket.add(kw)}
+      disabled={selectedRows.some((s) => s.kw === kw)}
+      title="Add to this page's keywords — rides every optimization"
+      className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary disabled:opacity-30"
+    >
+      <Plus className="h-3 w-3" />
+    </button>
+  );
+
+  const rankingColumns: DataTableColumn<KeywordRow>[] = [
+    { key: 'add', header: '', width: 28, cell: (r) => addButton(r.query) },
     { key: 'query', header: 'Keyword', cell: (r) => <span title={r.query}>{r.query}</span>, sortAccessor: (r) => r.query },
     { key: 'clicks', header: 'Clicks', width: 52, className: 'text-right', cell: (r) => r.clicks, sortAccessor: (r) => r.clicks },
     { key: 'impressions', header: 'Impr.', width: 60, className: 'text-right', cell: (r) => r.impressions, sortAccessor: (r) => r.impressions },
     { key: 'position', header: 'Pos.', width: 48, className: 'text-right', cell: (r) => r.position ?? <span className="text-slate-300">—</span>, sortAccessor: (r) => r.position },
-    // The trend columns (compare mode): sorting a Δ column IS the trend view.
-    ...(hasDeltas ? ([
-      { key: 'dClicks', header: 'Δ Clicks', width: 58, className: 'text-right', cell: (r) => deltaCell(r.d?.clicks), sortAccessor: (r) => r.d?.clicks ?? 0 },
-      { key: 'dImpressions', header: 'Δ Impr.', width: 62, className: 'text-right', cell: (r) => deltaCell(r.d?.impressions), sortAccessor: (r) => r.d?.impressions ?? 0 },
-      { key: 'dPosition', header: 'Δ Pos.', width: 54, className: 'text-right', cell: (r) => deltaCell(r.d?.position, true), sortAccessor: (r) => r.d?.position ?? 0 },
-    ] satisfies DataTableColumn<KeywordRow>[]) : []),
+    { key: 'dClicks', header: 'Δ Clicks', width: 58, className: 'text-right', cell: (r) => deltaCell(r.d?.clicks), sortAccessor: (r) => r.d?.clicks ?? 0 },
+    { key: 'dImpressions', header: 'Δ Impr.', width: 62, className: 'text-right', cell: (r) => deltaCell(r.d?.impressions), sortAccessor: (r) => r.d?.impressions ?? 0 },
+    { key: 'dPosition', header: 'Δ Pos.', width: 54, className: 'text-right', cell: (r) => deltaCell(r.d?.position, true), sortAccessor: (r) => r.d?.position ?? 0 },
+  ];
+
+  // IDEAS — the keyword engine's suggestions for a typed seed.
+  const [seed, setSeed] = useState('');
+  const [ideas, setIdeas] = useState<string[] | null>(null);
+  const [ideasError, setIdeasError] = useState<string | null>(null);
+  const searchMutation = trpc.keywords.search.useMutation();
+  const searching = searchMutation.isPending ?? false;
+  const runIdeas = () => {
+    const q = seed.trim();
+    if (q === '') return;
+    setIdeasError(null);
+    searchMutation.mutateAsync({ query: q })
+      .then((res: any) => {
+        const list: string[] = (Array.isArray(res?.suggestions) ? res.suggestions : []).slice(0, 20);
+        setIdeas(list);
+        fetchVolumes(list);
+      })
+      .catch((e: unknown) => {
+        setIdeas([]);
+        setIdeasError(e instanceof Error ? e.message : 'Keyword search failed');
+      });
+  };
+  const ideaColumns: DataTableColumn<{ kw: string }>[] = [
+    { key: 'add', header: '', width: 28, cell: (r) => addButton(r.kw) },
+    { key: 'kw', header: 'Keyword', cell: (r) => <span title={r.kw}>{r.kw}</span>, sortAccessor: (r) => r.kw },
+    {
+      key: 'volume',
+      header: 'Vol.',
+      width: 56,
+      className: 'text-right',
+      cell: (r) => (volumes[r.kw] != null ? volumes[r.kw] : <span className="text-slate-300" title={hasAhrefs ? 'No volume data' : 'Add an Ahrefs key in Integrations for search volumes'}>—</span>),
+      sortAccessor: (r) => volumes[r.kw] ?? -1,
+    },
   ];
 
   return (
@@ -184,29 +341,15 @@ export function KeywordsDrawer({
         </button>
       </div>
 
-      <div className="space-y-1.5 border-b border-slate-200 px-2.5 py-1.5">
-        <label className="block">
-          <span className="text-[10px] font-medium text-slate-500">Primary keyword</span>
-          <input
-            value={primaryKeyword}
-            onChange={(e) => onPrimaryChange(e.target.value)}
-            onBlur={(e) => saveField('primaryKeyword', e.target.value.trim())}
-            placeholder="The keyword this page targets"
-            className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
-          />
-        </label>
-        <label className="block">
-          <span className="text-[10px] font-medium text-slate-500">Supporting keywords</span>
-          <input
-            value={supportingKeywords}
-            onChange={(e) => onSupportingChange(e.target.value)}
-            onBlur={(e) => saveField('supportingKeyword', e.target.value.trim())}
-            placeholder="Comma-separated"
-            className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
-          />
-        </label>
-        <div>
-          <span className="text-[10px] font-medium text-slate-500">Additional keywords</span>
+      {/* ── SELECTED: the page's keywords — the decisions, pinned. ── */}
+      <div className="max-h-[45%] shrink-0 overflow-auto border-b border-slate-200">
+        <DataTable<SelectedRow>
+          columns={selectedColumns}
+          data={selectedRows}
+          rowKey={(r) => r.kw}
+          emptyMessage="No keywords yet — add them below with +, or type one here."
+        />
+        <div className="px-2.5 py-1.5">
           <input
             value={newKeyword}
             onChange={(e) => setNewKeyword(e.target.value)}
@@ -216,107 +359,129 @@ export function KeywordsDrawer({
               setNewKeyword('');
             }}
             placeholder="Add keyword…"
-            title="Rides every optimization — Enter adds; + in the list below adds too"
-            className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
+            title="Rides every optimization — Enter adds"
+            className="h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
           />
-          {bucket.keywords.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1">
-              {bucket.keywords.map((kw) => (
-                <span key={kw} className="inline-flex items-center gap-0.5 rounded-full border border-primary/40 bg-white px-1.5 py-px text-[10px] text-primary">
-                  {kw}
-                  <button
-                    type="button"
-                    onClick={() => bucket.remove(kw)}
-                    title="Remove from the additional keywords"
-                    className="rounded-full hover:bg-slate-100"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5 text-[10px] text-slate-600">
-        {/* WHICH page the data is pulled for (the + always feeds the edited
-            page's bucket) — searchable, defaults to the edited page. */}
-        <ModelDropdown
-          searchable
-          modelGroups={[{ label: 'Page', models: pages.map((p) => ({ id: String(p.id), name: p.title })) }]}
-          selectedModel={String(target.postId)}
-          onModelChange={(id) => {
-            const p = pages.find((x) => String(x.id) === id);
-            if (!p) return;
-            const t = { postId: p.id, pageUrl: p.permalink };
-            setTarget(t);
-            scan(t);
-          }}
-        />
-        <label className="flex items-center gap-1" title="How many days back Search Console looks">
-          <input
-            type="number"
-            min={1}
-            max={180}
-            value={days}
-            onChange={(e) => setDays(Math.max(1, Math.min(180, Number(e.target.value) || 30)))}
-            className="h-5 w-12 rounded border border-slate-200 bg-white px-1 text-[10px] outline-none focus:border-primary"
-          />
-          days
-        </label>
-        <label className="flex items-center gap-1" title="Compare with the previous period of the same length — adds the Δ trend columns">
-          <input
-            type="checkbox"
-            checked={compare}
-            onChange={(e) => { setCompare(e.target.checked); scan(target, e.target.checked); }}
-            className="h-3 w-3 accent-[#007bff]"
-          />
-          compare
-        </label>
-        <label className="flex items-center gap-1" title="Only keywords related to the primary keyword">
-          <input type="checkbox" checked={relatedOnly} onChange={(e) => setRelatedOnly(e.target.checked)} className="h-3 w-3 accent-[#007bff]" />
-          related
-        </label>
-        <div className="flex-1" />
-        {/* Freshness lives ON its remedy (UX ruling 2026-07-14): live data =
-            a silent normal refresh; saved-copy data = the icon turns amber
-            with a dot, the plain-words story in the tooltip. No chip. */}
-        <button
-          type="button"
-          onClick={() => scan()}
-          title={storedAt !== null
-            ? `Google couldn't be reached — showing the last saved results${storedAt > 0 ? ` from ${new Date(storedAt * 1000).toISOString().slice(0, 10)}` : ''}. Click to retry.`
-            : 'Re-scan Search Console for this page'}
-          className={`relative rounded p-0.5 hover:bg-slate-100 ${storedAt !== null ? 'text-amber-500 hover:text-amber-600' : 'text-slate-400 hover:text-primary'}`}
-        >
-          {loading ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <RotateCw className="h-3 w-3" />}
-          {storedAt !== null && !loading && (
-            <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" />
-          )}
-        </button>
+      {/* ── THE FINDER: one table, two sources. ── */}
+      <div className="flex items-center gap-1 border-b border-slate-200 px-2.5 py-1.5">
+        {(['ranking', 'ideas'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
+              tab === t ? 'bg-[#e7f5ff] text-primary' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+            }`}
+          >
+            {t === 'ranking' ? 'Ranking' : 'Ideas'}
+          </button>
+        ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
-        {error !== null && <div className="px-2.5 py-1.5 text-[10px] text-red-600">{error}</div>}
-        {rows === null && loading && (
-          <div className="flex items-center justify-center gap-1.5 py-4 text-[10px] text-slate-500">
-            <Loader2 className="h-3 w-3 animate-spin text-primary" /> Reading Search Console…
+      {tab === 'ranking' ? (
+        <>
+          <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5 text-[10px] text-slate-600">
+            <ModelDropdown
+              searchable
+              modelGroups={[{ label: 'Page', models: pages.map((p) => ({ id: String(p.id), name: p.title })) }]}
+              selectedModel={String(target.postId)}
+              onModelChange={(id) => {
+                const p = pages.find((x) => String(x.id) === id);
+                if (!p) return;
+                const t = { postId: p.id, pageUrl: p.permalink };
+                setTarget(t);
+                scan(t);
+              }}
+            />
+            <label className="flex items-center gap-1" title="How many days back Search Console looks (compared against the same period before it)">
+              <input
+                type="number"
+                min={1}
+                max={180}
+                value={days}
+                onChange={(e) => setDays(Math.max(1, Math.min(180, Number(e.target.value) || 30)))}
+                className="h-5 w-12 rounded border border-slate-200 bg-white px-1 text-[10px] outline-none focus:border-primary"
+              />
+              days
+            </label>
+            <label className="flex items-center gap-1" title="Only keywords related to the primary keyword">
+              <input type="checkbox" checked={relatedOnly} onChange={(e) => setRelatedOnly(e.target.checked)} className="h-3 w-3 accent-[#007bff]" />
+              related
+            </label>
+            <div className="flex-1" />
+            {/* Freshness lives ON its remedy: amber = showing the saved copy. */}
+            <button
+              type="button"
+              onClick={() => scan()}
+              title={storedAt !== null
+                ? `Google couldn't be reached — showing the last saved results${storedAt > 0 ? ` from ${new Date(storedAt * 1000).toISOString().slice(0, 10)}` : ''}. Click to retry.`
+                : 'Re-scan Search Console for this page'}
+              className={`relative rounded p-0.5 hover:bg-slate-100 ${storedAt !== null ? 'text-amber-500 hover:text-amber-600' : 'text-slate-400 hover:text-primary'}`}
+            >
+              {loading ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <RotateCw className="h-3 w-3" />}
+              {storedAt !== null && !loading && (
+                <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" />
+              )}
+            </button>
           </div>
-        )}
-        {rows !== null && (
-          <DataTable<KeywordRow>
-            columns={columns}
-            data={visible}
-            rowKey={(r) => r.query}
-            defaultSortKey="impressions"
-            defaultSortDir="desc"
-            layoutKey="optimizer-kw-drawer"
-            filterDefs={FILTER_DEFS}
-            emptyMessage="No keywords in this window — widen the days or remove the filters."
-          />
-        )}
-      </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {error !== null && <div className="px-2.5 py-1.5 text-[10px] text-red-600">{error}</div>}
+            {rows === null && loading && (
+              <div className="flex items-center justify-center gap-1.5 py-4 text-[10px] text-slate-500">
+                <Loader2 className="h-3 w-3 animate-spin text-primary" /> Reading Search Console…
+              </div>
+            )}
+            {rows !== null && (
+              <DataTable<KeywordRow>
+                columns={rankingColumns}
+                data={visible}
+                rowKey={(r) => r.query}
+                defaultSortKey="impressions"
+                defaultSortDir="desc"
+                layoutKey="optimizer-kw-drawer"
+                filterDefs={RANKING_FILTER_DEFS}
+                emptyMessage="No keywords in this window — widen the days or remove the filters."
+              />
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5">
+            <input
+              value={seed}
+              onChange={(e) => setSeed(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') runIdeas(); }}
+              placeholder="Search keyword ideas…"
+              className="h-6 min-w-0 flex-1 rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
+            />
+            <button
+              type="button"
+              onClick={runIdeas}
+              title="Find keyword ideas for this seed"
+              className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary"
+            >
+              {searching ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Search className="h-3 w-3" />}
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {ideasError !== null && <div className="px-2.5 py-1.5 text-[10px] text-red-600">{ideasError}</div>}
+            {ideas !== null && (
+              <DataTable<{ kw: string }>
+                columns={ideaColumns}
+                data={ideas.map((kw) => ({ kw }))}
+                rowKey={(r) => r.kw}
+                defaultSortKey="volume"
+                defaultSortDir="desc"
+                emptyMessage="No ideas for this seed — try another word."
+              />
+            )}
+          </div>
+        </>
+      )}
     </aside>
   );
 }
