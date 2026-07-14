@@ -183,12 +183,53 @@ pages share a top query. ZERO frontend work.
 commonalities + honest brand mapping vs brand/GBP data. MVP: single run
 per question; sampling/KPI later per backlog.
 
-## CHECKLIST (architecture + plan approval)
-- [ ] BEFORE state = this doc committed, tree clean
-- [ ] Owner GO on the architecture + plan
-- [ ] I1 SPINE + search teacher (own pair)
-- [ ] I2 keywords teacher + left drawer (own pair)
-- [ ] I3 subtopics teacher (own pair)
-- [ ] I4 approval-card slice (own gap first)
-- [ ] I5 interlinks teacher (own pair)
-- [ ] I6 ai-visibility teacher (own pair)
+---
+
+# ADDENDUM 2 — THE BASKET COMPILER + purpose verification (owner orders 2026-07-13, post-I1 live round)
+
+## Facts (verified)
+| # | Fact |
+|---|---|
+| F15 | I1 shipped and works live (owner-verified: analyze → tick → optimize → red/green regenerates to request). The basket is passed VERBATIM (`buildDirectives`, useOptimizer.ts): nothing drops by construction, but merging is delegated implicitly to the rewriting model — with many/overlapping directives, reconciliation happens inside the rewrite, silently and unattributed. The owner's compiler closes a real gap the plan did not have |
+| F16 | The review rail prints the MODEL name under each suggestion (`s.genModel`, SectionModal rail row) — the owner ruling: that spot must show the suggestion's PURPOSE (simple bullets from the compiled order) so the user can VERIFY the suggestion fulfills it before Accept/Revise |
+| F17 | Rail rows lead with the check LABEL + missing-thing evidence — reads as a fault list. Owner ruling: lead with the ACTION (the instruction — positives), the finding becomes subtext/tooltip |
+
+## The design
+
+**C1 — Positive phrasing (display flip).** Found rows lead with the
+instruction (the "do this"); the check name + found-evidence become the
+small subtext/tooltip. Wording pass over the checklist seed so every
+instruction reads as a clean imperative.
+
+**C2 — THE COMPILER (a new spine stage — exactly one, built once).**
+`POST /optimizer/compile {items: [{instruction, teacherId, label}]}` →
+ONE call to the model with a strict contract: merge overlaps, resolve
+collisions, KEEP EVERY OPTIMIZATION'S INTENT (dropping one is forbidden
+and stated so in the contract), output a concise ordered to-do list where
+each compiled directive carries its source purposes
+(`{text, purposes: teacherId[]}`). The compiled list becomes the
+optimization order (the run topic) AND the provenance source. Zero-result
+or lost-intent responses are honest failures, never silent.
+
+**C3 — Purpose verification in the review (replaces the model line).**
+The review rail row shows the run's compiled directives as simple bullets
+— what this suggestion was SUPPOSED to accomplish — so the user verifies
+purpose-fulfillment at a glance before Accept/Revise. Phase 1: run-level
+(same compiled order shown per suggestion). Phase 2 (later, own step):
+the rewriter reports per section WHICH directives it applied → exact
+per-change purposes.
+
+**C4 — Purpose pills.** Small pills (SEO / AI / …) on each suggestion;
+two-purpose changes show both. Phase 1 from the run's compiled purposes;
+phase 2 exact per change (rides C3 phase 2).
+
+## THE ROADMAP TO THE FULL GOAL (sequence locked, each step = one ritual pair)
+- [x] I1 SPINE + search teacher (live, owner-verified) + json-contract fix
+- [ ] S1 Positive phrasing flip (C1)
+- [ ] S2 THE COMPILER + purpose display + pills phase 1 (C2 + C3 + C4)
+- [ ] S3 = I2 keywords teacher + the LEFT GSC drawer
+- [ ] S4 = I3 subtopics teacher
+- [ ] S5 = I4 client approval card slice (own gap first; purpose-grouped per the presentation law)
+- [ ] S6 = I5 interlinks teacher
+- [ ] S7 = I6 ai-visibility teacher
+- [ ] S8 Per-change attribution phase 2 (exact pills + per-change purposes)
