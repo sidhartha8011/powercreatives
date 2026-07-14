@@ -29,6 +29,10 @@ class PCM_Optimizer_Service
     /** Option holding the editable checklist data (seeded on first read). */
     private const CHECKLISTS_OPTION = 'pcm_optimizer_checklists';
 
+    /** Option holding the per-page keyword buckets, keyed "siteId:postId"
+     *  (the proven option-map pattern — a table comes only if scale demands). */
+    private const KW_BUCKET_OPTION = 'pcm_optimizer_kw_bucket';
+
     /**
      * Registered teachers, keyed by id. Populated by load_teachers().
      *
@@ -226,6 +230,45 @@ class PCM_Optimizer_Service
         }
 
         return $out;
+    }
+
+    /**
+     * The page's keyword bucket — the additional keywords the user picked
+     * from GSC, riding EVERY optimize run (owner law 2026-07-13).
+     *
+     * @param int $site_id Site id.
+     * @param int $post_id Post id.
+     * @return string[]
+     */
+    public static function bucket_get(int $site_id, int $post_id): array
+    {
+        $map = get_option(self::KW_BUCKET_OPTION);
+        $key = $site_id . ':' . $post_id;
+        return (is_array($map) && is_array($map[$key] ?? null)) ? array_values($map[$key]) : array();
+    }
+
+    /**
+     * Persist one page's bucket ([] deletes the entry — the map never
+     * accumulates empty rows).
+     *
+     * @param int   $site_id  Site id.
+     * @param int   $post_id  Post id.
+     * @param array $keywords Sanitized, deduped keyword list.
+     * @return void
+     */
+    public static function bucket_save(int $site_id, int $post_id, array $keywords): void
+    {
+        $map = get_option(self::KW_BUCKET_OPTION);
+        if (!is_array($map)) {
+            $map = array();
+        }
+        $key = $site_id . ':' . $post_id;
+        if (empty($keywords)) {
+            unset($map[$key]);
+        } else {
+            $map[$key] = array_values($keywords);
+        }
+        update_option(self::KW_BUCKET_OPTION, $map, false);
     }
 
     /**

@@ -1762,6 +1762,9 @@ export function SEOModule() {
             permalink: pageEditRow.permalink || undefined,
             // The table's own inline preview window (renders above the editor).
             onPreview: pageEditRow.permalink ? () => setPreviewRow(pageEditRow) : undefined,
+            // The row's keyword fields seed the editor's keyword drawer.
+            primaryKeyword: pageEditRow.primaryKeyword || undefined,
+            metaKeywords: pageEditRow.metaKeywords || undefined,
           }}
           onClose={() => setPageEditRow(null)}
           onSaved={() => {}}

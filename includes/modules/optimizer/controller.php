@@ -32,7 +32,113 @@ class PCM_REST_Optimizer extends PCM_REST_Base
             ['GET',  '/optimizer/teachers', 'list_teachers'],
             ['POST', '/optimizer/analyze', 'analyze'],
             ['POST', '/optimizer/compile', 'compile'],
+            // The keyword drawer: GSC per-query stats + the page's bucket.
+            ['POST', '/optimizer/keywords/stats', 'keyword_stats'],
+            ['GET',  '/optimizer/keywords', 'get_keywords'],
+            ['POST', '/optimizer/keywords', 'save_keywords'],
         ];
+    }
+
+    /**
+     * POST /optimizer/keywords/stats — the queries ONE page is seen for.
+     *
+     * Input:  { pageUrl, days? }
+     * Output: { property, rows: [{query, clicks, impressions, position}] }
+     *
+     * Mirrors the proven integrations GSC flow: match the properties the
+     * service account can read, try up to 3 candidates, keep the first
+     * WITH data (www/non-www/sc-domain twins — the documented trap).
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function keyword_stats(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        try {
+            $key = $this->get_provider_api_key('gsc', (int) $pcm_user->id);
+        } catch (\RuntimeException $e) {
+            return $this->error('No active Google Search Console integration found — add one on the Integrations page.', 400);
+        }
+        $p        = $request->get_json_params();
+        $page_url = is_array($p) ? esc_url_raw(trim((string) ($p['pageUrl'] ?? ''))) : '';
+        $days     = is_array($p) ? max(1, min(180, (int) ($p['days'] ?? 30))) : 30;
+        if ($page_url === '') {
+            return $this->error('pageUrl is required.');
+        }
+
+        $props = PCM_GSC::list_properties($key);
+        if (is_wp_error($props)) {
+            return $this->error($props->get_error_message(), 502);
+        }
+        $candidates = PCM_GSC::match_properties($props, $page_url);
+        if (empty($candidates)) {
+            return $this->error('The GSC service account has no access to a property for this page\'s site.', 404);
+        }
+
+        $rows     = null;
+        $property = $candidates[0];
+        foreach (array_slice($candidates, 0, 3) as $prop) {
+            $r = PCM_GSC::query_stats($key, $prop, $days, $page_url);
+            if (is_wp_error($r)) {
+                $rows = $rows ?? $r;
+                continue;
+            }
+            if (!empty($r)) {
+                $property = $prop;
+                $rows     = $r;
+                break;
+            }
+            if ($rows === null || is_wp_error($rows)) {
+                $property = $prop;
+                $rows     = $r;
+            }
+        }
+        if ($rows === null || is_wp_error($rows)) {
+            return $this->error(is_wp_error($rows) ? $rows->get_error_message() : 'Search Console returned no result.', 502);
+        }
+
+        return $this->success(array('property' => $property, 'rows' => $rows));
+    }
+
+    /**
+     * GET /optimizer/keywords?siteId&postId — the page's keyword bucket.
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response
+     */
+    public function get_keywords(WP_REST_Request $request): WP_REST_Response
+    {
+        $site_id = absint($request->get_param('siteId'));
+        $post_id = absint($request->get_param('postId'));
+        return $this->success(array('keywords' => PCM_Optimizer_Service::bucket_get($site_id, $post_id)));
+    }
+
+    /**
+     * POST /optimizer/keywords — save the page's keyword bucket.
+     *
+     * Input: { siteId, postId, keywords: string[] }
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function save_keywords(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $p       = $request->get_json_params();
+        $site_id = is_array($p) ? absint($p['siteId'] ?? 0) : 0;
+        $post_id = is_array($p) ? absint($p['postId'] ?? 0) : 0;
+        if ($site_id === 0 || $post_id === 0) {
+            return $this->error('siteId and postId are required.');
+        }
+        $keywords = array();
+        foreach ((is_array($p) && is_array($p['keywords'] ?? null)) ? $p['keywords'] : array() as $kw) {
+            $clean = sanitize_text_field((string) $kw);
+            if ($clean !== '' && !in_array($clean, $keywords, true)) {
+                $keywords[] = $clean;
+            }
+        }
+        PCM_Optimizer_Service::bucket_save($site_id, $post_id, array_slice($keywords, 0, 50));
+        return $this->success(array('keywords' => PCM_Optimizer_Service::bucket_get($site_id, $post_id)));
     }
 
     /**

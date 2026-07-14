@@ -49,7 +49,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus, ScanSearch,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus, ScanSearch, KeyRound,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -60,6 +60,8 @@ import {
   diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
 } from './word-diff';
 import { OptimizerRail } from './optimizer/OptimizerRail';
+import { KeywordsDrawer } from './optimizer/KeywordsDrawer';
+import { useKeywordBucket } from './optimizer/useKeywordBucket';
 import { TEACHER_PILLS, type CompiledDirective } from './optimizer/types';
 
 // The hub's native WP media library (wp_enqueue_media — same pattern as the
@@ -110,7 +112,11 @@ export interface SectionModalProps {
   /** Page mode: the row's title, publish date (the Original row's label),
    *  the WP-editor escape hatch, the live permalink + the inline preview
    *  opener (the table's own preview window). */
-  page?: { title: string; editUrl?: string; date?: string; permalink?: string; onPreview?: () => void };
+  page?: {
+    title: string; editUrl?: string; date?: string; permalink?: string; onPreview?: () => void;
+    /** The row's keyword fields — the keyword drawer's initial values. */
+    primaryKeyword?: string; metaKeywords?: string;
+  };
   /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
   /** Where the user clicked — the window opens right below it. */
@@ -689,6 +695,13 @@ export function SectionModal({
   /** THE OPTIMIZER's rail (Analyze) — opening runs every teacher; closing
    *  discards the run (Analyze always means a FRESH analysis). */
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  // ── THE KEYWORD DRAWER (left side): primary/supporting live here so the
+  //    drawer edits and the optimize runs read ONE state; the bucket rides
+  //    EVERY run (owner law 2026-07-13). ──
+  const [keywordsOpen, setKeywordsOpen] = useState(false);
+  const [primaryKw, setPrimaryKw] = useState(page?.primaryKeyword ?? '');
+  const [metaKw, setMetaKw] = useState(page?.metaKeywords ?? '');
+  const kwBucket = useKeywordBucket(typeof siteId === 'number' ? siteId : 0, postId, isPage && !readOnly);
   const brandMutation = trpc.sites.update.useMutation();
   const pageTypeMutation = trpc.seo.remoteSavePageType.useMutation();
   const pickBrand = (id: string) => {
@@ -980,6 +993,13 @@ export function SectionModal({
   const startAiReview = async (topic: string, scope?: { from: number; to: number } | null, directives?: CompiledDirective[]) => {
     if (!editor || !pageReady || busy || review) return;
     setRunDirectives(directives && directives.length > 0 ? directives : null);
+    // THE KEYWORD RIDE (owner law): the primary keyword + the bucket join
+    // EVERY run — one-click, instruction and basket runs alike — as
+    // context, never as stuffing orders.
+    const kwTargets = [...new Set([primaryKw.trim(), ...kwBucket.keywords].filter((k) => k !== ''))];
+    if (kwTargets.length > 0) {
+      topic = `${topic}\n\nTarget keywords — incorporate them naturally where they genuinely fit, never force or stuff: ${kwTargets.join(', ')}`;
+    }
     const { sections } = splitDocSections(editor.getHTML());
     if (sections.length === 0) {
       toast.info('No sections to optimize on this page.');
@@ -1456,6 +1476,15 @@ export function SectionModal({
             sentence: insert things; optimize with this model). */}
         {isPage && !readOnly && pageReady && !review && (
           <div className="flex items-center gap-1.5 border-t border-slate-100 bg-white px-5 py-1.5">
+            {/* THE KEYWORD DRAWER toggle — the left drawer's one entry. */}
+            <button
+              type="button"
+              onClick={() => setKeywordsOpen((v) => !v)}
+              title="The page's keywords — primary, supporting, and the GSC-picked additional keywords that ride every optimization"
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium hover:bg-slate-100 ${keywordsOpen ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+            >
+              <KeyRound className="h-3 w-3" /> Keywords
+            </button>
             <ModelDropdown
               modelGroups={[{
                 label: 'Business',
@@ -1613,6 +1642,22 @@ export function SectionModal({
              lives in the SELECT-TEXT popover (owner correction — no permanent
              toolbar): select text → the floating B/I/U/Link/H1/H2/• menu. ── */}
       <div className={isPage ? 'flex min-h-0 flex-1' : 'contents'}>
+      {/* ── THE KEYWORD DRAWER (left): primary/supporting + the bucket that
+             rides every optimize run + the page's own GSC queries. ── */}
+      {isPage && !readOnly && keywordsOpen && pageReady && typeof siteId === 'number' && (
+        <KeywordsDrawer
+          siteId={siteId}
+          postId={postId}
+          type={type}
+          pageUrl={page?.permalink ?? ''}
+          primaryKeyword={primaryKw}
+          onPrimaryChange={setPrimaryKw}
+          metaKeywords={metaKw}
+          onMetaChange={setMetaKw}
+          bucket={kwBucket}
+          onClose={() => setKeywordsOpen(false)}
+        />
+      )}
       <div
         className={`${isPage ? 'min-h-0 flex-1 px-8 py-4' : 'h-[280px] px-3 py-2'} overflow-auto bg-white`}
         title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}

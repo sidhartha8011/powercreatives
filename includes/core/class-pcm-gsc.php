@@ -346,6 +346,55 @@ class PCM_GSC
     }
 
     /**
+     * Per-QUERY search stats — one page (or the whole property when
+     * $page_url is ''): dimensions=[query] + a page filter, same window law
+     * as page_stats (2-day lag + dataState=all, the interactive view).
+     * Rows: [{query, clicks, impressions, position}] in API order (clicks
+     * desc) — consumers sort and filter themselves.
+     *
+     * @param string $json     Service-account credentials JSON.
+     * @param string $property The matched GSC property.
+     * @param int    $days     Look-back window.
+     * @param string $page_url Exact page URL to filter on ('' = property-wide).
+     * @return array|WP_Error
+     */
+    public static function query_stats(string $json, string $property, int $days = 30, string $page_url = ''): array|WP_Error
+    {
+        $end   = gmdate('Y-m-d', time() - 2 * DAY_IN_SECONDS);
+        $start = gmdate('Y-m-d', time() - (2 + max(1, $days)) * DAY_IN_SECONDS);
+        $path  = '/sites/' . rawurlencode($property) . '/searchAnalytics/query';
+        $body  = array(
+            'startDate'  => $start,
+            'endDate'    => $end,
+            'dataState'  => 'all',
+            'dimensions' => array('query'),
+        );
+        if ($page_url !== '') {
+            $body['dimensionFilterGroups'] = array(array(
+                'filters' => array(array('dimension' => 'page', 'operator' => 'equals', 'expression' => $page_url)),
+            ));
+        }
+        $rows = self::sa_rows($json, $path, $body);
+        if (is_wp_error($rows)) {
+            return $rows;
+        }
+        $out = array();
+        foreach ($rows as $r) {
+            $query = (string) ($r['keys'][0] ?? '');
+            if ($query === '') {
+                continue;
+            }
+            $out[] = array(
+                'query'       => $query,
+                'clicks'      => (int) ($r['clicks'] ?? 0),
+                'impressions' => (int) ($r['impressions'] ?? 0),
+                'position'    => round((float) ($r['position'] ?? 0), 1),
+            );
+        }
+        return $out;
+    }
+
+    /**
      * Per-page search stats for the last $days days:
      * [norm_url => ['clicks'=>int,'impressions'=>int,'ctr'=>float,'position'=>float,'keywords'=>string[]]]
      * Two paginated queries: dimensions=[page] for the metrics, dimensions=[page,query] for top

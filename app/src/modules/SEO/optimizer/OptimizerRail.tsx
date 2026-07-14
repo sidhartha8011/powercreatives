@@ -13,7 +13,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Loader2, RotateCw, X } from 'lucide-react';
 import { useOptimizer, type UseOptimizerArgs } from './useOptimizer';
-import { teacherSectionBodies } from './sections';
 import { itemKey, type CompiledDirective } from './types';
 
 interface OptimizerRailProps extends UseOptimizerArgs {
@@ -65,7 +64,6 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
           const run = opt.runs[t.id];
           const found = run.items.filter((it) => it.found);
           const clean = run.items.filter((it) => !it.found);
-          const Custom = teacherSectionBodies[t.id];
           return (
             <section key={t.id} className="border-b border-slate-100 px-2.5 py-1.5">
               <div className="flex items-center gap-1.5">
@@ -96,8 +94,6 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
                   The analysis returned no results — re-analyze with the button above.
                 </div>
               )}
-
-              {Custom && <Custom run={run} siteId={args.siteId} postId={args.postId} />}
 
               {found.length > 0 && (
                 <div className="mt-1 space-y-1">

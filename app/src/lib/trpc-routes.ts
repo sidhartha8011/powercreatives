@@ -29,6 +29,9 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "optimizer.teachers": { endpoint: "optimizer/teachers", method: "GET" },
     "optimizer.analyze": { endpoint: "optimizer/analyze", method: "POST" },
     "optimizer.compile": { endpoint: "optimizer/compile", method: "POST" },
+    "optimizer.keywordStats": { endpoint: "optimizer/keywords/stats", method: "POST" },
+    "optimizer.keywords": { endpoint: "optimizer/keywords", method: "GET" },
+    "optimizer.keywordsSave": { endpoint: "optimizer/keywords", method: "POST" },
 
     // ── Integrations ──
     "integrations.list": { endpoint: "integrations", method: "GET" },
