@@ -40,12 +40,12 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
-import { Extension, Mark, Node } from '@tiptap/core';
+import { Extension, Mark, Node, createNodeFromContent, getHTMLFromFragment, type Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
-import type { Node as PMNode } from '@tiptap/pm/model';
+import { Fragment, type Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
@@ -429,6 +429,22 @@ function htmlText(html: string): string {
   const el = document.createElement('div');
   el.innerHTML = html;
   return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** THE AI-CONTENT GATE (law, 2026-07-13): no raw model output ever enters
+ *  the pipeline. Every AI reply is parsed through the editor's OWN schema
+ *  with normal whitespace rules and re-serialized, so everything stored or
+ *  inserted downstream (diff view, `s.ai`, Accept, Revise draft, baseline)
+ *  speaks the editor's canonical dialect BY CONSTRUCTION. Without it, a
+ *  pretty-printed reply (`<ul>` with newlines between items) rides verbatim
+ *  into `insertContentAt` — whose whitespace-preserving parse must coerce
+ *  each stray newline into a listItem: one empty bullet before every real
+ *  one. Content the schema can't represent is dropped HERE, once, visibly
+ *  — exactly what the editor would do on insert, never mid-review. */
+function canonicalAiHtml(editor: Editor, html: string): string {
+  if (html === '') return '';
+  const content = createNodeFromContent(html, editor.schema, { parseOptions: { preserveWhitespace: false } });
+  return getHTMLFromFragment(Fragment.from(content), editor.schema);
 }
 
 /** Restate a section's lane identity on the content that will be KEPT.
@@ -994,7 +1010,7 @@ export function SectionModal({
             html: sections[i].html, topic,
             model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
           });
-          const value = String(res?.value ?? '').trim();
+          const value = canonicalAiHtml(editor, String(res?.value ?? '').trim());
           const genModel = String(res?.model ?? '');
           const changed = value !== '' && htmlText(value) !== htmlText(sections[i].html);
           if (reviewRef.current?.[i]?.status !== 'pending') continue; // user already finished — drop the result
@@ -1065,7 +1081,7 @@ export function SectionModal({
         topic: `${note}\n\nThe current suggested rewrite (it may already include the user's own edits — build on it and apply the request above):\n${draft}`,
         model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
       });
-      const value = String(res?.value ?? '').trim();
+      const value = canonicalAiHtml(editor, String(res?.value ?? '').trim());
       const genModel = String(res?.model ?? '');
       if (reviewRef.current?.[i]?.status !== 'pending') return; // decided meanwhile — drop
       if (value && htmlText(value) !== htmlText(s.html)) {
