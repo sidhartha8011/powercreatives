@@ -62,25 +62,26 @@ const isRelated = (query: string, primary: string): boolean => {
   return p.size > 0 && tokens(query).some((t) => p.has(t));
 };
 
-/** Per-column header filters — THE shared table's own mechanism; numeric
- *  columns use the shared `number` kind (above / below / between icons). */
-const FILTER_DEFS: Record<string, FilterDef<KeywordRow>> = {
-  query: { key: 'query', kind: 'text', match: (r, v) => r.query.toLowerCase().includes(v.toLowerCase()) },
-  clicks: { key: 'clicks', kind: 'number', match: numberMatch((r) => r.clicks) },
-  impressions: { key: 'impressions', kind: 'number', match: numberMatch((r) => r.impressions) },
-  position: { key: 'position', kind: 'number', match: numberMatch((r) => r.position) },
-  dClicks: { key: 'dClicks', kind: 'number', match: numberMatch((r) => r.d?.clicks ?? null) },
-  dImpressions: { key: 'dImpressions', kind: 'number', match: numberMatch((r) => r.d?.impressions ?? null) },
-  dPosition: { key: 'dPosition', kind: 'number', match: numberMatch((r) => r.d?.position ?? null) },
-};
-
-/** Signed delta cell — green = improving, red = declining ($invert for
+/** Signed delta — green = improving, red = declining (`invert` for
  *  position, where DOWN is the win). A missing delta is a dash. */
-const deltaCell = (n: number | null | undefined, invert = false) => {
+const deltaSpan = (n: number | null | undefined, invert = false) => {
   if (n == null) return <span className="text-slate-300">—</span>;
   const good = invert ? n < 0 : n > 0;
   const cls = n === 0 ? 'text-slate-400' : good ? 'text-green-600' : 'text-red-600';
   return <span className={cls}>{n > 0 ? `+${n}` : String(n)}</span>;
+};
+
+/** TREND CELL (compare mode, owner UX 2026-07-14): the columns TRANSFORM
+ *  instead of multiplying — the change is the loud number, the current
+ *  value the quiet second line. Five columns always, no sideways scroll. */
+const metricCell = (trend: boolean, value: number | null, delta: number | null | undefined, invert = false) => {
+  if (!trend) return value ?? <span className="text-slate-300">—</span>;
+  return (
+    <span className="flex flex-col items-end leading-tight">
+      {deltaSpan(delta, invert)}
+      <span className="text-[9px] text-slate-400">now {value ?? '—'}</span>
+    </span>
+  );
 };
 
 export function KeywordsDrawer({
@@ -140,7 +141,16 @@ export function KeywordsDrawer({
     return out;
   }, [rows, relatedOnly, primaryKeyword]);
 
-  const hasDeltas = (rows ?? []).some((r) => r.d != null);
+  // TREND MODE: compare data present → the metric columns transform (the
+  // change is shown, sorted and filtered; the value rides as a quiet second
+  // line). Five columns in BOTH modes — never a sideways scroll.
+  const trend = (rows ?? []).some((r) => r.d != null);
+  const filterDefs = useMemo<Record<string, FilterDef<KeywordRow>>>(() => ({
+    query: { key: 'query', kind: 'text', match: (r, v) => r.query.toLowerCase().includes(v.toLowerCase()) },
+    clicks: { key: 'clicks', kind: 'number', match: numberMatch((r) => (trend ? r.d?.clicks ?? null : r.clicks)) },
+    impressions: { key: 'impressions', kind: 'number', match: numberMatch((r) => (trend ? r.d?.impressions ?? null : r.impressions)) },
+    position: { key: 'position', kind: 'number', match: numberMatch((r) => (trend ? r.d?.position ?? null : r.position)) },
+  }), [trend]);
   const columns: DataTableColumn<KeywordRow>[] = [
     {
       key: 'add',
@@ -159,15 +169,30 @@ export function KeywordsDrawer({
       ),
     },
     { key: 'query', header: 'Keyword', cell: (r) => <span title={r.query}>{r.query}</span>, sortAccessor: (r) => r.query },
-    { key: 'clicks', header: 'Clicks', width: 52, className: 'text-right', cell: (r) => r.clicks, sortAccessor: (r) => r.clicks },
-    { key: 'impressions', header: 'Impr.', width: 60, className: 'text-right', cell: (r) => r.impressions, sortAccessor: (r) => r.impressions },
-    { key: 'position', header: 'Pos.', width: 48, className: 'text-right', cell: (r) => r.position ?? <span className="text-slate-300">—</span>, sortAccessor: (r) => r.position },
-    // The trend columns (compare mode): sort a Δ column = the trend view.
-    ...(hasDeltas ? ([
-      { key: 'dClicks', header: 'Δ Clicks', width: 58, className: 'text-right', cell: (r) => deltaCell(r.d?.clicks), sortAccessor: (r) => r.d?.clicks ?? 0 },
-      { key: 'dImpressions', header: 'Δ Impr.', width: 62, className: 'text-right', cell: (r) => deltaCell(r.d?.impressions), sortAccessor: (r) => r.d?.impressions ?? 0 },
-      { key: 'dPosition', header: 'Δ Pos.', width: 54, className: 'text-right', cell: (r) => deltaCell(r.d?.position, true), sortAccessor: (r) => r.d?.position ?? 0 },
-    ] satisfies DataTableColumn<KeywordRow>[]) : []),
+    {
+      key: 'clicks',
+      header: trend ? 'Δ Clicks' : 'Clicks',
+      width: 56,
+      className: 'text-right',
+      cell: (r) => metricCell(trend, r.clicks, r.d?.clicks),
+      sortAccessor: (r) => (trend ? r.d?.clicks ?? 0 : r.clicks),
+    },
+    {
+      key: 'impressions',
+      header: trend ? 'Δ Impr.' : 'Impr.',
+      width: 62,
+      className: 'text-right',
+      cell: (r) => metricCell(trend, r.impressions, r.d?.impressions),
+      sortAccessor: (r) => (trend ? r.d?.impressions ?? 0 : r.impressions),
+    },
+    {
+      key: 'position',
+      header: trend ? 'Δ Pos.' : 'Pos.',
+      width: 52,
+      className: 'text-right',
+      cell: (r) => metricCell(trend, r.position, r.d?.position, true),
+      sortAccessor: (r) => (trend ? r.d?.position ?? 0 : r.position),
+    },
   ];
 
   return (
@@ -279,21 +304,21 @@ export function KeywordsDrawer({
           related
         </label>
         <div className="flex-1" />
-        {storedAt !== null && (
-          <span
-            title="Google is unreachable — showing the last stored rows; refresh retries live"
-            className="rounded-full bg-slate-100 px-1.5 py-px text-[9px] text-slate-500"
-          >
-            stored {storedAt > 0 ? new Date(storedAt * 1000).toISOString().slice(0, 10) : ''}
-          </span>
-        )}
+        {/* Freshness lives ON its remedy (UX ruling 2026-07-14): live data =
+            a silent normal refresh; saved-copy data = the icon turns amber
+            with a dot, the plain-words story in the tooltip. No chip. */}
         <button
           type="button"
           onClick={() => scan()}
-          title="Re-scan Search Console for this page"
-          className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary"
+          title={storedAt !== null
+            ? `Google couldn't be reached — showing the last saved results${storedAt > 0 ? ` from ${new Date(storedAt * 1000).toISOString().slice(0, 10)}` : ''}. Click to retry.`
+            : 'Re-scan Search Console for this page'}
+          className={`relative rounded p-0.5 hover:bg-slate-100 ${storedAt !== null ? 'text-amber-500 hover:text-amber-600' : 'text-slate-400 hover:text-primary'}`}
         >
           {loading ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <RotateCw className="h-3 w-3" />}
+          {storedAt !== null && !loading && (
+            <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" />
+          )}
         </button>
       </div>
 
@@ -312,7 +337,7 @@ export function KeywordsDrawer({
             defaultSortKey="impressions"
             defaultSortDir="desc"
             layoutKey="optimizer-kw-drawer"
-            filterDefs={FILTER_DEFS}
+            filterDefs={filterDefs}
             emptyMessage="No keywords in this window — widen the days or remove the filters."
           />
         )}
