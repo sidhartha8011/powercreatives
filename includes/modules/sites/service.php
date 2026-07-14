@@ -139,12 +139,23 @@ class PCM_Sites_Service
         $password = self::decrypt_password((string) $site->appPassword);
         $qs  = array_merge(array('rest_route' => $route), $query);
         $url = rtrim((string) $site->url, '/') . '/?' . http_build_query($qs);
+        $headers = array(
+            'Authorization' => 'Basic ' . base64_encode($site->username . ':' . $password),
+            'Content-Type'  => 'application/json',
+        );
+        // DELETE tunnels as POST + WP-core's native method override: web
+        // servers in front of client sites can refuse the DELETE method
+        // outright (proven live 2026-07-14 — bare 405 with an EMPTY body,
+        // the request never reached WordPress), and the override wins on
+        // servers that allow DELETE too. One transport fix for every
+        // remote-DELETE consumer, present and future.
+        if (strtoupper($method) === 'DELETE') {
+            $headers['X-HTTP-Method-Override'] = 'DELETE';
+            $method = 'POST';
+        }
         $args = array(
             'method'    => $method,
-            'headers'   => array(
-                'Authorization' => 'Basic ' . base64_encode($site->username . ':' . $password),
-                'Content-Type'  => 'application/json',
-            ),
+            'headers'   => $headers,
             'timeout'   => max(1, $timeout),
             'sslverify' => true,
         );
