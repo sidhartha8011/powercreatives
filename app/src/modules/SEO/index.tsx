@@ -1755,7 +1755,14 @@ export function SEOModule() {
           type={pageEditRow.type === 'page' ? 'page' : 'post'}
           readOnly={false}
           mode="page"
-          page={{ title: pageEditRow.title || 'Untitled', editUrl: pageEditRow.editUrl || undefined, date: pageEditRow.date || undefined, permalink: pageEditRow.permalink || undefined }}
+          page={{
+            title: pageEditRow.title || 'Untitled',
+            editUrl: pageEditRow.editUrl || undefined,
+            date: pageEditRow.date || undefined,
+            permalink: pageEditRow.permalink || undefined,
+            // The table's own inline preview window (renders above the editor).
+            onPreview: pageEditRow.permalink ? () => setPreviewRow(pageEditRow) : undefined,
+          }}
           onClose={() => setPageEditRow(null)}
           onSaved={() => {}}
         />

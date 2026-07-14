@@ -25,6 +25,10 @@ export interface RouteConfig {
 // ── Route Map ──
 
 export const ROUTE_MAP: Record<string, RouteConfig> = {
+    // ── Optimizer (the teacher/catalog/basket analysis system) ──
+    "optimizer.teachers": { endpoint: "optimizer/teachers", method: "GET" },
+    "optimizer.analyze": { endpoint: "optimizer/analyze", method: "POST" },
+
     // ── Integrations ──
     "integrations.list": { endpoint: "integrations", method: "GET" },
     "integrations.listProviders": { endpoint: "integrations/providers", method: "GET" },
@@ -507,6 +511,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "seo/sites",
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/redirects/${input.redirectId}/delete` }),
+    },
+    "seo.remoteSavePageType": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-type`, body: { type: input.type } }),
     },
     "seo.remoteUrlUsage": {
         endpoint: "seo/sites",

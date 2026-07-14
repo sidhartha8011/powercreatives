@@ -216,6 +216,174 @@ class PCM_Models_Service
     }
 
     /**
+     * SELF-REFRESHING REGISTRY (2026-07-13): reading the registry keeps it
+     * fresh. For every ACTIVE integration whose provider has a live models
+     * API, if that provider's registry rows are older than a day (or it has
+     * none), a background resync is scheduled — non-blocking, once per
+     * window (transient lock). The list mirrors what providers actually
+     * offer BECAUSE it is used: no cron babysitting, no manual ritual.
+     * The one-time key-add sync stopped being the registry's last word
+     * (live-found: a May snapshot served as "the" model list for months).
+     */
+    public function maybe_schedule_refresh(int $user_id): void
+    {
+        global $wpdb;
+        // Providers with a live /models API — mirrors the endpoint map in
+        // PCM_Providers::validate_api_key (the single validation authority).
+        $live = array('openai', 'anthropic', 'google', 'fal');
+        $table = PCM_Schema::table('models');
+        foreach ((array) PCM_DB::get_user_integrations($user_id) as $integration) {
+            $provider = (string) ($integration->provider ?? '');
+            if (empty($integration->isActive) || empty($integration->apiKey) || !in_array($provider, $live, true)) {
+                continue;
+            }
+            $lock = 'pcm_models_refresh_' . $user_id . '_' . $provider;
+            if (get_transient($lock)) {
+                continue;
+            }
+            $newest = $wpdb->get_var($wpdb->prepare(
+                "SELECT MAX(updatedAt) FROM {$table} WHERE userId = %d AND provider = %s",
+                $user_id,
+                $provider
+            ));
+            if ($newest !== null && (time() - (int) strtotime((string) $newest)) < DAY_IN_SECONDS) {
+                continue;
+            }
+            set_transient($lock, 1, 6 * HOUR_IN_SECONDS);
+            wp_schedule_single_event(time(), 'pcm_models_refresh', array($user_id, $provider));
+        }
+    }
+
+    /**
+     * The background refresh (wp-cron): validate the stored key against the
+     * provider's LIVE models API, then the normal sync (adds new models,
+     * marks vanished ones unavailable), then LIVE PRICING (below). Failures
+     * are logged, never fatal — the registry simply stays as-is until the
+     * next window.
+     */
+    public function run_refresh(int $user_id, string $provider): void
+    {
+        foreach ((array) PCM_DB::get_user_integrations($user_id) as $integration) {
+            if ((string) ($integration->provider ?? '') !== $provider || empty($integration->apiKey)) {
+                continue;
+            }
+            $validation = PCM_Providers::validate_api_key($provider, $integration->apiKey);
+            if (empty($validation['valid'])) {
+                error_log(sprintf('[PCM Models] Background refresh for "%s" failed: %s', $provider, (string) ($validation['error'] ?? 'unknown')));
+                return;
+            }
+            $results = $this->sync_models($user_id, $provider, (array) ($validation['models'] ?? array()), true);
+            $priced  = $this->apply_live_pricing($user_id, $provider);
+            error_log(sprintf('[PCM Models] Background refresh for "%s": %d of %d models synced, %d priced.', $provider, (int) $results['created'], (int) $results['total'], $priced));
+            return;
+        }
+    }
+
+    // ── LIVE PRICING (2026-07-13): providers publish prices on WEBSITES, not
+    //    in their APIs — the ONE machine-readable, continuously-updated feed
+    //    is OpenRouter's public catalog (no key). Real per-million-token USD
+    //    lands on each row; the tier becomes MATH against thresholds stored
+    //    as DATA (option, editable). Hand-set tiers (status != 'auto') are
+    //    never touched; models missing from the catalog keep the name-pattern
+    //    tier — the patterns are the FALLBACK now, not the truth. ──
+
+    /** Model-id identity across catalogs: lowercase, provider prefix and
+     *  ':variant' stripped, separators folded to '-', trailing date stamps
+     *  (-20YYMMDD) dropped. Pure — harness/probe testable. */
+    public static function normalize_price_key(string $id): string
+    {
+        $key = strtolower(trim($id));
+        $slash = strrpos($key, '/');
+        if ($slash !== false) {
+            $key = substr($key, $slash + 1);
+        }
+        $colon = strpos($key, ':');
+        if ($colon !== false) {
+            $key = substr($key, 0, $colon);
+        }
+        $key = str_replace(array('.', '_', ' '), '-', $key);
+        $key = (string) preg_replace('/-20\d{6}$/', '', $key);
+        return $key;
+    }
+
+    /** Tier from real prices: blended $(input+output)/2 per million tokens
+     *  against thresholds stored as data (editable option). Pure. */
+    public static function derive_tier(float $input_per_m, float $output_per_m): string
+    {
+        $t = get_option('pcm_model_tier_thresholds', array());
+        $budget_max   = isset($t['budgetMax']) ? (float) $t['budgetMax'] : 2.0;
+        $standard_max = isset($t['standardMax']) ? (float) $t['standardMax'] : 15.0;
+        $blended = ($input_per_m + $output_per_m) / 2;
+        if ($blended <= $budget_max) {
+            return 'budget';
+        }
+        return $blended <= $standard_max ? 'standard' : 'premium';
+    }
+
+    /** OpenRouter's public catalog → map of normalized id → {in, out} USD per
+     *  million tokens. Cached 12h (one fetch serves every provider refresh). */
+    public static function fetch_live_pricing(): array
+    {
+        $cached = get_transient('pcm_live_pricing');
+        if (is_array($cached)) {
+            return $cached;
+        }
+        $res = wp_remote_get('https://openrouter.ai/api/v1/models', array('timeout' => 30));
+        if (is_wp_error($res) || (int) wp_remote_retrieve_response_code($res) !== 200) {
+            error_log('[PCM Models] Live pricing fetch failed: ' . (is_wp_error($res) ? $res->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($res)));
+            return array();
+        }
+        $body = json_decode(wp_remote_retrieve_body($res), true);
+        $map  = array();
+        foreach ((array) ($body['data'] ?? array()) as $m) {
+            if (!is_array($m) || empty($m['id']) || !isset($m['pricing']['prompt'], $m['pricing']['completion'])) {
+                continue;
+            }
+            $in  = (float) $m['pricing']['prompt'] * 1000000;   // per-token → per-million
+            $out = (float) $m['pricing']['completion'] * 1000000;
+            if ($in < 0 || $out < 0) {
+                continue; // dynamic/unknown pricing — no claim is better than a wrong one
+            }
+            $map[self::normalize_price_key((string) $m['id'])] = array('in' => $in, 'out' => $out);
+        }
+        if (!empty($map)) {
+            set_transient('pcm_live_pricing', $map, 12 * HOUR_IN_SECONDS);
+        }
+        return $map;
+    }
+
+    /** Stamp real prices onto a provider's rows + re-derive AUTO tiers.
+     *  @return int rows priced. */
+    public function apply_live_pricing(int $user_id, string $provider): int
+    {
+        global $wpdb;
+        $pricing = self::fetch_live_pricing();
+        if (empty($pricing)) {
+            return 0;
+        }
+        $table = PCM_Schema::table('models');
+        $rows  = (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT id, modelId, status FROM {$table} WHERE userId = %d AND provider = %s",
+            $user_id,
+            $provider
+        ));
+        $priced = 0;
+        foreach ($rows as $row) {
+            $hit = $pricing[self::normalize_price_key((string) $row->modelId)] ?? null;
+            if ($hit === null) {
+                continue; // not in the catalog — pattern tier stays (honest fallback)
+            }
+            $update = array('inputPrice' => $hit['in'], 'outputPrice' => $hit['out']);
+            if ((string) $row->status === 'auto') {
+                $update['costTier'] = self::derive_tier($hit['in'], $hit['out']);
+            }
+            $wpdb->update($table, $update, array('id' => (int) $row->id));
+            $priced++;
+        }
+        return $priced;
+    }
+
+    /**
      * Mark models that are no longer available from the provider's API.
      * Sets isAvailable=0 for models that weren't in the latest sync.
      *

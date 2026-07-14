@@ -40,23 +40,26 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
-import { Extension, Mark, Node } from '@tiptap/core';
+import { Extension, Mark, Node, createNodeFromContent, getHTMLFromFragment, type Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
-import type { Node as PMNode } from '@tiptap/pm/model';
+import { Fragment, type Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus, ScanSearch,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
+import { ModelDropdown, PillButton, PillSplitButton } from '@/components/shared';
+import { useTextModels } from '@/modules/Copy/useTextModels';
 import {
   diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
 } from './word-diff';
+import { OptimizerRail } from './optimizer/OptimizerRail';
 
 // The hub's native WP media library (wp_enqueue_media — same pattern as the
 // table's featured-image picker).
@@ -104,8 +107,9 @@ export interface SectionModalProps {
   section?: SectionData;
   insert?: InsertData;
   /** Page mode: the row's title, publish date (the Original row's label),
-   *  the WP-editor escape hatch + the live permalink. */
-  page?: { title: string; editUrl?: string; date?: string; permalink?: string };
+   *  the WP-editor escape hatch, the live permalink + the inline preview
+   *  opener (the table's own preview window). */
+  page?: { title: string; editUrl?: string; date?: string; permalink?: string; onPreview?: () => void };
   /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
   /** Where the user clicked — the window opens right below it. */
@@ -121,9 +125,9 @@ const WIDTH = 440;
  *  section mode keeps the compact scale above, byte-identical. */
 const PAGE_TYPE_SCALE =
   'text-sm leading-relaxed text-slate-800 break-words ' +
-  '[&_h1]:text-xl [&_h1]:font-semibold [&_h1]:mt-6 [&_h1]:mb-2 ' +
-  '[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 ' +
-  '[&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1.5 ' +
+  '[&_h1]:font-serif [&_h1]:text-[22px] [&_h1]:leading-8 [&_h1]:font-bold [&_h1]:mt-7 [&_h1]:mb-2 ' +
+  '[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-6 [&_h2]:mb-2 ' +
+  '[&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-5 [&_h3]:mb-1.5 ' +
   '[&_h4]:text-sm [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-1 ' +
   '[&_h5]:text-sm [&_h5]:font-medium [&_h5]:mt-3 [&_h5]:mb-1 ' +
   '[&_h6]:text-sm [&_h6]:font-medium [&_h6]:mt-3 [&_h6]:mb-1 ' +
@@ -154,7 +158,9 @@ const LockedImage = Image.extend({
 const DiffAdded = Mark.create({
   name: 'diffAdded',
   parseHTML() { return [{ tag: 'span[data-diff-added]' }]; },
-  renderHTML() { return ['span', { 'data-diff-added': '1', class: 'rounded-sm bg-green-100 text-green-900' }, 0]; },
+  // ONE green (owner 2026-07-13): the same green-600 family as the shared
+  // save/Accept buttons — never a second green.
+  renderHTML() { return ['span', { 'data-diff-added': '1', class: 'rounded-sm bg-green-600/15 text-green-800' }, 0]; },
 });
 const DiffRemoved = Mark.create({
   name: 'diffRemoved',
@@ -162,25 +168,26 @@ const DiffRemoved = Mark.create({
   renderHTML() { return ['span', { 'data-diff-removed': '1', class: 'rounded-sm bg-red-50 text-red-800 line-through decoration-red-400' }, 0]; },
 });
 
-/** SECTION FRAMES (page mode): the page drawn as what it IS — a stack of
- *  sections. Pure ProseMirror decorations — they can never enter a save by
- *  construction. Per section: a left rail colored by ORIGIN (slate = the
- *  site's own content, amber = platform-edited, sky = platform-added; a
- *  heading with no origin attribute — typed or pasted this session — is
- *  platform-added by definition), plus an active tint on the section under
- *  the cursor. Blocks ABOVE the first heading are the server-refused dead
- *  zone and lock (contenteditable=false) so the refusal can never be
+/** SECTION BLOCKS (page mode, owner UX ruling 2026-07-13): every section is
+ *  drawn as ONE always-visible bordered block — no hover states, no active
+ *  highlight, no rails; a static structure the eye reads in one pass. The
+ *  block's 3px LEFT EDGE carries the origin (slate = the site's own content,
+ *  amber = platform-edited, sky = platform-added; a heading with no origin
+ *  attribute — typed or pasted this session — is platform-added by
+ *  definition). Pure ProseMirror decorations — they can never enter a save
+ *  by construction. Blocks ABOVE the first heading are the server-refused
+ *  dead zone and lock (contenteditable=false) so the refusal can never be
  *  reached; a doc with NO headings locks nothing — wiped pages must accept
  *  typing. The origin rides as a heading attribute (survives edits and
  *  reordering): the server emits it on load and strips it from every save.
  *  Version-row loads carry no origins, so their sections draw sky — a saved
  *  version IS platform-authored content, the color states a fact. */
-const FRAME_CLASS: Record<string, string> = {
-  original: 'pcm-frame-original',
-  owned: 'pcm-frame-owned',
-  insert: 'pcm-frame-added',
+const BLOCK_ORIGIN_CLASS: Record<string, string> = {
+  original: 'pcm-blk-original',
+  owned: 'pcm-blk-owned',
+  insert: 'pcm-blk-added',
 };
-function frameDecorations(doc: PMNode, selFrom: number): DecorationSet {
+function blockDecorations(doc: PMNode, flash: number | null): DecorationSet {
   const blocks: Array<{ pos: number; end: number; heading: boolean; origin: string | null }> = [];
   doc.forEach((node, pos) => {
     blocks.push({
@@ -196,23 +203,30 @@ function frameDecorations(doc: PMNode, selFrom: number): DecorationSet {
     else if (ranges.length > 0) ranges[ranges.length - 1].to = b.end;
   }
   if (ranges.length === 0) return DecorationSet.empty;
-  const activeIdx = ranges.findIndex((r) => selFrom >= r.from && selFrom < r.to);
   const decos: Decoration[] = [];
   for (const b of blocks) {
     if (b.end <= ranges[0].from) {
       decos.push(Decoration.node(b.pos, b.end, { class: 'pcm-deadzone', contenteditable: 'false' }));
     }
   }
-  ranges.forEach((r, i) => {
-    const cls = `pcm-frame ${FRAME_CLASS[r.origin] ?? 'pcm-frame-added'}${i === activeIdx ? ' pcm-frame-active' : ''}`;
-    for (const b of blocks) {
-      if (b.pos >= r.from && b.end <= r.to) decos.push(Decoration.node(b.pos, b.end, { class: cls }));
-    }
+  ranges.forEach((r, ri) => {
+    const origin = BLOCK_ORIGIN_CLASS[r.origin] ?? 'pcm-blk-added';
+    // FOCUS FLASH (owner 2026-07-13): a clicked rail card scrolls here and the
+    // section pulses (dark-blue lane + soft wash) so you always see the landing.
+    const pulse = ri === flash ? ' pcm-blk-flash' : '';
+    const inside = blocks.filter((b) => b.pos >= r.from && b.end <= r.to);
+    inside.forEach((b, i) => {
+      const role = `${i === 0 ? ' pcm-blk-start' : ''}${i === inside.length - 1 ? ' pcm-blk-end' : ''}`;
+      decos.push(Decoration.node(b.pos, b.end, { class: `pcm-blk ${origin}${role}${pulse}` }));
+    });
   });
   return DecorationSet.create(doc, decos);
 }
-const SectionFrames = Extension.create({
-  name: 'pcmSectionFrames',
+const SectionBlocks = Extension.create({
+  name: 'pcmSectionBlocks',
+  addStorage() {
+    return { flash: null as number | null };
+  },
   addGlobalAttributes() {
     return [
       {
@@ -230,11 +244,74 @@ const SectionFrames = Extension.create({
     ];
   },
   addProseMirrorPlugins() {
+    const ext = this;
     return [
       new Plugin({
-        key: new PluginKey('pcmSectionFrames'),
+        key: new PluginKey('pcmSectionBlocks'),
         props: {
-          decorations: (state) => frameDecorations(state.doc, state.selection.from),
+          decorations: (state) => blockDecorations(state.doc, ext.storage.flash),
+        },
+      }),
+    ];
+  },
+});
+
+/** INLINE REVIEW CONTROLS (owner-picked GitHub/Cursor pattern, 2026-07-13):
+ *  during an AI review every CHANGED section carries its own floating
+ *  ✓ Accept / ✕ chip at the top-right of its heading — you decide where you
+ *  read; the rail stays as overview + bulk. Widget decorations only (never
+ *  content); handlers ride the SAME resolveSection the rail uses. */
+const ReviewControls = Extension.create({
+  name: 'pcmReviewControls',
+  addStorage() {
+    return {
+      sections: [] as string[],
+      resolve: null as null | ((i: number, action: 'accept' | 'reject') => void),
+      revise: null as null | ((i: number) => void),
+    };
+  },
+  addProseMirrorPlugins() {
+    const ext = this;
+    return [
+      new Plugin({
+        key: new PluginKey('pcmReviewControls'),
+        props: {
+          decorations: (state) => {
+            const { sections, resolve } = ext.storage;
+            if (!sections.length || !resolve) return DecorationSet.empty;
+            const decos: Decoration[] = [];
+            let h = -1;
+            state.doc.forEach((node, pos) => {
+              if (node.type.name !== 'heading') return;
+              h++;
+              const i = h;
+              if (sections[i] !== 'diff') return;
+              decos.push(Decoration.widget(pos + 1, () => {
+                const wrap = document.createElement('span');
+                wrap.className = 'pcm-review-chip';
+                const mk = (label: string, cls: string, title: string, onClick: () => void) => {
+                  const b = document.createElement('button');
+                  b.type = 'button';
+                  b.textContent = label;
+                  b.className = cls;
+                  b.title = title;
+                  b.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onClick();
+                  });
+                  return b;
+                };
+                wrap.append(
+                  mk('✓ Accept', 'pcm-chip-accept', 'Keep this section as it reads right now (your edits included)', () => ext.storage.resolve?.(i, 'accept')),
+                  mk('↻ Revise', 'pcm-chip-revise', 'Send this section back to the AI with an adjustment', () => ext.storage.revise?.(i)),
+                  mk('✕', 'pcm-chip-ghost', 'Keep the original', () => ext.storage.resolve?.(i, 'reject')),
+                );
+                return wrap;
+              }, { side: 1 }));
+            });
+            return DecorationSet.create(state.doc, decos);
+          },
         },
       }),
     ];
@@ -253,18 +330,31 @@ const FaqItem = Node.create({
   group: 'block',
   content: 'faqSummary block+',
   defining: true,
-  addAttributes() {
-    return {
-      open: {
-        default: true,
-        parseHTML: (el: HTMLElement) => el.hasAttribute('open'),
-        renderHTML: (attrs: Record<string, unknown>) => (attrs.open ? { open: '' } : {}),
-      },
-      style: { default: null },
+  addAttributes() { return { style: { default: null } }; },
+  parseHTML() { return [{ tag: 'details' }]; },
+  // Serialized WITHOUT `open` — the LIVE page starts COLLAPSED (a real
+  // accordion). The node view below is the EDITOR's display: always open,
+  // fold neutralized — FAQ items edit as plain visible text (owner ruling).
+  renderHTML({ HTMLAttributes }) { return ['details', HTMLAttributes, 0]; },
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement('details');
+      if (node.attrs.style) dom.setAttribute('style', String(node.attrs.style));
+      dom.open = true;
+      dom.addEventListener('toggle', () => { if (!dom.open) dom.open = true; });
+      return {
+        dom,
+        contentDOM: dom,
+        update: (n) => {
+          if (n.type.name !== 'faqItem') return false;
+          if (n.attrs.style) dom.setAttribute('style', String(n.attrs.style));
+          else dom.removeAttribute('style');
+          dom.open = true;
+          return true;
+        },
+      };
     };
   },
-  parseHTML() { return [{ tag: 'details' }]; },
-  renderHTML({ HTMLAttributes }) { return ['details', HTMLAttributes, 0]; },
 });
 const FaqSummary = Node.create({
   name: 'faqSummary',
@@ -290,20 +380,36 @@ const FAQ_SUMMARY_STYLE = 'font-weight:600;cursor:pointer';
 const faqTemplate = (): string =>
   '<h2>Frequently asked questions</h2>' +
   [1, 2, 3].map((n) =>
-    `<details style="${FAQ_ITEM_STYLE}" open><summary style="${FAQ_SUMMARY_STYLE}">Question ${n}</summary><p>Answer ${n}.</p></details>`,
+    `<details style="${FAQ_ITEM_STYLE}"><summary style="${FAQ_SUMMARY_STYLE}">Question ${n}</summary><p>Answer ${n}.</p></details>`,
   ).join('');
 
-/** The frames' looks, scoped to the page editor (rails + active tint + dead zone). */
-const FRAME_STYLES =
-  '[&_.pcm-frame]:border-l-2 [&_.pcm-frame]:pl-3 ' +
-  '[&_.pcm-frame-original]:border-slate-200 ' +
-  '[&_.pcm-frame-owned]:border-amber-300 ' +
-  '[&_.pcm-frame-added]:border-sky-300 ' +
-  '[&_.pcm-frame-active]:bg-slate-50 ' +
-  '[&_.pcm-frame-active.pcm-frame-original]:border-slate-400 ' +
-  '[&_.pcm-frame-active.pcm-frame-owned]:border-amber-500 ' +
-  '[&_.pcm-frame-active.pcm-frame-added]:border-sky-500 ' +
-  '[&_.pcm-deadzone]:opacity-60';
+/** The blocks' looks, scoped to the page editor: one continuous bordered
+ *  block per section (start/middle/end roles join their borders; inter-block
+ *  margins become inner padding so the box never breaks), 3px origin left
+ *  edge, air between sections. Images pause the side borders (they keep
+ *  their natural width) but keep the origin edge. Summary markers hidden +
+ *  fold cursor neutralized: FAQ items EDIT as plain open text. */
+const BLOCK_STYLES =
+  '[&_.pcm-blk]:border-l-[3px] [&_.pcm-blk]:border-r [&_.pcm-blk]:border-r-slate-100 ' +
+  '[&_.pcm-blk]:px-4 [&_.pcm-blk]:my-0 [&_.pcm-blk]:py-1 ' +
+  '[&_.pcm-blk-start]:border-t [&_.pcm-blk-start]:border-t-slate-100 [&_.pcm-blk-start]:rounded-tr-xl [&_.pcm-blk-start]:pt-3 [&_.pcm-blk-start]:mt-5 ' +
+  '[&_.pcm-blk-end]:border-b [&_.pcm-blk-end]:border-b-slate-100 [&_.pcm-blk-end]:rounded-br-xl [&_.pcm-blk-end]:pb-3 ' +
+  '[&_.pcm-blk-original]:border-l-slate-300 [&_.pcm-blk-owned]:border-l-amber-400 [&_.pcm-blk-added]:border-l-sky-400 ' +
+  '[&_img.pcm-blk]:block [&_img.pcm-blk]:border-y-0 [&_img.pcm-blk]:border-r-0 [&_img.pcm-blk]:rounded-none ' +
+  '[&_summary]:list-none [&_summary]:!cursor-text [&_.pcm-deadzone]:opacity-60 ' +
+  // Focus flash (click a rail card): dark-blue lane + soft wash, eased both ways.
+  '[&_.pcm-blk]:transition-colors [&_.pcm-blk]:duration-500 ' +
+  '[&_.pcm-blk-flash]:!border-l-blue-600 [&_.pcm-blk-flash]:bg-blue-50/70 ' +
+  // Inline review chips: float on the changed section's first line. Hover
+  // law (owner 2026-07-13): SELF-hover only (`.pcm-chip-x:hover`, never a
+  // container-hover — that darkened every chip from anywhere in the text)
+  // and hover LIGHTENS. Colors state the action: green = keep (save
+  // family), blue = asks the AI (generate family), grey ghost = decline.
+  '[&_.pcm-review-chip]:float-right [&_.pcm-review-chip]:ml-2 [&_.pcm-review-chip]:inline-flex [&_.pcm-review-chip]:gap-1 [&_.pcm-review-chip]:align-middle ' +
+  '[&_.pcm-review-chip_button]:rounded-full [&_.pcm-review-chip_button]:px-2 [&_.pcm-review-chip_button]:py-0.5 [&_.pcm-review-chip_button]:text-[10px] ' +
+  '[&_.pcm-chip-accept]:bg-green-600 [&_.pcm-chip-accept]:font-medium [&_.pcm-chip-accept]:text-white [&_.pcm-chip-accept:hover]:bg-green-500 ' +
+  '[&_.pcm-chip-revise]:border [&_.pcm-chip-revise]:border-primary/40 [&_.pcm-chip-revise]:bg-white [&_.pcm-chip-revise]:text-primary [&_.pcm-chip-revise:hover]:bg-[#e7f5ff] ' +
+  '[&_.pcm-chip-ghost]:border [&_.pcm-chip-ghost]:border-slate-200 [&_.pcm-chip-ghost]:bg-white [&_.pcm-chip-ghost]:text-slate-500 [&_.pcm-chip-ghost:hover]:bg-slate-50';
 
 /** One section under AI review. pending/diff block saving; the rest are resolved. */
 type ReviewStatus = 'pending' | 'diff' | 'accepted' | 'rejected' | 'clean' | 'failed';
@@ -311,6 +417,12 @@ interface ReviewSection extends DocSection {
   status: ReviewStatus;
   ai?: string;
   error?: string;
+  /** What ACTUALLY generated this suggestion — the API's own report. */
+  genModel?: string;
+  /** The landed diff VIEW read back from the editor (same serializer as the
+   *  live compare) — effectiveContent's untouched-detector: live == baseline
+   *  ⇔ the user typed nothing in this section since the suggestion landed. */
+  baseline?: string;
 }
 
 /** Visible text of an HTML fragment (whitespace-collapsed) — clean-result check. */
@@ -318,6 +430,42 @@ function htmlText(html: string): string {
   const el = document.createElement('div');
   el.innerHTML = html;
   return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** THE AI-CONTENT GATE (law, 2026-07-13): no raw model output ever enters
+ *  the pipeline. Every AI reply is parsed through the editor's OWN schema
+ *  with normal whitespace rules and re-serialized, so everything stored or
+ *  inserted downstream (diff view, `s.ai`, Accept, Revise draft, baseline)
+ *  speaks the editor's canonical dialect BY CONSTRUCTION. Without it, a
+ *  pretty-printed reply (`<ul>` with newlines between items) rides verbatim
+ *  into `insertContentAt` — whose whitespace-preserving parse must coerce
+ *  each stray newline into a listItem: one empty bullet before every real
+ *  one. Content the schema can't represent is dropped HERE, once, visibly
+ *  — exactly what the editor would do on insert, never mid-review. */
+function canonicalAiHtml(editor: Editor, html: string): string {
+  if (html === '') return '';
+  const content = createNodeFromContent(html, editor.schema, { parseOptions: { preserveWhitespace: false } });
+  return getHTMLFromFragment(Fragment.from(content), editor.schema);
+}
+
+/** Restate a section's lane identity on the content that will be KEPT.
+ *  The pre-review capture (`sourceHtml`) is the only reliable origin carrier
+ *  — the AI's clean value carries no attributes. Accepting a CHANGED section
+ *  flips `original` → `owned`, so the lane reads amber the moment it lands
+ *  (owner law: amber = edited, sky = added — matches what the server emits
+ *  on the next load). `insert` stays platform-added; a version-loaded doc
+ *  carries no origins and keeps stating that fact. */
+function restateOrigin(html: string, sourceHtml: string, changed: boolean): string {
+  const src = document.createElement('div');
+  src.innerHTML = sourceHtml;
+  const origin = src.querySelector('h1,h2,h3,h4,h5,h6')?.getAttribute('data-pcm-origin') ?? null;
+  if (origin === null) return html;
+  const out = document.createElement('div');
+  out.innerHTML = html;
+  const heading = out.querySelector('h1,h2,h3,h4,h5,h6');
+  if (heading === null) return html;
+  heading.setAttribute('data-pcm-origin', changed && origin === 'original' ? 'owned' : origin);
+  return out.innerHTML;
 }
 
 /** Image-src identity (mirrors PCM_Text_Matcher::normalize_src): entity-decode
@@ -432,7 +580,13 @@ export function SectionModal({
         + section.paragraphs.map((p) => p.html).join('')
       : '';
   const [savedHtml, setSavedHtml] = useState(openedHtml);
-  const [busy, setBusy] = useState(false);
+  /** WHICH control is running (owner law 2026-07-13): every long action
+   *  names itself here and only THAT control may look busy — the rest keep
+   *  their resting face while `busy` still guards them functionally (one
+   *  long action at a time, modal-wide; guarded clicks simply do nothing). */
+  type BusyAction = 'save' | 'saveClose' | 'remove' | 'ai' | 'imageAdd' | 'imageSave' | 'imageHide' | 'imageRevert';
+  const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
+  const busy = busyAction !== null;
   const [askOpen, setAskOpen] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [position, setPosition] = useState<'before' | 'after'>(insert?.position ?? 'after');
@@ -450,14 +604,24 @@ export function SectionModal({
         },
         codeBlock: false, blockquote: false, horizontalRule: false,
       }),
-      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved, SectionFrames, FaqItem, FaqSummary] : []),
+      ...(isPage ? [LockedImage, DiffAdded, DiffRemoved, SectionBlocks, ReviewControls, FaqItem, FaqSummary] : []),
     ],
     content: openedHtml,
     // Baseline for dirty-checks must be the EDITOR's normalized form of the
     // opened content (TipTap reorders attrs etc.) — otherwise an untouched
     // window would "save" on every outside click.
     onCreate: ({ editor: ed }) => setSavedHtml(ed.getHTML()),
+    // Re-render on edits + selection moves: the Draft (unsaved) label and the
+    // Optimize button's scope wording are live states.
+    onUpdate: () => setEditorTick((t) => t + 1),
+    onSelectionUpdate: () => setEditorTick((t) => t + 1),
   });
+  const [, setEditorTick] = useState(0);
+  /** Unsaved edits in page mode — the versions dropdown's Draft state. */
+  const pageDirty = isPage && pageReady && !!editor && editor.getHTML() !== savedHtml;
+  /** A real text selection — narrows the AI review's SCOPE (never its safety:
+   *  every path shows red/green and waits for Accept/Reject). */
+  const hasSelection = !!editor && !editor.state.selection.empty && !(editor.state.selection as any).node;
 
   // Page mode opens empty and loads the fetched document ONCE (dirty-baseline
   // = the editor's normalized form of it, same law as onCreate). The ref
@@ -476,6 +640,76 @@ export function SectionModal({
   const saveMutation = trpc.seo.remoteSaveSectionRule.useMutation();
   const savePageMutation = trpc.seo.remoteSavePageEdits.useMutation();
   const optimizeMutation = trpc.seo.remoteOptimizeSection.useMutation();
+
+  // ── AI model choice (owner order 2026-07-13): ONE dropdown in the modal;
+  //    every AI action here uses it. Resolution: the user's saved pick →
+  //    the prop-passed model → the FIRST registry model (registry = models
+  //    with active keys, so the resolved model always WORKS — the old
+  //    hardcoded server default pointed at a provider without a key and
+  //    failed every call). Persisted per browser; visible in the select. ──
+  const { textModels, groups: modelGroups } = useTextModels();
+  const [aiModelId, setAiModelId] = useState<string>(() => {
+    try { return localStorage.getItem('pcm-seo-ai-model') ?? ''; } catch { return ''; }
+  });
+  const aiPick = textModels.find((m) => m.id === aiModelId)
+    ?? textModels.find((m) => m.id === model)
+    ?? textModels[0];
+  const pickAiModel = (id: string) => {
+    setAiModelId(id);
+    try { localStorage.setItem('pcm-seo-ai-model', id); } catch { /* private mode */ }
+  };
+  // THE shared picker (owner order: one dropdown everywhere — same component
+  // Copy uses, never a bland native select). Never busy-disabled: the pick
+  // is configuration for the NEXT run, harmless at any moment.
+  const aiModelSelect = textModels.length > 0 ? (
+    <ModelDropdown
+      modelGroups={modelGroups}
+      selectedModel={aiPick?.id ?? ''}
+      onModelChange={pickAiModel}
+    />
+  ) : null;
+
+  // ── Business + page type (owner order 2026-07-13): the site's linked brand
+  //    feeds real business details (phone/address/…) into every AI run, and
+  //    the page type tells the AI WHAT it's optimizing (local/blog/…). Both
+  //    visible in the header — you SEE the context the AI actually gets. ──
+  const brandsQuery = trpc.brands.list.useQuery(undefined, { enabled: isPage && !readOnly });
+  const brands = Array.isArray(brandsQuery.data)
+    ? (brandsQuery.data as any[]).map((b) => ({ id: Number(b.id), name: String(b.name) }))
+    : [];
+  const [brandId, setBrandId] = useState(0);
+  const [pageType, setPageType] = useState('general');
+  useEffect(() => {
+    if (!isPage || !pageQuery.data) return;
+    setBrandId(Number((pageQuery.data as any).brandId ?? 0));
+    setPageType(String((pageQuery.data as any).pageType ?? '') || 'general');
+  }, [isPage, pageQuery.data]);
+  const [insertOpen, setInsertOpen] = useState(false);
+  /** THE OPTIMIZER's rail (Analyze) — opening runs every teacher; closing
+   *  discards the run (Analyze always means a FRESH analysis). */
+  const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  const brandMutation = trpc.sites.update.useMutation();
+  const pageTypeMutation = trpc.seo.remoteSavePageType.useMutation();
+  const pickBrand = (id: string) => {
+    const n = Number(id);
+    setBrandId(n);
+    brandMutation.mutateAsync({ id: siteId, brandId: n })
+      .then(() => toast.success(n > 0 ? 'Business linked — the AI now uses its details' : 'Business unlinked'))
+      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : 'Failed to link the business'));
+  };
+  const pickPageType = (t: string) => {
+    setPageType(t);
+    pageTypeMutation.mutateAsync({ siteId, postId, type: t === 'general' ? '' : t })
+      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : 'Failed to save the page type'));
+  };
+  const PAGE_TYPE_OPTIONS = [
+    { id: 'general', name: 'General' },
+    { id: 'local', name: 'Local search' },
+    { id: 'blog', name: 'Blog article' },
+    { id: 'product', name: 'Product' },
+    { id: 'service', name: 'Service' },
+    { id: 'landing', name: 'Landing page' },
+  ];
 
   // ── Version history (replace-sections only — inserts have no Original). ──
   const versionsQuery = trpc.seo.remoteSectionVersions.useQuery(
@@ -503,9 +737,14 @@ export function SectionModal({
   };
   /** Page rows (owner order 2026-07-11): NO separate Current choice — the
    *  newest saved version IS what the site serves and carries the suffix;
-   *  the Original row shows the page's own date. */
+   *  the Original row shows the page's own date. When the newest save IS a
+   *  restore of the original, the label SAYS so (2026-07-13, live-caught:
+   *  a perfect restore looked like "another version" and read as a bug). */
+  const normDoc = (h: string) => h.replace(/\s*data-pcm-origin="[^"]*"/g, '').replace(/\s+/g, ' ').trim();
+  const currentIsOriginal = versions.length > 0 && originalHtml !== ''
+    && normDoc(String((versions[0] as any).replacement ?? '')) === normDoc(originalHtml);
   const pageRowLabel = (v: { createdAt: string }, idx: number) =>
-    `${v.createdAt.slice(0, 16)}${idx === 0 ? ' (Current)' : ''}`;
+    `${v.createdAt.slice(0, 16)}${idx === 0 ? (currentIsOriginal ? ' (Current — original)' : ' (Current)') : ''}`;
   const pageOriginalLabel = page?.date ? `${String(page.date).slice(0, 16)} (original)` : 'Original';
   /** The dropdown ALWAYS names a state (owner law — never a counter). */
   const hasActiveRule = !isInsert && !isPage && !!section?.sectionRuleReplacement;
@@ -520,6 +759,8 @@ export function SectionModal({
           )
           : 'Version')
         : (versions.find((v) => String(v.id) === versionPick)?.createdAt.slice(0, 16) ?? 'Version'))
+      : isPage && pageDirty
+        ? 'Draft (unsaved)'
       : isPage
         ? (versions.length > 0 ? pageRowLabel(versions[0], 0) : pageOriginalLabel)
         : (hasActiveRule && versions.length > 0 ? versions[0].createdAt.slice(0, 16) : 'Original');
@@ -535,9 +776,12 @@ export function SectionModal({
 
   const isDirty = () => !readOnly && !!editor && editor.getHTML() !== savedHtml;
 
-  // ── Save (save buttons / click outside): live rules, engine handles UPSERT/revert. ──
-  const save = async (replacementOverride?: string): Promise<boolean> => {
+  // ── Save (save buttons / click outside): live rules, engine handles
+  //    UPSERT/revert. `action` names the control that invoked it — that one
+  //    alone shows the working state. ──
+  const save = async (replacementOverride?: string, action: BusyAction = 'saveClose'): Promise<boolean> => {
     if (readOnly) return true;
+    if (busy) return false; // one long action at a time — a guarded click is a no-op
     if (isPage) {
       if (!pageReady) return true; // nothing loaded — nothing to save
       if (review) {
@@ -546,7 +790,7 @@ export function SectionModal({
       }
       // Guard: diff marks are presentation and must NEVER reach a save.
       const html = stripDiffHtml(replacementOverride ?? (editor?.getHTML() ?? ''));
-      setBusy(true);
+      setBusyAction(action);
       try {
         // The hub slices the document back into sections and routes each
         // change through the existing rule paths — page-level editing,
@@ -575,12 +819,12 @@ export function SectionModal({
         toast.error(e?.message ?? 'Could not save the page');
         return false;
       } finally {
-        setBusy(false);
+        setBusyAction(null);
       }
     }
     if (!isInsert && !section) return true;
     const replacement = replacementOverride ?? (editor?.getHTML() ?? '');
-    setBusy(true);
+    setBusyAction(action);
     try {
       let res: any;
       if (isInsert) {
@@ -626,7 +870,7 @@ export function SectionModal({
       toast.error(e?.message ?? 'Could not save the section');
       return false;
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -651,12 +895,14 @@ export function SectionModal({
 
   // ── AI: Re-write = whole-section rewrite into the editor; Ask AI adds an instruction. ──
   const runAi = async (withInstruction: string) => {
-    setBusy(true);
+    if (busy) return;
+    setBusyAction('ai');
     try {
       const current = editor?.getText().trim() ? (editor?.getHTML() ?? '') : '';
       const res: any = await optimizeMutation.mutateAsync({
         siteId: siteId as number, postId, type,
-        html: current, topic: withInstruction, model, provider,
+        html: current, topic: withInstruction,
+        model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
       });
       const value = String(res?.value ?? '').trim();
       if (value) { editor?.commands.setContent(value); setAskOpen(false); }
@@ -664,7 +910,7 @@ export function SectionModal({
     } catch (e: any) {
       toast.error(e?.message ?? 'Could not run the AI on this section');
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -675,33 +921,111 @@ export function SectionModal({
   //    is resolved. Locked images are lifted out per section (never sent to
   //    the AI) and ride along untouched.
   const [review, setReview] = useState<ReviewSection[] | null>(null);
-  const [reviewOrphan, setReviewOrphan] = useState('');
+  // Live mirror for async workers (their results must be dropped when the
+  // user already decided a section — e.g. OK'd the review mid-flight).
+  const reviewRef = useRef<ReviewSection[] | null>(null);
+  // (the old whole-doc rebuilder's orphan buffer died with it — the orphan
+  // zone is simply never touched by surgery)
 
-  const startAiReview = async (topic: string) => {
+  // ── SURGERY ENGINE (review-edit-revise, 2026-07-13): during a review the
+  //    DOCUMENT is the single source of truth for content; review state owns
+  //    only statuses + originals. ONE writer touches the doc — every
+  //    transition (suggestion lands / accept / reject / revise result) goes
+  //    through applySection on its OWN range. The old whole-doc rebuilder is
+  //    dead: it overwrote the source of truth from stale copies, which would
+  //    wipe the user's manual edits (and reset cursor/scroll on every event).
+  const sectionRange = (i: number): { from: number; to: number } | null => {
+    if (!editor) return null;
+    let h = -1;
+    let from = -1;
+    let to = editor.state.doc.content.size;
+    editor.state.doc.forEach((node, pos) => {
+      if (node.type.name !== 'heading') return;
+      h++;
+      if (h === i) from = pos;
+      if (h === i + 1) to = pos;
+    });
+    return from >= 0 ? { from, to: Math.max(from, to) } : null;
+  };
+  const applySection = (i: number, html: string) => {
+    const r = sectionRange(i);
+    if (!editor || !r) return;
+    // No .focus(): a landing suggestion must never steal the user's caret.
+    editor.chain().insertContentAt({ from: r.from, to: r.to }, html).run();
+  };
+  /** THE content oracle (review-integrity, 2026-07-13): what a section's
+   *  decision keeps. UNTOUCHED since the suggestion landed (live == baseline,
+   *  exact compare, same serializer both sides) → the AI's stored CLEAN
+   *  `s.ai` — full formatting, links, lists, zero distortion for every
+   *  element type. EDITED → the stripped live content: the user is rewriting
+   *  that text and their words trump the AI's formatting (word-diffed
+   *  paragraphs show plain — the named, bounded edge). Accept AND the Revise
+   *  draft consume this one function — no second content path exists.
+   *  Images ride separately: the live lifted set, or the captured one while
+   *  none are live. */
+  const effectiveContent = (i: number): { html: string; imgs: string } => {
+    const s = reviewRef.current?.[i];
+    const live = editor && s ? splitDocSections(editor.getHTML()).sections[i] : undefined;
+    const imgs = (live && live.imgs.length > 0 ? live.imgs : s?.imgs ?? []).join('');
+    if (!s || !live) return { html: s?.ai ?? s?.html ?? '', imgs };
+    const untouched = s.baseline !== undefined && live.html === s.baseline;
+    return { html: untouched ? (s.ai ?? s.html) : stripDiffHtml(live.html), imgs };
+  };
+
+  const startAiReview = async (topic: string, scope?: { from: number; to: number } | null) => {
     if (!editor || !pageReady || busy || review) return;
-    const { orphanHtml, sections } = splitDocSections(editor.getHTML());
+    const { sections } = splitDocSections(editor.getHTML());
     if (sections.length === 0) {
       toast.info('No sections to optimize on this page.');
       return;
     }
+    // SCOPE (owner order 2026-07-13): a text selection narrows the SAME
+    // review to the sections it touches — out-of-scope sections resolve
+    // 'clean' up front (never sent to the AI, invisible in the rail). One
+    // pipeline: rail, red/green, Accept/Reject/OK are shared by construction.
+    const inScope = new Set<number>();
+    if (scope) {
+      let idx = -1;
+      editor.state.doc.forEach((node, pos) => {
+        if (node.type.name === 'heading') idx++;
+        if (idx >= 0 && pos < scope.to && pos + node.nodeSize > scope.from) inScope.add(idx);
+      });
+      if (inScope.size === 0) {
+        toast.info('Select text inside a section to optimize it.');
+        return;
+      }
+    }
+    const skip = (i: number): boolean => !!scope && !inScope.has(i);
     setAskOpen(false);
-    setReviewOrphan(orphanHtml);
-    setReview(sections.map((s) => ({ ...s, status: 'pending' as ReviewStatus })));
-    editor.setEditable(false);
+    const initial = sections.map((s, i) => ({ ...s, status: (skip(i) ? 'clean' : 'pending') as ReviewStatus }));
+    reviewRef.current = initial; // workers may resolve before the sync effect runs
+    setReview(initial);
+    // The editor stays EDITABLE (owner F1): the doc is the source of truth,
+    // suggestions land by surgery — nothing rebuilds, nothing locks.
     // Bounded pool: 4 sections in flight; a slow/failed section fails ALONE.
     let next = 0;
     const worker = async () => {
       while (next < sections.length) {
         const i = next++;
+        if (skip(i)) continue;
         try {
           const res: any = await optimizeMutation.mutateAsync({
             siteId: siteId as number, postId, type,
-            html: sections[i].html, topic, model, provider,
+            html: sections[i].html, topic,
+            model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
           });
-          const value = String(res?.value ?? '').trim();
+          const value = canonicalAiHtml(editor, String(res?.value ?? '').trim());
+          const genModel = String(res?.model ?? '');
           const changed = value !== '' && htmlText(value) !== htmlText(sections[i].html);
+          if (reviewRef.current?.[i]?.status !== 'pending') continue; // user already finished — drop the result
+          if (changed) {
+            applySection(i, diffBlocksHtml(sections[i].html, value) + sections[i].imgs.join(''));
+          }
+          // Baseline = the landed view read back from the editor (surgery is
+          // synchronous) — effectiveContent's untouched-detector.
+          const baseline = changed ? splitDocSections(editor.getHTML()).sections[i]?.html : undefined;
           setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
-            ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value } : { ...s, status: 'clean' as ReviewStatus })
+            ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value, genModel, baseline } : { ...s, status: 'clean' as ReviewStatus })
             : s)) ?? cur);
         } catch (e: any) {
           setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
@@ -713,30 +1037,135 @@ export function SectionModal({
     await Promise.all(Array.from({ length: Math.min(4, sections.length) }, worker));
   };
 
-  const resolveSection = (i: number, action: 'accept' | 'reject') =>
-    setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'diff'
-      ? { ...s, status: (action === 'accept' && s.ai ? 'accepted' : 'rejected') as ReviewStatus }
-      : s)) ?? cur);
+  /** THE single decision path (chips, rail rows, Accept all, OK — all of
+   *  them). Accept = the oracle's answer (untouched → the AI's clean
+   *  formatted HTML; edited → the user's live words, marks stripped) with
+   *  the lane identity restated — a changed section reads amber the moment
+   *  it's accepted. Reject = the original back, byte-identical. */
+  const resolveSection = (i: number, action: 'accept' | 'reject') => {
+    const s = reviewRef.current?.[i];
+    if (!s || s.status !== 'diff') return;
+    const { html: kept, imgs } = effectiveContent(i);
+    if (action === 'accept') {
+      applySection(i, restateOrigin(kept, s.html, htmlText(kept) !== htmlText(s.html)) + imgs);
+    } else {
+      applySection(i, s.html + imgs);
+    }
+    setReview((cur) => cur?.map((x, k) => (k === i && x.status === 'diff'
+      ? { ...x, status: (action === 'accept' ? 'accepted' : 'rejected') as ReviewStatus }
+      : x)) ?? cur);
+  };
   const acceptAllDiffs = () =>
-    setReview((cur) => cur?.map((s) => (s.status === 'diff' && s.ai ? { ...s, status: 'accepted' as ReviewStatus } : s)) ?? cur);
-  const cancelReview = () =>
-    setReview((cur) => cur?.map((s) => (s.status === 'diff' || s.status === 'pending' ? { ...s, status: 'rejected' as ReviewStatus } : s)) ?? cur);
+    (reviewRef.current ?? []).forEach((s, i) => { if (s.status === 'diff') resolveSection(i, 'accept'); });
+  /** OK — finish the review NOW: decisions already made stay, every undecided
+   *  section keeps its original (still-generating ones too — late results are
+   *  dropped by the workers' status guard). */
+  const finishReview = () => {
+    (reviewRef.current ?? []).forEach((s, i) => { if (s.status === 'diff') resolveSection(i, 'reject'); });
+    setReview((cur) => cur?.map((s) => (s.status === 'pending' ? { ...s, status: 'rejected' as ReviewStatus } : s)) ?? cur);
+  };
 
-  // Rebuild the document from the review state; when every section is
-  // resolved the review ends — the doc is final content, editing returns.
+  // ── REVISE (owner F2): send a section BACK to the AI with an adjustment
+  //    note. The AI receives the ORIGINAL (as the optimize target), the
+  //    CURRENT draft — including the user's manual edits — and the note.
+  //    Revise-all runs the same path for every still-undecided section. ──
+  const [reviseTarget, setReviseTarget] = useState<number | 'all' | null>(null);
+  const [reviseNote, setReviseNote] = useState('');
+  const reviseSection = async (i: number, note: string) => {
+    const s = reviewRef.current?.[i];
+    if (!editor || !s || s.status !== 'diff') return;
+    // The draft the AI builds on = the SAME oracle Accept uses: clean
+    // formatted for untouched sections, the user's words for edited ones.
+    const draft = effectiveContent(i).html;
+    setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'pending' as ReviewStatus } : x)) ?? cur);
+    try {
+      const res: any = await optimizeMutation.mutateAsync({
+        siteId: siteId as number, postId, type,
+        html: s.html,
+        topic: `${note}\n\nThe current suggested rewrite (it may already include the user's own edits — build on it and apply the request above):\n${draft}`,
+        model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
+      });
+      const value = canonicalAiHtml(editor, String(res?.value ?? '').trim());
+      const genModel = String(res?.model ?? '');
+      if (reviewRef.current?.[i]?.status !== 'pending') return; // decided meanwhile — drop
+      if (value && htmlText(value) !== htmlText(s.html)) {
+        applySection(i, diffBlocksHtml(s.html, value) + s.imgs.join(''));
+        // Every landing re-arms the untouched-detector (initial + each revise).
+        const baseline = splitDocSections(editor.getHTML()).sections[i]?.html;
+        setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'diff' as ReviewStatus, ai: value, genModel, baseline } : x)) ?? cur);
+      } else {
+        applySection(i, s.html + s.imgs.join(''));
+        setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'clean' as ReviewStatus } : x)) ?? cur);
+      }
+    } catch (e: any) {
+      // The draft stays on screen — only the status returns to reviewable.
+      setReview((cur) => cur?.map((x, k) => (k === i && x.status === 'pending' ? { ...x, status: 'diff' as ReviewStatus } : x)) ?? cur);
+      toast.error(e?.message ?? 'Revise failed — the current draft was kept.');
+    }
+  };
+  const reviseAll = async (note: string) => {
+    const targets = (reviewRef.current ?? []).map((s, i) => (s.status === 'diff' ? i : -1)).filter((i) => i >= 0);
+    let next = 0;
+    const worker = async () => {
+      while (next < targets.length) {
+        await reviseSection(targets[next++], note);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, targets.length) }, worker));
+  };
+  const runRevise = () => {
+    const note = reviseNote.trim();
+    const target = reviseTarget;
+    if (!note || target === null) return;
+    setReviseTarget(null);
+    setReviseNote('');
+    if (target === 'all') void reviseAll(note);
+    else void reviseSection(target, note);
+  };
+
+  // ── Inline chips + focus flash (owner-picked combo 2026-07-13): the chips
+  //    ride the SAME resolveSection as the rail (one machinery); clicking a
+  //    rail card scrolls to its section and pulses it for ~2s. ──
+  const [flashIdx, setFlashIdx] = useState<number | null>(null);
   useEffect(() => {
+    if (!editor || !isPage) return;
+    (editor.storage as any).pcmReviewControls.sections = review?.map((s) => s.status) ?? [];
+    (editor.storage as any).pcmReviewControls.resolve = resolveSection;
+    (editor.storage as any).pcmReviewControls.revise = (i: number) => { setReviseTarget(i); setReviseNote(''); };
+    editor.view.dispatch(editor.state.tr); // refresh widget decorations
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, isPage, review]);
+  useEffect(() => {
+    if (!editor || !isPage) return;
+    (editor.storage as any).pcmSectionBlocks.flash = flashIdx;
+    editor.view.dispatch(editor.state.tr); // refresh block decorations
+  }, [editor, isPage, flashIdx]);
+  const focusSection = (i: number) => {
+    if (!editor) return;
+    let h = -1;
+    let target: number | null = null;
+    editor.state.doc.forEach((node, pos) => {
+      if (node.type.name === 'heading') {
+        h++;
+        if (h === i && target === null) target = pos;
+      }
+    });
+    if (target === null) return;
+    (editor.view.nodeDOM(target) as HTMLElement | null)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setFlashIdx(i);
+    window.setTimeout(() => setFlashIdx((cur) => (cur === i ? null : cur)), 2000);
+  };
+
+  // Completion watcher (the surgery engine replaced the old whole-doc
+  // rebuilder here — the doc is already correct at every moment): keep the
+  // workers' live mirror in sync and close the review when every section is
+  // resolved. Editing was never locked, so nothing to unlock.
+  useEffect(() => {
+    reviewRef.current = review;
     if (!editor || !review) return;
-    const doc = reviewOrphan + review.map((s) => {
-      const content = s.status === 'diff' && s.ai
-        ? diffBlocksHtml(s.html, s.ai)
-        : (s.status === 'accepted' && s.ai ? s.ai : s.html);
-      return content + s.imgs.join('');
-    }).join('');
-    editor.commands.setContent(doc);
     if (review.every((s) => s.status !== 'pending' && s.status !== 'diff')) {
       const accepted = review.filter((s) => s.status === 'accepted').length;
       setReview(null);
-      editor.setEditable(true);
       if (accepted > 0) toast.success(`AI review done — ${accepted} section${accepted === 1 ? '' : 's'} updated. Press Save to make it live.`);
       else if (review.some((s) => s.status === 'rejected' || s.status === 'failed')) toast.info('AI review closed — nothing was changed.');
       else toast.info('The page already looks optimized.');
@@ -790,6 +1219,7 @@ export function SectionModal({
   //    client-native URL is inserted at the cursor, marked platform-added. ──
   const uploadMediaMutation = trpc.seo.remoteUploadMedia.useMutation();
   const addImage = () => {
+    if (busy) return;
     if (typeof wp === 'undefined' || !wp.media) {
       toast.error('The media library isn’t available on this screen.');
       return;
@@ -798,7 +1228,7 @@ export function SectionModal({
     frame.on('select', () => {
       const att = frame.state().get('selection').first().toJSON();
       void (async () => {
-        setBusy(true);
+        setBusyAction('imageAdd');
         try {
           const res: any = await uploadMediaMutation.mutateAsync({ siteId: siteId as number, url: String(att.url ?? '') });
           const clientUrl = String(res?.url ?? '');
@@ -815,7 +1245,7 @@ export function SectionModal({
         } catch (e: any) {
           toast.error(e?.message ?? 'Could not deliver the image to the site');
         } finally {
-          setBusy(false);
+          setBusyAction(null);
         }
       })();
     });
@@ -824,7 +1254,7 @@ export function SectionModal({
 
   const saveImageMeta = async (mode: 'save' | 'revert' | 'hide') => {
     if (!imgSel || busy) return;
-    setBusy(true);
+    setBusyAction(mode === 'save' ? 'imageSave' : mode === 'hide' ? 'imageHide' : 'imageRevert');
     try {
       const res: any = await saveImageMutation.mutateAsync({
         siteId: siteId as number, postId,
@@ -858,7 +1288,7 @@ export function SectionModal({
     } catch (e: any) {
       toast.error(e?.message ?? 'Could not save the image metadata');
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -869,176 +1299,271 @@ export function SectionModal({
       : `¶ ${section?.heading.text ?? ''}`;
   const served = !isInsert && !isPage && !!section?.sectionRuleReplacement;
 
+  // ── Shared header controls: the page header's row 1 and the section
+  //    header render the SAME nodes (one definition, two placements). ──
+  const versionsControl = (!readOnly && !isInsert && !review) ? (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setVersionsOpen((v) => !v)}
+        title="Versions — pick one to view it — saving makes it live"
+        className="inline-flex max-w-[190px] items-center gap-1.5 truncate rounded-full border border-slate-200 bg-white px-2.5 py-[3px] text-xs font-medium text-slate-500 hover:bg-slate-50"
+      >
+        <span className="truncate">{versionLabel}</span>
+        <span className="text-slate-400">▾</span>
+      </button>
+      {versionsOpen && (
+        <div className="absolute right-0 top-full z-10 mt-1 w-[230px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
+          {isPage && pageDirty && (
+            <button
+              type="button"
+              onClick={() => { setVersionPick(''); setVersionsOpen(false); }}
+              className="block w-full px-2 py-1 text-left text-[11px] font-medium text-slate-800 hover:bg-slate-50"
+            >
+              {versionPick === '' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
+              Draft (unsaved)
+            </button>
+          )}
+          {(!isPage || originalHtml !== '') && (
+            <button
+              type="button"
+              onClick={() => pickVersion('original')}
+              className="block w-full px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
+            >
+              {versionPick === 'original' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
+              {isPage ? pageOriginalLabel : 'Original'}
+            </button>
+          )}
+          {versions.map((v, idx) => (
+            <div key={v.id} className="flex items-center hover:bg-slate-50">
+              <button
+                type="button"
+                onClick={() => pickVersion(String(v.id))}
+                className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[11px] text-slate-700"
+              >
+                {(versionPick === String(v.id) || (versionPick === '' && !pageDirty && isPage && idx === 0)) && (
+                  <Check className="mr-1 inline h-3 w-3 text-primary" />
+                )}
+                {isPage ? pageRowLabel(v, idx) : v.createdAt.slice(0, 16)}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void deleteVersion(v.id); }}
+                title="Delete this version"
+                className="shrink-0 rounded p-1 text-slate-400 hover:text-destructive"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+          {versions.length === 0 && (
+            <div className="px-2 py-1 text-[11px] text-slate-400">No saved versions yet</div>
+          )}
+        </div>
+      )}
+    </div>
+  ) : null;
+  const closeButton = (
+    <button type="button" onClick={onClose} title="Close (Esc) — closes without saving" className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+      <X className="h-3.5 w-3.5" />
+    </button>
+  );
+
   return createPortal(
+    <>
+    {/* Page mode: dimmed + blurred backdrop (clicks bubble to the document —
+        the existing outside-click flow is untouched). */}
+    {isPage && <div className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-sm" />}
     <div
       ref={rootRef}
-      className="fixed z-40 flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl"
+      className={`fixed z-40 flex flex-col overflow-hidden bg-white ${isPage ? 'rounded-2xl shadow-2xl' : 'rounded-lg border border-slate-200 shadow-xl'}`}
       style={isPage
-        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: '58vw', minWidth: 720, height: '85vh', maxWidth: 'calc(100vw - 32px)' }
+        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 'min(980px, 94vw)', minWidth: 720, height: '90vh', maxWidth: 'calc(100vw - 32px)' }
         : { left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
       role="dialog"
       aria-label={title}
     >
-      {/* ── Header: ¶ title + [Ask AI] [Re-write] [X] — draggable (page mode: fixed, centered) ── */}
+      {/* ── Header. PAGE mode (owner UX 2026-07-13): TWO rows — row 1 = the
+             document (identity, escape hatches, versions, close), row 2 = the
+             workbench (AI context left, tools right). The title keeps its
+             size; only the DATE is small, stacked underneath (owner order —
+             never on the same line). SECTION mode: the original draggable
+             single row. ── */}
       <div
-        className={`flex select-none items-center gap-1.5 border-b border-slate-200 bg-white px-2.5 py-1.5 ${isPage ? '' : 'cursor-grab active:cursor-grabbing'}`}
+        className={`select-none border-b bg-white ${isPage ? 'border-slate-100' : 'flex items-center gap-1.5 border-slate-200 px-2.5 py-1.5 cursor-grab active:cursor-grabbing'}`}
         onPointerDown={isPage ? undefined : onDragStart}
         onPointerMove={isPage ? undefined : onDragMove}
         onPointerUp={isPage ? undefined : onDragEnd}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="min-w-0 truncate text-xs font-medium text-slate-800" title={title}>
-            {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
-            {title}
-          </span>
-          {/* Escape hatches live LEFT, beside the name (owner order):
-              Edit = the site's WP editor, Open = the live page. */}
-          {isPage && page?.editUrl && (
-            <a
-              href={page.editUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Open this page in the site’s WP editor (source editing)"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-foreground"
-            >
-              <ExternalLink className="h-3 w-3" /> Edit
-            </a>
-          )}
-          {isPage && page?.permalink && (
-            <a
-              href={page.permalink}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Open the live page in a new tab"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-foreground"
-            >
-              <ExternalLink className="h-3 w-3" /> Open
-            </a>
-          )}
-        </div>
-        {/* Version history: the button ALWAYS names the shown state (picked/
-            Current/latest/Original — never a counter). The list: page mode adds
-            Current (the live served document); Original (light-grey,
-            undeletable — page mode: the rules-input document, hidden when the
-            input view is unavailable); each accepted save with date/time and a
-            delete button. Picking one loads it in the editor; saving makes
-            it live (page mode: through the normal per-section save). */}
-        {!readOnly && !isInsert && !review && (
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => setVersionsOpen((v) => !v)}
-              title="Versions — pick one to view it — saving makes it live"
-              className="inline-flex h-6 max-w-[140px] items-center gap-1 truncate rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 hover:bg-slate-50"
-            >
-              <span className="truncate">{versionLabel}</span>
-              <span className="text-slate-400">▾</span>
-            </button>
-            {versionsOpen && (
-              <div className="absolute right-0 top-full z-10 mt-1 w-[210px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
-                {(!isPage || originalHtml !== '') && (
-                <button
-                  type="button"
-                  onClick={() => pickVersion('original')}
-                  className="block w-full bg-slate-50 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-100"
-                >
-                  {isPage ? pageOriginalLabel : 'Original'}
-                </button>
-                )}
-                {versions.map((v, idx) => (
-                  <div key={v.id} className="flex items-center hover:bg-slate-50">
-                    <button
-                      type="button"
-                      onClick={() => pickVersion(String(v.id))}
-                      className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[11px] text-slate-700"
-                    >
-                      {isPage ? pageRowLabel(v, idx) : v.createdAt.slice(0, 16)}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { void deleteVersion(v.id); }}
-                      title="Delete this version"
-                      className="shrink-0 rounded p-1 text-slate-400 hover:text-destructive"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-                {versions.length === 0 && (
-                  <div className="px-2 py-1 text-[11px] text-slate-400">No saved versions yet</div>
-                )}
-              </div>
+        {isPage && (
+          <div className="flex items-center gap-2 px-5 pb-2 pt-3">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-50">
+              <FileText className="h-4 w-4 text-blue-600" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-[13px] font-medium leading-[1.4] text-slate-800" title={page?.title ?? 'Page'}>
+                {page?.title ?? 'Page'}
+              </span>
+              {page?.date && (
+                <span className="mt-0.5 block truncate text-[10px] leading-none text-slate-400">{String(page.date).slice(0, 10)}</span>
+              )}
+            </span>
+            {page?.editUrl && (
+              <a
+                href={page.editUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open this page in the site’s WP editor (source editing)"
+                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                <ExternalLink className="h-3 w-3" /> Edit
+              </a>
             )}
+            {page?.permalink && (
+              <a
+                href={page.permalink}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open the live page in a new tab"
+                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                <ExternalLink className="h-3 w-3" /> Open
+              </a>
+            )}
+            {page?.onPreview && (
+              <button
+                type="button"
+                onClick={page.onPreview}
+                title="Preview the live page here, in the inline preview window"
+                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                <Eye className="h-3 w-3" /> Preview
+              </button>
+            )}
+            <div className="flex-1" />
+            {versionsControl}
+            {closeButton}
           </div>
         )}
-        {/* Page mode AI (V2): Ask AI feeds one instruction to every section;
-            AI Optimize runs the whole-page review. Hidden while reviewing. */}
-        {!readOnly && isPage && pageReady && !review && (
+        {/* Row 2 — the workbench: the AI's context left (business, page
+            type), the tools right (Insert ▸ model ▸ Optimize — reads like a
+            sentence: insert things; optimize with this model). */}
+        {isPage && !readOnly && pageReady && !review && (
+          <div className="flex items-center gap-1.5 border-t border-slate-100 bg-white px-5 py-1.5">
+            <ModelDropdown
+              modelGroups={[{
+                label: 'Business',
+                models: [{ id: '0', name: 'No business' }, ...brands.map((b) => ({ id: String(b.id), name: b.name }))],
+              }]}
+              selectedModel={String(brandId)}
+              onModelChange={pickBrand}
+            />
+            <ModelDropdown
+              modelGroups={[{ label: 'Page type', models: PAGE_TYPE_OPTIONS }]}
+              selectedModel={pageType}
+              onModelChange={pickPageType}
+            />
+            <div className="flex-1" />
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setInsertOpen((v) => !v)}
+                title="Insert content at the cursor"
+                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium hover:bg-slate-100 ${insertOpen ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                {busyAction === 'imageAdd'
+                  ? <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                  : <Plus className="h-3 w-3" />} Insert <span className="text-slate-400">▾</span>
+              </button>
+              {insertOpen && (
+                <div className="absolute right-0 top-full z-10 mt-1 w-[150px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
+                  <button
+                    type="button"
+                    onClick={() => { setInsertOpen(false); addImage(); }}
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
+                  >
+                    <ImagePlus className="h-3 w-3 text-slate-400" /> Image
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setInsertOpen(false); editor?.chain().focus().insertContent(faqTemplate()).run(); }}
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
+                  >
+                    <MessageCircleQuestion className="h-3 w-3 text-slate-400" /> FAQ
+                  </button>
+                </div>
+              )}
+            </div>
+            {aiModelSelect}
+            {/* ANALYZE (the optimizer spine): blue OUTLINE pill — the
+                generate family, visually distinct from the filled Optimize
+                beside it. Opens the rail and runs every teacher. */}
+            <PillButton
+              variant="outline"
+              icon={<ScanSearch />}
+              onClick={() => setAnalyzeOpen((v) => !v)}
+              title="Analyze this page — every purpose contributes suggestions you pick from"
+            >
+              Analyze
+            </PillButton>
+            {/* ONE AI entry point (the shared blue generate pill, split): EVERY
+                run goes through the red/green review — no AI text ever lands
+                without Accept/Reject. A text selection only narrows the SCOPE;
+                the label always states it. The caret opens the instruction
+                field that steers the run. */}
+            <PillSplitButton
+              icon={<Sparkles />}
+              onClick={() => {
+                void startAiReview(
+                  instruction.trim(),
+                  hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
+                );
+              }}
+              onCaretClick={() => setAskOpen((v) => !v)}
+              caretActive={askOpen}
+              title={hasSelection
+                ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
+                : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject'}
+              caretTitle="Write instructions for the AI (e.g. “optimize for keyword X”)"
+            >
+              {hasSelection ? 'Optimize (selected text)' : 'Optimize page'}
+            </PillSplitButton>
+          </div>
+        )}
+        {!isPage && (
           <>
-            <button
-              type="button"
-              onClick={addImage}
-              disabled={busy}
-              title="Add an image — delivered into the site’s own media library, placed at the cursor"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
-            >
-              <ImagePlus className="h-3 w-3" /> Add image
-            </button>
-            <button
-              type="button"
-              onClick={() => editor?.chain().focus().insertContent(faqTemplate()).run()}
-              disabled={busy}
-              title="Add an FAQ section — a native accordion styled by the site itself"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
-            >
-              <MessageCircleQuestion className="h-3 w-3" /> Add FAQ
-            </button>
-            <button
-              type="button"
-              onClick={() => setAskOpen((v) => !v)}
-              disabled={busy}
-              title="Tell the AI what to do with this page"
-              className={`inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 disabled:opacity-60 ${askOpen ? 'text-primary border-primary/40' : 'text-slate-600'}`}
-            >
-              <MessageSquarePlus className="h-3 w-3" /> Ask AI
-            </button>
-            <button
-              type="button"
-              onClick={() => { void startAiReview(instruction.trim()); }}
-              disabled={busy}
-              title="Rewrite the whole page with AI — every change shows as red/green for you to accept or reject"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
-            >
-              <Sparkles className="h-3 w-3" /> AI Optimize
-            </button>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="min-w-0 truncate text-xs font-medium text-slate-800" title={title}>
+                {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
+                {title}
+              </span>
+            </div>
+            {versionsControl}
+            {!readOnly && (
+              <>
+                {aiModelSelect}
+                <button
+                  type="button"
+                  onClick={() => setAskOpen((v) => !v)}
+                  title="Tell the AI what to do with this section"
+                  className={`inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 ${askOpen ? 'text-primary border-primary/40' : 'text-slate-600'}`}
+                >
+                  <MessageSquarePlus className="h-3 w-3" /> Ask AI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runAi('')}
+                  title={isInsert ? 'Draft this section with AI' : 'Rewrite this section with AI'}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary"
+                >
+                  {busyAction === 'ai' ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
+                  {isInsert ? 'Generate' : 'Re-write'}
+                </button>
+              </>
+            )}
+            {closeButton}
           </>
         )}
-        {!readOnly && !isPage && (
-          <>
-            <button
-              type="button"
-              onClick={() => setAskOpen((v) => !v)}
-              disabled={busy}
-              title="Tell the AI what to do with this section"
-              className={`inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 disabled:opacity-60 ${askOpen ? 'text-primary border-primary/40' : 'text-slate-600'}`}
-            >
-              <MessageSquarePlus className="h-3 w-3" /> Ask AI
-            </button>
-            <button
-              type="button"
-              onClick={() => runAi('')}
-              disabled={busy}
-              title={isInsert ? 'Draft this section with AI' : 'Rewrite this section with AI'}
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary disabled:opacity-60"
-            >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
-              {isInsert ? 'Generate' : 'Re-write'}
-            </button>
-          </>
-        )}
-        <button type="button" onClick={onClose} title="Close (Esc) — closes without saving" className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-          <X className="h-3.5 w-3.5" />
-        </button>
       </div>
 
       {/* ── Ask-AI instruction (Enter runs it) ── */}
@@ -1050,10 +1575,13 @@ export function SectionModal({
             onChange={(e) => setInstruction(e.target.value)}
             onKeyDown={(e) => {
               if (e.key !== 'Enter' || !instruction.trim()) return;
-              if (isPage) void startAiReview(instruction.trim());
-              else void runAi(instruction.trim());
+              if (!isPage) { void runAi(instruction.trim()); return; }
+              void startAiReview(
+                instruction.trim(),
+                hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
+              );
             }}
-            placeholder="e.g. “make it shorter and add a price example” — Enter to run"
+            placeholder="e.g. “optimize for keyword X” or “inject keyword Y five times” — Enter to run"
             className="h-6 w-full rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-800 outline-none focus:border-primary"
           />
         </div>
@@ -1117,12 +1645,14 @@ export function SectionModal({
           </BubbleMenu>
         )}
         {(!isPage || pageReady) && (
-          <EditorContent
-            editor={editor}
-            className={`${isPage ? `${PAGE_TYPE_SCALE} ${FRAME_STYLES}` : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
-              // Locked context images: visible, clearly not editable.
-              + (isPage ? ' [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
-          />
+          <div className={isPage ? 'mx-auto w-full max-w-[820px] px-8 pb-16 pt-6' : 'contents'}>
+            <EditorContent
+              editor={editor}
+              className={`${isPage ? `${PAGE_TYPE_SCALE} ${BLOCK_STYLES}` : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
+                // Locked context images: visible, clearly not editable.
+                + (isPage ? ' [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
+            />
+          </div>
         )}
       </div>
 
@@ -1133,30 +1663,87 @@ export function SectionModal({
         <aside className="flex w-[250px] shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
           <div className="border-b border-slate-200 px-2.5 py-1.5">
             <div className="text-[11px] font-medium text-slate-700">
-              AI review — {review.filter((s) => s.status === 'pending' || s.status === 'diff').length} of {review.length} left
+              AI review — {review.filter((s) => s.status === 'pending' || s.status === 'diff').length} of {review.filter((s) => s.status !== 'clean').length} left
             </div>
             <div className="mt-1 flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={acceptAllDiffs}
                 disabled={!review.some((s) => s.status === 'diff')}
-                className="inline-flex items-center gap-1 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-500 disabled:opacity-50"
               >
                 <Check className="h-3 w-3" /> Accept all
               </button>
               <button
                 type="button"
-                onClick={cancelReview}
-                className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100"
+                onClick={() => { setReviseTarget('all'); setReviseNote(''); }}
+                disabled={!review.some((s) => s.status === 'diff')}
+                title="Send every undecided section back to the AI with ONE adjustment"
+                className="inline-flex items-center gap-1 rounded border border-primary/40 px-1.5 py-0.5 text-[10px] text-primary hover:bg-[#e7f5ff] disabled:opacity-50"
               >
-                <X className="h-3 w-3" /> Reject all
+                ↻ Revise all
+              </button>
+              <button
+                type="button"
+                onClick={finishReview}
+                title="Finish — accepted changes stay, everything undecided keeps its original"
+                className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-100"
+              >
+                <Check className="h-3 w-3" /> OK
               </button>
             </div>
           </div>
+          {/* The Revise box (owner F2): one note, Adjust sends it. Serves both
+              a single section (chip or rail Revise) and Revise-all. */}
+          {reviseTarget !== null && (
+            <div className="border-b border-slate-200 bg-white px-2.5 py-1.5">
+              <div className="mb-1 truncate text-[10px] font-medium text-slate-500">
+                {reviseTarget === 'all'
+                  ? 'Revise all undecided sections'
+                  : `Revise: ${review[reviseTarget]?.heading || '(untitled section)'}`}
+              </div>
+              <input
+                autoFocus
+                value={reviseNote}
+                onChange={(e) => setReviseNote(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') runRevise();
+                  if (e.key === 'Escape') setReviseTarget(null);
+                }}
+                placeholder="e.g. “shorter, and mention the guarantee”"
+                className="h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
+              />
+              <div className="mt-1 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={runRevise}
+                  disabled={!reviseNote.trim()}
+                  className="inline-flex items-center gap-1 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-green-500 disabled:opacity-50"
+                >
+                  Adjust
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReviseTarget(null)}
+                  className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-auto py-1">
-            {review.map((s, i) => (
-              <div key={`${s.heading}-${i}`} className="border-b border-slate-100 px-2.5 py-1.5">
+            {review.map((s, i) => s.status === 'clean' ? null : (
+              <div
+                key={`${s.heading}-${i}`}
+                onClick={() => focusSection(i)}
+                title="Click to jump to this section"
+                className="cursor-pointer border-b border-slate-100 px-2.5 py-1.5 hover:bg-slate-100/60"
+              >
                 <div className="truncate text-[11px] font-medium text-slate-700" title={s.heading}>{s.heading || '(untitled section)'}</div>
+                {s.genModel && (
+                  <div className="truncate text-[9px] text-slate-400" title={`Generated by ${s.genModel}`}>{s.genModel}</div>
+                )}
                 {s.status === 'pending' && (
                   <div className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-slate-500">
                     <Loader2 className="h-3 w-3 animate-spin text-primary" /> Rewriting…
@@ -1166,15 +1753,23 @@ export function SectionModal({
                   <div className="mt-1 flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => resolveSection(i, 'accept')}
-                      className="inline-flex items-center gap-1 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700"
+                      onClick={(e) => { e.stopPropagation(); resolveSection(i, 'accept'); }}
+                      className="inline-flex items-center gap-1 rounded-full bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-500"
                     >
                       <Check className="h-3 w-3" /> Accept
                     </button>
                     <button
                       type="button"
-                      onClick={() => resolveSection(i, 'reject')}
-                      className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100"
+                      onClick={(e) => { e.stopPropagation(); setReviseTarget(i); setReviseNote(''); }}
+                      title="Send this section back to the AI with an adjustment"
+                      className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-white px-1.5 py-0.5 text-[10px] text-primary hover:bg-[#e7f5ff]"
+                    >
+                      ↻ Revise
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); resolveSection(i, 'reject'); }}
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50"
                     >
                       <X className="h-3 w-3" /> Reject
                     </button>
@@ -1182,7 +1777,6 @@ export function SectionModal({
                 )}
                 {s.status === 'accepted' && <div className="mt-0.5 text-[10px] font-medium text-green-700">✓ Accepted</div>}
                 {s.status === 'rejected' && <div className="mt-0.5 text-[10px] text-slate-500">Rejected — original kept</div>}
-                {s.status === 'clean' && <div className="mt-0.5 text-[10px] text-slate-500">No change suggested</div>}
                 {s.status === 'failed' && (
                   <div className="mt-0.5 text-[10px] text-red-600" title={s.error}>AI failed — original kept</div>
                 )}
@@ -1190,6 +1784,25 @@ export function SectionModal({
             ))}
           </div>
         </aside>
+      )}
+
+      {/* ── THE ANALYZE RAIL (optimizer spine): teachers' suggestions →
+             basket → ONE optimize run through the normal red/green review.
+             Yields to the review rail and the image panel. ── */}
+      {isPage && !readOnly && analyzeOpen && !review && !imgSel && pageReady && (
+        <OptimizerRail
+          siteId={siteId as number}
+          postId={postId}
+          pageType={pageType}
+          model={aiPick?.id ?? model}
+          provider={aiPick?.provider ?? provider}
+          getHtml={() => stripDiffHtml(editor?.getHTML() ?? '')}
+          onClose={() => setAnalyzeOpen(false)}
+          onOptimize={(directives) => {
+            setAnalyzeOpen(false);
+            void startAiReview(directives);
+          }}
+        />
       )}
 
       {/* ── Image metadata panel (V3): alt/title as a dynamic rule — the image
@@ -1223,29 +1836,26 @@ export function SectionModal({
               <button
                 type="button"
                 onClick={() => { void saveImageMeta('save'); }}
-                disabled={busy}
-                className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
+                className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-green-500"
               >
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save
+                {busyAction === 'imageSave' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save
               </button>
               <button
                 type="button"
                 onClick={() => { void saveImageMeta('hide'); }}
-                disabled={busy}
                 title="Stop serving this image — it stays in the media library; restore it via the versions dropdown"
-                className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-[10px] text-red-600 hover:bg-red-50 disabled:opacity-60"
+                className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-[10px] text-red-600 hover:bg-red-50"
               >
-                <Trash2 className="h-3 w-3" /> Hide image
+                {busyAction === 'imageHide' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Hide image
               </button>
               {imgHasRule && (
                 <button
                   type="button"
                   onClick={() => { void saveImageMeta('revert'); }}
-                  disabled={busy}
                   title="Delete this image's metadata rule — the original alt/title serve again"
-                  className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+                  className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-600 hover:bg-slate-50"
                 >
-                  <Undo2 className="h-3 w-3" /> Revert to original
+                  {busyAction === 'imageRevert' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Revert to original
                 </button>
               )}
             </div>
@@ -1260,33 +1870,35 @@ export function SectionModal({
       {/* ── [✓ Save] [↶ Undo] (+ Remove for existing added sections) ── */}
       {!readOnly && (
         <div className="flex items-center gap-1.5 border-t border-slate-200 bg-white px-2.5 py-1.5">
-          {/* Order (owner): Save & close → Save (page mode, stays open) → Undo. */}
-          <button
-            type="button"
+          {/* Order (owner): Save & close → Save (page mode, stays open) → Undo.
+              The pill family (owner 2026-07-13): Save & close = the SHARED
+              green success pill; the rest are rounded siblings, same height. */}
+          <PillButton
+            variant="success"
+            icon={<Check />}
+            loading={busyAction === 'saveClose'}
+            disabled={isPage && (!pageReady || !!review)}
             onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
-            disabled={busy || (isPage && (!pageReady || !!review))}
-            title="Save and close"
-            className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-green-700 disabled:opacity-60"
           >
-            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} {isPage ? 'Save & close' : 'Save'}
-          </button>
+            {isPage ? 'Save & close' : 'Save'}
+          </PillButton>
           {isPage && (
             <button
               type="button"
-              onClick={() => { void save(); }}
-              disabled={busy || !pageReady || !!review}
+              onClick={() => { void save(undefined, 'save'); }}
+              disabled={!pageReady || !!review}
               title="Save — the window stays open"
-              className="inline-flex items-center gap-1 rounded border border-green-600 bg-white px-2 py-1 text-[11px] font-medium text-green-700 hover:bg-green-50 disabled:opacity-60"
+              className="inline-flex items-center gap-1 rounded-full border border-green-600 bg-white px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-60"
             >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save
+              {busyAction === 'save' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save
             </button>
           )}
           <button
             type="button"
-            onClick={() => editor?.commands.setContent(savedHtml)}
-            disabled={busy || (isPage && (!pageReady || !!review))}
+            onClick={() => { if (!busy) editor?.commands.setContent(savedHtml); }}
+            disabled={isPage && (!pageReady || !!review)}
             title="Restore the last saved state"
-            className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
             <Undo2 className="h-3 w-3" /> Undo
           </button>
@@ -1294,18 +1906,18 @@ export function SectionModal({
           {isInsert && !!insert?.ruleId && (
             <button
               type="button"
-              onClick={() => { void save('').then((ok) => { if (ok) onClose(); }); }}
-              disabled={busy}
+              onClick={() => { void save('', 'remove').then((ok) => { if (ok) onClose(); }); }}
               title="Remove this added section from the live page"
-              className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-destructive disabled:opacity-60"
+              className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-destructive"
             >
-              <Trash2 className="h-3 w-3" /> Remove
+              {busyAction === 'remove' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Remove
             </button>
           )}
         </div>
       )}
 
-    </div>,
+    </div>
+    </>,
     document.body,
   );
 }

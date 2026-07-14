@@ -23,7 +23,12 @@ if (!defined('ABSPATH')) {
 
 // ── Plugin Constants ──
 define('PCM_VERSION', '1.7.0');
-define('PCM_DB_VERSION', '1.40.0');
+// 1.42.0 = the 2026-07-14 branch merge: both lines bumped from 1.39 in
+// parallel (hub 1.40 price columns + 1.41 sites.brandId · strategy 1.40) —
+// the merged version must exceed BOTH stored values so maybe_upgrade fires
+// on every install and dbDelta applies the union schema (all three changes
+// are additive dbDelta, no custom gates).
+define('PCM_DB_VERSION', '1.42.0');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));

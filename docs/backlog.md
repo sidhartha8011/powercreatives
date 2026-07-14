@@ -119,3 +119,164 @@ Fonts are set in 8 systems (~1,265 declarations): wp-admin CSS (81, neutralized 
    the delivery card + one Kanban board.
 Safe stopping point after every step. Context: CHANGELOG-20260707-0645 (layer war),
 SESSION_LOG 2026-07-07 entries.
+
+## Content analysis — reality-based, page-type-aware checklists (owner order 2026-07-13, research first, TWO PARTS)
+The page editor gains an ANALYZE step: the content is evaluated against
+what ACTUALLY ranks — never generic SEO-tool "best practices based on
+nothing". PART 1 (search): checklists PER PAGE TYPE (at least:
+category/knowledge page e.g. "dentist" needing topical/knowledge-graph
+completion with subtopics; local service page prioritizing above-the-fold
+contact/phone/CTA/USP/reviews and simple human language — never academic;
+supporting/subtopic page; brand page carrying brand info/people/staff/
+differentiators; general as fallback). Checklists live as HUB-CONTROLLED
+DATA (editable, never hardcoded), keyed off the EXISTING Page-type
+dropdown. PART 2 (AI recommendations, owner spec confirmed 2026-07-13):
+simulate the 3–5 questions a person would ask an AI assistant → run them
+FOR REAL via web-search-enabled API calls, multiple runs each → find the
+consistently recommended winners → CITATIONS AS A GATE not the driver
+(classify sources: competitor's OWN site vs third-party; controllability
+weight — answers grounded in winners' own pages = HIGH on-page
+opportunity) → read the winners' own pages (the only controllable
+surface) → extract + sanity-check commonalities → map to OUR brand
+honestly (underlying-signal substitution, proximity/ambition phrasing,
+never claims we can't back, no dumb "go get certified" advice) →
+quotable one-line facts always recommended → baseline + scheduled
+re-runs = brand mention rate KPI. ONE winner-analysis engine feeds both
+parts. FLOW (both parts): Analyze button → per-check results (pass/fail +
+evidence) as a checklist with CHECKBOXES → ticked items ride the existing
+optimization prompt → the normal red/green review. RESEARCH delivered:
+docs/RESEARCH-CONTENT-ANALYSIS-20260713.md (checklist seeds, evaluators,
+reality-derivation, Part 2 workflow, GUI, prompt wiring).
+
+## GSC keyword drawer in the page editor (owner order 2026-07-13)
+A LEFT-side drawer in the page editor modal, driven by the existing GSC
+integration. TOP: the page's PRIMARY keyword + SUPPORTING keywords (read
+from the SEO table; settable right here when unset) + an ADDITIONAL
+KEYWORDS bucket that fills as the user clicks + on rows below. CONTROLS:
+searchable page dropdown listing every GSC-indexed page (default = the
+CURRENT page when GSC knows it, else the primary domain) · days-back input
+(default 30) · a "related only" checkbox that hides keywords unrelated to
+the primary keyword. SCAN: scans the whole domain for keywords RELATED to
+the primary keyword that the site ALREADY ranks for — surfacing proven
+potential, not guesses. TABLE (reuse THE existing shared table component,
+compacted — never reinvent): columns keyword | clicks | impressions |
+position; scrollable; per-column sort + filter; DEFAULT sorted by
+impressions desc with a noise filter (~impressions ≥ 100, user-removable).
+Workflow the layout serves: sort by position, read impressions → a page-2
+keyword with 1,000 impressions = the opportunity; click + → it joins the
+additional-keywords bucket for this page/site and feeds optimization
+prompts.
+
+## THE ONE-CLICK OPTIMIZATION SPINE — MVP consolidation of the 2026-07-13 batch (owner session 2026-07-13)
+The owner's goal sentence IS the architecture: ONE Analyze → tick what you
+want → ONE Optimize click → red/green review. Four of the five features
+are producers of TICKABLE ITEMS for that single flow — build the spine
+once, each feature plugs in. Value driver + MVP cut per feature:
+1. **Content Analysis P1 = THE SPINE (build first).** Value: the optimize
+   prompt stops being generic — directed by page-type-specific gaps. MVP:
+   checklists as data + one LLM analysis (pass/fail + evidence) +
+   checkboxes → prompt. Defer: reality-derivation, deterministic
+   evaluators.
+2. **Content Analysis P2.** Value: what the AI actually recommends + the
+   honest brand mapping. MVP: 3–5 web-search questions → winners →
+   recommendations as ANOTHER check group in the same rail. Defer:
+   multi-run sampling, citation weighting, mention-rate KPI.
+3. **GSC drawer.** Value: proven-demand keywords riding EVERY optimize run
+   automatically. MVP: this page's own GSC keywords + the + bucket +
+   auto-inclusion. Defer: domain-wide related scan, page-switcher.
+4. **Knowledge-graph insert.** The value is SUBTOPIC COVERAGE, not the
+   button: MVP = a check in the Analyze rail ("missing subtopics X/Y/Z —
+   tick to add a coverage section"). No separate insert machinery. Defer:
+   link-mode (needs 5's machinery).
+5. **Interlinking.** Value: in-context links FROM this page chosen by what
+   targets actually rank for (GSC), each an accept/reject item. Defer:
+   the reverse direction (links TO this page from other pages).
+**Build order by value: 1 → 3 → 4 → 6 → 5 → 2.**
+
+**THE MENTAL MODEL (owner 2026-07-13 — the purpose, stated so it can't be
+misread):** each purpose is a SEPARATE TEACHER — never a committee. Every
+teacher independently contributes its own suggestions; the teachers never
+talk to each other, they only add items to the CATALOG. The user selects/
+deselects from the catalog with full control, and the selection goes as a
+BASKET into ONE optimization order. One optimization — its content decided
+entirely by what the user put in the basket.
+
+**THE ANALYZE RAIL UX LAW (owner correction 2026-07-13 — this is for the
+USER doing the optimization, inside the editor):**
+- The rail is organized PER PURPOSE, as sections: first "Search engine
+  optimization" with all its suggestions below it, then "AI
+  optimizations" with all its suggestions below it, and so on.
+- The items are SUGGESTIONS TO SEND INTO THE OPTIMIZATION — checkboxes,
+  NEVER accept/reject. (Accept/reject is wrong here: suggestions get
+  MERGED into one optimization run. Accept/reject stays where it belongs —
+  on the resulting red/green content changes AFTER the run.)
+- Each purpose-section is divided into WHAT WE FOUND (gaps/opportunities —
+  tickable) and WHAT WE did NOT find (nothing to fix — quiet).
+- Each purpose-section has its own RE-ANALYZE button: re-run that purpose
+  alone and get fresh suggestions for it.
+(The client approval card grouping the changes by the same purposes —
+feature 6 — stays as a bonus the owner sanctioned separately.)
+
+## Client approval card for page changes (owner order 2026-07-13 — feature 6)
+Value driver: THE CLIENT SEES THE SAME RED/GREEN VIEW AND APPROVES. MVP: a
+shareable READ-ONLY link rendering this page's pending changes exactly as
+the editor shows them (red out, green in, per section) + Approve/Comment —
+reusing the client-review-board primitives that already exist.
+PRESENTATION LAW (owner 2026-07-13): the client reads it SECTION BY
+SECTION, and the changes are GROUPED BY WHAT THEY ARE FOR — e.g. "1.
+Organic search optimization", "2. AI recommendation optimizations", and so
+on — so the client understands the PURPOSE of every change, not just the
+diff. (The Analyze spine already knows each ticked item's origin — search
+check / AI check / keywords / subtopics / interlinks — that provenance
+rides along to the approval card for free.) BUILD LAW: this is the FIRST
+SLICE of the already-specced approval-pipeline rails (Autonomy roadmap #1:
+seo_staged_changes + asset-type adapter registry + Before/After cards) —
+never a parallel machinery; nothing thrown away when the full rails land.
+
+## Knowledge-graph insert (owner-approved spec 2026-07-13)
+A new Insert-menu item (beside Image and FAQ): insert a SUBTOPIC section
+for the page's topic — e.g. a "dentist" page gains a section covering 3–5
+subtopics of dentistry so the page covers the topic's important branches
+(placeable at the bottom as "Interested in reading more about…?").
+APPROVED IMPROVEMENTS: two modes chosen automatically PER SUBTOPIC — a
+supporting page EXISTS → short teaser + real link ("read more"); it does
+NOT exist → a short content block that actually SAYS something about the
+subtopic (bare link lists rank nothing; links to nowhere are impossible —
+NO dead links ever) and the missing subtopic is flagged as a
+supporting-page IDEA (a free content plan). Subtopics derive from REALITY,
+not invention: what winning pages for the term cover + what the site
+already surfaces for in GSC — reuses the winner-analysis engine and the
+keyword drawer (one machinery, three consumers). This insert is also the
+FIX ACTION for Content Analysis Part 1's "subtopic coverage" check.
+Generated content rides the red/green review like everything else.
+
+## Interlinking — Add Interlinks (owner-approved spec 2026-07-13)
+An "Add Interlinks" button beside Optimize. Owner core: scan the content
+minding the primary keyword (+ the other keywords found in it), look at
+all other site pages, find the relevant ones, build the linking strategy
+from this page — primarily ranking THIS page. APPROVED IMPROVEMENTS —
+the feature works BOTH DIRECTIONS (the honest SEO fact: outbound internal
+links mainly lift their TARGETS; what raises THIS page is links TO it):
+(1) FROM this page — natural phrases already in the text that match other
+pages' topics get linked IN PLACE (in-context links, never a bolted-on
+link list); (2) TO this page — scan the OTHER pages for mentions of this
+page's primary keyword and propose links FROM them TO here (the half that
+ranks this page; rides the same per-page rule machinery we already have).
+Relevance decided by what each page ACTUALLY ranks for (GSC data — Google
+already told us the association), not text-similarity guesses; flags
+keyword cannibalization (two pages competing for one term) instead of
+cross-linking blindly. Linking laws: descriptive anchors, one link per
+target per page, a stuffing cap, never self-link. EVERY proposed link is
+an accept/reject item in the red/green review; all reversible via
+versions.
+
+## Ask AI — the document advisor (owner-parked 2026-07-13)
+Ask AI returns as its OWN feature (not the optimize instruction field): a
+side panel where the user asks about the page ("why should this be
+optimized?", "what's weak for local search?") and the AI ANSWERS with
+analysis/advice — nothing touches the document. Each answer carries an
+"Apply as optimize instruction" action handing off to the existing red/green
+review. Mental model: Optimize = hands; Ask AI = advisor that can hand off
+to the hands. Lean build: one endpoint reusing the existing prompt/LLM
+plumbing (page content + business/page-type context already injected), one
+panel component; review machinery untouched.

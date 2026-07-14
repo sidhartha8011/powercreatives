@@ -699,6 +699,15 @@ class PCM_SEO_Service
         if (!empty($vars['topic']) && strpos($tpl, '{{topic}}') === false) {
             $tpl .= "\n\nExtra instruction (follow it): {{topic}}";
         }
+        // Same append law for the PAGE TYPE and the linked brand's BUSINESS
+        // context (owner order 2026-07-13): they must reach the model even on
+        // templates that predate the placeholders.
+        if (!empty($vars['page.type']) && strpos($tpl, '{{page.type}}') === false) {
+            $tpl .= "\n\nPage type: {{page.type}} — match the content to this intent (a local page targets local searches).";
+        }
+        if ((!empty($vars['business.phone']) || !empty($vars['business.address'])) && strpos($tpl, '{{business.') === false) {
+            $tpl .= "\n\nBusiness context: {{business.name}} — phone {{business.phone}}, address {{business.address}}, category {{business.category}}. Use the real details where relevant; never invent contact data.";
+        }
         $prompt  = self::substitute_vars($tpl, $vars);
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
@@ -707,8 +716,17 @@ class PCM_SEO_Service
             $opts = array('max_tokens' => $max);
             if (!empty($model))    { $opts['model'] = $model; }
             if (!empty($provider)) { $opts['provider'] = $provider; }
+            // The caller's user owns the API keys — without this, key lookup
+            // silently leaned on the WP session user (absent in cron/CLI).
+            if (!empty($user_id))  { $opts['user_id'] = $user_id; }
             $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
             $raw    = (string) ($result['content'] ?? '');
+            // What ACTUALLY answered (the API's own report, not the request) —
+            // callers surface it so the UI never claims one model and runs another.
+            $meta = array(
+                'model'    => (string) ($result['model'] ?? ($model ?? '')),
+                'provider' => (string) ($result['provider'] ?? ($provider ?? '')),
+            );
             if ($single_line) {
                 $value = self::sanitize_ai_output($raw);
             } else {
@@ -722,7 +740,7 @@ class PCM_SEO_Service
             if ($value === '') {
                 return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
             }
-            return $value;
+            return array('value' => $value, 'model' => $meta['model'], 'provider' => $meta['provider']);
         } catch (\Throwable $e) {
             return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
         }
@@ -735,8 +753,8 @@ class PCM_SEO_Service
         $vars['current_value'] = $text;
         $mode = ($text !== '') ? 'optimize' : 'generate';
         $max  = (int) (self::field_prompts()['heading']['max'] ?? 80);
-        $val  = self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
-        return ($val instanceof WP_Error) ? $val : array('value' => $val);
+        // run_prompt_section returns {value, model, provider} — pass it through.
+        return self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
     }
 
     /** Count internal vs external <a href> links in content. */
@@ -2377,13 +2395,72 @@ class PCM_SEO_Service
         return array('content' => $html);
     }
 
-    /** Prompt vars for a remote post (business context = the connected site). */
-    private static function remote_field_vars(object $site, array $row): array
+    /** Page types the AI can optimize FOR ('' = general). The list is the
+     *  contract between the editor dropdown and the prompt context. */
+    public const PAGE_TYPES = array('', 'local', 'blog', 'product', 'service', 'landing');
+
+    /** The per-post page-type store (option map per user+site — tiny data). */
+    private static function page_type_option(int $user_id, int $site_id): string
+    {
+        return 'pcm_seo_page_types_' . $user_id . '_' . $site_id;
+    }
+
+    /** @return string the post's page type ('' = general/unset). */
+    public static function get_page_type(int $user_id, int $site_id, int $post_id): string
+    {
+        $map = get_option(self::page_type_option($user_id, $site_id), array());
+        return is_array($map) ? (string) ($map[$post_id] ?? '') : '';
+    }
+
+    /** Persist a post's page type (whitelisted; '' clears). */
+    public static function save_page_type(int $user_id, int $site_id, int $post_id, string $type)
+    {
+        if (!in_array($type, self::PAGE_TYPES, true)) {
+            return new WP_Error('pcm_seo_bad_page_type', __('Unknown page type.', 'power-creatives'), array('status' => 400));
+        }
+        $key = self::page_type_option($user_id, $site_id);
+        $map = get_option($key, array());
+        $map = is_array($map) ? $map : array();
+        if ($type === '') {
+            unset($map[$post_id]);
+        } else {
+            $map[$post_id] = $type;
+        }
+        update_option($key, $map, false);
+        return array('postId' => $post_id, 'pageType' => $type);
+    }
+
+    /** Prompt vars for a remote post. Business context (owner order
+     *  2026-07-13): when the site is LINKED to a brand (sites.brandId), the
+     *  brand's business details — name, phone, address, category, hours —
+     *  fill the {{business.*}} placeholders the prompts already carry (they
+     *  were blank for remote pages before, so local-intent content had
+     *  nothing real to use). Falls back to the site's own name/url exactly
+     *  as before when no brand is linked. `page.type` rides along so the AI
+     *  knows WHAT it is optimizing (local / blog / product / …). */
+    private static function remote_field_vars(object $site, array $row, ?int $user_id = null, int $post_id = 0): array
     {
         $url    = (string) $site->url;
         $host   = (string) wp_parse_url($url, PHP_URL_HOST);
         $name   = !empty($site->name) ? (string) $site->name : $host;
         $locale = get_locale();
+        $gbp    = array();
+        $brand_id = (int) ($site->brandId ?? 0);
+        if ($brand_id > 0) {
+            global $wpdb;
+            $brands = PCM_Schema::table('brands');
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $brand = $wpdb->get_row($wpdb->prepare("SELECT name FROM {$brands} WHERE id = %d", $brand_id));
+            if ($brand && !empty($brand->name)) {
+                $name = (string) $brand->name;
+            }
+            if (class_exists('PCM_SEO_GBP')) {
+                $gbp = (array) (PCM_SEO_GBP::get_for_brand($brand_id)['resolved'] ?? array());
+                if (!empty($gbp['name'])) {
+                    $name = (string) $gbp['name'];
+                }
+            }
+        }
         return array(
             'title'                     => (string) ($row['title'] ?? ''),
             'primary_keyword'           => (string) ($row['primaryKeyword'] ?? ''),
@@ -2391,21 +2468,22 @@ class PCM_SEO_Service
             'meta_title'                => (string) ($row['metaTitle'] ?? ''),
             'meta_description'          => (string) ($row['metaDescription'] ?? ''),
             'post_type'                 => (string) ($row['type'] ?? ''),
+            'page.type'                 => ($user_id && $post_id) ? self::get_page_type($user_id, (int) $site->id, $post_id) : '',
             'site.lang'                 => $locale ? substr($locale, 0, 2) : 'en',
             'website.url'               => $url,
             'today'                     => gmdate('Y-m-d'),
             'business.name'             => $name,
             'business.tagline'          => '',
-            'business.website'          => $url,
+            'business.website'          => !empty($gbp['website']) ? (string) $gbp['website'] : $url,
             'business.website|hostname' => $host,
-            'business.address'          => '',
-            'business.phone'            => '',
-            'business.category'         => '',
-            'business.hours'            => '',
-            'business.rating'           => '',
-            'business.lat'              => '',
-            'business.lng'              => '',
-            'business.types'            => '',
+            'business.address'          => (string) ($gbp['address'] ?? ''),
+            'business.phone'            => (string) ($gbp['phone'] ?? ''),
+            'business.category'         => (string) ($gbp['category'] ?? ''),
+            'business.hours'            => (string) ($gbp['hours'] ?? ''),
+            'business.rating'           => isset($gbp['rating']) ? (string) $gbp['rating'] : '',
+            'business.lat'              => isset($gbp['lat']) ? (string) $gbp['lat'] : '',
+            'business.lng'              => isset($gbp['lng']) ? (string) $gbp['lng'] : '',
+            'business.types'            => !empty($gbp['types']) ? implode(', ', (array) $gbp['types']) : '',
         );
     }
 
@@ -2440,7 +2518,7 @@ class PCM_SEO_Service
             return new WP_Error('pcm_seo_remote_fetch', __('Could not read the remote post.', 'power-creatives'), array('status' => 502));
         }
         $row  = self::remote_row($res['body'], $type, $site);
-        $vars = self::remote_field_vars($site, $row);
+        $vars = self::remote_field_vars($site, $row, $user_id, $post_id);
 
         // Current value of THIS field (drives optimize vs generate).
         $current_map = array(
@@ -2762,12 +2840,12 @@ class PCM_SEO_Service
         $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
         $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'id,title,slug,link,author,meta'));
         $row   = (!is_wp_error($res) && is_array($res['body'] ?? null)) ? self::remote_row($res['body'], $type, $site) : array();
-        $vars  = self::remote_field_vars($site, $row);
+        $vars  = self::remote_field_vars($site, $row, $user_id, $post_id);
         $vars['current_value'] = $text;
         $mode  = ($text !== '') ? 'optimize' : 'generate';
         $max   = (int) (self::field_prompts()['heading']['max'] ?? 80);
-        $val   = self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
-        return ($val instanceof WP_Error) ? $val : array('value' => $val);
+        // run_prompt_section returns {value, model, provider} — pass it through.
+        return self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
     }
 
     // =====================================================================
@@ -3422,6 +3500,9 @@ class PCM_SEO_Service
                 'tier'      => $inv['tier'],
                 'headings'  => $inv['headings'],
                 'nodes'     => $inv['nodes'],
+                // The editor header's context controls (owner order 2026-07-13).
+                'pageType'  => $user_id ? self::get_page_type($user_id, (int) $site->id, $post_id) : '',
+                'brandId'   => (int) ($site->brandId ?? 0),
             );
             if (isset($inv['contentHtml'])) {
                 $out['contentHtml'] = (string) $inv['contentHtml'];
@@ -5601,7 +5682,7 @@ class PCM_SEO_Service
         $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
         $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'id,title,slug,link,author,meta'));
         $row   = (!is_wp_error($res) && is_array($res['body'] ?? null)) ? self::remote_row($res['body'], $type, $site) : array();
-        $vars  = self::remote_field_vars($site, $row);
+        $vars  = self::remote_field_vars($site, $row, $user_id, $post_id);
         $vars['current_value'] = $html;
         $vars['topic']         = $topic;
         $mode  = ($html !== '') ? 'optimize' : 'generate';
@@ -5610,7 +5691,8 @@ class PCM_SEO_Service
         if ($val instanceof WP_Error) {
             return $val;
         }
-        return array('value' => wp_kses_post((string) $val));
+        // The UI shows what ACTUALLY generated (the API's own report).
+        return array('value' => wp_kses_post((string) $val['value']), 'model' => (string) $val['model'], 'provider' => (string) $val['provider']);
     }
 
     /**

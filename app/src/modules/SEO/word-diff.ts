@@ -66,69 +66,134 @@ const blockText = (b: HTMLElement): string => (b.textContent ?? '').replace(/\s+
 /** Tags whose content model is inline text — safe wrappers for diff runs. */
 const isTextTag = (t: string): boolean => t === 'p' || /^h[1-6]$/.test(t);
 
-/** A whole block shown as ADDED — lists mark per <li> (text directly inside
- *  <ul> is invalid and the editor would drop it); other structural blocks
- *  render verbatim (the resolved states carry the truth, never this view). */
-const addedBlock = (b: HTMLElement): string => {
-  const tag = b.tagName.toLowerCase();
-  if (tag === 'ul' || tag === 'ol') {
-    const el = b.cloneNode(true) as HTMLElement;
-    el.querySelectorAll('li').forEach((li) => {
-      li.innerHTML = `<span data-diff-added="1">${escapeHtml((li.textContent ?? '').replace(/\s+/g, ' ').trim())}</span>`;
-    });
-    return el.outerHTML;
-  }
-  if (isTextTag(tag)) return `<${tag}><span data-diff-added="1">${escapeHtml(blockText(b))}</span></${tag}>`;
-  return b.outerHTML;
+/** A whole block rendered in ITS OWN shape with every text-bearing LEAF
+ *  wrapped in the given diff span — ONE renderer for both sides, only the
+ *  color says added or removed (fidelity law: a removed list is a red
+ *  list, bullet by bullet — the view must show what you HAD; the old
+ *  flatten-to-red-paragraph destroyed exactly that). Leaves are the
+ *  deepest text wrappers (p/h/summary, or a bare <li>); anything holding
+ *  an image stays verbatim — the view never destroys an image. The
+ *  block's OWN attributes always survive (the identity law). */
+const markBlock = (b: HTMLElement, kind: 'added' | 'removed'): string => {
+  const attr = kind === 'added' ? 'data-diff-added' : 'data-diff-removed';
+  const el = b.cloneNode(true) as HTMLElement;
+  const leaves = (Array.from(el.querySelectorAll('p, h1, h2, h3, h4, h5, h6, summary, li')) as HTMLElement[])
+    .filter((leaf) => leaf.querySelector('p, h1, h2, h3, h4, h5, h6, summary, li') === null);
+  const targets = leaves.length > 0 ? leaves : [el];
+  targets.forEach((t) => {
+    if (t.querySelector('img') !== null) return;
+    t.innerHTML = `<span ${attr}="1">${escapeHtml(blockText(t))}</span>`;
+  });
+  return el.outerHTML;
 };
 
-/** A whole block shown as REMOVED — always a valid paragraph wrapper. */
-const removedBlock = (b: HTMLElement): string =>
-  `<p><span data-diff-removed="1">${escapeHtml(blockText(b))}</span></p>`;
+/** The NEW block with the ORIGINAL heading's `data-pcm-origin` carried over
+ *  (unless it already states its own). The origin is the section's lane
+ *  identity and the ORIGINAL block is its only reliable carrier — the AI
+ *  reply doesn't echo attributes; losing it here repainted every reviewed
+ *  lane blue. Self-guarding: only headings ever carry an origin. */
+const withOrigin = (o: HTMLElement, nw: HTMLElement): HTMLElement => {
+  const el = nw.cloneNode(true) as HTMLElement;
+  const origin = o.getAttribute('data-pcm-origin');
+  if (origin !== null && /^h[1-6]$/i.test(el.tagName) && !el.hasAttribute('data-pcm-origin')) {
+    el.setAttribute('data-pcm-origin', origin);
+  }
+  return el;
+};
+
+/** Pairing class: every heading level is ONE class — a level tweak must
+ *  not unpair a heading from itself (the origin rides on that pair). */
+const pairClass = (el: HTMLElement): string =>
+  (/^H[1-6]$/.test(el.tagName) ? 'h' : el.tagName.toLowerCase());
+
+/** Pair old/new blocks by an LCS over their pairing classes (the same DP
+ *  family as the word diff — zero dependencies by law): equal-class blocks
+ *  pair up, the rest render added/removed in their own shape. One inserted
+ *  paragraph can never misalign the rest of the section again; identical
+ *  class sequences pair exactly as the old positional walk did. */
+const pairByClass = (a: HTMLElement[], b: HTMLElement[]): Array<[HTMLElement | null, HTMLElement | null]> => {
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = pairClass(a[i]) === pairClass(b[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const pairs: Array<[HTMLElement | null, HTMLElement | null]> = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (pairClass(a[i]) === pairClass(b[j])) { pairs.push([a[i], b[j]]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { pairs.push([a[i], null]); i++; }
+    else { pairs.push([null, b[j]]); j++; }
+  }
+  while (i < n) { pairs.push([a[i], null]); i++; }
+  while (j < m) { pairs.push([null, b[j]]); j++; }
+  return pairs;
+};
 
 /**
- * The inline red/green VIEW of one section: original vs AI blocks paired 1:1
- * by order; SAME-TAG text blocks (p/h) diff word-wise inside their tag —
- * structural pairs (list↔paragraph etc.) render as a removed line + the new
- * block with valid added marks, never text nodes inside list wrappers.
- * (Formatting shows plain during review — Accept applies the AI's clean
- * HTML, Reject restores the original verbatim; this view is never kept.)
+ * The inline red/green VIEW of one section: original vs AI blocks paired by
+ * an LCS over their block classes; paired text blocks (p/h) diff word-wise
+ * inside the NEW block's tag; paired structural blocks (list↔list, FAQ↔FAQ)
+ * and unmatched blocks render in THEIR OWN SHAPE with per-leaf marks — a
+ * removed list is a red list (fidelity law: the view shows what you HAD).
+ * (Formatting shows plain during review — the view is presentation, never
+ * the content source: Accept keeps the AI's clean HTML for untouched
+ * sections / the user's stripped live text for edited ones, Reject restores
+ * the original verbatim.)
  */
 export function diffBlocksHtml(originalHtml: string, aiHtml: string): string {
-  const oldBlocks = parseBlocks(originalHtml);
-  const newBlocks = parseBlocks(aiHtml);
   const out: string[] = [];
-  const count = Math.max(oldBlocks.length, newBlocks.length);
-  for (let k = 0; k < count; k++) {
-    const o = oldBlocks[k];
-    const nw = newBlocks[k];
+  for (const [o, nw] of pairByClass(parseBlocks(originalHtml), parseBlocks(aiHtml))) {
     if (o && nw) {
-      const oTag = o.tagName.toLowerCase();
-      const nTag = nw.tagName.toLowerCase();
       const oText = blockText(o);
       const nText = blockText(nw);
-      if (oText === nText && oTag === nTag) {
-        out.push(nw.outerHTML); // untouched block — keep its real formatting
-      } else if (oTag === nTag && isTextTag(nTag)) {
-        out.push(`<${nTag}>${runsToHtml(wordDiff(oText, nText))}</${nTag}>`);
+      if (oText === nText) {
+        out.push(withOrigin(o, nw).outerHTML); // untouched block — real formatting + identity kept
+      } else if (isTextTag(nw.tagName.toLowerCase())) {
+        const el = withOrigin(o, nw);
+        el.innerHTML = runsToHtml(wordDiff(oText, nText));
+        out.push(el.outerHTML);
       } else {
-        out.push(removedBlock(o) + addedBlock(nw));
+        // Same-class structural pair (list↔list, FAQ↔FAQ): both sides in shape.
+        out.push(markBlock(o, 'removed') + markBlock(withOrigin(o, nw), 'added'));
       }
     } else if (nw) {
-      out.push(addedBlock(nw));
+      out.push(markBlock(nw, 'added'));
     } else if (o) {
-      out.push(removedBlock(o));
+      out.push(markBlock(o, 'removed'));
     }
   }
   return out.join('');
 }
 
-/** The save guard: removed runs die, added runs unwrap — marks NEVER persist. */
+/** The save guard: removed runs die, added runs unwrap — marks NEVER persist.
+ *  Wrappers the strip itself EMPTIES die with their content: a leftover
+ *  <li></li> or <p></p> is a phantom bullet/gap, never content. Only the
+ *  ancestors of removed runs are candidates — the user's own blank
+ *  paragraphs are untouchable — pruned deepest-first so a fully emptied list
+ *  collapses with its items, and anything still holding an image survives. */
 export function stripDiffHtml(html: string): string {
   const el = document.createElement('div');
   el.innerHTML = html;
-  el.querySelectorAll('span[data-diff-removed]').forEach((s) => s.remove());
+  const candidates = new Set<HTMLElement>();
+  el.querySelectorAll('span[data-diff-removed]').forEach((s) => {
+    for (let p = s.parentElement; p !== null && p !== el; p = p.parentElement) candidates.add(p);
+    s.remove();
+  });
   el.querySelectorAll('span[data-diff-added]').forEach((s) => s.replaceWith(...Array.from(s.childNodes)));
+  const depth = (n: HTMLElement): number => {
+    let d = 0;
+    for (let p = n.parentElement; p !== null; p = p.parentElement) d++;
+    return d;
+  };
+  Array.from(candidates)
+    .sort((a, b) => depth(b) - depth(a))
+    .forEach((w) => {
+      if ((w.textContent ?? '').trim() === '' && w.querySelector('img') === null) w.remove();
+    });
   return el.innerHTML;
 }
 

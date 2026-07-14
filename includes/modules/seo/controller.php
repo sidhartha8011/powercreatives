@@ -92,6 +92,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/redirects', 'remote_save_redirect', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/redirects/(?P<rid>\d+)/delete', 'remote_delete_redirect', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/url-usage', 'remote_url_usage', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-type', 'remote_save_page_type', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-versions', 'remote_page_versions', array(), 'manage_options'),
@@ -579,6 +580,28 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $result = $this->service->delete_redirect((int) $user->id, $site, absint($request->get_param('rid')));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/page-type — what this page IS
+     *  (local/blog/product/…): steers every AI run on it. '' clears. */
+    public function remote_save_page_type(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = PCM_SEO_Service::save_page_type(
+            (int) $user->id,
+            (int) $site->id,
+            absint($request->get_param('post')),
+            sanitize_key((string) ($params['type'] ?? ''))
+        );
         if ($result instanceof WP_Error) {
             return $result;
         }

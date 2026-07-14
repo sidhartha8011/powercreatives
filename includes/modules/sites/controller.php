@@ -375,6 +375,11 @@ class PCM_REST_Sites extends PCM_REST_Base
         if (isset($params['status'])) {
             $update['status'] = sanitize_text_field($params['status']);
         }
+        if (array_key_exists('brandId', $params)) {
+            // The site↔brand link (FK only — brands own the business data).
+            // 0 / null disconnects.
+            $update['brandId'] = absint($params['brandId']) ?: null;
+        }
 
         if (empty($update)) {
             return $this->error('No valid fields to update.');
