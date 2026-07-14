@@ -59,15 +59,16 @@ class PCM_REST_Optimizer extends PCM_REST_Base
         $post_id  = is_array($p) ? absint($p['postId'] ?? 0) : 0;
         $page_url = is_array($p) ? esc_url_raw(trim((string) ($p['pageUrl'] ?? ''))) : '';
         $days     = is_array($p) ? max(1, min(180, (int) ($p['days'] ?? 30))) : 30;
+        $compare  = is_array($p) && !empty($p['compare']);
         if ($page_url === '') {
             return $this->error('pageUrl is required.');
         }
 
-        $live = $this->fetch_live_keyword_stats($page_url, $days);
+        $live = $this->fetch_live_keyword_stats($page_url, $days, $compare);
         if (!is_wp_error($live)) {
             // Success feeds the store — the drawer opens instantly next time
             // and stays useful when Google is unreachable.
-            PCM_Optimizer_Service::kw_stats_cache_save($site_id, $post_id, $live['property'], $live['rows']);
+            PCM_Optimizer_Service::kw_stats_cache_save($site_id, $post_id, $live['property'], $live['rows'], array('days' => $days, 'compare' => $compare));
             return $this->success(array(
                 'source'    => 'live',
                 'property'  => $live['property'],
@@ -93,13 +94,17 @@ class PCM_REST_Optimizer extends PCM_REST_Base
 
     /**
      * One live GSC per-query fetch for one page — the proven candidate-try
-     * flow (www/non-www/sc-domain twins), every failure as WP_Error.
+     * flow (www/non-www/sc-domain twins), every failure as WP_Error. With
+     * $compare the PREVIOUS period (same length, same property) is fetched
+     * too and the rows come back MERGED with per-keyword deltas; a failing
+     * compare fetch is an honest error, never a silently plain result.
      *
      * @param string $page_url The page to filter on.
      * @param int    $days     Look-back window.
+     * @param bool   $compare  Also fetch the previous period and merge.
      * @return array{property: string, rows: array}|WP_Error
      */
-    private function fetch_live_keyword_stats(string $page_url, int $days): array|WP_Error
+    private function fetch_live_keyword_stats(string $page_url, int $days, bool $compare = false): array|WP_Error
     {
         $pcm_user = $this->get_current_pcm_user();
         try {
@@ -136,6 +141,13 @@ class PCM_REST_Optimizer extends PCM_REST_Base
         }
         if ($rows === null || is_wp_error($rows)) {
             return is_wp_error($rows) ? $rows : new WP_Error('pcm_gsc_empty', 'Search Console returned no result.', array('status' => 502));
+        }
+        if ($compare) {
+            $previous = PCM_GSC::query_stats($key, $property, $days, $page_url, $days);
+            if (is_wp_error($previous)) {
+                return new WP_Error('pcm_gsc_compare', sprintf('The compare period could not be read: %s', $previous->get_error_message()), array('status' => 502));
+            }
+            $rows = PCM_Optimizer_Service::merge_compare($rows, $previous);
         }
         return array('property' => $property, 'rows' => $rows);
     }

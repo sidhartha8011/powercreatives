@@ -10,11 +10,45 @@
 
 import { useCallback, useMemo, useState } from 'react';
 
-export type FilterKind = 'text' | 'choice';
+export type FilterKind = 'text' | 'choice' | 'number';
 
 export interface FilterOption {
   value: string;
   label: string;
+}
+
+/** A `number`-kind filter's encoded value: `gt:N` · `lt:N` · `bt:N:M`. */
+export interface NumberFilterValue {
+  op: 'gt' | 'lt' | 'bt';
+  a: number;
+  b?: number;
+}
+
+export function parseNumberFilter(value: string): NumberFilterValue | null {
+  const [op, rawA, rawB] = value.split(':');
+  const a = Number(rawA);
+  if (Number.isNaN(a)) return null;
+  if (op === 'gt' || op === 'lt') return { op, a };
+  if (op === 'bt') {
+    const b = Number(rawB);
+    return Number.isNaN(b) ? null : { op: 'bt', a: Math.min(a, b), b: Math.max(a, b) };
+  }
+  return null;
+}
+
+/** Ready-made match for a `number`-kind FilterDef — above / below /
+ *  between. Unparseable input matches ALL (a filter must never hide rows
+ *  by accident); a null metric (a dash) satisfies no numeric bound. */
+export function numberMatch<T>(get: (row: T) => number | null): (row: T, value: string) => boolean {
+  return (row, value) => {
+    const f = parseNumberFilter(value);
+    if (f === null) return true;
+    const n = get(row);
+    if (n === null) return false;
+    if (f.op === 'gt') return n > f.a;
+    if (f.op === 'lt') return n < f.a;
+    return n >= f.a && n <= (f.b ?? f.a);
+  };
 }
 
 export interface FilterDef<T = unknown> {

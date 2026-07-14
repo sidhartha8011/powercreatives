@@ -15,8 +15,8 @@
  * per-column AI generation; omit it elsewhere).
  */
 
-import type { DragEvent, PointerEvent } from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown, ListFilter, X, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
+import { useState, type DragEvent, type PointerEvent } from 'react';
+import { ArrowUp, ArrowDown, ArrowUpDown, ArrowLeftRight, ChevronLeft, ChevronRight, ListFilter, X, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -27,7 +27,74 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { SortDirection } from '@/hooks/useSortableTable';
-import type { FilterDef } from '@/hooks/useColumnFilters';
+import { parseNumberFilter, type FilterDef } from '@/hooks/useColumnFilters';
+
+/** The `number` kind's filter box: above / below / between as ICONS (no
+ *  words — PO ruling 2026-07-14) + the numeric input(s). Emits the shared
+ *  encoded value (`gt:N` · `lt:N` · `bt:N:M`, '' = inactive). */
+function NumberFilterBox({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const parsed = parseNumberFilter(value);
+  const [op, setOp] = useState<'gt' | 'lt' | 'bt'>(parsed?.op ?? 'gt');
+  const [a, setA] = useState(parsed ? String(parsed.a) : '');
+  const [b, setB] = useState(parsed?.b != null ? String(parsed.b) : '');
+
+  const emit = (nextOp: 'gt' | 'lt' | 'bt', nextA: string, nextB: string) => {
+    const na = Number(nextA);
+    if (nextA.trim() === '' || Number.isNaN(na)) {
+      onChange('');
+      return;
+    }
+    if (nextOp === 'bt') {
+      const nb = Number(nextB);
+      onChange(nextB.trim() === '' || Number.isNaN(nb) ? '' : `bt:${na}:${nb}`);
+    } else {
+      onChange(`${nextOp}:${na}`);
+    }
+  };
+
+  const ops: Array<{ id: 'gt' | 'lt' | 'bt'; icon: LucideIcon; title: string }> = [
+    { id: 'gt', icon: ChevronRight, title: 'Above' },
+    { id: 'lt', icon: ChevronLeft, title: 'Below' },
+    { id: 'bt', icon: ArrowLeftRight, title: 'Between' },
+  ];
+
+  return (
+    <div className="space-y-1.5 px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+      <div className="flex gap-1">
+        {ops.map(({ id, icon: Icon, title }) => (
+          <button
+            key={id}
+            type="button"
+            title={title}
+            onClick={() => { setOp(id); emit(id, a, b); }}
+            className={`flex h-6 flex-1 items-center justify-center rounded-sm transition-colors ${
+              op === id ? 'bg-primary/10 text-primary' : 'bg-muted/50 text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Icon className="h-3.5 w-3.5" />
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-1">
+        <input
+          autoFocus
+          type="number"
+          value={a}
+          onChange={(e) => { setA(e.target.value); emit(op, e.target.value, b); }}
+          className="h-7 w-full rounded-sm border-0 bg-muted/50 px-2 text-sm outline-none"
+        />
+        {op === 'bt' && (
+          <input
+            type="number"
+            value={b}
+            onChange={(e) => { setB(e.target.value); emit(op, a, e.target.value); }}
+            className="h-7 w-full rounded-sm border-0 bg-muted/50 px-2 text-sm outline-none"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface SortState {
   active: boolean;
@@ -159,6 +226,8 @@ export function ColumnHead({
                     className="h-8 w-full rounded-sm border-0 bg-muted/50 px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
                   />
                 </div>
+              ) : filter.def.kind === 'number' ? (
+                <NumberFilterBox value={filter.value} onChange={filter.onChange} />
               ) : (
                 (filter.def.options ?? []).map((o) => (
                   <DropdownMenuCheckboxItem

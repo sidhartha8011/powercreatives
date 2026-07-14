@@ -14,7 +14,7 @@ import { Loader2, Plus, RotateCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { trpc } from '@/lib/trpc';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
-import type { FilterDef } from '@/hooks/useColumnFilters';
+import { numberMatch, type FilterDef } from '@/hooks/useColumnFilters';
 import { ModelDropdown } from '@/components/shared';
 import type { KeywordBucket } from './useKeywordBucket';
 
@@ -22,7 +22,12 @@ interface KeywordRow {
   query: string;
   clicks: number;
   impressions: number;
-  position: number;
+  /** null = not seen this period (a vanished keyword under compare). */
+  position: number | null;
+  /** Compare mode only: the previous period + the per-keyword deltas.
+   *  d.position null = no previous rank (a dash, never a fake zero). */
+  prev?: { clicks: number; impressions: number; position: number } | null;
+  d?: { clicks: number; impressions: number; position: number | null } | null;
 }
 
 interface KeywordsDrawerProps {
@@ -57,32 +62,32 @@ const isRelated = (query: string, primary: string): boolean => {
   return p.size > 0 && tokens(query).some((t) => p.has(t));
 };
 
-/** Numeric ≥ predicate for a header filter (junk input matches all). */
-const atLeast = (get: (r: KeywordRow) => number) => (r: KeywordRow, v: string): boolean => {
-  const n = Number(v);
-  return Number.isNaN(n) ? true : get(r) >= n;
-};
-
-/** Per-column header filters — THE shared table's own mechanism (the
- *  bolted-on impressions checkbox died for these, owner order). */
+/** Per-column header filters — THE shared table's own mechanism; numeric
+ *  columns use the shared `number` kind (above / below / between icons). */
 const FILTER_DEFS: Record<string, FilterDef<KeywordRow>> = {
   query: { key: 'query', kind: 'text', match: (r, v) => r.query.toLowerCase().includes(v.toLowerCase()) },
-  clicks: { key: 'clicks', kind: 'text', match: atLeast((r) => r.clicks) },
-  impressions: { key: 'impressions', kind: 'text', match: atLeast((r) => r.impressions) },
-  position: {
-    key: 'position',
-    kind: 'text',
-    match: (r, v) => {
-      const n = Number(v);
-      return Number.isNaN(n) ? true : r.position <= n; // lower position = better
-    },
-  },
+  clicks: { key: 'clicks', kind: 'number', match: numberMatch((r) => r.clicks) },
+  impressions: { key: 'impressions', kind: 'number', match: numberMatch((r) => r.impressions) },
+  position: { key: 'position', kind: 'number', match: numberMatch((r) => r.position) },
+  dClicks: { key: 'dClicks', kind: 'number', match: numberMatch((r) => r.d?.clicks ?? null) },
+  dImpressions: { key: 'dImpressions', kind: 'number', match: numberMatch((r) => r.d?.impressions ?? null) },
+  dPosition: { key: 'dPosition', kind: 'number', match: numberMatch((r) => r.d?.position ?? null) },
+};
+
+/** Signed delta cell — green = improving, red = declining ($invert for
+ *  position, where DOWN is the win). A missing delta is a dash. */
+const deltaCell = (n: number | null | undefined, invert = false) => {
+  if (n == null) return <span className="text-slate-300">—</span>;
+  const good = invert ? n < 0 : n > 0;
+  const cls = n === 0 ? 'text-slate-400' : good ? 'text-green-600' : 'text-red-600';
+  return <span className={cls}>{n > 0 ? `+${n}` : String(n)}</span>;
 };
 
 export function KeywordsDrawer({
   siteId, postId, type, pageUrl, pages, primaryKeyword, onPrimaryChange, supportingKeywords, onSupportingChange, bucket, onClose,
 }: KeywordsDrawerProps) {
   const [days, setDays] = useState(30);
+  const [compare, setCompare] = useState(false);
   const [relatedOnly, setRelatedOnly] = useState(false);
   const [rows, setRows] = useState<KeywordRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -104,14 +109,14 @@ export function KeywordsDrawer({
   /** When the rows are STORED (Google unreachable), the drawer says so —
    *  a status fact, never data passed off as live. */
   const [storedAt, setStoredAt] = useState<number | null>(null);
-  const scan = (t: { postId: number; pageUrl: string } = target) => {
+  const scan = (t: { postId: number; pageUrl: string } = target, cmp: boolean = compare) => {
     setError(null);
     if (t.pageUrl === '') {
       setError('This page has no public URL — Search Console has nothing to report.');
       setRows([]);
       return;
     }
-    statsMutation.mutateAsync({ siteId, postId: t.postId, pageUrl: t.pageUrl, days })
+    statsMutation.mutateAsync({ siteId, postId: t.postId, pageUrl: t.pageUrl, days, compare: cmp })
       .then((res: any) => {
         setRows(Array.isArray(res?.rows) ? res.rows : []);
         setStoredAt(res?.source === 'stored' ? Number(res?.fetchedAt ?? 0) : null);
@@ -135,6 +140,7 @@ export function KeywordsDrawer({
     return out;
   }, [rows, relatedOnly, primaryKeyword]);
 
+  const hasDeltas = (rows ?? []).some((r) => r.d != null);
   const columns: DataTableColumn<KeywordRow>[] = [
     {
       key: 'add',
@@ -155,7 +161,13 @@ export function KeywordsDrawer({
     { key: 'query', header: 'Keyword', cell: (r) => <span title={r.query}>{r.query}</span>, sortAccessor: (r) => r.query },
     { key: 'clicks', header: 'Clicks', width: 52, className: 'text-right', cell: (r) => r.clicks, sortAccessor: (r) => r.clicks },
     { key: 'impressions', header: 'Impr.', width: 60, className: 'text-right', cell: (r) => r.impressions, sortAccessor: (r) => r.impressions },
-    { key: 'position', header: 'Pos.', width: 48, className: 'text-right', cell: (r) => r.position, sortAccessor: (r) => r.position },
+    { key: 'position', header: 'Pos.', width: 48, className: 'text-right', cell: (r) => r.position ?? <span className="text-slate-300">—</span>, sortAccessor: (r) => r.position },
+    // The trend columns (compare mode): sort a Δ column = the trend view.
+    ...(hasDeltas ? ([
+      { key: 'dClicks', header: 'Δ Clicks', width: 58, className: 'text-right', cell: (r) => deltaCell(r.d?.clicks), sortAccessor: (r) => r.d?.clicks ?? 0 },
+      { key: 'dImpressions', header: 'Δ Impr.', width: 62, className: 'text-right', cell: (r) => deltaCell(r.d?.impressions), sortAccessor: (r) => r.d?.impressions ?? 0 },
+      { key: 'dPosition', header: 'Δ Pos.', width: 54, className: 'text-right', cell: (r) => deltaCell(r.d?.position, true), sortAccessor: (r) => r.d?.position ?? 0 },
+    ] satisfies DataTableColumn<KeywordRow>[]) : []),
   ];
 
   return (
@@ -252,6 +264,15 @@ export function KeywordsDrawer({
             className="h-5 w-12 rounded border border-slate-200 bg-white px-1 text-[10px] outline-none focus:border-primary"
           />
           days
+        </label>
+        <label className="flex items-center gap-1" title="Compare with the previous period of the same length — adds the Δ trend columns">
+          <input
+            type="checkbox"
+            checked={compare}
+            onChange={(e) => { setCompare(e.target.checked); scan(target, e.target.checked); }}
+            className="h-3 w-3 accent-[#007bff]"
+          />
+          compare
         </label>
         <label className="flex items-center gap-1" title="Only keywords related to the primary keyword">
           <input type="checkbox" checked={relatedOnly} onChange={(e) => setRelatedOnly(e.target.checked)} className="h-3 w-3 accent-[#007bff]" />

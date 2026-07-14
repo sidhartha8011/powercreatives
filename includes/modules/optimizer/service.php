@@ -38,7 +38,9 @@ class PCM_Optimizer_Service
      *  unreachable (never silently), and they make the table seedable as
      *  pure data. Rows capped so the map stays bounded. */
     private const KW_STATS_CACHE_OPTION = 'pcm_optimizer_kw_stats_cache';
-    private const KW_STATS_CACHE_MAX_ROWS = 300;
+    /** Rows arrive clicks-desc, so the cap keeps the most significant. The
+     *  LIVE view is always complete — this bounds only the stored copy. */
+    private const KW_STATS_CACHE_MAX_ROWS = 1000;
 
     /**
      * Registered teachers, keyed by id. Populated by load_teachers().
@@ -299,10 +301,11 @@ class PCM_Optimizer_Service
      * @param int    $site_id  Site id.
      * @param int    $post_id  Post id.
      * @param string $property The GSC property that answered.
-     * @param array  $rows     Live rows.
+     * @param array  $rows     Live rows (plain or compare-merged).
+     * @param array  $meta     {days, compare} — what the stored set IS.
      * @return void
      */
-    public static function kw_stats_cache_save(int $site_id, int $post_id, string $property, array $rows): void
+    public static function kw_stats_cache_save(int $site_id, int $post_id, string $property, array $rows, array $meta = array()): void
     {
         $map = get_option(self::KW_STATS_CACHE_OPTION);
         if (!is_array($map)) {
@@ -312,8 +315,68 @@ class PCM_Optimizer_Service
             'property'  => $property,
             'rows'      => array_slice(array_values($rows), 0, self::KW_STATS_CACHE_MAX_ROWS),
             'fetchedAt' => time(),
+            'days'      => (int) ($meta['days'] ?? 0),
+            'compare'   => (bool) ($meta['compare'] ?? false),
         );
         update_option(self::KW_STATS_CACHE_OPTION, $map, false);
+    }
+
+    /**
+     * Merge a current period's rows with the previous period's, per query:
+     * every current row gains `prev` + `d` (the trend deltas); keywords seen
+     * ONLY in the previous period stay in the list with zeroed current
+     * metrics and negative deltas — a vanishing keyword IS the trend signal.
+     * Positions honest by construction: no previous rank → `d.position`
+     * null (a dash, never a fake zero); vanished → current position null.
+     *
+     * @param array $current  Current-period rows {query, clicks, impressions, position}.
+     * @param array $previous Previous-period rows, same shape.
+     * @return array Merged rows.
+     */
+    public static function merge_compare(array $current, array $previous): array
+    {
+        $prev_by = array();
+        foreach ($previous as $r) {
+            if (is_array($r) && isset($r['query'])) {
+                $prev_by[(string) $r['query']] = $r;
+            }
+        }
+        $out = array();
+        foreach ($current as $r) {
+            $p = $prev_by[(string) $r['query']] ?? null;
+            unset($prev_by[(string) $r['query']]);
+            $out[] = $r + array(
+                'prev' => $p === null ? null : array(
+                    'clicks'      => (int) $p['clicks'],
+                    'impressions' => (int) $p['impressions'],
+                    'position'    => (float) $p['position'],
+                ),
+                'd'    => array(
+                    'clicks'      => (int) $r['clicks'] - (int) ($p['clicks'] ?? 0),
+                    'impressions' => (int) $r['impressions'] - (int) ($p['impressions'] ?? 0),
+                    'position'    => $p === null ? null : round((float) $r['position'] - (float) $p['position'], 1),
+                ),
+            );
+        }
+        foreach ($prev_by as $p) {
+            $out[] = array(
+                'query'       => (string) $p['query'],
+                'clicks'      => 0,
+                'impressions' => 0,
+                'position'    => null,
+                'prev'        => array(
+                    'clicks'      => (int) $p['clicks'],
+                    'impressions' => (int) $p['impressions'],
+                    'position'    => (float) $p['position'],
+                ),
+                'd'           => array(
+                    'clicks'      => -(int) $p['clicks'],
+                    'impressions' => -(int) $p['impressions'],
+                    'position'    => null,
+                ),
+            );
+        }
+        return $out;
     }
 
     /**

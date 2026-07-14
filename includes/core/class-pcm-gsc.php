@@ -352,16 +352,20 @@ class PCM_GSC
      * Rows: [{query, clicks, impressions, position}] in API order (clicks
      * desc) — consumers sort and filter themselves.
      *
-     * @param string $json     Service-account credentials JSON.
-     * @param string $property The matched GSC property.
-     * @param int    $days     Look-back window.
-     * @param string $page_url Exact page URL to filter on ('' = property-wide).
+     * @param string $json        Service-account credentials JSON.
+     * @param string $property    The matched GSC property.
+     * @param int    $days        Look-back window.
+     * @param string $page_url    Exact page URL to filter on ('' = property-wide).
+     * @param int    $offset_days Shift the whole window back by N days —
+     *                            `$offset_days = $days` is the PREVIOUS
+     *                            period of the same length (the compare).
      * @return array|WP_Error
      */
-    public static function query_stats(string $json, string $property, int $days = 30, string $page_url = ''): array|WP_Error
+    public static function query_stats(string $json, string $property, int $days = 30, string $page_url = '', int $offset_days = 0): array|WP_Error
     {
-        $end   = gmdate('Y-m-d', time() - 2 * DAY_IN_SECONDS);
-        $start = gmdate('Y-m-d', time() - (2 + max(1, $days)) * DAY_IN_SECONDS);
+        $offset_days = max(0, $offset_days);
+        $end   = gmdate('Y-m-d', time() - (2 + $offset_days) * DAY_IN_SECONDS);
+        $start = gmdate('Y-m-d', time() - (2 + $offset_days + max(1, $days)) * DAY_IN_SECONDS);
         $path  = '/sites/' . rawurlencode($property) . '/searchAnalytics/query';
         $body  = array(
             'startDate'  => $start,
