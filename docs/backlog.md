@@ -201,6 +201,17 @@ deselects from the catalog with full control, and the selection goes as a
 BASKET into ONE optimization order. One optimization — its content decided
 entirely by what the user put in the basket.
 
+**THE RAIL TAXONOMY (owner ruling 2026-07-14):** the rail has exactly TWO
+top groups — **Search optimization** (with subsections: e.g. content
+structure for search engines, page-specific checks, rankings-driven
+suggestions) and **AI optimization** (AI mentions/recommendations).
+Teachers declare which group they belong to; a group renders its teachers
+as subsections. OVERLAP BETWEEN GROUPS IS FINE by design (both may demand
+reviews, both may demand the same fact) — the COMPILER is the second step
+that collects and reconciles duplicates, so producers never need to
+coordinate. Priority ruling the same day: FINISH THE CONTENT FEATURES
+FIRST; the client approval card comes after the content work is done.
+
 **THE ANALYZE RAIL UX LAW (owner correction 2026-07-13 — this is for the
 USER doing the optimization, inside the editor):**
 - The rail is organized PER PURPOSE, as sections: first "Search engine
