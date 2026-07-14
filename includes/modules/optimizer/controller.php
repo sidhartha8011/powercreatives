@@ -31,7 +31,56 @@ class PCM_REST_Optimizer extends PCM_REST_Base
         return [
             ['GET',  '/optimizer/teachers', 'list_teachers'],
             ['POST', '/optimizer/analyze', 'analyze'],
+            ['POST', '/optimizer/compile', 'compile'],
         ];
+    }
+
+    /**
+     * POST /optimizer/compile — THE BASKET COMPILER (one spine stage).
+     *
+     * Input:  { items: [{instruction, teacherId, label}], model?, provider? }
+     * Output: { directives: [{text, purposes: string[], sources: int[]}] }
+     *
+     * Merges the ticked suggestions into one concise, ordered to-do list.
+     * The service enforces the certainty contract: every input item must be
+     * covered by the output — a dropped intent is an honest error.
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function compile(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $p     = $request->get_json_params();
+        $items = array();
+        foreach ((is_array($p) && is_array($p['items'] ?? null)) ? $p['items'] : array() as $it) {
+            if (!is_array($it)) {
+                continue;
+            }
+            $instruction = sanitize_text_field((string) ($it['instruction'] ?? ''));
+            $teacher_id  = sanitize_key((string) ($it['teacherId'] ?? ''));
+            if ($instruction !== '' && $teacher_id !== '') {
+                $items[] = array(
+                    'instruction' => $instruction,
+                    'teacherId'   => $teacher_id,
+                    'label'       => sanitize_text_field((string) ($it['label'] ?? '')),
+                );
+            }
+        }
+        if (empty($items)) {
+            return $this->error('There are no selected suggestions to compile.');
+        }
+
+        try {
+            $directives = PCM_Optimizer_Service::compile($items, array(
+                'model'    => is_array($p) ? sanitize_text_field((string) ($p['model'] ?? '')) : '',
+                'provider' => is_array($p) ? sanitize_key((string) ($p['provider'] ?? '')) : '',
+                'userId'   => get_current_user_id(),
+            ));
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 502);
+        }
+
+        return $this->success(array('directives' => $directives));
     }
 
     /**

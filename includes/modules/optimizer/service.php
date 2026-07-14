@@ -105,6 +105,130 @@ class PCM_Optimizer_Service
     }
 
     /**
+     * THE BASKET COMPILER (owner law 2026-07-13): the ticked suggestions are
+     * never dumped raw at the rewriting model — ONE reconciliation call
+     * merges overlaps and resolves collisions into a concise ordered to-do
+     * list. THE CERTAINTY CONTRACT: every input item must be covered by the
+     * output's `sources` union — a dropped intent is a thrown error, never a
+     * quiet loss. Each directive carries its source purposes (teacherIds) —
+     * the provenance the review's purpose bullets and pills stand on.
+     *
+     * A single item bypasses the model deterministically: there is nothing
+     * to merge, and a no-op LLM hop is a cost without a function.
+     *
+     * @param array $items   [{instruction, teacherId, label}] — sanitized.
+     * @param array $context {model, provider, userId}.
+     * @return array<int, array{text: string, purposes: string[], sources: int[]}>
+     * @throws \RuntimeException When the model drops an intent or answers
+     *                           off-contract.
+     */
+    public static function compile(array $items, array $context): array
+    {
+        if (count($items) === 1) {
+            return array(array(
+                'text'     => $items[0]['instruction'],
+                'purposes' => array($items[0]['teacherId']),
+                'sources'  => array(0),
+            ));
+        }
+
+        $numbered = array();
+        foreach ($items as $i => $it) {
+            $numbered[] = array('index' => $i, 'purpose' => $it['teacherId'], 'instruction' => $it['instruction']);
+        }
+
+        $messages = array(
+            array(
+                'role'    => 'system',
+                // The exact output contract lives IN the prompt (the Anthropic
+                // law — PCM_LLM drops response_format there by design).
+                'content' => 'You compile content-optimization directives into ONE concise, ordered to-do list for a '
+                    . 'rewriting AI. Rules: NEVER drop an intent — every input index must appear in at least one '
+                    . 'directive\'s sources; MERGE overlapping directives into one stronger directive; when two '
+                    . 'directives collide, produce one directive that explicitly preserves both intents; order by '
+                    . 'execution sense (structure first, then content, then wording). Keep each directive one '
+                    . 'sentence, imperative, self-contained. Respond with ONLY this JSON, no markdown: '
+                    . '{"directives":[{"text":"...","sources":[0,2]}]} — sources are the input indexes each '
+                    . 'directive covers.',
+            ),
+            array(
+                'role'    => 'user',
+                'content' => "INPUT DIRECTIVES:\n" . wp_json_encode($numbered),
+            ),
+        );
+
+        $schema = array(
+            'name'   => 'optimizer_compiled_directives',
+            'schema' => array(
+                'type'       => 'object',
+                'properties' => array(
+                    'directives' => array(
+                        'type'  => 'array',
+                        'items' => array(
+                            'type'       => 'object',
+                            'properties' => array(
+                                'text'    => array('type' => 'string'),
+                                'sources' => array('type' => 'array', 'items' => array('type' => 'integer')),
+                            ),
+                            'required'   => array('text', 'sources'),
+                        ),
+                    ),
+                ),
+                'required'   => array('directives'),
+            ),
+        );
+
+        $parsed = PCM_LLM::invoke_json($messages, $schema, array(
+            'model'    => (string) ($context['model'] ?? '') ?: null,
+            'provider' => (string) ($context['provider'] ?? '') ?: null,
+            'user_id'  => (int) ($context['userId'] ?? 0),
+        ));
+
+        $out     = array();
+        $covered = array();
+        foreach ((array) ($parsed['directives'] ?? array()) as $row) {
+            if (!is_array($row) || trim((string) ($row['text'] ?? '')) === '') {
+                continue;
+            }
+            $sources  = array();
+            $purposes = array();
+            foreach ((array) ($row['sources'] ?? array()) as $src) {
+                $i = (int) $src;
+                if (!isset($items[$i])) {
+                    continue; // out-of-range index — ignore the claim, coverage check judges the truth
+                }
+                $sources[]               = $i;
+                $covered[$i]             = true;
+                $purposes[$items[$i]['teacherId']] = true;
+            }
+            if (empty($sources)) {
+                continue;
+            }
+            $out[] = array(
+                'text'     => trim((string) $row['text']),
+                'purposes' => array_keys($purposes),
+                'sources'  => $sources,
+            );
+        }
+
+        // THE CERTAINTY CHECK: every intent accounted for, or an honest error.
+        $missing = array();
+        foreach ($items as $i => $it) {
+            if (!isset($covered[$i])) {
+                $missing[] = $it['label'] !== '' ? $it['label'] : $it['instruction'];
+            }
+        }
+        if (!empty($missing) || empty($out)) {
+            throw new \RuntimeException(sprintf(
+                'The compiler failed to account for every selected optimization (%s) — try again or pick another model.',
+                empty($missing) ? 'empty result' : implode(', ', array_slice($missing, 0, 5))
+            ));
+        }
+
+        return $out;
+    }
+
+    /**
      * The checklist for one page type: its own checks + the universal ones.
      * Unknown page types honestly get only the universal checks.
      *

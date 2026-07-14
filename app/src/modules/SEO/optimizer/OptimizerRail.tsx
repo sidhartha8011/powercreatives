@@ -10,20 +10,21 @@
  * promise: "analyze with all the inputs it has").
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Loader2, RotateCw, X } from 'lucide-react';
 import { useOptimizer, type UseOptimizerArgs } from './useOptimizer';
 import { teacherSectionBodies } from './sections';
-import { itemKey } from './types';
+import { itemKey, type CompiledDirective } from './types';
 
 interface OptimizerRailProps extends UseOptimizerArgs {
   onClose: () => void;
-  /** Hands the compiled directives to the page's ONE optimize pipeline. */
-  onOptimize: (directives: string) => void;
+  /** Hands the COMPILED directives to the page's ONE optimize pipeline. */
+  onOptimize: (directives: CompiledDirective[]) => void;
 }
 
 export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailProps) {
   const opt = useOptimizer(args);
+  const [compileError, setCompileError] = useState<string | null>(null);
 
   // First mount with a loaded registry = the Analyze click's full run.
   const startedRef = useRef(false);
@@ -32,6 +33,18 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
     startedRef.current = true;
     opt.analyzeAll();
   }, [opt]);
+
+  const runOptimize = () => {
+    setCompileError(null);
+    void opt.compileBasket()
+      .then((directives) => {
+        if (directives.length > 0) onOptimize(directives);
+      })
+      .catch((e: unknown) => {
+        // The certainty contract failed loudly — show it, never run partial.
+        setCompileError(e instanceof Error ? e.message : 'Compiling the selection failed');
+      });
+  };
 
   return (
     <aside className="flex w-[250px] shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
@@ -125,17 +138,18 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
       </div>
 
       <div className="border-t border-slate-200 px-2.5 py-1.5">
+        {compileError !== null && (
+          <div className="mb-1 text-[10px] text-red-600">{compileError}</div>
+        )}
         <button
           type="button"
-          onClick={() => {
-            const directives = opt.buildDirectives();
-            if (directives !== '') onOptimize(directives);
-          }}
-          disabled={opt.selectedCount === 0}
-          title="Run ONE optimization applying every selected suggestion — changes land as red/green to accept or reject"
+          onClick={runOptimize}
+          disabled={opt.selectedCount === 0 || opt.compiling}
+          title="Compiles every selected suggestion into ONE optimization order — changes land as red/green to accept or reject"
           className="inline-flex w-full items-center justify-center gap-1 rounded-full bg-[#e7f5ff] px-2.5 py-1 text-xs font-semibold text-primary disabled:opacity-50"
         >
-          Optimize selected{opt.selectedCount > 0 ? ` (${opt.selectedCount})` : ''}
+          {opt.compiling && <Loader2 className="h-3 w-3 animate-spin" />}
+          {opt.compiling ? 'Compiling the order…' : `Optimize selected${opt.selectedCount > 0 ? ` (${opt.selectedCount})` : ''}`}
         </button>
       </div>
     </aside>

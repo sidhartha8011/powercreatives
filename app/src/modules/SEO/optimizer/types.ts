@@ -39,3 +39,20 @@ export interface TeacherRun {
 /** Basket key — one ticked suggestion. */
 export const itemKey = (item: Pick<OptimizerItem, 'teacherId' | 'id'>): string =>
   `${item.teacherId}:${item.id}`;
+
+/** One compiled directive — the COMPILER's output: the run's to-do line,
+ *  the purposes (teacherIds) it serves, and the input items it covers. */
+export interface CompiledDirective {
+  text: string;
+  purposes: string[];
+  sources: number[];
+}
+
+/** Purpose pill labels (presentation only — teacherIds stay the truth). */
+export const TEACHER_PILLS: Record<string, string> = {
+  search: 'SEO',
+  subtopics: 'TOPICS',
+  keywords: 'KW',
+  interlinks: 'LINKS',
+  'ai-visibility': 'AI',
+};

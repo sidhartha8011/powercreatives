@@ -9,7 +9,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
-import { itemKey, type OptimizerItem, type TeacherMeta, type TeacherRun } from './types';
+import { itemKey, type CompiledDirective, type OptimizerItem, type TeacherMeta, type TeacherRun } from './types';
 
 export interface UseOptimizerArgs {
   siteId: number;
@@ -30,8 +30,10 @@ export interface UseOptimizer {
   /** One purpose — the section's own re-analyze button. */
   analyzeOne: (teacherId: string) => void;
   toggle: (item: OptimizerItem) => void;
-  /** The ticked suggestions compiled into the optimize run's directive text. */
-  buildDirectives: () => string;
+  /** THE COMPILER: merges the ticked suggestions into the run's ordered,
+   *  provenance-tagged to-do list (server-enforced: no intent may drop). */
+  compileBasket: () => Promise<CompiledDirective[]>;
+  compiling: boolean;
   selectedCount: number;
 }
 
@@ -104,15 +106,29 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
     });
   }, []);
 
-  const buildDirectives = useCallback((): string => {
-    const lines: string[] = [];
+  const compileMutation = trpc.optimizer.compile.useMutation();
+  const [compiling, setCompiling] = useState(false);
+  const compileBasket = useCallback(async (): Promise<CompiledDirective[]> => {
+    const selected: Array<{ instruction: string; teacherId: string; label: string }> = [];
     teachers.forEach((t) => {
       (runs[t.id]?.items ?? []).forEach((it) => {
-        if (basket.has(itemKey(it))) lines.push(`- ${it.instruction}`);
+        if (basket.has(itemKey(it))) selected.push({ instruction: it.instruction, teacherId: it.teacherId, label: it.label });
       });
     });
-    return lines.length > 0 ? `Apply exactly these optimizations to the content:\n${lines.join('\n')}` : '';
-  }, [teachers, runs, basket]);
+    if (selected.length === 0) return [];
+    setCompiling(true);
+    try {
+      const res: any = await compileMutation.mutateAsync({
+        items: selected,
+        model: args.model,
+        provider: args.provider,
+      });
+      return Array.isArray(res?.directives) ? (res.directives as CompiledDirective[]) : [];
+    } finally {
+      setCompiling(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teachers, runs, basket, args.model, args.provider]);
 
   const selectedCount = teachers.reduce(
     (n, t) => n + (runs[t.id]?.items ?? []).filter((it) => basket.has(itemKey(it))).length,
@@ -129,7 +145,8 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
     analyzeAll,
     analyzeOne,
     toggle,
-    buildDirectives,
+    compileBasket,
+    compiling,
     selectedCount,
   };
 }
