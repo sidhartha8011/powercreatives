@@ -56,10 +56,16 @@ class PCM_Teacher_Search implements PCM_Optimizer_Teacher
         $messages = array(
             array(
                 'role'    => 'system',
+                // The exact output contract lives IN the prompt: Anthropic has
+                // no response_format (PCM_LLM drops it by documented design,
+                // class-pcm-llm.php:126) — the prompt is the only schema there.
                 'content' => 'You are a strict, factual content auditor. Judge the given page content against each '
                     . 'check. For every check answer passes=true or passes=false, judging ONLY from the content '
                     . 'provided. evidence: when it passes, a short verbatim quote from the content proving it; when '
-                    . 'it fails, one short sentence naming the concrete thing that is missing. Never invent content.',
+                    . 'it fails, one short sentence naming the concrete thing that is missing. Never invent content. '
+                    . 'Respond with ONLY this JSON, no markdown, no commentary: '
+                    . '{"checks":[{"id":"<the check id, echoed EXACTLY as given>","passes":true,"evidence":"..."}]} '
+                    . '— one entry per check, every id present.',
             ),
             array(
                 'role'    => 'user',
@@ -102,6 +108,12 @@ class PCM_Teacher_Search implements PCM_Optimizer_Teacher
             if (is_array($row) && isset($row['id'])) {
                 $verdicts[(string) $row['id']] = $row;
             }
+        }
+        // ZERO matched verdicts = the model ignored the contract — an honest
+        // FAILURE the rail shows with its own retry, never an empty success
+        // (that exact silence shipped once, 2026-07-13, and read as "broken").
+        if (empty($verdicts)) {
+            throw new \RuntimeException('The model did not answer the checklist — re-analyze, or pick another model.');
         }
 
         $items = array();

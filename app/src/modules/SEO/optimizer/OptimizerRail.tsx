@@ -73,7 +73,14 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
 
               {run.status === 'failed' && (
                 <div className="mt-1 text-[10px] text-red-600" title={run.error}>
-                  Analysis failed — retry with the button above.
+                  {run.error || 'Analysis failed'} — retry with the button above.
+                </div>
+              )}
+
+              {/* An empty result is STATED, never a blank section. */}
+              {run.status === 'done' && run.items.length === 0 && (
+                <div className="mt-1 text-[10px] text-slate-400">
+                  The analysis returned no results — re-analyze with the button above.
                 </div>
               )}
 
