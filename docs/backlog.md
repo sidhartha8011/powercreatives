@@ -197,11 +197,17 @@ once, each feature plugs in. Value driver + MVP cut per feature:
 Value driver: THE CLIENT SEES THE SAME RED/GREEN VIEW AND APPROVES. MVP: a
 shareable READ-ONLY link rendering this page's pending changes exactly as
 the editor shows them (red out, green in, per section) + Approve/Comment —
-reusing the client-review-board primitives that already exist. BUILD LAW:
-this is the FIRST SLICE of the already-specced approval-pipeline rails
-(Autonomy roadmap #1: seo_staged_changes + asset-type adapter registry +
-Before/After cards) — never a parallel machinery; nothing thrown away when
-the full rails land.
+reusing the client-review-board primitives that already exist.
+PRESENTATION LAW (owner 2026-07-13): the client reads it SECTION BY
+SECTION, and the changes are GROUPED BY WHAT THEY ARE FOR — e.g. "1.
+Organic search optimization", "2. AI recommendation optimizations", and so
+on — so the client understands the PURPOSE of every change, not just the
+diff. (The Analyze spine already knows each ticked item's origin — search
+check / AI check / keywords / subtopics / interlinks — that provenance
+rides along to the approval card for free.) BUILD LAW: this is the FIRST
+SLICE of the already-specced approval-pipeline rails (Autonomy roadmap #1:
+seo_staged_changes + asset-type adapter registry + Before/After cards) —
+never a parallel machinery; nothing thrown away when the full rails land.
 
 ## Knowledge-graph insert (owner-approved spec 2026-07-13)
 A new Insert-menu item (beside Image and FAQ): insert a SUBTOPIC section
