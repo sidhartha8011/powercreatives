@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Plus, RotateCw, Search, X } from 'lucide-react';
+import { Loader2, Plus, RotateCw, Search, TrendingUp, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { trpc } from '@/lib/trpc';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
@@ -89,6 +89,10 @@ const deltaCell = (n: number | null | undefined, invert = false) => {
   return <span className={cls}>{n > 0 ? `+${n}` : String(n)}</span>;
 };
 
+/** Shared column widths — the three tables read as ONE system (owner law:
+ *  same features, same sizes, everywhere). */
+const COL = { add: 28, vol: 56 } as const;
+
 /** Ranking-tab header filters (number kind: above / below / between icons). */
 const RANKING_FILTER_DEFS: Record<string, FilterDef<KeywordRow>> = {
   query: { key: 'query', kind: 'text', match: (r, v) => r.query.toLowerCase().includes(v.toLowerCase()) },
@@ -152,20 +156,27 @@ export function KeywordsDrawer({
     }
   };
 
-  // ── Search volumes: cache-first server endpoint (Ahrefs credits respected). ──
+  // ── Search volumes: cache-first server endpoint (Ahrefs credits
+  //    respected: cachedOnly on scans, refresh only via the update button). ──
   const volumesMutation = trpc.optimizer.keywordVolumes.useMutation();
   const [volumes, setVolumes] = useState<Record<string, number | null>>({});
   const [hasAhrefs, setHasAhrefs] = useState(true);
-  const fetchVolumes = (kws: string[]) => {
-    const missing = [...new Set(kws.map((k) => k.trim()).filter(Boolean))].filter((k) => !(k in volumes));
-    if (missing.length === 0) return;
-    volumesMutation.mutateAsync({ keywords: missing.slice(0, 20) })
+  const fetchVolumes = (kws: string[], opts: { refresh?: boolean; cachedOnly?: boolean } = {}) => {
+    const list = [...new Set(kws.map((k) => k.trim()).filter(Boolean))];
+    const wanted = opts.refresh ? list : list.filter((k) => !(k in volumes));
+    if (wanted.length === 0) return;
+    volumesMutation.mutateAsync({ keywords: wanted.slice(0, 20), refresh: !!opts.refresh, cachedOnly: !!opts.cachedOnly })
       .then((res: any) => {
         setVolumes((v) => ({ ...v, ...(res?.volumes ?? {}) }));
         if (res?.hasKey === false) setHasAhrefs(false);
       })
       .catch(() => { /* volumes are enrichment — their absence is visible as dashes */ });
   };
+  /** The volume cell — one renderer for all three tables. */
+  const volCell = (kw: string) =>
+    (volumes[kw] != null
+      ? volumes[kw]
+      : <span className="text-slate-300" title={hasAhrefs ? 'No volume data — press the volume update button above' : 'Add an Ahrefs key in Integrations for search volumes'}>—</span>);
   const selectedKey = selectedRows.map((r) => r.kw).join('|');
   useEffect(() => {
     fetchVolumes(selectedRows.map((r) => r.kw));
@@ -218,9 +229,9 @@ export function KeywordsDrawer({
     {
       key: 'volume',
       header: 'Vol.',
-      width: 52,
+      width: COL.vol,
       className: 'text-right',
-      cell: (r) => (volumes[r.kw] != null ? volumes[r.kw] : <span className="text-slate-300" title={hasAhrefs ? 'No volume data' : 'Add an Ahrefs key in Integrations for search volumes'}>—</span>),
+      cell: (r) => volCell(r.kw),
       sortAccessor: (r) => volumes[r.kw] ?? -1,
     },
     {
@@ -261,8 +272,11 @@ export function KeywordsDrawer({
     }
     statsMutation.mutateAsync({ siteId, postId: t.postId, pageUrl: t.pageUrl, days, compare: true })
       .then((res: any) => {
-        setRows(Array.isArray(res?.rows) ? res.rows : []);
+        const fetched: KeywordRow[] = Array.isArray(res?.rows) ? res.rows : [];
+        setRows(fetched);
         setStoredAt(res?.source === 'stored' ? Number(res?.fetchedAt ?? 0) : null);
+        // Volume auto-fill from the CACHE only — scans stay credit-free.
+        fetchVolumes(fetched.map((r) => r.query), { cachedOnly: true });
       })
       .catch((e: unknown) => {
         setRows([]);
@@ -292,9 +306,14 @@ export function KeywordsDrawer({
     </button>
   );
 
+  const rankingFilterDefs = useMemo<Record<string, FilterDef<KeywordRow>>>(() => ({
+    ...RANKING_FILTER_DEFS,
+    volume: { key: 'volume', kind: 'number', match: numberMatch((r) => volumes[r.query] ?? null) },
+  }), [volumes]);
   const rankingColumns: DataTableColumn<KeywordRow>[] = [
-    { key: 'add', header: '', width: 28, cell: (r) => addButton(r.query) },
+    { key: 'add', header: '', width: COL.add, cell: (r) => addButton(r.query) },
     { key: 'query', header: 'Keyword', cell: (r) => <span title={r.query}>{r.query}</span>, sortAccessor: (r) => r.query },
+    { key: 'volume', header: 'Vol.', width: COL.vol, className: 'text-right', cell: (r) => volCell(r.query), sortAccessor: (r) => volumes[r.query] ?? -1 },
     { key: 'clicks', header: 'Clicks', width: 52, className: 'text-right', cell: (r) => r.clicks, sortAccessor: (r) => r.clicks },
     { key: 'impressions', header: 'Impr.', width: 60, className: 'text-right', cell: (r) => r.impressions, sortAccessor: (r) => r.impressions },
     { key: 'position', header: 'Pos.', width: 48, className: 'text-right', cell: (r) => r.position ?? <span className="text-slate-300">—</span>, sortAccessor: (r) => r.position },
@@ -324,23 +343,36 @@ export function KeywordsDrawer({
         setIdeasError(e instanceof Error ? e.message : 'Keyword search failed');
       });
   };
+  const ideaFilterDefs = useMemo<Record<string, FilterDef<{ kw: string }>>>(() => ({
+    kw: { key: 'kw', kind: 'text', match: (r, v) => r.kw.toLowerCase().includes(v.toLowerCase()) },
+    volume: { key: 'volume', kind: 'number', match: numberMatch((r) => volumes[r.kw] ?? null) },
+  }), [volumes]);
   const ideaColumns: DataTableColumn<{ kw: string }>[] = [
-    { key: 'add', header: '', width: 28, cell: (r) => addButton(r.kw) },
+    { key: 'add', header: '', width: COL.add, cell: (r) => addButton(r.kw) },
     { key: 'kw', header: 'Keyword', cell: (r) => <span title={r.kw}>{r.kw}</span>, sortAccessor: (r) => r.kw },
-    {
-      key: 'volume',
-      header: 'Vol.',
-      width: 56,
-      className: 'text-right',
-      cell: (r) => (volumes[r.kw] != null ? volumes[r.kw] : <span className="text-slate-300" title={hasAhrefs ? 'No volume data' : 'Add an Ahrefs key in Integrations for search volumes'}>—</span>),
-      sortAccessor: (r) => volumes[r.kw] ?? -1,
-    },
+    { key: 'volume', header: 'Vol.', width: COL.vol, className: 'text-right', cell: (r) => volCell(r.kw), sortAccessor: (r) => volumes[r.kw] ?? -1 },
   ];
 
   return (
     <aside className="flex h-full w-[520px] shrink-0 flex-col border border-r-0 border-slate-200 bg-white">
       <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5">
         <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700">Keywords</div>
+        {/* THE VOLUME UPDATE (owner order): one deliberate press re-fetches
+            search volumes from Ahrefs for every listed keyword — never on a
+            timer, credits respected. */}
+        <button
+          type="button"
+          onClick={() => fetchVolumes(
+            [...selectedRows.map((r) => r.kw), ...(rows ?? []).map((r) => r.query), ...(ideas ?? [])].slice(0, 20),
+            { refresh: true },
+          )}
+          title="Update search volumes from Ahrefs for the listed keywords (uses Ahrefs credits)"
+          className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary"
+        >
+          {volumesMutation.isPending
+            ? <Loader2 className="h-3 w-3 animate-spin text-primary" />
+            : <TrendingUp className="h-3 w-3" />}
+        </button>
         <button
           type="button"
           onClick={onClose}
@@ -454,7 +486,7 @@ export function KeywordsDrawer({
                 defaultSortKey="impressions"
                 defaultSortDir="desc"
                 layoutKey="optimizer-kw-drawer"
-                filterDefs={RANKING_FILTER_DEFS}
+                filterDefs={rankingFilterDefs}
                 emptyMessage="No keywords in this window — widen the days or remove the filters."
               />
             )}
@@ -488,6 +520,8 @@ export function KeywordsDrawer({
                 rowKey={(r) => r.kw}
                 defaultSortKey="volume"
                 defaultSortDir="desc"
+                layoutKey="optimizer-kw-ideas"
+                filterDefs={ideaFilterDefs}
                 emptyMessage="No ideas for this seed — try another word."
               />
             )}

@@ -25,9 +25,12 @@ class PCM_Keywords_Service
      * @param string $query Search term.
      * @param string $lang  Language code (e.g. 'en', 'sv').
      * @param string $gl    Country code (e.g. 'us', 'se').
-     * @return array List of suggestion strings.
+     * @return array|WP_Error Suggestion strings, or the TRANSPORT failure —
+     *                        an unreachable Google must never read as "no
+     *                        results" (proven live 2026-07-14: timeouts were
+     *                        served as empty successes).
      */
-    public static function google_suggest(string $query, string $lang = 'en', string $gl = ''): array
+    public static function google_suggest(string $query, string $lang = 'en', string $gl = ''): array|WP_Error
     {
         $url = add_query_arg(
             array_filter([
@@ -46,7 +49,15 @@ class PCM_Keywords_Service
 
         if (is_wp_error($response)) {
             error_log('PCM Keywords: Google suggest wp_remote_get failed — ' . $response->get_error_message());
-            return [];
+            return new WP_Error(
+                'pcm_kw_suggest_unreachable',
+                sprintf(
+                    /* translators: %s: transport error message */
+                    __('Google suggestions could not be reached from this server: %s', 'power-creatives'),
+                    $response->get_error_message()
+                ),
+                ['status' => 502]
+            );
         }
 
         $body = wp_remote_retrieve_body($response);
@@ -227,6 +238,11 @@ class PCM_Keywords_Service
         foreach ($prefixes as $i => $prefix) {
             $query       = $prefix . ' ' . $seed;
             $suggestions = self::google_suggest($query, $lang, $gl);
+            if (is_wp_error($suggestions)) {
+                // The batch tolerates per-prefix failures BY DESIGN (logged
+                // by google_suggest) — one dead prefix never kills the run.
+                $suggestions = [];
+            }
 
             $newCount = 0;
             if (!empty($suggestions)) {

@@ -295,9 +295,13 @@ class PCM_Optimizer_Service
      *
      * @param string[] $keywords      Sanitized keyword list.
      * @param callable $fetch_missing fn(string[] $missing): ?array
+     * @param bool     $refresh       Skip cache reads — the owner's UPDATE
+     *                                button: a deliberate re-fetch of all.
+     * @param bool     $cached_only   Never call Ahrefs — cache hits only
+     *                                (auto-fills on scans stay credit-free).
      * @return array{volumes: array<string, int|null>, hasKey: bool}
      */
-    public static function keyword_volumes(array $keywords, callable $fetch_missing): array
+    public static function keyword_volumes(array $keywords, callable $fetch_missing, bool $refresh = false, bool $cached_only = false): array
     {
         $map = get_option(self::KW_VOLUME_OPTION);
         if (!is_array($map)) {
@@ -307,7 +311,7 @@ class PCM_Optimizer_Service
         $volumes  = array();
         $missing  = array();
         foreach ($keywords as $kw) {
-            $entry = $map[$kw] ?? null;
+            $entry = $refresh ? null : ($map[$kw] ?? null);
             if (is_array($entry) && ($now - (int) ($entry['fetchedAt'] ?? 0)) < self::KW_VOLUME_TTL) {
                 $volumes[$kw] = $entry['volume'];
             } else {
@@ -315,6 +319,12 @@ class PCM_Optimizer_Service
             }
         }
         $has_key = true;
+        if ($cached_only) {
+            foreach ($missing as $kw) {
+                $volumes[$kw] = null; // not cached, not fetched — free by design
+            }
+            return array('volumes' => $volumes, 'hasKey' => $has_key);
+        }
         if (!empty($missing)) {
             $fetched = $fetch_missing($missing);
             if ($fetched === null) {

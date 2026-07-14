@@ -100,6 +100,11 @@ class PCM_REST_Keywords extends PCM_REST_Base
 
         // Single query proxy — frontend handles batching for progressive UX
         $suggestions = PCM_Keywords_Service::google_suggest($query, $lang, $gl);
+        if (is_wp_error($suggestions)) {
+            // An unreachable Google is an ERROR, never an empty result
+            // (proven live 2026-07-14: timeouts read as "zero results").
+            return $this->error($suggestions->get_error_message(), 502);
+        }
 
         return $this->success([
             'query'       => $query,

@@ -64,7 +64,9 @@ class PCM_REST_Optimizer extends PCM_REST_Base
                 $keywords[] = $clean;
             }
         }
-        $keywords = array_slice($keywords, 0, 20);
+        $keywords    = array_slice($keywords, 0, 20);
+        $refresh     = is_array($p) && !empty($p['refresh']);
+        $cached_only = is_array($p) && !empty($p['cachedOnly']);
         if (empty($keywords)) {
             return $this->success(array('volumes' => (object) array(), 'hasKey' => true));
         }
@@ -86,7 +88,7 @@ class PCM_REST_Optimizer extends PCM_REST_Base
                 $out[$kw] = isset($enriched[$kw]['volume']) ? (int) $enriched[$kw]['volume'] : null;
             }
             return $out;
-        });
+        }, $refresh, $cached_only);
 
         return $this->success($result);
     }
