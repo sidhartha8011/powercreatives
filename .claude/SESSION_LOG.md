@@ -7739,3 +7739,13 @@ of a bare syntax error. Verified live: raw invoke honors cap exactly (completion
 finish_reason=length); invoke_json under a 90-token cap returned a 1418-char field — only
 possible via the doubled retry — proving the rescue end-to-end. Suite 319/3-known unchanged.
 Not committed.
+
+## 2026-07-14 — Pulled + merged teammate's optimizer arc (36 commits)
+Committed our 5 pending features first (recurrence, parent reapply, compact dialog+coupling,
+LLM timeouts, truncation rescue — one commit), then merged origin/feat/seo-suite-port: ZERO
+conflicts (their optimizer.* trpc block + our strategy.* entries auto-merged; sites/controller
+carries all four route sets). Incoming: SEO page-editor arc + new optimizer module
+(teachers/analyze), DB → 1.42.0 (their convergence bump above both parallel lines).
+Verified per their ask: full PHPUnit 319 / exactly the 3 known failures; their standalone
+harness 88/88 on the merged tree; tsc 59; build ✓; real-WP loaded once → pcm_db_version
+stamped 1.42.0, optimizer routes registered. Pushed back to origin (standing workflow).
