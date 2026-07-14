@@ -1764,7 +1764,7 @@ export function SEOModule() {
             onPreview: pageEditRow.permalink ? () => setPreviewRow(pageEditRow) : undefined,
             // The row's keyword fields seed the editor's keyword drawer.
             primaryKeyword: pageEditRow.primaryKeyword || undefined,
-            metaKeywords: pageEditRow.metaKeywords || undefined,
+            supportingKeyword: pageEditRow.supportingKeyword || undefined,
           }}
           onClose={() => setPageEditRow(null)}
           onSaved={() => {}}

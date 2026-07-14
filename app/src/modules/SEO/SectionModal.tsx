@@ -115,7 +115,7 @@ export interface SectionModalProps {
   page?: {
     title: string; editUrl?: string; date?: string; permalink?: string; onPreview?: () => void;
     /** The row's keyword fields — the keyword drawer's initial values. */
-    primaryKeyword?: string; metaKeywords?: string;
+    primaryKeyword?: string; supportingKeyword?: string;
   };
   /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
@@ -126,6 +126,13 @@ export interface SectionModalProps {
 }
 
 const WIDTH = 440;
+
+/** The page card's effective width — ONE source of truth. Provably equal
+ *  to the former width/minWidth/maxWidth trio (CSS resolves width → the
+ *  max-width cap → the min-width floor, and min-width wins): the card takes
+ *  it as its width, and the keyword drawer anchors to the card's left edge
+ *  with the SAME expression — derived, never mirrored. */
+const PAGE_CARD_WIDTH = 'max(720px, min(980px, 94vw, 100vw - 32px))';
 
 /** Page mode's OWN reading scale (owner order U2): the document must read
  *  like the live page — real paragraph air, stepped heading sizes — while
@@ -700,8 +707,10 @@ export function SectionModal({
   //    EVERY run (owner law 2026-07-13). ──
   const [keywordsOpen, setKeywordsOpen] = useState(false);
   const [primaryKw, setPrimaryKw] = useState(page?.primaryKeyword ?? '');
-  const [metaKw, setMetaKw] = useState(page?.metaKeywords ?? '');
+  const [supportingKw, setSupportingKw] = useState(page?.supportingKeyword ?? '');
   const kwBucket = useKeywordBucket(typeof siteId === 'number' ? siteId : 0, postId, isPage && !readOnly);
+  /** The drawer floats OUTSIDE the card — the outside-click save must know it. */
+  const drawerRef = useRef<HTMLDivElement>(null);
   const brandMutation = trpc.sites.update.useMutation();
   const pageTypeMutation = trpc.seo.remoteSavePageType.useMutation();
   const pickBrand = (id: string) => {
@@ -893,6 +902,7 @@ export function SectionModal({
     const onDown = (e: PointerEvent) => {
       const t = e.target as HTMLElement;
       if (rootRef.current?.contains(t)) return;
+      if (drawerRef.current?.contains(t)) return; // the keyword drawer floats outside the card
       if (t.closest('[data-sonner-toaster]')) return; // toasts are not "outside"
       if (isDirty()) void save().then((ok) => { if (ok) onClose(); });
       else onClose();
@@ -1400,11 +1410,37 @@ export function SectionModal({
     {/* Page mode: dimmed + blurred backdrop (clicks bubble to the document —
         the existing outside-click flow is untouched). */}
     {isPage && <div className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-sm" />}
+    {/* ── THE KEYWORD DRAWER: slides OUT from under the card's LEFT edge —
+           the content column is never squeezed and the card never moves.
+           A SIBLING of the card (the card clips its children), rendered
+           BEFORE it so the card's shadow owns the seam; anchored with the
+           card's OWN width constant (derived, never mirrored); exempted
+           from the outside-click save via drawerRef. ── */}
+    {isPage && !readOnly && keywordsOpen && pageReady && typeof siteId === 'number' && (
+      <div
+        ref={drawerRef}
+        className="fixed z-40 overflow-hidden rounded-l-2xl bg-white shadow-2xl animate-in fade-in slide-in-from-right-10 duration-300"
+        style={{ right: `calc(50% + (${PAGE_CARD_WIDTH}) / 2)`, top: '7vh', height: '86vh' }}
+      >
+        <KeywordsDrawer
+          siteId={siteId}
+          postId={postId}
+          type={type}
+          pageUrl={page?.permalink ?? ''}
+          primaryKeyword={primaryKw}
+          onPrimaryChange={setPrimaryKw}
+          supportingKeywords={supportingKw}
+          onSupportingChange={setSupportingKw}
+          bucket={kwBucket}
+          onClose={() => setKeywordsOpen(false)}
+        />
+      </div>
+    )}
     <div
       ref={rootRef}
       className={`fixed z-40 flex flex-col overflow-hidden bg-white ${isPage ? 'rounded-2xl shadow-2xl' : 'rounded-lg border border-slate-200 shadow-xl'}`}
       style={isPage
-        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 'min(980px, 94vw)', minWidth: 720, height: '90vh', maxWidth: 'calc(100vw - 32px)' }
+        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: PAGE_CARD_WIDTH, height: '90vh' }
         : { left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
       role="dialog"
       aria-label={title}
@@ -1642,22 +1678,6 @@ export function SectionModal({
              lives in the SELECT-TEXT popover (owner correction — no permanent
              toolbar): select text → the floating B/I/U/Link/H1/H2/• menu. ── */}
       <div className={isPage ? 'flex min-h-0 flex-1' : 'contents'}>
-      {/* ── THE KEYWORD DRAWER (left): primary/supporting + the bucket that
-             rides every optimize run + the page's own GSC queries. ── */}
-      {isPage && !readOnly && keywordsOpen && pageReady && typeof siteId === 'number' && (
-        <KeywordsDrawer
-          siteId={siteId}
-          postId={postId}
-          type={type}
-          pageUrl={page?.permalink ?? ''}
-          primaryKeyword={primaryKw}
-          onPrimaryChange={setPrimaryKw}
-          metaKeywords={metaKw}
-          onMetaChange={setMetaKw}
-          bucket={kwBucket}
-          onClose={() => setKeywordsOpen(false)}
-        />
-      )}
       <div
         className={`${isPage ? 'min-h-0 flex-1 px-8 py-4' : 'h-[280px] px-3 py-2'} overflow-auto bg-white`}
         title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}

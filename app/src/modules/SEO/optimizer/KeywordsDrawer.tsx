@@ -32,9 +32,9 @@ interface KeywordsDrawerProps {
   pageUrl: string;
   primaryKeyword: string;
   onPrimaryChange: (value: string) => void;
-  /** Supporting keywords (the SEO table's metaKeywords field), comma-separated. */
-  metaKeywords: string;
-  onMetaChange: (value: string) => void;
+  /** Supporting keywords — the SEO table's own `supportingKeyword` field. */
+  supportingKeywords: string;
+  onSupportingChange: (value: string) => void;
   bucket: KeywordBucket;
   onClose: () => void;
 }
@@ -56,7 +56,7 @@ const isRelated = (query: string, primary: string): boolean => {
 const NOISE_FLOOR = 100; // impressions — the default "no crap" filter, removable
 
 export function KeywordsDrawer({
-  siteId, postId, type, pageUrl, primaryKeyword, onPrimaryChange, metaKeywords, onMetaChange, bucket, onClose,
+  siteId, postId, type, pageUrl, primaryKeyword, onPrimaryChange, supportingKeywords, onSupportingChange, bucket, onClose,
 }: KeywordsDrawerProps) {
   const [days, setDays] = useState(30);
   const [relatedOnly, setRelatedOnly] = useState(false);
@@ -66,7 +66,7 @@ export function KeywordsDrawer({
 
   // Field saves ride the EXISTING SEO cell route — one write path per field.
   const saveCell = trpc.seo.remoteSaveCell.useMutation();
-  const saveField = (field: 'primaryKeyword' | 'metaKeywords', value: string) => {
+  const saveField = (field: 'primaryKeyword' | 'supportingKeyword', value: string) => {
     saveCell.mutateAsync({ siteId, postId, field, value, type })
       .then(() => toast.success(field === 'primaryKeyword' ? 'Primary keyword saved.' : 'Supporting keywords saved.'))
       .catch((e: unknown) => toast.error(e instanceof Error ? e.message : 'Could not save the keyword'));
@@ -126,7 +126,7 @@ export function KeywordsDrawer({
   ];
 
   return (
-    <aside className="flex w-[300px] shrink-0 flex-col border-r border-slate-200 bg-slate-50/60">
+    <aside className="flex h-full w-[300px] shrink-0 flex-col border border-r-0 border-slate-200 bg-white">
       <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5">
         <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700">Keywords</div>
         <button
@@ -153,9 +153,9 @@ export function KeywordsDrawer({
         <label className="block">
           <span className="text-[10px] font-medium text-slate-500">Supporting keywords</span>
           <input
-            value={metaKeywords}
-            onChange={(e) => onMetaChange(e.target.value)}
-            onBlur={(e) => saveField('metaKeywords', e.target.value.trim())}
+            value={supportingKeywords}
+            onChange={(e) => onSupportingChange(e.target.value)}
+            onBlur={(e) => saveField('supportingKeyword', e.target.value.trim())}
             placeholder="Comma-separated"
             className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
           />
