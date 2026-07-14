@@ -118,6 +118,8 @@ export interface SectionModalProps {
     title: string; editUrl?: string; date?: string; permalink?: string; onPreview?: () => void;
     /** The row's keyword fields — the keyword drawer's initial values. */
     primaryKeyword?: string; supportingKeyword?: string;
+    /** The row's WP status — drafts open as previews, never dead links. */
+    status?: string;
   };
   /** The site's pages — the keyword drawer's page picker (the table's rows). */
   sitePages?: Array<{ id: number; title: string; permalink: string }>;
@@ -1589,10 +1591,16 @@ export function SectionModal({
             )}
             {page?.permalink && (
               <a
-                href={page.permalink}
+                // A DRAFT has no public URL (WP hands drafts a ?page_id= link
+                // that shows nothing to a visitor) — Open carries preview=true
+                // so the REAL page renders as a logged-in preview. The true
+                // permalink itself stays untouched (the GSC drawer filters on it).
+                href={page.status && page.status !== 'publish'
+                  ? `${page.permalink}${page.permalink.includes('?') ? '&' : '?'}preview=true`
+                  : page.permalink}
                 target="_blank"
                 rel="noopener noreferrer"
-                title="Open the live page in a new tab"
+                title={page.status && page.status !== 'publish' ? 'Open this draft as a preview in a new tab' : 'Open the live page in a new tab'}
                 className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
               >
                 <ExternalLink className="h-3 w-3" /> Open

@@ -13,6 +13,7 @@ import {
   type KeyboardEvent, type PointerEvent as ReactPointerEvent,
   type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes, type TableHTMLAttributes,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, ChevronDown, ChevronRight, RefreshCw, Copy,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
@@ -1765,6 +1766,8 @@ export function SEOModule() {
             // The row's keyword fields seed the editor's keyword drawer.
             primaryKeyword: pageEditRow.primaryKeyword || undefined,
             supportingKeyword: pageEditRow.supportingKeyword || undefined,
+            // Drafts have no public URL — Open needs to know (preview=true).
+            status: pageEditRow.status || undefined,
           }}
           // The drawer's page picker chooses which page's GSC data to read.
           sitePages={rows
@@ -1775,8 +1778,11 @@ export function SEOModule() {
         />
       )}
 
-      {/* Inline page preview — popup (not a new tab). */}
-      {previewRow && previewRow.permalink && (
+      {/* Inline page preview — popup (not a new tab). PORTALED to body:
+          the page editor is body-portaled too, and a preview trapped in
+          the app tree's stacking context painted BEHIND it (owner find
+          2026-07-14) — at body level its z-50 wins over the editor's z-40. */}
+      {previewRow && previewRow.permalink && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
           onClick={() => setPreviewRow(null)}
@@ -1816,7 +1822,8 @@ export function SEOModule() {
               <iframe src={previewRow.permalink} title="Page preview" className="h-full w-full flex-1 bg-white" />
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       </>
       )}
