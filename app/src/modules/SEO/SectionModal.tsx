@@ -57,7 +57,7 @@ import { trpc } from '@/lib/trpc';
 import { ModelDropdown, PillButton, PillSplitButton } from '@/components/shared';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import {
-  diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
+  diffBlocksHtml, splitDocSections, splitReviewSections, stripDiffHtml, type DocSection,
 } from './word-diff';
 import { OptimizerRail } from './optimizer/OptimizerRail';
 import { KeywordsDrawer } from './optimizer/KeywordsDrawer';
@@ -253,6 +253,19 @@ const SectionBlocks = Extension.create({
             renderHTML: (attrs: Record<string, unknown>) =>
               attrs['data-pcm-origin'] ? { 'data-pcm-origin': String(attrs['data-pcm-origin']) } : {},
           },
+          // REVIEW IDENTITY (2026-07-14): a section is identified by this
+          // anchor, never by counting headings — the count changes when the
+          // AI legitimately ADDS sections mid-review (subtopic coverage) and
+          // counted indexes then write to shifted ranges. Stamped at review
+          // start, kept alive by the one writer, removed at review end
+          // (+ server strip belt) — it can never reach a save.
+          'data-pcm-review-id': {
+            default: null,
+            keepOnSplit: false,
+            parseHTML: (el: HTMLElement) => el.getAttribute('data-pcm-review-id'),
+            renderHTML: (attrs: Record<string, unknown>) =>
+              attrs['data-pcm-review-id'] != null ? { 'data-pcm-review-id': String(attrs['data-pcm-review-id']) } : {},
+          },
         },
       },
     ];
@@ -294,11 +307,13 @@ const ReviewControls = Extension.create({
             const { sections, resolve } = ext.storage;
             if (!sections.length || !resolve) return DecorationSet.empty;
             const decos: Decoration[] = [];
-            let h = -1;
             state.doc.forEach((node, pos) => {
               if (node.type.name !== 'heading') return;
-              h++;
-              const i = h;
+              // Identity law (2026-07-14): the chip belongs to the heading's
+              // ANCHOR, never to its ordinal — the count changes mid-review.
+              const rid = (node.attrs['data-pcm-review-id'] as string | null) ?? null;
+              if (rid === null) return;
+              const i = Number(rid);
               if (sections[i] !== 'diff') return;
               decos.push(Decoration.widget(pos + 1, () => {
                 const wrap = document.createElement('span');
@@ -469,6 +484,18 @@ function canonicalAiHtml(editor: Editor, html: string): string {
  *  (owner law: amber = edited, sky = added — matches what the server emits
  *  on the next load). `insert` stays platform-added; a version-loaded doc
  *  carries no origins and keeps stating that fact. */
+/** Stamp the review anchor onto the FIRST heading of a section's html.
+ *  Called only by the ONE writer — identity survives every landing and
+ *  resolution no matter how many headings the content carries. */
+function stampReviewId(html: string, i: number): string {
+  const el = document.createElement('div');
+  el.innerHTML = html;
+  const heading = el.querySelector('h1,h2,h3,h4,h5,h6');
+  if (heading === null) return html;
+  heading.setAttribute('data-pcm-review-id', String(i));
+  return el.innerHTML;
+}
+
 function restateOrigin(html: string, sourceHtml: string, changed: boolean): string {
   const src = document.createElement('div');
   src.innerHTML = sourceHtml;
@@ -962,24 +989,33 @@ export function SectionModal({
   //    through applySection on its OWN range. The old whole-doc rebuilder is
   //    dead: it overwrote the source of truth from stale copies, which would
   //    wipe the user's manual edits (and reset cursor/scroll on every event).
+  /** Section i's live range BY ANCHOR (identity law 2026-07-14): from its
+   *  id-stamped heading to the NEXT id-carrying heading — id-LESS headings
+   *  (sections the AI added mid-review) belong to the section that produced
+   *  them. Counting headings is banned here: the count changes mid-review. */
   const sectionRange = (i: number): { from: number; to: number } | null => {
     if (!editor) return null;
-    let h = -1;
+    const id = String(i);
     let from = -1;
-    let to = editor.state.doc.content.size;
+    let to = -1;
     editor.state.doc.forEach((node, pos) => {
       if (node.type.name !== 'heading') return;
-      h++;
-      if (h === i) from = pos;
-      if (h === i + 1) to = pos;
+      const rid = (node.attrs['data-pcm-review-id'] as string | null) ?? null;
+      if (from < 0) {
+        if (rid === id) from = pos;
+      } else if (to < 0 && rid !== null) {
+        to = pos;
+      }
     });
-    return from >= 0 ? { from, to: Math.max(from, to) } : null;
+    if (from < 0) return null;
+    return { from, to: to < 0 ? editor.state.doc.content.size : to };
   };
   const applySection = (i: number, html: string) => {
     const r = sectionRange(i);
     if (!editor || !r) return;
     // No .focus(): a landing suggestion must never steal the user's caret.
-    editor.chain().insertContentAt({ from: r.from, to: r.to }, html).run();
+    // The anchor rides EVERY write — identity survives by construction.
+    editor.chain().insertContentAt({ from: r.from, to: r.to }, stampReviewId(html, i)).run();
   };
   /** THE content oracle (review-integrity, 2026-07-13): what a section's
    *  decision keeps. UNTOUCHED since the suggestion landed (live == baseline,
@@ -993,7 +1029,7 @@ export function SectionModal({
    *  none are live. */
   const effectiveContent = (i: number): { html: string; imgs: string } => {
     const s = reviewRef.current?.[i];
-    const live = editor && s ? splitDocSections(editor.getHTML()).sections[i] : undefined;
+    const live = editor && s ? splitReviewSections(editor.getHTML())[String(i)] : undefined;
     const imgs = (live && live.imgs.length > 0 ? live.imgs : s?.imgs ?? []).join('');
     if (!s || !live) return { html: s?.ai ?? s?.html ?? '', imgs };
     const untouched = s.baseline !== undefined && live.html === s.baseline;
@@ -1032,6 +1068,20 @@ export function SectionModal({
       }
     }
     const skip = (i: number): boolean => !!scope && !inScope.has(i);
+    // IDENTITY ANCHORS (2026-07-14): stamp every section heading with its
+    // review id in ONE transaction — the heading ORDINAL is trusted only
+    // HERE, at t0, where it still equals the captured section index. From
+    // now on the AI may add sections freely; identity never counts again.
+    {
+      const tr = editor.state.tr;
+      let h = -1;
+      editor.state.doc.forEach((node, pos) => {
+        if (node.type.name !== 'heading') return;
+        h++;
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, 'data-pcm-review-id': String(h) });
+      });
+      editor.view.dispatch(tr);
+    }
     setAskOpen(false);
     const initial = sections.map((s, i) => ({ ...s, status: (skip(i) ? 'clean' : 'pending') as ReviewStatus }));
     reviewRef.current = initial; // workers may resolve before the sync effect runs
@@ -1059,7 +1109,7 @@ export function SectionModal({
           }
           // Baseline = the landed view read back from the editor (surgery is
           // synchronous) — effectiveContent's untouched-detector.
-          const baseline = changed ? splitDocSections(editor.getHTML()).sections[i]?.html : undefined;
+          const baseline = changed ? splitReviewSections(editor.getHTML())[String(i)]?.html : undefined;
           setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
             ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value, genModel, baseline } : { ...s, status: 'clean' as ReviewStatus })
             : s)) ?? cur);
@@ -1081,6 +1131,15 @@ export function SectionModal({
   const resolveSection = (i: number, action: 'accept' | 'reject') => {
     const s = reviewRef.current?.[i];
     if (!s || s.status !== 'diff') return;
+    if (sectionRange(i) === null) {
+      // The user deleted the section (its anchor is gone): resolve honestly
+      // — never write to a guessed range.
+      toast.info('That section no longer exists in the document — nothing to apply.');
+      setReview((cur) => cur?.map((x, k) => (k === i && x.status === 'diff'
+        ? { ...x, status: 'rejected' as ReviewStatus }
+        : x)) ?? cur);
+      return;
+    }
     const { html: kept, imgs } = effectiveContent(i);
     if (action === 'accept') {
       applySection(i, restateOrigin(kept, s.html, htmlText(kept) !== htmlText(s.html)) + imgs);
@@ -1110,6 +1169,13 @@ export function SectionModal({
   const reviseSection = async (i: number, note: string) => {
     const s = reviewRef.current?.[i];
     if (!editor || !s || s.status !== 'diff') return;
+    if (sectionRange(i) === null) {
+      toast.info('That section no longer exists in the document — nothing to revise.');
+      setReview((cur) => cur?.map((x, k) => (k === i && x.status === 'diff'
+        ? { ...x, status: 'rejected' as ReviewStatus }
+        : x)) ?? cur);
+      return;
+    }
     // The draft the AI builds on = the SAME oracle Accept uses: clean
     // formatted for untouched sections, the user's words for edited ones.
     const draft = effectiveContent(i).html;
@@ -1127,7 +1193,7 @@ export function SectionModal({
       if (value && htmlText(value) !== htmlText(s.html)) {
         applySection(i, diffBlocksHtml(s.html, value) + s.imgs.join(''));
         // Every landing re-arms the untouched-detector (initial + each revise).
-        const baseline = splitDocSections(editor.getHTML()).sections[i]?.html;
+        const baseline = splitReviewSections(editor.getHTML())[String(i)]?.html;
         setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'diff' as ReviewStatus, ai: value, genModel, baseline } : x)) ?? cur);
       } else {
         applySection(i, s.html + s.imgs.join(''));
@@ -1178,18 +1244,25 @@ export function SectionModal({
   }, [editor, isPage, flashIdx]);
   const focusSection = (i: number) => {
     if (!editor) return;
-    let h = -1;
+    // Locate by ANCHOR (identity law), then translate to the heading's
+    // CURRENT ordinal — the flash decoration indexes every heading.
+    const id = String(i);
     let target: number | null = null;
+    let ordinal = -1;
+    let flashOrdinal: number | null = null;
     editor.state.doc.forEach((node, pos) => {
-      if (node.type.name === 'heading') {
-        h++;
-        if (h === i && target === null) target = pos;
+      if (node.type.name !== 'heading') return;
+      ordinal++;
+      if (target === null && (((node.attrs['data-pcm-review-id'] as string | null) ?? null) === id)) {
+        target = pos;
+        flashOrdinal = ordinal;
       }
     });
-    if (target === null) return;
+    if (target === null || flashOrdinal === null) return;
     (editor.view.nodeDOM(target) as HTMLElement | null)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setFlashIdx(i);
-    window.setTimeout(() => setFlashIdx((cur) => (cur === i ? null : cur)), 2000);
+    const f = flashOrdinal;
+    setFlashIdx(f);
+    window.setTimeout(() => setFlashIdx((cur) => (cur === f ? null : cur)), 2000);
   };
 
   // Completion watcher (the surgery engine replaced the old whole-doc
@@ -1200,6 +1273,17 @@ export function SectionModal({
     reviewRef.current = review;
     if (!editor || !review) return;
     if (review.every((s) => s.status !== 'pending' && s.status !== 'diff')) {
+      // The anchors die WITH the review (one transaction) — a save can never
+      // carry them; the server strip is only the belt.
+      const tr = editor.state.tr;
+      let stamped = false;
+      editor.state.doc.forEach((node, pos) => {
+        if (node.type.name === 'heading' && node.attrs['data-pcm-review-id'] != null) {
+          tr.setNodeMarkup(pos, undefined, { ...node.attrs, 'data-pcm-review-id': null });
+          stamped = true;
+        }
+      });
+      if (stamped) editor.view.dispatch(tr);
       const accepted = review.filter((s) => s.status === 'accepted').length;
       setReview(null);
       if (accepted > 0) toast.success(`AI review done — ${accepted} section${accepted === 1 ? '' : 's'} updated. Press Save to make it live.`);

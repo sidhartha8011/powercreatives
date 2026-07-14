@@ -4690,9 +4690,11 @@ class PCM_SEO_Service
      */
     public function save_page_edits(int $user_id, object $site, int $post_id, string $html)
     {
-        // Section-origin marker (frames): emit-only editor metadata — content
-        // identity, rules and version snapshots must never carry it.
-        $html = (string) preg_replace('#\s*data-pcm-origin="[^"]*"#i', '', $html);
+        // Editor-only heading metadata (origin lanes + review identity
+        // anchors): content identity, rules and version snapshots must never
+        // carry either — the review clears its anchors client-side, this is
+        // the belt.
+        $html = (string) preg_replace('#\s*data-pcm-(?:origin|review-id)="[^"]*"#i', '', $html);
         $inv = self::served_inventory($site, $post_id, $user_id);
         if ($inv === null || $inv['view'] !== 'served') {
             return new WP_Error(
