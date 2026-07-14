@@ -292,6 +292,42 @@ class PCM_Activator
                 );
             }
 
+            // v1.37.0: strategy scheduling. Adds strategy_items.scheduledDate (additive
+            // via dbDelta above, indexed for the due-item cron scanner) — no bespoke
+            // migration method needed.
+
+            // v1.38.0: strategy → Approvals hand-off. Adds strategy_items.setId
+            // (additive via dbDelta above — no bespoke migration method needed) and a
+            // new automation action ('strategy.publish_on_approval') that advances a
+            // strategy item + auto-publishes it when its linked approval set is fully
+            // approved. Back-fill the new default rule for EXISTING users (same
+            // idempotent seed_for_user() pattern as v1.19/v1.22.1/v1.30.0 above — new
+            // users get it automatically via PCM_REST_Base::get_current_pcm_user()).
+            if (version_compare($installed_version, '1.38.0', '<')
+                && class_exists('PCM_Automation_Seeds')) {
+                global $wpdb;
+                $users_table = PCM_Schema::table('users');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $user_ids = $wpdb->get_col("SELECT id FROM {$users_table}");
+                foreach (($user_ids ?: array()) as $uid) {
+                    PCM_Automation_Seeds::seed_for_user((int) $uid);
+                }
+            }
+
+            // v1.39.0: volume/difficulty carried onto strategy items. Adds
+            // strategy_items.volume + strategy_items.difficulty (display-only SEO
+            // metrics from the Keyword Explorer). Both purely-additive nullable
+            // columns, applied by the create_tables() dbDelta above — no bespoke
+            // migration method needed (same precedent as scheduledDate v1.37.0 and
+            // setId v1.38.0 in this same table).
+
+            // v1.40.0: CONVERGENCE bump after merging two parallel lines of work
+            // that both used 1.37–1.39 for different additive changes (strategy
+            // item columns on one side; SEO dynamic-rules/redirects tables on the
+            // other). An install stamped 1.39.0 by either build re-runs the
+            // create_tables() dbDelta once here and picks up whichever side it
+            // missed. Purely additive — no bespoke migration method.
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

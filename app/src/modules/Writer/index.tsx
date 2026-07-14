@@ -14,7 +14,7 @@ import {
   ResizableHandle,
 } from '@/components/ui/resizable';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { activeDocumentAtom, addDocumentsAtom, writerSelectedModelAtom, writerDocumentsAtom, selectedDocumentIdsAtom } from './store';
+import { activeDocumentAtom, activeDocumentIdAtom, addDocumentsAtom, writerSelectedModelAtom, writerDocumentsAtom, selectedDocumentIdsAtom } from './store';
 import type { WriterDocument } from './store';
 import { DocumentQueuePanel } from './components/DocumentQueuePanel';
 import { ContextGenerationPanel } from './components/ContextGenerationPanel';
@@ -59,11 +59,31 @@ export function WriterModule() {
   const setSelectedModel = useSetAtom(writerSelectedModelAtom);
   const writerDocs = useAtomValue(writerDocumentsAtom);
   const selectedIds = useAtomValue(selectedDocumentIdsAtom);
-  const { state, dispatch } = useApp();
+  const setActiveDocId = useSetAtom(activeDocumentIdAtom);
+  const setSelectedIds = useSetAtom(selectedDocumentIdsAtom);
+  const { state, dispatch, consumePendingWriterArticleId } = useApp();
   const { settings } = useSettings();
 
   // ── DB Persistence — loads from server, autosaves changes, syncs creates/deletes ──
   const { isLoading: isPersistenceLoading } = useWriterPersistence();
+
+  // ── Cross-module: open one article (e.g. from the Strategies list "View"
+  //    button). Reacts to `writerDocs` rather than the persistence hook's
+  //    isLoading flag — that flag flips false one render before the loaded
+  //    articles actually land in writerDocumentsAtom, which would otherwise
+  //    consume (and lose) the one-shot pending id before the match could be
+  //    found. Only consumes it at the exact moment the target doc is present;
+  //    if it never appears the id just stays inert — no wrong selection. ──
+  useEffect(() => {
+    const pendingId = state.pendingWriterArticleId;
+    if (pendingId === null) return;
+    const targetId = String(pendingId);
+    if (writerDocs.some((d) => d.id === targetId)) {
+      consumePendingWriterArticleId();
+      setActiveDocId(targetId);
+      setSelectedIds([targetId]);
+    }
+  }, [state.pendingWriterArticleId, writerDocs, consumePendingWriterArticleId, setActiveDocId, setSelectedIds]);
 
   // ── Memoized calculations for approvals packaging ──
   const targetDocs = useMemo(() => {

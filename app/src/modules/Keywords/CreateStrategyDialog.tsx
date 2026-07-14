@@ -26,7 +26,16 @@ export interface StrategyPayload {
   parentTargetUrl?: string;
   parentKeyword?: string;
   publishingMode: string;
+  /** Connected site the strategy targets. Stored on every strategy; auto-publish
+   *  pushes each article here when publishingMode === 'publish'. */
+  siteId?: number;
   approvalMode: string;
+  /** AutoPress parity: generate a featured image per article at creation time. */
+  featuredImages?: boolean;
+  /** AutoPress parity: insert in-content images & charts ([IMAGE_N] media_assets). Default on. */
+  inContentMedia?: boolean;
+  /** AutoPress parity: research the topic (Google-grounded Gemini) before writing. */
+  research?: boolean;
   interlinksConfig?: any;
   scheduleConfig?: any;
 }
@@ -63,8 +72,12 @@ export function CreateStrategyDialog({
   const [autoInterlink, setAutoInterlink] = useState(false);
   const [interlinkQuantity, setInterlinkQuantity] = useState(3);
   const [interlinkMode, setInterlinkMode] = useState('auto');
+  const [featuredImages, setFeaturedImages] = useState(true);
+  const [inContentMedia, setInContentMedia] = useState(true);
+  const [research, setResearch] = useState(true);
 
   const [publishingMode, setPublishingMode] = useState('draft');
+  const [siteId, setSiteId] = useState<string>('');
   const [approvalMode, setApprovalMode] = useState('none');
   const [frequency, setFrequency] = useState('weekly');
   const [startDate, setStartDate] = useState('');
@@ -82,7 +95,11 @@ export function CreateStrategyDialog({
       setAutoInterlink(false);
       setInterlinkQuantity(3);
       setInterlinkMode('auto');
+      setFeaturedImages(true);
+      setInContentMedia(true);
+      setResearch(true);
       setPublishingMode('draft');
+      setSiteId('');
       setApprovalMode('none');
       setFrequency('weekly');
       setStartDate('');
@@ -94,6 +111,20 @@ export function CreateStrategyDialog({
     { type: 'text' },
     { staleTime: 30_000 },
   );
+  const { data: sites = [], isLoading: sitesLoading } = trpc.sites.list.useQuery(undefined, {
+    staleTime: 30_000,
+  });
+
+  // Default the Target Site to the first connected site (mirrors AutoPress, where a
+  // strategy is always bound to a site). Functional updater only fills an EMPTY
+  // selection, so it never clobbers an explicit choice nor races the open-reset effect.
+  React.useEffect(() => {
+    if (!open) return;
+    const list = sites as any[];
+    if (list.length > 0) {
+      setSiteId((cur) => cur || String(list[0].id));
+    }
+  }, [open, sites]);
 
   const handleSave = () => {
     if (!templateId) return;
@@ -111,7 +142,11 @@ export function CreateStrategyDialog({
       parentTargetUrl: hierarchyMode === 'children_only' ? parentTargetUrl : undefined,
       parentKeyword: hierarchyMode === 'parent_and_children' ? selectedKeywords[parentKeywordIndex] : undefined,
       publishingMode,
+      siteId: siteId ? parseInt(siteId, 10) : undefined,
       approvalMode,
+      featuredImages,
+      inContentMedia,
+      research,
       interlinksConfig: autoInterlink ? { mode: interlinkMode, quantity: interlinkQuantity } : undefined,
       scheduleConfig: publishingMode === 'schedule' ? { frequency, startDate } : undefined,
     });
@@ -135,6 +170,32 @@ export function CreateStrategyDialog({
               onChange={(e) => setName(e.target.value)}
               className="w-full bg-background"
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Target Site</Label>
+            <Select value={siteId} onValueChange={setSiteId}>
+              <SelectTrigger className="w-full bg-background">
+                <SelectValue placeholder={sitesLoading ? 'Loading sites…' : 'Select a connected site...'} />
+              </SelectTrigger>
+              <SelectContent>
+                {(sites as any[]).length > 0 ? (
+                  (sites as any[]).map((s) => (
+                    <SelectItem key={s.id} value={s.id.toString()}>
+                      {s.name || s.url}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <div className="p-2 text-sm text-muted-foreground text-center">
+                    No connected sites — add one in the Sites module.
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-[0.8rem] text-muted-foreground">
+              The site this strategy is for. When Publishing Mode is “Publish Automatically”, each
+              generated article is published here.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -255,9 +316,57 @@ export function CreateStrategyDialog({
           <div className="space-y-4">
             <div className="flex flex-col space-y-2">
               <div className="flex items-center space-x-2">
-                <Checkbox 
-                  id="auto-interlink" 
-                  checked={autoInterlink} 
+                <Checkbox
+                  id="featured-images"
+                  checked={featuredImages}
+                  onCheckedChange={(c) => setFeaturedImages(c as boolean)}
+                />
+                <Label htmlFor="featured-images" className="cursor-pointer font-medium leading-none">
+                  Generate featured images
+                </Label>
+              </div>
+              <p className="text-[0.8rem] text-muted-foreground pl-6">
+                Automatically generate a featured image for each article when content is generated.
+              </p>
+            </div>
+
+            <div className="flex flex-col space-y-2">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="in-content-media"
+                  checked={inContentMedia}
+                  onCheckedChange={(c) => setInContentMedia(c as boolean)}
+                />
+                <Label htmlFor="in-content-media" className="cursor-pointer font-medium leading-none">
+                  In-content images &amp; charts
+                </Label>
+              </div>
+              <p className="text-[0.8rem] text-muted-foreground pl-6">
+                Let the writer place supporting images and charts inline within each article body.
+              </p>
+            </div>
+
+            <div className="flex flex-col space-y-2">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="research-topic"
+                  checked={research}
+                  onCheckedChange={(c) => setResearch(c as boolean)}
+                />
+                <Label htmlFor="research-topic" className="cursor-pointer font-medium leading-none">
+                  Research the topic before writing (uses Google-grounded Gemini)
+                </Label>
+              </div>
+              <p className="text-[0.8rem] text-muted-foreground pl-6">
+                Summarize the current search landscape (top themes, common questions, content gaps) and feed it into generation.
+              </p>
+            </div>
+
+            <div className="flex flex-col space-y-2">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="auto-interlink"
+                  checked={autoInterlink}
                   onCheckedChange={(c) => setAutoInterlink(c as boolean)}
                 />
                 <Label htmlFor="auto-interlink" className="cursor-pointer font-medium leading-none">
@@ -318,14 +427,60 @@ export function CreateStrategyDialog({
                </Select>
             </div>
           </div>
-          
+
+          {publishingMode === 'schedule' && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Frequency</Label>
+                <Select value={frequency} onValueChange={setFrequency}>
+                  <SelectTrigger className="w-full bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all_once">All at once</SelectItem>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="every_other_day">Every other day</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="biweekly">Twice a week (~every 3 days)</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Start Date</Label>
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full bg-background"
+                />
+                <p className="text-[0.8rem] text-muted-foreground">Leave blank to start today.</p>
+              </div>
+            </div>
+          )}
+
+          {(publishingMode === 'publish' || publishingMode === 'schedule') && !siteId && (
+            <p className="text-[0.8rem] text-destructive">
+              {(sites as any[]).length > 0
+                ? `Select a Target Site above to ${publishingMode === 'schedule' ? 'schedule' : 'publish'} automatically.`
+                : `Connect a site in the Sites module to ${publishingMode === 'schedule' ? 'schedule' : 'publish'} automatically.`}
+            </p>
+          )}
+
         </div>
+
+        <p className="text-[0.8rem] text-muted-foreground pt-2">
+          Generation starts automatically in the background after creation.
+        </p>
 
         <DialogFooter className="pt-4 border-t">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={isSaving || !templateId}>
+          <Button
+            onClick={handleSave}
+            disabled={isSaving || !templateId || ((publishingMode === 'publish' || publishingMode === 'schedule') && !siteId)}
+          >
             {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             Create Strategy
           </Button>

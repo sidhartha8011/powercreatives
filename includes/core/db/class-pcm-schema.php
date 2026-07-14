@@ -393,6 +393,17 @@ class PCM_Schema
         // ── Strategy Items ──
         // Individual keyword-to-article work units within a strategy.
         // Each item tracks its own generation status independently.
+        // scheduledDate (v1.37.0): when publishingMode='schedule', the due date this
+        // item should generate+publish on; a cron scanner (PCM_Strategy_Service)
+        // queries items where scheduledDate <= now. NULL for non-scheduled items.
+        // setId (v1.38.0): when the strategy's approvalMode != 'none', links this
+        // item to the Approvals module set created for its generated article
+        // ('in_review' status). NULL until an approval set is created for it.
+        // volume/difficulty (v1.39.0): display-only SEO metrics carried from the
+        // Keyword Explorer onto each item at creation (Ahrefs search volume +
+        // keyword difficulty). Purely additive + nullable, no index — the
+        // Strategies UI surfaces them next to the keyword; nothing queries or
+        // filters on them. NULL when the source keyword was never enriched.
         $sql = "CREATE TABLE {$prefix}strategy_items (
             id int(11) NOT NULL AUTO_INCREMENT,
             strategyId int(11) NOT NULL,
@@ -402,15 +413,21 @@ class PCM_Schema
             slug varchar(512) DEFAULT NULL,
             status varchar(50) DEFAULT 'pending' NOT NULL,
             articleId int(11) DEFAULT NULL,
+            setId int(11) DEFAULT NULL,
             position int(11) DEFAULT 0 NOT NULL,
             errorMessage text DEFAULT NULL,
             config text DEFAULT NULL,
+            scheduledDate datetime DEFAULT NULL,
+            volume int(11) DEFAULT NULL,
+            difficulty int(11) DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
             KEY idx_strategyId (strategyId),
             KEY idx_userId (userId),
-            KEY idx_status (status)
+            KEY idx_status (status),
+            KEY idx_scheduledDate (scheduledDate),
+            KEY idx_setId (setId)
         ) $charset_collate;";
         dbDelta($sql);
 

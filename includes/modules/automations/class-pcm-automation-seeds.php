@@ -161,6 +161,19 @@ class PCM_Automation_Seeds
                 'config'       => array('lane' => 'launch'),
                 'inputMapping' => array(),
             ),
+            // Strategy → Approvals hand-off (v1.38.0, Step 7/Decision 2). Runs
+            // alongside the "move to Launch" rule above on the same trigger — a
+            // clean no-op for the majority of sets that aren't Strategy-linked.
+            // See strategy/automations.php + class-pcm-publish-on-approval-
+            // action-handler.php for the action itself.
+            'strategy.flow.fully_approved_publish' => array(
+                'name'         => __('Advance & publish Strategy item when fully approved', 'power-creatives'),
+                'triggerId'    => 'approvals.set_fully_approved',
+                'conditions'   => array(),
+                'actionId'     => 'strategy.publish_on_approval',
+                'config'       => array(),
+                'inputMapping' => array(),
+            ),
             'approvals.launch.webhook' => array(
                 'name'         => __('Notify team on Launch (webhook)', 'power-creatives'),
                 'triggerId'    => 'approvals.set_status_changed',
@@ -188,6 +201,16 @@ class PCM_Automation_Seeds
                 'conditions'   => array('minDays' => '3'),
                 'actionId'     => 'webhook',
                 'config'       => array('url' => '', 'secret' => ''),
+                'inputMapping' => array(),
+            ),
+            // Strategy generation finishes (Task E3) → in-app notification. Mirrors
+            // the existing 'approvals.notify.*' seeds' shape exactly.
+            'strategy.notify.completed' => array(
+                'name'         => __('Notify when a strategy finishes', 'power-creatives'),
+                'triggerId'    => 'strategy.completed',
+                'conditions'   => array(),
+                'actionId'     => 'notifications.create',
+                'config'       => array(),
                 'inputMapping' => array(),
             ),
         );

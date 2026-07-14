@@ -149,7 +149,9 @@ class PCM_REST_Image extends PCM_REST_Base
         $params = $request->get_json_params() ?? array();
 
         $prompt = sanitize_text_field($params['prompt'] ?? '');
-        $model_id = sanitize_text_field($params['model'] ?? $params['modelId'] ?? 'dall-e-3');
+        // Fallback mirrors PCM_Strategy_Image: dall-e-3 is retired on newer API
+        // accounts ("model does not exist", confirmed live on this install).
+        $model_id = sanitize_text_field($params['model'] ?? $params['modelId'] ?? 'gpt-image-1-mini');
         $provider = sanitize_text_field($params['provider'] ?? '');
 
         if (empty($prompt)) {
@@ -371,7 +373,9 @@ class PCM_REST_Image extends PCM_REST_Base
         $params = $request->get_json_params() ?? array();
 
         $prompts = $params['prompts'] ?? array();
-        $model_id = sanitize_text_field($params['model'] ?? $params['modelId'] ?? 'dall-e-3');
+        // Fallback mirrors PCM_Strategy_Image: dall-e-3 is retired on newer API
+        // accounts ("model does not exist", confirmed live on this install).
+        $model_id = sanitize_text_field($params['model'] ?? $params['modelId'] ?? 'gpt-image-1-mini');
         $provider = sanitize_text_field($params['provider'] ?? '');
 
         if (empty($prompts) || !is_array($prompts)) {

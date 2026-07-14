@@ -9,10 +9,10 @@
  *   • Non-admins: enter the site URL + WP username + an Application Password.
  */
 
-import { useState, useCallback, useMemo, type ChangeEvent } from 'react';
+import { useState, useCallback, useMemo, useEffect, type ChangeEvent } from 'react';
 import {
   Globe, Plus, Trash2, RefreshCw, ExternalLink, Loader2, ShieldCheck,
-  KeyRound, Puzzle, Download, Search, X, ChevronDown,
+  KeyRound, Puzzle, Download, Search, X, ChevronDown, CalendarClock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -111,6 +111,56 @@ export function SitesModule() {
   const [formUsername, setFormUsername] = useState('');
   const [formPassword, setFormPassword] = useState('');
   const [pasteCode, setPasteCode] = useState('');
+
+  // ── "Auto content" recurring-schedule dialog (Task I2) ──
+  // The rule lives server-side (pcm_site_schedules option); the daily strategy
+  // scan turns it into "suggest N topics → create a strategy" per cadence.
+  const [scheduleSite, setScheduleSite] = useState<Site | null>(null);
+  const [schedEnabled, setSchedEnabled] = useState(false);
+  const [schedFrequency, setSchedFrequency] = useState('weekly');
+  const [schedCount, setSchedCount] = useState(5);
+  const [schedTemplateId, setSchedTemplateId] = useState<string>('');
+  const [schedMode, setSchedMode] = useState('draft');
+  const [schedNiche, setSchedNiche] = useState('');
+
+  const { data: templatesRaw } = trpc.templates.list.useQuery(undefined, { enabled: !!scheduleSite }) as any;
+  const templates: { id: number; name: string }[] = useMemo(
+    () => (Array.isArray(templatesRaw) ? templatesRaw : []).map((t: any) => ({ id: Number(t.id), name: String(t.name ?? `Template ${t.id}`) })),
+    [templatesRaw],
+  );
+  const { data: scheduleData } = trpc.sites.getSchedule.useQuery(
+    { id: scheduleSite?.id ?? 0 },
+    { enabled: !!scheduleSite },
+  ) as any;
+  // Hydrate the form from the stored rule each time the dialog opens.
+  useEffect(() => {
+    if (!scheduleSite) return;
+    const r = scheduleData?.schedule;
+    setSchedEnabled(!!r?.enabled);
+    setSchedFrequency(r?.frequency ?? 'weekly');
+    setSchedCount(Number(r?.count ?? 5));
+    setSchedTemplateId(r?.templateId ? String(r.templateId) : '');
+    setSchedMode(r?.publishingMode ?? 'draft');
+    setSchedNiche(r?.niche ?? '');
+  }, [scheduleSite, scheduleData]);
+
+  const setScheduleMutation = trpc.sites.setSchedule.useMutation({
+    onSuccess: () => { toast.success('Schedule saved'); setScheduleSite(null); },
+    onError: (e: any) => toast.error(e.message ?? 'Failed to save the schedule'),
+  }) as any;
+  const handleSaveSchedule = useCallback(() => {
+    if (!scheduleSite) return;
+    if (schedEnabled && !schedTemplateId) { toast.error('Pick a template for the generated strategies.'); return; }
+    setScheduleMutation.mutate({
+      id: scheduleSite.id,
+      enabled: schedEnabled,
+      frequency: schedFrequency,
+      count: schedCount,
+      templateId: schedTemplateId ? Number(schedTemplateId) : 0,
+      publishingMode: schedMode,
+      niche: schedNiche,
+    });
+  }, [scheduleSite, schedEnabled, schedFrequency, schedCount, schedTemplateId, schedMode, schedNiche, setScheduleMutation]);
 
   // ── Mutations ──
   const closeAll = useCallback(() => {
@@ -336,6 +386,9 @@ export function SitesModule() {
           <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" title="Register + verify this site in Google Search Console" disabled={gscPreviewMutation.isPending && gscSite?.id === site.id} onClick={() => openGsc(site)}>
             {gscPreviewMutation.isPending && gscSite?.id === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} GSC
           </Button>
+          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" title="Recurring auto-content schedule: suggest topics and create a strategy for this site on a cadence" onClick={() => setScheduleSite(site)}>
+            <CalendarClock className="w-3.5 h-3.5" /> Auto
+          </Button>
           <Button variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate({ id: site.id })}>
             <Trash2 className="w-3.5 h-3.5" />
           </Button>
@@ -529,6 +582,68 @@ export function SitesModule() {
               disabled={gscVerifyMutation.isPending || gscPreviewMutation.isPending || !gscTargetUrl.trim()}
             >
               {gscVerifyMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />} Verify in GSC
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Recurring auto-content schedule (Task I2) ── */}
+      <Dialog open={!!scheduleSite} onOpenChange={(o) => { if (!o) setScheduleSite(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Auto content for {scheduleSite?.name}</DialogTitle>
+            <DialogDescription>
+              On the chosen cadence, AI suggests fresh topics for this site and creates a content
+              strategy from them automatically. Runs with the daily scheduler.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <label className="flex items-center gap-2 text-sm" style={{ color: colors.text }}>
+              <input type="checkbox" checked={schedEnabled} onChange={(e) => setSchedEnabled(e.target.checked)} />
+              Enable recurring content for this site
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>Frequency</label>
+                <Select value={schedFrequency} onValueChange={setSchedFrequency}>
+                  <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="daily" className="text-xs">Daily</SelectItem>
+                    <SelectItem value="weekly" className="text-xs">Weekly</SelectItem>
+                    <SelectItem value="monthly" className="text-xs">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <LabeledInput label="Articles per run (1–10)" type="number" value={String(schedCount)} onChange={(v) => setSchedCount(Math.min(10, Math.max(1, Number(v) || 1)))} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>Template</label>
+                <Select value={schedTemplateId} onValueChange={setSchedTemplateId}>
+                  <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pick a template…" /></SelectTrigger>
+                  <SelectContent>
+                    {templates.map((t) => <SelectItem key={t.id} value={String(t.id)} className="text-xs">{t.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>Publishing</label>
+                <Select value={schedMode} onValueChange={setSchedMode}>
+                  <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="draft" className="text-xs">Save as drafts</SelectItem>
+                    <SelectItem value="publish" className="text-xs">Publish immediately</SelectItem>
+                    <SelectItem value="schedule" className="text-xs">Spread on a schedule</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <LabeledInput label="Niche / topic focus (optional)" placeholder="e.g. residential solar installation" value={schedNiche} onChange={setSchedNiche} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setScheduleSite(null)}>Cancel</Button>
+            <Button onClick={handleSaveSchedule} disabled={setScheduleMutation.isPending}>
+              {setScheduleMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />} Save schedule
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -6460,6 +6460,725 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
   approval-gate wiring to Approvals module, interlink injection, hierarchy-aware generation, `consolidated`
   structure. Map "Content Strategies pipeline" section + header updated. Not committed.
 
+## 2026-07-08 — Plan: remaining work for the Strategy module [/task, Fable 5 / T1, planning-only]
+- Deliverable = a prioritized roadmap of what's left for `strategy` (no code). Grounded in current code (post
+  model-selection/Generate-All/Retry), `docs/modules/strategy.md` (target architecture, 4-phase plan, AutoPress
+  mapping), the roadmap doc, AutoPress `strategyService.ts`, and a survey of what PC ALREADY has to build on.
+- **Load-bearing finding:** the "big" deferred features are mostly WIRING, not greenfield — PC already ships
+  the infra: `POST /sites/{id}/publish` → `PCM_Sites_Service::publish_to_site($site,$article,$uid)` +
+  `pcm_articles.siteId/publishedUrl/publishedPostId/publishedAt` (auto-publish); `SendToApprovalSetDialog` +
+  `approvals.createSet` + `approvals.set_fully_approved` trigger (approval gates); `wp_schedule_event('daily')`
+  + `run_scheduled_action` async seam + the pending-client cron scanner as a template (queue + scheduling).
+- **Decision surfaced:** docs' Lego architecture wants a **Workflows module** (multi-step pipelines) that does
+  NOT exist; strategy uses Writer `templateId` today and every remaining feature can ship without it → DEFER.
+- Plan (7 workstreams) presented in chat with recommended sequence + effort/deps; offered to formalize as a
+  docs/roadmap file. No code changed; not committed.
+
+## 2026-07-08 — Strategy: auto-publish + wire Writer "View" link [/task, frontier-sandwich: planned Fable 5, executed Sonnet 5/T2]
+- Continuation of the previous plan. Per the least-to-most decomposition rule (6 remaining workstreams, some
+  XL) this session scoped ONLY the two lowest-risk/highest-value/dependency-free items into `plan.md` (repo
+  root): quick-win #6 (wire the dead Writer "View" button) + #1 (auto-publish). The rest (#2 queue, #3
+  scheduling, #4 approvals, #5 hierarchy) each have an open design decision flagged in `plan.md` and were
+  deliberately NOT attempted — re-plan those separately after a checkpoint.
+- **Step 1 — Writer "View" link:** `AppContext.tsx` gained a 4th instance of the established one-shot
+  cross-module nav pattern (`pendingWriterArticleId`/`navigateToWriterArticle`/
+  `consumePendingWriterArticleId`, mirrors `navigateToProjectTab` exactly — not a new architecture).
+  `Writer/index.tsx` consumes it in a `useEffect`. CAUGHT DURING IMPLEMENTATION (not shipped as a latent
+  bug): gating on the persistence hook's `isLoading` flag would have consumed-and-lost the one-shot id,
+  because `isLoading` flips false ONE RENDER BEFORE the loaded articles actually land in
+  `writerDocumentsAtom` (the populate effect runs after commit) — fixed by keying the effect on `writerDocs`
+  itself and only consuming at the exact moment the target doc is confirmed present (a genuine miss just
+  leaves the id inert, never mis-selects). `Strategies/index.tsx`'s View button now calls
+  `navigateToWriterArticle(item.articleId)`.
+- **Step 2 — Auto-publish:** `CreateStrategyDialog.tsx` gained a **Site to Publish To** picker
+  (`trpc.sites.list`, shown only when publishingMode==='publish') sending `siteId`; `controller.php` captures
+  it (`absint`) into `config`. `service.php` gained `maybe_auto_publish()`, called after article creation +
+  counter recompute: when `strategy->publishingMode==='publish'` (top-level column) and `config.siteId`
+  resolves via ownership-scoped `PCM_DB::get_site()`, it reuses `PCM_Sites_Service::publish_to_site()`
+  VERBATIM — no new WP REST logic, the exact same call the Sites module's own `/publish` route makes. A
+  publish failure is isolated from generation state (never touches item.status/errorMessage/counters — those
+  mean "generation outcome," not "publish outcome"); it surfaces as a `publish:{success,message}` response
+  key that `Strategies/index.tsx` toasts, even during a bulk "Generate All" run (not otherwise counted in
+  that run's summary). CAUGHT DURING IMPLEMENTATION: the response's `article` must be RE-FETCHED after the
+  publish attempt, not before — `publish_to_site()` updates the article's status/publishedUrl on success, so
+  returning the pre-publish snapshot would show a stale 'draft' even when publish succeeded.
+- **Test-infra decision:** `maybe_auto_publish()`'s cross-module `require_once` is guarded with
+  `class_exists('PCM_Sites_Service')` (harmless, standard defensive idiom, behavior-neutral in production) so
+  the harness can substitute a fake — the real `publish_to_site()` needs `wp_salt()` + genuinely-encrypted
+  app-password data, disproportionate to stub just to verify the new orchestration wrapper (the pre-existing
+  function itself is unchanged).
+- **Verified:** `php -l` clean (controller.php + service.php); tsc 56/56 baseline (0 new errors, none in the
+  5 touched frontend files); `vite build` succeeded (2130 modules); extended `strategy_gen_test.php` to
+  **39/39** (18 new: publish invoked with the right site/article/user, response reports success, publish
+  failure isolated from item status/errorMessage/counters, draft-mode regression guard, no-siteId no-op,
+  site-disconnected-since-configured branch). NOT browser-verified — no running dev server; stated as a
+  limitation both times rather than claimed.
+- Map updated ("Content Strategies pipeline" section + header) — the "what's missing" list now excludes
+  auto-publish and the Writer View link. `plan.md` left in the repo root with both steps marked `[done]`
+  (including verification evidence) and Step 3 (done-gate) + the 4 explicitly-deferred workstreams recorded.
+  Not committed.
+
+## 2026-07-08 — Done-gate: Strategy auto-publish (2 verifier rounds, PHPUnit coverage added)
+- Continuation of the same task. Dispatched `spec-verifier` on the Steps 1+2 diff per plan.md's own done
+  gate.
+- **Round 1 (CHANGES REQUIRED):** confirmed correct — the Writer race-fix, ownership/security path
+  (`$user_id` always the authenticated owner, never attacker-controlled), the `class_exists` guard (inert
+  in production), frontend `siteId` parsing. Two real findings: **P1** — the "39/39" harness I'd reported
+  was scratchpad-only, never part of the repo, so no durable regression coverage actually existed for the
+  auto-publish isolation guarantee. **P2** — `maybe_auto_publish(object $strategy, object $article, ...)`
+  took a non-nullable `$article`; its caller re-fetches by id, and a hypothetical null would throw a
+  TypeError into `generate_next_item()`'s OUTER catch (meant for generation failures), wrongly flipping a
+  successfully-generated item to `error` — undermining the exact isolation guarantee being claimed.
+- **Fixed both:** (P1) wrote a REAL, committed `tests/unit/StrategyAutoPublishTest.php` (ported the
+  scratchpad's assertions properly using this project's actual PHPUnit+WP_Mock+Mockery framework). Since
+  it declares stand-ins under the SAME class names as real composer-classmapped services (PCM_DB/PCM_LLM/
+  PCM_Sites_Service/PCM_Schema — needed, this is a fast no-real-WP unit suite), it carries
+  `@runTestsInSeparateProcesses` + `@preserveGlobalState disabled` so it can never collide with any other
+  test in a full-suite run, and every `class_exists()` passes `false` (the default `true` would itself
+  trigger the classmap autoloader and load the REAL class before the guard could check — hit and fixed via
+  an actual full-suite run, not assumed). Also hit and fixed: PHPUnit only reads annotations from the
+  docblock immediately above `class` — my first attempt put them on the file-level docblock by mistake,
+  which silently did nothing (the class ended up colliding with the real `PCM_Sites_Service` inside
+  `ModuleLoaderTest`, caught by running the FULL suite, not just my new file). (P2) `$article` is now
+  `?object` with an explicit `!$article` guard returning a reported failure instead of dereferencing null.
+- **Round 2 (re-dispatched):** independently re-ran everything (didn't trust my fixes) — confirmed the P2
+  guard is correctly placed, confirmed the annotations are now on the right docblock (empirically: 129/129
+  full-suite run, zero redeclaration fatals), confirmed every `class_exists()` guard, confirmed all 11
+  assertions are meaningful, ran the file standalone (11/11) and the full suite itself (129/129, 441
+  assertions, 0 errors — matched my claim exactly). Raised one "CHANGES REQUIRED": the new test file +
+  service.php edit aren't `git commit`-ted. **Judgment call — false positive**: this task's own instructions
+  say "don't commit unless I ask," and every other file touched this session is in the identical
+  uncommitted-in-the-working-tree state; the verifier lacked that context. Not re-dispatching a round 3 for
+  a non-defect. Did adopt its one genuinely cheap, useful suggestion: added a 12th test forcing the
+  null-article path directly (`PCM_DB::$forceNullArticle` toggle) to lock down the P2 fix precisely.
+- **Also discovered (unrelated to this diff) while getting a clean full-suite baseline:** 6 pre-existing
+  `PCM_Hierarchy not found` errors — a stale composer classmap after the earlier 70-commit merge added
+  `class-pcm-hierarchy.php`; fixed harmlessly via `composer dump-autoload` (no source changed). One
+  pre-existing, unrelated FAILURE remains: `PlatformRoleInvariantTest` flags `deliveries/controller.php`
+  (commits from 2026-07-07, before today, nothing to do with strategy/auto-publish) — out of scope for this
+  task; spawned a background task suggestion for it rather than fixing inline.
+- **Final state:** `tests/unit/StrategyAutoPublishTest.php` 12/12 (45 assertions) isolated; full suite
+  130/130 (446 assertions, 0 errors), same 1 pre-existing unrelated failure. `plan.md` (repo root) — all 3
+  steps marked `[done]` with full verification evidence; the 4 explicitly-deferred workstreams (queue,
+  scheduling, approvals, hierarchy/interlink) remain flagged for a future task with their own decisions.
+  Not committed (controller.php/service.php/frontend files + the new test file all sit as uncommitted
+  working-tree changes, per this session's standing instruction).
+
+## 2026-07-08 — zip build (Strategy: auto-publish + Writer View link + api-error guard, connector 2.6.3 unchanged)
+- Rebuilt power-creatives.zip fresh: `npm run build` equivalent (node node_modules/vite/bin/vite.js build
+  --config vite.config.wp.ts) for a clean dist, then zipped `powerplatform/` from its parent dir so the
+  top-level entry is exactly `powerplatform`. Excludes: node_modules (root+app), .git, .DS_Store,
+  .phpunit.result.cache, **.agents/** (newly noticed this run — Claude Code's own orchestrator scratch
+  state, never belongs in a plugin deploy), .vscode/.idea, *.log, .env/.env.local.
+- Verified: 2723 files / 19.86MB uncompressed (5.57MB zip) — top-level ONLY `powerplatform`; 0 backslashes;
+  0 leaks (node_modules/.git/.DS_Store/.agents/.phpunit.result.cache/.env all absent); connector Version
+  confirmed **2.6.3** (unchanged — today's work didn't touch the connector); `app/dist/index-writer.js`
+  size matches the fresh build byte-for-byte (4,745,295); spot-checked today's actual PHP changes are
+  present in the shipped files (`maybe_auto_publish`/`resolve_model`/`recompute_counters` in
+  strategy/service.php, `guard_callback` in base-controller.php, `StrategyAutoPublishTest.php` included).
+  Replaced `~/Desktop/power-creatives.zip`. Not committed (zip is a build artifact, not tracked in git).
+
+## 2026-07-08 — Plan: complete the Strategy module [/task, Opus 4.8 / T2, PLAN-ONLY]
+- Frontier-sandwich handoff: produced `plan.md` (repo root) mapping the full path to "complete" the
+  strategy module = turn the create-dialog's already-STORED-but-not-executed config (structure/hierarchy/
+  interlink/schedule/approval) into behaviour, matching AutoPress `strategyService.ts`. No code changed.
+- Re-verified the load-bearing infra with file:line before planning: the daily cron event + async seam in
+  `automations/service.php` (queue/scheduler templates), the `approvals.set_fully_approved` trigger +
+  `create_set` route (approval gates), and that `strategy_items` has no `scheduledDate`/`setId` column
+  (scheduling/approvals need additive migrations off DB 1.36.0).
+- Plan = 12 steps in 5 phases: A) server-side queue runner; B) scheduling execution (scheduledDate column +
+  calculateSchedule port + cron scanner); C) approval gates (widen status, route to approval set, publish on
+  set_fully_approved via new `strategy/automations.php`); D) consolidated/hierarchy/interlink generation;
+  E) optional per-item status route + (deferred) AI topic suggestion + (deferred) Workflows module. Flagged
+  6 OPEN DECISIONS to resolve before executing (cron granularity, approval-state model, interlink algorithm,
+  queue retry policy, Workflows build-or-skip, topic-suggestion scope) with a recommendation on each.
+- Presented for review; stopped per plan-only. User then RESOLVED all 6 decisions (daily cron; approvals
+  handled BY the custom Approvals module — strategy hands off a set + reacts to `set_fully_approved`, not a
+  strategy-internal workflow; phrase-match interlinks; skip-and-continue queue; defer Workflows + topic
+  suggestion). Locked into `plan.md` (DECISIONS section + Phase C refined). Execution-ready; awaiting an
+  explicit "continue executing plan.md" (likely after a model switch per the sandwich). Not committed.
+
+## 2026-07-08 — Execute plan.md: Step 11 (reset-item) + Step 1 (background queue) [/task, Sonnet 5/T2, Phase 4]
+- Frontier-sandwich execution: plan.md planned on Fable 5, resumed here on Sonnet 5 at Phase 4 ("start
+  execution"). Completed the recommended-order first two steps.
+- **Step 11 — manual reset-to-pending**: new `PATCH /strategies/{id}/items/{itemId} {status:'pending'}`.
+  Scoped to exactly the one meaningful pre-Phase-C action: reset a `completed`/`error` item back to
+  `pending` (detaches `articleId`→null, clears `errorMessage`, article itself untouched in Writer). Logic
+  lives in `PCM_Strategy_Service::reset_item_to_pending()` (not the controller) — matches the codebase's
+  controller=plumbing/service=business-logic split, and makes it unit-testable without faking
+  WP_REST_Request/Response. `recompute_counters()` widened private→public (no behavior change) since the
+  controller/service boundary needed it from two call sites. Item-in-strategy ownership is checked INSIDE
+  the service method (mirrors `generate_next_item`'s existing itemId-targeting pattern), since
+  `PCM_DB::update_strategy_item()` itself takes no user_id/strategy_id.
+- **Step 1 — background queue continuation, WITH A DOCUMENTED DESIGN DEVIATION from the plan's original
+  wording**: discovered this project's own `prevent-loopback-deadlock.php` mu-plugin (documented in the
+  map) exists because the local PHP dev server deadlocks on wp-cron's self-loopback requests — meaning a
+  "POST /process-all → frontend polls strategy.get" design (as literally planned) would rely on exactly
+  the wp-cron opportunistic-dispatch mechanism this project's own dev environment already has to work
+  around, and which is also known-fragile on many shared-hosting targets. Instead: embedded the
+  continuation directly in the EXISTING `generate_next_item()` — after a "next pending" call
+  (`$item_id===null`, i.e. Generate/Generate-All, NOT a targeted Retry), if a pending item remains, it
+  self-schedules a `wp_schedule_single_event` → new `run_queue_tick()` wp-cron callback (deduped via
+  `wp_next_scheduled`), which re-calls `generate_next_item` and re-arms itself until nothing's pending.
+  Net effect: the EXISTING Generate/Generate-All buttons transparently gain closed-tab resilience — ZERO
+  frontend changes, ZERO new REST route, one file touched (`strategy/service.php`). Reused
+  `run_pending_client_scan`'s exact hook-registration idiom (`if (function_exists('add_action'))` at file
+  load) rather than inventing a new pattern. Decision 4 (skip-and-continue): a failed item still schedules
+  the continuation before re-throwing; `run_queue_tick` additionally swallows any exception so a
+  background cron failure never surfaces as a fatal on an unrelated future page load.
+- **Verified module-loader fact the whole design depends on**: `PCM_Module_Loader::discover()` eagerly
+  `require_once`s every module's `service.php` (if present) on EVERY request, including a bare wp-cron
+  dispatch — confirmed by reading `includes/module-loader.php` directly (not assumed) — so the file-load
+  `add_action(...)` hook registration is guaranteed live when wp-cron fires the event.
+- **Verified**: `php -l` clean on both PHP files. Extended `tests/unit/StrategyAutoPublishTest.php`
+  +4 (Step 11: reset-completed clears article+recomputes counters, reset-error clears message, rejects
+  pending/generating, rejects a foreign itemId) +8 (Step 1: continuation scheduled/not-scheduled/dedup'd/
+  scoped-away-from-targeted-retry/still-fires-on-failure, `run_queue_tick` generates+re-arms/swallows a
+  failure/no-ops on a deleted strategy) → **24/24 isolated, 69 assertions**; full suite **142/142 (470
+  assertions, 0 errors)** — same 1 pre-existing unrelated `PlatformRoleInvariantTest` failure (flagged
+  separately, out of scope). Hit and fixed a real PHPUnit process-isolation gotcha along the way:
+  `@runTestsInSeparateProcesses` misreports `error_log()`'s default STDERR write as a child-process fatal
+  — fixed via `ini_set('error_log', <tmp file>)` in the test's own setup (test-run-only, zero production
+  change). No frontend/tsc/build impact (backend-only).
+- Dispatched the done-gate `spec-verifier` on both steps combined before continuing to Phase B (a DB
+  migration — higher blast radius, deserves its own careful pass). Result pending as of this entry.
+- `plan.md` updated (Steps 11 + 1 marked `[done]` with full reasoning + verification evidence). Not
+  committed.
+
+## 2026-07-08 — Execute plan.md: Step 2 (schema) + Step 3 (compute schedule) [/task, Sonnet 5/T2, Phase 4]
+- **Step 2 — schema migration**: `strategy_items.scheduledDate datetime NULL` + `idx_scheduledDate` index,
+  purely additive `dbDelta` (`class-pcm-schema.php`), `PCM_DB_VERSION` 1.36.0 → 1.37.0
+  (`power-creatives.php`), documentation-only comment in `class-pcm-activator.php` — no bespoke
+  `migrate_*`/gate needed, matching the established "purely additive" pattern from v1.24/1.25/1.34-1.36.
+  **Verified against the REAL local WordPress runtime**, not just fakes (dbDelta is genuine WP-core; this
+  project's fast PHPUnit+WP_Mock suite deliberately doesn't boot real WP, per `tests/bootstrap.php`'s own
+  docblock — a fake-based test can't prove a schema migration actually works): booted `wp-load.php`,
+  confirmed `maybe_upgrade()` detected `1.36.0 < 1.37.0` and ran `create_tables()` live; `SHOW COLUMNS`
+  confirmed `scheduledDate datetime NULL DEFAULT NULL`; `SHOW INDEX` confirmed `idx_scheduleddate`.
+  Re-ran `create_tables()` a second time directly — idempotent, no duplicate columns/indexes/errors.
+- **Step 3 — compute the schedule at create time**: new pure static
+  `PCM_Strategy_Service::calculate_schedule_dates(count, frequency, start_date): array` — a faithful port
+  of AutoPress's `calculateSchedule()`, including its "biweekly" label mapping to **+3 days**, not +14
+  (kept verbatim, documented inline as intentional). `create_from_keywords()` calls it right after
+  `create_strategy_items()`, only when `publishingMode==='schedule'`, reading `frequency`/`startDate` from
+  `options.config.scheduleConfig` with safe fallbacks (`weekly` / `current_time('mysql')`), then writes
+  `scheduledDate` via the existing `update_strategy_item()`. Decision 1 (daily cron granularity — these are
+  due DATES a scanner checks once a day, not precise times).
+- **Known frontend gap, flagged not fixed (out of this step's file scope)**: `CreateStrategyDialog.tsx`
+  has no `frequency` selector or `startDate` picker — `frequency` defaults to a hardcoded `'weekly'` and
+  `startDate` is always sent as `''`. Every "Schedule Mode" strategy created today takes the weekly+now
+  fallback path through the new backend code; correct and forward-compatible once a picker ships, but
+  there's currently no UI path to pick daily/monthly/a future start date.
+- **Verified**: `php -l` clean. Extended `tests/unit/StrategyAutoPublishTest.php` +11 (8 pure-function
+  cases covering every frequency branch incl. the biweekly quirk, the unknown-frequency fallback, and
+  count=0; 3 `create_from_keywords()` integration cases: schedule-mode writes dates across all items in
+  position order, missing `scheduleConfig` defaults to weekly+now, non-schedule mode leaves
+  `scheduledDate` unset) → **35/35 isolated, 83 assertions** (up from 24/69); full suite **153/153 (484
+  assertions)** (up from 142/470) — same 1 pre-existing unrelated `PlatformRoleInvariantTest` failure
+  (tracked separately, out of scope). No frontend/tsc/build impact (backend-only).
+- `plan.md` updated (Steps 2 + 3 marked `[done]` with full reasoning + verification evidence, frontend
+  gap explicitly flagged). Not committed. Next: Step 4 (cron scanner publishes due items).
+
+## 2026-07-08 — Execute plan.md: Step 4 (cron scanner for due items) — Phase B complete [/task, Sonnet 5/T2, Phase 4]
+- **Step 4 — cron scanner**: new `PCM_DB::get_due_scheduled_strategies($now)` — a cross-user query
+  (distinct `strategyId`/`userId` pairs with a pending item whose `scheduledDate <= now`), unlike every
+  other `strategy_items` DB method which is scoped to a strategy the caller already knows. New
+  `PCM_Strategy_Service::run_scheduled_scan()` calls it and, per due pair, calls Step 1's EXISTING
+  `maybe_schedule_queue_continuation()` — no new generation/publish path, just a new trigger for the one
+  already built. Registered on its own daily event `pcm_strategy_scheduled_scan`
+  (`power-creatives.php`, mirroring `pcm_automation_check_pending_approvals`'s exact daily-scheduling
+  idiom); hook wired at file load in `strategy/service.php`.
+- **Design correction caught while implementing, not in the original plan wording**:
+  `maybe_schedule_queue_continuation()` previously chained to the next pending item with no regard for
+  its due date — for a scheduled strategy this would have blown through a whole week's "daily" items in
+  one background sweep the moment the first one ran. Fixed by adding a due-date gate: if the next pending
+  item's `scheduledDate` is set and still in the future, the chain stops there instead of scheduling;
+  `run_scheduled_scan()`'s next daily pass re-arms it once that date arrives. Items with no
+  `scheduledDate` (draft/publish mode) are unaffected — `?? null` on the possibly-unset property means
+  they keep chaining immediately exactly as before (verified: none of Step 1's existing 8 tests broke).
+  Relies on `calculate_schedule_dates()` (Step 3) always assigning non-decreasing dates by position, so
+  "lowest-position pending item" and "earliest-due pending item" are always the same item.
+- **Verified**: `php -l` clean on all 3 touched files (`class-pcm-db.php`, `strategy/service.php`,
+  `power-creatives.php`). Extended `tests/unit/StrategyAutoPublishTest.php` +4 (scan schedules the queue
+  for a due strategy; scan no-ops when nothing's due; chain does NOT continue into a not-yet-due next
+  item; chain DOES continue when the next item is already due) → **39/39 isolated, 90 assertions** (up
+  from 35/83); full suite **157/157 (491 assertions)** (up from 153/484) — same 1 pre-existing unrelated
+  `PlatformRoleInvariantTest` failure. No frontend/tsc/build impact (backend-only).
+- **Phase B (Steps 2+3+4) is now fully done.** `plan.md` updated (Step 4 marked `[done]` with full
+  reasoning + verification evidence). Not committed. Dispatched the done-gate `spec-verifier` against the
+  whole phase (schema + schedule computation + cron scanner together) before starting Phase C (approvals
+  hand-off) — a DB migration + new cron event is higher blast radius, warrants its own careful pass rather
+  than trusting the implementer's own step-by-step claims.
+- **Done-gate: APPROVED.** Verifier independently re-ran both the isolated test file (39/39, 90
+  assertions) and the full suite (157/157, 491 assertions, same 1 pre-existing unrelated
+  `PlatformRoleInvariantTest` failure) itself, and confirmed all 10 checked points (frequency-branch
+  correctness, schedule-write gating, the due-date gate's `?? null` handling of items with no
+  `scheduledDate` property, SQL-injection safety, cron wiring parity with the existing daily-scan idiom,
+  chain reuse, non-negotiables, no Step-1 regression, frontend-gap accuracy). One P3/cosmetic noted
+  (`calculate_schedule_dates()`'s `strtotime(...) ?: time()` fallback would break purity on an
+  unparseable `start_date`, never triggered in practice) — no fix required. `plan.md` updated with the
+  Phase B done-gate summary. Proceeding to Phase C (Steps 5-7, approvals-module hand-off).
+
+## 2026-07-08 — Execute plan.md: Phase C, Steps 5-7 (Approvals hand-off) [/task, Sonnet 5/T2, Phase 4]
+- **Step 5 — schema**: `strategy_items.setId int NULL` + `idx_setId` index (additive `dbDelta`);
+  `PCM_DB_VERSION` 1.37.0 → 1.38.0. New `PCM_DB::get_strategy_item_by_set_id($set_id, $user_id)`
+  (owner-scoped, no join — `strategy_items` already carries its own `userId`). Confirmed
+  `recompute_counters()` needs no change: it only tallies `completed`/`error`, so the new `in_review`
+  status correctly falls through as neither, by reading the method rather than assuming.
+- **Step 6 — hand-off to Approvals**: `generate_next_item()` branches on a new `approval_mode($strategy)`
+  helper (reads `config.approvalMode`, defaults `'none'` — every pre-existing strategy is unaffected,
+  proven by the fact none of the 39 prior tests set `approvalMode` and all still pass). When not `'none'`,
+  new `create_approval_set_for_item()` builds the exact `{media, copy, articles}` snapshot shape the
+  Writer module already uses for `POST /approvals/sets`, so a strategy-generated article renders on the
+  existing approval-card UI with zero special-casing — one set per item, not batched per strategy. Item
+  is parked `in_review` with its `setId`; `maybe_auto_publish()` is deliberately skipped on this path.
+- **Step 7 — react to approval**: this engine is fully rule-based (traced `fire_trigger()`/`run_action()`
+  directly — there's no bare "subscribe a callback" mechanism), so "register a handler on the trigger"
+  meant: new action `strategy.publish_on_approval` (new `strategy/automations.php` +
+  `class-pcm-publish-on-approval-action-handler.php`, implementing the existing
+  `PCM_Automation_Action_Handler` interface like Approvals' own `PCM_Move_Lane_Action_Handler`) plus a new
+  DEFAULT SEEDED RULE in the shared `automations/class-pcm-automation-seeds.php` registry (same file
+  Approvals' own default rules live in — not a per-module file) linking
+  `approvals.set_fully_approved → strategy.publish_on_approval`. Runs alongside the existing "move to
+  Launch" rule on the same trigger; a clean no-op (`skipped`, not an error) for the majority of sets that
+  aren't strategy-linked. Backfilled for EXISTING users via a new `version_compare(...,'1.38.0','<')` gate
+  in `class-pcm-activator.php` (mirrors the v1.19/v1.22.1/v1.30.0 pattern exactly).
+- **Dispatched `security-auditor`** against the whole cross-module write (per the plan's own Step 6
+  consult directive) before calling this done. No P0/P1. Fixed two of three findings inline:
+  - **P2 (fixed)**: the original `in_review`-status guard in `advance_item_on_approval()` was
+    check-then-act, not atomic — two concurrently-delivered `set_fully_approved` events (client
+    double-clicking "approve all") could both pass the read and both publish, and `publish_to_site()`
+    isn't idempotent, so this was a real duplicate-live-post risk. Fixed with a new
+    `PCM_DB::advance_strategy_item_from_in_review($id)` — a single `$wpdb->update()` gated on
+    `status='in_review'` in the WHERE clause (atomic compare-and-set); the claim now runs BEFORE
+    `maybe_auto_publish()`, and a losing caller skips publish entirely, not just the status write.
+  - **P3 (fixed)**: client-mode set names embedded the internal strategy name + target SEO keyword,
+    visible to any client opening the unauthenticated token-scoped review link. Fixed: `'client'`-mode
+    sets now use a client-safe name (article title only); `'internal'`-mode keeps the more useful
+    strategy+keyword name since those aren't automatically shared externally.
+  - **P3 (flagged, not fixed)**: LLM-generated article content is stored with no server-side sanitization
+    — the verifier traced the actual render path and confirmed it's not currently exploitable (Tiptap/
+    ProseMirror parses into an allow-listed node schema on the client-facing approval card) and that this
+    predates this phase entirely (every content-generation path in the plugin has the same shape). Fixing
+    it means auditing `create_article()`'s callers plugin-wide — out of this phase's scope, noted for a
+    separate hardening pass.
+- **Verified**: `php -l` clean on all touched/new files. Extended `tests/unit/StrategyAutoPublishTest.php`
+  +9 (approval-mode internal/client/none behavior, deferred-publish-under-publish-mode, advance-on-approval
+  success/not-linked/re-entry-noop/race-loss, action-handler clean-skip) → **48/48 isolated, 112
+  assertions** (up from 39/90); full suite **166/166 (513 assertions)** (up from 157/491 — plus fixing
+  `AutomationSeedsTest`'s own hardcoded seed-definition count, 7→8, a correct necessary update since I
+  added an 8th default rule, not a regression; same 1 pre-existing unrelated failure). **Verified against
+  the REAL local WordPress runtime**: booted `wp-load.php`, confirmed `setId`/`idx_setid` via `SHOW
+  COLUMNS`/`SHOW INDEX`, re-ran `create_tables()` a second time (idempotent), and confirmed all 3 existing
+  local users were actually backfilled with the new rule by querying `wp_pcm_automations` directly.
+- `plan.md` updated (Steps 5-7 + the security review marked `[done]` with full reasoning + verification
+  evidence). Not committed. Dispatched the Phase C done-gate `spec-verifier` before proceeding to Phase D
+  (content depth: consolidated structure, hierarchy, interlinks).
+- **Done-gate: APPROVED.** Verifier independently re-ran the isolated test file (48/48, 112 assertions),
+  `AutomationSeedsTest` (confirmed the 7→8 count bump is genuine, not fudged), and the full suite
+  (166/166, 513 assertions, same 1 pre-existing unrelated failure), and confirmed all 11 checked points
+  (default-none regression safety, publish genuinely skipped on the gated path, the P2 atomic-claim
+  correctness + ordering, the P3 client-name fix, ownership/SQL safety, trigger user-id provenance,
+  action-handler wiring, the v1.38.0 seed-backfill gate, non-negotiables, the client-share-gap claim). One
+  non-blocking P3/low prose-precision note (no fix needed). `plan.md` updated with the Phase C done-gate
+  summary. Proceeding to Phase D (Steps 8-10: consolidated structure, hierarchy-aware generation,
+  interlink injection).
+
+## 2026-07-08 — Execute plan.md: Phase D, Steps 8-10 (content depth) [/task, Sonnet 5/T2, Phase 4]
+- **Step 8 — consolidated structure**: `generate_next_item()` routes to a new `generate_consolidated_batch()`
+  at its very top when `config.structure==='consolidated'` — one shared article for the whole batch instead
+  of one per item, every item advancing together. `build_prompt()`'s signature changed from a single
+  `string $keyword` to `array $keywords` (one production call site updated) so the LLM sees ALL keywords in
+  one prompt. Deliberately reapplies the Step 6 approval-gate branch (a strategy can combine "Consolidated"
+  with "Internal/Client" approvals) rather than silently bypassing a just-shipped feature for that combo.
+- **Step 9 — hierarchy-aware generation**: **design deviation, transparently documented** — the actual
+  AutoPress reference this was ported from injects the parent-link as a PROMPT INSTRUCTION (non-deterministic
+  — the LLM can ignore it), which directly conflicts with this plan's own verify criterion ("child HTML
+  contains the parent link" — only provable if guaranteed). Ported instead as deterministic post-process HTML
+  append. Covers `children_only` (stored external `parentTargetUrl`) and `parent_and_children` (the
+  strategy's own designated parent item, matched by keyword string — this codebase stores `parentKeyword` as
+  a string, not an item id). Item SELECTION is now hierarchy-aware too: the parent generates first regardless
+  of position, children wait until it has an articleId (mirrors the AutoPress reference's "waiting for
+  parent," simplified to "has generated" vs. "has published," since draft-mode strategies may never publish).
+- **Step 10 — interlink injection**: "reuse SEO link-rewrite" doesn't refer to anything that exists in this
+  codebase (searched `includes/`/`app/src/` directly, nothing found) — implemented as a small, purpose-built,
+  dependency-free method rather than a separate `interlinks.php` file. Phrase-match = literal keyword-text
+  search + wrap-in-`<a>`, no extra LLM call (unlike AutoPress's AI-anchor variant). Hooked into
+  `recompute_counters()` (the one choke point every completion path already runs through) via a pre/post
+  status comparison — fires exactly once on the transition into `'completed'`, no new DB column needed.
+- **Dispatched `architect-review`** against all of Steps 8-10 (per the plan's Step 10 consult directive).
+  4 of 5 questions came back approve-with-notes; one genuine gate-merge bug found and fixed, one requested
+  fix applied, two noted-but-deliberately-not-fixed with reasoning recorded in `plan.md`:
+  - **Fixed (blocking)**: the interlink idempotency guard compared the raw target URL against stored
+    content, but injection wraps `esc_url($url)` — a URL with special characters (e.g. `&` in a query
+    string) would defeat the guard and re-inject on every re-run. Fixed to compare the same escaped form.
+  - **Fixed (requested)**: a blind `preg_replace(..., 1)` could wrap the first keyword occurrence even
+    inside existing markup or (realistically, since Step 9 runs first) inside an existing `<a>`'s own
+    text, producing an invalid nested anchor once persisted. Fixed with a new `is_inside_html_tag()` guard
+    (covers both "inside a tag's own markup" and "inside more open `<a>` than `</a>` closes") using
+    `preg_match_all(PREG_OFFSET_CAPTURE)` + `substr_replace()` instead of a single blind replace.
+  - **Fixed (requested)**: extracted `finalize_on_completion()` as a named seam off `recompute_counters()`
+    rather than burying the interlink side effect under a misleading "just recomputes counters" contract.
+  - **Noted, not fixed**: declined to extract a shared helper for `generate_consolidated_batch()`'s
+    approval-gate duplication against the per-item path — the two paths' iteration semantics genuinely
+    differ, and the reviewer's "missing queue-continuation call" observation is actually correct behavior
+    (nothing left to continue to after a one-shot whole-batch generation), not an oversight. Revisit if a
+    third structure mode is ever added.
+  - **Noted, not fixed**: `structure='consolidated'` silently takes priority over `hierarchyMode`/
+    `scheduledDate` (both arguably contradictory combinations with "one article for everything" anyway) —
+    documented as a known interaction; no create-dialog validation yet prevents selecting the combination.
+- **Verified**: `php -l` clean on `strategy/service.php` (the only file touched this phase). Extended
+  `tests/unit/StrategyAutoPublishTest.php` +14 total (3 consolidated: one article/all keywords in prompt,
+  no-op once generated, respects approval mode; 4 hierarchy: children_only injects into every item, parent
+  generates first regardless of position, children wait while parent has no article, child links to the
+  parent's constructed URL; 5 interlinks: injects once on completion, never double-injects, respects the
+  quantity cap, no-op when unconfigured, plus 2 more from the architect-review fixes: never nests an anchor
+  inside an existing anchor's text, idempotency guard survives a URL with special characters) → **61/61
+  isolated, 145 assertions** (up from 48/112); full suite **179/179 (546 assertions)** (up from 166/513),
+  same 1 pre-existing unrelated `PlatformRoleInvariantTest` failure.
+- `plan.md` updated (Steps 8-10 + the architect-review findings marked `[done]` with full reasoning +
+  verification evidence). Not committed. All 12 steps of the original plan are now `[done]` or
+  `[deferred]`/`[out of scope]` per the resolved decisions (Step 12 deferred per Decision 6; the Workflows
+  module deferred entirely per Decision 5). Dispatched the final done-gate `spec-verifier` for Phase D
+  before considering the whole "complete the Strategy module" task done.
+- **Done-gate: APPROVED.** Verifier independently re-ran the isolated file (61/61, 145 assertions) and the
+  full suite (179/179, 546 assertions, same 1 pre-existing unrelated failure), confirmed all 7 checked
+  points, and did its own new-bug hunt on top. Found and I fixed one trivial issue inline (a stale
+  `build_prompt()` docblock still describing the old `string $keyword` signature). Two more P3/low findings
+  from the hunt — consolidated+interlinks produces harmless self-links; a permanently-errored parent in
+  `parent_and_children` mode stalls its children's queue until manually retried — both documented in
+  `plan.md` as known, narrow combinatorial gaps rather than fixed, matching the treatment already given to
+  the closely-related consolidated+hierarchy/scheduled gaps recorded earlier in Phase D.
+- **This completes the entire "complete the Strategy module" plan.** All 5 phases (A: background queue;
+  B: scheduling; C: approvals hand-off; D: content depth; E: manual reset) are done, each with its own
+  done-gate `spec-verifier` pass (Phase A/E combined, B, C, D) plus a `security-auditor` consult (Phase C)
+  and an `architect-review` consult (Phase D), per the plan's own consult directives. Test suite grew from
+  the session's starting baseline to **179/179 (546 assertions)**, with the same single pre-existing,
+  separately-tracked `PlatformRoleInvariantTest` failure unrelated to any of this work. Nothing committed —
+  standing constraint held throughout the whole multi-phase execution.
+
+## 2026-07-08 — Execute plan.md: make the strategy ↔ site binding visible and reliable [/task, Sonnet 5/T2, Phase 4]
+- **New plan**, triggered by a user bug report against the live hub (create.widgetify.co): "not able to
+  select the site... also its not showing the site in which it should be added." Investigated first
+  (frontier session, Fable 5): confirmed the create dialog's Target Site field only shipped in that day's
+  18:10 zip (the live site's June 30 build predates it entirely); found 3 real, separate gaps beyond
+  deployment — the Strategies page never showed/edited the site at all, published items never showed where
+  they went, and `PATCH /strategies/{id}` would wholesale-replace `config` (wiping approvalMode/schedule/
+  interlinks) if ever used for a partial site change. User asked to also fold in the known schedule-picker
+  gap and a deploy-verification step; both added to the plan before execution.
+- **Step 1 — merging PATCH**: new pure `PCM_Strategy_Service::merge_strategy_config()` (no DB access,
+  degrades malformed/null JSON to empty rather than throwing) + a shared `sanitize_config_fields()`
+  controller helper (uses `array_key_exists()`, not truthiness, so a caller can explicitly clear a key).
+  `create_strategy` merges the result over full defaults (first-ever config); `update_strategy` merges it
+  over the EXISTING stored config via an extra ownership-scoped read, only when `config` is actually
+  present in the request.
+- **Step 2 — published destination per item**: `get_strategy_items()` LEFT JOINs `articles`, adding
+  `articlePublishedUrl`/`articleSiteId` — both explicitly aliased to avoid colliding with
+  `strategy_items`'s own `id`/`status` when joined against a table that has columns of the same name.
+- **Step 3 — Strategies page** (the core of the complaint): inline site `Select` on every row (partial
+  `{siteId}` update via Step 1's merge, `stopPropagation`'d so it doesn't toggle the row), a publishing-mode
+  label inline in the existing meta text, and a "View on site" button in expanded item rows when
+  `articlePublishedUrl` is set — this is literally the second half of "not showing the site... it should be
+  added."
+- **Step 4-5 — create-dialog fixes**: extended the publish-only site guard to also cover `schedule` mode
+  (hint + disabled Create button); wired the previously-dead `frequency`/`startDate` state to actual
+  controls — a `Select` whose 6 values match `calculate_schedule_dates()`'s branches verbatim (labeling the
+  `biweekly` quirk honestly as "~every 3 days," not implying 14) and a native date input.
+- **Verified**: `php -l` clean on all touched PHP files. Real-WP smoke tests (this repo's plugin dir is
+  symlinked into `~/Desktop/wordpress-local`) for BOTH backend steps — Step 2's JOIN (created a throwaway
+  strategy/item/article, confirmed the joined fields populate correctly and don't clobber the item's own
+  `status`/`id`) and Step 5's end-to-end data flow (called `create_from_keywords()` with a payload shaped
+  exactly like the new UI sends, confirmed the daily spread from a real start date through the real code
+  path) — not just unit tests with fakes. Extended `tests/unit/StrategyAutoPublishTest.php` +5 for
+  `merge_strategy_config()` → 67/67 isolated (155 assertions, up from 61/145); full suite 185/185 (556
+  assertions, up from 179/546), same 1 pre-existing unrelated failure. Frontend: `tsc` held exactly at the
+  56-error baseline (0 new, none in the 2 touched files) and `vite build` stayed clean, both via direct
+  `node` invocations (the npm/vite `.bin` shims are quarantine-blocked on this machine).
+- **Browser visual verification not performed** for Steps 3-4 — the local WP install requires a login and
+  no stored admin credentials exist for it; flagged as a genuine limitation rather than claimed. Backend
+  correctness for the equivalent payloads was instead proven via direct PHP calls against the real DB/schema.
+- **Packaged and deployed the fix**: regenerated the composer classmap, rebuilt `app/dist`, staged a clean
+  copy (same dev-file exclusion recipe as the earlier session), re-zipped to
+  `~/Desktop/powercreatives/power-creatives.zip` (1.43 MB, 171 files). Verified the ZIP itself (not just the
+  source): `php -l` clean inside the extracted copy, hash-matched the staged files against the live source
+  (mtimes alone are misleading since rsync preserves them), grepped for this session's new symbols in both
+  the extracted PHP and the minified JS bundle. The live-site half of deployment (installing on
+  create.widgetify.co and running the 4-point checklist) is handed to the user — no browser connection to
+  their actual hub exists in this session.
+- **Done-gate: APPROVED.** Verifier independently re-ran the isolated file (67/67, 155 assertions), the
+  full suite (185/185, 556 assertions, same 1 pre-existing unrelated failure), and `tsc` (56/56 baseline, 0
+  new), and confirmed all 8 checked points (merge purity/correctness, ownership-scoped read before merge,
+  JOIN aliasing/injection safety, frontend partial-send + stopPropagation + conditional render, schedule
+  guard parity + exact frequency-value match + honest biweekly label, non-negotiables, working-tree
+  sanity). Two non-blocking P3 notes, both already-intentional (shallow merge on nested config objects;
+  unrelated pre-existing PHP 8.5 deprecation noise in the full-suite output). `plan.md` updated with the
+  done-gate summary. Not committed.
+
+## 2026-07-08 — Verify site-binding plan execution (user: "i feel there are gaps") [/task, Opus 4.8/T2, verify-only]
+- **Verification task, NOT implementation** — user asked to check whether the site-binding plan actually
+  solves their problem. Traced the real end-to-end publish/schedule paths (the parts never browser-verified)
+  and dispatched an independent gap-hunting `spec-verifier`. Both my trace and the verifier agree. No code
+  changed.
+- **The plan executed its DECLARED scope correctly** (row shows/edits site, safe merge-PATCH, schedule
+  pickers — the earlier done-gate's "code matches plan" APPROVED still holds). But the scope did not cover
+  the FUNCTIONAL publishing behavior, which is where the user's felt gaps are:
+  - **P0 — Schedule Mode never publishes.** `maybe_auto_publish()` (`service.php:833`) short-circuits to
+    null unless `publishingMode === 'publish'`; scheduled strategies carry `'schedule'`. The daily cron
+    (`run_scheduled_scan` → queue → `generate_next_item`) DOES generate scheduled items on their due date,
+    but they land as drafts and are NEVER pushed to the site. The create dialog forces a Target Site and
+    implies auto-scheduling — so the promise is unkept. No code path publishes a scheduled item.
+  - **P1 — Setting a site on an already-completed strategy is inert.** `handleSiteChange` PATCHes
+    `config.siteId`; nothing reacts to it. No republish route; `maybe_auto_publish` only fires during
+    generation; the row can change siteId but not publishingMode. The user's completed "fifa world cup"
+    (draft mode) strategy's articles stay Writer drafts even after a site is picked — literally their
+    complaint.
+  - **P1 — Site can't be cleared once set** (row selector has no "None" option).
+  - **P2 — Create dialog silently defaults to the first connected site** — in publish mode a user who
+    doesn't notice publishes to the wrong site with no confirmation.
+  - **P2 — Generate All ignores the schedule** — direct generation bypasses the due-date gate (which only
+    guards the background continuation), so a schedule strategy dumps all drafts at once when clicked.
+  - **P2 — Stale comment introduced by THIS session's Step 5**: `service.php:105-107` still says "the create
+    dialog has no date-picker yet (always sends startDate:'')", but Step 5 added exactly that picker. The
+    comment now lies — doc rot from my own execution.
+- **What works** (verified sound): "Publish Automatically" mode + a selected site + Generate = the one
+  end-to-end path that actually pushes to the site and lights up the "View on site" link.
+- **siteId type handling checked and REFUTED as a gap** — `absint` store / `(int)` read / `String()`↔`String()`
+  compare are all consistent.
+- Verdict: the visibility/data-integrity plan did what it said; it did not make articles actually reach the
+  site in schedule mode, nor help already-completed strategies. Reported to user with fix options; awaiting
+  their call on which to address (some are product decisions — e.g. make schedule publish vs. relabel it).
+  Nothing committed.
+
+## 2026-07-08 — Fix: expanding a strategy row showed nothing [/task, Opus 4.8/T2]
+- **User-reported, screenshot-confirmed**: clicking a strategy row expanded it to an EMPTY body — the
+  generated items/articles never appeared ("its not showing in here like we have in autopress").
+- **Root cause (a real, pre-existing bug, never caught because the render path had never run):**
+  `list_strategies` (`controller.php:49`) returned strategies with NO items (`get_user_strategies` is a
+  plain `SELECT *`), and `toggleExpand` (`Strategies/index.tsx:149`) only set `expandedId` — it never
+  fetched items, despite a comment falsely claiming "strategy.get returns items attached". The expanded
+  render is gated on `strategy.items`, which was therefore always `undefined` → nothing rendered.
+- **Fix (2 files, minimal):**
+  1. Backend `list_strategies`: attach `->items = get_strategy_items($id)` per strategy, fetched fresh
+     outside the transient cache so item state is current right after generate/retry. (Transient cache
+     confirmed reference-safe.)
+  2. Frontend `Strategies/index.tsx`: corrected the stale toggleExpand comment; fixed two latent
+     string/number bugs the newly-reachable render exposed — `item.position + 1` (wpdb returns strings, so
+     it concatenated to "01/11/21") → `Number(item.position) + 1`; and `navigateToWriterArticle(item.articleId)`
+     (expects number) → `Number(item.articleId)`. Verified `position` really is a string via real-WP smoke.
+- **Verified:** `php -l` clean; full PHP suite 185/185 (556 assertions, same 1 pre-existing unrelated
+  `PlatformRoleInvariantTest` failure); tsc 56/56 baseline (0 new, none in Strategies/index.tsx); `vite build`
+  clean; real-WP smoke confirmed the list now returns each strategy with its items attached (3/3) and that
+  `position` is a string (proving the Number() fix necessary).
+- **Repackaged** → `~/Desktop/powercreatives/power-creatives.zip` (correct `powerplatform/` top folder,
+  vendor autoloader, no dev packages; fix confirmed present in the extracted controller). Restored the dev
+  autoloader afterward. Not committed.
+- **Note:** this fixes the "click shows nothing" defect. The DEEPER gaps reported earlier this session
+  still stand and are separate product decisions (Schedule Mode never publishes; setting a site on a
+  completed strategy doesn't retro-publish; no clear-site option). Those were NOT touched here.
+
+## 2026-07-08 — Fix: generation 400 "response_format json_schema not supported" [/task, Opus 4.8/T2]
+- **User-reported runtime error** (the "1 failed" item): OpenAI returned `400 Invalid parameter:
+  'response_format' of type 'json_schema' is not supported with this model`. The strategy generator asks
+  for structured JSON via `PCM_LLM::invoke_json` → `response_format: json_schema` (Structured Outputs),
+  but the user's selected model doesn't support that param, so OpenAI rejected the whole request. The
+  existing invoke_json retry only handled JSON *parse* failures, not a hard HTTP 400 — so the 400 escaped
+  as "Generation failed" with no fallback.
+- **Fix (`includes/core/llm/class-pcm-llm.php`, shared layer — benefits every module):** wrapped the first
+  `invoke()` in invoke_json with try/catch. On a response_format-unsupported 400, fall back to
+  prompt-enforced JSON via a new `invoke_json_prompt_only()` helper (drops `response_format`, prepends a
+  hard "raw JSON only" instruction + top-level-keys hint; the generation prompt already requests a JSON
+  object, so it degrades cleanly and works on ANY chat model). Unified the pre-existing parse-failure retry
+  onto the same helper. New `is_response_format_unsupported()` detector kept narrow (must mention the param
+  AND an unsupported phrasing) so genuine errors — bad key, rate limit, context-length — still propagate.
+- **Verified:** `php -l` clean; exercised the REAL `is_response_format_unsupported()` via reflection against
+  the user's exact 400 string (MATCH) and against 401/429/context-length errors (all correctly no-match);
+  full suite 185/185 (556 assertions, same 1 pre-existing unrelated `PlatformRoleInvariantTest` failure).
+- **Repackaged** → `~/Desktop/powercreatives/power-creatives.zip` (`powerplatform/` folder; fix confirmed
+  present + lint-clean in the extracted zip). Restored dev autoloader. Not committed.
+
+## 2026-07-09 — Fix (round 2): "LLM returned invalid JSON after prompt-only" [/task, Opus 4.8/T2]
+- **Follow-up to yesterday's json_schema-400 fix.** That fix fell back json_schema→prompt-only; the user
+  then hit "LLM returned invalid JSON after prompt-only retry" repeatedly. Prompt-only relies on the MODEL
+  to emit perfectly-escaped JSON, which it does inconsistently for large HTML article content (stray
+  unescaped control chars) → intermittent parse failures.
+- **Root cause GROUNDED via real reproduction** (local WP has a real OpenAI key + `gpt-4-turbo`, the exact
+  kind of model that rejects json_schema): confirmed `gpt-4-turbo` + `json_object` mode → API-guaranteed
+  VALID JSON every time; prompt-only → passes sometimes, not always. So the reliable fix is json_object,
+  not prompt-only.
+- **Fix (`class-pcm-llm.php`, `invoke_json`):** replaced the 2-tier fallback with a 3-tier ladder —
+  **json_schema → json_object → prompt-only** — each tier falling through on an unsupported-param 400 OR
+  an unparseable response. json_object is API-enforced valid JSON with far wider model support (gpt-4-turbo/
+  4o/3.5-1106+ …). New `invoke_json_fallback($use_json_object)` helper (augments messages with a hard JSON
+  instruction + top-level-keys hint — also satisfies json_object's "prompt must mention json" requirement)
+  + `parse_json_result()` helper. Genuine errors (bad key, rate limit, context length) still propagate
+  immediately (never masked by the ladder). Cross-provider reasoned through: Gemini default (json_schema
+  tier 1, unchanged); Anthropic (response_format not sent → tier1 original-msgs + tier2 augmented-msgs
+  retry, ≈ old behavior).
+- **Verified (real end-to-end API calls on local install):** `gpt-4-turbo` (rejects json_schema) →
+  `invoke_json` with the REAL strategy article schema+prompt now SUCCEEDS via json_object (full article,
+  all 4 keys, 2536-char content). Regression: `gpt-4o` (supports json_schema) still succeeds via tier 1.
+  `php -l` clean; full suite 185/185 (556 assertions, same 1 pre-existing unrelated failure).
+- **Repackaged** → `~/Desktop/powercreatives/power-creatives.zip` (`powerplatform/` folder; fix present +
+  lint-clean in extracted zip). Restored dev autoloader. Not committed.
+
+## 2026-07-09 — Fix (round 3): "context_length_exceeded" / token-budget overflow [/task, Opus 4.8/T2]
+- **Follow-up to the json_object fix.** User now hit `400 context_length_exceeded`: "maximum context
+  length is 8192 tokens ... you requested 8492 (300 in messages, 8192 in completion)". Root cause: the
+  strategy hardcodes `max_tokens => 8192` (completion), which overflows a model whose TOTAL context window
+  is 8192 (base gpt-4 8k). Same class of failure as Claude's/OpenAI's per-response output caps — which is
+  why "chatgpt and claude both tried."
+- **Grounded via 3 live-reproduced error formats:** OpenAI context-overflow (from the user's screenshot,
+  verbatim), OpenAI output-cap ("supports at most 4096 completion tokens" — reproduced on gpt-4-turbo),
+  Anthropic output-cap ("max_tokens: 200000 > 128000 ..." — reproduced on claude-opus-4-8).
+- **Fix (`class-pcm-llm.php`, `invoke()`):** wrapped the blocking request in a token-budget reduce-and-retry.
+  New `reduced_token_budget()` parser derives a safe completion budget from the model's OWN stated limit
+  (context − prompt − 256 margin, or the stated output cap) and retries ONCE with the reduced
+  `max_completion_tokens`/`max_tokens`. Only fires on a recognizable token-limit error and only when the
+  reduced budget is actually smaller (else propagates) — genuine errors (bad key, rate limit) still surface.
+  Composes with the json_schema→json_object→prompt-only ladder (each invoke() call self-heals token
+  overflow internally).
+- **Verified (real API, local install):** `reduced_token_budget()` via reflection → correct budget for all
+  3 confirmed error strings, null for bad-key/rate-limit. Live end-to-end: `invoke_json` with the REAL
+  strategy schema on `gpt-4-turbo` requesting the overflowing 8192 now SUCCEEDS (json_schema-reject →
+  json_object → output-cap 400 → auto-retry 4096 → full article, all 4 keys, 2232-char content). `php -l`
+  clean; full suite 185/185 (556 assertions, same 1 pre-existing unrelated failure).
+- **Repackaged** → `~/Desktop/powercreatives/power-creatives.zip` (`powerplatform/` folder; fix present +
+  lint-clean in extracted zip). Restored dev autoloader. Not committed.
+- **Noted (not changed):** the reactive retry adds one extra API call per generation on a small-context
+  model. A proactive cap of the strategy's `max_tokens` (e.g. 4096) would avoid that but caps article
+  length on large-context models — left as a possible follow-up, not folded in (minimal-diff; the reactive
+  fix is the general correctness fix and covers all callers/providers).
+
+## 2026-07-09/10 — Worker-mode: generation reliability + real publish-to-site + interlinks [/worker, Fable 5 driver + Sonnet workers]
+- **Plan**: `plan-worker.md` (previous plan.md became OS-locked mid-session — macOS TCC revoked the app's
+  Desktop access, requiring an app restart; execution resumed in-place afterward). 6 steps, all done.
+- **Step 1 [Sonnet worker] — LLM remembers model limits** (`class-pcm-llm.php`): transient-backed memory —
+  a model that rejects json_schema is remembered (`pcm_llm_nojschema_*`) and skips straight to json_object;
+  a discovered token cap is remembered (`pcm_llm_tokcap_*`) and clamped proactively. Real-API proof on
+  gpt-4-turbo: call 1 discovers+remembers (nojschema=true, tokcap=4096), call 2 single-shot at ~half the
+  latency. This kills the "lot of api issues" spam (previously EVERY item re-failed the same 1-2 calls).
+- **Step 2 [driver] — atomic claim + stale reclaim**: new `PCM_DB::claim_strategy_item()` (compare-and-set
+  on status='pending') closes the REAL duplicate-generation race between the browser's Generate-All loop
+  and the wp-cron queue tick; pick→claim bounded loop in the next-pending flow (lost claim → re-pick next);
+  targeted Retry unchanged. New `PCM_DB::reclaim_stale_generating()` (10-min threshold) un-wedges items
+  stranded 'generating' by killed processes. Real-WP smoke: claim wins once/loses second, reclaim resets
+  only stale rows. Residual accepted risk (verified as the ONLY window): a generator legitimately slower
+  than 10 min could have its item reclaimed → rare duplicate; threshold >> worst-case LLM chain.
+- **Step 3 [Sonnet worker] — schedule mode publishes**: `maybe_auto_publish` gate now
+  `in_array('publish','schedule')` — scheduled items publish on their due date via the existing cron chain;
+  draft still never publishes (existing test).
+- **Step 4 [driver] — retro publish + interlinks API**: `publish_item()` (item-in-strategy scoped,
+  completed+articleId+siteId required, reuses publish_to_site) + route
+  `POST /strategies/{id}/items/{itemId}/publish`; `run_interlinks()` public trigger (defaults quantity 3
+  when unconfigured) + route `POST /strategies/{id}/interlinks`; `maybe_inject_interlinks` now returns the
+  injected count. Real-WP smoke: 2 articles cross-linked (2 injected), rerun idempotent (0).
+- **Step 5 [driver] — Strategies page**: publishing-mode inline Select (Draft/Auto-publish/Scheduled) per
+  row; per-item "Publish" button (completed + unpublished + site set) — THE retro-publish path for the
+  user's existing draft articles; "Interlinks" row button with injected-count toast; list auto-polls (5s)
+  only while something is generating (background cron completions now appear live instead of "spooky");
+  generate-error toast now says generation may continue in the background.
+- **Step 6 [driver] — verify + package**: 197/197 tests (185 baseline + 12 new; same 1 pre-existing
+  unrelated `PlatformRoleInvariantTest` failure), tsc 56 baseline/0 new, vite build clean, real-WP smokes
+  (claim/reclaim SQL, interlinks, LLM memory live API). Zip → `~/Desktop/powercreatives/power-creatives.zip`
+  (`powerplatform/` folder, autoloader, all fix symbols verified inside).
+- **Done-gate [spec-verifier]: APPROVED, no P0/P1.** Independently reproduced every check. Its P2 finding
+  (F1: endpoint-level double-publish on an already-published item — UI-only guard) was FIXED anyway
+  (idempotency guard in `publish_item` returning the existing URL; +1 test; suites re-run green; re-zipped).
+  Noted residuals (P3, documented, not fixed): consolidated-batch path doesn't use the atomic claim
+  (pre-existing, outside scope); json_object rejection not remembered (rare model class); wedged-strategy
+  reclaim is user-triggered (next Generate click) and the 5s poll doesn't self-terminate for a wedged
+  strategy; token cap is a single per-model scalar (self-corrects).
+- **Delegated vs driver**: Steps 1, 3 → Sonnet workers (briefs with file allowlists + verbatim acceptance
+  checks; both reports verified by the driver against the real diff/suite before acceptance). Steps 2, 4,
+  5, 6 + the F1 hardening → driver. Nothing committed.
+
+## 2026-07-10 — AutoPress parity audit (workflow) + Batch 2 implementation [/task, Fable 5]
+- **Audit**: multi-agent workflow compared 7 AutoPress feature dimensions against our port (104 features
+  from 4 completed dimensions recovered from the workflow journal after a session-limit failure killed the
+  verify wave + 3 readers; the one genuinely uncovered dimension — the article GENERATION pipeline — was
+  re-run as a single agent). Driver triaged all claims directly (deep session knowledge substituted for
+  the failed adversarial-verify wave).
+- **Batch 2 IMPLEMENTED (UI/service parity, all verified):**
+  - Per-row **Approval select** (none/internal/client → partial config merge) and **Template select**
+    (new `templateId` int-coerced whitelist entry on PATCH /strategies/{id}).
+  - Per-row **Frequency select** (schedule mode) → new `reschedule_pending_items()` redistributes ONLY
+    pending items' due dates (completed keep history); carries startDate through the shallow
+    scheduleConfig merge.
+  - **Per-item due-date**: shown on item rows; inline date picker for pending items on schedule
+    strategies → item PATCH extended with `scheduledDate` (new `set_item_scheduled_date()`, pending-only,
+    strtotime-validated, normalized).
+  - **Per-item delete** (`DELETE /strategies/{id}/items/{itemId}` → new `delete_item()`: refuses
+    'generating' live work, article stays in Writer, decrements totalItems + recomputes; new
+    `PCM_DB::delete_strategy_item()`).
+  - **Delete confirmations** (strategy + item) and **parent Crown badge** on hierarchy items.
+  - Routes: `strategy.updateItem`, `strategy.deleteItem` in the trpc map.
+- **Verified**: php -l clean ×3; **86/86 isolated (202 asserts, +7 tests)**; full **204/204 (603 asserts)**,
+  same 1 pre-existing unrelated failure; tsc 56 baseline/0 new; vite build clean; **real-WP smoke**:
+  reschedule (daily→weekly redistribution exact), set-item-date normalized write, delete-item leaves 2/3
+  with totalItems=2. Zip rebuilt (`powerplatform/`, symbols verified inside) →
+  `~/Desktop/powercreatives/power-creatives.zip`.
+- **Confirmed-present (audit refuted "missing")**: row site/mode selects, per-item Publish/View-on-site,
+  interlinks trigger, schedule computation incl. biweekly quirk, parent-first ordering, consolidated mode,
+  counters, polling, error surfacing — all previously built.
+- **REMAINING gaps (ranked, NOT implemented — next-batch candidates needing user choice):**
+  - Pipeline (from the generation audit): **featured-image generation** (i5, needs image provider + WP
+    media upload + featured_media on publish), in-content images/charts (i4), **JSON-LD schema wiring**
+    (i4 — SEO module renderer exists, strategy pipeline never writes its meta), categories/tags on publish
+    (i3, needs remote term resolution), research/context enrichment (i5 but == the user's own earlier
+    Decision 5 deferral of the Workflows module), multi-step prompting (i3), editor-agent QC pass (i2,
+    manual in AutoPress too), author/Person schema (i2).
+  - UI: Interlink Manager modal + manual anchor→URL rules (i5/i4), bulk selection + bulk action bar (i5),
+    master cross-strategy Schedule view (i5), per-site recurring schedules (i4), search/status filter
+    (i4), AI-assisted anchor placement (== user's earlier "phrase-match, no deps" Decision 3 — deliberate),
+    duplicate strategy, pause/resume, WP status pull-sync, per-item prompt/approval/mode overrides,
+    auto-start on create, volume/difficulty columns, ParentSettings modal, deep-link/sort.
+- Not committed.
+
+## 2026-07-10 — AutoPress parity plan: final waves (F3, A6, I2, J1, K)
+Completed the 31-step plan-worker.md. F3 (opus): volume/difficulty columns, PCM_DB_VERSION → 1.39.0,
+driver-verified dbDelta + idempotency on real WP. A6 (opus): in-content images/charts ([IMAGE_N] /
+media_assets, QuickChart, publish-time sideload); driver fixed the strict-mode schema shape
+(all-props-required + chart_config as JSON string) after a real-API 400 the unit fakes couldn't see.
+J1 (driver): PCM_Article_Review (LLM suggestions + tag-safe surgical apply), 2 Writer routes, AI Review
+panel; real-API smoke 4.6s/8 suggestions. I2 (driver): per-site recurring schedules — WP-option rules
+(sites table has no config column; plan assumption corrected), GET/POST /sites/{id}/schedule, daily-scan
+hook feeding PCM_Topic_Suggester → create_from_keywords, Sites "Auto" dialog. Driver also fixed the
+missing json_schema wrapper ({name, schema}) in J1 + C2's pick_ai_anchor (OpenAI 400); same pre-existing
+bug in scraper/service.php spawned as a separate task chip.
+Routing split — planned: 20 sonnet / 8 opus / 3 driver; executed: 4 sonnet / 16 opus / 3 driver + driver
+fix-passes (many sonnet-routed steps were bundled into opus dispatches for shared-file coherence; no
+step failed twice → no forced reroutes).
+Gates: suite 291 tests / 942 assertions / exactly the 1 known PlatformRoleInvariantTest failure; tsc 56
+pre-existing errors; vite build clean; PCM_VERSION 1.7.0 untouched. Nothing committed.
+
+## 2026-07-10 — Post-parity model modernization sweep
+Audited the ported surface for AutoPress-specific leftovers. No Swedish-language or branding
+carry-overs (existing Swedish refs are this platform's own client context; AutoPress mentions are
+provenance comments). One real finding: the Image module still defaulted/catalogued retired
+dall-e-3 — added gpt-image-1 + gpt-image-1-mini to the OpenAI knownModels catalog and the live
+/models classifier, and switched both image-controller fallbacks to gpt-image-1-mini (matches
+PCM_Strategy_Image; dall-e-3 retirement was confirmed live on this account). Fixed CLAUDE.md's
+stale DB version note (1.17.0 → 1.39.0). Suite 291 / 1 known failure; no TS changes.
+
+## 2026-07-11 — Fix: "No active API key" on strategy generation (wrong user id)
+Root cause (confirmed in code + reproduced live): the two article-text LLM calls
+(generate_next_item, generate_consolidated_batch) and the research-enrichment call passed
+`get_current_user_id()` as the key-lookup user_id, while the wp_pcm_integrations table is keyed by
+the PCM user id (what the rest of the service — templates, brands, featured-image key lookup, article
+row — already threads as $user_id). Under wp-cron (the queue continuation) get_current_user_id() is 0,
+so the owner's key was never found and every cron-driven item errored "No active API key found for
+provider openai" even though the key was present + active. Fix: use the threaded PCM $user_id in all
+three calls (service.php); removed the deliberate unset() + stale docblock in maybe_research_context.
+Verified: full suite 291/1-known; real-WP smoke with get_current_user_id()===0 + OpenAI provider →
+item completed, article created (was the exact failing scenario). One file, 3 call sites; no version bump.
+
+## 2026-07-11 — Case study documentation
+Researched the full platform via 4 parallel read-only explorers (approvals+automations, SEO, AI
+inventory, agency infrastructure) + driver-verified counts (22 modules, 27 tables, 278 route
+declarations, 49k PHP + 76k TS lines, 291 tests, ~24 AI features, 5 providers, 60+ models).
+Wrote docs/PLATFORM-REFERENCE-2026-07.md (internal, technical, honest maturity notes) and
+docs/CASE-STUDY-power-creatives.md (client-facing: stats table, Challenge→Approach→What We
+Built→Why It Matters→Outcomes; no internal identifiers; every claim traced to verified research).
 ## 2026-07-07 — quiet header icons (deliveries) [columnhead-quiet-icons]
 - Shared ColumnHead gains OPT-IN `quietIcons`: filter dot + sort icon opacity-0
   at rest → revealed on header group-hover/group-focus-within → active = always
@@ -6941,3 +7660,15 @@ High-effort review of the uncommitted v1.18/v1.19 delta; fixed:
 - OWNER: update powerleads to 3.0.1, test per handover product checklist. The
   stale test rules (2,5,9 + 6/7 chain) now VISIBLE correctly in the outline;
   chain resolves on next save of that section or manual cleanup. NO PUSH.
+
+## 2026-07-13 — Merged origin/feat/seo-suite-port (175 commits) into local parity work
+Committed the uncommitted parity work first (1310d28, 59 files), then merged the remote SEO-suite
+epic (engine v2.4, connector 3.0.x, dynamic rules/redirects/FAQ/section-frames — 75 files, +14.5k).
+Only 2 conflicts, both resolved as unions: sites/controller.php (our schedule routes + their
+connector-version/update routes) and SESSION_LOG. Critical reconciliation: both lines used DB
+versions 1.37–1.39 for different additive schema — bumped PCM_DB_VERSION to 1.40.0 as a convergence
+pass (documented in activator) and proved it live: an install stamped 1.39.0 by our side re-ran
+dbDelta and gained seo_dynamic_rules/seo_rule_versions/seo_redirects while keeping volume/difficulty.
+Verification on merged code: PHPUnit 299 tests — 3 failures, ALL pre-existing (our 1 known invariant
++ their 2, proven identical on a pure-remote worktree, so ZERO merge regressions); their standalone
+harness 88/88 green; tsc 59 (= their baseline, our changes add none); vite build clean. Not pushed.

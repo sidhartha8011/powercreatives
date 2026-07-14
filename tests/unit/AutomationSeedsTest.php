@@ -55,7 +55,7 @@ class AutomationSeedsTest extends TestCase
         $second = PCM_Automation_Seeds::seed_for_user(1);
 
         // All default rules seeded the first time, nothing the second time.
-        $this->assertSame(7, $first);
+        $this->assertSame(9, $first);
         $this->assertSame(0, $second);
     }
 
