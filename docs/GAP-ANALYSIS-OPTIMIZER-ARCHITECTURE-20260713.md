@@ -104,7 +104,91 @@ review machinery untouched (the basket only writes the topic string) ·
 no existing module modified (new module + new directory) · module loader
 untouched (auto-discovery, F1) · GSC integration consumed read-only.
 
-## CHECKLIST (architecture approval)
+---
+
+# THE FULL PLAN (owner order 2026-07-13: complete, factual, fishbone-per-thing)
+
+## The GOAL STATE the user sees when the plan is executed
+- An **Analyze** button — BLUE OUTLINE pill (white bg, blue border, blue
+  text — visually distinct from the FILLED blue Optimize) sitting
+  immediately LEFT of the Optimize split button in the workbench row.
+  One click = every teacher analyzes with all the inputs it has.
+- The **right Analyze rail**: purpose sections in order (Search engine
+  optimization → AI optimizations → …), each split into FOUND (tickable
+  checkboxes) / NOT FOUND (quiet), each with its own re-analyze button;
+  basket footer → ONE optimization → red/green review.
+- The **left GSC keyword drawer**: primary + supporting keywords (from the
+  SEO fields, settable here), the additional-keywords bucket, days-back,
+  related-only, the compact keyword table (+ per row). Bucket keywords
+  auto-ride EVERY optimize run.
+
+## Additional verified facts the increments stand on
+
+| # | Fact |
+|---|---|
+| F8 | `PCM_LLM::invoke_json(messages, schema, options)` EXISTS (core/llm/class-pcm-llm.php:189) — structured per-check verdicts are one call, no parsing hacks |
+| F9 | `PCM_LLM::invoke_with_grounding` EXISTS (class-pcm-llm.php:304, Gemini google_search) — the AI-visibility teacher's web-search runs need ZERO new plumbing |
+| F10 | `PCM_GSC::sa_rows` is a generic paginated Search-Analytics fetch; `page_stats` (class-pcm-gsc.php:356) already returns per-URL clicks/impressions/position + top `keywords[]` PER PAGE — the interlinks teacher's page↔topic map already exists; the drawer needs one thin `query_stats` (dimensions `[query]` + page filter) reusing `sa_rows` |
+| F11 | Per-page keyword fields exist BOTH ways: local meta map `pcm_seo_primary_keyword`/`pcm_seo_meta_keywords` (seo/service.php:48-77, :210-211) and remote fields `seo:keyword`/`seo:meta_keywords` (:852-853) with read/write plumbing — the drawer reuses the seo module's existing paths (modular boundary held) |
+| F12 | THE shared table exists: `app/src/components/ui/data-table.tsx` (`DataTable<T>`) — the drawer compacts it, never reinvents |
+| F13 | The GSC stats controller pattern (integrations/controller.php:299-351) shows key resolution + property matching — the optimizer consumes `PCM_GSC` the same way, integrations module untouched |
+| F14 | PillButton variants are the sanctioned extension point (the `success` variant was owner-ordered the same way) — the Analyze button = ONE new shared `outline` variant (white bg, blue border/text), reusable app-wide |
+
+## The increments (each = ONE full ritual pair; one fishbone per thing)
+
+**I1 — SPINE + search teacher (the system is alive here).**
+Server: `includes/modules/optimizer/` — config.php · controller.php
+(`GET /optimizer/teachers`, `POST /optimizer/analyze {teacherId, siteId,
+postId, html, context}`) · service.php (teacher glob-registry, shared
+context assembly: pageType + brand + primary keyword, checklist option
+seed `pcm_optimizer_checklists`) · teachers/interface +
+`class-pcm-teacher-search.php` (ONE `invoke_json` call: page-type
+checklist in, per-check `{id, found, evidence}` out; F8).
+Frontend: `app/src/modules/SEO/optimizer/` (types · useOptimizer ·
+OptimizerRail · sections.ts) · PillButton `outline` variant (F14) ·
+the TWO SectionModal seams (Analyze button left of Optimize; basket →
+`startAiReview(directives)`) · trpc-routes entries.
+
+**I2 — keywords teacher + the LEFT drawer.**
+Server: `PCM_GSC::query_stats` (thin, reuses `sa_rows`; F10) ·
+`POST /optimizer/keywords/stats {siteId, postId, days}` ·
+bucket option map `GET/POST /optimizer/keywords` (page-type-map pattern) ·
+`class-pcm-teacher-keywords.php` (bucket + primary as catalog items so
+they're VISIBLE in the rail too).
+Frontend: left `<aside>` drawer (mirror of the right rail) ·
+KeywordsSection: primary/supporting inputs (existing seo field paths,
+F11), bucket pills, days-back (default 30), related-only checkbox,
+compact `DataTable` (F12: keyword/clicks/impressions/position, default
+sort impressions desc, noise filter ≥100 removable, + per row).
+`buildTopic()` appends bucket keywords to EVERY optimize topic —
+one-click AND instruction runs (the seam exists from I1).
+
+**I3 — subtopics teacher.** ONE server file: `invoke_json` — expected
+subtopic branches for the page's topic vs what the content covers →
+missing ones as items ("add a coverage section about X"). ZERO frontend
+work (generic catalog items prove the add-on law).
+
+**I4 — approval-card slice.** Own gap analysis when reached (approvals
+rails dependency; the spine already serializes basket provenance).
+
+**I5 — interlinks teacher.** ONE server file consuming `page_stats`'s
+existing per-URL top-keywords map (F10): phrases in THIS page's text that
+match OTHER pages' top queries → in-context link items
+(`{phrase → targetUrl}` + instruction). Cannibalization flag when two
+pages share a top query. ZERO frontend work.
+
+**I6 — ai-visibility teacher.** ONE server file: 3–5 simulated questions
+→ `invoke_with_grounding` (F9) → winners + citation classification
+(own-site vs third-party = the controllability weight) → `invoke_json`
+commonalities + honest brand mapping vs brand/GBP data. MVP: single run
+per question; sampling/KPI later per backlog.
+
+## CHECKLIST (architecture + plan approval)
 - [ ] BEFORE state = this doc committed, tree clean
-- [ ] Owner GO on the architecture
-- [ ] Then increment 1 (SPINE + search teacher) starts as its own pair
+- [ ] Owner GO on the architecture + plan
+- [ ] I1 SPINE + search teacher (own pair)
+- [ ] I2 keywords teacher + left drawer (own pair)
+- [ ] I3 subtopics teacher (own pair)
+- [ ] I4 approval-card slice (own gap first)
+- [ ] I5 interlinks teacher (own pair)
+- [ ] I6 ai-visibility teacher (own pair)
