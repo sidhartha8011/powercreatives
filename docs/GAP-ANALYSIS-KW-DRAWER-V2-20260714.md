@@ -16,7 +16,7 @@ from the code.
 | K4 | VOLUME: the keyword engine's enrichment EXISTS — `POST /keywords/enrich {keywords[], country}` (keywords/controller.php:120, Ahrefs key via Integrations, batch phase = fast). It COSTS Ahrefs credits → volumes fetch on ADD + on a manual refresh, never on a timer; results cached in an option map (keyword → {volume, fetchedAt}, capped, 30-day TTL — the hub-data pattern) so re-opens are free |
 | K5 | DISCOVERY: the engine's search EXISTS — `POST /keywords/search {query, lang, gl}` → suggestions[] (keywords/controller.php:90, Google Autocomplete proxy). Drawer MVP = ONE call per typed seed (the Keywords module's prefix fan-out stays module-only) + ONE batch enrich (capped 20) for volumes. Same DataTable anatomy as the GSC table, + adds to SELECTED as Additional |
 | K6 | COMPARE ALWAYS ON: the checkbox + state die; `scan` always sends `compare: true`; the Δ columns become permanent. (Cost note: two Google calls per live refresh — accepted by owner) |
-| K7 | The 520px drawer holds three stacked sections; SELECTED sizes to content (it is the smallest), GSC keeps the flexible middle, DISCOVERY renders collapsed until a seed is searched — no fourth scroll container fighting the other three |
+| K7 | AMENDED (owner UX round): NOT three stacked tables — TWO ZONES. Top: the SELECTED table (the decisions, pinned, sized to content). Bottom: ONE FINDER table with a two-tab switch — **Ranking** (the GSC list: days/refresh controls, Δ columns, compare always on) and **Ideas** (a seed input + the keyword engine's suggestions with volumes). Same table anatomy, same + gesture, one scroll area — cart on top, store below |
 
 ## The build
 1. **Smart button:** family-look trigger right of Page type: `key icon +
