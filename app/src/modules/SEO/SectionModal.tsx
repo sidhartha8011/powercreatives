@@ -117,6 +117,8 @@ export interface SectionModalProps {
     /** The row's keyword fields — the keyword drawer's initial values. */
     primaryKeyword?: string; supportingKeyword?: string;
   };
+  /** The site's pages — the keyword drawer's page picker (the table's rows). */
+  sitePages?: Array<{ id: number; title: string; permalink: string }>;
   /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
   /** Where the user clicked — the window opens right below it. */
@@ -565,7 +567,7 @@ function ToolButton({ onClick, active, title, children }: {
 }
 
 export function SectionModal({
-  siteId, postId, type, model, provider, readOnly, mode, section, insert, page, anchors, anchorPoint, onClose, onSaved,
+  siteId, postId, type, model, provider, readOnly, mode, section, insert, page, sitePages, anchors, anchorPoint, onClose, onSaved,
 }: SectionModalProps) {
   const isInsert = mode === 'insert';
   const isPage = mode === 'page';
@@ -1511,6 +1513,7 @@ export function SectionModal({
           postId={postId}
           type={type}
           pageUrl={page?.permalink ?? ''}
+          pages={sitePages ?? []}
           primaryKeyword={primaryKw}
           onPrimaryChange={setPrimaryKw}
           supportingKeywords={supportingKw}

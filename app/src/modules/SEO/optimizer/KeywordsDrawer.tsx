@@ -14,6 +14,8 @@ import { Loader2, Plus, RotateCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { trpc } from '@/lib/trpc';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
+import type { FilterDef } from '@/hooks/useColumnFilters';
+import { ModelDropdown } from '@/components/shared';
 import type { KeywordBucket } from './useKeywordBucket';
 
 interface KeywordRow {
@@ -30,6 +32,8 @@ interface KeywordsDrawerProps {
   type: string;
   /** The page's live URL — the GSC filter ('' = GSC can't see this page). */
   pageUrl: string;
+  /** The site's pages — the picker's choices (the edited page is the default). */
+  pages: Array<{ id: number; title: string; permalink: string }>;
   primaryKeyword: string;
   onPrimaryChange: (value: string) => void;
   /** Supporting keywords — the SEO table's own `supportingKeyword` field. */
@@ -53,17 +57,39 @@ const isRelated = (query: string, primary: string): boolean => {
   return p.size > 0 && tokens(query).some((t) => p.has(t));
 };
 
-const NOISE_FLOOR = 100; // impressions — the default "no crap" filter, removable
+/** Numeric ≥ predicate for a header filter (junk input matches all). */
+const atLeast = (get: (r: KeywordRow) => number) => (r: KeywordRow, v: string): boolean => {
+  const n = Number(v);
+  return Number.isNaN(n) ? true : get(r) >= n;
+};
+
+/** Per-column header filters — THE shared table's own mechanism (the
+ *  bolted-on impressions checkbox died for these, owner order). */
+const FILTER_DEFS: Record<string, FilterDef<KeywordRow>> = {
+  query: { key: 'query', kind: 'text', match: (r, v) => r.query.toLowerCase().includes(v.toLowerCase()) },
+  clicks: { key: 'clicks', kind: 'text', match: atLeast((r) => r.clicks) },
+  impressions: { key: 'impressions', kind: 'text', match: atLeast((r) => r.impressions) },
+  position: {
+    key: 'position',
+    kind: 'text',
+    match: (r, v) => {
+      const n = Number(v);
+      return Number.isNaN(n) ? true : r.position <= n; // lower position = better
+    },
+  },
+};
 
 export function KeywordsDrawer({
-  siteId, postId, type, pageUrl, primaryKeyword, onPrimaryChange, supportingKeywords, onSupportingChange, bucket, onClose,
+  siteId, postId, type, pageUrl, pages, primaryKeyword, onPrimaryChange, supportingKeywords, onSupportingChange, bucket, onClose,
 }: KeywordsDrawerProps) {
   const [days, setDays] = useState(30);
   const [relatedOnly, setRelatedOnly] = useState(false);
-  const [hideNoise, setHideNoise] = useState(true);
   const [rows, setRows] = useState<KeywordRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newKeyword, setNewKeyword] = useState('');
+  /** WHICH page the GSC data is pulled for — defaults to the edited page;
+   *  the bucket stays bound to the EDITED page regardless. */
+  const [target, setTarget] = useState({ postId, pageUrl });
 
   // Field saves ride the EXISTING SEO cell route — one write path per field.
   const saveCell = trpc.seo.remoteSaveCell.useMutation();
@@ -78,14 +104,14 @@ export function KeywordsDrawer({
   /** When the rows are STORED (Google unreachable), the drawer says so —
    *  a status fact, never data passed off as live. */
   const [storedAt, setStoredAt] = useState<number | null>(null);
-  const scan = () => {
+  const scan = (t: { postId: number; pageUrl: string } = target) => {
     setError(null);
-    if (pageUrl === '') {
+    if (t.pageUrl === '') {
       setError('This page has no public URL — Search Console has nothing to report.');
       setRows([]);
       return;
     }
-    statsMutation.mutateAsync({ siteId, postId, pageUrl, days })
+    statsMutation.mutateAsync({ siteId, postId: t.postId, pageUrl: t.pageUrl, days })
       .then((res: any) => {
         setRows(Array.isArray(res?.rows) ? res.rows : []);
         setStoredAt(res?.source === 'stored' ? Number(res?.fetchedAt ?? 0) : null);
@@ -105,10 +131,9 @@ export function KeywordsDrawer({
 
   const visible = useMemo(() => {
     let out = rows ?? [];
-    if (hideNoise) out = out.filter((r) => r.impressions >= NOISE_FLOOR);
     if (relatedOnly && primaryKeyword.trim() !== '') out = out.filter((r) => isRelated(r.query, primaryKeyword));
     return out;
-  }, [rows, hideNoise, relatedOnly, primaryKeyword]);
+  }, [rows, relatedOnly, primaryKeyword]);
 
   const columns: DataTableColumn<KeywordRow>[] = [
     {
@@ -203,6 +228,20 @@ export function KeywordsDrawer({
       </div>
 
       <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5 text-[10px] text-slate-600">
+        {/* WHICH page the data is pulled for (the + always feeds the edited
+            page's bucket) — searchable, defaults to the edited page. */}
+        <ModelDropdown
+          searchable
+          modelGroups={[{ label: 'Page', models: pages.map((p) => ({ id: String(p.id), name: p.title })) }]}
+          selectedModel={String(target.postId)}
+          onModelChange={(id) => {
+            const p = pages.find((x) => String(x.id) === id);
+            if (!p) return;
+            const t = { postId: p.id, pageUrl: p.permalink };
+            setTarget(t);
+            scan(t);
+          }}
+        />
         <label className="flex items-center gap-1" title="How many days back Search Console looks">
           <input
             type="number"
@@ -218,10 +257,6 @@ export function KeywordsDrawer({
           <input type="checkbox" checked={relatedOnly} onChange={(e) => setRelatedOnly(e.target.checked)} className="h-3 w-3 accent-[#007bff]" />
           related
         </label>
-        <label className="flex items-center gap-1" title={`Hide keywords under ${NOISE_FLOOR} impressions`}>
-          <input type="checkbox" checked={hideNoise} onChange={(e) => setHideNoise(e.target.checked)} className="h-3 w-3 accent-[#007bff]" />
-          ≥{NOISE_FLOOR} impr.
-        </label>
         <div className="flex-1" />
         {storedAt !== null && (
           <span
@@ -233,7 +268,7 @@ export function KeywordsDrawer({
         )}
         <button
           type="button"
-          onClick={scan}
+          onClick={() => scan()}
           title="Re-scan Search Console for this page"
           className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary"
         >
@@ -255,6 +290,8 @@ export function KeywordsDrawer({
             rowKey={(r) => r.query}
             defaultSortKey="impressions"
             defaultSortDir="desc"
+            layoutKey="optimizer-kw-drawer"
+            filterDefs={FILTER_DEFS}
             emptyMessage="No keywords in this window — widen the days or remove the filters."
           />
         )}

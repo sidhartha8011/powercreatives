@@ -1766,6 +1766,10 @@ export function SEOModule() {
             primaryKeyword: pageEditRow.primaryKeyword || undefined,
             supportingKeyword: pageEditRow.supportingKeyword || undefined,
           }}
+          // The drawer's page picker chooses which page's GSC data to read.
+          sitePages={rows
+            .filter((r) => (r.permalink ?? '') !== '')
+            .map((r) => ({ id: Number(r.id), title: r.title || r.slug || String(r.id), permalink: r.permalink ?? '' }))}
           onClose={() => setPageEditRow(null)}
           onSaved={() => {}}
         />
