@@ -131,10 +131,15 @@ const WIDTH = 440;
 
 /** The page card's effective width — ONE source of truth. Provably equal
  *  to the former width/minWidth/maxWidth trio (CSS resolves width → the
- *  max-width cap → the min-width floor, and min-width wins): the card takes
- *  it as its width, and the keyword drawer anchors to the card's left edge
- *  with the SAME expression — derived, never mirrored. */
+ *  max-width cap → the min-width floor, and min-width wins). While the
+ *  keyword drawer is open the card TAPERS by a fixed amount (owner UX
+ *  2026-07-14) and tapers back on close — a plain width transition; the
+ *  drawer/card PAIR is centered by the page-mode flex wrapper, so no
+ *  anchor math exists anywhere. */
 const PAGE_CARD_WIDTH = 'max(720px, min(980px, 94vw, 100vw - 32px))';
+const PAGE_CARD_TAPER_PX = 280;
+const pageCardWidth = (tapered: boolean): string =>
+  (tapered ? `calc(${PAGE_CARD_WIDTH} - ${PAGE_CARD_TAPER_PX}px)` : PAGE_CARD_WIDTH);
 
 /** Page mode's OWN reading scale (owner order U2): the document must read
  *  like the live page — real paragraph air, stepped heading sizes — while
@@ -1491,43 +1496,38 @@ export function SectionModal({
     </button>
   );
 
-  return createPortal(
-    <>
-    {/* Page mode: dimmed + blurred backdrop (clicks bubble to the document —
-        the existing outside-click flow is untouched). */}
-    {isPage && <div className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-sm" />}
-    {/* ── THE KEYWORD DRAWER: slides OUT from under the card's LEFT edge —
-           the content column is never squeezed and the card never moves.
-           A SIBLING of the card (the card clips its children), rendered
-           BEFORE it so the card's shadow owns the seam; anchored with the
-           card's OWN width constant (derived, never mirrored); exempted
-           from the outside-click save via drawerRef. ── */}
-    {isPage && !readOnly && keywordsOpen && pageReady && typeof siteId === 'number' && (
-      <div
-        ref={drawerRef}
-        className="fixed z-40 overflow-hidden rounded-l-2xl bg-white shadow-2xl animate-in fade-in slide-in-from-right-10 duration-300"
-        style={{ right: `calc(50% + (${PAGE_CARD_WIDTH}) / 2)`, top: '7vh', height: '86vh' }}
-      >
-        <KeywordsDrawer
-          siteId={siteId}
-          postId={postId}
-          type={type}
-          pageUrl={page?.permalink ?? ''}
-          pages={sitePages ?? []}
-          primaryKeyword={primaryKw}
-          onPrimaryChange={setPrimaryKw}
-          supportingKeywords={supportingKw}
-          onSupportingChange={setSupportingKw}
-          bucket={kwBucket}
-          onClose={() => setKeywordsOpen(false)}
-        />
-      </div>
-    )}
+  /** THE KEYWORD DRAWER — page mode's flex sibling: the wrapper centers
+   *  the [drawer][card] PAIR as one unit (no anchor math anywhere), the
+   *  card tapers while it is open. drawerRef exempts it from the
+   *  outside-click save. */
+  const drawerVisible = isPage && !readOnly && keywordsOpen && pageReady && typeof siteId === 'number';
+  const drawerEl = drawerVisible ? (
+    <div
+      ref={drawerRef}
+      className="h-[86vh] shrink-0 self-center overflow-hidden rounded-l-2xl bg-white shadow-2xl animate-in fade-in slide-in-from-right-10 duration-300"
+    >
+      <KeywordsDrawer
+        siteId={siteId as number}
+        postId={postId}
+        type={type}
+        pageUrl={page?.permalink ?? ''}
+        pages={sitePages ?? []}
+        primaryKeyword={primaryKw}
+        onPrimaryChange={setPrimaryKw}
+        supportingKeywords={supportingKw}
+        onSupportingChange={setSupportingKw}
+        bucket={kwBucket}
+        onClose={() => setKeywordsOpen(false)}
+      />
+    </div>
+  ) : null;
+
+  const cardEl = (
     <div
       ref={rootRef}
-      className={`fixed z-40 flex flex-col overflow-hidden bg-white ${isPage ? 'rounded-2xl shadow-2xl' : 'rounded-lg border border-slate-200 shadow-xl'}`}
+      className={`flex flex-col overflow-hidden bg-white ${isPage ? 'rounded-2xl shadow-2xl' : 'fixed z-40 rounded-lg border border-slate-200 shadow-xl'}`}
       style={isPage
-        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: PAGE_CARD_WIDTH, height: '90vh' }
+        ? { width: pageCardWidth(drawerVisible), height: '90vh', transition: 'width 300ms ease' }
         : { left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
       role="dialog"
       aria-label={title}
@@ -2101,6 +2101,23 @@ export function SectionModal({
       )}
 
     </div>
+  );
+
+  return createPortal(
+    <>
+      {/* Page mode: dimmed + blurred backdrop (clicks bubble to the document —
+          the existing outside-click flow is untouched). */}
+      {isPage && <div className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-sm" />}
+      {isPage ? (
+        // The centered PAIR: layout derives all geometry — the card tapers
+        // while the drawer is open, the pair stays centered as one unit.
+        <div className="fixed inset-0 z-40 flex items-center justify-center">
+          {drawerEl}
+          {cardEl}
+        </div>
+      ) : (
+        cardEl
+      )}
     </>,
     document.body,
   );

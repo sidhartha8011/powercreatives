@@ -62,26 +62,25 @@ const isRelated = (query: string, primary: string): boolean => {
   return p.size > 0 && tokens(query).some((t) => p.has(t));
 };
 
-/** Signed delta — green = improving, red = declining (`invert` for
+/** Signed delta cell — green = improving, red = declining (`invert` for
  *  position, where DOWN is the win). A missing delta is a dash. */
-const deltaSpan = (n: number | null | undefined, invert = false) => {
+const deltaCell = (n: number | null | undefined, invert = false) => {
   if (n == null) return <span className="text-slate-300">—</span>;
   const good = invert ? n < 0 : n > 0;
   const cls = n === 0 ? 'text-slate-400' : good ? 'text-green-600' : 'text-red-600';
   return <span className={cls}>{n > 0 ? `+${n}` : String(n)}</span>;
 };
 
-/** TREND CELL (compare mode, owner UX 2026-07-14): the columns TRANSFORM
- *  instead of multiplying — the change is the loud number, the current
- *  value the quiet second line. Five columns always, no sideways scroll. */
-const metricCell = (trend: boolean, value: number | null, delta: number | null | undefined, invert = false) => {
-  if (!trend) return value ?? <span className="text-slate-300">—</span>;
-  return (
-    <span className="flex flex-col items-end leading-tight">
-      {deltaSpan(delta, invert)}
-      <span className="text-[9px] text-slate-400">now {value ?? '—'}</span>
-    </span>
-  );
+/** Per-column header filters — explicit columns, explicit predicates
+ *  (owner ruling 2026-07-14: you must always SEE what you sort/filter by). */
+const FILTER_DEFS: Record<string, FilterDef<KeywordRow>> = {
+  query: { key: 'query', kind: 'text', match: (r, v) => r.query.toLowerCase().includes(v.toLowerCase()) },
+  clicks: { key: 'clicks', kind: 'number', match: numberMatch((r) => r.clicks) },
+  impressions: { key: 'impressions', kind: 'number', match: numberMatch((r) => r.impressions) },
+  position: { key: 'position', kind: 'number', match: numberMatch((r) => r.position) },
+  dClicks: { key: 'dClicks', kind: 'number', match: numberMatch((r) => r.d?.clicks ?? null) },
+  dImpressions: { key: 'dImpressions', kind: 'number', match: numberMatch((r) => r.d?.impressions ?? null) },
+  dPosition: { key: 'dPosition', kind: 'number', match: numberMatch((r) => r.d?.position ?? null) },
 };
 
 export function KeywordsDrawer({
@@ -141,16 +140,7 @@ export function KeywordsDrawer({
     return out;
   }, [rows, relatedOnly, primaryKeyword]);
 
-  // TREND MODE: compare data present → the metric columns transform (the
-  // change is shown, sorted and filtered; the value rides as a quiet second
-  // line). Five columns in BOTH modes — never a sideways scroll.
-  const trend = (rows ?? []).some((r) => r.d != null);
-  const filterDefs = useMemo<Record<string, FilterDef<KeywordRow>>>(() => ({
-    query: { key: 'query', kind: 'text', match: (r, v) => r.query.toLowerCase().includes(v.toLowerCase()) },
-    clicks: { key: 'clicks', kind: 'number', match: numberMatch((r) => (trend ? r.d?.clicks ?? null : r.clicks)) },
-    impressions: { key: 'impressions', kind: 'number', match: numberMatch((r) => (trend ? r.d?.impressions ?? null : r.impressions)) },
-    position: { key: 'position', kind: 'number', match: numberMatch((r) => (trend ? r.d?.position ?? null : r.position)) },
-  }), [trend]);
+  const hasDeltas = (rows ?? []).some((r) => r.d != null);
   const columns: DataTableColumn<KeywordRow>[] = [
     {
       key: 'add',
@@ -169,34 +159,19 @@ export function KeywordsDrawer({
       ),
     },
     { key: 'query', header: 'Keyword', cell: (r) => <span title={r.query}>{r.query}</span>, sortAccessor: (r) => r.query },
-    {
-      key: 'clicks',
-      header: trend ? 'Δ Clicks' : 'Clicks',
-      width: 56,
-      className: 'text-right',
-      cell: (r) => metricCell(trend, r.clicks, r.d?.clicks),
-      sortAccessor: (r) => (trend ? r.d?.clicks ?? 0 : r.clicks),
-    },
-    {
-      key: 'impressions',
-      header: trend ? 'Δ Impr.' : 'Impr.',
-      width: 62,
-      className: 'text-right',
-      cell: (r) => metricCell(trend, r.impressions, r.d?.impressions),
-      sortAccessor: (r) => (trend ? r.d?.impressions ?? 0 : r.impressions),
-    },
-    {
-      key: 'position',
-      header: trend ? 'Δ Pos.' : 'Pos.',
-      width: 52,
-      className: 'text-right',
-      cell: (r) => metricCell(trend, r.position, r.d?.position, true),
-      sortAccessor: (r) => (trend ? r.d?.position ?? 0 : r.position),
-    },
+    { key: 'clicks', header: 'Clicks', width: 52, className: 'text-right', cell: (r) => r.clicks, sortAccessor: (r) => r.clicks },
+    { key: 'impressions', header: 'Impr.', width: 60, className: 'text-right', cell: (r) => r.impressions, sortAccessor: (r) => r.impressions },
+    { key: 'position', header: 'Pos.', width: 48, className: 'text-right', cell: (r) => r.position ?? <span className="text-slate-300">—</span>, sortAccessor: (r) => r.position },
+    // The trend columns (compare mode): sorting a Δ column IS the trend view.
+    ...(hasDeltas ? ([
+      { key: 'dClicks', header: 'Δ Clicks', width: 58, className: 'text-right', cell: (r) => deltaCell(r.d?.clicks), sortAccessor: (r) => r.d?.clicks ?? 0 },
+      { key: 'dImpressions', header: 'Δ Impr.', width: 62, className: 'text-right', cell: (r) => deltaCell(r.d?.impressions), sortAccessor: (r) => r.d?.impressions ?? 0 },
+      { key: 'dPosition', header: 'Δ Pos.', width: 54, className: 'text-right', cell: (r) => deltaCell(r.d?.position, true), sortAccessor: (r) => r.d?.position ?? 0 },
+    ] satisfies DataTableColumn<KeywordRow>[]) : []),
   ];
 
   return (
-    <aside className="flex h-full w-[360px] shrink-0 flex-col border border-r-0 border-slate-200 bg-white">
+    <aside className="flex h-full w-[520px] shrink-0 flex-col border border-r-0 border-slate-200 bg-white">
       <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5">
         <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700">Keywords</div>
         <button
@@ -337,7 +312,7 @@ export function KeywordsDrawer({
             defaultSortKey="impressions"
             defaultSortDir="desc"
             layoutKey="optimizer-kw-drawer"
-            filterDefs={filterDefs}
+            filterDefs={FILTER_DEFS}
             emptyMessage="No keywords in this window — widen the days or remove the filters."
           />
         )}
