@@ -193,6 +193,14 @@ once, each feature plugs in. Value driver + MVP cut per feature:
    the reverse direction (links TO this page from other pages).
 **Build order by value: 1 → 3 → 4 → 6 → 5 → 2.**
 
+**THE MENTAL MODEL (owner 2026-07-13 — the purpose, stated so it can't be
+misread):** each purpose is a SEPARATE TEACHER — never a committee. Every
+teacher independently contributes its own suggestions; the teachers never
+talk to each other, they only add items to the CATALOG. The user selects/
+deselects from the catalog with full control, and the selection goes as a
+BASKET into ONE optimization order. One optimization — its content decided
+entirely by what the user put in the basket.
+
 **THE ANALYZE RAIL UX LAW (owner correction 2026-07-13 — this is for the
 USER doing the optimization, inside the editor):**
 - The rail is organized PER PURPOSE, as sections: first "Search engine
