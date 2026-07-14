@@ -951,6 +951,11 @@ export function SectionModal({
       // menu and the column filter menus are INSIDE the editor by intent,
       // now also by law (the toast exception's exact precedent).
       if (t.closest('[data-radix-popper-content-wrapper]')) return;
+      // And while ANY such menu is OPEN, Radix sets pointer-events:none on
+      // the body — a click then targets bare <html>, outside every ref
+      // (the owner's "random" closes). An open menu owns that click: it is
+      // a menu dismissal, never an outside click.
+      if (document.querySelector('[data-radix-popper-content-wrapper]')) return;
       if (isDirty()) void save().then((ok) => { if (ok) onClose(); });
       else onClose();
     };

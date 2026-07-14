@@ -174,6 +174,16 @@ export function KeywordsDrawer({
 
   const [newKeyword, setNewKeyword] = useState('');
 
+  // FULL table parity (owner law: never a lesser table): the selected
+  // table gets the same header filters as every other — live-value
+  // predicates, so the defs live here with their dependencies.
+  const selectedFilterDefs = useMemo<Record<string, FilterDef<SelectedRow>>>(() => ({
+    kw: { key: 'kw', kind: 'text', match: (r, v) => r.kw.toLowerCase().includes(v.toLowerCase()) },
+    uses: { key: 'uses', kind: 'number', match: numberMatch((r) => keywordUses(contentText, r.kw).uses) },
+    density: { key: 'density', kind: 'number', match: numberMatch((r) => keywordUses(contentText, r.kw).density) },
+    volume: { key: 'volume', kind: 'number', match: numberMatch((r) => volumes[r.kw] ?? null) },
+  }), [contentText, volumes]);
+
   const selectedColumns: DataTableColumn<SelectedRow>[] = [
     { key: 'kw', header: 'Keyword', cell: (r) => <span title={r.kw}>{r.kw}</span>, sortAccessor: (r) => r.kw },
     {
@@ -347,6 +357,8 @@ export function KeywordsDrawer({
           columns={selectedColumns}
           data={selectedRows}
           rowKey={(r) => r.kw}
+          layoutKey="optimizer-kw-selected"
+          filterDefs={selectedFilterDefs}
           emptyMessage="No keywords yet — add them below with +, or type one here."
         />
         <div className="px-2.5 py-1.5">
