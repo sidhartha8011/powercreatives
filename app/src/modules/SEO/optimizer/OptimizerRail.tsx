@@ -96,8 +96,10 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
                         onChange={() => opt.toggle(it)}
                         className="mt-0.5 h-3 w-3 shrink-0 accent-[#007bff]"
                       />
-                      <span className="min-w-0">
-                        <span className="block text-[11px] leading-tight text-slate-700">{it.label}</span>
+                      {/* POSITIVES law (owner 2026-07-14): the row says what
+                          TO DO — the finding is the quiet subtext. */}
+                      <span className="min-w-0" title={it.label}>
+                        <span className="block text-[11px] leading-tight text-slate-700">{it.instruction}</span>
                         {it.evidence !== '' && (
                           <span className="block text-[10px] leading-tight text-slate-400">{it.evidence}</span>
                         )}
