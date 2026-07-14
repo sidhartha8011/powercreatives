@@ -75,6 +75,9 @@ export function KeywordsDrawer({
 
   const statsMutation = trpc.optimizer.keywordStats.useMutation();
   const loading = statsMutation.isPending ?? false;
+  /** When the rows are STORED (Google unreachable), the drawer says so —
+   *  a status fact, never data passed off as live. */
+  const [storedAt, setStoredAt] = useState<number | null>(null);
   const scan = () => {
     setError(null);
     if (pageUrl === '') {
@@ -82,10 +85,14 @@ export function KeywordsDrawer({
       setRows([]);
       return;
     }
-    statsMutation.mutateAsync({ pageUrl, days })
-      .then((res: any) => setRows(Array.isArray(res?.rows) ? res.rows : []))
+    statsMutation.mutateAsync({ siteId, postId, pageUrl, days })
+      .then((res: any) => {
+        setRows(Array.isArray(res?.rows) ? res.rows : []);
+        setStoredAt(res?.source === 'stored' ? Number(res?.fetchedAt ?? 0) : null);
+      })
       .catch((e: unknown) => {
         setRows([]);
+        setStoredAt(null);
         setError(e instanceof Error ? e.message : 'Search Console request failed');
       });
   };
@@ -216,6 +223,14 @@ export function KeywordsDrawer({
           ≥{NOISE_FLOOR} impr.
         </label>
         <div className="flex-1" />
+        {storedAt !== null && (
+          <span
+            title="Google is unreachable — showing the last stored rows; refresh retries live"
+            className="rounded-full bg-slate-100 px-1.5 py-px text-[9px] text-slate-500"
+          >
+            stored {storedAt > 0 ? new Date(storedAt * 1000).toISOString().slice(0, 10) : ''}
+          </span>
+        )}
         <button
           type="button"
           onClick={scan}

@@ -33,6 +33,13 @@ class PCM_Optimizer_Service
      *  (the proven option-map pattern — a table comes only if scale demands). */
     private const KW_BUCKET_OPTION = 'pcm_optimizer_kw_bucket';
 
+    /** Option holding the last successful GSC keyword rows per page, keyed
+     *  "siteId:postId" — the drawer serves these LABELED when Google is
+     *  unreachable (never silently), and they make the table seedable as
+     *  pure data. Rows capped so the map stays bounded. */
+    private const KW_STATS_CACHE_OPTION = 'pcm_optimizer_kw_stats_cache';
+    private const KW_STATS_CACHE_MAX_ROWS = 300;
+
     /**
      * Registered teachers, keyed by id. Populated by load_teachers().
      *
@@ -269,6 +276,44 @@ class PCM_Optimizer_Service
             $map[$key] = array_values($keywords);
         }
         update_option(self::KW_BUCKET_OPTION, $map, false);
+    }
+
+    /**
+     * The stored keyword rows for one page, or null when never fetched.
+     *
+     * @param int $site_id Site id.
+     * @param int $post_id Post id.
+     * @return array{property: string, rows: array, fetchedAt: int}|null
+     */
+    public static function kw_stats_cache_get(int $site_id, int $post_id): ?array
+    {
+        $map   = get_option(self::KW_STATS_CACHE_OPTION);
+        $entry = (is_array($map)) ? ($map[$site_id . ':' . $post_id] ?? null) : null;
+        return (is_array($entry) && is_array($entry['rows'] ?? null)) ? $entry : null;
+    }
+
+    /**
+     * Store a page's keyword rows after a successful live fetch (capped —
+     * the map stays bounded).
+     *
+     * @param int    $site_id  Site id.
+     * @param int    $post_id  Post id.
+     * @param string $property The GSC property that answered.
+     * @param array  $rows     Live rows.
+     * @return void
+     */
+    public static function kw_stats_cache_save(int $site_id, int $post_id, string $property, array $rows): void
+    {
+        $map = get_option(self::KW_STATS_CACHE_OPTION);
+        if (!is_array($map)) {
+            $map = array();
+        }
+        $map[$site_id . ':' . $post_id] = array(
+            'property'  => $property,
+            'rows'      => array_slice(array_values($rows), 0, self::KW_STATS_CACHE_MAX_ROWS),
+            'fetchedAt' => time(),
+        );
+        update_option(self::KW_STATS_CACHE_OPTION, $map, false);
     }
 
     /**

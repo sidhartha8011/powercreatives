@@ -54,26 +54,66 @@ class PCM_REST_Optimizer extends PCM_REST_Base
      */
     public function keyword_stats(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
-        $pcm_user = $this->get_current_pcm_user();
-        try {
-            $key = $this->get_provider_api_key('gsc', (int) $pcm_user->id);
-        } catch (\RuntimeException $e) {
-            return $this->error('No active Google Search Console integration found — add one on the Integrations page.', 400);
-        }
         $p        = $request->get_json_params();
+        $site_id  = is_array($p) ? absint($p['siteId'] ?? 0) : 0;
+        $post_id  = is_array($p) ? absint($p['postId'] ?? 0) : 0;
         $page_url = is_array($p) ? esc_url_raw(trim((string) ($p['pageUrl'] ?? ''))) : '';
         $days     = is_array($p) ? max(1, min(180, (int) ($p['days'] ?? 30))) : 30;
         if ($page_url === '') {
             return $this->error('pageUrl is required.');
         }
 
+        $live = $this->fetch_live_keyword_stats($page_url, $days);
+        if (!is_wp_error($live)) {
+            // Success feeds the store — the drawer opens instantly next time
+            // and stays useful when Google is unreachable.
+            PCM_Optimizer_Service::kw_stats_cache_save($site_id, $post_id, $live['property'], $live['rows']);
+            return $this->success(array(
+                'source'    => 'live',
+                'property'  => $live['property'],
+                'rows'      => $live['rows'],
+                'fetchedAt' => time(),
+            ));
+        }
+
+        // Live failed (no integration / Google error): serve the STORED rows
+        // when they exist — always labeled, never passed off as live. No
+        // store either → the live error stands, honestly.
+        $stored = PCM_Optimizer_Service::kw_stats_cache_get($site_id, $post_id);
+        if ($stored !== null) {
+            return $this->success(array(
+                'source'    => 'stored',
+                'property'  => (string) ($stored['property'] ?? ''),
+                'rows'      => $stored['rows'],
+                'fetchedAt' => (int) ($stored['fetchedAt'] ?? 0),
+            ));
+        }
+        return $this->error($live->get_error_message(), (int) ($live->get_error_data()['status'] ?? 502));
+    }
+
+    /**
+     * One live GSC per-query fetch for one page — the proven candidate-try
+     * flow (www/non-www/sc-domain twins), every failure as WP_Error.
+     *
+     * @param string $page_url The page to filter on.
+     * @param int    $days     Look-back window.
+     * @return array{property: string, rows: array}|WP_Error
+     */
+    private function fetch_live_keyword_stats(string $page_url, int $days): array|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        try {
+            $key = $this->get_provider_api_key('gsc', (int) $pcm_user->id);
+        } catch (\RuntimeException $e) {
+            return new WP_Error('pcm_no_gsc', 'No active Google Search Console integration found — add one on the Integrations page.', array('status' => 400));
+        }
         $props = PCM_GSC::list_properties($key);
         if (is_wp_error($props)) {
-            return $this->error($props->get_error_message(), 502);
+            return $props;
         }
         $candidates = PCM_GSC::match_properties($props, $page_url);
         if (empty($candidates)) {
-            return $this->error('The GSC service account has no access to a property for this page\'s site.', 404);
+            return new WP_Error('pcm_no_gsc_property', 'The GSC service account has no access to a property for this page\'s site.', array('status' => 404));
         }
 
         $rows     = null;
@@ -95,10 +135,9 @@ class PCM_REST_Optimizer extends PCM_REST_Base
             }
         }
         if ($rows === null || is_wp_error($rows)) {
-            return $this->error(is_wp_error($rows) ? $rows->get_error_message() : 'Search Console returned no result.', 502);
+            return is_wp_error($rows) ? $rows : new WP_Error('pcm_gsc_empty', 'Search Console returned no result.', array('status' => 502));
         }
-
-        return $this->success(array('property' => $property, 'rows' => $rows));
+        return array('property' => $property, 'rows' => $rows);
     }
 
     /**
