@@ -49,7 +49,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus, ScanSearch,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -59,6 +59,7 @@ import { useTextModels } from '@/modules/Copy/useTextModels';
 import {
   diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
 } from './word-diff';
+import { OptimizerRail } from './optimizer/OptimizerRail';
 
 // The hub's native WP media library (wp_enqueue_media — same pattern as the
 // table's featured-image picker).
@@ -684,6 +685,9 @@ export function SectionModal({
     setPageType(String((pageQuery.data as any).pageType ?? '') || 'general');
   }, [isPage, pageQuery.data]);
   const [insertOpen, setInsertOpen] = useState(false);
+  /** THE OPTIMIZER's rail (Analyze) — opening runs every teacher; closing
+   *  discards the run (Analyze always means a FRESH analysis). */
+  const [analyzeOpen, setAnalyzeOpen] = useState(false);
   const brandMutation = trpc.sites.update.useMutation();
   const pageTypeMutation = trpc.seo.remoteSavePageType.useMutation();
   const pickBrand = (id: string) => {
@@ -1491,6 +1495,17 @@ export function SectionModal({
               )}
             </div>
             {aiModelSelect}
+            {/* ANALYZE (the optimizer spine): blue OUTLINE pill — the
+                generate family, visually distinct from the filled Optimize
+                beside it. Opens the rail and runs every teacher. */}
+            <PillButton
+              variant="outline"
+              icon={<ScanSearch />}
+              onClick={() => setAnalyzeOpen((v) => !v)}
+              title="Analyze this page — every purpose contributes suggestions you pick from"
+            >
+              Analyze
+            </PillButton>
             {/* ONE AI entry point (the shared blue generate pill, split): EVERY
                 run goes through the red/green review — no AI text ever lands
                 without Accept/Reject. A text selection only narrows the SCOPE;
@@ -1769,6 +1784,25 @@ export function SectionModal({
             ))}
           </div>
         </aside>
+      )}
+
+      {/* ── THE ANALYZE RAIL (optimizer spine): teachers' suggestions →
+             basket → ONE optimize run through the normal red/green review.
+             Yields to the review rail and the image panel. ── */}
+      {isPage && !readOnly && analyzeOpen && !review && !imgSel && pageReady && (
+        <OptimizerRail
+          siteId={siteId as number}
+          postId={postId}
+          pageType={pageType}
+          model={aiPick?.id ?? model}
+          provider={aiPick?.provider ?? provider}
+          getHtml={() => stripDiffHtml(editor?.getHTML() ?? '')}
+          onClose={() => setAnalyzeOpen(false)}
+          onOptimize={(directives) => {
+            setAnalyzeOpen(false);
+            void startAiReview(directives);
+          }}
+        />
       )}
 
       {/* ── Image metadata panel (V3): alt/title as a dynamic rule — the image

@@ -25,6 +25,10 @@ export interface RouteConfig {
 // ── Route Map ──
 
 export const ROUTE_MAP: Record<string, RouteConfig> = {
+    // ── Optimizer (the teacher/catalog/basket analysis system) ──
+    "optimizer.teachers": { endpoint: "optimizer/teachers", method: "GET" },
+    "optimizer.analyze": { endpoint: "optimizer/analyze", method: "POST" },
+
     // ── Integrations ──
     "integrations.list": { endpoint: "integrations", method: "GET" },
     "integrations.listProviders": { endpoint: "integrations/providers", method: "GET" },

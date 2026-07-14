@@ -18,7 +18,7 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { colors, typography, spacing } from './design-tokens';
 
-export type PillButtonVariant = 'active' | 'default' | 'subtle' | 'success';
+export type PillButtonVariant = 'active' | 'default' | 'subtle' | 'success' | 'outline';
 
 interface PillButtonProps {
   children: React.ReactNode;
@@ -28,13 +28,14 @@ interface PillButtonProps {
   loading?: boolean;
   disabled?: boolean;
   className?: string;
+  title?: string;
   /** Optional trailing element (badge, count, chevron) */
   trailing?: React.ReactNode;
 }
 
 const variantStyles: Record<
   PillButtonVariant,
-  { bg: string; color: string; iconColor: string; weight: number; hoverBg: string; hoverColor: string }
+  { bg: string; color: string; iconColor: string; weight: number; hoverBg: string; hoverColor: string; border?: string }
 > = {
   active: {
     bg: colors.primaryLight,
@@ -62,6 +63,18 @@ const variantStyles: Record<
     hoverBg: colors.primaryLight,
     hoverColor: colors.primary,
   },
+  // The ANALYZE semantic (owner 2026-07-13): white pill, blue outline +
+  // text — a generate-family sibling that stays visually DISTINCT from the
+  // filled blue pill beside it. Hover = the family's light-blue lift.
+  outline: {
+    bg: '#ffffff',
+    color: colors.primary,
+    iconColor: colors.primary,
+    weight: typography.medium,
+    hoverBg: colors.primaryLight,
+    hoverColor: colors.primary,
+    border: 'rgba(0, 123, 255, 0.4)',
+  },
   // The SAVE semantic (owner 2026-07-13): solid green, white text — ONE
   // shared look for every save-class action app-wide.
   success: {
@@ -82,6 +95,7 @@ export function PillButton({
   loading = false,
   disabled = false,
   className = '',
+  title,
   trailing,
 }: PillButtonProps) {
   const [hovered, setHovered] = useState(false);
@@ -105,6 +119,7 @@ export function PillButton({
     <button
       onClick={onClick}
       disabled={isDisabled}
+      title={title}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       className={`flex items-center shrink-0 ${className}`}
@@ -115,7 +130,7 @@ export function PillButton({
         fontWeight: v.weight,
         background: bg,
         color,
-        border: '1px solid transparent',
+        border: `1px solid ${v.border ?? 'transparent'}`,
         gap: spacing.gap,
         transition: 'background-color 0.2s, color 0.2s',
         opacity: isDisabled ? 0.5 : 1,
