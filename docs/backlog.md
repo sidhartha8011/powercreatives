@@ -120,6 +120,53 @@ Fonts are set in 8 systems (~1,265 declarations): wp-admin CSS (81, neutralized 
 Safe stopping point after every step. Context: CHANGELOG-20260707-0645 (layer war),
 SESSION_LOG 2026-07-07 entries.
 
+## Content analysis — reality-based, page-type-aware checklists (owner order 2026-07-13, research first, TWO PARTS)
+The page editor gains an ANALYZE step: the content is evaluated against
+what ACTUALLY ranks — never generic SEO-tool "best practices based on
+nothing". PART 1 (search): checklists PER PAGE TYPE (at least:
+category/knowledge page e.g. "dentist" needing topical/knowledge-graph
+completion with subtopics; local service page prioritizing above-the-fold
+contact/phone/CTA/USP/reviews and simple human language — never academic;
+supporting/subtopic page; brand page carrying brand info/people/staff/
+differentiators; general as fallback). Checklists live as HUB-CONTROLLED
+DATA (editable, never hardcoded), keyed off the EXISTING Page-type
+dropdown. PART 2 (AI recommendations, owner spec confirmed 2026-07-13):
+simulate the 3–5 questions a person would ask an AI assistant → run them
+FOR REAL via web-search-enabled API calls, multiple runs each → find the
+consistently recommended winners → CITATIONS AS A GATE not the driver
+(classify sources: competitor's OWN site vs third-party; controllability
+weight — answers grounded in winners' own pages = HIGH on-page
+opportunity) → read the winners' own pages (the only controllable
+surface) → extract + sanity-check commonalities → map to OUR brand
+honestly (underlying-signal substitution, proximity/ambition phrasing,
+never claims we can't back, no dumb "go get certified" advice) →
+quotable one-line facts always recommended → baseline + scheduled
+re-runs = brand mention rate KPI. ONE winner-analysis engine feeds both
+parts. FLOW (both parts): Analyze button → per-check results (pass/fail +
+evidence) as a checklist with CHECKBOXES → ticked items ride the existing
+optimization prompt → the normal red/green review. RESEARCH delivered:
+docs/RESEARCH-CONTENT-ANALYSIS-20260713.md (checklist seeds, evaluators,
+reality-derivation, Part 2 workflow, GUI, prompt wiring).
+
+## GSC keyword drawer in the page editor (owner order 2026-07-13)
+A LEFT-side drawer in the page editor modal, driven by the existing GSC
+integration. TOP: the page's PRIMARY keyword + SUPPORTING keywords (read
+from the SEO table; settable right here when unset) + an ADDITIONAL
+KEYWORDS bucket that fills as the user clicks + on rows below. CONTROLS:
+searchable page dropdown listing every GSC-indexed page (default = the
+CURRENT page when GSC knows it, else the primary domain) · days-back input
+(default 30) · a "related only" checkbox that hides keywords unrelated to
+the primary keyword. SCAN: scans the whole domain for keywords RELATED to
+the primary keyword that the site ALREADY ranks for — surfacing proven
+potential, not guesses. TABLE (reuse THE existing shared table component,
+compacted — never reinvent): columns keyword | clicks | impressions |
+position; scrollable; per-column sort + filter; DEFAULT sorted by
+impressions desc with a noise filter (~impressions ≥ 100, user-removable).
+Workflow the layout serves: sort by position, read impressions → a page-2
+keyword with 1,000 impressions = the opportunity; click + → it joins the
+additional-keywords bucket for this page/site and feeds optimization
+prompts.
+
 ## Ask AI — the document advisor (owner-parked 2026-07-13)
 Ask AI returns as its OWN feature (not the optimize instruction field): a
 side panel where the user asks about the page ("why should this be
