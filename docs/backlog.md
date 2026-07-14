@@ -167,6 +167,42 @@ keyword with 1,000 impressions = the opportunity; click + → it joins the
 additional-keywords bucket for this page/site and feeds optimization
 prompts.
 
+## THE ONE-CLICK OPTIMIZATION SPINE — MVP consolidation of the 2026-07-13 batch (owner session 2026-07-13)
+The owner's goal sentence IS the architecture: ONE Analyze → tick what you
+want → ONE Optimize click → red/green review. Four of the five features
+are producers of TICKABLE ITEMS for that single flow — build the spine
+once, each feature plugs in. Value driver + MVP cut per feature:
+1. **Content Analysis P1 = THE SPINE (build first).** Value: the optimize
+   prompt stops being generic — directed by page-type-specific gaps. MVP:
+   checklists as data + one LLM analysis (pass/fail + evidence) +
+   checkboxes → prompt. Defer: reality-derivation, deterministic
+   evaluators.
+2. **Content Analysis P2.** Value: what the AI actually recommends + the
+   honest brand mapping. MVP: 3–5 web-search questions → winners →
+   recommendations as ANOTHER check group in the same rail. Defer:
+   multi-run sampling, citation weighting, mention-rate KPI.
+3. **GSC drawer.** Value: proven-demand keywords riding EVERY optimize run
+   automatically. MVP: this page's own GSC keywords + the + bucket +
+   auto-inclusion. Defer: domain-wide related scan, page-switcher.
+4. **Knowledge-graph insert.** The value is SUBTOPIC COVERAGE, not the
+   button: MVP = a check in the Analyze rail ("missing subtopics X/Y/Z —
+   tick to add a coverage section"). No separate insert machinery. Defer:
+   link-mode (needs 5's machinery).
+5. **Interlinking.** Value: in-context links FROM this page chosen by what
+   targets actually rank for (GSC), each an accept/reject item. Defer:
+   the reverse direction (links TO this page from other pages).
+**Build order by value: 1 → 3 → 4 → 6 → 5 → 2.**
+
+## Client approval card for page changes (owner order 2026-07-13 — feature 6)
+Value driver: THE CLIENT SEES THE SAME RED/GREEN VIEW AND APPROVES. MVP: a
+shareable READ-ONLY link rendering this page's pending changes exactly as
+the editor shows them (red out, green in, per section) + Approve/Comment —
+reusing the client-review-board primitives that already exist. BUILD LAW:
+this is the FIRST SLICE of the already-specced approval-pipeline rails
+(Autonomy roadmap #1: seo_staged_changes + asset-type adapter registry +
+Before/After cards) — never a parallel machinery; nothing thrown away when
+the full rails land.
+
 ## Knowledge-graph insert (owner-approved spec 2026-07-13)
 A new Insert-menu item (beside Image and FAQ): insert a SUBTOPIC section
 for the page's topic — e.g. a "dentist" page gains a section covering 3–5
