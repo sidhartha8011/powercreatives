@@ -37,6 +37,36 @@ belong in a disclosure. NO information may be removed. Senior-UX pass.
   ruling here (this order supersedes the row-shows-instruction reading).
 
 ## CHECKLIST
-[ ] BEFORE commit (this doc) · [ ] OptimizerRail rework (my lane file
-only) · [ ] tsc 59/0 new · [ ] build "built in" · [ ] changelog ·
-[ ] AFTER commit LOCAL ONLY
+[x] BEFORE commit (this doc) · [x] OptimizerRail rework (my lane file
+only) · [x] tsc 59/0 new · [x] build "built in" · [x] changelog ·
+[x] AFTER commit LOCAL ONLY (1c7a52b)
+
+---
+
+# ADDENDUM — ROUND 2 (owner screenshots 2026-07-15, QUEUED — owner will
+send more feedback; build as ONE pass on his GO)
+
+## FACTS (owner screenshots, verified against the code)
+1. AMBIGUITY: checkbox rows show the check NAME ("Natural human flow") —
+   a ticked NAME reads as a feature the page HAS, when it means the
+   OPPOSITE (a gap whose fix is selected). Only list position
+   distinguishes gap vs passed — too subtle.
+2. DOUBLE HEADER: group "SEARCH OPTIMIZATION" + first card "Search
+   engine optimization" — near-identical titles stacked.
+3. REPEATED PREFIXES: serp teacher labels = 'Winners for "kw": <id>' and
+   demand labels = 'Proven demand: "kw"' — the constant prefix fills the
+   row, the differentiator truncates off the end; rows look identical
+   and heavy (the "big text" impression = repetition, font is 11px).
+
+## DESIGN (round-2, one pass after owner completes feedback)
+- D1: found rows read as one-line ACTIONS (the fix's first line,
+  truncated) — a ticked action reads as what will happen. Passed rows
+  keep check names (read correctly there).
+- D2: rename the page-type checks teacher label ("Search engine
+  optimization" → "Page-type checks") — the group owns the word.
+- D3: display-side prefix stripping — rows show only the differentiator
+  (serp: "Format" / "Coverage: X" / "Angle"; demand: the keyword itself,
+  rank+impressions as subtext). Shared context ("for `kw`") stated ONCE
+  per card, never per row. Labels stay unique in DATA (itemKey identity
+  untouched) — presentation only.
+- (await further owner rounds before building)
