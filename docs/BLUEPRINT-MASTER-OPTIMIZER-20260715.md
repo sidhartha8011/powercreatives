@@ -204,6 +204,31 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
 
 - 2026-07-15 · Document created. All features above merged from every
   prior plan/spec/gap doc. Statuses current as of commit `775054b`.
+- 2026-07-15 · **THE SELECTION-SCOPED ACTION LAW (owner ruling).** EVERY
+  action button (Optimize, Generate, all) acts on what is CURRENTLY
+  SELECTED, and on EVERYTHING when nothing is: ticked keywords → the run
+  uses exactly those; selected text → exactly that content (the existing
+  scope law); both → both constraints; NOTHING → ALL the page's keywords
+  (primary + supporting + additional) across the ENTIRE content. With
+  keywords ticked the button TRANSFORMS into the keyword-optimization
+  button for that selection. **"Insert into content"** is a NAMED run
+  type — the frequent light touch: weave the chosen keywords naturally
+  into the existing text per the hierarchy law, red/green as always. The
+  user picks WHICH and HOW MANY keywords by ticking drawer selected-table
+  rows. Supersedes §8's injection-button detail where they differ.
+  Gap: GAP-ANALYSIS-KEYWORD-SELECTION-ACTIONS-COUNTRY-20260715.
+- 2026-07-15 · **AHREFS COUNTRY RESOLUTION (owner order).** Volumes/SERP
+  must know WHERE the site is: resolve from the site's brand (GBP
+  address) when possible; DEFAULT TO SWEDEN when no location resolves —
+  the default is hub-editable DATA, never code. The volume cache key
+  gains the country so one market's numbers never serve another's.
+  (Today everything silently defaults to the US — same gap doc.)
+- 2026-07-15 · **REVIEW DIFF CONSOLIDATION (owner order).** Past a
+  tunable threshold of adjacent word-level strike-throughs (~15), the
+  section's red/green DISPLAY collapses to ONE struck block + ONE green
+  block — a section-rewrite view instead of word confetti. Display layer
+  only (word-diff rendering, editor lane); accept/reject semantics and
+  the content pipeline unchanged. Own gap when its turn comes.
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
