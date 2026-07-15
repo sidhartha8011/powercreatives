@@ -43,12 +43,15 @@ class PCM_REST_Optimizer extends PCM_REST_Base
     /**
      * POST /optimizer/keywords/volumes — search volumes for a keyword set.
      *
-     * Input:  { keywords: string[] } (capped 20)
-     * Output: { volumes: {kw: int|null}, hasKey: bool }
+     * Input:  { keywords: string[] (capped 20), siteId, contentSample? }
+     * Output: { volumes: {kw: int|null}, hasKey: bool, country: string }
      *
-     * Cache-first (30-day option map); misses batch through the keyword
-     * engine's Ahrefs enrichment. No Ahrefs key → volumes come back null
-     * with hasKey=false — the drawer shows dashes, keywords stay usable.
+     * The market comes from THE SMART COUNTRY CHAIN (site's brand → AI
+     * language check on contentSample → hub default; gap 2cf0a44).
+     * Cache-first (30-day option map, country-keyed); misses batch through
+     * the keyword engine's Ahrefs enrichment. No Ahrefs key → volumes come
+     * back null with hasKey=false — the drawer shows dashes, keywords stay
+     * usable.
      *
      * @param WP_REST_Request $request Request object.
      * @return WP_REST_Response
@@ -71,14 +74,21 @@ class PCM_REST_Optimizer extends PCM_REST_Base
             return $this->success(array('volumes' => (object) array(), 'hasKey' => true));
         }
 
-        $result = PCM_Optimizer_Service::keyword_volumes($keywords, function (array $missing) use ($pcm_user): ?array {
+        $site_id = is_array($p) ? absint($p['siteId'] ?? 0) : 0;
+        $site    = $site_id > 0 ? PCM_DB::get_site($site_id, (int) $pcm_user->id) : null;
+        $sample  = is_array($p) ? sanitize_textarea_field((string) ($p['contentSample'] ?? '')) : '';
+        $country = $site
+            ? PCM_Keywords_Service::resolve_country($site, $sample)
+            : PCM_Keywords_Service::default_country();
+
+        $result = PCM_Optimizer_Service::keyword_volumes($keywords, $country, function (array $missing) use ($pcm_user, $country): ?array {
             try {
                 $key = $this->get_provider_api_key('ahrefs', (int) $pcm_user->id);
             } catch (\RuntimeException $e) {
                 return null; // no key — honest dashes, nothing cached
             }
             try {
-                $enriched = PCM_Keywords_Service::ahrefs_enrich($missing, $key);
+                $enriched = PCM_Keywords_Service::ahrefs_enrich($missing, $key, $country);
             } catch (\Throwable $e) {
                 error_log('[PCM_Optimizer] volume enrichment failed: ' . $e->getMessage());
                 return null; // transient failure — never poison the cache
@@ -90,6 +100,7 @@ class PCM_REST_Optimizer extends PCM_REST_Base
             return $out;
         }, $refresh, $cached_only);
 
+        $result['country'] = $country;
         return $this->success($result);
     }
 

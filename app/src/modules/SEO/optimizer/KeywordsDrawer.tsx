@@ -172,7 +172,10 @@ export function KeywordsDrawer({
     const wanted = opts.refresh ? list : list.filter((k) => !(k in volumes));
     if (wanted.length === 0) return;
     if (opts.source) setPendingSource(opts.source);
-    volumesMutation.mutateAsync({ keywords: wanted.slice(0, 20), refresh: !!opts.refresh, cachedOnly: !!opts.cachedOnly })
+    // siteId + a content sample feed THE SMART COUNTRY CHAIN server-side
+    // (site's brand → AI language check → hub default) — volumes belong
+    // to the site's real market, never a hardcoded one.
+    volumesMutation.mutateAsync({ keywords: wanted.slice(0, 20), refresh: !!opts.refresh, cachedOnly: !!opts.cachedOnly, siteId, contentSample: contentText.slice(0, 1200) })
       .then((res: any) => {
         setVolumes((v) => ({ ...v, ...(res?.volumes ?? {}) }));
         if (res?.hasKey === false) setHasAhrefs(false);

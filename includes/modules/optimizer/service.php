@@ -284,20 +284,24 @@ class PCM_Optimizer_Service
         update_option(self::KW_BUCKET_OPTION, $map, false);
     }
 
-    /** Search-volume cache: keyword → {volume, fetchedAt}. Ahrefs calls cost
-     *  credits — 30-day TTL, most-recent-capped, autoload off. */
+    /** Search-volume cache: "country|keyword" → {volume, fetchedAt}. The
+     *  key carries the MARKET (owner ruling 2026-07-15) so one country's
+     *  numbers can never serve another's. Ahrefs calls cost credits —
+     *  30-day TTL, most-recent-capped, autoload off. */
     private const KW_VOLUME_OPTION = 'pcm_optimizer_kw_volumes';
     private const KW_VOLUME_TTL = 30 * DAY_IN_SECONDS;
     private const KW_VOLUME_MAX = 2000;
 
     /**
-     * Search volumes for a keyword set — cache-first; misses go through
-     * $fetch_missing ONCE (batch). The callback returns kw→volume|null on
-     * success (null = Ahrefs doesn't know it — cacheable) or NULL on
-     * no-key/failure (nothing cached, retried next time — never a poisoned
-     * cache).
+     * Search volumes for a keyword set in ONE market — cache-first; misses
+     * go through $fetch_missing ONCE (batch). The callback returns
+     * kw→volume|null on success (null = Ahrefs doesn't know it — cacheable)
+     * or NULL on no-key/failure (nothing cached, retried next time — never
+     * a poisoned cache). The response stays keyed by the PLAIN keyword —
+     * the market lives in storage only.
      *
      * @param string[] $keywords      Sanitized keyword list.
+     * @param string   $country       ISO alpha-2 market (resolve_country).
      * @param callable $fetch_missing fn(string[] $missing): ?array
      * @param bool     $refresh       Skip cache reads — the owner's UPDATE
      *                                button: a deliberate re-fetch of all.
@@ -306,7 +310,7 @@ class PCM_Optimizer_Service
      *                                misses are omitted from the result.
      * @return array{volumes: array<string, int|null>, hasKey: bool}
      */
-    public static function keyword_volumes(array $keywords, callable $fetch_missing, bool $refresh = false, bool $cached_only = false): array
+    public static function keyword_volumes(array $keywords, string $country, callable $fetch_missing, bool $refresh = false, bool $cached_only = false): array
     {
         $map = get_option(self::KW_VOLUME_OPTION);
         if (!is_array($map)) {
@@ -316,7 +320,7 @@ class PCM_Optimizer_Service
         $volumes  = array();
         $missing  = array();
         foreach ($keywords as $kw) {
-            $entry = $refresh ? null : ($map[$kw] ?? null);
+            $entry = $refresh ? null : ($map[$country . '|' . $kw] ?? null);
             if (is_array($entry) && ($now - (int) ($entry['fetchedAt'] ?? 0)) < self::KW_VOLUME_TTL) {
                 $volumes[$kw] = $entry['volume'];
             } else {
@@ -339,10 +343,14 @@ class PCM_Optimizer_Service
                     $volumes[$kw] = null;
                 }
             } else {
+                // Market-blind keys from before the country ruling were all
+                // US-market numbers — wrong data for any resolved market:
+                // deleted, not migrated (gap 2cf0a44).
+                $map = array_filter($map, static fn($k): bool => str_contains((string) $k, '|'), ARRAY_FILTER_USE_KEY);
                 foreach ($missing as $kw) {
-                    $volume        = isset($fetched[$kw]) && is_numeric($fetched[$kw]) ? (int) $fetched[$kw] : null;
-                    $volumes[$kw]  = $volume;
-                    $map[$kw]      = array('volume' => $volume, 'fetchedAt' => $now);
+                    $volume       = isset($fetched[$kw]) && is_numeric($fetched[$kw]) ? (int) $fetched[$kw] : null;
+                    $volumes[$kw] = $volume;
+                    $map[$country . '|' . $kw] = array('volume' => $volume, 'fetchedAt' => $now);
                 }
                 if (count($map) > self::KW_VOLUME_MAX) {
                     uasort($map, static fn(array $a, array $b): int => ((int) ($b['fetchedAt'] ?? 0)) <=> ((int) ($a['fetchedAt'] ?? 0)));
