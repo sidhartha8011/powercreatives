@@ -284,7 +284,7 @@ class PCM_Optimizer_Service
      *  credits — 30-day TTL, most-recent-capped, autoload off. */
     private const KW_VOLUME_OPTION = 'pcm_optimizer_kw_volumes';
     private const KW_VOLUME_TTL = 30 * DAY_IN_SECONDS;
-    private const KW_VOLUME_MAX = 500;
+    private const KW_VOLUME_MAX = 2000;
 
     /**
      * Search volumes for a keyword set — cache-first; misses go through
@@ -298,7 +298,8 @@ class PCM_Optimizer_Service
      * @param bool     $refresh       Skip cache reads — the owner's UPDATE
      *                                button: a deliberate re-fetch of all.
      * @param bool     $cached_only   Never call Ahrefs — cache hits only
-     *                                (auto-fills on scans stay credit-free).
+     *                                (auto-fills on scans stay credit-free);
+     *                                misses are omitted from the result.
      * @return array{volumes: array<string, int|null>, hasKey: bool}
      */
     public static function keyword_volumes(array $keywords, callable $fetch_missing, bool $refresh = false, bool $cached_only = false): array
@@ -320,9 +321,10 @@ class PCM_Optimizer_Service
         }
         $has_key = true;
         if ($cached_only) {
-            foreach ($missing as $kw) {
-                $volumes[$kw] = null; // not cached, not fetched — free by design
-            }
+            // Misses are OMITTED, not null-filled: a null would enter the
+            // client's volume state and mask the keyword from later real
+            // fetches (cached "Ahrefs doesn't know" nulls still flow through
+            // the hit path above — those are correctly final for the TTL).
             return array('volumes' => $volumes, 'hasKey' => $has_key);
         }
         if (!empty($missing)) {

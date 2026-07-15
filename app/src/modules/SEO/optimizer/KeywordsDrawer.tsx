@@ -176,7 +176,7 @@ export function KeywordsDrawer({
   const volCell = (kw: string) =>
     (volumes[kw] != null
       ? volumes[kw]
-      : <span className="text-slate-300" title={hasAhrefs ? 'No volume data — press the volume update button above' : 'Add an Ahrefs key in Integrations for search volumes'}>—</span>);
+      : <span className="text-slate-300" title={hasAhrefs ? 'No volume data — press the volume button to fetch it' : 'Add an Ahrefs key in Integrations for search volumes'}>—</span>);
   const selectedKey = selectedRows.map((r) => r.kw).join('|');
   useEffect(() => {
     fetchVolumes(selectedRows.map((r) => r.kw));
@@ -336,7 +336,9 @@ export function KeywordsDrawer({
       .then((res: any) => {
         const list: string[] = (Array.isArray(res?.suggestions) ? res.suggestions : []).slice(0, 20);
         setIdeas(list);
-        fetchVolumes(list);
+        // Volume auto-fill from the CACHE only — searches stay credit-free
+        // (the finder's volume button is the deliberate fetch).
+        fetchVolumes(list, { cachedOnly: true });
       })
       .catch((e: unknown) => {
         setIdeas([]);
@@ -352,6 +354,11 @@ export function KeywordsDrawer({
     { key: 'kw', header: 'Keyword', cell: (r) => <span title={r.kw}>{r.kw}</span>, sortAccessor: (r) => r.kw },
     { key: 'volume', header: 'Vol.', width: COL.vol, className: 'text-right', cell: (r) => volCell(r.kw), sortAccessor: (r) => volumes[r.kw] ?? -1 },
   ];
+
+  // THE FINDER'S GET (owner order 2026-07-14): finder rows never spend on
+  // their own — this press fetches the ACTIVE tab's volumes, cache-first
+  // (credits only for keywords the hub lacks or whose cache expired).
+  const finderKeywords = tab === 'ranking' ? (rows ?? []).map((r) => r.query) : (ideas ?? []);
 
   return (
     <aside className="flex h-full w-[520px] shrink-0 flex-col border border-r-0 border-slate-200 bg-white">
@@ -423,6 +430,18 @@ export function KeywordsDrawer({
             {t === 'ranking' ? 'Ranking' : 'Ideas'}
           </button>
         ))}
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => fetchVolumes(finderKeywords)}
+          disabled={finderKeywords.length === 0}
+          title="Get search volumes for this list — only keywords without a cached volume use Ahrefs credits"
+          className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary disabled:opacity-30"
+        >
+          {volumesMutation.isPending
+            ? <Loader2 className="h-3 w-3 animate-spin text-primary" />
+            : <TrendingUp className="h-3 w-3" />}
+        </button>
       </div>
 
       {tab === 'ranking' ? (
