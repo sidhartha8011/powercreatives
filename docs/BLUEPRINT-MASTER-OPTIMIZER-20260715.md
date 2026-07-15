@@ -261,6 +261,32 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   the user knows: SEO / AI (detail one tap deep); (d) review-side text
   also oversized. Supersedes the queued round-2 cosmetics
   (title-contract/rename) where they overlap.
+- 2026-07-15 · **REVIEW PURPOSE LABELS + CLICK-TO-VERIFY (owner order).**
+  The accept step shows, per changed section: the SEO/AI pill + a light
+  grey ITALIC line of the plain CATEGORY names the change serves
+  ("untapped searches, internal links, topic coverage") — the WHY next
+  to the WHAT (the directive bullets stay). Clicking a category SCROLLS
+  to the section it optimized so the user verifies the writing actually
+  does what the purpose claims ("this is for internal linking — let me
+  check"). Data exists: compiled directives carry purposes (teacherIds)
+  → map to the plain category names. An SEO inside the platform connects
+  purpose → text instantly, and can judge "this is NOT how it should be
+  → revise".
+- 2026-07-15 · **REVISE FIDELITY — the human-editor contract (owner
+  order, defect-grade).** TODAY: a targeted revise note ("change the
+  phone number to X") rewrites the WHOLE section — ~80% of the text lost,
+  phone changed. REQUIRED: revise behaves like a professional human
+  editor — understand the INTENT AND SCOPE of the note dynamically
+  (never hardcoded cases): a targeted request changes EXACTLY that and
+  reproduces every other sentence VERBATIM; a broad request ("make this
+  more selling") may rewrite broadly. Zero hallucination tolerance.
+  Implementation direction: a fidelity contract in the revise prompt
+  (scope-first: state what the note permits touching, forbid all else,
+  verbatim-preservation law) + a server-side RETENTION CHECK (diff the
+  result vs the draft; a targeted note with a collapsed retention ratio
+  = honest retry/failure, never a silent 80% loss). The editor-lane
+  revise path (SectionModal reviseSection) + the section prompt's
+  optimize mode are the surfaces.
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
