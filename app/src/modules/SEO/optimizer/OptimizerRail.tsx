@@ -1,24 +1,26 @@
 /**
- * THE ANALYZE RAIL (owner UX law, backlog "spine" spec): TWO top groups —
- * Search optimization · AI optimization (owner taxonomy ruling 2026-07-14)
- * — each rendering its teachers as purpose sections, each split into WHAT
- * WE FOUND (tickable, pre-selected) and NOTHING TO FIX (quiet) — each with
- * its OWN re-analyze. Items are SUGGESTIONS for the basket, never
- * accept/reject: the basket compiles into ONE optimization run whose
- * changes then land as the normal red/green review.
+ * THE ANALYZE RAIL (owner UX law + hierarchy order 2026-07-15): TWO top
+ * groups — Search optimization · AI optimization — each rendering its
+ * teachers as WHITE PURPOSE CARDS on the slate rail. Inside a card every
+ * suggestion is ONE scannable line (checkbox + short label + chevron);
+ * the full detail — what we found, the fix that rides the basket, the
+ * data source — lives in the row's disclosure. Passed checks collapse
+ * into one quiet summary row. NOTHING is removed; everything is one tap
+ * deep (owner: all information stays).
  *
- * THE PEEK (owner confirmation tool): every section's info icon reveals
- * exactly what that run was given — keywords, business facts, page type,
- * engine — read-only. Items that came from a data tap carry its name.
+ * Items are SUGGESTIONS for the basket, never accept/reject: the basket
+ * compiles into ONE optimization run whose changes land as the normal
+ * red/green review. THE PEEK: the card's info icon reveals exactly what
+ * the run was given — read-only provenance.
  *
  * Mounting the rail runs every teacher once (the Analyze button's
  * promise: "analyze with all the inputs it has").
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, Info, Loader2, RotateCw, X } from 'lucide-react';
+import { Check, ChevronDown, Info, Loader2, RotateCw, X } from 'lucide-react';
 import { useOptimizer, type UseOptimizerArgs } from './useOptimizer';
-import { itemKey, RAIL_GROUPS, type CompiledDirective, type RunContext, type TeacherMeta, type TeacherRun } from './types';
+import { itemKey, RAIL_GROUPS, type CompiledDirective, type OptimizerItem, type RunContext, type TeacherMeta, type TeacherRun } from './types';
 
 interface OptimizerRailProps extends UseOptimizerArgs {
   onClose: () => void;
@@ -47,8 +49,11 @@ function peekLines(ctx: RunContext): string[] {
 export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailProps) {
   const opt = useOptimizer(args);
   const [compileError, setCompileError] = useState<string | null>(null);
-  /** Which section's peek is open (one at a time — the rail is narrow). */
+  /** Which card's peek is open (one at a time — the rail is narrow). */
   const [peekOpen, setPeekOpen] = useState<string | null>(null);
+  /** Open item disclosures (per itemKey) + open passed-summaries (per teacher). */
+  const [openItems, setOpenItems] = useState<Set<string>>(new Set());
+  const [openPassed, setOpenPassed] = useState<Set<string>>(new Set());
 
   // First mount with a loaded registry = the Analyze click's full run.
   const startedRef = useRef(false);
@@ -70,13 +75,71 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
       });
   };
 
-  const renderSection = (t: TeacherMeta, run: TeacherRun) => {
+  const toggleSet = (set: Set<string>, key: string): Set<string> => {
+    const next = new Set(set);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  };
+
+  /** ONE scannable line + its disclosure — the item's whole story lives
+   *  one tap deep (label → evidence → the fix → the source). */
+  const renderItem = (it: OptimizerItem) => {
+    const key = itemKey(it);
+    const open = openItems.has(key);
+    const actionable = it.instruction !== '';
+    return (
+      <div key={key}>
+        <div className="flex items-center gap-1.5">
+          {actionable ? (
+            <input
+              type="checkbox"
+              checked={opt.basket.has(key)}
+              onChange={() => opt.toggle(it)}
+              className="h-3 w-3 shrink-0 accent-[#007bff]"
+            />
+          ) : (
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title={it.evidence} />
+          )}
+          <button
+            type="button"
+            onClick={() => setOpenItems((cur) => toggleSet(cur, key))}
+            className="flex min-w-0 flex-1 items-center gap-1 rounded py-0.5 text-left hover:bg-slate-50"
+          >
+            <span className="min-w-0 flex-1 truncate text-[11px] leading-tight text-slate-700">{it.label}</span>
+            <ChevronDown className={`h-3 w-3 shrink-0 text-slate-300 transition-transform ${open ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+        {open && (
+          <div className="mb-1 ml-[18px] space-y-1">
+            {it.evidence !== '' && (
+              <div className="text-[10px] leading-snug text-slate-500">{it.evidence}</div>
+            )}
+            {actionable && (
+              /* The FIX — exactly what rides the basket when ticked. */
+              <div className="rounded border-l-2 border-[#007bff]/50 bg-[#e7f5ff]/50 px-1.5 py-1 text-[10px] leading-snug text-slate-600">
+                {it.instruction}
+              </div>
+            )}
+            {it.source !== undefined && it.source !== '' && (
+              <div className="text-[9px] uppercase tracking-wide text-slate-300">via {it.source}</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /** One purpose = one white card: header (name · peek · re-analyze),
+   *  found items as one-liners, passed checks behind a summary row. */
+  const renderCard = (t: TeacherMeta, run: TeacherRun) => {
     const found = run.items.filter((it) => it.found);
     const clean = run.items.filter((it) => !it.found);
+    const passedOpen = openPassed.has(t.id);
     return (
-      <section key={t.id} className="border-b border-slate-100 px-2.5 py-1.5">
+      <section key={t.id} className="mx-2 mb-1.5 rounded-lg border border-slate-200/70 bg-white px-2 py-1.5 shadow-sm">
         <div className="flex items-center gap-1.5">
-          <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700" title={t.label}>
+          <div className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-700" title={t.label}>
             {t.label}
           </div>
           {run.context !== undefined && (
@@ -124,47 +187,38 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
         )}
 
         {found.length > 0 && (
-          <div className="mt-1 space-y-1">
-            {found.map((it) => (
-              <label key={itemKey(it)} className="flex cursor-pointer items-start gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={opt.basket.has(itemKey(it))}
-                  onChange={() => opt.toggle(it)}
-                  disabled={it.instruction === ''}
-                  className="mt-0.5 h-3 w-3 shrink-0 accent-[#007bff] disabled:opacity-40"
-                />
-                {/* POSITIVES law (owner 2026-07-14): the row says what
-                    TO DO — the finding is the quiet subtext. */}
-                <span className="min-w-0" title={it.label}>
-                  <span className="block text-[11px] leading-tight text-slate-700">{it.instruction !== '' ? it.instruction : it.label}</span>
-                  {(it.evidence !== '' || it.source !== undefined) && (
-                    <span className="block text-[10px] leading-tight text-slate-400">
-                      {it.evidence}
+          <div className="mt-1 space-y-0.5">
+            {found.map(renderItem)}
+          </div>
+        )}
+
+        {/* Passed checks: ONE quiet summary row — the list is a tap away. */}
+        {run.status === 'done' && clean.length > 0 && (
+          <div className="mt-1">
+            <button
+              type="button"
+              onClick={() => setOpenPassed((cur) => toggleSet(cur, t.id))}
+              className="flex w-full items-center gap-1.5 rounded py-0.5 text-left hover:bg-slate-50"
+            >
+              <Check className="h-3 w-3 shrink-0 text-green-600" />
+              <span className="min-w-0 flex-1 truncate text-[10px] text-slate-400">{clean.length} passed</span>
+              <ChevronDown className={`h-3 w-3 shrink-0 text-slate-300 transition-transform ${passedOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {passedOpen && (
+              <div className="ml-[18px] space-y-0.5">
+                {clean.map((it) => (
+                  <div key={itemKey(it)} className="flex items-start gap-1.5 opacity-70" title={it.evidence}>
+                    <Check className="mt-0.5 h-2.5 w-2.5 shrink-0 text-green-600" />
+                    <span className="min-w-0 text-[10px] leading-tight text-slate-500">
+                      {it.label}
                       {it.source !== undefined && it.source !== '' && (
                         <span className="text-slate-300"> · via {it.source}</span>
                       )}
                     </span>
-                  )}
-                </span>
-              </label>
-            ))}
-          </div>
-        )}
-
-        {run.status === 'done' && clean.length > 0 && (
-          <div className="mt-1 space-y-0.5">
-            {clean.map((it) => (
-              <div key={itemKey(it)} className="flex items-start gap-1.5 opacity-60" title={it.evidence}>
-                <Check className="mt-0.5 h-3 w-3 shrink-0 text-green-600" />
-                <span className="min-w-0 text-[10px] leading-tight text-slate-500">
-                  {it.label}
-                  {it.source !== undefined && it.source !== '' && (
-                    <span className="text-slate-300"> · via {it.source}</span>
-                  )}
-                </span>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
       </section>
@@ -191,10 +245,10 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
           if (members.length === 0) return null;
           return (
             <div key={group.id}>
-              <div className="bg-slate-100/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              <div className="px-3 pb-1 pt-1.5 text-[9px] font-semibold uppercase tracking-widest text-slate-400">
                 {group.label}
               </div>
-              {members.map((t) => renderSection(t, opt.runs[t.id]))}
+              {members.map((t) => renderCard(t, opt.runs[t.id]))}
             </div>
           );
         })}
