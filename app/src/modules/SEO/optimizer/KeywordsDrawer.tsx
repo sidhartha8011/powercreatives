@@ -48,6 +48,14 @@ const ROLE_LABEL: Record<Role, string> = { primary: 'Primary', supporting: 'Supp
 /** Sort rank — the hierarchy IS the order (owner law: P → S → A). */
 const ROLE_RANK: Record<Role, number> = { primary: 0, supporting: 1, additional: 2 };
 
+/** THE BACKBONE CONTRACT (owner ruling 2026-07-15): the drawer owns the
+ *  keyword selection every action button acts on. Ticked rows flow up
+ *  through ONE callback; an empty array = no selection = act on ALL. */
+export interface TickedKeyword {
+  kw: string;
+  role: Role;
+}
+
 interface KeywordsDrawerProps {
   siteId: number;
   postId: number;
@@ -65,6 +73,8 @@ interface KeywordsDrawerProps {
   bucket: KeywordBucket;
   /** The editor's live text — uses/density recompute per keystroke. */
   contentText: string;
+  /** The backbone: ticked selected-table rows, [] when none/closed. */
+  onKeywordSelection?: (ticked: TickedKeyword[]) => void;
   onClose: () => void;
 }
 
@@ -107,7 +117,7 @@ const RANKING_FILTER_DEFS: Record<string, FilterDef<KeywordRow>> = {
 };
 
 export function KeywordsDrawer({
-  siteId, postId, type, pageUrl, pages, primaryKeyword, onPrimaryChange, supportingKeywords, onSupportingChange, bucket, contentText, onClose,
+  siteId, postId, type, pageUrl, pages, primaryKeyword, onPrimaryChange, supportingKeywords, onSupportingChange, bucket, contentText, onKeywordSelection, onClose,
 }: KeywordsDrawerProps) {
   // ── THE SELECTED ZONE: a view over the three existing stores. ──
   const primary = primaryKeyword.trim();
@@ -206,6 +216,22 @@ export function KeywordsDrawer({
     fetchVolumes(selectedRows.map((r) => r.kw));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKey]);
+
+  // ── THE BACKBONE (owner ruling 2026-07-15): the ticked selected-table
+  //    rows are THE selection every action button acts on. A tick dies
+  //    with its row; the editor hears every change, and hears [] when
+  //    the drawer unmounts (closing clears the selection by law). ──
+  const [ticked, setTicked] = useState<Set<string | number>>(new Set());
+  const tickedRows = useMemo<TickedKeyword[]>(
+    () => selectedRows.filter((r) => ticked.has(r.kw)).map((r) => ({ kw: r.kw, role: r.role })),
+    [selectedRows, ticked],
+  );
+  const tickedKey = tickedRows.map((r) => r.kw).join('|');
+  useEffect(() => {
+    onKeywordSelection?.(tickedRows);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickedKey]);
+  useEffect(() => () => { onKeywordSelection?.([]); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [newKeyword, setNewKeyword] = useState('');
 
@@ -388,7 +414,12 @@ export function KeywordsDrawer({
   return (
     <aside className="flex h-full w-[520px] shrink-0 flex-col border border-r-0 border-slate-200 bg-white">
       <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5">
-        <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700">Keywords</div>
+        <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700">
+          Keywords
+          {tickedRows.length > 0 && (
+            <span className="ml-1 font-normal text-slate-400">· {tickedRows.length} selected</span>
+          )}
+        </div>
         {/* THE VOLUME UPDATE (owner independence law 2026-07-15): one
             deliberate press re-fetches Ahrefs volumes for the SELECTED
             table only — the finder has its own button, tables never
@@ -420,6 +451,7 @@ export function KeywordsDrawer({
           columns={selectedColumns}
           data={selectedRows}
           rowKey={(r) => r.kw}
+          selection={{ selected: ticked, onChange: setTicked }}
           defaultSortKey="role"
           defaultSortDir="asc"
           layoutKey="optimizer-kw-selected"

@@ -60,7 +60,7 @@ import {
   diffBlocksHtml, splitDocSections, splitReviewSections, stripDiffHtml, type DocSection,
 } from './word-diff';
 import { OptimizerRail } from './optimizer/OptimizerRail';
-import { KeywordsDrawer } from './optimizer/KeywordsDrawer';
+import { KeywordsDrawer, type TickedKeyword } from './optimizer/KeywordsDrawer';
 import { useKeywordBucket } from './optimizer/useKeywordBucket';
 import { keywordUses } from './optimizer/keywordStats';
 import { TEACHER_PILLS, type CompiledDirective } from './optimizer/types';
@@ -747,6 +747,10 @@ export function SectionModal({
   const [primaryKw, setPrimaryKw] = useState(page?.primaryKeyword ?? '');
   const [supportingKw, setSupportingKw] = useState(page?.supportingKeyword ?? '');
   const kwBucket = useKeywordBucket(typeof siteId === 'number' ? siteId : 0, postId, isPage && !readOnly);
+  // THE BACKBONE (owner ruling 2026-07-15): the drawer's ticked keywords —
+  // the selection every action button acts on. [] = no selection = act on
+  // ALL keywords; the drawer reports [] when it closes.
+  const [tickedKw, setTickedKw] = useState<TickedKeyword[]>([]);
   /** The drawer floats OUTSIDE the card — the outside-click save must know it. */
   const drawerRef = useRef<HTMLDivElement>(null);
   // The smart button's LIVE values — recomputed on the existing edit tick.
@@ -1063,14 +1067,24 @@ export function SectionModal({
     return { html: untouched ? (s.ai ?? s.html) : stripDiffHtml(live.html), imgs };
   };
 
-  const startAiReview = async (topic: string, scope?: { from: number; to: number } | null, directives?: CompiledDirective[]) => {
+  const startAiReview = async (
+    topic: string,
+    scope?: { from: number; to: number } | null,
+    directives?: CompiledDirective[],
+    opts?: { suppressKeywordRide?: boolean },
+  ) => {
     if (!editor || !pageReady || busy || review) return;
     setRunDirectives(directives && directives.length > 0 ? directives : null);
-    // THE KEYWORD RIDE (owner law): the primary keyword + the bucket join
-    // EVERY run — one-click, instruction and basket runs alike — as
-    // context, never as stuffing orders.
-    const kwTargets = [...new Set([primaryKw.trim(), ...kwBucket.keywords].filter((k) => k !== ''))];
-    if (kwTargets.length > 0) {
+    // THE KEYWORD RIDE (owner law 2026-07-15): ALL the page's keywords —
+    // primary + supporting + additional — join EVERY run as context,
+    // never as stuffing orders. An injection run suppresses the ride:
+    // its topic IS the keyword order (one order per prompt, never two).
+    const kwTargets = [...new Set([
+      primaryKw.trim(),
+      ...supportingKw.split(',').map((s) => s.trim()),
+      ...kwBucket.keywords,
+    ].filter((k) => k !== ''))];
+    if (!opts?.suppressKeywordRide && kwTargets.length > 0) {
       topic = `${topic}\n\nTarget keywords — incorporate them naturally where they genuinely fit, never force or stuff: ${kwTargets.join(', ')}`;
     }
     const { sections } = splitDocSections(editor.getHTML());
@@ -1148,6 +1162,33 @@ export function SectionModal({
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, sections.length) }, worker));
+  };
+
+  /** THE INJECTION RUN (owner spec d135e3c + the action matrix 2026-07-15):
+   *  weave EXACTLY the ticked keywords into the existing content per THE
+   *  HIERARCHY LAW — the frequent light touch, red/green like every run.
+   *  A text selection narrows it (the matrix); the generic ride is
+   *  suppressed because this topic IS the keyword order. */
+  const runKeywordInsert = () => {
+    const byRole = (role: TickedKeyword['role']): string[] =>
+      tickedKw.filter((t) => t.role === role).map((t) => t.kw);
+    const lines = ([
+      ['primary', "PRIMARY — thread straight through the page (headings + body, the page's spine)"],
+      ['supporting', 'SUPPORTING — present in some headers and some text (structural, not everywhere)'],
+      ['additional', 'ADDITIONAL — light touch, mentioned naturally, roughly ONE paragraph each, never more'],
+    ] as const).flatMap(([role, law]) => {
+      const kws = byRole(role);
+      return kws.length > 0 ? [`${law}: ${kws.join(', ')}`] : [];
+    });
+    const topic = 'Weave the following keywords into the existing content — keep the page\'s structure '
+      + 'and message, no full rework. Placement follows each keyword\'s ROLE; natural inclusion always, '
+      + `keyword stuffing never.\n${lines.join('\n')}`;
+    void startAiReview(
+      topic,
+      hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
+      [{ text: `Insert the selected keywords by role: ${tickedKw.map((t) => t.kw).join(', ')}`, purposes: ['keywords'], sources: [0] }],
+      { suppressKeywordRide: true },
+    );
   };
 
   /** THE single decision path (chips, rail rows, Accept all, OK — all of
@@ -1538,6 +1579,7 @@ export function SectionModal({
         onSupportingChange={setSupportingKw}
         bucket={kwBucket}
         contentText={contentText}
+        onKeywordSelection={setTickedKw}
         onClose={() => setKeywordsOpen(false)}
       />
     </div>
@@ -1707,6 +1749,13 @@ export function SectionModal({
             <PillSplitButton
               icon={<Sparkles />}
               onClick={() => {
+                // THE ACTION MATRIX (owner law 2026-07-15): ticked keywords
+                // transform the run into the injection; a text selection
+                // narrows either run; nothing selected = everything.
+                if (tickedKw.length > 0) {
+                  runKeywordInsert();
+                  return;
+                }
                 void startAiReview(
                   instruction.trim(),
                   hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
@@ -1714,12 +1763,18 @@ export function SectionModal({
               }}
               onCaretClick={() => setAskOpen((v) => !v)}
               caretActive={askOpen}
-              title={hasSelection
-                ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
-                : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject'}
+              title={tickedKw.length > 0
+                ? (hasSelection
+                  ? 'Weave the ticked keywords into the selected sections by their roles — changes show as red/green'
+                  : 'Weave the ticked keywords into the content by their roles — changes show as red/green')
+                : (hasSelection
+                  ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
+                  : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject')}
               caretTitle="Write instructions for the AI (e.g. “optimize for keyword X”)"
             >
-              {hasSelection ? 'Optimize (selected text)' : 'Optimize page'}
+              {tickedKw.length > 0
+                ? `Insert keywords (${tickedKw.length})`
+                : hasSelection ? 'Optimize (selected text)' : 'Optimize page'}
             </PillSplitButton>
           </div>
         )}
