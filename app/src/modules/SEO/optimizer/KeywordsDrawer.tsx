@@ -45,6 +45,8 @@ interface SelectedRow {
 }
 const ROLE_TAG: Record<Role, string> = { primary: 'P', supporting: 'S', additional: 'A' };
 const ROLE_LABEL: Record<Role, string> = { primary: 'Primary', supporting: 'Supporting', additional: 'Additional' };
+/** Sort rank — the hierarchy IS the order (owner law: P → S → A). */
+const ROLE_RANK: Record<Role, number> = { primary: 0, supporting: 1, additional: 2 };
 
 interface KeywordsDrawerProps {
   siteId: number;
@@ -161,22 +163,41 @@ export function KeywordsDrawer({
   const volumesMutation = trpc.optimizer.keywordVolumes.useMutation();
   const [volumes, setVolumes] = useState<Record<string, number | null>>({});
   const [hasAhrefs, setHasAhrefs] = useState(true);
-  const fetchVolumes = (kws: string[], opts: { refresh?: boolean; cachedOnly?: boolean } = {}) => {
+  /** Which BUTTON is fetching (owner law 2026-07-15: tables fetch
+   *  independently — each button animates only its own press; the free
+   *  auto-fills animate neither). */
+  const [pendingSource, setPendingSource] = useState<'selected' | 'finder' | null>(null);
+  const fetchVolumes = (kws: string[], opts: { refresh?: boolean; cachedOnly?: boolean; source?: 'selected' | 'finder' } = {}) => {
     const list = [...new Set(kws.map((k) => k.trim()).filter(Boolean))];
     const wanted = opts.refresh ? list : list.filter((k) => !(k in volumes));
     if (wanted.length === 0) return;
+    if (opts.source) setPendingSource(opts.source);
     volumesMutation.mutateAsync({ keywords: wanted.slice(0, 20), refresh: !!opts.refresh, cachedOnly: !!opts.cachedOnly })
       .then((res: any) => {
         setVolumes((v) => ({ ...v, ...(res?.volumes ?? {}) }));
         if (res?.hasKey === false) setHasAhrefs(false);
       })
-      .catch(() => { /* volumes are enrichment — their absence is visible as dashes */ });
+      .catch(() => { /* volumes are enrichment — their absence is visible as dashes */ })
+      .finally(() => setPendingSource(null));
   };
-  /** The volume cell — one renderer for all three tables. */
+  /** The volume cell — one renderer for all three tables. The dash is
+   *  honest about WHY: a fetched keyword Ahrefs has no data for is final;
+   *  a never-fetched one names its trigger. */
   const volCell = (kw: string) =>
     (volumes[kw] != null
       ? volumes[kw]
-      : <span className="text-slate-300" title={hasAhrefs ? 'No volume data — press the volume button to fetch it' : 'Add an Ahrefs key in Integrations for search volumes'}>—</span>);
+      : (
+        <span
+          className="text-slate-300"
+          title={!hasAhrefs
+            ? 'Add an Ahrefs key in Integrations for search volumes'
+            : kw in volumes
+              ? 'Ahrefs has no volume data for this keyword'
+              : 'No volume data — press the volume button to fetch it'}
+        >
+          —
+        </span>
+      ));
   const selectedKey = selectedRows.map((r) => r.kw).join('|');
   useEffect(() => {
     fetchVolumes(selectedRows.map((r) => r.kw));
@@ -201,6 +222,7 @@ export function KeywordsDrawer({
       key: 'role',
       header: 'Role',
       width: 44,
+      sortAccessor: (r) => ROLE_RANK[r.role],
       cell: (r) => (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -364,19 +386,18 @@ export function KeywordsDrawer({
     <aside className="flex h-full w-[520px] shrink-0 flex-col border border-r-0 border-slate-200 bg-white">
       <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5">
         <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700">Keywords</div>
-        {/* THE VOLUME UPDATE (owner order): one deliberate press re-fetches
-            search volumes from Ahrefs for every listed keyword — never on a
-            timer, credits respected. */}
+        {/* THE VOLUME UPDATE (owner independence law 2026-07-15): one
+            deliberate press re-fetches Ahrefs volumes for the SELECTED
+            table only — the finder has its own button, tables never
+            cross. Never on a timer, credits respected. */}
         <button
           type="button"
-          onClick={() => fetchVolumes(
-            [...selectedRows.map((r) => r.kw), ...(rows ?? []).map((r) => r.query), ...(ideas ?? [])].slice(0, 20),
-            { refresh: true },
-          )}
-          title="Update search volumes from Ahrefs for the listed keywords (uses Ahrefs credits)"
-          className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary"
+          onClick={() => fetchVolumes(selectedRows.map((r) => r.kw), { refresh: true, source: 'selected' })}
+          disabled={selectedRows.length === 0}
+          title="Update search volumes from Ahrefs for the selected keywords (uses Ahrefs credits)"
+          className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary disabled:opacity-30"
         >
-          {volumesMutation.isPending
+          {pendingSource === 'selected'
             ? <Loader2 className="h-3 w-3 animate-spin text-primary" />
             : <TrendingUp className="h-3 w-3" />}
         </button>
@@ -396,6 +417,8 @@ export function KeywordsDrawer({
           columns={selectedColumns}
           data={selectedRows}
           rowKey={(r) => r.kw}
+          defaultSortKey="role"
+          defaultSortDir="asc"
           layoutKey="optimizer-kw-selected"
           filterDefs={selectedFilterDefs}
           emptyMessage="No keywords yet — add them below with +, or type one here."
@@ -433,12 +456,12 @@ export function KeywordsDrawer({
         <div className="flex-1" />
         <button
           type="button"
-          onClick={() => fetchVolumes(finderKeywords)}
+          onClick={() => fetchVolumes(finderKeywords, { source: 'finder' })}
           disabled={finderKeywords.length === 0}
           title="Get search volumes for this list — only keywords without a cached volume use Ahrefs credits"
           className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-primary disabled:opacity-30"
         >
-          {volumesMutation.isPending
+          {pendingSource === 'finder'
             ? <Loader2 className="h-3 w-3 animate-spin text-primary" />
             : <TrendingUp className="h-3 w-3" />}
         </button>
