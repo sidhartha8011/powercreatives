@@ -217,12 +217,19 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   user picks WHICH and HOW MANY keywords by ticking drawer selected-table
   rows. Supersedes §8's injection-button detail where they differ.
   Gap: GAP-ANALYSIS-KEYWORD-SELECTION-ACTIONS-COUNTRY-20260715.
+  **[BUILT 2f6198a — keyword half live: drawer checkbox backbone (one
+  upward contract) + Insert keywords (N) + all-roles ride + text-selection
+  narrowing. Generate-button scoping = a later fold.]**
 - 2026-07-15 · **AHREFS COUNTRY RESOLUTION (owner order).** Volumes/SERP
   must know WHERE the site is: resolve from the site's brand (GBP
   address) when possible; DEFAULT TO SWEDEN when no location resolves —
   the default is hub-editable DATA, never code. The volume cache key
   gains the country so one market's numbers never serve another's.
   (Today everything silently defaults to the US — same gap doc.)
+  **[BUILT dd1d856 — THE SMART COUNTRY CHAIN live: brand address → quick
+  AI language check on a content sample → hub default `pcm_kw_default_country`
+  seeded 'se'; per-site cached with source; market-keyed volume cache,
+  legacy US keys deleted; no silent 'us' default anywhere.]**
 - 2026-07-15 · **REVIEW DIFF CONSOLIDATION (owner order).** Past a
   tunable threshold of adjacent word-level strike-throughs (~15), the
   section's red/green DISPLAY collapses to ONE struck block + ONE green
