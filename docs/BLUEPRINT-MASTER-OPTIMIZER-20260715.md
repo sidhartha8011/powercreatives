@@ -229,6 +229,38 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   block — a section-rewrite view instead of word confetti. Display layer
   only (word-diff rendering, editor lane); accept/reject semantics and
   the content pipeline unchanged. Own gap when its turn comes.
+- 2026-07-15 · **THE FOUR VALUE LEVERS (owner: "extremely good stuff",
+  order locked — SERP upgrade FIRST, results loop SECOND):**
+  1. **SERP researcher analyzes the winners' actual CONTENT** — today it
+     infers from TITLES only ("the SERP researcher is stupid right now" —
+     owner). Use the existing scraper to fetch the top results' real
+     pages; coverage/format/length gaps become FACTS (their sections,
+     their word counts, their proof elements vs ours). NEXT UP.
+  2. **THE RESULTS LOOP** — stamp every optimization run on the page's
+     timeline; show GSC position/impressions BEFORE vs AFTER ("optimized
+     July 15 → #8.4 → #5.2"). Proves the product's ROI, and produces the
+     calibration data the future points/weighting system needs. SECOND.
+  3. **Site-wide audit** — rank ALL the site's pages by striking-distance
+     potential (close rankings × impressions × thin content) so the
+     agency knows WHICH page to optimize first; opens the editor from
+     the list. (Planned, after 1-2.)
+  4. **Delivery verification** — post-run check that every ticked
+     directive was actually applied per section (same machinery as
+     per-change attribution §9.1). (Planned.)
+- 2026-07-15 · **POINTS/WEIGHTING = the future senior version (owner):**
+  suggestions carry an impact score (30- or 100-point scale discussed);
+  v1 basis must be honest data (impressions-derived where data exists,
+  flat hub-tunable values where not, basis always visible); the results
+  loop (#2 above) later CALIBRATES the weights from what actually moved
+  rankings. Parked by owner — do not build before the loop exists.
+- 2026-07-15 · **RAIL + REVIEW SIMPLIFICATION (owner order, active UX
+  round):** (a) checkbox row text smaller, never big/black, must NEVER
+  overflow the rail — full text readable via the disclosure; (b) better
+  GROUP names the user actually understands; (c) the red/green review's
+  purpose pills are noise ("weird pills") — collapse to the TWO purposes
+  the user knows: SEO / AI (detail one tap deep); (d) review-side text
+  also oversized. Supersedes the queued round-2 cosmetics
+  (title-contract/rename) where they overlap.
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
