@@ -354,6 +354,15 @@ class PCM_Keywords_Service
             $result    = [];
             $batch_size = 50;
 
+            // Ahrefs echoes keywords back LOWERCASED — the result must be keyed
+            // by the CALLER'S casing or "Privacy" never matches "privacy" and a
+            // false "no data" gets cached (gap 71d3cde). Same transform on both
+            // sides, so non-ASCII stays consistent by construction.
+            $input_by_lower = [];
+            foreach ($unique as $input_kw) {
+                $input_by_lower[strtolower($input_kw)] = $input_kw;
+            }
+
             for ($i = 0; $i < count($unique); $i += $batch_size) {
                 $batch = array_slice($unique, $i, $batch_size);
 
@@ -381,6 +390,8 @@ class PCM_Keywords_Service
                     foreach ($kw_items as $item) {
                         $kw = $item['keyword'] ?? null;
                         if (!$kw) continue;
+                        // Re-key to the input casing (see map above).
+                        $kw = $input_by_lower[strtolower((string) $kw)] ?? $kw;
 
                         $result[$kw] = [
                             'volume'     => $item['volume'] ?? 0,
