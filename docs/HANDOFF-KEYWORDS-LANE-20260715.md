@@ -1,5 +1,27 @@
 # HANDOFF — KEYWORDS LANE (owner-approved work split, 2026-07-15)
 
+> ## ⚠ SUPERSEDED IN PART — OWNER RULING (2026-07-15, later the same day)
+> **Hard lanes by DIRECTORY, one writer each, nobody waits, no merges:**
+> - **The optimizer module is entirely the other developer's** — backend
+>   (`includes/modules/optimizer/**` incl. ALL teachers — the demand
+>   teacher moved to his lane) and frontend (`app/src/modules/SEO/
+>   optimizer/**`), PLUS **every edit to SectionModal.tsx** (he is the
+>   editor's only writer; your drawer state hooks stay yours, he wires
+>   the rail/editor side).
+> - **Everything keywords is YOURS** — `KeywordsDrawer.tsx`, the Keywords
+>   module (frontend + backend), keyword services and data flows.
+> - **Your tasks now (start immediately, nothing blocks):**
+>   1. Keyword-injection SELECTION STATE — drawer-internal only (the
+>      selected-rows checkboxes + exposing the selection); the two-line
+>      Optimize-button transform in SectionModal lands through him when
+>      your side is ready (spec: backlog.md, hierarchy law).
+>   2. Phrase-match keyword discovery (owner plan item — pure keywords).
+>   3. Domain-wide related keyword scan (owner plan item — pure keywords).
+> - Task 1 (context wiring) + Task 2 (demand teacher) below are NO LONGER
+>   YOURS — he built the context slot into the optimizer core already and
+>   takes the demand teacher. The FROZEN CONTRACTS section below still
+>   holds — it is the read-only interface between the lanes.
+
 For the developer on the keyword module. The owner split the research-spine
 arc between us: I build the foundation + rail + five researchers; YOU own
 everything keyword-flavored. This file is the factual contract — line refs
