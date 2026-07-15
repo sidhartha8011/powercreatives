@@ -32,6 +32,11 @@ class PCM_Teacher_Search implements PCM_Optimizer_Teacher
         return 10;
     }
 
+    public function group(): string
+    {
+        return 'search';
+    }
+
     /**
      * One invoke_json call: checklist in, per-check verdicts out, mapped
      * onto the catalog contract in DATA order (the model's order is never
@@ -69,7 +74,11 @@ class PCM_Teacher_Search implements PCM_Optimizer_Teacher
             ),
             array(
                 'role'    => 'user',
-                'content' => 'PAGE TYPE: ' . (string) ($context['pageType'] ?? 'general') . "\n\n"
+                // The context package (research spine D1): the checks judge
+                // with the real keywords and business facts in view — e.g.
+                // "contact visible early" against the ACTUAL phone number.
+                'content' => 'PAGE TYPE: ' . (string) ($context['pageType'] ?? 'general')
+                    . PCM_Optimizer_Service::context_suffix($context) . "\n\n"
                     . "CHECKS (answer every one, by id):\n" . wp_json_encode($questions) . "\n\n"
                     . "PAGE CONTENT (HTML):\n" . (string) $context['html'],
             ),

@@ -9,7 +9,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
-import { itemKey, type CompiledDirective, type OptimizerItem, type TeacherMeta, type TeacherRun } from './types';
+import { itemKey, type CompiledDirective, type KeywordPackage, type OptimizerItem, type TeacherMeta, type TeacherRun } from './types';
 
 export interface UseOptimizerArgs {
   siteId: number;
@@ -19,6 +19,11 @@ export interface UseOptimizerArgs {
   provider: string;
   /** The live document, diff marks stripped — read at analyze time. */
   getHtml: () => string;
+  /** THE KEYWORD PACKAGE — live editor state, read at analyze time (the
+   *  same source-of-truth law as the html). */
+  getKeywords: () => KeywordPackage;
+  /** The site's other pages — the interlink researcher's map. */
+  pages: Array<{ id: number; title: string; permalink: string }>;
 }
 
 export interface UseOptimizer {
@@ -63,16 +68,23 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
         pageType: args.pageType,
         model: args.model,
         provider: args.provider,
+        keywords: args.getKeywords(),
+        pages: args.pages,
       })
       .then((res: any) => {
         if (runSeq.current[teacherId] !== seq) return; // superseded — drop
         const items: OptimizerItem[] = Array.isArray(res?.items) ? res.items : [];
-        setRuns((cur) => ({ ...cur, [teacherId]: { status: 'done', items } }));
-        // Fresh gaps come PRE-TICKED (owner spec); resolved ones leave the basket.
+        // THE PEEK: what this run was actually given (server-reported).
+        const context = res?.contextUsed && typeof res.contextUsed === 'object' ? res.contextUsed : undefined;
+        setRuns((cur) => ({ ...cur, [teacherId]: { status: 'done', items, context } }));
+        // Fresh gaps come PRE-TICKED (owner spec); resolved ones leave the
+        // basket. An informational finding without a directive (e.g. "no
+        // primary keyword set", an unreachable engine) can't ride the
+        // basket — it renders, but never ticks.
         setBasket((cur) => {
           const next = new Set(cur);
           items.forEach((it) => {
-            if (it.found) next.add(itemKey(it));
+            if (it.found && it.instruction !== '') next.add(itemKey(it));
             else next.delete(itemKey(it));
           });
           return next;
@@ -90,7 +102,7 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
         }));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [args.siteId, args.postId, args.pageType, args.model, args.provider]);
+  }, [args.siteId, args.postId, args.pageType, args.model, args.provider, args.pages]);
 
   const analyzeAll = useCallback(() => {
     teachers.forEach((t) => analyzeOne(t.id));
@@ -122,13 +134,17 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
         items: selected,
         model: args.model,
         provider: args.provider,
+        // The same package the teachers analyzed with — the merge respects
+        // the keyword hierarchy and real business facts (spine D6).
+        siteId: args.siteId,
+        keywords: args.getKeywords(),
       });
       return Array.isArray(res?.directives) ? (res.directives as CompiledDirective[]) : [];
     } finally {
       setCompiling(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teachers, runs, basket, args.model, args.provider]);
+  }, [teachers, runs, basket, args.model, args.provider, args.siteId]);
 
   const selectedCount = teachers.reduce(
     (n, t) => n + (runs[t.id]?.items ?? []).filter((it) => basket.has(itemKey(it))).length,

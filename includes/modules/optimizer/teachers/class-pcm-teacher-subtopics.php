@@ -33,6 +33,11 @@ class PCM_Teacher_Subtopics implements PCM_Optimizer_Teacher
         return 20;
     }
 
+    public function group(): string
+    {
+        return 'search';
+    }
+
     /**
      * One invoke_json call; verdicts land on the catalog contract. An
      * off-contract answer (no subtopics) is an honest failure — the rail
@@ -43,13 +48,23 @@ class PCM_Teacher_Subtopics implements PCM_Optimizer_Teacher
      */
     public function analyze(array $context): array
     {
+        // THE ANCHOR (research spine, gap fact 1): when the user set a
+        // primary keyword, that IS the page's core topic — the model maps
+        // its subtopics instead of inventing a topic of its own. Without
+        // one it derives the topic from content (the honest fallback,
+        // stated in the peek by the empty keywords package).
+        $primary = trim((string) ($context['keywords']['primary'] ?? ''));
+        $topic_rule = $primary === ''
+            ? 'From the page content, determine the ONE core topic, then list'
+            : 'The page\'s core topic IS its primary keyword (given in the context below) — echo it as the topic, then list';
+
         $messages = array(
             array(
                 'role'    => 'system',
                 // The exact output contract lives IN the prompt (the
                 // Anthropic law — no response_format there).
-                'content' => 'You are a topical-coverage auditor. From the page content, determine the ONE core '
-                    . 'topic, then list the 4 to 7 subtopics a COMPLETE page about that topic covers (what '
+                'content' => 'You are a topical-coverage auditor. ' . $topic_rule
+                    . ' the 4 to 7 subtopics a COMPLETE page about that topic covers (what '
                     . 'genuinely comprehensive pages on this topic actually include — never filler). Judge each '
                     . 'subtopic ONLY against the given content: covered=true needs real substance about it, not a '
                     . 'passing mention; evidence = a short verbatim quote when covered, or one short sentence of '
@@ -58,7 +73,8 @@ class PCM_Teacher_Subtopics implements PCM_Optimizer_Teacher
             ),
             array(
                 'role'    => 'user',
-                'content' => 'PAGE TYPE: ' . (string) ($context['pageType'] ?? 'general') . "\n\n"
+                'content' => 'PAGE TYPE: ' . (string) ($context['pageType'] ?? 'general')
+                    . PCM_Optimizer_Service::context_suffix($context) . "\n\n"
                     . "PAGE CONTENT (HTML):\n" . (string) $context['html'],
             ),
         );

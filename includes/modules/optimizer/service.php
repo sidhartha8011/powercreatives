@@ -85,14 +85,14 @@ class PCM_Optimizer_Service
     /**
      * Registry metadata for the rail, sorted by order().
      *
-     * @return array<int, array{id: string, label: string, order: int}>
+     * @return array<int, array{id: string, label: string, order: int, group: string}>
      */
     public static function teacher_meta(): array
     {
         self::load_teachers();
         $meta = array();
         foreach (self::$teachers as $t) {
-            $meta[] = array('id' => $t->id(), 'label' => $t->label(), 'order' => $t->order());
+            $meta[] = array('id' => $t->id(), 'label' => $t->label(), 'order' => $t->order(), 'group' => $t->group());
         }
         usort($meta, static fn(array $a, array $b): int => $a['order'] <=> $b['order']);
         return $meta;
@@ -130,7 +130,10 @@ class PCM_Optimizer_Service
      * to merge, and a no-op LLM hop is a cost without a function.
      *
      * @param array $items   [{instruction, teacherId, label}] — sanitized.
-     * @param array $context {model, provider, userId}.
+     * @param array $context {model, provider, userId, keywords?, business?} —
+     *                       keywords/business (when present) ride the
+     *                       reconciliation prompt so merge order respects
+     *                       the keyword hierarchy and real business facts.
      * @return array<int, array{text: string, purposes: string[], sources: int[]}>
      * @throws \RuntimeException When the model drops an intent or answers
      *                           off-contract.
@@ -166,7 +169,8 @@ class PCM_Optimizer_Service
             ),
             array(
                 'role'    => 'user',
-                'content' => "INPUT DIRECTIVES:\n" . wp_json_encode($numbered),
+                'content' => "INPUT DIRECTIVES:\n" . wp_json_encode($numbered)
+                    . self::context_suffix($context),
             ),
         );
 
@@ -609,5 +613,235 @@ class PCM_Optimizer_Service
                 'landing' => $conversion,
             ),
         );
+    }
+
+    // =====================================================================
+    // THE CONTEXT PACKAGE (research spine D1) — one builder, one formatter.
+    // Every teacher, the compiler and the peek read THIS shape; nothing
+    // else ever re-derives keywords/business/page-type on its own.
+    // =====================================================================
+
+    /**
+     * The linked business record for a site — siteId → brandId → the
+     * resolved GBP record (snapshot + manual overrides). Name falls back
+     * brand → site so the record is never nameless when a brand exists.
+     *
+     * @param int $site_id Site id (0 = no site → empty record).
+     * @return array Resolved business fields (may be empty — honest).
+     */
+    public static function business_context(int $site_id): array
+    {
+        if ($site_id <= 0) {
+            return array();
+        }
+        global $wpdb;
+        $sites = PCM_Schema::table('sites');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $site = $wpdb->get_row($wpdb->prepare("SELECT name, url, brandId FROM {$sites} WHERE id = %d", $site_id));
+        if (!$site) {
+            return array();
+        }
+        $business = array('siteUrl' => (string) $site->url);
+        $brand_id = (int) ($site->brandId ?? 0);
+        if ($brand_id > 0) {
+            $brands = PCM_Schema::table('brands');
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $brand = $wpdb->get_row($wpdb->prepare("SELECT name FROM {$brands} WHERE id = %d", $brand_id));
+            if ($brand && !empty($brand->name)) {
+                $business['name'] = (string) $brand->name;
+            }
+            if (class_exists('PCM_SEO_GBP')) {
+                $resolved = (array) (PCM_SEO_GBP::get_for_brand($brand_id)['resolved'] ?? array());
+                // GBP fields win over the bare brand name (same precedence
+                // as the SEO field vars — one law, two consumers).
+                $business = array_merge($business, array_filter($resolved, static fn($v) => $v !== '' && $v !== null && $v !== array()));
+            }
+        }
+        return $business;
+    }
+
+    /**
+     * THE context block — the one formatter that renders the package for
+     * a prompt. Sections render only when they have content: an absent
+     * keyword or business record is absent, never an empty label the
+     * model could hallucinate around.
+     *
+     * @param array $context {keywords?, business?, pageType?} (superset ok).
+     * @return string Plain-text block, '' when nothing is known.
+     */
+    public static function context_block(array $context): string
+    {
+        $lines = array();
+        $kw    = (array) ($context['keywords'] ?? array());
+        $primary    = trim((string) ($kw['primary'] ?? ''));
+        $supporting = array_values(array_filter(array_map('strval', (array) ($kw['supporting'] ?? array())), static fn(string $s): bool => trim($s) !== ''));
+        $additional = array_values(array_filter(array_map('strval', (array) ($kw['additional'] ?? array())), static fn(string $s): bool => trim($s) !== ''));
+        if ($primary !== '') {
+            $lines[] = 'PRIMARY KEYWORD (the page\'s one target topic — everything anchors on it): ' . $primary;
+        }
+        if (!empty($supporting)) {
+            $lines[] = 'SUPPORTING KEYWORDS (structural — belong in some headings and some text): ' . implode(', ', $supporting);
+        }
+        if (!empty($additional)) {
+            $lines[] = 'ADDITIONAL KEYWORDS (light touch — natural mentions only, never stuffed): ' . implode(', ', $additional);
+        }
+        $biz = (array) ($context['business'] ?? array());
+        $biz_bits = array();
+        foreach (array('name' => 'Name', 'category' => 'Category', 'address' => 'Address', 'phone' => 'Phone', 'website' => 'Website', 'hours' => 'Hours', 'rating' => 'Rating', 'description' => 'About') as $key => $label) {
+            $v = trim((string) ($biz[$key] ?? ''));
+            if ($v !== '') {
+                $biz_bits[] = $label . ': ' . $v;
+            }
+        }
+        if (!empty($biz_bits)) {
+            $lines[] = 'BUSINESS FACTS (real, verified — use these, never invent business details): ' . implode(' · ', $biz_bits);
+        }
+        $page_type = trim((string) ($context['pageType'] ?? ''));
+        if ($page_type !== '' && $page_type !== 'general') {
+            $lines[] = 'PAGE TYPE: ' . $page_type;
+        }
+        return empty($lines) ? '' : "PAGE CONTEXT:\n" . implode("\n", $lines);
+    }
+
+    /**
+     * The block as a message suffix — '' stays '', content gets separated.
+     *
+     * @param array $context See context_block().
+     * @return string
+     */
+    public static function context_suffix(array $context): string
+    {
+        $block = self::context_block($context);
+        return $block === '' ? '' : "\n\n" . $block;
+    }
+
+    /** Option holding the research tunables — hub-controlled DATA (the
+     *  standing law), seeded once, edited as an option, never code. */
+    private const RESEARCH_OPTION = 'pcm_optimizer_research';
+
+    /**
+     * Research tunables — read-through seeded option (the checklists
+     * pattern, service.php checklist law).
+     *
+     * @return array{onpage: array, demand: array, serp: array, mention: array}
+     */
+    public static function research_tunables(): array
+    {
+        $stored = get_option(self::RESEARCH_OPTION);
+        if (is_array($stored) && !empty($stored['onpage'])) {
+            return $stored;
+        }
+        $seed = array(
+            'version' => 1,
+            // Thin/stuffed thresholds — density in percent of total words.
+            'onpage'  => array('minWords' => 300, 'maxDensityPct' => 2.5, 'minPrimaryUses' => 1),
+            // Striking distance: Google already ranks the page for these.
+            'demand'  => array('minPos' => 4, 'maxPos' => 20, 'maxItems' => 8),
+            // How many organic winners the SERP researcher studies.
+            'serp'    => array('topN' => 10),
+            // The AI panel: engine cap + the money questions (placeholders
+            // substitute from the context package; a question whose
+            // placeholder is empty is skipped, never sent half-filled).
+            'mention' => array(
+                'maxEngines' => 4,
+                'questions'  => array(
+                    'What is the best {{primary_keyword}} you would recommend, and why?',
+                    'Which providers of {{primary_keyword}} near {{business.address}} would you recommend?',
+                    'I need {{business.category}} services — who should I choose and why?',
+                ),
+            ),
+        );
+        add_option(self::RESEARCH_OPTION, $seed, '', false);
+        return $seed;
+    }
+
+    /**
+     * An active integration key for a provider, or null — teachers throw
+     * their OWN honest, named error when the tap they need is missing
+     * (never a silent skip).
+     *
+     * @param string $provider Provider id (e.g. 'ahrefs', 'gsc', 'google').
+     * @param int    $user_id  PCM user id.
+     * @return string|null
+     */
+    public static function provider_key(string $provider, int $user_id): ?string
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('integrations');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $key = $wpdb->get_var($wpdb->prepare(
+            "SELECT apiKey FROM {$table} WHERE provider = %s AND userId = %d AND isActive = 1 LIMIT 1",
+            $provider,
+            $user_id
+        ));
+        return !empty($key) ? (string) $key : null;
+    }
+
+    /**
+     * The AI panel's engines: one representative TEXT model per provider
+     * the user holds an active key for (cheapest tier first — panel
+     * verdicts don't need frontier models). Capped by the caller.
+     *
+     * @param int $user_id PCM user id.
+     * @param int $cap     Max engines.
+     * @return array<int, array{provider: string, model: string}>
+     */
+    public static function text_engines(int $user_id, int $cap): array
+    {
+        global $wpdb;
+        $models       = PCM_Schema::table('models');
+        $integrations = PCM_Schema::table('integrations');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT m.provider, m.modelId, m.costTier FROM {$models} m
+             INNER JOIN {$integrations} i ON i.provider = m.provider AND i.userId = m.userId AND i.isActive = 1
+             WHERE m.userId = %d AND m.canGenerateText = 1 AND m.isEnabled = 1",
+            $user_id
+        ));
+        $tier_rank = array('budget' => 0, 'standard' => 1, 'premium' => 2);
+        $by_provider = array();
+        foreach ((array) $rows as $r) {
+            $provider = (string) $r->provider;
+            $rank     = $tier_rank[(string) ($r->costTier ?? 'standard')] ?? 1;
+            if (!isset($by_provider[$provider]) || $rank < $by_provider[$provider]['rank']) {
+                $by_provider[$provider] = array('provider' => $provider, 'model' => (string) $r->modelId, 'rank' => $rank);
+            }
+        }
+        $engines = array_values(array_map(
+            static fn(array $e): array => array('provider' => $e['provider'], 'model' => $e['model']),
+            $by_provider
+        ));
+        return array_slice($engines, 0, max(1, $cap));
+    }
+
+    /**
+     * Deterministic brand-presence check (the mention teacher's verdict —
+     * never the model's self-report): the business name or the site host
+     * appearing in an engine's answer counts as a mention.
+     *
+     * @param string $text     The engine's answer.
+     * @param array  $business The context package's business record.
+     * @return bool
+     */
+    public static function mentions_brand(string $text, array $business): bool
+    {
+        $haystack = function_exists('mb_strtolower') ? mb_strtolower($text) : strtolower($text);
+        $needles  = array();
+        $name = trim((string) ($business['name'] ?? ''));
+        if ($name !== '') {
+            $needles[] = function_exists('mb_strtolower') ? mb_strtolower($name) : strtolower($name);
+        }
+        foreach (array('website', 'siteUrl') as $url_key) {
+            $host = (string) wp_parse_url((string) ($business[$url_key] ?? ''), PHP_URL_HOST);
+            if ($host !== '') {
+                $needles[] = strtolower(preg_replace('/^www\./', '', $host));
+            }
+        }
+        foreach ($needles as $needle) {
+            if ($needle !== '' && strpos($haystack, $needle) !== false) {
+                return true;
+            }
+        }
+        return false;
     }
 }

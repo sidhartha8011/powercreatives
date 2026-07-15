@@ -706,7 +706,7 @@ class PCM_SEO_Service
             $tpl .= "\n\nPage type: {{page.type}} — match the content to this intent (a local page targets local searches).";
         }
         if ((!empty($vars['business.phone']) || !empty($vars['business.address'])) && strpos($tpl, '{{business.') === false) {
-            $tpl .= "\n\nBusiness context: {{business.name}} — phone {{business.phone}}, address {{business.address}}, category {{business.category}}. Use the real details where relevant; never invent contact data.";
+            $tpl .= "\n\nBusiness context: {{business.name}} — phone {{business.phone}}, address {{business.address}}, category {{business.category}}, hours {{business.hours}}. About: {{business.description}}. Use the real details where relevant; never invent contact data.";
         }
         $prompt  = self::substitute_vars($tpl, $vars);
         if (!class_exists('PCM_LLM')) {
@@ -2480,6 +2480,7 @@ class PCM_SEO_Service
             'business.phone'            => (string) ($gbp['phone'] ?? ''),
             'business.category'         => (string) ($gbp['category'] ?? ''),
             'business.hours'            => (string) ($gbp['hours'] ?? ''),
+            'business.description'      => (string) ($gbp['description'] ?? ''),
             'business.rating'           => isset($gbp['rating']) ? (string) $gbp['rating'] : '',
             'business.lat'              => isset($gbp['lat']) ? (string) $gbp['lat'] : '',
             'business.lng'              => isset($gbp['lng']) ? (string) $gbp['lng'] : '',
@@ -6181,6 +6182,7 @@ class PCM_SEO_Service
             'business.phone'            => (string) ($gbp['phone'] ?? ''),
             'business.category'         => (string) ($gbp['category'] ?? ''),
             'business.hours'            => (string) ($gbp['hours'] ?? ''),
+            'business.description'      => (string) ($gbp['description'] ?? ''),
             'business.rating'           => isset($gbp['rating']) ? (string) $gbp['rating'] : '',
             'business.lat'              => isset($gbp['lat']) ? (string) $gbp['lat'] : '',
             'business.lng'              => isset($gbp['lng']) ? (string) $gbp['lng'] : '',

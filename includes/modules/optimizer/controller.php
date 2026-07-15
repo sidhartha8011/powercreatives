@@ -282,10 +282,15 @@ class PCM_REST_Optimizer extends PCM_REST_Base
         }
 
         try {
+            // The same context package the teachers analyzed with rides the
+            // reconciliation (research spine D6) — merge order respects the
+            // keyword hierarchy and real business facts.
             $directives = PCM_Optimizer_Service::compile($items, array(
                 'model'    => is_array($p) ? sanitize_text_field((string) ($p['model'] ?? '')) : '',
                 'provider' => is_array($p) ? sanitize_key((string) ($p['provider'] ?? '')) : '',
                 'userId'   => get_current_user_id(),
+                'keywords' => $this->sanitize_keywords(is_array($p) ? ($p['keywords'] ?? null) : null),
+                'business' => PCM_Optimizer_Service::business_context(is_array($p) ? (int) ($p['siteId'] ?? 0) : 0),
             ));
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 502);
@@ -331,9 +336,35 @@ class PCM_REST_Optimizer extends PCM_REST_Base
             return $this->error('There is no content to analyze.');
         }
 
+        $site_id = is_array($p) ? (int) ($p['siteId'] ?? 0) : 0;
+        $post_id = is_array($p) ? (int) ($p['postId'] ?? 0) : 0;
+
+        // THE CONTEXT PACKAGE (research spine D1): keywords arrive from the
+        // editor's LIVE state (the same source-of-truth law as the html);
+        // the additional list falls back to the stored bucket when the
+        // payload sends none (documented — the drawer fills the bucket).
+        $keywords = $this->sanitize_keywords(is_array($p) ? ($p['keywords'] ?? null) : null);
+        if (empty($keywords['additional'])) {
+            $keywords['additional'] = PCM_Optimizer_Service::bucket_get($site_id, $post_id);
+        }
+        // The business record resolves SERVER-side (site → brand → GBP) —
+        // cheap DB reads, never trusted from the client.
+        $business = PCM_Optimizer_Service::business_context($site_id);
+        $pages    = array();
+        foreach ((is_array($p) && is_array($p['pages'] ?? null)) ? array_slice($p['pages'], 0, 200) : array() as $pg) {
+            if (!is_array($pg)) {
+                continue;
+            }
+            $permalink = esc_url_raw((string) ($pg['permalink'] ?? ''));
+            $title     = sanitize_text_field((string) ($pg['title'] ?? ''));
+            if ($permalink !== '' && $title !== '') {
+                $pages[] = array('id' => absint($pg['id'] ?? 0), 'title' => $title, 'permalink' => $permalink);
+            }
+        }
+
         $context = array(
-            'siteId'   => is_array($p) ? (int) ($p['siteId'] ?? 0) : 0,
-            'postId'   => is_array($p) ? (int) ($p['postId'] ?? 0) : 0,
+            'siteId'   => $site_id,
+            'postId'   => $post_id,
             'html'     => $html,
             'pageType' => is_array($p) ? sanitize_key((string) ($p['pageType'] ?? 'general')) : 'general',
             'model'    => is_array($p) ? sanitize_text_field((string) ($p['model'] ?? '')) : '',
@@ -341,6 +372,9 @@ class PCM_REST_Optimizer extends PCM_REST_Base
             // The CALLER's identity rides every LLM call (key lookup must
             // never lean on an absent session — the model-truth lesson).
             'userId'   => get_current_user_id(),
+            'keywords' => $keywords,
+            'business' => $business,
+            'pages'    => $pages,
         );
 
         try {
@@ -350,8 +384,45 @@ class PCM_REST_Optimizer extends PCM_REST_Base
         }
 
         return $this->success(array(
-            'teacherId' => $teacher_id,
-            'items'     => $items,
+            'teacherId'   => $teacher_id,
+            'items'       => $items,
+            // THE PEEK (owner confirmation tool): exactly what this run was
+            // given — the rail shows it read-only, nothing hidden.
+            'contextUsed' => array(
+                'keywords'       => $keywords,
+                'businessFields' => array_values(array_filter(array_keys($business), static fn(string $k): bool => is_scalar($business[$k]) && trim((string) $business[$k]) !== '')),
+                'businessName'   => (string) ($business['name'] ?? ''),
+                'pageType'       => $context['pageType'],
+                'model'          => $context['model'],
+                'provider'       => $context['provider'],
+                'pageCount'      => count($pages),
+            ),
         ));
+    }
+
+    /**
+     * Sanitize the analyze/compile payload's keyword package into the
+     * context shape {primary, supporting[], additional[]}.
+     *
+     * @param mixed $raw The payload's `keywords` value.
+     * @return array{primary: string, supporting: string[], additional: string[]}
+     */
+    private function sanitize_keywords(mixed $raw): array
+    {
+        $clean = array('primary' => '', 'supporting' => array(), 'additional' => array());
+        if (!is_array($raw)) {
+            return $clean;
+        }
+        $clean['primary'] = sanitize_text_field((string) ($raw['primary'] ?? ''));
+        foreach (array('supporting', 'additional') as $role) {
+            foreach (is_array($raw[$role] ?? null) ? $raw[$role] : array() as $kw) {
+                $k = sanitize_text_field((string) $kw);
+                if ($k !== '' && !in_array($k, $clean[$role], true)) {
+                    $clean[$role][] = $k;
+                }
+            }
+            $clean[$role] = array_slice($clean[$role], 0, 50);
+        }
+        return $clean;
     }
 }

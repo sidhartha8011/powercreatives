@@ -2013,6 +2013,14 @@ export function SectionModal({
           model={aiPick?.id ?? model}
           provider={aiPick?.provider ?? provider}
           getHtml={() => stripDiffHtml(editor?.getHTML() ?? '')}
+          // THE KEYWORD PACKAGE — the drawer's LIVE state rides every
+          // analysis (the html's source-of-truth law, same reasons).
+          getKeywords={() => ({
+            primary: primaryKw.trim(),
+            supporting: supportingKw.split(',').map((s) => s.trim()).filter(Boolean),
+            additional: kwBucket.keywords,
+          })}
+          pages={sitePages ?? []}
           onClose={() => setAnalyzeOpen(false)}
           onOptimize={(directives) => {
             setAnalyzeOpen(false);

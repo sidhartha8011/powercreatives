@@ -27,11 +27,20 @@ interface PCM_Optimizer_Teacher
     /** Rail position — lower renders first. */
     public function order(): int;
 
+    /** The rail's top group (owner taxonomy ruling 2026-07-14):
+     *  'search' = Search optimization · 'ai' = AI optimization.
+     *  Overlap between groups is fine by design — the compiler reconciles. */
+    public function group(): string;
+
     /**
      * Analyze the page and contribute catalog items.
      *
      * @param array $context {siteId, postId, html, pageType, model,
-     *                        provider, userId} — see the controller.
+     *                        provider, userId, keywords {primary,
+     *                        supporting[], additional[]}, business
+     *                        (resolved brand record), pages[]} — see the
+     *                        controller. Items may carry an optional
+     *                        `source` (which integration/engine answered).
      * @return array<int, array{id: string, teacherId: string, found: bool,
      *                          label: string, evidence: string,
      *                          instruction: string}>
