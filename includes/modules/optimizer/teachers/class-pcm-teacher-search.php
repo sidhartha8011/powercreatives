@@ -24,7 +24,7 @@ class PCM_Teacher_Search implements PCM_Optimizer_Teacher
 
     public function label(): string
     {
-        return 'Search engine optimization';
+        return 'Structure & language';
     }
 
     public function order(): int

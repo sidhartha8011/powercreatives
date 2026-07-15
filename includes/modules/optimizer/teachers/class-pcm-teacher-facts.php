@@ -61,7 +61,7 @@ class PCM_Teacher_Facts implements PCM_Optimizer_Teacher
 
     public function label(): string
     {
-        return 'Entity & fact authority';
+        return 'Business facts';
     }
 
     public function order(): int

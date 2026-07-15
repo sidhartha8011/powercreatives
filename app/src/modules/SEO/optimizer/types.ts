@@ -90,8 +90,15 @@ export const TEACHER_PILLS: Record<string, string> = {
   facts: 'FACTS',
 };
 
-/** The two rail groups, in render order (owner taxonomy ruling 2026-07-14). */
+/** The two rail groups, in render order — the TWO purposes the user
+ *  knows (owner rulings 2026-07-14/15). */
 export const RAIL_GROUPS: Array<{ id: TeacherMeta['group']; label: string }> = [
-  { id: 'search', label: 'Search optimization' },
-  { id: 'ai', label: 'AI optimization' },
+  { id: 'search', label: 'SEO · Google results' },
+  { id: 'ai', label: 'AI · recommendations' },
 ];
+
+/** Group pill styling for the review side — SEO blue · AI violet. */
+export const GROUP_PILLS: Record<TeacherMeta['group'], { label: string; className: string }> = {
+  search: { label: 'SEO', className: 'bg-[#e7f5ff] text-primary' },
+  ai: { label: 'AI', className: 'bg-violet-100 text-violet-700' },
+};

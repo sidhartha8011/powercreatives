@@ -28,7 +28,7 @@ class PCM_Teacher_Serp implements PCM_Optimizer_Teacher
 
     public function label(): string
     {
-        return 'SERP reality';
+        return 'Competitor gaps (SERP)';
     }
 
     public function order(): int
@@ -64,22 +64,50 @@ class PCM_Teacher_Serp implements PCM_Optimizer_Teacher
             throw new \RuntimeException('The keyword engine is unavailable.');
         }
 
-        $top_n  = (int) (PCM_Optimizer_Service::research_tunables()['serp']['topN'] ?? 10);
-        $locale = get_locale();
-        $lang   = $locale ? substr($locale, 0, 2) : 'en';
-        $serp   = PCM_Keywords_Service::ahrefs_serp_dr(array($primary), $key, $lang);
-        $rows   = array_slice((array) ($serp[$primary]['serpResults'] ?? array()), 0, max(3, $top_n));
+        $tun    = (array) (PCM_Optimizer_Service::research_tunables()['serp'] ?? array());
+        $top_n  = (int) ($tun['topN'] ?? 10);
+        // The market comes from THE SMART COUNTRY CHAIN (site → brand → AI
+        // check → hub default) — never a silent locale guess (gap e8fcae5).
+        $country = $this->resolve_market((int) ($context['siteId'] ?? 0), (string) ($context['html'] ?? ''));
+        $serp    = PCM_Keywords_Service::ahrefs_serp_dr(array($primary), $key, $country);
+        $rows    = array_slice((array) ($serp[$primary]['serpResults'] ?? array()), 0, max(3, $top_n));
         if (empty($rows)) {
             throw new \RuntimeException(sprintf('Ahrefs returned no organic results for "%s" — check the keyword or try again.', $primary));
         }
 
+        // THE CONTENT UPGRADE (gap e8fcae5 D4): fetch the top winners' REAL
+        // pages — gaps become facts, not title-inference. A failed fetch
+        // degrades THAT winner to title-only, marked — never kills the run.
+        $fetch_top = (int) ($tun['fetchTop'] ?? 3);
+        $max_chars = (int) ($tun['maxCharsPerPage'] ?? 4000);
+        $timeout   = (int) ($tun['fetchTimeout'] ?? 8);
+        $scraper   = class_exists('PCM_Scraper_Service') ? new PCM_Scraper_Service() : null;
+
         $winners = array();
-        foreach ($rows as $r) {
-            $winners[] = array(
+        foreach (array_values($rows) as $i => $r) {
+            $winner = array(
                 'position' => (int) ($r['position'] ?? 0),
                 'title'    => (string) ($r['title'] ?? ''),
                 'url'      => (string) ($r['url'] ?? ''),
             );
+            if ($scraper !== null && $i < $fetch_top && $winner['url'] !== '') {
+                try {
+                    $fetched   = $scraper->fetch_html($winner['url'], 'SERP Researcher', $timeout);
+                    $extracted = $scraper->extract_text_content((string) ($fetched['html'] ?? ''), $winner['url']);
+                    $text      = trim(implode("\n", array_merge(
+                        array_map(static fn($h): string => '## ' . $h, (array) ($extracted['headings'] ?? array())),
+                        (array) ($extracted['paragraphs'] ?? array())
+                    )));
+                    if ($text !== '') {
+                        $winner['content'] = function_exists('mb_substr') ? mb_substr($text, 0, $max_chars) : substr($text, 0, $max_chars);
+                    } else {
+                        $winner['contentNote'] = 'page fetched but no readable text extracted';
+                    }
+                } catch (\Throwable $e) {
+                    $winner['contentNote'] = 'content unavailable (' . $e->getMessage() . ')';
+                }
+            }
+            $winners[] = $winner;
         }
 
         $messages = array(
@@ -87,16 +115,18 @@ class PCM_Teacher_Serp implements PCM_Optimizer_Teacher
                 'role'    => 'system',
                 // The exact output contract lives IN the prompt (the
                 // Anthropic law — no response_format there).
-                'content' => 'You are a search-results analyst. You get the REAL top organic results (position, '
-                    . 'title, url) for a keyword, and the content of OUR page targeting it. From the winners\' '
-                    . 'titles and urls, judge three things about OUR content, honestly and only from the given '
-                    . 'data: (1) format — do the winners signal a different content format (guide, list, service '
-                    . 'page, comparison) than ours? (2) coverage — which concrete themes the winners\' titles '
-                    . 'promise that our content does not cover (max 4, only real gaps); (3) angle — is there a '
-                    . 'clearly stronger angle in the winners\' titles (price, locality, speed, proof) that ours '
+                'content' => 'You are a search-results analyst. You get the REAL top organic results for a keyword — '
+                    . 'the leading ones INCLUDING their actual page content (headings + paragraphs; a winner with '
+                    . 'contentNote could not be fetched, judge it by title only) — and the content of OUR page '
+                    . 'targeting it. Judge three things about OUR content, honestly and only from the given data: '
+                    . '(1) format — do the winners use a different content format (guide, list, service page, '
+                    . 'comparison) than ours? (2) coverage — which concrete topics/sections/facts the winners\' '
+                    . 'CONTENT covers that ours does not (max 4, only real gaps a reader would miss); (3) angle — '
+                    . 'is there a clearly stronger angle in the winners (price, locality, speed, proof) that ours '
                     . 'misses? For each verdict: matches=true means we already align (evidence = why, short); '
-                    . 'matches=false means a gap (evidence = the concrete gap; fix = ONE imperative sentence for '
-                    . 'a rewriting AI). NEVER invent winners or content. Respond with ONLY this JSON, no markdown: '
+                    . 'matches=false means a gap (evidence = the concrete gap NAMING which winner shows it; fix = '
+                    . 'ONE imperative sentence for a rewriting AI). NEVER invent winners or content. Respond with '
+                    . 'ONLY this JSON, no markdown: '
                     . '{"verdicts":[{"id":"format|coverage-<slug>|angle","matches":true,"evidence":"...","fix":"..."}]}',
             ),
             array(
@@ -155,13 +185,42 @@ class PCM_Teacher_Serp implements PCM_Optimizer_Teacher
                 'id'          => sanitize_title((string) $v['id']),
                 'teacherId'   => $this->id(),
                 'found'       => !$matches,
-                'label'       => sprintf('Winners for "%s": %s', $primary, (string) $v['id']),
+                // The differentiator leads; the shared keyword lives in the
+                // card/context, not repeated per row (owner ruling).
+                'label'       => ucfirst(str_replace('-', ': ', (string) $v['id'])),
                 'evidence'    => (string) ($v['evidence'] ?? ''),
                 'instruction' => $matches ? '' : $fix,
                 'source'      => 'ahrefs',
             );
         }
         return $items;
+    }
+
+    /**
+     * The market for the SERP pull — the live country chain (site → brand
+     * GBP → AI language check → hub default); any failure lands on the hub
+     * default honestly (it is DATA, editable).
+     *
+     * @param int    $site_id Site id from the context.
+     * @param string $html    Content sample for the language check.
+     * @return string Two-letter country code.
+     */
+    private function resolve_market(int $site_id, string $html): string
+    {
+        try {
+            if ($site_id > 0 && class_exists('PCM_Schema')) {
+                global $wpdb;
+                $sites = PCM_Schema::table('sites');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $site = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$sites} WHERE id = %d", $site_id));
+                if ($site) {
+                    return PCM_Keywords_Service::resolve_country($site, wp_strip_all_tags($html));
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[PCM_Optimizer] serp teacher: country resolution failed — ' . $e->getMessage());
+        }
+        return PCM_Keywords_Service::default_country();
     }
 }
 

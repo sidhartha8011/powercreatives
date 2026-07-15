@@ -33,6 +33,8 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "optimizer.keywords": { endpoint: "optimizer/keywords", method: "GET" },
     "optimizer.keywordsSave": { endpoint: "optimizer/keywords", method: "POST" },
     "optimizer.keywordVolumes": { endpoint: "optimizer/keywords/volumes", method: "POST" },
+    "optimizer.historyStamp": { endpoint: "optimizer/history", method: "POST" },
+    "optimizer.history": { endpoint: "optimizer/history", method: "GET" },
 
     // ── Integrations ──
     "integrations.list": { endpoint: "integrations", method: "GET" },

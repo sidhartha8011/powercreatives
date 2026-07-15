@@ -28,7 +28,7 @@ class PCM_Teacher_Demand implements PCM_Optimizer_Teacher
 
     public function label(): string
     {
-        return 'Proven search demand';
+        return 'Untapped searches (GSC)';
     }
 
     public function order(): int
@@ -117,7 +117,9 @@ class PCM_Teacher_Demand implements PCM_Optimizer_Teacher
                 'id'          => 'demand-' . sanitize_title($c['query']),
                 'teacherId'   => $this->id(),
                 'found'       => true,
-                'label'       => sprintf('Proven demand: "%s"', $c['query']),
+                // The keyword IS the row — the card name says the rest
+                // (owner ruling: no repeated prefixes).
+                'label'       => sprintf('"%s" — #%s · %d impressions', $c['query'], round($c['position'], 1), $c['impressions']),
                 'evidence'    => sprintf('Ranks #%s · %d impressions (%d clicks) — Google already associates this page with it.', round($c['position'], 1), $c['impressions'], $c['clicks']),
                 'instruction' => sprintf('Weave the search phrase "%s" naturally into an existing relevant section — the page already ranks #%s for it.', $c['query'], round($c['position'], 1)),
                 'source'      => $source,

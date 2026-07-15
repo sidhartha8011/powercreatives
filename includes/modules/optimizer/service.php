@@ -735,18 +735,15 @@ class PCM_Optimizer_Service
      */
     public static function research_tunables(): array
     {
-        $stored = get_option(self::RESEARCH_OPTION);
-        if (is_array($stored) && !empty($stored['onpage'])) {
-            return $stored;
-        }
         $seed = array(
             'version' => 1,
             // Thin/stuffed thresholds — density in percent of total words.
             'onpage'  => array('minWords' => 300, 'maxDensityPct' => 2.5, 'minPrimaryUses' => 1),
             // Striking distance: Google already ranks the page for these.
             'demand'  => array('minPos' => 4, 'maxPos' => 20, 'maxItems' => 8),
-            // How many organic winners the SERP researcher studies.
-            'serp'    => array('topN' => 10),
+            // The SERP researcher: how many winners are listed, and how many
+            // get their REAL page content fetched into the comparison.
+            'serp'    => array('topN' => 10, 'fetchTop' => 3, 'maxCharsPerPage' => 4000, 'fetchTimeout' => 8),
             // The AI panel: engine cap + the money questions (placeholders
             // substitute from the context package; a question whose
             // placeholder is empty is skipped, never sent half-filled).
@@ -758,9 +755,95 @@ class PCM_Optimizer_Service
                     'I need {{business.category}} services — who should I choose and why?',
                 ),
             ),
+            // Revise fidelity: below this sentence-retention ratio a
+            // targeted revise is judged over-rewritten (retry, then an
+            // honest error — never a silent 80% text loss).
+            'revise'  => array('minRetention' => 0.6),
         );
+        $stored = get_option(self::RESEARCH_OPTION);
+        if (is_array($stored) && !empty($stored['onpage'])) {
+            // MERGE, never verbatim (gap e8fcae5 fact 6): stored edits WIN,
+            // but new tunable keys still reach already-seeded installs.
+            return array_replace_recursive($seed, $stored);
+        }
         add_option(self::RESEARCH_OPTION, $seed, '', false);
         return $seed;
+    }
+
+    /** Option: last optimization event per page, keyed "siteId:postId" —
+     *  THE RESULTS LOOP's stamp (gap e8fcae5 D5): when + what purposes +
+     *  a GSC rows snapshot to measure against later. */
+    private const HISTORY_OPTION = 'pcm_optimizer_history';
+    private const HISTORY_SNAPSHOT_MAX_ROWS = 200;
+
+    /**
+     * Stamp an optimization event (called when a review ends with accepted
+     * sections). The snapshot = the stored GSC rows AT THIS MOMENT — the
+     * honest "before" the results view compares against.
+     *
+     * @param int      $site_id  Site id.
+     * @param int      $post_id  Post id.
+     * @param string[] $purposes The run's purposes (teacherIds).
+     * @return void
+     */
+    public static function history_stamp(int $site_id, int $post_id, array $purposes): void
+    {
+        $map = get_option(self::HISTORY_OPTION);
+        if (!is_array($map)) {
+            $map = array();
+        }
+        $stored = self::kw_stats_cache_get($site_id, $post_id);
+        $map[$site_id . ':' . $post_id] = array(
+            'at'       => time(),
+            'purposes' => array_values(array_unique(array_map('sanitize_key', $purposes))),
+            'rows'     => $stored !== null ? array_slice((array) $stored['rows'], 0, self::HISTORY_SNAPSHOT_MAX_ROWS) : array(),
+        );
+        update_option(self::HISTORY_OPTION, $map, false);
+    }
+
+    /**
+     * The last optimization event + the then-vs-now summary (clicks and
+     * average position over the queries both sets share). Sources are the
+     * STORED GSC rows — stated on the label, never passed off as live.
+     * No event → null. Event without snapshot rows → summary null, stated.
+     *
+     * @param int $site_id Site id.
+     * @param int $post_id Post id.
+     * @return array|null {at, purposes, summary|null}
+     */
+    public static function history_get(int $site_id, int $post_id): ?array
+    {
+        $map   = get_option(self::HISTORY_OPTION);
+        $event = is_array($map) ? ($map[$site_id . ':' . $post_id] ?? null) : null;
+        if (!is_array($event)) {
+            return null;
+        }
+        $then = (array) ($event['rows'] ?? array());
+        $now  = self::kw_stats_cache_get($site_id, $post_id);
+        $now_rows = $now !== null ? (array) $now['rows'] : array();
+        $summary  = null;
+        if (!empty($then) && !empty($now_rows)) {
+            $sum = static function (array $rows): array {
+                $clicks = 0;
+                $pos    = array();
+                foreach ($rows as $r) {
+                    if (!is_array($r)) {
+                        continue;
+                    }
+                    $clicks += (int) ($r['clicks'] ?? 0);
+                    if (isset($r['position']) && $r['position'] !== null) {
+                        $pos[] = (float) $r['position'];
+                    }
+                }
+                return array('clicks' => $clicks, 'position' => empty($pos) ? null : round(array_sum($pos) / count($pos), 1));
+            };
+            $summary = array('then' => $sum($then), 'now' => $sum($now_rows), 'source' => 'gsc:stored');
+        }
+        return array(
+            'at'       => (int) ($event['at'] ?? 0),
+            'purposes' => (array) ($event['purposes'] ?? array()),
+            'summary'  => $summary,
+        );
     }
 
     /**

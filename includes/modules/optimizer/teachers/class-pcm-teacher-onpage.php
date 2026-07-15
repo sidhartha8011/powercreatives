@@ -27,7 +27,7 @@ class PCM_Teacher_Onpage implements PCM_Optimizer_Teacher
 
     public function label(): string
     {
-        return 'On-page & keyword placement';
+        return 'Keyword placement';
     }
 
     public function order(): int

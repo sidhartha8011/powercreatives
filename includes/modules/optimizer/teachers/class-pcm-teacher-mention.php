@@ -30,7 +30,7 @@ class PCM_Teacher_Mention implements PCM_Optimizer_Teacher
 
     public function label(): string
     {
-        return 'AI mentions & recommendations';
+        return 'AI recommendations';
     }
 
     public function order(): int

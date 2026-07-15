@@ -5678,8 +5678,11 @@ class PCM_SEO_Service
         self::push_current_rules_or_rollback($user_id, $site, $post_id, $snapshot);
     }
 
-    /** AI-rewrite a whole section / draft a NEW one (NOT saved — staged). Returns { value } = block HTML. */
-    public static function remote_optimize_section(object $site, int $post_id, string $type, string $html, string $topic = '', ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
+    /** AI-rewrite a whole section / draft a NEW one (NOT saved — staged). Returns { value } = block HTML.
+     *  With $draft (a revise): THE HUMAN-EDITOR CONTRACT + retention check ride
+     *  the run — a targeted note may never silently rewrite the whole draft
+     *  (gap e8fcae5 D3). */
+    public static function remote_optimize_section(object $site, int $post_id, string $type, string $html, string $topic = '', ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null, string $draft = '')
     {
         self::ensure_sites_service();
         $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
@@ -5688,14 +5691,98 @@ class PCM_SEO_Service
         $vars  = self::remote_field_vars($site, $row, $user_id, $post_id);
         $vars['current_value'] = $html;
         $vars['topic']         = $topic;
+        $contract = 'You are a careful human editor revising an existing draft. Apply the user\'s request below EXACTLY '
+            . 'and ONLY. Every sentence the request does not cover must be reproduced VERBATIM — word for word, '
+            . 'unchanged, in full. Only if the request explicitly asks for a broad rewrite (tone, style, length, full '
+            . 'rework) may you change text beyond it. Never invent facts.';
+        if ($draft !== '') {
+            $vars['topic'] = $contract . "\n\nUSER REQUEST: " . $topic
+                . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft;
+        }
         $mode  = ($html !== '') ? 'optimize' : 'generate';
         $max   = (int) (self::field_prompts()['section']['max'] ?? 1200);
         $val   = self::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
         if ($val instanceof WP_Error) {
             return $val;
         }
+        if ($draft !== '') {
+            $min_retention = (float) ((PCM_Optimizer_Service::research_tunables()['revise']['minRetention'] ?? 0.6));
+            $retention     = self::sentence_retention($draft, (string) $val['value']);
+            if ($retention < $min_retention && !self::note_wants_broad_rewrite($topic, $model, $user_id, $provider)) {
+                // ONE retry with the contract restated — then honesty, never a
+                // silent 80% text loss.
+                $vars['topic'] = $contract . ' THIS IS A RETRY: the previous attempt rewrote text the request did not '
+                    . 'cover. Copy the draft exactly and change ONLY what the request demands.'
+                    . "\n\nUSER REQUEST: " . $topic . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft;
+                $retry = self::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
+                if (!($retry instanceof WP_Error) && self::sentence_retention($draft, (string) $retry['value']) > $retention) {
+                    $val       = $retry;
+                    $retention = self::sentence_retention($draft, (string) $val['value']);
+                }
+                if ($retention < $min_retention) {
+                    return new WP_Error('pcm_seo_revise_overwrote', __('The AI changed much more of the text than the note asked for — try again, or rephrase the note (say explicitly if you WANT a full rewrite).', 'power-creatives'), array('status' => 502));
+                }
+            }
+        }
         // The UI shows what ACTUALLY generated (the API's own report).
         return array('value' => wp_kses_post((string) $val['value']), 'model' => (string) $val['model'], 'provider' => (string) $val['provider']);
+    }
+
+    /**
+     * How much of the draft survived, sentence-wise: the share of the
+     * draft's substantial sentences (≥40 chars) present verbatim
+     * (whitespace/case-normalized) in the result. No measurable sentences
+     * → 1.0 (never block a tiny draft).
+     *
+     * @param string $draft  The draft sent for revision.
+     * @param string $result The model's output.
+     * @return float 0..1
+     */
+    private static function sentence_retention(string $draft, string $result): float
+    {
+        $norm        = static fn(string $s): string => strtolower(trim((string) preg_replace('/\s+/u', ' ', $s)));
+        $result_norm = $norm(wp_strip_all_tags($result));
+        $sentences   = preg_split('/(?<=[.!?])\s+/u', wp_strip_all_tags($draft)) ?: array();
+        $len         = static fn(string $s): int => function_exists('mb_strlen') ? mb_strlen($s) : strlen($s);
+        $substantial = array_values(array_filter(array_map($norm, $sentences), static fn(string $s): bool => $len($s) >= 40));
+        if (empty($substantial)) {
+            return 1.0;
+        }
+        $kept = 0;
+        foreach ($substantial as $s) {
+            if (strpos($result_norm, $s) !== false) {
+                $kept++;
+            }
+        }
+        return $kept / count($substantial);
+    }
+
+    /**
+     * Dynamic scope judgment (never keyword-hardcoded): does the note ask
+     * for a BROAD rewrite? Unjudgeable (LLM error) → false — the strict
+     * path protects the user's text.
+     *
+     * @param string      $note     The revise note.
+     * @param string|null $model    Model override.
+     * @param int|null    $user_id  Key owner.
+     * @param string|null $provider Provider override.
+     * @return bool
+     */
+    private static function note_wants_broad_rewrite(string $note, ?string $model, ?int $user_id, ?string $provider): bool
+    {
+        try {
+            $parsed = PCM_LLM::invoke_json(
+                array(
+                    array('role' => 'system', 'content' => 'Judge ONE thing about the user\'s revision request: does it ask for a BROAD rewrite of the whole text (tone, style, length, full rework) or a TARGETED change (specific facts, words, numbers, links)? Respond with ONLY this JSON, no markdown: {"broad":true} or {"broad":false}.'),
+                    array('role' => 'user', 'content' => $note),
+                ),
+                array('name' => 'revise_scope', 'schema' => array('type' => 'object', 'properties' => array('broad' => array('type' => 'boolean')), 'required' => array('broad'))),
+                array('model' => $model ?: null, 'provider' => $provider ?: null, 'user_id' => (int) $user_id)
+            );
+            return !empty($parsed['broad']);
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**

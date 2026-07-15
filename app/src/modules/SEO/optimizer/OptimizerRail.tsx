@@ -19,6 +19,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Info, Loader2, RotateCw, X } from 'lucide-react';
+import { trpc } from '@/lib/trpc';
 import { useOptimizer, type UseOptimizerArgs } from './useOptimizer';
 import { itemKey, RAIL_GROUPS, type CompiledDirective, type OptimizerItem, type RunContext, type TeacherMeta, type TeacherRun } from './types';
 
@@ -46,8 +47,16 @@ function peekLines(ctx: RunContext): string[] {
   return lines;
 }
 
+interface HistoryEvent {
+  at: number;
+  purposes: string[];
+  summary: { then: { clicks: number; position: number | null }; now: { clicks: number; position: number | null }; source: string } | null;
+}
+
 export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailProps) {
   const opt = useOptimizer(args);
+  const historyQuery = trpc.optimizer.history.useQuery({ siteId: args.siteId, postId: args.postId }, { staleTime: 60_000 });
+  const history: HistoryEvent | null = (historyQuery.data as any)?.event ?? null;
   const [compileError, setCompileError] = useState<string | null>(null);
   /** Which card's peek is open (one at a time — the rail is narrow). */
   const [peekOpen, setPeekOpen] = useState<string | null>(null);
@@ -106,7 +115,7 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
             onClick={() => setOpenItems((cur) => toggleSet(cur, key))}
             className="flex min-w-0 flex-1 items-center gap-1 rounded py-0.5 text-left hover:bg-slate-50"
           >
-            <span className="min-w-0 flex-1 truncate text-[11px] leading-tight text-slate-700">{it.label}</span>
+            <span className="min-w-0 flex-1 text-[10px] font-normal leading-tight text-slate-600 line-clamp-2">{it.label}</span>
             <ChevronDown className={`h-3 w-3 shrink-0 text-slate-300 transition-transform ${open ? 'rotate-180' : ''}`} />
           </button>
         </div>
@@ -137,7 +146,7 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
     const clean = run.items.filter((it) => !it.found);
     const passedOpen = openPassed.has(t.id);
     return (
-      <section key={t.id} className="mx-2 mb-1.5 rounded-lg border border-slate-200/70 bg-white px-2 py-1.5 shadow-sm">
+      <section key={t.id} className="mx-2 mb-1.5 rounded border border-slate-200/70 bg-white px-2 py-1.5 shadow-[0_1px_1px_rgba(0,0,0,0.03)]">
         <div className="flex items-center gap-1.5">
           <div className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-700" title={t.label}>
             {t.label}
@@ -240,6 +249,28 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto py-1">
+        {/* THE RESULTS LOOP (gap e8fcae5 D5): what the LAST optimization did
+            to real search numbers — stored GSC, honestly labeled. */}
+        {history !== null && (
+          <div className="mx-2 mb-1.5 rounded border border-slate-200/70 bg-white px-2 py-1.5 shadow-[0_1px_1px_rgba(0,0,0,0.03)]">
+            <div className="text-[10px] font-semibold text-slate-600">
+              Optimized {new Date(history.at * 1000).toLocaleDateString()}
+            </div>
+            {history.summary !== null ? (
+              <div className="mt-0.5 text-[10px] leading-tight text-slate-500">
+                Clicks {history.summary.then.clicks} → {history.summary.now.clicks}
+                {history.summary.then.position !== null && history.summary.now.position !== null && (
+                  <> · position {history.summary.then.position} → {history.summary.now.position}</>
+                )}
+                <span className="text-slate-300"> · stored GSC</span>
+              </div>
+            ) : (
+              <div className="mt-0.5 text-[10px] leading-tight text-slate-400">
+                No Search Console rows were stored at optimization time — results can't be compared yet.
+              </div>
+            )}
+          </div>
+        )}
         {RAIL_GROUPS.map((group) => {
           const members = opt.teachers.filter((t) => t.group === group.id);
           if (members.length === 0) return null;

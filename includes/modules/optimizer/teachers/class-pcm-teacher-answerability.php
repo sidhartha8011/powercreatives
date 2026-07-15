@@ -62,7 +62,7 @@ class PCM_Teacher_Answerability implements PCM_Optimizer_Teacher
 
     public function label(): string
     {
-        return 'AI answerability';
+        return 'Direct answers';
     }
 
     public function order(): int

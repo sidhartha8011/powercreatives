@@ -37,7 +37,50 @@ class PCM_REST_Optimizer extends PCM_REST_Base
             ['GET',  '/optimizer/keywords', 'get_keywords'],
             ['POST', '/optimizer/keywords', 'save_keywords'],
             ['POST', '/optimizer/keywords/volumes', 'keyword_volumes'],
+            // THE RESULTS LOOP (gap e8fcae5 D5): stamp + read back.
+            ['POST', '/optimizer/history', 'history_stamp'],
+            ['GET',  '/optimizer/history', 'history_get'],
         ];
+    }
+
+    /**
+     * POST /optimizer/history — stamp an optimization event (review ended
+     * with accepted sections). Input: { siteId, postId, purposes: string[] }.
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function history_stamp(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $p       = $request->get_json_params();
+        $site_id = is_array($p) ? absint($p['siteId'] ?? 0) : 0;
+        $post_id = is_array($p) ? absint($p['postId'] ?? 0) : 0;
+        if ($site_id === 0 || $post_id === 0) {
+            return $this->error('siteId and postId are required.');
+        }
+        $purposes = array();
+        foreach ((is_array($p) && is_array($p['purposes'] ?? null)) ? $p['purposes'] : array() as $purpose) {
+            $clean = sanitize_key((string) $purpose);
+            if ($clean !== '') {
+                $purposes[] = $clean;
+            }
+        }
+        PCM_Optimizer_Service::history_stamp($site_id, $post_id, $purposes);
+        return $this->success(array('stamped' => true));
+    }
+
+    /**
+     * GET /optimizer/history?siteId&postId — the last optimization event +
+     * the then-vs-now stored-GSC summary (null when never optimized).
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response
+     */
+    public function history_get(WP_REST_Request $request): WP_REST_Response
+    {
+        return $this->success(array(
+            'event' => PCM_Optimizer_Service::history_get(absint($request->get_param('siteId')), absint($request->get_param('postId'))),
+        ));
     }
 
     /**
