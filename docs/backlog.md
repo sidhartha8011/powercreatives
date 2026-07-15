@@ -228,6 +228,28 @@ USER doing the optimization, inside the editor):**
 (The client approval card grouping the changes by the same purposes —
 feature 6 — stays as a bonus the owner sanctioned separately.)
 
+## Keyword injection — the frequent light touch (owner order 2026-07-14)
+THE frequent real-world job: take an EXISTING page and weave keywords in —
+no full rework, just add the keywords (or a section, or a FAQ). FLOW: in
+the keyword drawer's SELECTED table, rows become SELECTABLE (checkboxes);
+with keywords selected, the Optimize button TRANSFORMS — it reads
+"Insert keywords" (short label) — and ONE run weaves exactly the selected
+keywords into the existing content, landing as the normal red/green
+review, exactly like a section optimize.
+
+**THE KEYWORD HIERARCHY LAW (owner): placement follows the ROLE —**
+- PRIMARY: threads straight through the page (headings + body — the
+  page's spine).
+- SUPPORTING: present in some headers and some text — structural but not
+  everywhere.
+- ADDITIONAL: light touch — mentioned naturally in the text, roughly ONE
+  paragraph maximum per keyword, never more.
+The injection prompt encodes this hierarchy so the AI treats each keyword
+according to its role — natural inclusion always, stuffing never. The
+role data already exists (the selected table's P/S/A) — the feature is a
+selection state + a relabeled run, all existing machinery (compiler,
+review, keyword ride).
+
 ## Client approval card for page changes (owner order 2026-07-13 — feature 6)
 Value driver: THE CLIENT SEES THE SAME RED/GREEN VIEW AND APPROVES. MVP: a
 shareable READ-ONLY link rendering this page's pending changes exactly as
