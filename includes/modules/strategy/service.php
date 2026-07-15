@@ -48,6 +48,41 @@ class PCM_Strategy_Service
     }
 
     /**
+     * Enforce the invariant that a 'consolidated' structure (ONE article for
+     * every keyword in the strategy — see structure_mode()) can never carry a
+     * hierarchy between the strategy's OWN articles: hierarchyMode
+     * ('children_only'/'parent_and_children') is only meaningful when a
+     * strategy produces more than one article. The create dialog's UI already
+     * prevents picking both together, but the server must not trust client
+     * input — this is the single place both create_from_keywords() (covering
+     * every creation path: the REST create endpoint, duplicate_strategy(),
+     * and the per-site schedule scanner) and
+     * PCM_REST_Strategy::update_strategy() (the only PATCH door that can
+     * change hierarchyMode and/or config.structure) funnel through before
+     * persisting.
+     *
+     * Pure/deterministic — no DB access, directly unit-testable. Callers must
+     * pass the EFFECTIVE values (i.e., already merged with any existing
+     * stored config for a partial PATCH), not just the fields present in a
+     * given request.
+     *
+     * @param string $hierarchy_mode Effective hierarchyMode.
+     * @param array  $config         Effective config (must reflect the
+     *                                effective 'structure' key).
+     * @return array{hierarchyMode:string,config:array} Corrected pair —
+     *                                returned unchanged when structure isn't
+     *                                'consolidated'.
+     */
+    public static function apply_structure_hierarchy_guard(string $hierarchy_mode, array $config): array
+    {
+        if (($config['structure'] ?? 'individual') === 'consolidated') {
+            $hierarchy_mode = 'standalone';
+            unset($config['parentTargetUrl'], $config['parentKeyword'], $config['parentAnchorKeyword']);
+        }
+        return array('hierarchyMode' => $hierarchy_mode, 'config' => $config);
+    }
+
+    /**
      * Create a strategy and its items from a keyword list.
      *
      * Equivalent to backup's `createNewStrategy()` (18 params) but simplified
@@ -73,6 +108,15 @@ class PCM_Strategy_Service
         array $keywords,
         array $options = array()
     ): array {
+        // A consolidated structure (single article for every keyword) can never
+        // carry a hierarchy between the strategy's own articles — enforced here
+        // regardless of what the caller sent, since this is the one funnel every
+        // creation path (REST create, duplicate_strategy(), site schedules) uses.
+        $guarded = self::apply_structure_hierarchy_guard(
+            (string)($options['hierarchyMode'] ?? 'standalone'),
+            is_array($options['config'] ?? null) ? $options['config'] : array()
+        );
+
         // ── Create the strategy record ──
         $strategy_data = array(
             'userId'         => $user_id,
@@ -80,9 +124,9 @@ class PCM_Strategy_Service
             'templateId'     => $template_id,
             'brandId'        => $brand_id,
             'status'         => 'pending',
-            'hierarchyMode'  => $options['hierarchyMode'] ?? 'standalone',
+            'hierarchyMode'  => $guarded['hierarchyMode'],
             'publishingMode' => $options['publishingMode'] ?? 'draft',
-            'config'         => !empty($options['config']) ? wp_json_encode($options['config']) : null,
+            'config'         => !empty($guarded['config']) ? wp_json_encode($guarded['config']) : null,
             'totalItems'     => count($keywords),
             'completedItems' => 0,
             'failedItems'    => 0,
@@ -110,16 +154,25 @@ class PCM_Strategy_Service
             $schedule_cfg = (is_array($options['config'] ?? null) && is_array($options['config']['scheduleConfig'] ?? null))
                 ? $options['config']['scheduleConfig']
                 : array();
-            $frequency  = !empty($schedule_cfg['frequency']) ? (string)$schedule_cfg['frequency'] : 'weekly';
             // The create dialog has no date-picker yet (frontend gap — always sends
             // startDate:''), so this default-to-now path is the one every scheduled
             // strategy currently takes; still correct once a picker ships.
             $start_date = !empty($schedule_cfg['startDate']) ? (string)$schedule_cfg['startDate'] : current_time('mysql');
 
             $items = PCM_DB::get_strategy_items($strategy_id); // position ASC — matches keyword order
-            $dates = self::calculate_schedule_dates(count($items), $frequency, $start_date);
+            // Pass the WHOLE scheduleConfig to the custom-recurrence engine — it
+            // takes the byte-identical legacy path for a bare {frequency}, and the
+            // custom keys (interval/unit/byDays/ends) once a picker sends them.
+            $dates = self::calculate_recurrence_dates(count($items), $schedule_cfg, $start_date);
             foreach ($items as $i => $item) {
-                PCM_DB::update_strategy_item((int)$item->id, array('scheduledDate' => $dates[$i] ?? end($dates)));
+                $slot = $dates[$i] ?? null;
+                // A null slot = past a custom-recurrence `ends` cap: leave the
+                // freshly-created item's scheduledDate NULL (it stays pending and is
+                // never picked up by the due-date scan) rather than writing a date.
+                if ($slot === null) {
+                    continue;
+                }
+                PCM_DB::update_strategy_item((int)$item->id, array('scheduledDate' => $slot));
             }
         }
 
@@ -170,8 +223,16 @@ class PCM_Strategy_Service
 
         $publishing_mode = (string)($strategy->publishingMode ?? 'draft');
         // Copy the config JSON verbatim (already-stored, already-sanitized string);
-        // null stays null.
-        $config_json = !empty($strategy->config) ? (string)$strategy->config : null;
+        // null stays null. One exception: run the structure↔hierarchy guard over
+        // the copied pair — the live write doors already guarantee clean rows,
+        // but a legacy/imported consolidated+hierarchy row must not propagate
+        // its contradiction into the copy.
+        $config_arr = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : array();
+        $guarded = self::apply_structure_hierarchy_guard(
+            (string)($strategy->hierarchyMode ?? 'standalone'),
+            is_array($config_arr) ? $config_arr : array()
+        );
+        $config_json = $guarded['config'] !== array() ? wp_json_encode($guarded['config']) : null;
 
         $new_id = PCM_DB::create_strategy(array(
             'userId'         => $user_id,
@@ -179,7 +240,7 @@ class PCM_Strategy_Service
             'templateId'     => (int)$strategy->templateId,
             'brandId'        => !empty($strategy->brandId) ? (int)$strategy->brandId : null,
             'status'         => 'pending',
-            'hierarchyMode'  => (string)($strategy->hierarchyMode ?? 'standalone'),
+            'hierarchyMode'  => $guarded['hierarchyMode'],
             'publishingMode' => $publishing_mode,
             'config'         => $config_json,
             'totalItems'     => count($keywords),
@@ -199,8 +260,9 @@ class PCM_Strategy_Service
             $schedule_cfg = (is_array($cfg) && is_array($cfg['scheduleConfig'] ?? null))
                 ? $cfg['scheduleConfig']
                 : array();
-            $frequency = !empty($schedule_cfg['frequency']) ? (string)$schedule_cfg['frequency'] : 'weekly';
-            self::reschedule_pending_items($new_id, $frequency, ''); // '' → now
+            // Pass the whole stored scheduleConfig (custom-recurrence keys and all)
+            // straight through; an empty/frequency-only config still yields weekly.
+            self::reschedule_pending_items($new_id, $schedule_cfg, ''); // '' → now
         }
 
         // NOTE: no maybe_schedule_queue_continuation() here — see the deviation
@@ -220,12 +282,181 @@ class PCM_Strategy_Service
      * the caller resolves "now" (via `current_time()`) before calling, so this
      * has no hidden time dependency and is directly unit-testable.
      *
+     * Thin adapter over calculate_recurrence_dates() (the custom-recurrence
+     * engine): a bare frequency is just the legacy shape of a schedule config,
+     * so this wraps it as `{frequency}` and delegates. Signature and behavior
+     * are unchanged for existing callers (and the direct unit tests) — the
+     * engine's legacy branch reproduces the original switch byte-for-byte.
+     *
      * @param int    $count      Number of items to schedule (in position order).
      * @param string $frequency  'all_once'|'daily'|'every_other_day'|'weekly'|'biweekly'|'monthly'.
      * @param string $start_date Any strtotime()-parseable date (the first item's due date).
      * @return string[] $count MySQL DATETIME strings ('Y-m-d H:i:s'), one per item, in order.
      */
     public static function calculate_schedule_dates(int $count, string $frequency, string $start_date): array
+    {
+        return self::calculate_recurrence_dates($count, array('frequency' => $frequency), $start_date);
+    }
+
+    /**
+     * Custom-recurrence date engine (behind calculate_schedule_dates()). Spreads
+     * $count items across per-item due dates from a schedule config, in position
+     * order. Pure/deterministic — the caller resolves "now" before calling, so
+     * this has no hidden time dependency and is directly unit-testable.
+     *
+     * Config keys (all optional; sane defaults):
+     *   - `interval` int 1–12 (default 1) — steps of `unit` between items.
+     *   - `unit` 'day'|'week'|'month' (default 'week').
+     *   - `byDays` ISO weekday ints 1(Mon)–7(Sun); honored ONLY when unit='week'.
+     *     Items land on the selected weekdays in order: the first run starts on
+     *     the first selected weekday >= the start date's weekday (same week), or
+     *     the first selected day of the NEXT block if none remain that week; after
+     *     the last selected day in a block, advance `interval` weeks to the block
+     *     holding the FIRST selected day.
+     *   - `ends` {type:'never'} (default) | {type:'on','date'=>'Y-m-d'} |
+     *     {type:'after','count'=>N}. Slots past the cap are NULL entries (the
+     *     caller leaves scheduledDate NULL → the item stays pending, never
+     *     scanned). `on`: no date strictly after that day's 23:59:59. `after`:
+     *     only the first N slots get dates.
+     *
+     * LEGACY: a bare `frequency` (with NONE of interval/unit/byDays/ends present)
+     * reproduces calculate_schedule_dates()'s original switch byte-for-byte,
+     * including the deliberately-ported 'biweekly' = +3 days quirk.
+     *
+     * The start date's time-of-day is preserved on every slot (day/week/month
+     * and byDays alike).
+     *
+     * @param int    $count        Number of items to schedule (position order).
+     * @param array  $schedule_cfg Schedule config (keys above; empty = weekly).
+     * @param string $start_date   Any strtotime()-parseable date (first slot anchor).
+     * @return array<int,string|null> $count entries: 'Y-m-d H:i:s' strings, or
+     *   null for slots past an `ends` cap.
+     */
+    public static function calculate_recurrence_dates(int $count, array $schedule_cfg, string $start_date): array
+    {
+        // LEGACY: a bare frequency with none of the custom-recurrence keys → the
+        // exact original calculate_schedule_dates() switch (byte-identical).
+        $has_custom = isset($schedule_cfg['interval']) || isset($schedule_cfg['unit'])
+            || isset($schedule_cfg['byDays']) || isset($schedule_cfg['ends']);
+        if (!$has_custom && isset($schedule_cfg['frequency'])) {
+            return self::legacy_schedule_dates($count, (string)$schedule_cfg['frequency'], $start_date);
+        }
+
+        if ($count < 1) {
+            return array();
+        }
+
+        // ── Parse config with sane defaults ──
+        $interval = isset($schedule_cfg['interval']) ? (int)$schedule_cfg['interval'] : 1;
+        $interval = max(1, min(12, $interval));
+        $unit = isset($schedule_cfg['unit']) ? (string)$schedule_cfg['unit'] : 'week';
+        if (!in_array($unit, array('day', 'week', 'month'), true)) {
+            $unit = 'week';
+        }
+        // byDays is only meaningful weekly — normalize to unique ISO ints 1–7, ascending.
+        $by_days = array();
+        if ($unit === 'week' && isset($schedule_cfg['byDays']) && is_array($schedule_cfg['byDays'])) {
+            foreach ($schedule_cfg['byDays'] as $d) {
+                $d = (int)$d;
+                if ($d >= 1 && $d <= 7) {
+                    $by_days[$d] = $d; // key by value → dedupe
+                }
+            }
+            $by_days = array_values($by_days);
+            sort($by_days);
+        }
+
+        $start_ts = strtotime($start_date) ?: time();
+        $time_str = date('H:i:s', $start_ts);
+
+        // ── Build the raw (uncapped) sequence of MySQL DATETIME strings ──
+        $raw = array();
+        if ($by_days !== array()) {
+            // Weekday-set scheduling: walk the selected weekdays within each block,
+            // advancing `interval` weeks after the block's last selected day.
+            $start_wd = (int)date('N', $start_ts); // ISO 1(Mon)–7(Sun)
+            // Monday of the start week (whole-day shift keeps the time-of-day).
+            $block_monday = strtotime(sprintf('%+d days', -($start_wd - 1)), $start_ts);
+
+            // First slot: the first selected weekday >= the start weekday; if none
+            // remain this week, the first selected day of the next block.
+            $idx = null;
+            foreach ($by_days as $k => $wd) {
+                if ($wd >= $start_wd) {
+                    $idx = $k;
+                    break;
+                }
+            }
+            if ($idx === null) {
+                $idx = 0;
+                $block_monday = strtotime('+' . ($interval * 7) . ' days', $block_monday);
+            }
+
+            $day_count = count($by_days);
+            for ($i = 0; $i < $count; $i++) {
+                $ts = strtotime('+' . ($by_days[$idx] - 1) . ' days', $block_monday);
+                // Rebuild with the anchored time-of-day so a DST-crossing day shift
+                // can't drift the stored time by an hour.
+                $raw[] = date('Y-m-d ', $ts) . $time_str;
+                $idx++;
+                if ($idx >= $day_count) {
+                    $idx = 0;
+                    $block_monday = strtotime('+' . ($interval * 7) . ' days', $block_monday);
+                }
+            }
+        } else {
+            // Fixed-interval scheduling by unit. Advancing from the previous slot's
+            // timestamp preserves the day-of-month/time for the month unit (and
+            // mirrors the legacy switch's own chained-strtotime shape).
+            $step = $unit === 'day'
+                ? '+' . $interval . ' day'
+                : ($unit === 'month' ? '+' . $interval . ' month' : '+' . ($interval * 7) . ' days');
+            $ts = $start_ts;
+            for ($i = 0; $i < $count; $i++) {
+                $raw[] = date('Y-m-d H:i:s', $ts);
+                $ts = strtotime($step, $ts);
+            }
+        }
+
+        // ── Apply the `ends` cap: slots past it become null ──
+        $ends      = (isset($schedule_cfg['ends']) && is_array($schedule_cfg['ends'])) ? $schedule_cfg['ends'] : array();
+        $ends_type = (string)($ends['type'] ?? 'never');
+        $cap_ts    = null;  // 'on': last inclusive second of the cap day
+        $after_n   = null;  // 'after': how many leading slots keep a date
+        if ($ends_type === 'on' && !empty($ends['date'])) {
+            $cap_ts = strtotime((string)$ends['date'] . ' 23:59:59');
+            if ($cap_ts === false) {
+                $cap_ts = null; // unparseable → treat as never
+            }
+        } elseif ($ends_type === 'after') {
+            $after_n = max(0, (int)($ends['count'] ?? 0));
+        }
+
+        $out = array();
+        for ($i = 0; $i < $count; $i++) {
+            $slot = $raw[$i];
+            if ($after_n !== null && $i >= $after_n) {
+                $slot = null;
+            } elseif ($cap_ts !== null && strtotime($raw[$i]) > $cap_ts) {
+                $slot = null;
+            }
+            $out[] = $slot;
+        }
+        return $out;
+    }
+
+    /**
+     * The original calculateSchedule() switch, preserved verbatim behind the
+     * custom-recurrence engine's legacy branch (calculate_recurrence_dates()).
+     * `all_once` gives every item the SAME date; every other key advances the
+     * timestamp by its interval in position order.
+     *
+     * @param int    $count      Number of items (position order).
+     * @param string $frequency  'all_once'|'daily'|'every_other_day'|'weekly'|'biweekly'|'monthly'.
+     * @param string $start_date strtotime()-parseable first due date.
+     * @return string[] $count MySQL DATETIME strings ('Y-m-d H:i:s').
+     */
+    private static function legacy_schedule_dates(int $count, string $frequency, string $start_date): array
     {
         $dates     = array();
         $timestamp = strtotime($start_date) ?: time();
@@ -589,6 +820,98 @@ class PCM_Strategy_Service
             esc_url($link['url']),
             esc_html($anchor)
         );
+    }
+
+    /**
+     * Remove any previously injected parent-link paragraph(s) from article HTML.
+     * Safe because inject_parent_link() emits a DETERMINISTIC, distinctive shape
+     * ("<p>Learn more in …: <a …>…</a>.</p>") that user content and the
+     * interlinker never produce — so a literal pattern match is surgical.
+     *
+     * @param string $content Article HTML.
+     * @return string Content without parent-link paragraphs.
+     */
+    private static function strip_parent_link(string $content): string
+    {
+        return (string)preg_replace(
+            '#\s*<p>Learn more in [^<]*: <a href="[^"]*">[^<]*</a>\.</p>#',
+            '',
+            $content
+        );
+    }
+
+    /**
+     * Re-apply the parent link across a strategy's ALREADY-GENERATED articles —
+     * the "change the parent after generation" action. Generation bakes the
+     * parent-link paragraph into each child's content, so editing the parent
+     * settings later (new target URL, a different item promoted to parent, a
+     * new anchor keyword, or switching hierarchy mode) never touched existing
+     * articles until this.
+     *
+     * Per article: strip any old parent-link paragraph, then append the freshly
+     * resolved one — EXCEPT on the current parent's own article, which (like at
+     * generation time) carries no link to itself. Resolving to no link at all
+     * (standalone mode, missing config, parent not generated yet) degrades to a
+     * pure strip, so switching a strategy back to standalone cleans its
+     * children. Idempotent: re-running with unchanged settings rewrites nothing.
+     *
+     * Local content only — articles already pushed to a client site need a
+     * re-publish/sync to update the remote copy (existing flows).
+     *
+     * @param int $strategy_id Strategy ID (ownership verified by the caller).
+     * @param int $user_id     Owner ID.
+     * @return array{updated: int, cleared: int, skipped: int}
+     *   updated = articles whose link was replaced/added; cleared = articles
+     *   whose old link was removed with nothing re-added; skipped = articles
+     *   already correct (or items with no article yet).
+     */
+    public static function reapply_parent_links(int $strategy_id, int $user_id): array
+    {
+        $out = array('updated' => 0, 'cleared' => 0, 'skipped' => 0);
+        $strategy = PCM_DB::get_strategy($strategy_id, $user_id);
+        if (!$strategy) {
+            return $out;
+        }
+        $items = PCM_DB::get_strategy_items($strategy_id);
+        $link  = self::resolve_parent_link($strategy, $items, $user_id);
+
+        $mode           = (string)($strategy->hierarchyMode ?? 'standalone');
+        $parent_keyword = $mode === 'parent_and_children'
+            ? (string)(self::hierarchy_config($strategy)['parentKeyword'] ?? '')
+            : '';
+
+        foreach ($items as $item) {
+            if (empty($item->articleId)) {
+                $out['skipped']++;
+                continue;
+            }
+            $article = PCM_DB::get_article((int)$item->articleId, $user_id);
+            if (!$article) {
+                $out['skipped']++;
+                continue;
+            }
+            $original = (string)$article->content;
+            $stripped = self::strip_parent_link($original);
+
+            // The parent's own article never links to itself (matches the
+            // generation-time behavior, where the parent generates first).
+            $is_parent = $parent_keyword !== '' && (string)$item->keyword === $parent_keyword;
+            $next = (!$is_parent && $link !== null)
+                ? self::inject_parent_link($stripped, $link, $strategy)
+                : $stripped;
+
+            if ($next === $original) {
+                $out['skipped']++;
+                continue;
+            }
+            PCM_DB::update_article((int)$item->articleId, $user_id, array('content' => $next));
+            if ($next === $stripped) {
+                $out['cleared']++;
+            } else {
+                $out['updated']++;
+            }
+        }
+        return $out;
     }
 
     /**
@@ -2253,13 +2576,18 @@ class PCM_Strategy_Service
      * errored/generating items keep their history; only not-yet-generated
      * items are redistributed, in position order.
      *
-     * @param int    $strategy_id Strategy ID (ownership verified by the caller).
-     * @param string $frequency   calculate_schedule_dates() frequency key.
-     * @param string $start_date  strtotime()-parseable start ('' → now).
-     * @return int Items rescheduled.
+     * @param int          $strategy_id Strategy ID (ownership verified by the caller).
+     * @param array|string $schedule    Full scheduleConfig array (custom-recurrence:
+     *   interval/unit/byDays/ends), OR a bare frequency string — every current UI
+     *   surface now sends the full array; the string form is kept as a defensive
+     *   back-compat rail (normalized to `{frequency}`, byte-identical legacy path).
+     * @param string       $start_date  strtotime()-parseable start ('' → now).
+     * @return int Items rescheduled (slots past an `ends` cap are skipped, not counted).
      */
-    public static function reschedule_pending_items(int $strategy_id, string $frequency, string $start_date = ''): int
+    public static function reschedule_pending_items(int $strategy_id, $schedule, string $start_date = ''): int
     {
+        $schedule_cfg = is_array($schedule) ? $schedule : array('frequency' => (string)$schedule);
+
         $pending = array_values(array_filter(
             PCM_DB::get_strategy_items($strategy_id),
             static fn($it) => $it->status === 'pending'
@@ -2268,11 +2596,21 @@ class PCM_Strategy_Service
             return 0;
         }
         $start = $start_date !== '' ? $start_date : current_time('mysql');
-        $dates = self::calculate_schedule_dates(count($pending), $frequency, $start);
+        $dates = self::calculate_recurrence_dates(count($pending), $schedule_cfg, $start);
+        $rescheduled = 0;
         foreach ($pending as $i => $item) {
-            PCM_DB::update_strategy_item((int)$item->id, array('scheduledDate' => $dates[$i] ?? end($dates)));
+            $slot = $dates[$i] ?? null;
+            // A null slot = past a custom-recurrence `ends` cap. update_strategy_item()
+            // rides $wpdb->update(), which drops NULL values (it can't write SQL NULL),
+            // so SKIP the write and leave scheduledDate as-is rather than no-op a NULL
+            // that would never land. (Legacy frequency paths never yield nulls.)
+            if ($slot === null) {
+                continue;
+            }
+            PCM_DB::update_strategy_item((int)$item->id, array('scheduledDate' => $slot));
+            $rescheduled++;
         }
-        return count($pending);
+        return $rescheduled;
     }
 
     /**

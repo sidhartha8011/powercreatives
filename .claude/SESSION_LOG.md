@@ -7672,3 +7672,80 @@ dbDelta and gained seo_dynamic_rules/seo_rule_versions/seo_redirects while keepi
 Verification on merged code: PHPUnit 299 tests — 3 failures, ALL pre-existing (our 1 known invariant
 + their 2, proven identical on a pure-remote worktree, so ZERO merge regressions); their standalone
 harness 88/88 green; tsc 59 (= their baseline, our changes add none); vite build clean. Not pushed.
+
+## 2026-07-13 — Fix: LLM timeout (cURL error 28) on long article generation
+Live failure: "LLM API request failed: cURL error 28: Operation timed out after 120002 ms with 0
+bytes received" — the blocking LLM HTTP call had a hard-coded 120s timeout, which long pillar
+articles legitimately exceed. Fix in class-pcm-llm.php: blocking_request timeout → 300s default
+(overridable via options['timeout'], floor 30) + set_time_limit headroom so PHP can't die first;
+grounded-research call 120→180s (same override); streaming CURLOPT_TIMEOUT 120→600s to match the
+Writer's PCM_SSE::start(600) budget. Verified: php -l, suite 299/3-known-pre-existing unchanged,
+live invoke_json through the patched path OK (2.6s). Uncommitted pending owner word.
+
+## 2026-07-13 — Custom recurrence for strategy posting schedules (/worker)
+Google-Calendar-style recurrence per the owner mock: repeat every N day/week/month, weekly
+byDays (Mon-first ISO), ends never/on-date/after-N (cap → items stay pending with NULL
+scheduledDate). New calculate_recurrence_dates engine with legacy frequencies byte-identical
+behind a thin adapter (biweekly +3d quirk preserved); sanitize whitelist for the new keys;
+new RecurrenceEditor.tsx (pinned contract) wired into CreateStrategyDialog + a row "Posting
+schedule" dialog replacing the bare frequency Select. Driver integration fix: controller's
+reschedule call now passes the FULL config (bare string would have silently ignored the new
+keys). Routing planned 3 sonnet/2 opus/1 driver = executed (no reroutes, no failures).
+Gates: suite 309/3-known-pre-existing; tsc 59; build ✓. Real-WP proof: start Tue 2026-07-14,
+byDays Mon+Wed, ends after 3 over 5 keywords → Wed 15, Mon 20, Wed 22 + 2 NULLs; legacy
+string reschedule still works. spec-verifier APPROVED (no P0/P1; 3 P3 notes — stale docblock
+fixed, LLM-timeout diff is separate pending work, biweekly re-save label divergence is
+by-design per plan). Not committed.
+
+## 2026-07-13 — Parent changes now apply AFTER generation (/task)
+Gap: the parent link is a deterministic paragraph baked into each child article at generation
+time, so editing Parent Settings later (new URL, different parent item, anchor change, mode
+switch) never touched existing articles. New PCM_Strategy_Service::reapply_parent_links():
+surgically strips the deterministic paragraph and re-appends the freshly resolved link per
+article, with generation-matching role rules (the current parent's own article stays link-free;
+resolving to nothing = pure strip, so switching to standalone cleans children). New POST
+/strategies/{id}/reapply-parent; ParentSettingsModal chains it after save with a relinked/cleared
+count toast. Local content only (remote copies need re-publish/sync — existing flows).
+Verified: 6 new unit tests (role swap, replace-not-stack, standalone strip, idempotency, anchor
+override); suite 315/3-known; tsc 59; build ✓; real-WP live pass on strategy 10 — link injected
+with anchor override, URL change replaced (count stayed 1), route registered. Skipped the formal
+spec-verifier: contained feature, mechanism proven live (same precedent as the user-id fix).
+Not committed.
+
+## 2026-07-13 — Compact Create-Strategy dialog + structure↔hierarchy coupling (/worker)
+Dialog compacted (opus, baseline-ui+redesign skills): three 2-col rows (Name+Site,
+Workflow+Structure, Model+Hierarchy), 4 feature checkboxes → single-line rows with title
+tooltips under one "Generation options" group; ~26→~15 text rows, fits 900px. Coupling:
+consolidated (one article) ⇒ hierarchy forced standalone — UI select disabled with hint +
+submit-time payload guard; server-side pure helper apply_structure_hierarchy_guard() wired
+into the create funnel (covers REST create + scheduler), the PATCH door (effective merged
+state, no spurious writes), and — driver fix after the spec-verifier traced it as unguarded —
+the duplicate door (legacy contradictory rows can no longer propagate into copies). 4 new
+tests. Routing planned=executed 1 opus/1 sonnet/1 driver, no reroutes. Gates: suite 319/3
+known pre-existing; tsc 59; build ✓; real-WP smoke: consolidated+parent_and_children in →
+stored standalone, parent keys dropped. spec-verifier APPROVED (F1 fixed, F2 resolved as
+driver decision). Not committed.
+
+## 2026-07-13 — Fix: "LLM returned invalid JSON (json_object mode)" on long articles (truncation)
+Live failure (screenshot): article generation died with invalid-JSON — raw began with an
+unterminated ```json fence and ended mid-word. Root cause: output TRUNCATED at the token cap
+(finish_reason=length); truncated JSON is unparseable by construction (extract_json's fence
+regex needs a closing fence; the brace fallback finds no final brace). Fix in class-pcm-llm.php:
+parse_response now surfaces a normalized finish_reason ('length', incl. Anthropic 'max_tokens');
+invoke_json_fallback detects a truncated parse failure and retries ONCE with a doubled budget
+(floor 1024×2; a strategy call at 8192 retries at 16384; guarded by pcm_truncation_retry so a
+second truncation falls through); the terminal error now says the output was truncated instead
+of a bare syntax error. Verified live: raw invoke honors cap exactly (completion_tokens=90,
+finish_reason=length); invoke_json under a 90-token cap returned a 1418-char field — only
+possible via the doubled retry — proving the rescue end-to-end. Suite 319/3-known unchanged.
+Not committed.
+
+## 2026-07-14 — Pulled + merged teammate's optimizer arc (36 commits)
+Committed our 5 pending features first (recurrence, parent reapply, compact dialog+coupling,
+LLM timeouts, truncation rescue — one commit), then merged origin/feat/seo-suite-port: ZERO
+conflicts (their optimizer.* trpc block + our strategy.* entries auto-merged; sites/controller
+carries all four route sets). Incoming: SEO page-editor arc + new optimizer module
+(teachers/analyze), DB → 1.42.0 (their convergence bump above both parallel lines).
+Verified per their ask: full PHPUnit 319 / exactly the 3 known failures; their standalone
+harness 88/88 on the merged tree; tsc 59; build ✓; real-WP loaded once → pcm_db_version
+stamped 1.42.0, optimizer routes registered. Pushed back to origin (standing workflow).

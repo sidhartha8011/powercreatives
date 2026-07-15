@@ -14,6 +14,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { KeywordPicker } from '@/components/shared';
 import { trpc } from '@/lib/trpc';
 import { Loader2 } from 'lucide-react';
+import {
+  RecurrenceEditor,
+  recurrenceFromConfig,
+  recurrenceToConfig,
+  type ScheduleRecurrence,
+} from '../Strategies/RecurrenceEditor';
 
 export interface StrategyPayload {
   name: string;
@@ -79,7 +85,7 @@ export function CreateStrategyDialog({
   const [publishingMode, setPublishingMode] = useState('draft');
   const [siteId, setSiteId] = useState<string>('');
   const [approvalMode, setApprovalMode] = useState('none');
-  const [frequency, setFrequency] = useState('weekly');
+  const [recurrence, setRecurrence] = useState<ScheduleRecurrence>(() => recurrenceFromConfig({}));
   const [startDate, setStartDate] = useState('');
 
   React.useEffect(() => {
@@ -101,7 +107,7 @@ export function CreateStrategyDialog({
       setPublishingMode('draft');
       setSiteId('');
       setApprovalMode('none');
-      setFrequency('weekly');
+      setRecurrence(recurrenceFromConfig({}));
       setStartDate('');
     }
   }, [open]);
@@ -126,11 +132,20 @@ export function CreateStrategyDialog({
     }
   }, [open, sites]);
 
+  // Consolidated = one article for all keywords, so hierarchy is meaningless.
+  // Selecting it forces hierarchy back to standalone (belt); the payload also
+  // normalizes it below (braces) so parent keys never leak when consolidated.
+  const handleStructureChange = (value: string) => {
+    setStructure(value);
+    if (value === 'consolidated') setHierarchyMode('standalone');
+  };
+
   const handleSave = () => {
     if (!templateId) return;
 
     const finalName = name.trim() ? name.trim() : defaultName;
     const selectedModel = (genModels as any[]).find((m) => m.modelId === modelId);
+    const effectiveHierarchy = structure === 'consolidated' ? 'standalone' : hierarchyMode;
 
     onSave({
       name: finalName,
@@ -138,9 +153,9 @@ export function CreateStrategyDialog({
       model: modelId || undefined,
       provider: selectedModel?.provider || undefined,
       structure,
-      hierarchyMode,
-      parentTargetUrl: hierarchyMode === 'children_only' ? parentTargetUrl : undefined,
-      parentKeyword: hierarchyMode === 'parent_and_children' ? selectedKeywords[parentKeywordIndex] : undefined,
+      hierarchyMode: effectiveHierarchy,
+      parentTargetUrl: effectiveHierarchy === 'children_only' ? parentTargetUrl : undefined,
+      parentKeyword: effectiveHierarchy === 'parent_and_children' ? selectedKeywords[parentKeywordIndex] : undefined,
       publishingMode,
       siteId: siteId ? parseInt(siteId, 10) : undefined,
       approvalMode,
@@ -148,7 +163,7 @@ export function CreateStrategyDialog({
       inContentMedia,
       research,
       interlinksConfig: autoInterlink ? { mode: interlinkMode, quantity: interlinkQuantity } : undefined,
-      scheduleConfig: publishingMode === 'schedule' ? { frequency, startDate } : undefined,
+      scheduleConfig: publishingMode === 'schedule' ? { ...recurrenceToConfig(recurrence), startDate } : undefined,
     });
   };
 
@@ -159,47 +174,49 @@ export function CreateStrategyDialog({
           <DialogTitle>Create Strategy ({selectedCount} Keywords)</DialogTitle>
         </DialogHeader>
         
-        <div className="py-2 space-y-6">
-          
-          <div className="space-y-2">
-            <Label htmlFor="strategy-name">Strategy Name (Optional)</Label>
-            <Input
-              id="strategy-name"
-              placeholder={defaultName}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full bg-background"
-            />
+        <div className="py-2 space-y-4">
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="strategy-name">Strategy Name (Optional)</Label>
+              <Input
+                id="strategy-name"
+                placeholder={defaultName}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full bg-background"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="target-site"
+                title="The site this strategy is for. When Publishing Mode is Publish Automatically, each generated article is published here."
+              >
+                Target Site
+              </Label>
+              <Select value={siteId} onValueChange={setSiteId}>
+                <SelectTrigger id="target-site" className="w-full bg-background">
+                  <SelectValue placeholder={sitesLoading ? 'Loading sites…' : 'Select a connected site...'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(sites as any[]).length > 0 ? (
+                    (sites as any[]).map((s) => (
+                      <SelectItem key={s.id} value={s.id.toString()}>
+                        {s.name || s.url}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <div className="p-2 text-sm text-muted-foreground text-center">
+                      No connected sites — add one in the Sites module.
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>Target Site</Label>
-            <Select value={siteId} onValueChange={setSiteId}>
-              <SelectTrigger className="w-full bg-background">
-                <SelectValue placeholder={sitesLoading ? 'Loading sites…' : 'Select a connected site...'} />
-              </SelectTrigger>
-              <SelectContent>
-                {(sites as any[]).length > 0 ? (
-                  (sites as any[]).map((s) => (
-                    <SelectItem key={s.id} value={s.id.toString()}>
-                      {s.name || s.url}
-                    </SelectItem>
-                  ))
-                ) : (
-                  <div className="p-2 text-sm text-muted-foreground text-center">
-                    No connected sites — add one in the Sites module.
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
-            <p className="text-[0.8rem] text-muted-foreground">
-              The site this strategy is for. When Publishing Mode is “Publish Automatically”, each
-              generated article is published here.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
                <Label>Workflow (Prompt)</Label>
                <Select value={templateId} onValueChange={setTemplateId}>
                  <SelectTrigger className="w-full bg-background">
@@ -224,9 +241,9 @@ export function CreateStrategyDialog({
                  </SelectContent>
                </Select>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
                <Label>Content per Keyword</Label>
-               <Select value={structure} onValueChange={setStructure}>
+               <Select value={structure} onValueChange={handleStructureChange}>
                  <SelectTrigger className="w-full bg-background">
                    <SelectValue />
                  </SelectTrigger>
@@ -238,35 +255,40 @@ export function CreateStrategyDialog({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>AI Model</Label>
-            <Select value={modelId} onValueChange={setModelId}>
-              <SelectTrigger className="w-full bg-background">
-                <SelectValue placeholder={modelsLoading ? 'Loading models…' : 'Default (Gemini 2.5 Flash)'} />
-              </SelectTrigger>
-              <SelectContent>
-                {(genModels as any[]).length > 0 ? (
-                  (genModels as any[]).map((m) => (
-                    <SelectItem key={m.modelId} value={m.modelId}>
-                      {(m.customName || m.originalName || m.modelId)} ({m.provider})
-                    </SelectItem>
-                  ))
-                ) : (
-                  <div className="p-2 text-sm text-muted-foreground text-center">
-                    No text models registered — add one in Settings → Models.
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
-            <p className="text-[0.8rem] text-muted-foreground">
-              Which model writes each article. Leave unset to use the default.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="ai-model"
+                title="Which model writes each article. Leave unset to use the default."
+              >
+                AI Model
+              </Label>
+              <Select value={modelId} onValueChange={setModelId}>
+                <SelectTrigger id="ai-model" className="w-full bg-background">
+                  <SelectValue placeholder={modelsLoading ? 'Loading models…' : 'Default (Gemini 2.5 Flash)'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(genModels as any[]).length > 0 ? (
+                    (genModels as any[]).map((m) => (
+                      <SelectItem key={m.modelId} value={m.modelId}>
+                        {(m.customName || m.originalName || m.modelId)} ({m.provider})
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <div className="p-2 text-sm text-muted-foreground text-center">
+                      No text models registered — add one in Settings → Models.
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
               <Label>Content Hierarchy</Label>
-              <Select value={hierarchyMode} onValueChange={setHierarchyMode}>
+              <Select
+                value={hierarchyMode}
+                onValueChange={setHierarchyMode}
+                disabled={structure === 'consolidated'}
+              >
                 <SelectTrigger className="w-full bg-background">
                   <SelectValue />
                 </SelectTrigger>
@@ -277,45 +299,51 @@ export function CreateStrategyDialog({
                   <SelectItem value="parent_and_children">Parent + Children Together</SelectItem>
                 </SelectContent>
               </Select>
+              {structure === 'consolidated' && (
+                <p className="text-xs text-muted-foreground">
+                  Hierarchy applies to per-keyword strategies.
+                </p>
+              )}
             </div>
-
-            {hierarchyMode === 'children_only' && (
-              <div className="space-y-2">
-                <Label>Target Parent URL</Label>
-                <p className="text-[0.8rem] text-muted-foreground">
-                  All generated content will link to this parent.
-                </p>
-                <Input
-                   type="url"
-                   value={parentTargetUrl}
-                   onChange={(e) => setParentTargetUrl(e.target.value)}
-                   placeholder="https://example.com/parent-page"
-                   className="w-full bg-background"
-                />
-              </div>
-            )}
-
-            {hierarchyMode === 'parent_and_children' && selectedKeywords?.length > 0 && (
-              <div className="space-y-2">
-                <Label>Select Parent Keyword</Label>
-                <p className="text-[0.8rem] text-muted-foreground">
-                  First article becomes parent, others link to it.
-                </p>
-                <KeywordPicker
-                  keywords={selectedKeywords}
-                  selectedIndex={parentKeywordIndex}
-                  onSelect={setParentKeywordIndex}
-                  selectedLabel="Parent"
-                  unselectedLabel={null}
-                  maxHeight="8rem"
-                />
-              </div>
-            )}
           </div>
 
-          <div className="space-y-4">
-            <div className="flex flex-col space-y-2">
-              <div className="flex items-center space-x-2">
+          {structure !== 'consolidated' && hierarchyMode === 'children_only' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="parent-url" title="All generated content will link to this parent.">
+                Target Parent URL
+              </Label>
+              <Input
+                 id="parent-url"
+                 type="url"
+                 value={parentTargetUrl}
+                 onChange={(e) => setParentTargetUrl(e.target.value)}
+                 placeholder="https://example.com/parent-page"
+                 className="w-full bg-background"
+              />
+            </div>
+          )}
+
+          {structure !== 'consolidated' && hierarchyMode === 'parent_and_children' && selectedKeywords?.length > 0 && (
+            <div className="space-y-1.5">
+              <Label title="First article becomes parent, others link to it.">Select Parent Keyword</Label>
+              <KeywordPicker
+                keywords={selectedKeywords}
+                selectedIndex={parentKeywordIndex}
+                onSelect={setParentKeywordIndex}
+                selectedLabel="Parent"
+                unselectedLabel={null}
+                maxHeight="8rem"
+              />
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Generation options</Label>
+            <div className="space-y-2">
+              <div
+                className="flex items-center space-x-2"
+                title="Automatically generate a featured image for each article when content is generated."
+              >
                 <Checkbox
                   id="featured-images"
                   checked={featuredImages}
@@ -325,13 +353,11 @@ export function CreateStrategyDialog({
                   Generate featured images
                 </Label>
               </div>
-              <p className="text-[0.8rem] text-muted-foreground pl-6">
-                Automatically generate a featured image for each article when content is generated.
-              </p>
-            </div>
 
-            <div className="flex flex-col space-y-2">
-              <div className="flex items-center space-x-2">
+              <div
+                className="flex items-center space-x-2"
+                title="Let the writer place supporting images and charts inline within each article body."
+              >
                 <Checkbox
                   id="in-content-media"
                   checked={inContentMedia}
@@ -341,29 +367,25 @@ export function CreateStrategyDialog({
                   In-content images &amp; charts
                 </Label>
               </div>
-              <p className="text-[0.8rem] text-muted-foreground pl-6">
-                Let the writer place supporting images and charts inline within each article body.
-              </p>
-            </div>
 
-            <div className="flex flex-col space-y-2">
-              <div className="flex items-center space-x-2">
+              <div
+                className="flex items-center space-x-2"
+                title="Summarize the current search landscape (top themes, common questions, content gaps) and feed it into generation."
+              >
                 <Checkbox
                   id="research-topic"
                   checked={research}
                   onCheckedChange={(c) => setResearch(c as boolean)}
                 />
                 <Label htmlFor="research-topic" className="cursor-pointer font-medium leading-none">
-                  Research the topic before writing (uses Google-grounded Gemini)
+                  Research the topic before writing
                 </Label>
               </div>
-              <p className="text-[0.8rem] text-muted-foreground pl-6">
-                Summarize the current search landscape (top themes, common questions, content gaps) and feed it into generation.
-              </p>
-            </div>
 
-            <div className="flex flex-col space-y-2">
-              <div className="flex items-center space-x-2">
+              <div
+                className="flex items-center space-x-2"
+                title="Automatically inject internal links between articles when content is generated."
+              >
                 <Checkbox
                   id="auto-interlink"
                   checked={autoInterlink}
@@ -373,34 +395,31 @@ export function CreateStrategyDialog({
                   Auto-Interlink after generation
                 </Label>
               </div>
-              <p className="text-[0.8rem] text-muted-foreground pl-6">
-                Automatically inject internal links between articles when content is generated.
-              </p>
-            </div>
 
-            {autoInterlink && (
-              <div className="ml-6 flex items-center justify-between gap-4 p-3 bg-muted/20 border rounded-md text-sm">
-                <div className="flex items-center space-x-3">
-                  <span className="font-medium text-muted-foreground">Max Links:</span>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={interlinkQuantity}
-                    onChange={(e) => setInterlinkQuantity(parseInt(e.target.value) || 3)}
-                    className="w-16 h-8 bg-background"
-                  />
+              {autoInterlink && (
+                <div className="ml-6 flex items-center justify-between gap-4 p-3 bg-muted/20 border rounded-md text-sm">
+                  <div className="flex items-center space-x-3">
+                    <span className="font-medium text-muted-foreground">Max Links:</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={interlinkQuantity}
+                      onChange={(e) => setInterlinkQuantity(parseInt(e.target.value) || 3)}
+                      className="w-16 h-8 bg-background"
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-medium text-muted-foreground">Mode:</span>
+                    <span>Auto (Phrase)</span>
+                  </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <span className="font-medium text-muted-foreground">Mode:</span>
-                  <span>Auto (Phrase)</span>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
                <Label>Publishing Mode</Label>
                <Select value={publishingMode} onValueChange={setPublishingMode}>
                  <SelectTrigger className="w-full bg-background">
@@ -413,7 +432,7 @@ export function CreateStrategyDialog({
                  </SelectContent>
                </Select>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
                <Label>Approvals</Label>
                <Select value={approvalMode} onValueChange={setApprovalMode}>
                  <SelectTrigger className="w-full bg-background">
@@ -429,24 +448,12 @@ export function CreateStrategyDialog({
           </div>
 
           {publishingMode === 'schedule' && (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
                 <Label>Frequency</Label>
-                <Select value={frequency} onValueChange={setFrequency}>
-                  <SelectTrigger className="w-full bg-background">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all_once">All at once</SelectItem>
-                    <SelectItem value="daily">Daily</SelectItem>
-                    <SelectItem value="every_other_day">Every other day</SelectItem>
-                    <SelectItem value="weekly">Weekly</SelectItem>
-                    <SelectItem value="biweekly">Twice a week (~every 3 days)</SelectItem>
-                    <SelectItem value="monthly">Monthly</SelectItem>
-                  </SelectContent>
-                </Select>
+                <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label>Start Date</Label>
                 <Input
                   type="date"

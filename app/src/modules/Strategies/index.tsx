@@ -23,12 +23,14 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { colors, typography, shadows, statusColors } from '@/components/shared/design-tokens';
 import { trpc } from '@/lib/trpc';
 import { useApp } from '@/contexts/AppContext';
 import { InterlinkManagerModal } from './InterlinkManagerModal';
 import { ScheduleView } from './ScheduleView';
 import { ParentSettingsModal } from './ParentSettingsModal';
+import { RecurrenceEditor, recurrenceFromConfig, recurrenceToConfig, type ScheduleRecurrence } from './RecurrenceEditor';
 
 // ── Types ──
 interface StrategyItem {
@@ -103,6 +105,25 @@ const PUBLISHING_MODE_LABELS: Record<string, string> = {
   publish: 'Auto-publish',
   schedule: 'Scheduled',
 };
+
+/** 3-letter, Mon-first day names — index by ISO 1(Mon)–7(Sun). */
+const DAY_SHORT_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Compact, truncatable summary of a ScheduleRecurrence for the row button label. */
+function summarizeRecurrence(r: ScheduleRecurrence): string {
+  let base: string;
+  if (r.unit === 'day') base = r.interval === 1 ? 'Daily' : `Every ${r.interval} days`;
+  else if (r.unit === 'week') base = r.interval === 1 ? 'Weekly' : `Every ${r.interval} weeks`;
+  else base = r.interval === 1 ? 'Monthly' : `Every ${r.interval} months`;
+
+  const parts = [base];
+  if (r.byDays.length > 0) {
+    parts.push(r.byDays.map((iso) => DAY_SHORT_NAMES[iso - 1]).join(', '));
+  }
+  if (r.ends.type === 'on') parts.push(`ends ${r.ends.date}`);
+  else if (r.ends.type === 'after') parts.push(`×${r.ends.count}`);
+  return parts.join(' · ');
+}
 
 // ── Status indicator — reusable across Strategies + Approvals ──
 function StatusBadge({ status }: { status: string }) {
@@ -360,15 +381,17 @@ export function StrategiesModule() {
     updateStrategyMutation.mutate({ id: strategyId, templateId: parseInt(templateId, 10) });
   }, [updateStrategyMutation]);
 
-  // Inline frequency change for schedule-mode strategies. scheduleConfig is
-  // replaced WHOLE inside the config merge (the merge is shallow), so the
+  // Recurrence dialog (replaces the old bare frequency Select) — scheduleConfig
+  // is replaced WHOLE inside the config merge (the merge is shallow), so the
   // existing startDate must be carried along — the backend then redistributes
-  // the PENDING items' due dates from the new frequency.
-  const handleFrequencyChange = useCallback((strategyId: number, frequency: string, existingStartDate: string) => {
+  // the PENDING items' due dates from the new recurrence.
+  const [recurrenceDialog, setRecurrenceDialog] = useState<{ strategyId: number; value: ScheduleRecurrence } | null>(null);
+  const handleRecurrenceSave = useCallback((strategyId: number, r: ScheduleRecurrence, existingStartDate: string) => {
     updateStrategyMutation.mutate({
       id: strategyId,
-      config: { scheduleConfig: { frequency, startDate: existingStartDate || '' } },
+      config: { scheduleConfig: { ...recurrenceToConfig(r), startDate: existingStartDate || '' } },
     });
+    setRecurrenceDialog(null);
   }, [updateStrategyMutation]);
 
   // Per-item due-date edit (pending items on schedule-mode strategies).
@@ -817,26 +840,23 @@ export function StrategiesModule() {
                   </Select>
                 </div>
 
-                {/* Frequency — schedule mode only; changing it redistributes
-                    the PENDING items' due dates server-side. */}
+                {/* Frequency — schedule mode only; opens the recurrence dialog.
+                    Saving redistributes the PENDING items' due dates server-side. */}
                 {strategy.publishingMode === 'schedule' && (
                   <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <Select
-                      value={config.scheduleConfig?.frequency || 'weekly'}
-                      onValueChange={(value) => handleFrequencyChange(strategy.id, value, config.scheduleConfig?.startDate || '')}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-full justify-start text-xs font-normal bg-background overflow-hidden"
+                      title="Posting schedule"
+                      onClick={() => setRecurrenceDialog({
+                        strategyId: strategy.id,
+                        value: recurrenceFromConfig(config.scheduleConfig ?? {}),
+                      })}
                     >
-                      <SelectTrigger className="h-8 text-xs bg-background">
-                        <SelectValue placeholder="Frequency" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all_once">All at once</SelectItem>
-                        <SelectItem value="daily">Daily</SelectItem>
-                        <SelectItem value="every_other_day">Every other day</SelectItem>
-                        <SelectItem value="weekly">Weekly</SelectItem>
-                        <SelectItem value="biweekly">Twice a week (~3 days)</SelectItem>
-                        <SelectItem value="monthly">Monthly</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      <CalendarClock className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{summarizeRecurrence(recurrenceFromConfig(config.scheduleConfig ?? {}))}</span>
+                    </Button>
                   </div>
                 )}
 
@@ -1247,6 +1267,39 @@ export function StrategiesModule() {
         config={parseStrategyConfig(parentSettingsStrategy?.config)}
         onDone={refetch}
       />
+
+      {/* Posting schedule (recurrence) editor — replaces the old bare
+          frequency Select on the strategy row. */}
+      <Dialog open={recurrenceDialog !== null} onOpenChange={(o) => { if (!o) setRecurrenceDialog(null); }}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>Posting schedule</DialogTitle>
+          </DialogHeader>
+          {recurrenceDialog && (
+            <RecurrenceEditor
+              value={recurrenceDialog.value}
+              onChange={(next) => setRecurrenceDialog({ strategyId: recurrenceDialog.strategyId, value: next })}
+            />
+          )}
+          <DialogFooter className="pt-4 border-t">
+            <Button variant="outline" size="sm" onClick={() => setRecurrenceDialog(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => {
+                if (!recurrenceDialog) return;
+                const strategy = strategyList.find((s) => s.id === recurrenceDialog.strategyId);
+                const existingStartDate = parseStrategyConfig(strategy?.config).scheduleConfig?.startDate || '';
+                handleRecurrenceSave(recurrenceDialog.strategyId, recurrenceDialog.value, existingStartDate);
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

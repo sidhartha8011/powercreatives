@@ -183,7 +183,7 @@ class PCM_LLM
         }
 
         try {
-            return self::blocking_request($base_url, $payload, $headers);
+            return self::blocking_request($base_url, $payload, $headers, max(30, (int) ($options['timeout'] ?? 300)));
         } catch (\RuntimeException $e) {
             // Token-budget overflow: the requested completion budget is too large
             // for the model's total context window OR its per-response output cap.
@@ -208,7 +208,7 @@ class PCM_LLM
                 substr($e->getMessage(), 0, 160)
             ));
             $payload[$token_key] = $budget;
-            $retry_result = self::blocking_request($base_url, $payload, $headers);
+            $retry_result = self::blocking_request($base_url, $payload, $headers, max(30, (int) ($options['timeout'] ?? 300)));
             self::remember_token_cap($model, $budget);
             return $retry_result;
         }
@@ -331,10 +331,34 @@ class PCM_LLM
         $content = $result['content'] ?? '';
         $parsed = json_decode(self::extract_json($content), true);
 
+        // Truncation rescue: finish_reason 'length' means the output hit the
+        // token cap mid-JSON — unparseable by construction (live failure: a
+        // long article cut off inside its unterminated ```json fence). One
+        // retry with double the budget recovers it; a second truncation at the
+        // doubled budget is a genuine oversize and falls through to the error.
+        if ((json_last_error() !== JSON_ERROR_NONE || !is_array($parsed))
+            && ($result['finish_reason'] ?? '') === 'length'
+            && empty($options['pcm_truncation_retry'])
+        ) {
+            $bumped = $options;
+            $bumped['pcm_truncation_retry'] = true;
+            $bumped['max_tokens'] = max(1024, (int) ($options['max_tokens'] ?? 4096)) * 2;
+            error_log(sprintf(
+                '[PCM_LLM] JSON output truncated at the token cap (model=%s); retrying once with max_tokens=%d.',
+                (string) ($result['model'] ?? ''),
+                $bumped['max_tokens']
+            ));
+            $result = self::invoke($msgs, $bumped);
+            $content = $result['content'] ?? '';
+            $parsed = json_decode(self::extract_json($content), true);
+        }
+
         if (json_last_error() !== JSON_ERROR_NONE || !is_array($parsed)) {
+            $truncated = ($result['finish_reason'] ?? '') === 'length';
             throw new \RuntimeException(sprintf(
-                'LLM returned invalid JSON (%s mode): %s — raw: %s',
+                'LLM returned invalid JSON (%s mode)%s: %s — raw: %s',
                 $use_json_object ? 'json_object' : 'prompt-only',
+                $truncated ? ' — output TRUNCATED at the token limit even after a doubled retry; the article is too long for the budget' : '',
                 json_last_error_msg(),
                 substr($content, 0, 500)
             ));
@@ -612,7 +636,9 @@ class PCM_LLM
         $response = wp_remote_post($url, array(
             'body' => wp_json_encode($payload),
             'headers' => $headers,
-            'timeout' => 120,
+            // Grounded research fans out to live web search before answering —
+            // give it the same headroom class as generation (was 120s).
+            'timeout' => max(30, (int) ($options['timeout'] ?? 180)),
             'sslverify' => true,
         ));
 
@@ -673,12 +699,20 @@ class PCM_LLM
      *
      * @return array { content, usage, model, raw }
      */
-    private static function blocking_request(string $url, array $payload, array $headers): array
+    private static function blocking_request(string $url, array $payload, array $headers, int $timeout = 300): array
     {
+        // Long-form generation (full pillar articles + media manifests) routinely
+        // needs more than the old hard-coded 120s — cURL error 28 ("timed out
+        // after 120002 ms with 0 bytes received") killed those items. Default is
+        // now 300s, overridable per call via options['timeout']. Also raise PHP's
+        // own execution ceiling so the HTTP wait can't outlive the process.
+        if (function_exists('set_time_limit')) {
+            @set_time_limit($timeout + 30);
+        }
         $response = wp_remote_post($url, array(
             'body' => wp_json_encode($payload),
             'headers' => $headers,
-            'timeout' => 120,
+            'timeout' => $timeout,
             'sslverify' => true,
         ));
 
@@ -793,7 +827,10 @@ class PCM_LLM
             CURLOPT_POSTFIELDS => wp_json_encode($payload),
             CURLOPT_HTTPHEADER => $curl_headers,
             CURLOPT_WRITEFUNCTION => $write_callback,
-            CURLOPT_TIMEOUT => 120,
+            // Total-transfer ceiling. Streams deliver tokens continuously, but a
+            // long article still needs wall-clock: match the Writer's SSE budget
+            // (PCM_SSE::start(600)) instead of the old 120s that cut streams off.
+            CURLOPT_TIMEOUT => 600,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_RETURNTRANSFER => false,
         ));
@@ -1163,10 +1200,19 @@ class PCM_LLM
             $content = $data['content'][0]['text'];
         }
 
+        // Normalized truncation signal: OpenAI/compat 'length', Anthropic
+        // native 'max_tokens' — both mean the output hit the token cap and is
+        // cut off mid-stream (invoke_json uses this to retry with more budget).
+        $finish = $data['choices'][0]['finish_reason'] ?? ($data['stop_reason'] ?? '');
+        if ($finish === 'max_tokens') {
+            $finish = 'length';
+        }
+
         return array(
             'content' => $content,
             'usage' => $data['usage'] ?? null,
             'model' => $data['model'] ?? '',
+            'finish_reason' => (string) $finish,
             'raw' => $data,
         );
     }

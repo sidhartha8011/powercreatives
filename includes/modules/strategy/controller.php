@@ -55,7 +55,29 @@ class PCM_REST_Strategy extends PCM_REST_Base
             array('POST',   '/strategies/(?P<id>\d+)/items/(?P<itemId>\d+)/publish', 'publish_item'),
             array('POST',   '/strategies/(?P<id>\d+)/interlinks', 'run_interlinks'),
             array('POST',   '/strategies/(?P<id>\d+)/sync-status', 'sync_status'),
+            array('POST',   '/strategies/(?P<id>\d+)/reapply-parent', 'reapply_parent'),
         );
+    }
+
+    /**
+     * Re-apply the parent link across a strategy's already-generated articles
+     * (the Parent Settings modal calls this right after saving new settings, so
+     * "changing the parent after generation" actually updates existing content:
+     * old parent-link paragraphs are stripped and the fresh one appended, with
+     * the current parent's own article kept link-free).
+     */
+    public function reapply_parent(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $strategy_id = (int)$request->get_param('id');
+
+        $strategy = PCM_DB::get_strategy($strategy_id, (int)$pcm_user->id);
+        if (!$strategy) {
+            return $this->not_found('Strategy');
+        }
+
+        $result = PCM_Strategy_Service::reapply_parent_links($strategy_id, (int)$pcm_user->id);
+        return $this->success($result);
     }
 
     /**
@@ -290,6 +312,36 @@ class PCM_REST_Strategy extends PCM_REST_Base
             $schedule_changed = array_key_exists('scheduleConfig', $incoming) && is_array($incoming['scheduleConfig']);
         }
 
+        // Invariant: a consolidated strategy (single article for every keyword)
+        // can never carry a hierarchy between its own articles — enforced here
+        // regardless of which side of this PATCH set it (hierarchyMode,
+        // config.structure, or both at once; either can flip the combination
+        // into the contradictory state on its own). Only relevant when this
+        // request actually touches one of those two fields; only writes back
+        // when the guard actually changes something, so an unrelated field
+        // update (e.g. just 'name') never gains a spurious hierarchyMode write.
+        if (array_key_exists('hierarchyMode', $update) || array_key_exists('config', $update)) {
+            if ($existing_strategy === null) {
+                $existing_strategy = PCM_DB::get_strategy($strategy_id, (int)$pcm_user->id);
+                if (!$existing_strategy) {
+                    return $this->not_found('Strategy');
+                }
+            }
+            require_once __DIR__ . '/service.php';
+            $effective_config = array_key_exists('config', $update)
+                ? (json_decode((string)$update['config'], true) ?: array())
+                : ((array)(json_decode((string)($existing_strategy->config ?? ''), true) ?: array()));
+            $effective_hierarchy = $update['hierarchyMode'] ?? (string)($existing_strategy->hierarchyMode ?? 'standalone');
+
+            $guarded = PCM_Strategy_Service::apply_structure_hierarchy_guard($effective_hierarchy, $effective_config);
+            if ($guarded['hierarchyMode'] !== $effective_hierarchy) {
+                $update['hierarchyMode'] = $guarded['hierarchyMode'];
+            }
+            if (array_key_exists('config', $update) && $guarded['config'] !== $effective_config) {
+                $update['config'] = wp_json_encode($guarded['config']);
+            }
+        }
+
         if (empty($update)) {
             return $this->error('No valid fields to update.');
         }
@@ -307,9 +359,13 @@ class PCM_REST_Strategy extends PCM_REST_Base
             $mode = $update['publishingMode'] ?? (string)($existing_strategy->publishingMode ?? '');
             if ($mode === 'schedule') {
                 $sc = json_decode((string)$update['config'], true)['scheduleConfig'] ?? array();
+                // Pass the FULL sanitized config, not just the frequency label —
+                // the custom-recurrence keys (interval/unit/byDays/ends) must
+                // reach the engine; a bare string would silently fall back to
+                // the legacy fixed-frequency path.
                 PCM_Strategy_Service::reschedule_pending_items(
                     $strategy_id,
-                    !empty($sc['frequency']) ? (string)$sc['frequency'] : 'weekly',
+                    is_array($sc) && $sc !== array() ? $sc : 'weekly',
                     !empty($sc['startDate']) ? (string)$sc['startDate'] : ''
                 );
             }
@@ -374,12 +430,57 @@ class PCM_REST_Strategy extends PCM_REST_Base
                 : null;
         }
         if (array_key_exists('scheduleConfig', $fields)) {
-            $config['scheduleConfig'] = is_array($fields['scheduleConfig'] ?? null)
-                ? array(
-                    'frequency' => sanitize_text_field($fields['scheduleConfig']['frequency'] ?? ''),
-                    'startDate' => sanitize_text_field($fields['scheduleConfig']['startDate'] ?? ''),
-                )
-                : null;
+            if (is_array($fields['scheduleConfig'] ?? null)) {
+                $schedule_config = $fields['scheduleConfig'];
+                $schedule = array(
+                    'frequency' => sanitize_text_field($schedule_config['frequency'] ?? ''),
+                    'startDate' => sanitize_text_field($schedule_config['startDate'] ?? ''),
+                );
+                // Custom recurrence (optional): the strategy service consumes
+                // these to build a non-standard cadence on top of frequency.
+                // Unknown/invalid values are dropped rather than defaulted, so
+                // the service can distinguish "not set" from an explicit value.
+                if (isset($schedule_config['interval'])) {
+                    $schedule['interval'] = min(12, max(1, absint($schedule_config['interval'])));
+                }
+                if (in_array($schedule_config['unit'] ?? null, array('day', 'week', 'month'), true)) {
+                    $schedule['unit'] = $schedule_config['unit'];
+                }
+                if (is_array($schedule_config['byDays'] ?? null)) {
+                    $by_days = array_values(array_unique(array_filter(
+                        array_map('absint', $schedule_config['byDays']),
+                        fn($day) => $day >= 1 && $day <= 7
+                    )));
+                    sort($by_days);
+                    if (!empty($by_days)) {
+                        $schedule['byDays'] = $by_days;
+                    }
+                }
+                if (is_array($schedule_config['ends'] ?? null)) {
+                    $ends_type = $schedule_config['ends']['type'] ?? '';
+                    if (in_array($ends_type, array('never', 'on', 'after'), true)) {
+                        $ends = array('type' => $ends_type);
+                        if ($ends_type === 'on') {
+                            $ends_date = sanitize_text_field($schedule_config['ends']['date'] ?? '');
+                            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $ends_date)) {
+                                $ends['date'] = $ends_date;
+                                $schedule['ends'] = $ends;
+                            }
+                        } elseif ($ends_type === 'after') {
+                            $ends_count = min(365, absint($schedule_config['ends']['count'] ?? 0));
+                            if ($ends_count > 0) {
+                                $ends['count'] = $ends_count;
+                                $schedule['ends'] = $ends;
+                            }
+                        } else {
+                            $schedule['ends'] = $ends;
+                        }
+                    }
+                }
+                $config['scheduleConfig'] = $schedule;
+            } else {
+                $config['scheduleConfig'] = null;
+            }
         }
         if (array_key_exists('siteId', $fields)) {
             $config['siteId'] = !empty($fields['siteId']) ? absint($fields['siteId']) : 0;

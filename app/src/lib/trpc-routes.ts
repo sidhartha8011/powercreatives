@@ -270,6 +270,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `strategies/${input.id}/sync-status` }),
     },
+    "strategy.reapplyParent": {
+        endpoint: "strategies",
+        method: "POST",
+        transform: (input: any) => ({ url: `strategies/${input.id}/reapply-parent` }),
+    },
     "strategy.updateItem": {
         endpoint: "strategies",
         method: "PATCH",

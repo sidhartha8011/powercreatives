@@ -66,11 +66,35 @@ export function ParentSettingsModal({
     setAllowAnchorVariations(config.allowAnchorVariations !== false);
   }, [open, initialHierarchyMode, config]);
 
-  const updateMutation = trpc.strategy.update.useMutation({
-    onSuccess: () => {
-      toast.success('Parent settings updated');
+  // After the settings save, re-apply the parent link across the strategy's
+  // ALREADY-GENERATED articles — without this, editing the parent after
+  // generation only affected future items (the link is baked into content at
+  // generation time). A re-apply failure is surfaced but doesn't undo the save.
+  const reapplyMutation = trpc.strategy.reapplyParent.useMutation({
+    onSuccess: (r: any) => {
+      const updated = Number(r?.updated ?? 0);
+      const cleared = Number(r?.cleared ?? 0);
+      if (updated > 0 || cleared > 0) {
+        toast.success(
+          `Parent settings updated — ${updated} article${updated === 1 ? '' : 's'} relinked` +
+          (cleared > 0 ? `, ${cleared} cleared` : ''),
+        );
+      } else {
+        toast.success('Parent settings updated');
+      }
       onDone();
       onOpenChange(false);
+    },
+    onError: (err: any) => {
+      toast.warning(err.message ?? 'Settings saved, but existing articles could not be relinked.');
+      onDone();
+      onOpenChange(false);
+    },
+  }) as any;
+
+  const updateMutation = trpc.strategy.update.useMutation({
+    onSuccess: () => {
+      reapplyMutation.mutate({ id: strategyId });
     },
     onError: (err: any) => toast.error(err.message ?? 'Failed to update parent settings'),
   }) as any;
@@ -90,7 +114,7 @@ export function ParentSettingsModal({
     });
   };
 
-  const isSaving = !!updateMutation.isPending;
+  const isSaving = !!updateMutation.isPending || !!reapplyMutation.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
