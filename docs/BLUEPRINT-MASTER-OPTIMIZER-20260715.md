@@ -294,6 +294,28 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   = honest retry/failure, never a silent 80% loss). The editor-lane
   revise path (SectionModal reviseSection) + the section prompt's
   optimize mode are the surfaces.
+- 2026-07-15 · **META-ADS-STYLE EDIT MODAL (owner order — REMIND).** The
+  page editor becomes the one place to edit EVERYTHING about a page,
+  like opening an ad set in Meta Ads: (a) a CONCISE left sidebar (the
+  keyword-drawer presentation pattern) listing the site's pages/posts —
+  toggle between pages without leaving the modal; (b) top TABS switching
+  the content area between CONTENT EDIT (today's editor) and PAGE DATA /
+  METADATA EDIT — all fields as a simple field editor with per-field
+  optimization visible. One modal, whole page, whole site.
+- 2026-07-15 · **RESULTS-FIRST (owner order — REMIND).** Meta Ads leads
+  with results; SEO tools lose that. (a) Reorder the SEO table columns so
+  RESULTS come early — you see what you're working with. (b) Grow the
+  results loop into the growth view: per-page "is it growing?" +
+  site-level rollup + a simple graph annotated with WHEN changes were
+  made and WHAT they were (one row per change, date + summary — the
+  Google Ads change-history pattern). Full everything-history is too
+  advanced for now; the page-content versions that already exist give
+  "some versions back" for free.
+- 2026-07-15 · **PAGE VERSIONING + REPLACE-NOT-APPEND SAVE** — gap
+  c51b774, owner GO, building now: version+fingerprint both sides, save
+  replaces the page's rule set (the 63-pile bug dies), compare-before-
+  fetch (the GUI lag dies), honest outside-edit conflict. Nothing
+  removed; per-section versions stay.
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
