@@ -80,3 +80,75 @@ Volumes: US-cached entries age out via TTL; until re-fetch the drawer
 shows the old number (honest, dated by design) · zero-selection behavior
 today = unchanged until DS2 lands · no shared component modified ·
 compiler/review untouched.
+
+---
+
+# ADDENDUM — THE BACKBONE + THE SMART COUNTRY CHAIN (owner GO 2026-07-15)
+
+**Owner rulings this addendum executes:** (1) the DRAWER is the BACKBONE
+of the whole selection mechanism — keyword selection, content, parts of
+content — feeding optimize, generate, AND analyze alike; (2) ALL keywords
+(P+S+A) join every run; (3) country resolves SMART, three steps: the
+site's set location (brand) → a quick AI language check on the site's
+actual content → DEFAULT SWEDEN. Lanes: the other dev's arc LANDED, tree
+clean (verified) — the SectionModal/optimizer edits below are surgical,
+preceded by a clean-tree check each (shared-checkout law).
+
+## Facts re-verified in the LANDED code
+
+| # | Fact |
+|---|---|
+| A1 | Volume endpoint still reads keywords only — no siteId, no country (optimizer/controller.php:56-74) |
+| A2 | Volume cache still keyword-only keys (optimizer/service.php:311-351) |
+| A3 | THE RIDE still primary + bucket only — supporting NEVER joins (SectionModal.tsx:1069-1074) |
+| A4 | The drawer already holds everything the backbone needs: live content, all three keyword stores, siteId (KeywordsDrawer props) |
+| A5 | `invoke_json` exists for the quick language check (class-pcm-llm.php); GBP address exists for step 1 (gbp.php:148) |
+
+## THE SENIOR EXECUTION PLAN (four pairs, clean-code laws binding)
+
+**P1 — COUNTRY (server).**
+- `PCM_Keywords_Service::resolve_country(object $site, string $content_sample = ''): array{country, source}`
+  — chain: (1) brand GBP address matched against ISO country-name data →
+  (2) content sample present → ONE fast `invoke_json` language→country →
+  (3) hub option `pcm_kw_default_country` (seeded `'se'`, editable).
+  Result CACHED per site (option map siteId→{country, source, resolvedAt})
+  — resolved once, source-labeled, never re-guessed per request.
+- `keyword_volumes()` gains required `$country`; cache key becomes
+  `"{country}|{kw}"`; **old un-prefixed keys are DELETED on first write**
+  (they are US-market numbers — wrong data, not kept; honest deletion).
+- `ahrefs_enrich` country default REMOVED — every caller passes explicitly
+  (the only default lives in the option; no silent 'us' anywhere).
+- Volumes + keyword-search endpoints read `siteId` (+ optional
+  `contentSample`), resolve server-side.
+- Drawer sends `siteId` + a content sample in both payloads.
+- DELETED in the same pair: the hardcoded `'us'` fallbacks (C1, C2).
+
+**P2 — THE BACKBONE (drawer).**
+- Selection state (`Set<kw>`) + DataTable checkbox selection on the
+  SELECTED table + ticked-count in the drawer header.
+- ONE upward prop: `onKeywordSelection(kws: {kw, role}[])` — the backbone
+  contract every action button consumes (analyze context, optimize,
+  insert, generate — same source).
+- Clears on drawer close.
+
+**P3 — THE ACTION MATRIX (SectionModal, surgical).**
+- THE RIDE grows to ALL keywords: primary + supporting + additional —
+  the old two-store line REPLACED, not kept beside (A3 dies).
+- Ticked keywords → the split button transforms: **Insert keywords (N)**
+  → topic = hierarchy law verbatim with exactly those keywords by role →
+  `startAiReview` with ride suppressed (one keyword order per prompt).
+- Text selection interplay = the existing scope law (matrix rows 2/4
+  come free).
+- Analyze context keywords: unchanged path already reads live state —
+  the backbone selection ADDITIONALLY narrows what optimize consumes,
+  never what analyze sees (analyze always sees all — research is whole-
+  page by definition).
+
+**P4 — owner browser pass** (the backbone round: tick keywords → insert
+→ red/green; country: volumes re-fetch shows the Swedish market).
+
+Ritual per pair: clean-tree check → build → php -l → harness 88/88 +
+research suite → tsc 59/0 new → build "built in" → changelog → pathspec
+AFTER commit LOCAL ONLY. No dead code: every superseded line dies in the
+pair that replaces it; no compat shims; comments describe the NEW law
+only.
