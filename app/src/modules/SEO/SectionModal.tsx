@@ -64,6 +64,9 @@ import { KeywordsDrawer, type TickedKeyword } from './optimizer/KeywordsDrawer';
 import { useKeywordBucket } from './optimizer/useKeywordBucket';
 import { keywordUses } from './optimizer/keywordStats';
 import { GROUP_PILLS, TEACHER_PILLS, type CompiledDirective, type TeacherMeta } from './optimizer/types';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
+import { Pill } from '@/components/ui/pill';
+import { statusPillVariant } from './types';
 import { DROPDOWN_TRIGGER_STYLE } from '@/components/shared/ModelDropdown';
 
 // The hub's native WP media library (wp_enqueue_media — same pattern as the
@@ -1020,6 +1023,23 @@ export function SectionModal({
     ? Object.fromEntries(((teachersMetaQuery.data as any).teachers as TeacherMeta[]).map((t) => [t.id, t]))
     : {};
   const historyStampMutation = trpc.optimizer.historyStamp.useMutation();
+  // ── Status dropdown in the header (owner order 2026-07-15): the SAME
+  //    control + save path as the table's status cell — optimistic by law,
+  //    failure reverts AND says so. Draft honesty: the status is now
+  //    changeable exactly where the draft/preview confusion happened. ──
+  const [pageStatus, setPageStatus] = useState(page?.status ?? '');
+  useEffect(() => { setPageStatus(page?.status ?? ''); }, [page?.status]);
+  const statusMutation = trpc.seo.remoteSaveCell.useMutation();
+  const pickStatus = (v: string) => {
+    const prev = pageStatus;
+    setPageStatus(v); // the UI moves NOW
+    statusMutation.mutateAsync({ siteId: siteId as number, postId, field: 'status', value: v, type })
+      .then(() => toast.success(v === 'publish' ? 'Published — saved changes now render on the live page.' : `Status: ${v}`))
+      .catch((e: unknown) => {
+        setPageStatus(prev); // revert to the truth
+        toast.error(`Could not change the status — ${e instanceof Error ? e.message : 'the save failed'}`);
+      });
+  };
   // (the old whole-doc rebuilder's orphan buffer died with it — the orphan
   // zone is simply never touched by surgery)
 
@@ -1644,6 +1664,20 @@ export function SectionModal({
                 <span className="mt-0.5 block truncate text-[10px] leading-none text-slate-400">{String(page.date).slice(0, 10)}</span>
               )}
             </span>
+            {/* Status — the table's exact control, same save path (owner
+                order 2026-07-15). Sits right of the title by design. */}
+            {!readOnly && pageStatus !== '' && (
+              <Select value={pageStatus} onValueChange={pickStatus}>
+                <SelectTrigger className="h-auto w-auto shrink-0 border-0 bg-transparent p-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
+                  <Pill variant={statusPillVariant(pageStatus)} className="capitalize">{pageStatus}</Pill>
+                </SelectTrigger>
+                <SelectContent>
+                  {['publish', 'draft', 'pending', 'private', 'future'].map((s) => (
+                    <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {page?.editUrl && (
               <a
                 href={page.editUrl}

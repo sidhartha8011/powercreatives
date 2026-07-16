@@ -62,7 +62,7 @@ import { HeadingRows } from './HeadingsPanel';
 import { SectionModal } from './SectionModal';
 import { SEO_TABLE_GRID } from './seo-table';
 import { Pill, type PillVariant } from '@/components/ui/pill';
-import { SEO_TEXT_FIELDS, type SeoRow } from './types';
+import { SEO_TEXT_FIELDS, statusPillVariant, type SeoRow } from './types';
 
 // WordPress media library global (wp_enqueue_media() is called in class-pcm-admin.php).
 declare const wp: any;
@@ -236,12 +236,8 @@ const FIELD_ICONS: Record<string, LucideIcon> = {
   metaKeywords: Tags,
 };
 
-/** Status → Pill variant (colors live in the global Pill, never here). */
-function statusPillVariant(status: string): PillVariant {
-  return (['publish', 'pending', 'private', 'future'] as const).includes(status as any)
-    ? (status as PillVariant)
-    : 'draft';
-}
+// statusPillVariant lives in ./types — ONE source for the table cell and
+// the editor header dropdown (owner order 2026-07-15).
 
 /** Columns that can be shown/hidden + saved in a View (selection col is fixed). */
 const TOGGLE_COLUMNS: { key: string; label: string }[] = [
