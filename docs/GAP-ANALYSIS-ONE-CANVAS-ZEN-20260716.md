@@ -30,3 +30,18 @@ NOT touched: bulk bar/modals/popovers (genuinely float), table header
 ## Checklist
 Edits 1-4 · tsc 59/0 new · build "built in" · harness 88/88 · changelog ·
 pathspec AFTER commit LOCAL ONLY.
+
+---
+
+## ADDENDUM (owner screenshot 2026-07-16): the missed edge
+
+**Fact:** the app Sidebar is `bg-white` with NO right border
+(Sidebar.tsx:156) — its boundary existed only as grey-shell CONTRAST.
+On the white canvas the sidebar and the page merge into one sheet.
+
+**Fix (the rulings applied):** a region's edge = a hairline —
+`border-r border-border` on the Sidebar container. One class, all
+modules (on grey modules a hairline between white and grey is the
+standard, subtler-than-contrast edge). Also: the stale "Main content
+background: #f8f9fa" header comment in Shell.tsx dies (predates the
+whiteShellModules pattern).
