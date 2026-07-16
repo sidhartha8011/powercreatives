@@ -562,6 +562,14 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Strip the platform's transient heading anchors (origin colors, review ids)
+ *  from stored html — a saved version opens as plain content, exactly what a
+ *  dropdown version pick shows (the server strips them on save; this is the
+ *  belt for any row that predates that law). */
+function stripPcmAnchors(html: string): string {
+  return html.replace(/\s*data-pcm-(?:origin|review-id)="[^"]*"/g, '');
+}
+
 function ToolButton({ onClick, active, title, children }: {
   onClick: () => void; active?: boolean; title: string; children: React.ReactNode;
 }) {
@@ -603,6 +611,20 @@ export function SectionModal({
     { siteId: siteId as number, postId },
     { enabled: isPage && !readOnly, staleTime: 0 },
   );
+  /** Page mode's saved documents, newest first — W0 (2026-07-16): the open
+   *  loads [0]; the versions dropdown lists the same rows. */
+  const pageVersions: Array<{ id: number; replacement: string; createdAt: string }> =
+    isPage && Array.isArray((pageVersionsQuery.data as any)?.versions)
+      ? (pageVersionsQuery.data as any).versions
+      : [];
+  /** Settled = answered, either way — the one-time load must not wait forever
+   *  on a failed versions read (the assembly is then the honest fallback). */
+  const pageVersionsSettled = pageVersionsQuery.isSuccess || pageVersionsQuery.isError;
+  /** W4 drift contract (2026-07-16, optional until every side ships): the
+   *  inventory reply may carry pageState {version, fingerprint, drifted} —
+   *  the hub compared the site's echoed state against its own record.
+   *  No pageState → no drift knowledge → nothing is claimed. */
+  const pageDrifted = isPage && (pageQuery.data as any)?.pageState?.drifted === true;
 
   // ── Position: right below the click, draggable from the header. ──
   const [pos, setPos] = useState(() => ({
@@ -678,19 +700,26 @@ export function SectionModal({
    *  every path shows red/green and waits for Accept/Reject). */
   const hasSelection = !!editor && !editor.state.selection.empty && !(editor.state.selection as any).node;
 
-  // Page mode opens empty and loads the fetched document ONCE (dirty-baseline
-  // = the editor's normalized form of it, same law as onCreate). The ref
-  // guard is the 2026-07-11 incident fix: the editor must NEVER auto-replace
-  // its content afterwards — a degraded refetch once clobbered a full
-  // document in front of the owner. Version picks load content explicitly.
+  // Page mode opens empty and loads its document ONCE (dirty-baseline = the
+  // editor's normalized form of it, same law as onCreate). The ref guard is
+  // the 2026-07-11 incident fix: the editor must NEVER auto-replace its
+  // content afterwards — a degraded refetch once clobbered a full document
+  // in front of the owner. Version picks load content explicitly.
+  // W0 (2026-07-16): the SAVED version wins the open — versions[0] IS the
+  // dropdown's Current row; the site-side assembly is the fallback only when
+  // no saved versions exist (and the drift detector's reference either way).
+  // The versions read may land after the page fetch, so the one-time load
+  // waits for BOTH to settle.
   const pageLoadedRef = useRef(false);
   useEffect(() => {
-    if (!isPage || !editor || !pageReady || pageLoadedRef.current) return;
+    if (!isPage || !editor || !pageReady || !pageVersionsSettled || pageLoadedRef.current) return;
     pageLoadedRef.current = true;
-    editor.commands.setContent(pageHtml);
+    editor.commands.setContent(
+      pageVersions.length > 0 ? stripPcmAnchors(pageVersions[0].replacement) : pageHtml,
+    );
     setSavedHtml(editor.getHTML());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPage, editor, pageReady, pageHtml]);
+  }, [isPage, editor, pageReady, pageVersionsSettled, pageHtml, pageVersions]);
 
   const saveMutation = trpc.seo.remoteSaveSectionRule.useMutation();
   const savePageMutation = trpc.seo.remoteSavePageEdits.useMutation();
@@ -794,9 +823,9 @@ export function SectionModal({
     },
     { enabled: !readOnly && !isInsert && !!section, staleTime: 0 },
   );
-  const versionsData: any = isPage ? pageVersionsQuery.data : versionsQuery.data;
-  const versions: Array<{ id: number; replacement: string; createdAt: string }> =
-    Array.isArray(versionsData?.versions) ? versionsData.versions : [];
+  const versions: Array<{ id: number; replacement: string; createdAt: string }> = isPage
+    ? pageVersions
+    : Array.isArray((versionsQuery.data as any)?.versions) ? (versionsQuery.data as any).versions : [];
   /** '' = viewing the current state; 'original' | version id as string. */
   const [versionPick, setVersionPick] = useState('');
   const [versionsOpen, setVersionsOpen] = useState(false);
@@ -1871,6 +1900,28 @@ export function SectionModal({
           </>
         )}
       </div>
+
+      {/* ── W4 drift notice (2026-07-16): a state statement — the hub's saved
+             version and the site's served state disagree. Load live view swaps
+             in the assembly EXPLICITLY (a user action, never an auto-replace —
+             the 2026-07-11 law holds) and behaves like a version pick: the
+             baseline stays, so the dropdown honestly reads Draft (unsaved)
+             and saving makes the live view the saved version. ── */}
+      {isPage && !readOnly && pageReady && pageDrifted && (
+        <div className="border-b border-slate-100 bg-white px-5 py-1 text-[11px] text-slate-400">
+          The live page has drifted from the saved version.{' '}
+          <button
+            type="button"
+            onClick={() => {
+              editor?.commands.setContent(pageHtml);
+              setVersionPick('');
+            }}
+            className="text-slate-500 underline underline-offset-2 hover:text-slate-700"
+          >
+            Load live view
+          </button>
+        </div>
+      )}
 
       {/* ── Ask-AI instruction (Enter runs it) ── */}
       {askOpen && !readOnly && (

@@ -452,7 +452,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — four dumb jobs: page snapshot (the hub does ALL parsing), builder-aware storage writers (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), guarded render-time apply of hub-precomputed instructions (refuse-if-unsure), and hub-pushed config. Also: SEO meta in REST, fallback meta tags, robots.txt + JSON-LD, /llms.txt + /llm-info/, cache flush on edit, self-update, one-paste connection code.
- * Version: 3.0.5
+ * Version: 3.0.6
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1939,6 +1939,17 @@ function pcm_conn_rules_save($pid, $rules) {
     }
     update_option('pcm_conn_rules_index', $idx, false);
 }
+/** Echo the hub-declared page state {version, fingerprint} on a snapshot reply
+ *  (page-versioning contract, 3.0.6). Stored beside the rules on push; when the
+ *  hub never declared one the reply carries NO pageState key — a fabricated
+ *  value would read as agreement on the hub's compare. */
+function pcm_conn_page_state_echo($reply, $pid) {
+    $s = get_option('pcm_conn_page_state_' . (int) $pid, null);
+    if (is_array($s) && isset($s['version'], $s['fingerprint'])) {
+        $reply['pageState'] = array('version' => (int) $s['version'], 'fingerprint' => (string) $s['fingerprint']);
+    }
+    return $reply;
+}
 /** Per-post serve/miss counters (throttled writes — min gap is hub-pushed config). */
 function pcm_conn_rules_bump_stats($pid, $applied, $missed) {
     $key = 'pcm_conn_rules_stats_' . (int) $pid;
@@ -2417,6 +2428,15 @@ add_action('rest_api_init', function () {
                 else { update_option('pcm_conn_rules_site', array_values($clean), true); }
                 return array('stored' => count($clean), 'schemaVersion' => 3, 'scope' => 'site');
             }
+            // Page state (3.0.6, page-versioning contract): the hub's {version, fingerprint}
+            // for the rule set just stored — kept beside the rules, echoed on the snapshot
+            // reply. Both values are hub-computed; the connector never derives either. A push
+            // WITHOUT one clears the stored state: it described a rule set this push replaced.
+            $state = (isset($p['pageState']) && is_array($p['pageState']) && isset($p['pageState']['version'], $p['pageState']['fingerprint']))
+                ? array('version' => (int) $p['pageState']['version'], 'fingerprint' => (string) $p['pageState']['fingerprint'])
+                : null;
+            if ($state !== null) { update_option('pcm_conn_page_state_' . $pid, $state, false); } // autoload OFF — same as the rules
+            else { delete_option('pcm_conn_page_state_' . $pid); }
             pcm_conn_rules_save($pid, $clean);
             delete_transient('pcm_conn_snap_' . $pid); // rules changed → snapshot cache is stale
             pcm_conn_purge_caches($pid);
@@ -2446,8 +2466,10 @@ add_action('rest_api_init', function () {
             $cache_key = $served
                 ? 'pcm_conn_snap_served_' . (int) get_option('pcm_conn_view_ver', 0) . '_' . $pid
                 : 'pcm_conn_snap_' . $pid;
+            // pageState (3.0.6) is attached AFTER the cache on every reply — never
+            // baked into the transient, so a cached document can't echo stale state.
             $cached = get_transient($cache_key);
-            if (is_array($cached)) { return $cached; }
+            if (is_array($cached)) { return pcm_conn_page_state_echo($cached, $pid); }
             $result = null;
             // Tier 1 — rendered page via the LOCKED loopback (TRUE serving order,
             // incl. builder output).
@@ -2493,7 +2515,7 @@ add_action('rest_api_init', function () {
             // trusting a response as served.
             $result['view'] = $served ? 'served' : 'input';
             set_transient($cache_key, $result, max(1, (int) pcm_conn_cfg('snapshotCacheTtl')));
-            return $result;
+            return pcm_conn_page_state_echo($result, $pid);
         },
     ));
 });

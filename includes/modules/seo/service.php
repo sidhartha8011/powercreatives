@@ -2925,6 +2925,13 @@ class PCM_SEO_Service
             // the missing marker tells callers the served view is unavailable.
             'view'  => (string) ($res['body']['view'] ?? 'input'),
             'error' => isset($res['body']['error']) ? (string) $res['body']['error'] : '',
+            // The connector's page-state ECHO (frozen contract: the value the
+            // last accepted push carried, stored — never recomputed). NULL on
+            // pre-versioning connectors: honest ignorance, not a state.
+            'pageState' => (isset($res['body']['pageState']) && is_array($res['body']['pageState'])) ? array(
+                'version'     => (int) ($res['body']['pageState']['version'] ?? 0),
+                'fingerprint' => (string) ($res['body']['pageState']['fingerprint'] ?? ''),
+            ) : null,
         );
     }
 
@@ -3151,15 +3158,16 @@ class PCM_SEO_Service
                 // SAME parse the rows come from, never raw builder soup.
                 'contentHtml' => self::assemble_content_html($served['html'], $parsed['headings']),
                 'error'       => '',
+                'pageState'   => $served['pageState'],
             );
         }
         $in = self::remote_fetch_snapshot($site, $post_id, 'input');
         if ($in !== null && $in['html'] !== '') {
             $rules  = $user_id ? self::heading_instructions((int) $user_id, (int) $site->id, $post_id) : array();
             $parsed = self::parse_page_snapshot($in['html'], $rules);
-            return array('view' => 'input', 'tier' => $in['tier'], 'headings' => $parsed['headings'], 'nodes' => $parsed['nodes'], 'error' => '');
+            return array('view' => 'input', 'tier' => $in['tier'], 'headings' => $parsed['headings'], 'nodes' => $parsed['nodes'], 'error' => '', 'pageState' => $in['pageState']);
         }
-        return array('view' => 'served', 'tier' => (string) $served['tier'], 'headings' => array(), 'nodes' => array(), 'error' => (string) ($served['error'] !== '' ? $served['error'] : 'loopback_blocked'));
+        return array('view' => 'served', 'tier' => (string) $served['tier'], 'headings' => array(), 'nodes' => array(), 'error' => (string) ($served['error'] !== '' ? $served['error'] : 'loopback_blocked'), 'pageState' => $served['pageState']);
     }
 
     /**
@@ -3504,6 +3512,9 @@ class PCM_SEO_Service
                 // The editor header's context controls (owner order 2026-07-13).
                 'pageType'  => $user_id ? self::get_page_type($user_id, (int) $site->id, $post_id) : '',
                 'brandId'   => (int) ($site->brandId ?? 0),
+                // Page versioning (frozen contract, 2026-07-16): hub record +
+                // drift verdict from the connector's echo in this snapshot.
+                'pageState' => self::page_state_reply((int) $site->id, $post_id, $inv['pageState']),
             );
             if (isset($inv['contentHtml'])) {
                 $out['contentHtml'] = (string) $inv['contentHtml'];
@@ -3521,6 +3532,9 @@ class PCM_SEO_Service
             'view'      => 'input',
             'headings'  => $headings,
             'nodes'     => (array) $meta['nodes'],
+            // Pre-3.0 fleet: no snapshot, no echo — the record with an honest
+            // no-echo verdict (drifted:false).
+            'pageState' => self::page_state_reply((int) $site->id, $post_id, null),
         );
         if (!empty($meta['error'])) {
             $out['error'] = (string) $meta['error'];
@@ -3764,9 +3778,13 @@ class PCM_SEO_Service
      * caches). Capability-checked first so an old connector fails honestly.
      *
      * @param array[] $rules Rule rows shaped per rule schema v1.
+     * @param array{version:int,fingerprint:string} $page_state The state this
+     *        push establishes (frozen contract keys) — the connector stores it
+     *        beside the set and echoes it in the snapshot reply; pre-versioning
+     *        connectors ignore the key.
      * @return array{stored:int}|\WP_Error
      */
-    public static function push_rules(object $site, int $post_id, array $rules)
+    public static function push_rules(object $site, int $post_id, array $rules, array $page_state)
     {
         self::ensure_sites_service();
         // v2 ONLY when the set contains section targets — posts with plain
@@ -3835,6 +3853,10 @@ class PCM_SEO_Service
             'schemaVersion' => $needs_v5 ? 5 : ($needs_v4 ? 4 : ($needs_v3 ? 3 : ($needs_v2 ? 2 : 1))),
             'postId'        => $post_id,
             'rules'         => array_values($rules),
+            'pageState'     => array(
+                'version'     => (int) ($page_state['version'] ?? 0),
+                'fingerprint' => (string) ($page_state['fingerprint'] ?? ''),
+            ),
         ), 60);
         if (is_wp_error($res)) {
             return new WP_Error('pcm_seo_rules_push', $res->get_error_message(), array('status' => 502));
@@ -3936,6 +3958,127 @@ class PCM_SEO_Service
         }, $rows);
     }
 
+    // =====================================================================
+    // PAGE STATE (page versioning, frozen contracts 2026-07-16) — ONE
+    // version+fingerprint per "siteId:postId": the hub records it beside
+    // every accepted push, the connector stores the VALUE and echoes it
+    // (never recomputes), the inventory reply compares echo vs record.
+    // =====================================================================
+
+    /**
+     * Content fingerprint of a NET rule set (schema shape, rules_to_schema
+     * output) — sha1 of its normalized JSON. THE one fingerprint function
+     * (frozen contract): the connector receives the value and echoes it,
+     * nothing anywhere recomputes it from served HTML.
+     *
+     * Normalization = CONTENT identity, not storage identity: row ids are
+     * dropped (rollback/replace re-creates rows without changing what
+     * serves), map keys sort recursively, and the rule LIST sorts by its
+     * encoded form (row order is a storage accident). Lists inside a rule
+     * (paragraphs, units) keep their order — order there IS content.
+     */
+    public static function page_fingerprint(array $rules): string
+    {
+        $normalize = static function ($value) use (&$normalize) {
+            if (!is_array($value)) {
+                return $value;
+            }
+            $out = array();
+            foreach ($value as $k => $v) {
+                $out[$k] = $normalize($v);
+            }
+            if ($out !== array_values($out)) {
+                ksort($out);
+            }
+            return $out;
+        };
+        $encoded = array();
+        foreach ($rules as $rule) {
+            $rule = (array) $rule;
+            unset($rule['id']);
+            $encoded[] = (string) wp_json_encode($normalize($rule));
+        }
+        sort($encoded, SORT_STRING);
+        return sha1('[' . implode(',', $encoded) . ']');
+    }
+
+    /**
+     * The recorded page state for one "siteId:postId" (option 'pcm_page_state',
+     * the proven option-map pattern — no schema change). version 0 +
+     * fingerprint '' = never saved under versioning: the documented baseline,
+     * which the inventory reply reports as drifted:false (nothing recorded =
+     * nothing to drift from).
+     *
+     * @return array{version:int,fingerprint:string,savedAt:int}
+     */
+    public static function page_state(int $site_id, int $post_id): array
+    {
+        $map = get_option('pcm_page_state', array());
+        $rec = is_array($map) ? ($map[$site_id . ':' . $post_id] ?? null) : null;
+        return array(
+            'version'     => is_array($rec) ? (int) ($rec['version'] ?? 0) : 0,
+            'fingerprint' => is_array($rec) ? (string) ($rec['fingerprint'] ?? '') : '',
+            'savedAt'     => is_array($rec) ? (int) ($rec['savedAt'] ?? 0) : 0,
+        );
+    }
+
+    /**
+     * The inventory reply's pageState block (frozen contract keys): the HUB
+     * RECORD is the reported state; drifted = the connector's ECHO disagreeing
+     * with it. An absent echo (pre-versioning connector, or a reply without
+     * the field) is honest ignorance — reported drifted:false, never a guess
+     * presented as truth.
+     *
+     * @param array{version:int,fingerprint:string}|null $echo Connector echo.
+     * @return array{version:int,fingerprint:string,drifted:bool}
+     */
+    private static function page_state_reply(int $site_id, int $post_id, ?array $echo): array
+    {
+        $record = self::page_state($site_id, $post_id);
+        return array(
+            'version'     => $record['version'],
+            'fingerprint' => $record['fingerprint'],
+            'drifted'     => is_array($echo) && (
+                (int) ($echo['version'] ?? 0) !== $record['version']
+                || (string) ($echo['fingerprint'] ?? '') !== $record['fingerprint']
+            ),
+        );
+    }
+
+    /** Record an ACCEPTED push's page state — called only after the connector stored the same pair. */
+    private static function write_page_state(int $site_id, int $post_id, int $version, string $fingerprint): void
+    {
+        $map = get_option('pcm_page_state', array());
+        $map = is_array($map) ? $map : array();
+        $map[$site_id . ':' . $post_id] = array('version' => $version, 'fingerprint' => $fingerprint, 'savedAt' => time());
+        update_option('pcm_page_state', $map, false);
+    }
+
+    /**
+     * W2 (replace-not-append): ids of page rule rows SUPERSEDED by the served
+     * truth — section/sectionInsert rows the served view attributes to no
+     * section serve nothing and can only stack (the observed 63-rule pile).
+     * sectionRemove rows are part of the NET set BY LAW (they stay while the
+     * doc omits their baseline section); every other target keeps its own
+     * lifecycle law (absorb/clean-revert) and is never swept here.
+     *
+     * @param array[] $rows          The page's rule rows (post_rule_rows shape).
+     * @param int[]   $live_rule_ids Rule ids the served inventory attributed.
+     * @return int[] Row ids that must die with the save.
+     */
+    public static function superseded_rule_ids(array $rows, array $live_rule_ids): array
+    {
+        $live = array_map('intval', $live_rule_ids);
+        $dead = array();
+        foreach ($rows as $r) {
+            $target = (string) ($r['target'] ?? '');
+            if (($target === 'section' || $target === 'sectionInsert') && !in_array((int) ($r['id'] ?? 0), $live, true)) {
+                $dead[] = (int) $r['id'];
+            }
+        }
+        return $dead;
+    }
+
     // NOTE (consolidation, 2026-07-11): save_paragraph_rule was DELETED with
     // its endpoints — paragraph-rule CREATION had zero UI callers (the page +
     // section editors superseded it). Existing paragraph rules keep serving
@@ -3993,12 +4136,23 @@ class PCM_SEO_Service
     /** Push a post's CURRENT hub rule set; on failure restore $snapshot and return the error. */
     private static function push_current_rules_or_rollback(int $user_id, object $site, int $post_id, array $snapshot)
     {
-        $rows = self::post_rule_rows($user_id, (int) $site->id, $post_id);
-        $push = self::push_rules($site, $post_id, self::rules_to_schema($rows));
+        $rows   = self::post_rule_rows($user_id, (int) $site->id, $post_id);
+        $schema = self::rules_to_schema($rows);
+        // Page state rides EVERY push (frozen contract): the payload carries
+        // the NEXT record, the hub records it only after the connector
+        // accepted — hub record and connector echo can never disagree about
+        // an accepted push. A rejected push rolls the rows back and leaves
+        // the record untouched (the connector kept the previous set).
+        $next = array(
+            'version'     => self::page_state((int) $site->id, $post_id)['version'] + 1,
+            'fingerprint' => self::page_fingerprint($schema),
+        );
+        $push = self::push_rules($site, $post_id, $schema, $next);
         if ($push instanceof WP_Error) {
             self::restore_rule_rows($user_id, (int) $site->id, $post_id, $snapshot);
             return $push;
         }
+        self::write_page_state((int) $site->id, $post_id, $next['version'], $next['fingerprint']);
         return $push;
     }
 
@@ -4687,7 +4841,8 @@ class PCM_SEO_Service
      * Each routed save pushes and rolls itself back (existing atomicity law);
      * a mid-sequence failure stops honestly, reporting what already saved.
      *
-     * @return array{saved:int,inserted:int,skipped:int,notes:array<int,string>}|\WP_Error
+     * @return array{saved:int,inserted:int,skipped:int,removed:int,restored:int,
+     *               hidden:int,unhidden:int,flattened:int,notes:array<int,string>}|\WP_Error
      */
     public function save_page_edits(int $user_id, object $site, int $post_id, string $html)
     {
@@ -5064,6 +5219,46 @@ class PCM_SEO_Service
             }
         }
 
+        // ── W2 REPLACE-NOT-APPEND (page versioning, 2026-07-16): the save must
+        //    leave the page's rows as the NET set. section/sectionInsert rows
+        //    the served view attributes to NOTHING are superseded identities —
+        //    they serve nothing and can only stack (the live-probed 63-rule
+        //    pile). They die BEFORE routing so an identity upsert below can
+        //    never resurrect a dead row; the routed saves and their version
+        //    rows then run exactly as before. sectionRemove rows stay (net by
+        //    law while the doc omits their baseline section; restores above
+        //    already deleted theirs). Same atomicity law as every rule write:
+        //    the deletion pushes or rolls back. ──
+        $live_ids = array();
+        foreach ($inv['headings'] as $h) {
+            if (isset($h['rule']['id']) && in_array((string) ($h['rule']['target'] ?? ''), array('section', 'sectionInsert'), true)) {
+                $live_ids[] = (int) $h['rule']['id'];
+            }
+        }
+        $page_rows = self::post_rule_rows($user_id, (int) $site->id, $post_id);
+        $dead_ids  = self::superseded_rule_ids($page_rows, $live_ids);
+        $flattened = 0;
+        if (!empty($dead_ids)) {
+            foreach ($dead_ids as $dead_id) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->delete($rules_table, array('id' => $dead_id, 'userId' => $user_id, 'siteId' => (int) $site->id), array('%d', '%d', '%d'));
+            }
+            $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $page_rows);
+            if ($push instanceof WP_Error) {
+                return new WP_Error(
+                    $push->get_error_code(),
+                    sprintf(
+                        /* translators: 1: superseded rule count, 2: reason */
+                        __('Clearing %1$d superseded rule(s) failed: %2$s Nothing was saved — retry.', 'power-creatives'),
+                        count($dead_ids),
+                        rtrim($push->get_error_message()) . (str_ends_with(rtrim($push->get_error_message()), '.') ? '' : '.')
+                    ),
+                    $push->get_error_data()
+                );
+            }
+            $flattened = count($dead_ids);
+        }
+
         // ── Route every pair through the existing save paths, document order. ──
         $saved    = 0;
         $inserted = 0;
@@ -5316,14 +5511,18 @@ class PCM_SEO_Service
             self::record_version($user_id, (int) $site->id, $post_id, 'page', '', 0, $html);
         }
         return array(
-            'saved'    => $saved,
-            'inserted' => $inserted,
-            'skipped'  => $skipped,
-            'removed'  => $removed_count,
-            'restored' => $restored,
-            'hidden'   => $hidden_count,
-            'unhidden' => $unhidden,
-            'notes'    => array_values(array_unique($notes)),
+            'saved'     => $saved,
+            'inserted'  => $inserted,
+            'skipped'   => $skipped,
+            'removed'   => $removed_count,
+            'restored'  => $restored,
+            'hidden'    => $hidden_count,
+            'unhidden'  => $unhidden,
+            // Superseded rows the net-set law deleted (W2) — reported, never
+            // silent; they change no served output, so they don't count as a
+            // page-version change above.
+            'flattened' => $flattened,
+            'notes'     => array_values(array_unique($notes)),
         );
     }
 
