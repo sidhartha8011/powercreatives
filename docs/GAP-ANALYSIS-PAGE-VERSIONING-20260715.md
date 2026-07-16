@@ -78,3 +78,24 @@ replace-not-append · [ ] W3 connector fields + bump · [ ] W4 compare +
 conflict prompt · [ ] W5 verified on Privacy Policy (63 → net set) ·
 [ ] php -l · [ ] harness 88/88 + research 34/34 (+ new net-set tests) ·
 [ ] tsc 59/0 · [ ] build · [ ] changelog · [ ] AFTER commit LOCAL ONLY
+
+---
+# ADDENDUM — ROOT CAUSE PROVEN (2026-07-15, live probe)
+
+- **Fact 1 REVISED:** `http://powerleads.local/?page_id=3` → **404** (curl
+  probe). The Privacy Policy is a DRAFT — no public render exists. The
+  owner's "old version" view is WordPress's authenticated draft PREVIEW,
+  which renders the draft's raw content; the connector's rule engine
+  serves on front-end renders (template_redirect ob_start,
+  seohub/service.php:2170-2183 — admin/feed/REST excluded, preview NOT
+  explicitly handled/verified). Saves + pushes PROVEN good (clean log,
+  rules stored to 09:13).
+- **The 63-rule pile is real but NOT the render bug** — it remains the
+  LAG driver (fact 2 stands) and a correctness risk, not the cause of
+  the stale preview.
+- **Fix split:** (A) DRAFT/PREVIEW SERVING — verify + support rules on
+  authenticated previews in the connector (bump) AND the editor states
+  the page's status honestly ("draft — publishes changes when the page
+  is published"); needs the owner's 2-minute confirm on a PUBLISHED page
+  that saves render there. (B) The versioning/lag build (W1-W4)
+  proceeds unchanged — its facts are intact.
