@@ -99,3 +99,42 @@ conflict prompt · [ ] W5 verified on Privacy Policy (63 → net set) ·
   is published"); needs the owner's 2-minute confirm on a PUBLISHED page
   that saves render there. (B) The versioning/lag build (W1-W4)
   proceeds unchanged — its facts are intact.
+
+---
+# ADDENDUM 2 — ARCHITECT PLAN + SUB-AGENT LANES (owner order 2026-07-16)
+
+New fact (third symptom, live-traced): editor OPEN loads the site-side
+ASSEMBLY (snapshot+rules, SectionModal:687) while dropdown "Current" loads
+versions[0].replacement (:804) — identity drift makes them disagree.
+NEW W0: **the saved version wins the editor open**; the assembly is used
+only for drift DETECTION (fingerprint compare → honest notice).
+
+## FROZEN CONTRACTS BETWEEN LANES
+- Fingerprint = sha1 of normalized net rule set JSON (one function,
+  hub-side PCM_SEO_Service::page_fingerprint; connector receives the
+  VALUE, never recomputes).
+- Push payload gains {pageState: {version:int, fingerprint:string}} per
+  post; connector stores it and ECHOES it (same keys) in the scan/served
+  reply envelope.
+- Hub state record: option 'pcm_page_state', key "siteId:postId" →
+  {version, fingerprint, savedAt}.
+- Inventory/open reply to frontend gains {pageState: {version,
+  fingerprint, drifted: bool}} (hub compares echo vs record).
+
+## LANES (zero file overlap)
+- **LANE A — hub backend**: includes/modules/seo/{service,controller}.php
+  + tests/standalone/page_versioning_test.php (NEW). W1 state record ·
+  W2 save replaces the page rule set wholesale (net set; per-section
+  version rows unchanged; rollback law kept) · fingerprint fn · inventory
+  reply gains pageState+drifted. NEVER touches seohub or frontend.
+- **LANE B — connector**: includes/modules/seohub/service.php ONLY.
+  W3: store {version,fingerprint} beside rules on push; echo in the
+  scan/served/snapshot reply; connector patch version bump; parity
+  harness (tests/standalone/run.php) must stay green.
+- **LANE C — frontend**: app/src/modules/SEO/SectionModal.tsx + hooks +
+  trpc-routes.ts. W0 open-from-saved-version (versions[0].replacement
+  when present; assembly only as fallback when NO versions exist) ·
+  W4 drift notice (one quiet line + reload action, no dialogs) ·
+  keep the 2026-07-11 never-clobber law.
+- Orchestrator (me): verify all (php -l · run.php 88/88 · research 34/34
+  · new tests · tsc 59/0 · build) · changelog · commits.
