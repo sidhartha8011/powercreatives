@@ -11,7 +11,7 @@
 
 import { useState, useCallback, useMemo, useEffect, type ChangeEvent } from 'react';
 import {
-  Globe, Plus, Trash2, RefreshCw, ExternalLink, Loader2, ShieldCheck,
+  Globe, Plus, Trash2, RefreshCw, ExternalLink, Loader2, ShieldCheck, MoreHorizontal,
   KeyRound, Puzzle, Download, Search, X, ChevronDown, CalendarClock,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -28,7 +28,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel,
+  DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
@@ -376,22 +376,38 @@ export function SitesModule() {
       cell: (site) => (site.createdAt ? new Date(site.createdAt).toLocaleDateString() : '—'),
     },
     {
-      key: 'actions', header: 'Actions', width: '10%', className: 'text-center',
+      key: 'actions', header: 'Actions', width: '6%', className: 'text-center',
+      // ONE kebab per site (owner order 2026-07-16, gap 618dd16): all actions
+      // in the SHARED dropdown — same handlers, same disabled states; the
+      // in-flight test spinner rides the TRIGGER so it stays visible with
+      // the menu closed.
       cell: (site) => (
-        <div className="flex items-center justify-center gap-1">
-          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>
-            {testingId === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Test
-          </Button>
-          {/* Open the "Verify in GSC" dialog: confirm the indexed domain, reuse existing property. */}
-          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" title="Register + verify this site in Google Search Console" disabled={gscPreviewMutation.isPending && gscSite?.id === site.id} onClick={() => openGsc(site)}>
-            {gscPreviewMutation.isPending && gscSite?.id === site.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} GSC
-          </Button>
-          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" title="Recurring auto-content schedule: suggest topics and create a strategy for this site on a cadence" onClick={() => setScheduleSite(site)}>
-            <CalendarClock className="w-3.5 h-3.5" /> Auto
-          </Button>
-          <Button variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate({ id: site.id })}>
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+        <div className="flex items-center justify-center">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" aria-label="Site actions">
+                {testingId === site.id || (gscPreviewMutation.isPending && gscSite?.id === site.id)
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <MoreHorizontal className="w-3.5 h-3.5" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem disabled={testingId === site.id} onClick={() => { setTestingId(site.id); testMutation.mutate({ id: site.id }); }}>
+                <RefreshCw className="mr-2 w-3.5 h-3.5" /> Test connection
+              </DropdownMenuItem>
+              {/* Open the "Verify in GSC" dialog: confirm the indexed domain, reuse existing property. */}
+              <DropdownMenuItem disabled={gscPreviewMutation.isPending && gscSite?.id === site.id} onClick={() => openGsc(site)} title="Register + verify this site in Google Search Console">
+                <ShieldCheck className="mr-2 w-3.5 h-3.5" /> Verify in GSC
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setScheduleSite(site)} title="Recurring auto-content schedule: suggest topics and create a strategy for this site on a cadence">
+                <CalendarClock className="mr-2 w-3.5 h-3.5" /> Auto-content schedule
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => deleteMutation.mutate({ id: site.id })}>
+                <Trash2 className="mr-2 w-3.5 h-3.5" /> Delete site
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ),
     },
