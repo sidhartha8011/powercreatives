@@ -4023,6 +4023,51 @@ class PCM_SEO_Service
     }
 
     /**
+     * THE FEATHERWEIGHT CHECK (gap e48b1ff): local record vs the connector's
+     * /page-state answer — no page render anywhere. remote=null + error set
+     * when the site could not answer (an unanswered question is reported as
+     * unanswered, never as a verdict). brandId/pageType ride along so the
+     * editor's instant-open path needs NO inventory fetch for them.
+     *
+     * @return array{local:array,remote:?array,drifted:?bool,error:?string,brandId:int,pageType:string}
+     */
+    public static function page_state_compare(object $site, int $post_id, ?int $user_id = null): array
+    {
+        self::ensure_sites_service();
+        $local = self::page_state((int) $site->id, $post_id);
+        $out   = array(
+            'local'    => $local,
+            'remote'   => null,
+            'drifted'  => null,
+            'error'    => null,
+            'brandId'  => (int) ($site->brandId ?? 0),
+            'pageType' => ($user_id && $post_id) ? self::get_page_type($user_id, (int) $site->id, $post_id) : '',
+        );
+        // Timeout is hub DATA (read-through seed — the tunables law).
+        $cfg = get_option('pcm_seo_state_check');
+        if (!is_array($cfg) || !isset($cfg['timeoutS'])) {
+            $cfg = array('timeoutS' => 5);
+            add_option('pcm_seo_state_check', $cfg, '', false);
+        }
+        $rep = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/page-state', array('post_id' => $post_id), array(), max(1, (int) $cfg['timeoutS']));
+        if (is_wp_error($rep) || !is_array($rep['body'] ?? null)) {
+            $out['error'] = is_wp_error($rep) ? $rep->get_error_message() : __('The site did not answer the state check.', 'power-creatives');
+            return $out;
+        }
+        $remote = array(
+            'version'     => (int) ($rep['body']['version'] ?? 0),
+            'fingerprint' => (string) ($rep['body']['fingerprint'] ?? ''),
+        );
+        $out['remote'] = $remote;
+        // Nothing recorded on either side = nothing to drift from (the
+        // documented pre-versioning baseline).
+        $out['drifted'] = ($local['version'] !== 0 || $remote['version'] !== 0)
+            ? ($local['fingerprint'] !== $remote['fingerprint'])
+            : false;
+        return $out;
+    }
+
+    /**
      * The inventory reply's pageState block (frozen contract keys): the HUB
      * RECORD is the reported state; drifted = the connector's ECHO disagreeing
      * with it. An absent echo (pre-versioning connector, or a reply without

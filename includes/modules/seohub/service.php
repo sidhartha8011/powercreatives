@@ -452,7 +452,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — four dumb jobs: page snapshot (the hub does ALL parsing), builder-aware storage writers (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), guarded render-time apply of hub-precomputed instructions (refuse-if-unsure), and hub-pushed config. Also: SEO meta in REST, fallback meta tags, robots.txt + JSON-LD, /llms.txt + /llm-info/, cache flush on edit, self-update, one-paste connection code.
- * Version: 3.0.6
+ * Version: 3.0.7
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1325,6 +1325,20 @@ add_action('rest_api_init', function () {
             if (is_array($p) && array_key_exists('gscToken', $p)) { update_option('pcm_conn_gsc_token', sanitize_text_field((string) $p['gscToken'])); }
             return call_user_func($read);
         }),
+    ));
+    // Featherweight page-state (3.0.7, gap e48b1ff): version+fingerprint ONLY —
+    // no page render, no rule application. version 0 / '' = never pushed under
+    // versioning (the true baseline, never an invention).
+    register_rest_route('pcm-conn/v1', '/page-state', array(
+        'methods' => 'GET', 'permission_callback' => $perm,
+        'callback' => function ($req) {
+            $pid = absint($req->get_param('post_id'));
+            $s   = get_option('pcm_conn_page_state_' . $pid, null);
+            return new WP_REST_Response(array(
+                'version'     => (is_array($s) && isset($s['version'])) ? (int) $s['version'] : 0,
+                'fingerprint' => (is_array($s) && isset($s['fingerprint'])) ? (string) $s['fingerprint'] : '',
+            ), 200);
+        },
     ));
     // Instant self-update: the hub POSTs here to force an update NOW (bypassing WP's twice-daily
     // poll). Same admin/app-password auth as every other route — the hub already holds that key,

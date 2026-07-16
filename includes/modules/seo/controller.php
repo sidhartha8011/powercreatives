@@ -94,6 +94,8 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/sites/(?P<id>\d+)/url-usage', 'remote_url_usage', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-type', 'remote_save_page_type', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
+            // THE FEATHERWEIGHT CHECK (gap e48b1ff): version+fingerprint compare, no render.
+            array('GET', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-state', 'remote_page_state', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-versions', 'remote_page_versions', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions/(?P<vid>\d+)/delete', 'remote_delete_section_version', array(), 'manage_options'),
@@ -679,6 +681,23 @@ class PCM_REST_SEO extends PCM_REST_Base
 
     /** POST /seo/sites/{id}/content/{post}/section-optimize — AI-rewrite a whole
      *  section / draft a new one (block HTML, NOT saved — staged). */
+    /**
+     * GET /seo/sites/{id}/content/{post}/page-state — the featherweight
+     * sync check the editor's glyph runs in the background (gap e48b1ff).
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function remote_page_state(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(PCM_SEO_Service::page_state_compare($site, absint($request->get_param('post')), (int) $user->id));
+    }
+
     public function remote_optimize_section(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $user = $this->get_current_pcm_user();

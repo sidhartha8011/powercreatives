@@ -50,6 +50,7 @@ import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
   Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus, ScanSearch, KeyRound,
+  RefreshCw, CloudOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -593,18 +594,6 @@ export function SectionModal({
   const isPage = mode === 'page';
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // ── Page mode: self-fetch the hub-assembled served content document. ──
-  const pageQuery = trpc.seo.remoteGetInventory.useQuery(
-    { siteId: siteId as number, postId, type },
-    { enabled: isPage && !readOnly, staleTime: 0, refetchOnMount: 'always' },
-  );
-  const pageHtml = isPage ? String((pageQuery.data as any)?.contentHtml ?? '') : '';
-  const pageReady = isPage && (pageQuery.data as any)?.view === 'served' && pageHtml !== '';
-  const pageError = isPage && !pageQuery.isLoading && !pageReady
-    ? ((pageQuery.data as any)?.error === 'loopback_blocked'
-      ? 'Page editing unavailable — the site blocked the connector’s content fetch.'
-      : 'Page editing needs the served page view (connector 3.0.1+ on this site) — update it from the Sites module, then re-open.')
-    : null;
   // Page versions: saved page documents + the true no-rules Original
   // (rules-input snapshot, hub-assembled) — one read.
   const pageVersionsQuery = trpc.seo.remotePageVersions.useQuery(
@@ -620,11 +609,37 @@ export function SectionModal({
   /** Settled = answered, either way — the one-time load must not wait forever
    *  on a failed versions read (the assembly is then the honest fallback). */
   const pageVersionsSettled = pageVersionsQuery.isSuccess || pageVersionsQuery.isError;
-  /** W4 drift contract (2026-07-16, optional until every side ships): the
-   *  inventory reply may carry pageState {version, fingerprint, drifted} —
-   *  the hub compared the site's echoed state against its own record.
-   *  No pageState → no drift knowledge → nothing is claimed. */
-  const pageDrifted = isPage && (pageQuery.data as any)?.pageState?.drifted === true;
+
+  // ── INSTANT OPEN (gap e48b1ff): the heavy served-page assembly is LAZY —
+  //    fetched only when there is no saved version to open from, or when the
+  //    user explicitly asks for the live view. The open never waits for the
+  //    client site to render a page it doesn't need. ──
+  const [liveViewWanted, setLiveViewWanted] = useState(false);
+  const inventoryNeeded = isPage && !readOnly
+    && (liveViewWanted || (pageVersionsSettled && pageVersions.length === 0));
+  const pageQuery = trpc.seo.remoteGetInventory.useQuery(
+    { siteId: siteId as number, postId, type },
+    { enabled: inventoryNeeded, staleTime: 0, refetchOnMount: 'always' },
+  );
+  const pageHtml = isPage ? String((pageQuery.data as any)?.contentHtml ?? '') : '';
+  const pageReady = isPage && (pageQuery.data as any)?.view === 'served' && pageHtml !== '';
+  const pageError = isPage && inventoryNeeded && !pageQuery.isLoading && !pageQuery.isPending && !pageReady
+    ? ((pageQuery.data as any)?.error === 'loopback_blocked'
+      ? 'Page editing unavailable — the site blocked the connector’s content fetch.'
+      : 'Page editing needs the served page view (connector 3.0.1+ on this site) — update it from the Sites module, then re-open.')
+    : null;
+
+  // ── THE FEATHERWEIGHT CHECK (gap e48b1ff): one tiny background question —
+  //    "what version + fingerprint are you serving?" — powering the header
+  //    glyph. Never blocks anything; an unanswered check is shown as
+  //    unanswered, never as a verdict. ──
+  const stateQuery = trpc.seo.pageState.useQuery(
+    { siteId: siteId as number, postId },
+    { enabled: isPage && !readOnly, staleTime: 0, refetchOnMount: 'always' },
+  );
+  const pageState: any = isPage ? stateQuery.data : null;
+  const pageDrifted = pageState?.drifted === true;
+  const stateUnreachable = !!pageState && pageState.remote === null;
 
   // ── Position: right below the click, draggable from the header. ──
   const [pos, setPos] = useState(() => ({
@@ -706,20 +721,35 @@ export function SectionModal({
   // content afterwards — a degraded refetch once clobbered a full document
   // in front of the owner. Version picks load content explicitly.
   // W0 (2026-07-16): the SAVED version wins the open — versions[0] IS the
-  // dropdown's Current row; the site-side assembly is the fallback only when
-  // no saved versions exist (and the drift detector's reference either way).
-  // The versions read may land after the page fetch, so the one-time load
-  // waits for BOTH to settle.
+  // dropdown's Current row. INSTANT OPEN (gap e48b1ff): with versions the
+  // open waits for NOTHING else — the site-side assembly is fetched and
+  // waited for ONLY on the no-versions fallback path.
   const pageLoadedRef = useRef(false);
   useEffect(() => {
-    if (!isPage || !editor || !pageReady || !pageVersionsSettled || pageLoadedRef.current) return;
-    pageLoadedRef.current = true;
-    editor.commands.setContent(
-      pageVersions.length > 0 ? stripPcmAnchors(pageVersions[0].replacement) : pageHtml,
-    );
+    if (!isPage || !editor || !pageVersionsSettled || pageLoadedRef.current) return;
+    if (pageVersions.length > 0) {
+      pageLoadedRef.current = true;
+      editor.commands.setContent(stripPcmAnchors(pageVersions[0].replacement));
+    } else {
+      if (!pageReady) return; // fallback path — the assembly is still loading
+      pageLoadedRef.current = true;
+      editor.commands.setContent(pageHtml);
+    }
     setSavedHtml(editor.getHTML());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPage, editor, pageReady, pageVersionsSettled, pageHtml, pageVersions]);
+
+  // The deliberate "load live view" (drift glyph action): enable the heavy
+  // fetch, then swap the doc in ONCE when it arrives — version-pick
+  // semantics (the dropdown honestly flips to Draft, Save adopts it).
+  const liveViewArmedRef = useRef(false);
+  useEffect(() => {
+    if (!liveViewWanted || !editor || !pageReady || liveViewArmedRef.current) return;
+    liveViewArmedRef.current = true;
+    editor.commands.setContent(pageHtml);
+    setVersionPick('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveViewWanted, editor, pageReady, pageHtml]);
 
   const saveMutation = trpc.seo.remoteSaveSectionRule.useMutation();
   const savePageMutation = trpc.seo.remoteSavePageEdits.useMutation();
@@ -763,11 +793,16 @@ export function SectionModal({
     : [];
   const [brandId, setBrandId] = useState(0);
   const [pageType, setPageType] = useState('general');
+  // brandId/pageType arrive on the FEATHERWEIGHT check (instant-open path,
+  // gap e48b1ff); the heavy inventory reply keeps carrying them for the
+  // fallback path — whichever answers first fills the header context.
   useEffect(() => {
-    if (!isPage || !pageQuery.data) return;
-    setBrandId(Number((pageQuery.data as any).brandId ?? 0));
-    setPageType(String((pageQuery.data as any).pageType ?? '') || 'general');
-  }, [isPage, pageQuery.data]);
+    const src: any = (isPage && stateQuery.data) || (isPage && pageQuery.data) || null;
+    if (!src) return;
+    setBrandId(Number(src.brandId ?? 0));
+    setPageType(String(src.pageType ?? '') || 'general');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPage, stateQuery.data, pageQuery.data]);
   const [insertOpen, setInsertOpen] = useState(false);
   /** THE OPTIMIZER's rail (Analyze) — opening runs every teacher; closing
    *  discards the run (Analyze always means a FRESH analysis). */
@@ -1778,6 +1813,33 @@ export function SectionModal({
                 </SelectContent>
               </Select>
             )}
+            {/* THE SYNC GLYPH (gap e48b1ff — the Ive/Woz ruling): one 12px
+                icon, four TRUE states. In-sync renders NOTHING — silence is
+                the success state. Never blocks; never claims what the check
+                didn't answer. */}
+            {!readOnly && stateQuery.isFetching && (
+              <RefreshCw className="h-3 w-3 shrink-0 animate-spin text-slate-300" />
+            )}
+            {!readOnly && !stateQuery.isFetching && pageDrifted && (
+              <button
+                type="button"
+                onClick={() => setLiveViewWanted(true)}
+                title="The live page differs from your saved version — click to load the live view"
+                className="shrink-0 rounded p-0.5 text-amber-500 hover:bg-amber-50"
+              >
+                <RefreshCw className="h-3 w-3" />
+              </button>
+            )}
+            {!readOnly && !stateQuery.isFetching && !pageDrifted && stateUnreachable && (
+              <button
+                type="button"
+                onClick={() => { void stateQuery.refetch(); }}
+                title={`Couldn't reach the site to verify — click to retry${pageState?.error ? ` (${pageState.error})` : ''}`}
+                className="shrink-0 rounded p-0.5 text-red-300 hover:bg-red-50"
+              >
+                <CloudOff className="h-3 w-3" />
+              </button>
+            )}
             {page?.editUrl && (
               <a
                 href={page.editUrl}
@@ -1971,28 +2033,6 @@ export function SectionModal({
           </>
         )}
       </div>
-
-      {/* ── W4 drift notice (2026-07-16): a state statement — the hub's saved
-             version and the site's served state disagree. Load live view swaps
-             in the assembly EXPLICITLY (a user action, never an auto-replace —
-             the 2026-07-11 law holds) and behaves like a version pick: the
-             baseline stays, so the dropdown honestly reads Draft (unsaved)
-             and saving makes the live view the saved version. ── */}
-      {isPage && !readOnly && pageReady && pageDrifted && (
-        <div className="border-b border-slate-100 bg-white px-5 py-1 text-[11px] text-slate-400">
-          The live page has drifted from the saved version.{' '}
-          <button
-            type="button"
-            onClick={() => {
-              editor?.commands.setContent(pageHtml);
-              setVersionPick('');
-            }}
-            className="text-slate-500 underline underline-offset-2 hover:text-slate-700"
-          >
-            Load live view
-          </button>
-        </div>
-      )}
 
       {/* ── Ask-AI instruction (Enter runs it) ── */}
       {askOpen && !readOnly && (

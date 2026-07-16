@@ -534,6 +534,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/image-rule`, body: { src: input.src, occurrence: input.occurrence, alt: input.alt, title: input.title, originalAlt: input.originalAlt, originalTitle: input.originalTitle, revert: input.revert } }),
     },
+    "seo.pageState": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-state` }),
+    },
     "seo.remotePageVersions": {
         endpoint: "seo/sites",
         method: "GET",
