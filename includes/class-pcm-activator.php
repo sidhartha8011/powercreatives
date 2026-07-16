@@ -328,6 +328,14 @@ class PCM_Activator
             // create_tables() dbDelta once here and picks up whichever side it
             // missed. Purely additive — no bespoke migration method.
 
+            // v1.43.0: Writer article revision history. Adds the
+            // wp_pcm_article_revisions table (point-in-time title+content
+            // snapshots captured before content-changing edits, AI-review
+            // applies, and restores). Purely additive — applied by the
+            // create_tables() dbDelta above; no bespoke migration method needed
+            // (same precedent as delivery_logs v1.35.0 and the additive
+            // strategy-item columns v1.37.0–v1.39.0).
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

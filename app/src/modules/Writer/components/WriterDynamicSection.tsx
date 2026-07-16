@@ -1,10 +1,9 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import type {
   WriterSectionConfig,
   WriterFieldConfig,
 } from "../types";
-import { colors, typography } from "@/components/shared/design-tokens";
+import { colors } from "@/components/shared/design-tokens";
 import {
   Select,
   SelectContent,
@@ -14,13 +13,15 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
-import { PanelHeader } from "@/components/shared/PanelHeader";
+import { AccordionSection } from "@/components/shared/AccordionSection";
 import { Field, FieldLabel, FieldContent, FieldDescription } from "@/components/ui/field";
 
 interface Props {
   section: WriterSectionConfig;
   values: Record<string, any>;
   onChange: (fieldId: string, value: any) => void;
+  /** Overrides the section's own defaultCollapsed when provided. */
+  defaultOpen?: boolean;
 }
 
 function DynamicListInput({
@@ -191,11 +192,8 @@ export function WriterDynamicSection({
   section,
   values,
   onChange,
+  defaultOpen,
 }: Props) {
-  const [isCollapsed, setIsCollapsed] = useState(
-    section.defaultCollapsed ?? false
-  );
-
   // Only fetch image models for the image_generation section — avoids redundant API calls from other sections
   const needsImageModels = section.id === 'image_generation';
   const { data: imageModels = [] } = trpc.models.getForGeneration.useQuery(
@@ -207,59 +205,45 @@ export function WriterDynamicSection({
   if (visibleFields.length === 0) return null;
 
   return (
-    <div className="rounded-lg border" style={{ borderColor: colors.border, background: colors.bgSurface }}>
-      <PanelHeader
-        title={section.title}
-        onClick={() => setIsCollapsed(!isCollapsed)}
-        isCollapsed={isCollapsed}
-        rightElement={
-            isCollapsed ? (
-              <ChevronRight className="w-4 h-4" style={{ color: colors.textFaint }} />
-            ) : (
-              <ChevronDown className="w-4 h-4" style={{ color: colors.textFaint }} />
-            )
-        }
-      />
-
-      {!isCollapsed && (
-        <div className="p-3 pt-2 border-t" style={{ borderColor: colors.borderLight }}>
-          <div className="grid grid-cols-1 gap-y-4">
-            {visibleFields.map((field) => (
-              <Field key={field.id} orientation="vertical" className="mb-2">
-                <FieldLabel className="text-xs font-medium" style={{ color: colors.textSecondary }}>
-                  {field.label}
-                </FieldLabel>
-                <FieldContent>
-                  {field.id === 'imageModel' ? (
-                    <FieldRenderer
-                      field={{
-                        ...field,
-                        options: [
-                          { value: 'auto', label: 'Auto (Any capable model)' },
-                          ...imageModels.map(m => ({ value: m.modelId, label: m.customName || m.originalName }))
-                        ]
-                      }}
-                      value={values[field.id]}
-                      onChange={(val) => onChange(field.id, val)}
-                    />
-                  ) : (
-                    <FieldRenderer
-                      field={field}
-                      value={values[field.id]}
-                      onChange={(val) => onChange(field.id, val)}
-                    />
-                  )}
-                  {field.helpText && (
-                    <FieldDescription className="text-[11px] mt-1 leading-snug" style={{ color: colors.textMuted }}>
-                      {field.helpText}
-                    </FieldDescription>
-                  )}
-                </FieldContent>
-              </Field>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+    <AccordionSection
+      title={section.title}
+      defaultOpen={defaultOpen ?? !section.defaultCollapsed}
+    >
+      <div className="grid grid-cols-1 gap-y-4">
+        {visibleFields.map((field) => (
+          <Field key={field.id} orientation="vertical" className="mb-2">
+            <FieldLabel className="text-xs font-medium" style={{ color: colors.textSecondary }}>
+              {field.label}
+            </FieldLabel>
+            <FieldContent>
+              {field.id === 'imageModel' ? (
+                <FieldRenderer
+                  field={{
+                    ...field,
+                    options: [
+                      { value: 'auto', label: 'Auto (Any capable model)' },
+                      ...imageModels.map(m => ({ value: m.modelId, label: m.customName || m.originalName }))
+                    ]
+                  }}
+                  value={values[field.id]}
+                  onChange={(val) => onChange(field.id, val)}
+                />
+              ) : (
+                <FieldRenderer
+                  field={field}
+                  value={values[field.id]}
+                  onChange={(val) => onChange(field.id, val)}
+                />
+              )}
+              {field.helpText && (
+                <FieldDescription className="text-[11px] mt-1 leading-snug" style={{ color: colors.textMuted }}>
+                  {field.helpText}
+                </FieldDescription>
+              )}
+            </FieldContent>
+          </Field>
+        ))}
+      </div>
+    </AccordionSection>
   );
 }

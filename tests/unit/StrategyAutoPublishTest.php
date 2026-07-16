@@ -401,6 +401,13 @@ function pcm_test_define_strategy_fakes(): void
                 self::$createSetCalls[] = array('userId' => $user_id, 'data' => $data);
                 return self::$nextSetId;
             }
+            /** @var array<int,array{id:int,userId:int,status:string}> lane moves (real create_set hardcodes 'draft'; the strategy side moves the set to its starting lane right after). */
+            public static $updateStatusCalls = array();
+            public static function update_status($id, $user_id, $next_status)
+            {
+                self::$updateStatusCalls[] = array('id' => (int)$id, 'userId' => (int)$user_id, 'status' => (string)$next_status);
+                return true;
+            }
         }
     }
 

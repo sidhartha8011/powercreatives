@@ -7749,3 +7749,86 @@ carries all four route sets). Incoming: SEO page-editor arc + new optimizer modu
 Verified per their ask: full PHPUnit 319 / exactly the 3 known failures; their standalone
 harness 88/88 on the merged tree; tsc 59; build ✓; real-WP loaded once → pcm_db_version
 stamped 1.42.0, optimizer routes registered. Pushed back to origin (standing workflow).
+
+## 2026-07-14 — Owner feedback round: hierarchy, media, research, anchors, dual approval (/worker)
+Five features: (1) hierarchy Standalone removed from UI (legacy value kept internally); consolidated
+now supports children_only — parent link injected into the consolidated article (new); guard narrowed
+(consolidated downgrades parent_and_children→children_only, anchor override survives); reapply deduped
+by articleId. (2) mediaType (images/charts/both) + mediaCount (1–8) + is_quality_chart validator (≥3
+numeric points, named series, title, non-uniform) — junk charts dropped; research findings explicitly
+offered as chart data. (3) researchMode off/grounded/deep (deep = 3 isolated grounded calls: landscape,
+questions+stats, gaps); grounded byte-identical; back-compat research:true. (4) interlink anchorMode
+keyword/synonym/ai (+pick_synonym_anchors, {name,schema} wrapper; back-compat aiAnchors→ai; keyword
+mode zero-LLM). (5) approvalMode 'both': set starts INTERNAL lane; driver fix — create_set hardcodes
+draft, so REAL lane placement now via update_status (also fixes pre-existing bug where internal/client
+sets silently started in Draft). Frontend: all selects/radios wired, payloads additive w/ legacy keys;
+driver wired verifier's P2 (modal receives stored interlinksConfig).
+Routing planned 3 opus/4 sonnet/1 driver = executed (no reroutes, no failures) + 2 driver fix-passes.
+Gates: suite 319→337 (+18 across 6 suites) / 3 known pre-existing; tsc 59; build ✓. Live smoke:
+consolidated+children_only+both in ONE generation — stored un-downgraded, parent link ×1 in the
+article, approval set in the internal lane. spec-verifier APPROVED. Not committed.
+
+## 2026-07-14 — Create-dialog refinements: media guidance, research hints, anchor choice (/task)
+Three owner follow-ups on the new dialog controls: (1) config.mediaGuidance — free-text creative
+direction ("what images should show / what data charts present"), sanitized+capped 500 chars,
+threaded through media_guidance() → build_prompt (both call sites) as an explicit CREATIVE
+DIRECTION sentence in the IN-CONTENT MEDIA block; input field under the Type/Count row; prompt
+assertion test added (media suite 12/12). (2) Research select now shows a visible one-line
+description per mode (off = model knowledge only; standard = one live Google search of what
+ranks; deep = three live searches — landscape, questions & statistics, competitor gaps).
+(3) The create dialog's Auto-Interlink panel replaces the static "Auto (Phrase)" text with the
+anchor-mode select (Destination keyword / Synonym / AI decides) stored into
+interlinksConfig.anchorMode at create (backend sanitize already existed from the anchor-modes
+round). Gates: suite 338/3-known; tsc 59; build ✓. Not committed.
+
+## 2026-07-14 — Writer: all three side panels collapsed by default (/task)
+Owner ask: in Writer, the right (AI Review) panel and both left panels (Queue + Context/Settings)
+should start closed, giving a distraction-free editor. Single-file change in Writer/index.tsx: the
+three collapsible ResizablePanels now use defaultSize={0} (valid + warning-free because each is
+collapsible with collapsedSize={0} — verified against react-resizable-panels v3.0.6 validation at
+Panel constraints line 1603) and the editor canvas defaultSize 45→100 so the group still totals 100;
+the isQueueCollapsed/isContextCollapsed/isAiCollapsed toolbar flags init true so the Show/Hide toggles
+render correctly on first paint (onCollapse doesn't fire for an already-collapsed panel). The Show
+buttons still work — expand() from a collapsed-start restores to each panel's minSize. No autoSaveId on
+the group, so no persisted layout overrides this. Verified: tsc 59 (baseline), vite build clean.
+Note: the Writer needs a live WP/tRPC backend to render, so verification is tsc+build+library-source
+(same constraint prior Writer-UI steps noted); no runtime browser check. Not committed.
+
+## 2026-07-14 — 'parent_only' hierarchy mode for Consolidated strategies (/worker)
+Owner: consolidated should offer "Parent only" (the one article IS the pillar, no outbound link)
+and "Children only" — never Parent+Children. Also confirmed: the SEO Pillar Template already lives
+in the Templates module (Writer tab, editable + new ones creatable; both strategy dropdowns read it
+live) — NO code change for that ask. New hierarchyMode value 'parent_only': works with near-zero
+backend because hierarchyMode has no value whitelist and resolve_parent_link already returns null for
+any non-children_only/parent_and_children mode (so parent_only injects nothing, reapply strips only).
+Only real backend change: apply_structure_hierarchy_guard maps consolidated+parent_and_children →
+parent_only (was children_only), dropping parentKeyword, keeping parentTargetUrl+parentAnchorKeyword —
+enforced at all three doors (create/PATCH/duplicate). Frontend: create dialog offers parent_only/
+children_only for consolidated (parent_and_children/children_only for individual) with updated coupling
++ submit guard; ParentSettingsModal gains the parent_only option. Routing planned 1 opus/1 sonnet/1
+driver = executed, no reroutes. Gates: suite 338→341 (+3) / 3 known pre-existing; tsc 59; build ✓.
+Real-WP A/B/C: parent_and_children→stored parent_only; parent_only article generated with no parent
+link; children_only still injects the external hub link. spec-verifier APPROVED. Not committed.
+
+## 2026-07-16 — Writer UX round: shared accordions, panel-state fix, Publish CTA, real revision history (/worker)
+Four owner asks. (1) ContextGenerationPanel + WriterDynamicSection now use the shared AccordionSection
+chrome (same as Ads/Video); grey PanelHeader banners deleted; Keywords + Prompt/Brief defaultOpen, rest
+closed; Brand header deduped via pre-existing hideBrandHeader prop; zero behavior change (caveat: the
+shared TemplateDropdown in Copy/ keeps one inner border — off-limits file). (2) Panel-state bug killed:
+a desiredCollapsed ref (written only by the 3 toolbar toggles + panel header collapse buttons) is
+authoritative; each panel's onExpand/onCollapse re-asserts on drift (group redistribution used to
+re-inflate a collapsed sibling — "close Settings then Queue reopens Settings"); loop-free by
+construction. (3) New always-primary Publish button (Rocket, rightmost) → POST sites/{siteId}/publish
+body {articleId} (handler loads the persisted article server-side, returns postUrl); disabled w/ reason
+when doc unsaved/empty/no Target Site; success → status 'published' + permalink toast. Send-to-Approvals
+demoted to subtle, primary only when activeDoc.status==='review'. (4) Right panel: Revisions is now a
+real history queue — new pcm_article_revisions table (DB 1.42.0→1.43.0, additive, no gate), snapshots
+prev title+content on content-changing saves (source editor/ai-review/restore), pruned to 10/article;
+routes GET list (excerpt rows) / GET one / POST restore (snapshots current first); panel is two tabs —
+History (default: time-ago, source badge, excerpt, confirm-restore → editor sync) + AI Review verbatim.
+Routing planned 3 opus/2 sonnet/1 driver = executed, zero reroutes, all 5 workers first-try. Gates:
+suite 341→347 (+6 WriterRevisionsTest) / 3 known pre-existing; tsc 59; build ✓. Real-WP smoke: table
+live @1.43.0; 2 updates→2 revisions; restore roundtrip YES + own 'restore' snapshot; prune 12→10;
+ownership gates hold; all 3 revision routes + publish route registered. spec-verifier APPROVED (no
+P0/P1; P3s: REST strings untranslated per module convention, ignored extra id in publish body,
+empty-state split into two spans). Not committed.

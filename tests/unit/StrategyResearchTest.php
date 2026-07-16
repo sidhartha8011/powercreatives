@@ -54,6 +54,12 @@ function pcm_test_define_research_llm(): void
             /** @var bool When true, invoke_with_grounding() throws — simulates
              *  the missing-Google-key case (research must degrade silently). */
             public static $groundingThrow = false;
+            /** @var array<int,array>|null When set, each sequential
+             *  invoke_with_grounding() call returns groundingReturns[N] (0-based
+             *  call index) instead of the default fixed content — lets a test
+             *  give the 3 'deep'-mode calls distinct, assertable payloads. Falls
+             *  back to the default return for any index beyond the array. */
+            public static $groundingReturns = null;
 
             public static function invoke_json($messages, $schema, $options)
             {
@@ -75,9 +81,13 @@ function pcm_test_define_research_llm(): void
 
             public static function invoke_with_grounding($messages, $options = array())
             {
+                $callIndex = count(self::$groundingCalls);
                 self::$groundingCalls[] = array('messages' => $messages, 'options' => $options);
                 if (self::$groundingThrow) {
                     throw new \RuntimeException('missing google api key');
+                }
+                if (is_array(self::$groundingReturns) && array_key_exists($callIndex, self::$groundingReturns)) {
+                    return self::$groundingReturns[$callIndex];
                 }
                 return array('content' => 'RESEARCH FINDINGS X');
             }
@@ -114,6 +124,7 @@ class StrategyResearchTest extends \PHPUnit\Framework\TestCase
         PCM_LLM::$lastMessages = null;
         PCM_LLM::$groundingCalls = array();
         PCM_LLM::$groundingThrow = false;
+        PCM_LLM::$groundingReturns = null;
         PCM_Sites_Service::$calls = array();
         PCM_Sites_Service::$shouldThrow = false;
         PCM_Test_Cron::$scheduleCalls = array();
@@ -196,5 +207,64 @@ class StrategyResearchTest extends \PHPUnit\Framework\TestCase
         $this->assertSame('', PCM_DB::$items[1]->errorMessage ?? '', 'no error must be recorded on the item');
         $this->assertStringNotContainsString('RESEARCH FINDINGS', $this->systemContent());
         $this->assertStringNotContainsString('CURRENT SEARCH LANDSCAPE', $this->systemContent(), 'no research block when research degraded to empty');
+    }
+
+    public function test_research_mode_deep_makes_three_grounding_calls_with_all_sections(): void
+    {
+        $this->seedItems(array(array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0)));
+        PCM_LLM::$groundingReturns = array(
+            0 => array('content' => 'LANDSCAPE FINDINGS'),
+            1 => array('content' => 'QUESTIONS AND STATS FINDINGS'),
+            2 => array('content' => 'GAP FINDINGS'),
+        );
+        $strategy = (object)array(
+            'id' => 7, 'templateId' => 3, 'brandId' => null,
+            'config' => json_encode(array('researchMode' => 'deep')),
+            'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0,
+        );
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $this->assertCount(3, PCM_LLM::$groundingCalls, "researchMode='deep' must make exactly 3 grounding calls");
+        $system = $this->systemContent();
+        $this->assertStringContainsString('SEARCH LANDSCAPE:', $system);
+        $this->assertStringContainsString('QUESTIONS & DATA:', $system);
+        $this->assertStringContainsString('CONTENT GAPS:', $system);
+        $this->assertStringContainsString('LANDSCAPE FINDINGS', $system);
+        $this->assertStringContainsString('QUESTIONS AND STATS FINDINGS', $system);
+        $this->assertStringContainsString('GAP FINDINGS', $system);
+        $this->assertSame('completed', PCM_DB::$items[1]->status);
+    }
+
+    public function test_research_mode_off_wins_over_legacy_research_true(): void
+    {
+        $this->seedItems(array(array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0)));
+        $strategy = (object)array(
+            'id' => 7, 'templateId' => 3, 'brandId' => null,
+            'config' => json_encode(array('research' => true, 'researchMode' => 'off')),
+            'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0,
+        );
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $this->assertCount(0, PCM_LLM::$groundingCalls, "explicit researchMode='off' must win over legacy research=true");
+        $this->assertStringNotContainsString('RESEARCH FINDINGS', $this->systemContent());
+        $this->assertSame('completed', PCM_DB::$items[1]->status);
+    }
+
+    public function test_legacy_research_true_without_research_mode_is_grounded(): void
+    {
+        $this->seedItems(array(array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0)));
+        $strategy = (object)array(
+            'id' => 7, 'templateId' => 3, 'brandId' => null,
+            'config' => json_encode(array('research' => true)),
+            'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0,
+        );
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $this->assertCount(1, PCM_LLM::$groundingCalls, 'legacy research=true with no researchMode must resolve to a single grounded call, unchanged');
+        $this->assertStringContainsString('RESEARCH FINDINGS X', $this->systemContent());
+        $this->assertSame('completed', PCM_DB::$items[1]->status);
     }
 }

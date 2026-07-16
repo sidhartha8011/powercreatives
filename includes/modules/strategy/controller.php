@@ -422,12 +422,20 @@ class PCM_REST_Strategy extends PCM_REST_Base
             $config['allowAnchorVariations'] = (bool)$fields['allowAnchorVariations'];
         }
         if (array_key_exists('interlinksConfig', $fields)) {
-            $config['interlinksConfig'] = is_array($fields['interlinksConfig'] ?? null)
-                ? array(
+            if (is_array($fields['interlinksConfig'] ?? null)) {
+                $interlinks = array(
                     'mode'     => sanitize_text_field($fields['interlinksConfig']['mode'] ?? ''),
                     'quantity' => absint($fields['interlinksConfig']['quantity'] ?? 0),
-                )
-                : null;
+                );
+                // anchorMode governs the anchor fallback (keyword|synonym|ai);
+                // persist only a whitelisted value, drop anything else.
+                if (in_array($fields['interlinksConfig']['anchorMode'] ?? '', array('keyword', 'synonym', 'ai'), true)) {
+                    $interlinks['anchorMode'] = $fields['interlinksConfig']['anchorMode'];
+                }
+                $config['interlinksConfig'] = $interlinks;
+            } else {
+                $config['interlinksConfig'] = null;
+            }
         }
         if (array_key_exists('scheduleConfig', $fields)) {
             if (is_array($fields['scheduleConfig'] ?? null)) {
@@ -494,8 +502,36 @@ class PCM_REST_Strategy extends PCM_REST_Base
         if (array_key_exists('inContentMedia', $fields)) {
             $config['inContentMedia'] = (bool)$fields['inContentMedia'];
         }
+        // A6: max in-content assets per article (1–8, default 3 enforced in the
+        // service at READ time). Only persist when the client sends it; clamp.
+        if (array_key_exists('mediaCount', $fields)) {
+            $config['mediaCount'] = min(8, max(1, absint($fields['mediaCount'])));
+        }
+        // A6: which in-content asset type(s) are allowed. Whitelist only — an
+        // unrecognized value is dropped (never persisted), so the service default
+        // ('both') stands rather than storing junk.
+        if (array_key_exists('mediaType', $fields)
+            && in_array($fields['mediaType'], array('images', 'charts', 'both'), true)
+        ) {
+            $config['mediaType'] = $fields['mediaType'];
+        }
+        if (array_key_exists('mediaGuidance', $fields)) {
+            // Free-text creative direction for in-content media (what the
+            // images should depict / what data the charts should show) —
+            // plain text, capped at 500 chars.
+            $config['mediaGuidance'] = mb_substr(sanitize_text_field((string)$fields['mediaGuidance']), 0, 500);
+        }
         if (array_key_exists('research', $fields)) {
             $config['research'] = (bool)$fields['research'];
+        }
+        // Selectable research modes ('off'|'grounded'|'deep'), layered on top of
+        // the legacy `research` boolean above (kept untouched for back-compat —
+        // see PCM_Strategy_Service::research_mode()). Whitelist only; an
+        // unrecognized value is dropped rather than persisted, mirroring mediaType.
+        if (array_key_exists('researchMode', $fields)
+            && in_array($fields['researchMode'], array('off', 'grounded', 'deep'), true)
+        ) {
+            $config['researchMode'] = $fields['researchMode'];
         }
         if (array_key_exists('imageProvider', $fields)) {
             $config['imageProvider'] = sanitize_text_field($fields['imageProvider'] ?? '');
@@ -556,7 +592,9 @@ class PCM_REST_Strategy extends PCM_REST_Base
      * if empty/zero — 0 is not a valid template id), publishingMode and
      * approvalMode (both dropped unless they match their exact whitelist — an
      * unrecognized value is silently dropped, never persisted, per the plan's
-     * "drop unknowns" instruction).
+     * "drop unknowns" instruction). approvalMode's whitelist includes 'both'
+     * (internal + client must BOTH approve — see create_approval_set_for_item()
+     * in service.php for how that starts in the internal lane).
      *
      * @param array $fields Raw `config` object from the request body.
      * @return array Sanitized subset containing only recognized, valid keys.
@@ -571,7 +609,7 @@ class PCM_REST_Strategy extends PCM_REST_Base
         if (in_array($fields['publishingMode'] ?? null, array('draft', 'publish', 'schedule'), true)) {
             $config['publishingMode'] = sanitize_text_field($fields['publishingMode']);
         }
-        if (in_array($fields['approvalMode'] ?? null, array('none', 'internal', 'client'), true)) {
+        if (in_array($fields['approvalMode'] ?? null, array('none', 'internal', 'client', 'both'), true)) {
             $config['approvalMode'] = sanitize_text_field($fields['approvalMode']);
         }
 
@@ -817,6 +855,9 @@ class PCM_REST_Strategy extends PCM_REST_Base
         }
         if (isset($params['aiAnchors'])) {
             $options['aiAnchors'] = (bool)$params['aiAnchors'];
+        }
+        if (isset($params['anchorMode']) && in_array($params['anchorMode'], array('keyword', 'synonym', 'ai'), true)) {
+            $options['anchorMode'] = $params['anchorMode'];
         }
 
         try {

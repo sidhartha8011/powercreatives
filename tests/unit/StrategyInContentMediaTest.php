@@ -51,6 +51,8 @@ function pcm_test_define_in_content_media_fakes(): void
             public static $callCount = 0;
             /** @var string|null Last user-role message content (assert prompt wiring). */
             public static $lastUserMessage = null;
+            /** @var array What invoke_with_grounding() returns (research enrichment). */
+            public static $groundingResult = array('content' => 'RESEARCH: metric A is 42%, metric B is 58%, metric C is 71%.');
 
             public static function invoke_json($messages, $schema, $options)
             {
@@ -64,6 +66,13 @@ function pcm_test_define_in_content_media_fakes(): void
                     return self::$nextResult;
                 }
                 return array('title' => 'Generated Title', 'content' => '<p>body</p>', 'metaTitle' => 'MT', 'metaDescription' => 'MD');
+            }
+
+            // Research enrichment (maybe_research_context) uses grounding; the fake
+            // returns a settable summary so a test can exercise the research path.
+            public static function invoke_with_grounding($messages, $options)
+            {
+                return self::$groundingResult;
             }
         }
     }
@@ -129,8 +138,23 @@ class StrategyInContentMediaTest extends \PHPUnit\Framework\TestCase
         PCM_LLM::$nextResult = null;
         PCM_LLM::$callCount = 0;
         PCM_LLM::$lastUserMessage = null;
+        PCM_LLM::$groundingResult = array('content' => 'RESEARCH: metric A is 42%, metric B is 58%, metric C is 71%.');
         PCM_Strategy_Image::$calls = array();
         PCM_Strategy_Image::$returnUrl = 'https://img.example/generated.png';
+    }
+
+    /** A canonical QUALITY Chart.js config (≥3 labels, ≥3 numeric distinct values,
+     *  named series, descriptive title) — passes is_quality_chart(). */
+    private function qualityChart(): array
+    {
+        return array(
+            'type' => 'bar',
+            'data' => array(
+                'labels'   => array('Q1', 'Q2', 'Q3'),
+                'datasets' => array(array('label' => 'Revenue', 'data' => array(10, 25, 18))),
+            ),
+            'options' => array('plugins' => array('title' => array('text' => 'Quarterly Revenue'))),
+        );
     }
 
     /** @param array<int,array<string,mixed>> $items */
@@ -188,10 +212,9 @@ class StrategyInContentMediaTest extends \PHPUnit\Framework\TestCase
 
     public function test_chart_asset_builds_a_quickchart_url_containing_the_encoded_config(): void
     {
-        $chart = array(
-            'type' => 'bar',
-            'data' => array('labels' => array('A', 'B'), 'datasets' => array(array('label' => 'S', 'data' => array(1, 2)))),
-        );
+        // Must be a QUALITY chart now that charts pass a server-side validator —
+        // a 2-point/untitled config would be dropped as junk (see the (c) test).
+        $chart = $this->qualityChart();
         PCM_LLM::$nextResult = array(
             'title' => 'T', 'metaTitle' => 'MT', 'metaDescription' => 'MD',
             'content' => '<p>Data</p>[IMAGE_1]',
@@ -292,5 +315,137 @@ class StrategyInContentMediaTest extends \PHPUnit\Framework\TestCase
         $this->assertStringNotContainsString('[IMAGE_1]', $content, 'the token is stripped when its asset is dropped');
         $this->assertNotNull($res, 'a null image must never fail generation');
         $this->assertSame('completed', PCM_DB::$items[1]->status);
+    }
+
+    // ── (g) mediaCount=1 caps placement: 2 returned assets → 1 figure, other stripped ─
+
+    public function test_media_count_caps_the_number_of_placed_assets(): void
+    {
+        PCM_LLM::$nextResult = array(
+            'title' => 'T', 'metaTitle' => 'MT', 'metaDescription' => 'MD',
+            'content' => '<p>a</p>[IMAGE_1]<p>b</p>[IMAGE_2]',
+            'media_assets' => array(
+                array('placeholder' => 'IMAGE_1', 'type' => 'image', 'prompt' => 'first'),
+                array('placeholder' => 'IMAGE_2', 'type' => 'image', 'prompt' => 'second'),
+            ),
+        );
+
+        PCM_Strategy_Service::generate_next_item($this->strategy(array('mediaCount' => 1)), 1);
+
+        $content = $this->articleContent();
+        $this->assertSame(1, substr_count($content, '<figure class="pcm-in-content-media">'), 'only mediaCount figures are placed');
+        $this->assertStringNotContainsString('[IMAGE_2]', $content, 'the over-cap placeholder must be stripped');
+        $this->assertStringNotContainsString('[IMAGE', $content, 'no raw tokens survive');
+        $this->assertCount(1, PCM_Strategy_Image::$calls, 'only the capped asset is generated');
+    }
+
+    // ── (h) mediaType='images' → a returned chart is dropped, the image kept ──
+
+    public function test_media_type_images_drops_chart_assets(): void
+    {
+        PCM_LLM::$nextResult = array(
+            'title' => 'T', 'metaTitle' => 'MT', 'metaDescription' => 'MD',
+            'content' => '<p>a</p>[IMAGE_1]<p>b</p>[IMAGE_2]',
+            'media_assets' => array(
+                array('placeholder' => 'IMAGE_1', 'type' => 'chart', 'prompt' => 'a chart', 'chart_config' => $this->qualityChart()),
+                array('placeholder' => 'IMAGE_2', 'type' => 'image', 'prompt' => 'an image'),
+            ),
+        );
+
+        PCM_Strategy_Service::generate_next_item($this->strategy(array('mediaType' => 'images')), 1);
+
+        $content = $this->articleContent();
+        $this->assertStringNotContainsString('quickchart.io', $content, 'a chart must be dropped under images-only');
+        $this->assertStringNotContainsString('[IMAGE_1]', $content, 'the dropped chart token is stripped');
+        $this->assertStringContainsString('https://img.example/generated.png', $content, 'the image asset is kept');
+        $this->assertCount(1, PCM_Strategy_Image::$calls, 'only the image asset is generated');
+    }
+
+    // ── (i) junk chart (all-equal values) → dropped, token stripped, no URL ──
+
+    public function test_junk_chart_is_dropped_by_the_quality_validator(): void
+    {
+        $junk = array(
+            'type' => 'bar',
+            // 3 labels but all-identical values AND no title/named-context beyond label — the
+            // all-equal values alone are the canonical junk smell the validator rejects.
+            'data' => array('labels' => array('A', 'B', 'C'), 'datasets' => array(array('label' => 'S', 'data' => array(1, 1, 1)))),
+            'options' => array('plugins' => array('title' => array('text' => 'Chart'))),
+        );
+        PCM_LLM::$nextResult = array(
+            'title' => 'T', 'metaTitle' => 'MT', 'metaDescription' => 'MD',
+            'content' => '<p>data</p>[IMAGE_1]',
+            'media_assets' => array(
+                array('placeholder' => 'IMAGE_1', 'type' => 'chart', 'prompt' => 'junk', 'chart_config' => $junk),
+            ),
+        );
+
+        PCM_Strategy_Service::generate_next_item($this->strategy(array()), 1);
+
+        $content = $this->articleContent();
+        $this->assertStringNotContainsString('quickchart.io', $content, 'a junk chart yields no quickchart URL');
+        $this->assertStringNotContainsString('<figure', $content, 'a junk chart produces no figure');
+        $this->assertStringNotContainsString('[IMAGE_1]', $content, 'the junk chart token is stripped');
+    }
+
+    // ── (j) quality chart passes the validator → quickchart URL present ──
+
+    public function test_quality_chart_passes_the_validator_and_renders(): void
+    {
+        $chart = $this->qualityChart();
+        PCM_LLM::$nextResult = array(
+            'title' => 'T', 'metaTitle' => 'MT', 'metaDescription' => 'MD',
+            'content' => '<p>data</p>[IMAGE_1]',
+            'media_assets' => array(
+                array('placeholder' => 'IMAGE_1', 'type' => 'chart', 'prompt' => 'Quarterly revenue, source: 10-K', 'chart_config' => $chart),
+            ),
+        );
+
+        PCM_Strategy_Service::generate_next_item($this->strategy(array()), 1);
+
+        $content = $this->articleContent();
+        $this->assertStringContainsString('https://quickchart.io/chart?w=800&h=450&c=', $content);
+        $this->assertStringContainsString(rawurlencode(json_encode($chart)), $content, 'the validated chart config is encoded into the URL');
+        $this->assertStringContainsString('<figure class="pcm-in-content-media">', $content);
+    }
+
+    // ── (k) research context present → prompt carries the research-data instruction ─
+
+    public function test_research_context_injects_the_research_chart_instruction_into_the_prompt(): void
+    {
+        PCM_LLM::$nextResult = array(
+            'title' => 'T', 'metaTitle' => 'MT', 'metaDescription' => 'MD',
+            'content' => '<p>body</p>',
+            'media_assets' => array(),
+        );
+
+        PCM_Strategy_Service::generate_next_item($this->strategy(array('research' => true)), 1);
+
+        $this->assertNotNull(PCM_LLM::$lastUserMessage, 'the article prompt should have been built');
+        $this->assertStringContainsString(
+            'Base chart data on the RESEARCH FINDINGS above',
+            (string) PCM_LLM::$lastUserMessage,
+            'with a research context, the media instruction must direct charts to use the research findings'
+        );
+    }
+
+    public function test_media_guidance_reaches_the_writer_prompt(): void
+    {
+        PCM_LLM::$nextResult = array(
+            'title' => 'T', 'metaTitle' => 'MT', 'metaDescription' => 'MD',
+            'content' => '<p>Body</p>',
+            'media_assets' => array(),
+        );
+
+        PCM_Strategy_Service::generate_next_item(
+            $this->strategy(array('mediaGuidance' => 'charts comparing yearly market growth')),
+            1
+        );
+
+        $this->assertStringContainsString(
+            'CREATIVE DIRECTION for the visuals: "charts comparing yearly market growth"',
+            (string) PCM_LLM::$lastUserMessage,
+            'config.mediaGuidance must be forwarded into the IN-CONTENT MEDIA prompt block'
+        );
     }
 }

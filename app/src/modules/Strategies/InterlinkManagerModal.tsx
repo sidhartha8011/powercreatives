@@ -26,7 +26,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Zap, Settings, Plus, Trash2, CheckCircle2, Ban, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -34,6 +33,9 @@ import { trpc } from '@/lib/trpc';
 
 // ── Types ──
 type MatchType = 'phrase' | 'exact';
+/** Anchor-text strategy for auto-mode links: exact destination keyword, a
+ *  synonym of it, or let the AI decide. */
+type AnchorMode = 'keyword' | 'synonym' | 'ai';
 
 interface ManualRule {
   id: string;
@@ -56,6 +58,10 @@ interface InterlinkManagerModalProps {
   strategyName: string;
   /** Called after a successful run so the parent can refetch the strategy list. */
   onDone: () => void;
+  /** Stored strategy interlink config, if any. When it carries an `anchorMode`
+   *  key that wins on open; otherwise the legacy `aiAnchors` boolean (true →
+   *  'ai') decides the default. */
+  interlinksConfig?: { anchorMode?: AnchorMode; aiAnchors?: boolean } | null;
 }
 
 const newRule = (): ManualRule => ({
@@ -71,13 +77,18 @@ export function InterlinkManagerModal({
   strategyId,
   strategyName,
   onDone,
+  interlinksConfig,
 }: InterlinkManagerModalProps) {
   const [activeTab, setActiveTab] = useState<'auto' | 'manual'>('auto');
 
   // Auto-mode config
   const [maxLinksPerArticle, setMaxLinksPerArticle] = useState(2);
   const [maxLinks, setMaxLinks] = useState(3);
-  const [aiAnchors, setAiAnchors] = useState(true);
+  // Default resolution: an explicit anchorMode on the stored config wins;
+  // otherwise the legacy aiAnchors boolean (true → 'ai'), else 'keyword'.
+  const [anchorMode, setAnchorMode] = useState<AnchorMode>(
+    interlinksConfig?.anchorMode ?? (interlinksConfig?.aiAnchors ? 'ai' : 'keyword'),
+  );
 
   // Manual-mode config
   const [manualRules, setManualRules] = useState<ManualRule[]>([newRule()]);
@@ -91,11 +102,11 @@ export function InterlinkManagerModal({
       setActiveTab('auto');
       setMaxLinksPerArticle(2);
       setMaxLinks(3);
-      setAiAnchors(true);
+      setAnchorMode(interlinksConfig?.anchorMode ?? (interlinksConfig?.aiAnchors ? 'ai' : 'keyword'));
       setManualRules([newRule()]);
       setResults(null);
     }
-  }, [open]);
+  }, [open, interlinksConfig]);
 
   const interlinksMutation = trpc.strategy.injectInterlinks.useMutation({
     onSuccess: (data: any) => {
@@ -134,7 +145,13 @@ export function InterlinkManagerModal({
       }
       interlinksMutation.mutate({ id: strategyId, manualRules: cleaned });
     } else {
-      interlinksMutation.mutate({ id: strategyId, maxLinks, maxLinksPerArticle, aiAnchors });
+      interlinksMutation.mutate({
+        id: strategyId,
+        maxLinks,
+        maxLinksPerArticle,
+        anchorMode,
+        aiAnchors: anchorMode === 'ai', // legacy back-compat key
+      });
     }
   };
 
@@ -212,21 +229,43 @@ export function InterlinkManagerModal({
                 </div>
               </div>
 
-              <div className="flex flex-col space-y-2">
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="ai-anchors"
-                    checked={aiAnchors}
-                    onCheckedChange={(c) => setAiAnchors(c as boolean)}
-                  />
-                  <Label htmlFor="ai-anchors" className="cursor-pointer font-medium leading-none">
-                    Use AI to pick anchor text when no exact match exists
-                  </Label>
+              <div className="space-y-2">
+                <Label>Anchor text</Label>
+                <div className="flex flex-col space-y-1.5" role="radiogroup" aria-label="Anchor text">
+                  <label htmlFor="anchor-keyword" className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      id="anchor-keyword"
+                      name="anchor-mode"
+                      className="h-3.5 w-3.5"
+                      checked={anchorMode === 'keyword'}
+                      onChange={() => setAnchorMode('keyword')}
+                    />
+                    Destination keyword (exact)
+                  </label>
+                  <label htmlFor="anchor-synonym" className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      id="anchor-synonym"
+                      name="anchor-mode"
+                      className="h-3.5 w-3.5"
+                      checked={anchorMode === 'synonym'}
+                      onChange={() => setAnchorMode('synonym')}
+                    />
+                    Synonym of the keyword
+                  </label>
+                  <label htmlFor="anchor-ai" className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      id="anchor-ai"
+                      name="anchor-mode"
+                      className="h-3.5 w-3.5"
+                      checked={anchorMode === 'ai'}
+                      onChange={() => setAnchorMode('ai')}
+                    />
+                    Let AI decide
+                  </label>
                 </div>
-                <p className="text-[0.8rem] text-muted-foreground pl-6">
-                  When enabled, the AI rewrites nearby phrasing to host a natural anchor
-                  instead of skipping the link.
-                </p>
               </div>
             </div>
           ) : (

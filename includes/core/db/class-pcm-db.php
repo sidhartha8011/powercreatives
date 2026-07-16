@@ -1358,6 +1358,157 @@ class PCM_DB
     }
 
     // =========================================================================
+    // ARTICLE REVISIONS
+    // =========================================================================
+
+    /** Newest revisions retained per article; older rows are pruned on insert. */
+    private const ARTICLE_REVISION_KEEP = 10;
+
+    /** Characters of plain-text excerpt returned by get_article_revisions(). */
+    private const ARTICLE_REVISION_EXCERPT = 160;
+
+    /**
+     * Snapshot an article's title + content into the revision history, then
+     * prune to the ARTICLE_REVISION_KEEP most-recent rows for that article.
+     *
+     * Ownership is NOT re-checked here — callers snapshot a row they have
+     * already loaded ownership-checked via get_article(). MySQL forbids a
+     * DELETE with a subquery over the same table, so the prune fetches the ids
+     * to keep first, then deletes everything else by id-list.
+     *
+     * @param int    $article_id Article the revision belongs to.
+     * @param int    $user_id    Owner (author) of the snapshot.
+     * @param string $title      Title at snapshot time.
+     * @param string $content    Content (HTML) at snapshot time.
+     * @param string $source     'editor' | 'ai-review' | 'restore'.
+     * @return int Inserted revision id, or 0 on failure.
+     */
+    public static function add_article_revision(
+        int $article_id,
+        int $user_id,
+        string $title,
+        string $content,
+        string $source = 'editor'
+    ): int {
+        global $wpdb;
+        $table = self::t('article_revisions');
+
+        $ok = $wpdb->insert(
+            $table,
+            array(
+                'articleId' => $article_id,
+                'userId'    => $user_id,
+                'title'     => $title,
+                'content'   => $content,
+                'source'    => $source,
+            ),
+            array('%d', '%d', '%s', '%s', '%s')
+        );
+        if (!$ok) {
+            return 0;
+        }
+        $revision_id = (int) $wpdb->insert_id;
+
+        // Prune: keep the newest N ids for this article, delete the rest.
+        // Two-step because MySQL cannot DELETE with a subquery on the same table.
+        $keep_ids = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT id FROM {$table} WHERE articleId = %d ORDER BY id DESC LIMIT %d",
+                $article_id,
+                self::ARTICLE_REVISION_KEEP
+            )
+        );
+        $keep_ids = array_map('intval', (array) $keep_ids);
+        if (!empty($keep_ids)) {
+            $placeholders = implode(',', array_fill(0, count($keep_ids), '%d'));
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $wpdb->query(
+                $wpdb->prepare(
+                    "DELETE FROM {$table} WHERE articleId = %d AND id NOT IN ($placeholders)",
+                    array_merge(array($article_id), $keep_ids)
+                )
+            );
+        }
+
+        return $revision_id;
+    }
+
+    /**
+     * List an article's revisions, newest first, WITHOUT full content.
+     *
+     * Ownership: returns rows only when the article belongs to $user_id
+     * (pre-checked via get_article). Each row carries a plain-text excerpt of
+     * the content (strip_tags + trim, capped at ARTICLE_REVISION_EXCERPT chars)
+     * computed in PHP so the list stays lightweight.
+     *
+     * @param int $article_id Article whose history to list.
+     * @param int $user_id    Owner making the request.
+     * @return array<int, object> Revision rows {id, articleId, title, source, createdAt, excerpt}.
+     */
+    public static function get_article_revisions(int $article_id, int $user_id): array
+    {
+        global $wpdb;
+
+        // Ownership gate — no cross-user history leaks.
+        if (!self::get_article($article_id, $user_id)) {
+            return array();
+        }
+
+        $table = self::t('article_revisions');
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, articleId, title, content, source, createdAt
+                 FROM {$table} WHERE articleId = %d ORDER BY id DESC",
+                $article_id
+            )
+        );
+        if (!is_array($rows)) {
+            return array();
+        }
+
+        $out = array();
+        foreach ($rows as $row) {
+            $plain = trim(wp_strip_all_tags((string) $row->content));
+            $excerpt = mb_substr($plain, 0, self::ARTICLE_REVISION_EXCERPT);
+            $out[] = (object) array(
+                'id'        => (int) $row->id,
+                'articleId' => (int) $row->articleId,
+                'title'     => $row->title,
+                'source'    => $row->source,
+                'createdAt' => $row->createdAt,
+                'excerpt'   => $excerpt,
+            );
+        }
+        return $out;
+    }
+
+    /**
+     * Fetch one revision WITH full content, ownership-checked via its article.
+     *
+     * @param int $revision_id Revision id.
+     * @param int $user_id     Owner making the request.
+     * @return object|null Revision row, or null if missing / not owned.
+     */
+    public static function get_article_revision(int $revision_id, int $user_id): ?object
+    {
+        global $wpdb;
+        $table = self::t('article_revisions');
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $revision_id)
+        );
+        if (!$row) {
+            return null;
+        }
+
+        // Ownership derives from the parent article, not the revision's userId.
+        if (!self::get_article((int) $row->articleId, $user_id)) {
+            return null;
+        }
+        return $row;
+    }
+
+    // =========================================================================
     // SITES
     // =========================================================================
 

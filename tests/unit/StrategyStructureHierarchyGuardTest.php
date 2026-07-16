@@ -45,8 +45,14 @@ class StrategyStructureHierarchyGuardTest extends \PHPUnit\Framework\TestCase
         PCM_Test_Cron::$now = '2026-07-14 09:00:00';
     }
 
-    /** (a) consolidated + parent_and_children + parent keys → stripped on create. */
-    public function test_create_consolidated_forces_standalone_and_drops_parent_keys(): void
+    /**
+     * (a) consolidated + parent_and_children → downgraded to parent_only on
+     * create (the single consolidated article IS the pillar, with no outbound
+     * parent link); only parentKeyword (the item-designation key) is dropped,
+     * while the external parentTargetUrl and the parentAnchorKeyword anchor
+     * override survive untouched.
+     */
+    public function test_create_consolidated_downgrades_parent_and_children_to_parent_only(): void
     {
         PCM_Strategy_Service::create_from_keywords(
             1,
@@ -68,15 +74,83 @@ class StrategyStructureHierarchyGuardTest extends \PHPUnit\Framework\TestCase
         );
 
         $this->assertNotNull(PCM_DB::$createStrategyData);
-        $this->assertSame('standalone', PCM_DB::$createStrategyData['hierarchyMode']);
+        $this->assertSame('parent_only', PCM_DB::$createStrategyData['hierarchyMode']);
 
         $stored_config = json_decode((string) PCM_DB::$createStrategyData['config'], true);
         $this->assertSame('consolidated', $stored_config['structure']);
-        $this->assertArrayNotHasKey('parentTargetUrl', $stored_config);
+        // The item-designation key is meaningless with one article → dropped.
         $this->assertArrayNotHasKey('parentKeyword', $stored_config);
-        $this->assertArrayNotHasKey('parentAnchorKeyword', $stored_config);
+        // The external target URL + anchor override are kept untouched.
+        $this->assertSame('https://example.com/parent', $stored_config['parentTargetUrl']);
+        $this->assertSame('anchor text', $stored_config['parentAnchorKeyword']);
         // Unrelated config keys survive the guard untouched.
         $this->assertSame('gpt-x', $stored_config['model']);
+    }
+
+    /**
+     * (a cont'd) consolidated + parent_only passes through untouched — the
+     * single consolidated article legitimately IS the pillar (no link above
+     * it), so nothing is downgraded and no keys are dropped.
+     */
+    public function test_create_consolidated_parent_only_passes_through(): void
+    {
+        PCM_Strategy_Service::create_from_keywords(
+            1,
+            'Guard Test Parent Only',
+            5,
+            null,
+            array('kw one', 'kw two'),
+            array(
+                'hierarchyMode'  => 'parent_only',
+                'publishingMode' => 'draft',
+                'config'         => array(
+                    'structure'           => 'consolidated',
+                    'parentTargetUrl'     => 'https://example.com/parent',
+                    'parentAnchorKeyword' => 'anchor text',
+                ),
+            )
+        );
+
+        $this->assertNotNull(PCM_DB::$createStrategyData);
+        $this->assertSame('parent_only', PCM_DB::$createStrategyData['hierarchyMode']);
+
+        $stored_config = json_decode((string) PCM_DB::$createStrategyData['config'], true);
+        $this->assertSame('consolidated', $stored_config['structure']);
+        $this->assertSame('https://example.com/parent', $stored_config['parentTargetUrl']);
+        $this->assertSame('anchor text', $stored_config['parentAnchorKeyword']);
+    }
+
+    /**
+     * (a cont'd) consolidated + children_only passes through untouched — the
+     * single article legitimately links to an external parent, so nothing is
+     * downgraded and no keys are dropped.
+     */
+    public function test_create_consolidated_children_only_passes_through(): void
+    {
+        PCM_Strategy_Service::create_from_keywords(
+            1,
+            'Guard Test Children Only',
+            5,
+            null,
+            array('kw one', 'kw two'),
+            array(
+                'hierarchyMode'  => 'children_only',
+                'publishingMode' => 'draft',
+                'config'         => array(
+                    'structure'           => 'consolidated',
+                    'parentTargetUrl'     => 'https://example.com/parent',
+                    'parentAnchorKeyword' => 'anchor text',
+                ),
+            )
+        );
+
+        $this->assertNotNull(PCM_DB::$createStrategyData);
+        $this->assertSame('children_only', PCM_DB::$createStrategyData['hierarchyMode']);
+
+        $stored_config = json_decode((string) PCM_DB::$createStrategyData['config'], true);
+        $this->assertSame('consolidated', $stored_config['structure']);
+        $this->assertSame('https://example.com/parent', $stored_config['parentTargetUrl']);
+        $this->assertSame('anchor text', $stored_config['parentAnchorKeyword']);
     }
 
     /** (b) individual structure → hierarchy + parent keys pass through untouched. */
@@ -118,22 +192,54 @@ class StrategyStructureHierarchyGuardTest extends \PHPUnit\Framework\TestCase
      * directly with the EFFECTIVE (already-merged) values the controller
      * would compute, which is the exact contract the controller relies on.
      */
-    public function test_patch_door_guard_forces_standalone_and_drops_parent_keys(): void
+    public function test_patch_door_guard_downgrades_and_drops_only_parent_keyword(): void
     {
         $result = PCM_Strategy_Service::apply_structure_hierarchy_guard(
             'parent_and_children',
             array(
-                'structure'       => 'consolidated',
-                'parentTargetUrl' => 'https://example.com/parent',
-                'parentKeyword'   => 'parent keyword',
-                'siteId'          => 42,
+                'structure'           => 'consolidated',
+                'parentTargetUrl'     => 'https://example.com/parent',
+                'parentKeyword'       => 'parent keyword',
+                'parentAnchorKeyword' => 'anchor text',
+                'siteId'              => 42,
             )
         );
 
-        $this->assertSame('standalone', $result['hierarchyMode']);
-        $this->assertArrayNotHasKey('parentTargetUrl', $result['config']);
+        $this->assertSame('parent_only', $result['hierarchyMode']);
+        // Only the item-designation key is dropped.
         $this->assertArrayNotHasKey('parentKeyword', $result['config']);
+        // External URL + anchor override + unrelated keys survive.
+        $this->assertSame('https://example.com/parent', $result['config']['parentTargetUrl']);
+        $this->assertSame('anchor text', $result['config']['parentAnchorKeyword']);
         $this->assertSame(42, $result['config']['siteId']);
+    }
+
+    /** (c cont'd) consolidated + children_only through the guard is a no-op. */
+    public function test_patch_door_guard_is_noop_for_consolidated_children_only(): void
+    {
+        $config = array(
+            'structure'           => 'consolidated',
+            'parentTargetUrl'     => 'https://example.com/parent',
+            'parentAnchorKeyword' => 'anchor text',
+        );
+        $result = PCM_Strategy_Service::apply_structure_hierarchy_guard('children_only', $config);
+
+        $this->assertSame('children_only', $result['hierarchyMode']);
+        $this->assertSame($config, $result['config']);
+    }
+
+    /** (c cont'd) consolidated + parent_only through the guard is a no-op. */
+    public function test_patch_door_guard_is_noop_for_consolidated_parent_only(): void
+    {
+        $config = array(
+            'structure'           => 'consolidated',
+            'parentTargetUrl'     => 'https://example.com/parent',
+            'parentAnchorKeyword' => 'anchor text',
+        );
+        $result = PCM_Strategy_Service::apply_structure_hierarchy_guard('parent_only', $config);
+
+        $this->assertSame('parent_only', $result['hierarchyMode']);
+        $this->assertSame($config, $result['config']);
     }
 
     /** (c cont'd) Non-consolidated structure through the PATCH-door guard is a no-op. */

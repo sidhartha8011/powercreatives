@@ -314,6 +314,18 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
             body: { find: input.find, replacement: input.replacement },
         }),
     },
+    "writer.revisions": {
+        endpoint: "articles",
+        method: "GET",
+        transform: (input: any) => ({ url: `articles/${input.articleId}/revisions` }),
+    },
+    "writer.revisionRestore": {
+        endpoint: "articles",
+        method: "POST",
+        transform: (input: any) => ({
+            url: `articles/${input.articleId}/revisions/${input.revisionId}/restore`,
+        }),
+    },
 
     // ── Sites ──
     "sites.list": { endpoint: "sites", method: "GET" },

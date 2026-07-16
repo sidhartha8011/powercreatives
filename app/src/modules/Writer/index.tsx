@@ -14,14 +14,14 @@ import {
   ResizableHandle,
 } from '@/components/ui/resizable';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { activeDocumentAtom, activeDocumentIdAtom, addDocumentsAtom, writerSelectedModelAtom, writerDocumentsAtom, selectedDocumentIdsAtom } from './store';
+import { activeDocumentAtom, activeDocumentIdAtom, addDocumentsAtom, writerSelectedModelAtom, writerDocumentsAtom, selectedDocumentIdsAtom, updateActiveDocumentAtom } from './store';
 import type { WriterDocument } from './store';
 import { DocumentQueuePanel } from './components/DocumentQueuePanel';
 import { ContextGenerationPanel } from './components/ContextGenerationPanel';
 import { ReviewEditorCanvas } from './components/ReviewEditorCanvas';
 import { AiRevisionsPanel } from './components/AiRevisionsPanel';
 import { PillButton, StatusBadge, colors, typography } from '@/components/shared';
-import { Link2, Send, PanelRightOpen, PanelLeftOpen, History, Share2, Copy, Check, Loader2 } from 'lucide-react';
+import { Link2, Send, PanelRightOpen, PanelLeftOpen, History, Share2, Copy, Check, Loader2, Rocket } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { ImperativePanelHandle } from 'react-resizable-panels';
 import { useApp } from '@/contexts/AppContext';
@@ -61,6 +61,7 @@ export function WriterModule() {
   const selectedIds = useAtomValue(selectedDocumentIdsAtom);
   const setActiveDocId = useSetAtom(activeDocumentIdAtom);
   const setSelectedIds = useSetAtom(selectedDocumentIdsAtom);
+  const updateDoc = useSetAtom(updateActiveDocumentAtom);
   const { state, dispatch, consumePendingWriterArticleId } = useApp();
   const { settings } = useSettings();
 
@@ -155,10 +156,68 @@ export function WriterModule() {
   const queuePanelRef = useRef<ImperativePanelHandle>(null);
   const contextPanelRef = useRef<ImperativePanelHandle>(null);
   const aiPanelRef = useRef<ImperativePanelHandle>(null);
-  const [isQueueCollapsed, setIsQueueCollapsed] = useState(false);
-  const [isContextCollapsed, setIsContextCollapsed] = useState(false);
-  const [isAiCollapsed, setIsAiCollapsed] = useState(false);
+  // Default to a distraction-free editor: both left panels (Queue, Context/
+  // Settings) and the right AI Review panel start collapsed. The panels below
+  // use defaultSize={0} to match; these flags keep the toolbar toggles in sync
+  // on first paint (onCollapse doesn't fire for an already-collapsed panel).
+  const [isQueueCollapsed, setIsQueueCollapsed] = useState(true);
+  const [isContextCollapsed, setIsContextCollapsed] = useState(true);
+  const [isAiCollapsed, setIsAiCollapsed] = useState(true);
   const [isQueueListCollapsed, setIsQueueListCollapsed] = useState(false);
+
+  // ── Desired collapsed state — the AUTHORITATIVE source of truth for each
+  // panel's collapsed/expanded intent. Updated ONLY by explicit user actions:
+  // the three toolbar toggle buttons and each panel's own header collapse
+  // button. react-resizable-panels redistributes freed space across the
+  // group whenever one panel collapses/expands or a handle is dragged; that
+  // redistribution can push an already-collapsed sibling's size above (or an
+  // expanded sibling's size below) its threshold, firing a spurious
+  // onExpand/onCollapse that has nothing to do with user intent. The
+  // onCollapse/onExpand handlers below compare against this ref before
+  // trusting the event: if it disagrees with desired state, they immediately
+  // re-assert the desired state via the imperative API instead of flipping
+  // the visible flag. This is loop-free — reasserting collapse/expand only
+  // ever produces an event that now MATCHES desired state (the matching
+  // branch just syncs the visible flag and returns, calling nothing further)
+  // — and the flex-1 editor panel (no maxSize) always absorbs whatever space
+  // is displaced, so the group has somewhere to settle.
+  const desiredCollapsed = useRef({ queue: true, context: true, ai: true });
+
+  /** Toggle Queue panel; the toolbar button is the sole non-drift source for this flag. */
+  const toggleQueue = useCallback(() => {
+    const next = !desiredCollapsed.current.queue;
+    desiredCollapsed.current.queue = next;
+    if (next) queuePanelRef.current?.collapse();
+    else queuePanelRef.current?.expand();
+  }, []);
+
+  /** Toggle Context/Settings panel from the toolbar button. */
+  const toggleContext = useCallback(() => {
+    const next = !desiredCollapsed.current.context;
+    desiredCollapsed.current.context = next;
+    if (next) contextPanelRef.current?.collapse();
+    else contextPanelRef.current?.expand();
+  }, []);
+
+  /** Toggle AI/Revisions panel from the toolbar button. */
+  const toggleAi = useCallback(() => {
+    const next = !desiredCollapsed.current.ai;
+    desiredCollapsed.current.ai = next;
+    if (next) aiPanelRef.current?.collapse();
+    else aiPanelRef.current?.expand();
+  }, []);
+
+  /** Context panel's own header collapse button — also an explicit user action. */
+  const collapseContextFromHeader = useCallback(() => {
+    desiredCollapsed.current.context = true;
+    contextPanelRef.current?.collapse();
+  }, []);
+
+  /** AI panel's own header collapse button — also an explicit user action. */
+  const collapseAiFromHeader = useCallback(() => {
+    desiredCollapsed.current.ai = true;
+    aiPanelRef.current?.collapse();
+  }, []);
 
   // ── Approvals mutation — same pattern as Ads module ──
   const createApprovalMutation = trpc.approvals.createSet.useMutation({
@@ -234,6 +293,42 @@ export function WriterModule() {
     setShowApprovalDialog(true);
   }, [activeDoc, writerDocs, selectedIds]);
 
+  // ── Publish to Target Site — publishes the active article to the WP site
+  //    selected in its generation settings (Settings → Target Site). The
+  //    handler needs only { articleId }; the site id rides in the URL via the
+  //    sites.publish transform. Returns { postUrl } on success. ──
+  const publishMutation = trpc.sites.publish.useMutation({
+    onSuccess: (data: any) => {
+      const link = data?.postUrl || '';
+      updateDoc({ status: 'published' });
+      toast.success(link ? `Published! View at ${link}` : 'Article published!');
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to publish article.');
+    },
+  });
+
+  // Target Site chosen in ContextGenerationPanel (numeric site id) or undefined.
+  const publishSiteId = activeDoc?.generationSettings?.siteId;
+  // Server-persisted docs carry a numeric id (house idiom, cf. AiRevisionsPanel);
+  // UUID-id local drafts have nothing server-side to publish yet.
+  const isDocPersisted = !!activeDoc && /^\d+$/.test(activeDoc.id);
+  const publishDisabledReason = !activeDoc
+    ? 'No document selected'
+    : !isDocPersisted
+      ? 'Save the article before publishing'
+      : !activeDoc.content
+        ? 'Add content before publishing'
+        : !publishSiteId
+          ? 'Select a Target Site in Settings before publishing'
+          : '';
+  const canPublish = publishDisabledReason === '';
+
+  const handlePublish = useCallback(() => {
+    if (!activeDoc || !publishSiteId || !/^\d+$/.test(activeDoc.id)) return;
+    publishMutation.mutate({ id: publishSiteId, articleId: Number(activeDoc.id) });
+  }, [activeDoc, publishSiteId, publishMutation]);
+
   return (
     <div
       className="flex flex-col h-full overflow-hidden w-full"
@@ -254,15 +349,7 @@ export function WriterModule() {
           <PillButton
             variant={isQueueCollapsed ? 'default' : 'subtle'}
             icon={<PanelLeftOpen />}
-            onClick={() => {
-              if (isQueueCollapsed) {
-                queuePanelRef.current?.expand();
-                setIsQueueCollapsed(false);
-              } else {
-                queuePanelRef.current?.collapse();
-                setIsQueueCollapsed(true);
-              }
-            }}
+            onClick={toggleQueue}
           >
             {isQueueCollapsed ? 'Show Queue' : 'Hide Queue'}
           </PillButton>
@@ -270,15 +357,7 @@ export function WriterModule() {
           <PillButton
             variant={isContextCollapsed ? 'default' : 'subtle'}
             icon={<PanelRightOpen />}
-            onClick={() => {
-              if (isContextCollapsed) {
-                contextPanelRef.current?.expand();
-                setIsContextCollapsed(false);
-              } else {
-                contextPanelRef.current?.collapse();
-                setIsContextCollapsed(true);
-              }
-            }}
+            onClick={toggleContext}
           >
             {isContextCollapsed ? 'Show Settings' : 'Hide Settings'}
           </PillButton>
@@ -337,21 +416,13 @@ export function WriterModule() {
           <PillButton
             variant={isAiCollapsed ? 'default' : 'subtle'}
             icon={<History />}
-            onClick={() => {
-              if (isAiCollapsed) {
-                aiPanelRef.current?.expand();
-                setIsAiCollapsed(false);
-              } else {
-                aiPanelRef.current?.collapse();
-                setIsAiCollapsed(true);
-              }
-            }}
+            onClick={toggleAi}
           >
             {isAiCollapsed ? 'Show Revisions' : 'Hide Revisions'}
           </PillButton>
 
           <PillButton
-            variant="active"
+            variant={activeDoc?.status === 'review' ? 'active' : 'subtle'}
             icon={<Share2 />}
             onClick={handleOpenApprovalDialog}
             disabled={!canSendApprovals}
@@ -361,6 +432,17 @@ export function WriterModule() {
               : selectedIds.length === 1
                 ? 'Send 1 Article to Approvals'
                 : 'Send to Approvals'}
+          </PillButton>
+
+          <PillButton
+            variant="active"
+            icon={<Rocket />}
+            onClick={handlePublish}
+            disabled={!canPublish}
+            loading={publishMutation.isPending}
+            title={publishDisabledReason || 'Publish to the selected Target Site'}
+          >
+            Publish
           </PillButton>
         </div>
       </header>
@@ -372,13 +454,31 @@ export function WriterModule() {
           {/* Column 1: Document Queue — collapsible */}
           <ResizablePanel
             ref={queuePanelRef}
-            defaultSize={15}
+            defaultSize={0}
             minSize={10}
             maxSize={20}
             collapsible={true}
             collapsedSize={0}
-            onCollapse={() => setIsQueueCollapsed(true)}
-            onExpand={() => setIsQueueCollapsed(false)}
+            onCollapse={() => {
+              if (!desiredCollapsed.current.queue) {
+                // Drift: layout redistribution squeezed an intentionally-open
+                // panel shut. Re-assert the desired (expanded) state instead
+                // of trusting this event — loop-free because the resulting
+                // onExpand will match desired and just sync the flag.
+                queuePanelRef.current?.expand();
+                return;
+              }
+              setIsQueueCollapsed(true);
+            }}
+            onExpand={() => {
+              if (desiredCollapsed.current.queue) {
+                // Drift: layout redistribution re-inflated an intentionally-
+                // collapsed panel. Re-assert collapse; do NOT flip the flag.
+                queuePanelRef.current?.collapse();
+                return;
+              }
+              setIsQueueCollapsed(false);
+            }}
           >
             <DocumentQueuePanel
               isCollapsed={isQueueListCollapsed}
@@ -395,15 +495,27 @@ export function WriterModule() {
           {/* Column 2: Context & Generation */}
           <ResizablePanel
             ref={contextPanelRef}
-            defaultSize={22}
+            defaultSize={0}
             minSize={18}
             maxSize={40}
             collapsible={true}
             collapsedSize={0}
-            onCollapse={() => setIsContextCollapsed(true)}
-            onExpand={() => setIsContextCollapsed(false)}
+            onCollapse={() => {
+              if (!desiredCollapsed.current.context) {
+                contextPanelRef.current?.expand();
+                return;
+              }
+              setIsContextCollapsed(true);
+            }}
+            onExpand={() => {
+              if (desiredCollapsed.current.context) {
+                contextPanelRef.current?.collapse();
+                return;
+              }
+              setIsContextCollapsed(false);
+            }}
           >
-            <ContextGenerationPanel onCollapse={() => contextPanelRef.current?.collapse()} />
+            <ContextGenerationPanel onCollapse={collapseContextFromHeader} />
           </ResizablePanel>
 
           <ResizableHandle
@@ -412,8 +524,9 @@ export function WriterModule() {
             style={{ background: colors.borderLight }}
           />
 
-          {/* Column 3: Editor Canvas */}
-          <ResizablePanel defaultSize={45} minSize={30}>
+          {/* Column 3: Editor Canvas — takes the full width by default since the
+              three side panels start collapsed (0+0+100+0 = 100). */}
+          <ResizablePanel defaultSize={100} minSize={30}>
             <ReviewEditorCanvas />
           </ResizablePanel>
 
@@ -426,15 +539,27 @@ export function WriterModule() {
           {/* Column 4: Revisions — collapsible */}
           <ResizablePanel
             ref={aiPanelRef}
-            defaultSize={18}
+            defaultSize={0}
             minSize={12}
             maxSize={30}
             collapsible={true}
             collapsedSize={0}
-            onCollapse={() => setIsAiCollapsed(true)}
-            onExpand={() => setIsAiCollapsed(false)}
+            onCollapse={() => {
+              if (!desiredCollapsed.current.ai) {
+                aiPanelRef.current?.expand();
+                return;
+              }
+              setIsAiCollapsed(true);
+            }}
+            onExpand={() => {
+              if (desiredCollapsed.current.ai) {
+                aiPanelRef.current?.collapse();
+                return;
+              }
+              setIsAiCollapsed(false);
+            }}
           >
-            <AiRevisionsPanel onCollapse={() => aiPanelRef.current?.collapse()} />
+            <AiRevisionsPanel onCollapse={collapseAiFromHeader} />
           </ResizablePanel>
 
         </ResizablePanelGroup>

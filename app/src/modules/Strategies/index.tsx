@@ -69,6 +69,7 @@ const ITEM_APPROVAL_LABELS: Record<string, string> = {
   none: 'None',
   internal: 'Internal',
   client: 'Client',
+  both: 'Internal + Client',
 };
 
 interface Strategy {
@@ -461,7 +462,7 @@ export function StrategiesModule() {
   // Interlink injection is configured & run in a modal (auto/manual modes).
   // The button below opens it; the modal owns the injectInterlinks mutation and
   // calls back onDone → refetch so completions land in the list.
-  const [interlinkModalStrategy, setInterlinkModalStrategy] = useState<{ id: number; name: string } | null>(null);
+  const [interlinkModalStrategy, setInterlinkModalStrategy] = useState<{ id: number; name: string; interlinksConfig?: any } | null>(null);
 
   // Parent-settings editor (Task G1) — edits hierarchyMode + parent-link/anchor
   // config for one strategy in a modal (opened from the row's Settings button).
@@ -836,6 +837,7 @@ export function StrategiesModule() {
                       <SelectItem value="none">No approval</SelectItem>
                       <SelectItem value="internal">Internal</SelectItem>
                       <SelectItem value="client">Client</SelectItem>
+                      <SelectItem value="both">Internal + Client</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -908,7 +910,7 @@ export function StrategiesModule() {
                       variant="outline"
                       size="sm"
                       title="Insert internal links between this strategy's generated articles"
-                      onClick={() => setInterlinkModalStrategy({ id: strategy.id, name: strategy.name })}
+                      onClick={() => setInterlinkModalStrategy({ id: strategy.id, name: strategy.name, interlinksConfig: parseStrategyConfig(strategy.config)?.interlinksConfig })}
                     >
                       <Link2 className="w-3.5 h-3.5" />
                       Interlinks
@@ -1254,6 +1256,7 @@ export function StrategiesModule() {
         onOpenChange={(o) => { if (!o) setInterlinkModalStrategy(null); }}
         strategyId={interlinkModalStrategy?.id ?? 0}
         strategyName={interlinkModalStrategy?.name ?? ''}
+        interlinksConfig={interlinkModalStrategy?.interlinksConfig}
         onDone={refetch}
       />
 

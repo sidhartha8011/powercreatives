@@ -231,6 +231,14 @@ function pcm_test_define_item_overrides_fakes(): void
                 self::$createSetCalls[] = array('userId' => $user_id, 'data' => $data);
                 return self::$nextSetId;
             }
+            /** Lane moves — the real create_set() hardcodes 'draft'; the strategy
+             *  side moves the fresh set to its mode's starting lane right after. */
+            public static $updateStatusCalls = array();
+            public static function update_status($id, $user_id, $next_status)
+            {
+                self::$updateStatusCalls[] = array('id' => (int)$id, 'userId' => (int)$user_id, 'status' => (string)$next_status);
+                return true;
+            }
         }
     }
 
@@ -268,6 +276,7 @@ class StrategyItemOverridesTest extends \PHPUnit\Framework\TestCase
         PCM_LLM::$callCount = 0;
         PCM_Sites_Service::$calls = array();
         PCM_Approvals_Service::$createSetCalls = array();
+        PCM_Approvals_Service::$updateStatusCalls = array();
         PCM_Approvals_Service::$nextSetId = 501;
         PCM_Test_FakeWpdb::$lastTemplateId = null;
     }
@@ -348,6 +357,63 @@ class StrategyItemOverridesTest extends \PHPUnit\Framework\TestCase
 
         $this->assertSame('in_review', PCM_DB::$items[1]->status, 'the overridden item must be parked in review');
         $this->assertCount(1, PCM_Approvals_Service::$createSetCalls, 'exactly one approval set — for the overridden item only');
+        $this->assertSame('completed', PCM_DB::$items[2]->status, 'the non-overridden sibling must complete normally (strategy approvalMode is none)');
+    }
+
+    // ── (e) approvalMode 'both' — internal + client must BOTH approve ────
+
+    public function test_strategy_level_both_approval_mode_creates_set_in_the_internal_starting_lane(): void
+    {
+        // Strategy-wide approvalMode is 'both': no per-item override, so
+        // generate_next_item() must resolve 'both' from the strategy config
+        // and create_approval_set_for_item() must start the set in the same
+        // lane as plain 'internal' (see that method's docblock: 'both' starts
+        // internal; the Client-lane move is the internal sign-off).
+        $this->seedItems(array(array(
+            'id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0,
+        )));
+        $strategy = (object)array(
+            'id' => 7, 'name' => 'My Strategy', 'templateId' => 3, 'brandId' => null,
+            'config' => json_encode(array('approvalMode' => 'both')),
+            'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0,
+        );
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $this->assertSame('in_review', PCM_DB::$items[1]->status, 'a "both" item is parked in review, same as "internal"/"client"');
+        $this->assertNotEmpty(PCM_DB::$items[1]->setId ?? null, 'the item must be linked to the created approval set');
+        $this->assertCount(1, PCM_Approvals_Service::$createSetCalls);
+        $this->assertSame(
+            'internal',
+            PCM_Approvals_Service::$createSetCalls[0]['data']['status'] ?? null,
+            '"both" must start in the INTERNAL lane, not "client" or the bare "draft" default'
+        );
+        // REAL lane placement (create_set hardcodes draft): explicit move to internal.
+        $this->assertSame('internal', PCM_Approvals_Service::$updateStatusCalls[0]['status'] ?? null);
+    }
+
+    public function test_item_approval_override_both_wins_over_a_strategy_level_none(): void
+    {
+        // Mirrors test_item_approval_override_parks_only_that_item_in_review()
+        // above, but for the new 'both' value: an item-level 'both' override
+        // must win over the strategy's own 'none', park that item in review,
+        // and leave its non-overridden sibling to complete normally.
+        $this->seedItems(array(
+            array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0, 'config' => json_encode(array('approvalMode' => 'both'))),
+            array('id' => 2, 'keyword' => 'kw two', 'status' => 'pending', 'position' => 1),
+        ));
+        $strategy = (object)array('id' => 7, 'name' => 'My Strategy', 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 2, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1); // item 1
+        PCM_Strategy_Service::generate_next_item($strategy, 1); // item 2
+
+        $this->assertSame('in_review', PCM_DB::$items[1]->status, 'the "both"-overridden item must be parked in review');
+        $this->assertCount(1, PCM_Approvals_Service::$createSetCalls, 'exactly one approval set — for the overridden item only');
+        $this->assertSame(
+            'internal',
+            PCM_Approvals_Service::$createSetCalls[0]['data']['status'] ?? null,
+            'the per-item "both" override must also start in the internal lane'
+        );
         $this->assertSame('completed', PCM_DB::$items[2]->status, 'the non-overridden sibling must complete normally (strategy approvalMode is none)');
     }
 

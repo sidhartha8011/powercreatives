@@ -40,8 +40,15 @@ export interface StrategyPayload {
   featuredImages?: boolean;
   /** AutoPress parity: insert in-content images & charts ([IMAGE_N] media_assets). Default on. */
   inContentMedia?: boolean;
+  /** Media type to insert when inContentMedia is on. Default 'both'. */
+  mediaType?: string;
+  /** Count of in-content media items to insert. Default 3. */
+  mediaCount?: number;
+  mediaGuidance?: string;
   /** AutoPress parity: research the topic (Google-grounded Gemini) before writing. */
   research?: boolean;
+  /** Research depth: off / grounded (single Google-grounded pass) / deep (3-pass workflow). */
+  researchMode?: string;
   interlinksConfig?: any;
   scheduleConfig?: any;
 }
@@ -70,17 +77,23 @@ export function CreateStrategyDialog({
   const [modelId, setModelId] = useState<string>('');
   const [structure, setStructure] = useState('individual');
 
-  const [hierarchyMode, setHierarchyMode] = useState('standalone');
+  const [hierarchyMode, setHierarchyMode] = useState('parent_and_children');
   const [parentTargetType, setParentTargetType] = useState('custom');
   const [parentTargetUrl, setParentTargetUrl] = useState('');
   const [parentKeywordIndex, setParentKeywordIndex] = useState(0);
   
   const [autoInterlink, setAutoInterlink] = useState(false);
+  const [interlinkAnchorMode, setInterlinkAnchorMode] = useState('keyword');
   const [interlinkQuantity, setInterlinkQuantity] = useState(3);
   const [interlinkMode, setInterlinkMode] = useState('auto');
   const [featuredImages, setFeaturedImages] = useState(true);
   const [inContentMedia, setInContentMedia] = useState(true);
-  const [research, setResearch] = useState(true);
+  const [mediaType, setMediaType] = useState('both');
+  const [mediaCount, setMediaCount] = useState(3);
+  const [mediaGuidance, setMediaGuidance] = useState('');
+  // Effective default preserved from the old "Research the topic before writing"
+  // checkbox, which defaulted to checked → 'grounded' (single Google-grounded pass).
+  const [researchMode, setResearchMode] = useState('grounded');
 
   const [publishingMode, setPublishingMode] = useState('draft');
   const [siteId, setSiteId] = useState<string>('');
@@ -94,7 +107,7 @@ export function CreateStrategyDialog({
       setTemplateId('');
       setModelId('');
       setStructure('individual');
-      setHierarchyMode('standalone');
+      setHierarchyMode('parent_and_children');
       setParentTargetType('custom');
       setParentTargetUrl('');
       setParentKeywordIndex(0);
@@ -103,7 +116,11 @@ export function CreateStrategyDialog({
       setInterlinkMode('auto');
       setFeaturedImages(true);
       setInContentMedia(true);
-      setResearch(true);
+      setMediaType('both');
+      setMediaCount(3);
+    setMediaGuidance('');
+    setInterlinkAnchorMode('keyword');
+      setResearchMode('grounded');
       setPublishingMode('draft');
       setSiteId('');
       setApprovalMode('none');
@@ -132,12 +149,19 @@ export function CreateStrategyDialog({
     }
   }, [open, sites]);
 
-  // Consolidated = one article for all keywords, so hierarchy is meaningless.
-  // Selecting it forces hierarchy back to standalone (belt); the payload also
-  // normalizes it below (braces) so parent keys never leak when consolidated.
+  // Consolidated = one article for all keywords, so it can't have separate
+  // parent + children articles — its single article can only be the pillar
+  // itself ('parent_only') or a child of an existing page ('children_only').
+  // Switching to consolidated auto-corrects an in-flight "Parent + Children"
+  // pick to "Parent (this is the pillar)"; switching back to individual
+  // auto-corrects "parent_only" (not offered there) back to "Parent + Children".
   const handleStructureChange = (value: string) => {
     setStructure(value);
-    if (value === 'consolidated') setHierarchyMode('standalone');
+    if (value === 'consolidated' && hierarchyMode === 'parent_and_children') {
+      setHierarchyMode('parent_only');
+    } else if (value === 'individual' && hierarchyMode === 'parent_only') {
+      setHierarchyMode('parent_and_children');
+    }
   };
 
   const handleSave = () => {
@@ -145,7 +169,13 @@ export function CreateStrategyDialog({
 
     const finalName = name.trim() ? name.trim() : defaultName;
     const selectedModel = (genModels as any[]).find((m) => m.modelId === modelId);
-    const effectiveHierarchy = structure === 'consolidated' ? 'standalone' : hierarchyMode;
+    // Belt-and-braces: the UI shouldn't allow parent_and_children under consolidated
+    // (the option isn't offered + auto-corrected on structure change), but guard the
+    // payload anyway in case state gets here some other way.
+    const effectiveHierarchy =
+      structure === 'consolidated' && hierarchyMode === 'parent_and_children'
+        ? 'parent_only'
+        : hierarchyMode;
 
     onSave({
       name: finalName,
@@ -161,8 +191,10 @@ export function CreateStrategyDialog({
       approvalMode,
       featuredImages,
       inContentMedia,
-      research,
-      interlinksConfig: autoInterlink ? { mode: interlinkMode, quantity: interlinkQuantity } : undefined,
+      ...(inContentMedia ? { mediaType, mediaCount, ...(mediaGuidance.trim() ? { mediaGuidance: mediaGuidance.trim() } : {}) } : {}),
+      research: researchMode !== 'off',
+      researchMode,
+      interlinksConfig: autoInterlink ? { mode: interlinkMode, quantity: interlinkQuantity, anchorMode: interlinkAnchorMode } : undefined,
       scheduleConfig: publishingMode === 'schedule' ? { ...recurrenceToConfig(recurrence), startDate } : undefined,
     });
   };
@@ -284,30 +316,28 @@ export function CreateStrategyDialog({
             </div>
             <div className="space-y-1.5">
               <Label>Content Hierarchy</Label>
-              <Select
-                value={hierarchyMode}
-                onValueChange={setHierarchyMode}
-                disabled={structure === 'consolidated'}
-              >
+              <Select value={hierarchyMode} onValueChange={setHierarchyMode}>
                 <SelectTrigger className="w-full bg-background">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="standalone">Standalone (No Hierarchy)</SelectItem>
-                  <SelectItem value="parent_only">Parent Only (Hub Page)</SelectItem>
-                  <SelectItem value="children_only">Children Only (Link to Existing)</SelectItem>
-                  <SelectItem value="parent_and_children">Parent + Children Together</SelectItem>
+                  <SelectItem value="children_only">Children of an Existing Page</SelectItem>
+                  {structure === 'consolidated' ? (
+                    <SelectItem value="parent_only">Parent (this is the pillar)</SelectItem>
+                  ) : (
+                    <SelectItem value="parent_and_children">Parent + Children</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
               {structure === 'consolidated' && (
                 <p className="text-xs text-muted-foreground">
-                  Hierarchy applies to per-keyword strategies.
+                  A consolidated strategy produces one article — it can be a child of an existing page, but not a parent.
                 </p>
               )}
             </div>
           </div>
 
-          {structure !== 'consolidated' && hierarchyMode === 'children_only' && (
+          {hierarchyMode === 'children_only' && (
             <div className="space-y-1.5">
               <Label htmlFor="parent-url" title="All generated content will link to this parent.">
                 Target Parent URL
@@ -368,18 +398,73 @@ export function CreateStrategyDialog({
                 </Label>
               </div>
 
+              {inContentMedia && (
+                <div className="ml-6 flex items-center gap-3 text-sm">
+                  <span className="font-medium text-muted-foreground">Type:</span>
+                  <Select value={mediaType} onValueChange={setMediaType}>
+                    <SelectTrigger className="h-8 w-32 text-xs bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="images">Images</SelectItem>
+                      <SelectItem value="charts">Charts</SelectItem>
+                      <SelectItem value="both">Images + Charts</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span className="font-medium text-muted-foreground">Count:</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={8}
+                    value={mediaCount}
+                    onChange={(e) => setMediaCount(parseInt(e.target.value, 10) || 3)}
+                    className="w-16 h-8 text-xs bg-background"
+                  />
+                </div>
+              )}
+
+              {inContentMedia && (
+                <div className="ml-6">
+                  <Input
+                    value={mediaGuidance}
+                    onChange={(e) => setMediaGuidance(e.target.value)}
+                    maxLength={500}
+                    placeholder="Optional: what should the images show / what data should the charts present? e.g. “clean product photos; charts comparing yearly market growth”"
+                    className="h-8 text-xs bg-background"
+                    title="Creative direction passed to the writer: image subjects/style and the data charts should visualize."
+                  />
+                </div>
+              )}
+
               <div
                 className="flex items-center space-x-2"
                 title="Summarize the current search landscape (top themes, common questions, content gaps) and feed it into generation."
               >
-                <Checkbox
-                  id="research-topic"
-                  checked={research}
-                  onCheckedChange={(c) => setResearch(c as boolean)}
-                />
-                <Label htmlFor="research-topic" className="cursor-pointer font-medium leading-none">
-                  Research the topic before writing
+                <Label htmlFor="research-mode" className="font-medium leading-none">
+                  Research:
                 </Label>
+                <Select value={researchMode} onValueChange={setResearchMode}>
+                  <SelectTrigger id="research-mode" className="h-8 w-32 text-xs bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="off">Off</SelectItem>
+                    <SelectItem value="grounded" title="One Google-grounded pass.">
+                      Standard
+                    </SelectItem>
+                    <SelectItem
+                      value="deep"
+                      title="3-pass workflow — landscape, questions & statistics, competitor gaps."
+                    >
+                      Deep
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground">
+                  {researchMode === 'off' && 'No research — writes from the model’s own knowledge.'}
+                  {researchMode === 'grounded' && 'One live Google search summarizing what currently ranks for the keyword.'}
+                  {researchMode === 'deep' && 'Three live searches: search landscape, questions & statistics (chart-ready data), competitor gaps.'}
+                </span>
               </div>
 
               <div
@@ -410,8 +495,17 @@ export function CreateStrategyDialog({
                     />
                   </div>
                   <div className="flex items-center space-x-2">
-                    <span className="font-medium text-muted-foreground">Mode:</span>
-                    <span>Auto (Phrase)</span>
+                    <span className="font-medium text-muted-foreground">Anchor:</span>
+                    <Select value={interlinkAnchorMode} onValueChange={setInterlinkAnchorMode}>
+                      <SelectTrigger className="h-8 w-40 text-xs bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="keyword" title="Link the exact keyword of the destination article where it already appears.">Destination keyword</SelectItem>
+                        <SelectItem value="synonym" title="AI finds a synonym of the destination keyword already present in the text and links that.">Synonym</SelectItem>
+                        <SelectItem value="ai" title="AI picks the most natural existing phrase to link.">AI decides</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               )}
@@ -442,6 +536,9 @@ export function CreateStrategyDialog({
                    <SelectItem value="none">None</SelectItem>
                    <SelectItem value="internal">Internal Only</SelectItem>
                    <SelectItem value="client">Client Only</SelectItem>
+                   <SelectItem value="both" title="Both your team and the client must approve before the post publishes.">
+                     Internal + Client
+                   </SelectItem>
                  </SelectContent>
                </Select>
             </div>

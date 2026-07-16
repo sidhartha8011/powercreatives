@@ -48,18 +48,31 @@ class PCM_Strategy_Service
     }
 
     /**
-     * Enforce the invariant that a 'consolidated' structure (ONE article for
-     * every keyword in the strategy — see structure_mode()) can never carry a
-     * hierarchy between the strategy's OWN articles: hierarchyMode
-     * ('children_only'/'parent_and_children') is only meaningful when a
-     * strategy produces more than one article. The create dialog's UI already
-     * prevents picking both together, but the server must not trust client
-     * input — this is the single place both create_from_keywords() (covering
-     * every creation path: the REST create endpoint, duplicate_strategy(),
-     * and the per-site schedule scanner) and
-     * PCM_REST_Strategy::update_strategy() (the only PATCH door that can
-     * change hierarchyMode and/or config.structure) funnel through before
-     * persisting.
+     * Enforce the one hierarchy invariant a 'consolidated' structure (ONE
+     * article for every keyword in the strategy — see structure_mode()) still
+     * breaks: 'parent_and_children'. That mode splits the strategy's OWN
+     * articles into a parent and its children, which is impossible when there
+     * is only one article. The other modes are fine — 'children_only' means the
+     * single consolidated article links to an EXTERNAL parent URL
+     * (config.parentTargetUrl), 'parent_only' means the single consolidated
+     * article IS the pillar/parent and carries no outbound parent link, and
+     * 'standalone' carries no link at all — so all pass through untouched.
+     *
+     * When consolidated + 'parent_and_children': downgrade the mode to
+     * 'parent_only' — the "parent" intent is now expressible for a single
+     * consolidated article: that one article becomes the pillar with nothing
+     * above it (no injected link, via resolve_parent_link()'s default-null
+     * path). Drop only 'parentKeyword' — the item-designation key that names
+     * which of the strategy's own items is the parent, meaningless with a
+     * single article. 'parentAnchorKeyword' (the anchor-text override) and
+     * 'parentTargetUrl' survive untouched.
+     *
+     * The create dialog's UI already prevents an impossible combination, but
+     * the server must not trust client input — this is the single place both
+     * create_from_keywords() (covering every creation path: the REST create
+     * endpoint, duplicate_strategy(), and the per-site schedule scanner) and
+     * PCM_REST_Strategy::update_strategy() (the only PATCH door that can change
+     * hierarchyMode and/or config.structure) funnel through before persisting.
      *
      * Pure/deterministic — no DB access, directly unit-testable. Callers must
      * pass the EFFECTIVE values (i.e., already merged with any existing
@@ -70,14 +83,17 @@ class PCM_Strategy_Service
      * @param array  $config         Effective config (must reflect the
      *                                effective 'structure' key).
      * @return array{hierarchyMode:string,config:array} Corrected pair —
-     *                                returned unchanged when structure isn't
-     *                                'consolidated'.
+     *                                returned unchanged unless structure is
+     *                                'consolidated' AND mode is
+     *                                'parent_and_children' (→ 'parent_only').
      */
     public static function apply_structure_hierarchy_guard(string $hierarchy_mode, array $config): array
     {
-        if (($config['structure'] ?? 'individual') === 'consolidated') {
-            $hierarchy_mode = 'standalone';
-            unset($config['parentTargetUrl'], $config['parentKeyword'], $config['parentAnchorKeyword']);
+        if (($config['structure'] ?? 'individual') === 'consolidated'
+            && $hierarchy_mode === 'parent_and_children'
+        ) {
+            $hierarchy_mode = 'parent_only';
+            unset($config['parentKeyword']);
         }
         return array('hierarchyMode' => $hierarchy_mode, 'config' => $config);
     }
@@ -560,7 +576,7 @@ class PCM_Strategy_Service
             $brand = !empty($strategy->brandId) ? PCM_DB::get_brand_by_id((int)$strategy->brandId, $user_id) : null;
 
             $research = self::maybe_research_context($strategy, $keywords, $user_id);
-            $messages = self::build_prompt($keywords, $template, $brand, $research, self::in_content_media_enabled($strategy));
+            $messages = self::build_prompt($keywords, $template, $brand, $research, self::in_content_media_enabled($strategy), self::media_count($strategy), self::media_type($strategy), self::media_guidance($strategy));
             list($model, $provider) = self::resolve_model($strategy);
             $llm_options = array(
                 'model'      => $model,
@@ -579,6 +595,20 @@ class PCM_Strategy_Service
             // A6: in-content images & charts — replace [IMAGE_N] tokens with
             // <figure> blocks (or strip them when disabled/absent), before persist.
             $result = self::maybe_generate_in_content_media($result, $strategy, $user_id);
+            $content = $result['content'] ?? '';
+
+            // Step 9: hierarchy-aware parent-link injection — mirrors the per-item
+            // path in generate_next_item(), applied here to the single shared
+            // article. For a consolidated strategy the only hierarchy left after
+            // the guard is 'children_only', where resolve_parent_link() returns
+            // the EXTERNAL parentTargetUrl without any item lookup — so the
+            // $items array is passed only for signature parity. Runs after the
+            // media step and before persist, so the link is baked into stored
+            // content. Failure-isolated: neither helper throws for missing config.
+            $parent_link = self::resolve_parent_link($strategy, $items, $user_id);
+            if ($parent_link !== null) {
+                $content = self::inject_parent_link($content, $parent_link, $strategy);
+            }
 
             $title = $result['title'] ?? ucfirst($keywords[0] ?? '');
             $slug  = sanitize_title($title);
@@ -590,7 +620,7 @@ class PCM_Strategy_Service
                 'brandId'         => !empty($strategy->brandId) ? (int)$strategy->brandId : null,
                 'title'           => $title,
                 'slug'            => $slug,
-                'content'         => $result['content'] ?? '',
+                'content'         => $content,
                 'metaTitle'       => $result['metaTitle'] ?? $title,
                 'metaDescription' => $result['metaDescription'] ?? '',
                 'schemaType'      => 'Article',
@@ -880,11 +910,24 @@ class PCM_Strategy_Service
             ? (string)(self::hierarchy_config($strategy)['parentKeyword'] ?? '')
             : '';
 
+        // A consolidated strategy has N items all pointing at the SAME
+        // articleId; process each DISTINCT article once. Without this the loop
+        // would strip+append the same article N times — the final content is
+        // still correct (strip-then-append), but the counts inflate and the
+        // writes are wasteful. A duplicate item isn't a real "skip" candidate,
+        // so it bumps no counter. (Individual/parent_and_children strategies
+        // have one article per item, so this never coalesces them.)
+        $seen_articles = array();
         foreach ($items as $item) {
             if (empty($item->articleId)) {
                 $out['skipped']++;
                 continue;
             }
+            $article_key = (int)$item->articleId;
+            if (isset($seen_articles[$article_key])) {
+                continue;
+            }
+            $seen_articles[$article_key] = true;
             $article = PCM_DB::get_article((int)$item->articleId, $user_id);
             if (!$article) {
                 $out['skipped']++;
@@ -1027,7 +1070,7 @@ class PCM_Strategy_Service
 
             // ── 4. Build prompt with variable injection (+ optional live research) ──
             $research = self::maybe_research_context($strategy, array($item->keyword), $user_id);
-            $messages = self::build_prompt(array($item->keyword), $template, $brand, $research, self::in_content_media_enabled($strategy));
+            $messages = self::build_prompt(array($item->keyword), $template, $brand, $research, self::in_content_media_enabled($strategy), self::media_count($strategy), self::media_type($strategy), self::media_guidance($strategy));
 
             // ── 5. Invoke LLM — user-selected model/provider (data-driven), with a
             //       fallback for strategies created before model selection existed. ──
@@ -1092,7 +1135,7 @@ class PCM_Strategy_Service
             // own approval_mode(); array_key_exists (not empty()) so an explicit
             // 'none' override is honored, not treated as "absent".
             $approval_mode = array_key_exists('approvalMode', $item_cfg)
-                && in_array($item_cfg['approvalMode'], array('none', 'internal', 'client'), true)
+                && in_array($item_cfg['approvalMode'], array('none', 'internal', 'client', 'both'), true)
                 ? (string)$item_cfg['approvalMode']
                 : self::approval_mode($strategy);
 
@@ -1533,7 +1576,7 @@ class PCM_Strategy_Service
      * maybe-auto-publish, no Approvals involvement at all.
      *
      * @param object $strategy Strategy DB row.
-     * @return string 'none'|'internal'|'client'.
+     * @return string 'none'|'internal'|'client'|'both'.
      */
     private static function approval_mode(object $strategy): string
     {
@@ -1542,7 +1585,7 @@ class PCM_Strategy_Service
         }
         $cfg  = json_decode((string)$strategy->config, true);
         $mode = is_array($cfg) ? (string)($cfg['approvalMode'] ?? 'none') : 'none';
-        return in_array($mode, array('internal', 'client'), true) ? $mode : 'none';
+        return in_array($mode, array('internal', 'client', 'both'), true) ? $mode : 'none';
     }
 
     /**
@@ -1635,6 +1678,128 @@ class PCM_Strategy_Service
     }
 
     /**
+     * Max in-content media assets per article (A6, `config.mediaCount`) — replaces
+     * the old hard cap of 3. Default 3, clamped to 1–8 (mirrors the controller's
+     * own sanitize clamp so a legacy/out-of-range stored value is still bounded).
+     *
+     * @param object $strategy Strategy DB row.
+     * @return int 1–8.
+     */
+    private static function media_count(object $strategy): int
+    {
+        if (empty($strategy->config)) {
+            return 3;
+        }
+        $cfg = json_decode((string)$strategy->config, true);
+        if (!is_array($cfg) || !isset($cfg['mediaCount'])) {
+            return 3;
+        }
+        return max(1, min(8, (int)$cfg['mediaCount']));
+    }
+
+    /**
+     * Which in-content asset type(s) are allowed (A6, `config.mediaType`):
+     * 'images' | 'charts' | 'both'. Default 'both'; any unrecognized/absent value
+     * falls back to 'both'. Governs BOTH the prompt (instruct only the allowed
+     * type) and the post-process gate (drop assets of a disallowed type).
+     *
+     * @param object $strategy Strategy DB row.
+     * @return string 'images'|'charts'|'both'.
+     */
+    private static function media_type(object $strategy): string
+    {
+        if (empty($strategy->config)) {
+            return 'both';
+        }
+        $cfg  = json_decode((string)$strategy->config, true);
+        $type = is_array($cfg) ? (string)($cfg['mediaType'] ?? 'both') : 'both';
+        return in_array($type, array('images', 'charts', 'both'), true) ? $type : 'both';
+    }
+
+    /**
+     * Optional free-text creative direction for in-content media
+     * (config.mediaGuidance): what kind of images to use and/or what data the
+     * charts should show. Sanitized + capped at the controller; '' when unset.
+     *
+     * @param object $strategy Strategy DB row.
+     * @return string
+     */
+    private static function media_guidance(object $strategy): string
+    {
+        if (empty($strategy->config)) {
+            return '';
+        }
+        $cfg = json_decode((string)$strategy->config, true);
+        return is_array($cfg) ? trim((string)($cfg['mediaGuidance'] ?? '')) : '';
+    }
+
+    /**
+     * Server-side chart-quality gate (A6, the owner's "no junk charts" ask). A
+     * decoded Chart.js config passes ONLY when it presents real, meaningful data:
+     *   - data.labels is an array with ≥3 entries;
+     *   - data.datasets[0].data is an array of ≥3 numeric values;
+     *   - data.datasets[0].label is a non-empty string (named series);
+     *   - the values are NOT all identical (a placeholder/filler smell); and
+     *   - a descriptive title is present — either options.plugins.title.text OR a
+     *     top-level `title` string (accept either, don't over-require).
+     * A failing config ⇒ the asset is dropped (its token stripped), exactly like a
+     * failed image.
+     *
+     * @param array $chart_config Decoded Chart.js config.
+     * @return bool True when the chart carries real, meaningful data.
+     */
+    private static function is_quality_chart(array $chart_config): bool
+    {
+        $data = $chart_config['data'] ?? null;
+        if (!is_array($data)) {
+            return false;
+        }
+
+        $labels = $data['labels'] ?? null;
+        if (!is_array($labels) || count($labels) < 3) {
+            return false;
+        }
+
+        $datasets = $data['datasets'] ?? null;
+        if (!is_array($datasets) || empty($datasets)) {
+            return false;
+        }
+        $first = $datasets[0] ?? null;
+        if (!is_array($first)) {
+            return false;
+        }
+
+        $label = $first['label'] ?? null;
+        if (!is_string($label) || trim($label) === '') {
+            return false;
+        }
+
+        $values = $first['data'] ?? null;
+        if (!is_array($values) || count($values) < 3) {
+            return false;
+        }
+        $numeric = array();
+        foreach ($values as $v) {
+            if (is_bool($v) || !is_numeric($v)) {
+                return false; // non-numeric data point ⇒ not a real chart
+            }
+            $numeric[] = (float)$v;
+        }
+        // All-identical values are the canonical placeholder smell (e.g. [1,1,1]).
+        if (count(array_unique($numeric)) < 2) {
+            return false;
+        }
+
+        // A descriptive title in EITHER accepted location.
+        $top_title    = $chart_config['title'] ?? null;
+        $plugin_title = $chart_config['options']['plugins']['title']['text'] ?? null;
+        $has_title = (is_string($top_title) && trim($top_title) !== '')
+            || (is_string($plugin_title) && trim($plugin_title) !== '');
+
+        return $has_title;
+    }
+
+    /**
      * A6 — turn the model's `media_assets` into in-content <figure> blocks
      * (AutoPress [IMAGE_N] parity). For each returned asset, its matching
      * [IMAGE_N] token in the article HTML is replaced with a
@@ -1642,7 +1807,9 @@ class PCM_Strategy_Service
      * image (type=image → PCM_Strategy_Image::generate(), reusing the strategy's
      * imageProvider/imageModel exactly like maybe_generate_featured_image()) or a
      * QuickChart-rendered chart (type=chart → a quickchart.io URL built from the
-     * asset's chart_config; no API key). Capped at 3 assets.
+     * asset's chart_config; no API key). Capped at `config.mediaCount` (1–8,
+     * default 3) assets, and filtered to the allowed `config.mediaType`
+     * (images|charts|both); charts additionally pass a server-side quality gate.
      *
      * Fully guarded so no raw placeholder ever survives to the published article:
      *   - Disabled (config.inContentMedia falsey) or no assets → the article is
@@ -1678,8 +1845,12 @@ class PCM_Strategy_Service
         $img_provider = is_array($cfg) ? (string)($cfg['imageProvider'] ?? '') : '';
         $img_model    = is_array($cfg) ? (string)($cfg['imageModel'] ?? '') : '';
 
-        // Cap at 3 assets per article.
-        foreach (array_slice($assets, 0, 3) as $asset) {
+        // mediaCount caps how many assets we place; mediaType restricts which
+        // asset type(s) survive (a disallowed type is dropped, its token stripped).
+        $max          = self::media_count($strategy);
+        $allowed_type = self::media_type($strategy);
+
+        foreach (array_slice($assets, 0, $max) as $asset) {
             if (!is_array($asset)) {
                 continue;
             }
@@ -1692,6 +1863,14 @@ class PCM_Strategy_Service
             $type  = (($asset['type'] ?? 'image') === 'chart') ? 'chart' : 'image';
             $desc  = (string)($asset['prompt'] ?? '');
 
+            // mediaType gate: drop an asset of a disallowed type regardless of what
+            // the model returned — the token falls through to the strip below.
+            if (($allowed_type === 'images' && $type !== 'image')
+                || ($allowed_type === 'charts' && $type !== 'chart')
+            ) {
+                continue;
+            }
+
             $src = '';
             if ($type === 'chart') {
                 $chart_config = $asset['chart_config'] ?? null;
@@ -1703,6 +1882,11 @@ class PCM_Strategy_Service
                 }
                 if (!is_array($chart_config) || empty($chart_config)) {
                     continue; // invalid/empty chart — leave the token to be stripped
+                }
+                // Chart-quality gate (owner's "no junk charts" ask): a config that
+                // doesn't present real, meaningful data is dropped like a failed image.
+                if (!self::is_quality_chart($chart_config)) {
+                    continue;
                 }
                 // QuickChart renders the Chart.js config to a static image URL; no
                 // API key required (approved plan decision). Publish-time sideload
@@ -1792,11 +1976,16 @@ class PCM_Strategy_Service
      * consistent with Decision 2 (sharing IS an Approvals-module action) rather
      * than a silently-dropped requirement.
      *
+     * 'both' (internal + client must BOTH approve) is not a new pipeline: it
+     * reuses the exact 'internal' starting lane below — 'both' starts internal;
+     * moving the set to the Client lane is the internal sign-off; the client's
+     * full approval then triggers publish — both parties gate the post.
+     *
      * @param object $strategy      Strategy DB row.
      * @param object $item          Strategy item DB row (for its keyword, in the name).
      * @param int    $article_id    Newly created article ID.
      * @param int    $user_id       Owner ID.
-     * @param string $approval_mode 'internal'|'client'.
+     * @param string $approval_mode 'internal'|'client'|'both'.
      * @return int|null New approval set ID, or null if the article/creation failed.
      */
     private static function create_approval_set_for_item(object $strategy, object $item, int $article_id, int $user_id, string $approval_mode): ?int
@@ -1809,18 +1998,37 @@ class PCM_Strategy_Service
             require_once dirname(__DIR__) . '/approvals/service.php';
         }
 
+        // Explicit mode -> starting lane/status map, instead of an implicit
+        // client-or-not ternary, now that a third mode exists: 'internal' and
+        // 'client' each start in their own lane; 'both' starts internal (see
+        // docblock above for why).
+        $status_map = array(
+            'internal' => 'internal',
+            'client'   => 'client',
+            'both'     => 'internal',
+        );
+        $starting_status = $status_map[$approval_mode] ?? 'internal';
+
         $label = $approval_mode === 'client' ? 'Client Review' : 'Internal Review';
         // Client-facing sets get a client-safe name (just the article title) --
         // the internal strategy name + target SEO keyword must not be exposed to
         // a client who opens the (unauthenticated, token-scoped) review link.
         // Internal-only sets keep the more useful strategy+keyword identifier for
-        // the team's own approval-queue dashboard.
+        // the team's own approval-queue dashboard. 'both' starts internal, so it
+        // takes the internal-only naming, same as 'internal'.
         $name = $approval_mode === 'client'
             ? sprintf('%s (%s)', (string)$article->title, $label)
             : sprintf('%s — %s (%s)', (string)$strategy->name, (string)$item->keyword, $label);
+        // NOTE: create_set() hardcodes status 'draft' and ignores this key (a
+        // pre-existing approvals-module contract) — it stays in the payload as
+        // documentation/forward-compat; the REAL lane placement happens via the
+        // explicit update_status() call below, the same public API the approvals
+        // Kanban uses. Before that call existed, every strategy-made set
+        // silently started in Draft regardless of approvalMode.
         $set_id = PCM_Approvals_Service::create_set($user_id, array(
             'name'     => $name,
             'brandId'  => !empty($strategy->brandId) ? (int)$strategy->brandId : null,
+            'status'   => $starting_status,
             'snapshot' => array(
                 'media'    => array(),
                 'copy'     => array(),
@@ -1837,6 +2045,14 @@ class PCM_Strategy_Service
                 )),
             ),
         ));
+
+        // Move the fresh set out of the hardcoded 'draft' into its mode's
+        // starting lane ('internal'/'client'; 'both' → internal). Best-effort:
+        // a failed move leaves the set findable in Draft rather than failing
+        // the generation that created it.
+        if ($set_id && method_exists('PCM_Approvals_Service', 'update_status')) {
+            PCM_Approvals_Service::update_status((int)$set_id, $user_id, $starting_status);
+        }
 
         return $set_id ?: null;
     }
@@ -2003,6 +2219,30 @@ class PCM_Strategy_Service
     }
 
     /**
+     * Resolve the effective anchor mode for an interlink run — 'keyword'
+     * (exact scan only, no LLM ever), 'synonym' (verbatim synonym fallback), or
+     * 'ai' (single-phrase fallback ≡ legacy aiAnchors). An explicit valid
+     * anchorMode in $options wins; else the stored interlinksConfig's anchorMode;
+     * else back-compat with the legacy aiAnchors flag (truthy -> 'ai', absent ->
+     * 'keyword'). Mirrors how quantity/aiAnchors resolve ($options over $cfg).
+     *
+     * @param array $options Per-run overrides.
+     * @param array $cfg     Stored interlinksConfig (fallback).
+     * @return string 'keyword'|'synonym'|'ai'
+     */
+    private static function resolve_anchor_mode(array $options, array $cfg): string
+    {
+        $valid = array('keyword', 'synonym', 'ai');
+        if (isset($options['anchorMode']) && in_array($options['anchorMode'], $valid, true)) {
+            return (string)$options['anchorMode'];
+        }
+        if (isset($cfg['anchorMode']) && in_array($cfg['anchorMode'], $valid, true)) {
+            return (string)$cfg['anchorMode'];
+        }
+        return !empty($options['aiAnchors']) ? 'ai' : 'keyword';
+    }
+
+    /**
      * Best-effort URL for a generated article — prefer its real publishedUrl,
      * otherwise construct one from the strategy's configured site + slug.
      * Shared by Step 9 (parent link) and Step 10 (interlinks); a guess, not a
@@ -2096,15 +2336,24 @@ class PCM_Strategy_Service
      *                                list (every OTHER completed item's own
      *                                keyword) with this fixed rule set for every
      *                                source article.
-     *   - aiAnchors           bool  When truthy AND a target keyword has no safe
-     *                                verbatim occurrence, ask the LLM (one call
-     *                                per source/target pair) for an existing
-     *                                short phrase already in the article to wrap
-     *                                instead -- re-validated through the SAME
-     *                                deterministic rails. Any LLM failure or
+     *   - aiAnchors           bool  Legacy flag. When truthy AND no anchorMode is
+     *                                given, resolves to anchorMode='ai' (below).
+     *   - anchorMode          string 'keyword'|'synonym'|'ai'. Governs the anchor
+     *                                fallback when a target keyword has no safe
+     *                                verbatim occurrence. 'keyword': never consult
+     *                                the LLM (exact scan only). 'ai': ask the LLM
+     *                                (one call per source/target pair) for one
+     *                                existing short phrase already in the article
+     *                                to wrap instead (≡ legacy aiAnchors). 'synonym':
+     *                                ask (one call) for 3-5 short verbatim synonyms
+     *                                of the keyword and take the first that
+     *                                re-validates. All fallbacks re-validate through
+     *                                the SAME deterministic rails; any LLM failure or
      *                                unsafe answer degrades to the plain
-     *                                'no safe occurrence' skip (never fails the
-     *                                run). Absent -> false.
+     *                                'no safe occurrence' skip (never fails the run).
+     *                                Resolution: explicit valid anchorMode (option
+     *                                then stored config) wins; else legacy aiAnchors
+     *                                truthy -> 'ai'; else 'keyword'.
      *
      * @param int   $strategy_id Strategy ID.
      * @param int   $user_id     Owner ID.
@@ -2127,10 +2376,12 @@ class PCM_Strategy_Service
             return $empty_result; // not configured, or explicitly set to 0 links
         }
 
-        // When truthy, a target keyword with no safe verbatim occurrence falls
-        // back to an LLM-picked existing phrase (see pick_ai_anchor() below),
-        // re-validated through the same rails. Absent -> false.
-        $ai_anchors = !empty($options['aiAnchors']);
+        // Anchor mode governs what happens when a target keyword has no safe
+        // verbatim occurrence: 'keyword' never consults the LLM; 'ai' asks for a
+        // single existing phrase (legacy aiAnchors semantics); 'synonym' asks for
+        // 3-5 short verbatim synonyms. Resolved from $options with the stored
+        // interlinksConfig as fallback, then back-compat with legacy aiAnchors.
+        $anchor_mode = self::resolve_anchor_mode($options, $cfg);
 
         $max_links_per_article = array_key_exists('maxLinksPerArticle', $options) && $options['maxLinksPerArticle'] !== null
             ? (int)$options['maxLinksPerArticle']
@@ -2241,21 +2492,37 @@ class PCM_Strategy_Service
                 $safe   = self::find_safe_occurrence($content, $target['keyword'], $flags);
                 $reason = 'ok';
 
-                // AI-assisted anchor fallback (AutoPress injectLinkSurgically
-                // allowAi parity): the keyword itself has no safe occurrence, so
-                // ask the LLM (exactly one call per source/target pair) for an
-                // existing short phrase already in the article to wrap instead,
-                // then re-validate that phrase through the SAME deterministic
-                // rails (case-SENSITIVE verbatim scan + is_inside_html_tag). Any
-                // failure or unsafe answer falls through to the skip below -- the
-                // LLM is never retried, and a throw never fails the run.
-                if ($safe === null && $ai_anchors) {
+                // Anchor fallback when the keyword itself has no safe occurrence.
+                // 'ai' (AutoPress injectLinkSurgically allowAi parity / legacy
+                // aiAnchors): ask the LLM (exactly one call per source/target
+                // pair) for one existing short phrase already in the article to
+                // wrap instead, then re-validate that phrase through the SAME
+                // deterministic rails. 'synonym': ask (one call) for 3-5 short
+                // verbatim synonyms of the target keyword and take the first that
+                // re-validates. 'keyword': never consult the LLM. Any failure or
+                // unsafe answer falls through to the skip below -- the LLM is
+                // never retried, and a throw never fails the run.
+                if ($safe === null && $anchor_mode === 'ai') {
                     $ai_anchor = self::pick_ai_anchor($content, $target['keyword'], $user_id);
                     if ($ai_anchor !== null) {
                         $ai_safe = self::find_safe_occurrence($content, $ai_anchor, '');
                         if ($ai_safe !== null) {
                             $safe   = $ai_safe;
                             $reason = 'ai anchor';
+                        }
+                    }
+                } elseif ($safe === null && $anchor_mode === 'synonym') {
+                    foreach (self::pick_synonym_anchors($content, $target['keyword'], $user_id) as $synonym) {
+                        $synonym = trim((string)$synonym);
+                        if ($synonym === '') {
+                            continue;
+                        }
+                        // Case-insensitive re-validation pass, same as the AI path.
+                        $syn_safe = self::find_safe_occurrence($content, $synonym, 'i');
+                        if ($syn_safe !== null) {
+                            $safe   = $syn_safe;
+                            $reason = 'synonym anchor';
+                            break; // first safely-locatable candidate wins
                         }
                     }
                 }
@@ -2364,6 +2631,48 @@ class PCM_Strategy_Service
             return $anchor !== '' ? $anchor : null;
         } catch (\Throwable $e) {
             return null; // any LLM failure -> no AI anchor, run continues
+        }
+    }
+
+    /**
+     * Synonym-anchor fallback (the 'synonym' anchor mode): when a target keyword
+     * has no safe verbatim occurrence, ask the LLM (exactly one call) for 3-5
+     * short synonyms / close variants of the TARGET KEYWORD that literally appear
+     * VERBATIM in the article text. Returns the raw candidate list (each
+     * re-validated by the caller through find_safe_occurrence); returns [] on any
+     * throwable or malformed answer — same isolation contract as pick_ai_anchor:
+     * an LLM failure must never fail the interlink run, and it is never retried.
+     *
+     * @param string $content        Source article's raw HTML content.
+     * @param string $target_keyword Topic the internal link should point at.
+     * @param int    $user_id        Owner ID, forwarded for LLM accounting.
+     * @return array<int,string> Candidate synonym phrases (possibly empty).
+     */
+    private static function pick_synonym_anchors(string $content, string $target_keyword, int $user_id): array
+    {
+        try {
+            $text     = substr(strip_tags($content), 0, 6000);
+            $messages = array(
+                array('role' => 'system', 'content' => 'You select synonym anchor text for internal links.'),
+                array('role' => 'user', 'content' => 'From the ARTICLE TEXT below, return 3-5 short synonyms or close variants (2-6 words each, verbatim from the text, outside of HTML tags) of the keyword "' . $target_keyword . '" that literally appear in the text. ARTICLE TEXT: ' . $text),
+            );
+            // Full json_schema wrapper ({name, schema}) — see pick_ai_anchor()'s
+            // note on why the name is required (OpenAI strict-mode 400s without it).
+            $schema = array(
+                'name'   => 'synonym_anchors',
+                'schema' => array(
+                    'type'       => 'object',
+                    'properties' => array(
+                        'synonyms' => array('type' => 'array', 'items' => array('type' => 'string')),
+                    ),
+                    'required'   => array('synonyms'),
+                ),
+            );
+            $result   = PCM_LLM::invoke_json($messages, $schema, array('max_tokens' => 256, 'user_id' => $user_id));
+            $synonyms = (is_array($result) && isset($result['synonyms']) && is_array($result['synonyms'])) ? $result['synonyms'] : array();
+            return array_values($synonyms);
+        } catch (\Throwable $e) {
+            return array(); // any LLM failure -> no synonyms, run continues
         }
     }
 
@@ -2841,16 +3150,59 @@ class PCM_Strategy_Service
      *   option and the integrations table's keying. (Previously used
      *   get_current_user_id(), which is 0 under wp-cron, so research silently
      *   never ran for cron-driven items.)
-     * @return string Research summary (trimmed, capped ~4000 chars), or '' when
-     *   opted out or on any failure.
+     * @return string Research summary (trimmed, capped ~4000 chars for 'grounded'
+     *   / ~6000 chars for 'deep'), or '' when opted out ('off') or on failure.
      */
     private static function maybe_research_context(object $strategy, array $keywords, int $user_id): string
     {
-        $cfg = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
-        if (!is_array($cfg) || empty($cfg['research'])) {
-            return ''; // strategy didn't opt in
+        $mode = self::research_mode($strategy);
+
+        if ($mode === 'off') {
+            return '';
         }
 
+        if ($mode === 'deep') {
+            return self::deep_research_context($keywords, $user_id);
+        }
+
+        return self::grounded_research_context($keywords, $user_id);
+    }
+
+    /**
+     * Resolves the effective research mode for a strategy: 'off' | 'grounded' | 'deep'.
+     *
+     * Precedence: an explicit, valid `config.researchMode` always wins. Otherwise
+     * fall back to the legacy `config.research` boolean for back-compat — truthy
+     * maps to 'grounded' (today's single-call behaviour), and falsy/absent maps
+     * to 'off' (the pre-existing default: no `research` key means no research).
+     *
+     * @param object $strategy Strategy DB row.
+     * @return string 'off'|'grounded'|'deep'.
+     */
+    private static function research_mode(object $strategy): string
+    {
+        $cfg = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
+        if (!is_array($cfg)) {
+            return 'off';
+        }
+
+        if (isset($cfg['researchMode']) && in_array($cfg['researchMode'], array('off', 'grounded', 'deep'), true)) {
+            return $cfg['researchMode'];
+        }
+
+        return !empty($cfg['research']) ? 'grounded' : 'off';
+    }
+
+    /**
+     * Today's single-call research behaviour (byte-identical prompt/options to
+     * the original B1/B2 implementation) — used for research_mode() === 'grounded'.
+     *
+     * @param array $keywords Keyword(s) driving the research query.
+     * @param int   $user_id  Strategy owner (PCM user id).
+     * @return string Research summary (trimmed, capped ~4000 chars), or '' on failure.
+     */
+    private static function grounded_research_context(array $keywords, int $user_id): string
+    {
         $query    = implode('", "', $keywords);
         $messages = array(array(
             'role'    => 'user',
@@ -2874,7 +3226,82 @@ class PCM_Strategy_Service
         }
     }
 
-    private static function build_prompt(array $keywords, array $template, ?object $brand, string $research_context = '', bool $in_content_media = false): array
+    /**
+     * 'deep' research mode: three sequential, individually failure-isolated
+     * invoke_with_grounding() calls — search landscape (today's prompt),
+     * questions + citable statistics, and competitor content gaps — merged
+     * into labeled sections. One call failing only drops its own section;
+     * the others are still used. Never throws.
+     *
+     * @param array $keywords Keyword(s) driving the research query.
+     * @param int   $user_id  Strategy owner (PCM user id).
+     * @return string Merged, labeled research summary (capped ~6000 chars), or ''
+     *   when every call failed/returned empty.
+     */
+    private static function deep_research_context(array $keywords, int $user_id): string
+    {
+        $query = implode('", "', $keywords);
+
+        $landscape = self::run_grounding_call(
+            'Research the current top-ranking content, dominant themes, common questions, and content gaps for the search query: "' . $query . '". Summarize concisely: key themes to cover, questions to answer, angles competitors miss.',
+            $user_id
+        );
+        $questions = self::run_grounding_call(
+            'For the search query: "' . $query . '", identify the most common questions real users ask AND concrete, citable statistics or data points (with sources) relevant to this topic — include specific numbers that could be used in a chart or infographic.',
+            $user_id
+        );
+        $gaps = self::run_grounding_call(
+            'For the search query: "' . $query . '", identify angles and subtopics that competitors\' top-ranking pages commonly miss or under-cover.',
+            $user_id
+        );
+
+        $sections = array();
+        if ($landscape !== '') {
+            $sections[] = "SEARCH LANDSCAPE:\n" . $landscape;
+        }
+        if ($questions !== '') {
+            $sections[] = "QUESTIONS & DATA:\n" . $questions;
+        }
+        if ($gaps !== '') {
+            $sections[] = "CONTENT GAPS:\n" . $gaps;
+        }
+
+        $result = implode("\n\n", $sections);
+        if (strlen($result) > 6000) {
+            $result = substr($result, 0, 6000);
+        }
+        return $result;
+    }
+
+    /**
+     * Runs a single invoke_with_grounding() call, fully failure-isolated: any
+     * throwable is caught, error_log()'d, and degrades to '' — this section is
+     * simply omitted from the merged research context, per-call, without
+     * affecting sibling calls in deep_research_context().
+     *
+     * @param string $prompt  User-role prompt content for this grounding call.
+     * @param int    $user_id Strategy owner (PCM user id).
+     * @return string Trimmed content, or '' on failure.
+     */
+    private static function run_grounding_call(string $prompt, int $user_id): string
+    {
+        try {
+            $result = PCM_LLM::invoke_with_grounding(array(array(
+                'role'    => 'user',
+                'content' => $prompt,
+            )), array(
+                'model'      => 'gemini-2.5-flash',
+                'max_tokens' => 2048,
+                'user_id'    => $user_id,
+            ));
+            return trim((string)($result['content'] ?? ''));
+        } catch (\Throwable $e) {
+            error_log('[PCM_Strategy_Service] Research enrichment failed: ' . $e->getMessage());
+            return '';
+        }
+    }
+
+    private static function build_prompt(array $keywords, array $template, ?object $brand, string $research_context = '', bool $in_content_media = false, int $media_count = 3, string $media_type = 'both', string $media_guidance = ''): array
     {
         $messages = array();
 
@@ -2945,15 +3372,53 @@ class PCM_Strategy_Service
         // media_assets entry for each — the post-process step
         // (maybe_generate_in_content_media()) turns those into <figure> blocks.
         if ($in_content_media) {
+            // mediaCount (1–8) drives how many placeholders we advertise; mediaType
+            // restricts which asset type(s) the model may return.
+            $count  = max(1, min(8, $media_count));
+            $tokens = array();
+            for ($n = 1; $n <= $count; $n++) {
+                $tokens[] = '[IMAGE_' . $n . ']';
+            }
+
+            if ($media_type === 'images') {
+                $type_field = "\"image\"";
+                $type_rule  = "Every media_assets entry's type must be \"image\" (do NOT return any charts). ";
+            } elseif ($media_type === 'charts') {
+                $type_field = "\"chart\"";
+                $type_rule  = "Every media_assets entry's type must be \"chart\" (do NOT return any images). ";
+            } else {
+                $type_field = "\"image\"|\"chart\"";
+                $type_rule  = "Each media_assets entry's type must be either \"image\" or \"chart\". ";
+            }
+
             $user_content .= "\n\n"
-                . "IN-CONTENT MEDIA: You may add up to 3 supporting visuals. Insert placeholder tokens "
-                . "[IMAGE_1], [IMAGE_2], [IMAGE_3] — each on its OWN line, wrapped in its own <p></p>, at "
+                . "IN-CONTENT MEDIA: You may add up to " . $count . " supporting visuals. Insert placeholder tokens "
+                . implode(', ', $tokens) . " — each on its OWN line, wrapped in its own <p></p>, at "
                 . "natural points in the HTML body. For EVERY placeholder you insert, add one matching entry "
-                . "to a \"media_assets\" array, where each entry is {placeholder: \"IMAGE_1\", type: \"image\"|\"chart\", "
-                . "prompt: string, chart_config: string|null}. For type \"image\", `prompt` is a detailed image-generation "
-                . "prompt and chart_config is null. For type \"chart\", put a VALID Chart.js config — serialized as a JSON "
-                . "string — in `chart_config` and a short caption in `prompt`. Only insert a placeholder if you also "
-                . "return its media_assets entry, and never exceed 3.";
+                . "to a \"media_assets\" array, where each entry is {placeholder: \"IMAGE_1\", type: " . $type_field . ", "
+                . "prompt: string, chart_config: string|null}. " . $type_rule
+                . "For type \"image\", `prompt` is a detailed image-generation prompt and chart_config is null. "
+                . "For type \"chart\", put a VALID Chart.js config — serialized as a JSON string — in `chart_config`, "
+                . "presenting REAL, meaningful data: at least 3 data points, a named dataset/series (a non-empty "
+                . "`label`), and a descriptive chart title; put a short caption naming the data source in `prompt`. "
+                . "Never use placeholder, filler, or all-identical values.";
+
+            // Chart-quality contract, research-grounded (the owner's core ask):
+            // when live research findings are present, base chart data on them.
+            if ($research_context !== '') {
+                $user_content .= " Base chart data on the RESEARCH FINDINGS above (real statistics, real "
+                    . "comparisons); cite the source in the chart caption (`prompt` field).";
+            }
+
+            // Owner-supplied creative direction (config.mediaGuidance): what
+            // the images should depict / what data the charts should show.
+            if ($media_guidance !== '') {
+                $user_content .= " CREATIVE DIRECTION for the visuals: \"" . $media_guidance . "\" — follow it "
+                    . "for image subjects/style and for what data the charts present.";
+            }
+
+            $user_content .= " Only insert a placeholder if you also return its media_assets entry, and never "
+                . "exceed " . $count . ".";
         }
 
         $messages[] = array(

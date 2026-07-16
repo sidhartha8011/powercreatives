@@ -38,7 +38,30 @@ class PCM_REST_Writer extends PCM_REST_Base
             array('POST', '/articles/upload-image', 'upload_image'),
             array('POST', '/articles/(?P<id>\d+)/ai-review', 'ai_review'),
             array('POST', '/articles/(?P<id>\d+)/ai-review/apply', 'ai_review_apply'),
+            array('GET', '/articles/(?P<id>\d+)/revisions', 'list_revisions'),
+            array('GET', '/articles/(?P<id>\d+)/revisions/(?P<revId>\d+)', 'get_revision'),
+            array('POST', '/articles/(?P<id>\d+)/revisions/(?P<revId>\d+)/restore', 'restore_revision'),
         );
+    }
+
+    /**
+     * Decide whether an update should snapshot the article's PREVIOUS state.
+     *
+     * Pure decision helper (no DB / WP calls) so it is unit-testable: snapshot
+     * only when the incoming payload carries a 'content' key AND that content
+     * differs from the article's currently-stored content. A null article
+     * (missing / not owned) never snapshots.
+     *
+     * @param array       $params  Incoming request params.
+     * @param object|null $article The currently-stored article, or null.
+     * @return bool
+     */
+    public static function should_snapshot(array $params, ?object $article): bool
+    {
+        if ($article === null || !array_key_exists('content', $params)) {
+            return false;
+        }
+        return (string) $params['content'] !== (string) ($article->content ?? '');
     }
 
     /**
@@ -176,6 +199,20 @@ class PCM_REST_Writer extends PCM_REST_Base
             return $this->error('No valid fields to update.');
         }
 
+        // Capture the PREVIOUS title+content into the revision history before
+        // applying, but only when the update actually changes the content
+        // (ownership is enforced by loading the article as the current user).
+        $existing = PCM_DB::get_article($article_id, (int) $pcm_user->id);
+        if (self::should_snapshot($params, $existing)) {
+            PCM_DB::add_article_revision(
+                $article_id,
+                (int) $pcm_user->id,
+                (string) $existing->title,
+                (string) $existing->content,
+                'editor'
+            );
+        }
+
         $success = PCM_DB::update_article($article_id, (int) $pcm_user->id, $update);
         if (!$success) {
             return $this->not_found('Article');
@@ -306,6 +343,18 @@ class PCM_REST_Writer extends PCM_REST_Base
             return $this->error('That text could no longer be safely located in the article — it may have been edited since the review.', 409);
         }
 
+        // Snapshot the PREVIOUS state before the AI edit lands, when it changes
+        // the content (same differs-check as the editor path, source 'ai-review').
+        if (self::should_snapshot(array('content' => $updated_content), $article)) {
+            PCM_DB::add_article_revision(
+                $article_id,
+                (int) $pcm_user->id,
+                (string) $article->title,
+                (string) $article->content,
+                'ai-review'
+            );
+        }
+
         $success = PCM_DB::update_article($article_id, (int) $pcm_user->id, array(
             'content' => wp_kses_post($updated_content),
         ));
@@ -337,5 +386,88 @@ class PCM_REST_Writer extends PCM_REST_Base
         } catch (\Throwable $e) {
             return $this->error('Failed to upload image: ' . $e->getMessage(), 500);
         }
+    }
+
+    /**
+     * List an article's revision history, newest first.
+     *
+     * Returns lightweight rows (id, title, source, createdAt, 160-char excerpt)
+     * — never the full stored content. Ownership is enforced in PCM_DB.
+     */
+    public function list_revisions(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user   = $this->get_current_pcm_user();
+        $article_id = (int) $request->get_param('id');
+
+        $article = PCM_DB::get_article($article_id, (int) $pcm_user->id);
+        if (!$article) {
+            return $this->not_found('Article');
+        }
+
+        $revisions = PCM_DB::get_article_revisions($article_id, (int) $pcm_user->id);
+        return $this->success($revisions);
+    }
+
+    /**
+     * Get a single revision WITH its full title + content, so the editor can
+     * preview or diff it. Ownership is enforced via the parent article.
+     */
+    public function get_revision(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user    = $this->get_current_pcm_user();
+        $article_id  = (int) $request->get_param('id');
+        $revision_id = (int) $request->get_param('revId');
+
+        $revision = PCM_DB::get_article_revision($revision_id, (int) $pcm_user->id);
+        if (!$revision || (int) $revision->articleId !== $article_id) {
+            return $this->not_found('Revision');
+        }
+
+        return $this->success($revision);
+    }
+
+    /**
+     * Restore an article to a previous revision.
+     *
+     * Snapshots the CURRENT state first (source 'restore') so the restore is
+     * itself reversible, then writes the revision's title + content onto the
+     * article (content re-sanitized via wp_kses_post). Returns the updated
+     * article so the editor can re-sync.
+     */
+    public function restore_revision(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user    = $this->get_current_pcm_user();
+        $article_id  = (int) $request->get_param('id');
+        $revision_id = (int) $request->get_param('revId');
+
+        $article = PCM_DB::get_article($article_id, (int) $pcm_user->id);
+        if (!$article) {
+            return $this->not_found('Article');
+        }
+
+        $revision = PCM_DB::get_article_revision($revision_id, (int) $pcm_user->id);
+        if (!$revision || (int) $revision->articleId !== $article_id) {
+            return $this->not_found('Revision');
+        }
+
+        // Snapshot the current state so the restore can itself be undone.
+        PCM_DB::add_article_revision(
+            $article_id,
+            (int) $pcm_user->id,
+            (string) $article->title,
+            (string) $article->content,
+            'restore'
+        );
+
+        $success = PCM_DB::update_article($article_id, (int) $pcm_user->id, array(
+            'title'   => sanitize_text_field((string) $revision->title),
+            'content' => wp_kses_post((string) $revision->content),
+        ));
+        if (!$success) {
+            return $this->error('Failed to restore the revision.', 500);
+        }
+
+        $article = PCM_DB::get_article($article_id, (int) $pcm_user->id);
+        return $this->success($article);
     }
 }

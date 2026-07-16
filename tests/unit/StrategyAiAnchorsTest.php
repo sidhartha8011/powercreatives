@@ -42,6 +42,16 @@ if (!class_exists('PCM_LLM', false)) {
         /** @var array|null Options passed on the last anchor-schema call. */
         public static $lastAnchorOptions = null;
 
+        // ── synonym-fallback controls (anchorMode='synonym') ─────────────
+        /** @var array<int,string> Synonyms invoke_json() returns for a synonym-schema call. */
+        public static $synonyms = array();
+        /** @var bool When true, a synonym-schema call throws (simulates LLM failure). */
+        public static $throwOnSynonym = false;
+        /** @var int Number of synonym-schema calls this test. */
+        public static $synonymCallCount = 0;
+        /** @var array|null Options passed on the last synonym-schema call. */
+        public static $lastSynonymOptions = null;
+
         // ── Generation-path statics (mirror the sibling fake) ────────────
         public static $lastOptions = null;
         public static $throwOn = null;
@@ -70,6 +80,15 @@ if (!class_exists('PCM_LLM', false)) {
                     throw new \RuntimeException('anchor LLM boom');
                 }
                 return array('anchor' => self::$anchor);
+            }
+            // The 'synonym' anchor-mode fallback requires 'synonyms' (an array).
+            if (in_array('synonyms', $required, true)) {
+                self::$synonymCallCount++;
+                self::$lastSynonymOptions = $options;
+                if (self::$throwOnSynonym) {
+                    throw new \RuntimeException('synonym LLM boom');
+                }
+                return array('synonyms' => self::$synonyms);
             }
 
             // Generation path (unused by these tests, kept for parity).
@@ -107,6 +126,10 @@ class StrategyAiAnchorsTest extends \PHPUnit\Framework\TestCase
         PCM_LLM::$throwOnAnchor = false;
         PCM_LLM::$anchorCallCount = 0;
         PCM_LLM::$lastAnchorOptions = null;
+        PCM_LLM::$synonyms = array();
+        PCM_LLM::$throwOnSynonym = false;
+        PCM_LLM::$synonymCallCount = 0;
+        PCM_LLM::$lastSynonymOptions = null;
         PCM_LLM::$lastOptions = null;
         PCM_LLM::$throwOn = null;
         PCM_LLM::$callCount = 0;
@@ -281,5 +304,88 @@ class StrategyAiAnchorsTest extends \PHPUnit\Framework\TestCase
         $this->assertNotNull($skipped);
         $this->assertSame('skipped', $skipped['status']);
         $this->assertSame('no safe occurrence', $skipped['reason']);
+    }
+
+    // (f) anchorMode='synonym': keyword absent, the LLM returns several synonyms
+    // but only the SECOND exists safely -> that one is wrapped (first locatable
+    // candidate wins), and the AI single-phrase path is never consulted.
+    public function test_synonym_mode_wraps_first_locatable_synonym(): void
+    {
+        // Article 100 lacks the target keyword 'cheap accounting tools'; of the
+        // returned synonyms only 'top sneakers' appears verbatim in its content.
+        $this->seedTwoArticles('<p>We reviewed the top sneakers for busy teams.</p>');
+        PCM_LLM::$synonyms = array('best running shoes', 'top sneakers');
+
+        $result = PCM_Strategy_Service::run_interlinks(7, 1, array('anchorMode' => 'synonym'));
+
+        $this->assertSame(1, PCM_LLM::$synonymCallCount, 'exactly one synonym attempt for the one keyword-absent pair');
+        $this->assertSame(0, PCM_LLM::$anchorCallCount, 'synonym mode must never consult the AI single-phrase path');
+        $this->assertStringContainsString('<a href="/accounting-guide">top sneakers</a>', PCM_DB::$articles[100]['content']);
+        $this->assertStringNotContainsString('best running shoes</a>', PCM_DB::$articles[100]['content']);
+
+        $synRow = null;
+        foreach ($result['results'] as $row) {
+            if ($row['source'] === 'best crm software' && $row['target'] === 'cheap accounting tools') {
+                $synRow = $row;
+            }
+        }
+        $this->assertNotNull($synRow);
+        $this->assertSame('injected', $synRow['status']);
+        $this->assertSame('synonym anchor', $synRow['reason']);
+
+        // The synonym fallback forwards max_tokens + user_id on its single call.
+        $this->assertSame(256, PCM_LLM::$lastSynonymOptions['max_tokens'] ?? null);
+        $this->assertSame(1, PCM_LLM::$lastSynonymOptions['user_id'] ?? null);
+    }
+
+    // (g) anchorMode='keyword' with the exact keyword absent -> the pair is
+    // skipped and NEITHER LLM path is ever consulted (zero LLM calls).
+    public function test_keyword_mode_skips_without_any_llm_call(): void
+    {
+        $this->seedTwoArticles('<p>Great accounting made simple for busy teams.</p>');
+        PCM_LLM::$anchor   = 'accounting made simple';
+        PCM_LLM::$synonyms = array('accounting made simple');
+
+        $result = PCM_Strategy_Service::run_interlinks(7, 1, array('anchorMode' => 'keyword'));
+
+        $this->assertSame(0, PCM_LLM::$callCount, 'keyword mode must never invoke the LLM at all');
+        $this->assertSame(0, PCM_LLM::$anchorCallCount);
+        $this->assertSame(0, PCM_LLM::$synonymCallCount);
+        $this->assertStringNotContainsString('accounting made simple</a>', PCM_DB::$articles[100]['content']);
+
+        $skipped = null;
+        foreach ($result['results'] as $row) {
+            if ($row['source'] === 'best crm software' && $row['target'] === 'cheap accounting tools') {
+                $skipped = $row;
+            }
+        }
+        $this->assertNotNull($skipped);
+        $this->assertSame('skipped', $skipped['status']);
+        $this->assertSame('no safe occurrence', $skipped['reason']);
+    }
+
+    // (h) back-compat equivalence: explicit anchorMode='ai' behaves exactly like
+    // legacy aiAnchors=true -> the AI single-phrase path is consulted once and
+    // its phrase is wrapped with the 'ai anchor' reason.
+    public function test_anchor_mode_ai_matches_legacy_aiAnchors(): void
+    {
+        $this->seedTwoArticles('<p>Great accounting made simple for busy teams.</p>');
+        PCM_LLM::$anchor = 'accounting made simple';
+
+        $result = PCM_Strategy_Service::run_interlinks(7, 1, array('anchorMode' => 'ai'));
+
+        $this->assertSame(1, PCM_LLM::$anchorCallCount, 'anchorMode=ai consults the AI path exactly once, like legacy aiAnchors=true');
+        $this->assertSame(0, PCM_LLM::$synonymCallCount);
+        $this->assertStringContainsString('<a href="/accounting-guide">accounting made simple</a>', PCM_DB::$articles[100]['content']);
+
+        $aiRow = null;
+        foreach ($result['results'] as $row) {
+            if ($row['source'] === 'best crm software' && $row['target'] === 'cheap accounting tools') {
+                $aiRow = $row;
+            }
+        }
+        $this->assertNotNull($aiRow);
+        $this->assertSame('injected', $aiRow['status']);
+        $this->assertSame('ai anchor', $aiRow['reason']);
     }
 }

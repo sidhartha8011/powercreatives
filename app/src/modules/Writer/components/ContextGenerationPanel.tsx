@@ -15,7 +15,7 @@
 import { useAtomValue, useSetAtom } from 'jotai';
 import { activeDocumentAtom, updateActiveDocumentAtom } from '../store';
 import { PanelRightClose } from 'lucide-react';
-import { SectionLabel, colors, typography, AsyncSelectField, UNSELECTED } from '@/components/shared';
+import { SectionLabel, colors, typography, AsyncSelectField, UNSELECTED, AccordionSection } from '@/components/shared';
 import { toSiteOptions } from '@/lib/select-helpers';
 import type { SiteRecord } from '@/lib/select-helpers';
 import { Input } from '@/components/ui/input';
@@ -32,9 +32,7 @@ import { ContextPanel } from '@/components/shared/ContextPanel';
 import { TemplateDropdown } from '../../Copy/components/TemplateDropdown';
 import { WriterDynamicSection } from './WriterDynamicSection';
 import { WRITER_SECTIONS } from '../writerConfig';
-import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { PanelHeader } from '@/components/shared/PanelHeader';
+import { useMemo } from 'react';
 import { trpc } from '@/lib/trpc';
 
 interface Props {
@@ -44,8 +42,6 @@ interface Props {
 export function ContextGenerationPanel({ onCollapse }: Props) {
   const doc = useAtomValue(activeDocumentAtom);
   const updateDoc = useSetAtom(updateActiveDocumentAtom);
-
-  const [seoCollapsed, setSeoCollapsed] = useState(true);
 
   // ── Sites dropdown data ──
   const { data: sitesRaw, isLoading: sitesLoading } = trpc.sites.list.useQuery();
@@ -159,22 +155,23 @@ export function ContextGenerationPanel({ onCollapse }: Props) {
 
       {/* ── Scrollable Content ────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="flex flex-col gap-4 p-4">
+        <div className="flex flex-col gap-3 p-4">
 
           {/* Brand & Theme Context */}
-          <div className="rounded-lg border p-3" style={{ borderColor: colors.borderLight, background: colors.bgSurface }}>
+          <AccordionSection title="Brand" defaultOpen={false}>
             <ContextPanel
               moduleId="writer"
               value={contextData}
               onChange={handleContextChange}
               hideTheme={true}
+              hideBrandHeader
             />
-          </div>
+          </AccordionSection>
 
           {/* Target Site */}
-          <div className="rounded-lg border p-3" style={{ borderColor: colors.borderLight, background: colors.bgSurface }}>
+          <AccordionSection title="Target Site" defaultOpen={false}>
             <AsyncSelectField
-              label="Target Site"
+              label=""
               value={settings.siteId ? String(settings.siteId) : UNSELECTED}
               onChange={(val) => handleSettingChange('siteId', val !== UNSELECTED ? parseInt(val, 10) : undefined)}
               options={siteOptions}
@@ -182,14 +179,16 @@ export function ContextGenerationPanel({ onCollapse }: Props) {
               placeholder="Select site…"
               noneLabel="No Site"
             />
-          </div>
+          </AccordionSection>
 
           {/* Templates */}
-          <TemplateDropdown
-            moduleName="writer"
-            selectedTemplateId={settings.templateId}
-            onTemplateApply={handleTemplateApply}
-          />
+          <AccordionSection title="Templates" defaultOpen={false}>
+            <TemplateDropdown
+              moduleName="writer"
+              selectedTemplateId={settings.templateId}
+              onTemplateApply={handleTemplateApply}
+            />
+          </AccordionSection>
 
           {/* Primary Keywords Section */}
           {primarySection && (
@@ -197,6 +196,7 @@ export function ContextGenerationPanel({ onCollapse }: Props) {
               section={primarySection}
               values={settings}
               onChange={handleSettingChange}
+              defaultOpen
             />
           )}
 
@@ -207,81 +207,67 @@ export function ContextGenerationPanel({ onCollapse }: Props) {
               section={section}
               values={settings}
               onChange={handleSettingChange}
+              defaultOpen={section.id === 'prompt_instructions'}
             />
           ))}
 
-          {/* SEO Metadata Accordion */}
-          <div className="rounded-lg border" style={{ borderColor: colors.border, background: colors.bgSurface }}>
-            <PanelHeader
-              title="SEO Metadata"
-              onClick={() => setSeoCollapsed(!seoCollapsed)}
-              isCollapsed={seoCollapsed}
-              rightElement={
-                seoCollapsed ? (
-                  <ChevronRight className="w-4 h-4" style={{ color: colors.textFaint }} />
-                ) : (
-                  <ChevronDown className="w-4 h-4" style={{ color: colors.textFaint }} />
-                )
-              }
-            />
-
-            {!seoCollapsed && (
-              <div className="p-3 pt-2 border-t flex flex-col gap-3" style={{ borderColor: colors.borderLight }}>
-                <div>
-                  <label className="block mb-1.5" style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>
-                    Meta Title
-                  </label>
-                  <Input
-                    value={doc.metaTitle}
-                    onChange={(e) => updateDoc({ metaTitle: e.target.value })}
-                    placeholder="Enter SEO title..."
-                    style={{ background: colors.bgSurface }}
-                  />
-                </div>
-                <div>
-                  <label className="block mb-1.5 flex items-center justify-between" style={{ fontSize: typography.xs, fontWeight: typography.medium }}>
-                    <span style={{ color: colors.textSecondary }}>Meta Description</span>
-                  </label>
-                  <Textarea
-                    value={doc.metaDescription}
-                    onChange={(e) => updateDoc({ metaDescription: e.target.value })}
-                    placeholder="Enter SEO description..."
-                    className="resize-none"
-                    style={{ background: colors.bgSurface }}
-                    rows={3}
-                  />
-                </div>
-                <div>
-                  <label className="block mb-1.5" style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>
-                    URL Slug
-                  </label>
-                  <Input
-                    value={doc.slug}
-                    onChange={(e) => updateDoc({ slug: e.target.value })}
-                    className="font-mono"
-                    style={{ background: colors.bgSurface, fontSize: typography.xs }}
-                  />
-                </div>
-                <div>
-                  <label className="block mb-1.5" style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>
-                    Schema.org Type
-                  </label>
-                  <Select
-                    value={doc.schemaType}
-                    onValueChange={(val: any) => updateDoc({ schemaType: val })}
-                  >
-                    <SelectTrigger style={{ background: colors.bgSurface }}>
-                      <SelectValue placeholder="Select schema..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Article">Article</SelectItem>
-                      <SelectItem value="WebPage">WebPage</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+          {/* SEO Metadata */}
+          <AccordionSection title="SEO Metadata" defaultOpen={false}>
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="block mb-1.5" style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>
+                  Meta Title
+                </label>
+                <Input
+                  value={doc.metaTitle}
+                  onChange={(e) => updateDoc({ metaTitle: e.target.value })}
+                  placeholder="Enter SEO title..."
+                  style={{ background: colors.bgSurface }}
+                />
               </div>
-            )}
-          </div>
+              <div>
+                <label className="block mb-1.5 flex items-center justify-between" style={{ fontSize: typography.xs, fontWeight: typography.medium }}>
+                  <span style={{ color: colors.textSecondary }}>Meta Description</span>
+                </label>
+                <Textarea
+                  value={doc.metaDescription}
+                  onChange={(e) => updateDoc({ metaDescription: e.target.value })}
+                  placeholder="Enter SEO description..."
+                  className="resize-none"
+                  style={{ background: colors.bgSurface }}
+                  rows={3}
+                />
+              </div>
+              <div>
+                <label className="block mb-1.5" style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>
+                  URL Slug
+                </label>
+                <Input
+                  value={doc.slug}
+                  onChange={(e) => updateDoc({ slug: e.target.value })}
+                  className="font-mono"
+                  style={{ background: colors.bgSurface, fontSize: typography.xs }}
+                />
+              </div>
+              <div>
+                <label className="block mb-1.5" style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>
+                  Schema.org Type
+                </label>
+                <Select
+                  value={doc.schemaType}
+                  onValueChange={(val: any) => updateDoc({ schemaType: val })}
+                >
+                  <SelectTrigger style={{ background: colors.bgSurface }}>
+                    <SelectValue placeholder="Select schema..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Article">Article</SelectItem>
+                    <SelectItem value="WebPage">WebPage</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </AccordionSection>
         </div>
       </div>
     </div>

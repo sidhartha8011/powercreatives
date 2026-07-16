@@ -463,6 +463,30 @@ class PCM_Schema
         ) $charset_collate;";
         dbDelta($sql);
 
+        // ── Article Revisions (v1.43.0) ──
+        // Point-in-time snapshots of an article's title+content, captured by the
+        // Writer before a content-changing edit (source 'editor'), before an
+        // AI-review apply ('ai-review'), and of the current state before a restore
+        // ('restore'). Newest-first history; PCM_DB::add_article_revision prunes to
+        // the 10 most-recent rows per articleId on every insert. articleId is
+        // indexed for the list/prune queries; ownership is enforced in PHP by
+        // joining back to the article's userId (no FK, same as sibling tables).
+        // Purely additive — applied by the create_tables() dbDelta above, no
+        // bespoke migration method needed (same precedent as delivery_logs v1.35.0).
+        $sql = "CREATE TABLE {$prefix}article_revisions (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            articleId int(11) NOT NULL,
+            userId int(11) NOT NULL,
+            title text DEFAULT NULL,
+            content longtext DEFAULT NULL,
+            source varchar(32) DEFAULT 'editor' NOT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_articleId (articleId),
+            KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
+
         // ── Sites ──
         // Connected WordPress sites for content publishing.
         // Uses WP Application Passwords for secure REST API auth.
@@ -1218,6 +1242,7 @@ class PCM_Schema
             'delivery_assignments',
             'deliveries',
             'sites',
+            'article_revisions',
             'articles',
             'strategy_items',
             'strategies',

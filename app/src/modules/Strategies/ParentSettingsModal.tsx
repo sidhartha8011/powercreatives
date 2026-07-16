@@ -37,6 +37,17 @@ interface ParentSettingsModalProps {
   onDone: () => void;
 }
 
+// Only 'children_only', 'parent_and_children', and 'parent_only' are offered
+// in the select. Legacy strategies may still have 'standalone' (or another
+// stale value) stored — in that case, default the select to
+// 'parent_and_children' without writing anything back until the user
+// actually hits Save.
+function normalizeHierarchyMode(mode: string | undefined): string {
+  return mode === 'children_only' || mode === 'parent_and_children' || mode === 'parent_only'
+    ? mode
+    : 'parent_and_children';
+}
+
 export function ParentSettingsModal({
   open,
   onOpenChange,
@@ -46,7 +57,7 @@ export function ParentSettingsModal({
   config,
   onDone,
 }: ParentSettingsModalProps) {
-  const [hierarchyMode, setHierarchyMode] = useState(initialHierarchyMode || 'standalone');
+  const [hierarchyMode, setHierarchyMode] = useState(normalizeHierarchyMode(initialHierarchyMode));
   const [parentTargetUrl, setParentTargetUrl] = useState<string>(config.parentTargetUrl ?? '');
   const [parentKeyword, setParentKeyword] = useState<string>(config.parentKeyword ?? '');
   const [parentAnchorKeyword, setParentAnchorKeyword] = useState<string>(config.parentAnchorKeyword ?? '');
@@ -59,7 +70,7 @@ export function ParentSettingsModal({
   // edited without unmounting) — mirrors CreateStrategyDialog's open-reset effect.
   React.useEffect(() => {
     if (!open) return;
-    setHierarchyMode(initialHierarchyMode || 'standalone');
+    setHierarchyMode(normalizeHierarchyMode(initialHierarchyMode));
     setParentTargetUrl(config.parentTargetUrl ?? '');
     setParentKeyword(config.parentKeyword ?? '');
     setParentAnchorKeyword(config.parentAnchorKeyword ?? '');
@@ -131,10 +142,9 @@ export function ParentSettingsModal({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="standalone">Standalone (No Hierarchy)</SelectItem>
-                <SelectItem value="parent_only">Parent Only (Hub Page)</SelectItem>
-                <SelectItem value="children_only">Children Only (Link to Existing)</SelectItem>
-                <SelectItem value="parent_and_children">Parent + Children Together</SelectItem>
+                <SelectItem value="children_only">Children of an Existing Page</SelectItem>
+                <SelectItem value="parent_and_children">Parent + Children</SelectItem>
+                <SelectItem value="parent_only">Parent (this is the pillar)</SelectItem>
               </SelectContent>
             </Select>
           </div>
