@@ -639,7 +639,10 @@ export function SectionModal({
   );
   const pageState: any = isPage ? stateQuery.data : null;
   const pageDrifted = pageState?.drifted === true;
-  const stateUnreachable = !!pageState && pageState.remote === null;
+  // Unreachable = the site didn't answer (remote null) OR the hub call
+  // itself failed — an unanswered check is SHOWN as unanswered, never as
+  // a silent nothing.
+  const stateUnreachable = (!!pageState && pageState.remote === null) || stateQuery.isError;
 
   // ── Position: right below the click, draggable from the header. ──
   const [pos, setPos] = useState(() => ({
