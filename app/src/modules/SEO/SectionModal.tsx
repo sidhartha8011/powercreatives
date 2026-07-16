@@ -877,6 +877,39 @@ export function SectionModal({
       toast.error(e?.message ?? 'Could not delete the version');
     }
   };
+  // ── Bulk version cleanup (owner order 2026-07-16): tick many / select
+  //    all, ONE delete. The CURRENT version (idx 0) is excluded from
+  //    select-all and carries no checkbox — deleting what the editor opens
+  //    from would recreate the old-version trap (W0). Sequential deletes
+  //    (the bulk-status precedent), one refetch, one honest summary. ──
+  const [versionSel, setVersionSel] = useState<Set<number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const toggleVersionSel = (id: number) => setVersionSel((cur) => {
+    const next = new Set(cur);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const deletableVersionIds = versions.slice(1).map((v) => Number(v.id));
+  const deleteSelectedVersions = async () => {
+    const ids = Array.from(versionSel);
+    if (ids.length === 0 || bulkDeleting) return;
+    setBulkDeleting(true);
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await deleteVersionMutation.mutateAsync({ siteId: siteId as number, postId, versionId: id });
+      } catch {
+        failed++;
+      }
+    }
+    setBulkDeleting(false);
+    setVersionSel(new Set());
+    if (ids.some((id) => versionPick === String(id))) setVersionPick('');
+    await (isPage ? pageVersionsQuery : versionsQuery).refetch();
+    if (failed > 0) toast.error(`${failed} of ${ids.length} versions could not be deleted — the rest are gone.`);
+    else toast.success(`${ids.length} version${ids.length === 1 ? '' : 's'} deleted.`);
+  };
 
   const isDirty = () => !readOnly && !!editor && editor.getHTML() !== savedHtml;
 
@@ -1595,8 +1628,46 @@ export function SectionModal({
               {isPage ? pageOriginalLabel : 'Original'}
             </button>
           )}
+          {/* Bulk cleanup bar — shown when there is history to clean. The
+              Current version never joins select-all (W0 opens from it). */}
+          {deletableVersionIds.length > 0 && (
+            <div className="flex items-center gap-1.5 border-b border-slate-100 px-2 py-1">
+              <input
+                type="checkbox"
+                checked={versionSel.size > 0 && versionSel.size === deletableVersionIds.length}
+                onChange={() => setVersionSel(versionSel.size === deletableVersionIds.length ? new Set() : new Set(deletableVersionIds))}
+                title="Select all versions except the current one"
+                className="h-3 w-3 shrink-0 accent-[#007bff]"
+              />
+              <span className="min-w-0 flex-1 truncate text-[10px] text-slate-400">
+                {versionSel.size > 0 ? `${versionSel.size} selected` : 'Select versions'}
+              </span>
+              {versionSel.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { void deleteSelectedVersions(); }}
+                  disabled={bulkDeleting}
+                  className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-destructive hover:bg-red-50 disabled:opacity-50"
+                >
+                  {bulkDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                  Delete ({versionSel.size})
+                </button>
+              )}
+            </div>
+          )}
           {versions.map((v, idx) => (
             <div key={v.id} className="flex items-center hover:bg-slate-50">
+              {/* idx 0 = Current — deliberately no checkbox (single delete stays). */}
+              {idx > 0 ? (
+                <input
+                  type="checkbox"
+                  checked={versionSel.has(Number(v.id))}
+                  onChange={() => toggleVersionSel(Number(v.id))}
+                  className="ml-2 h-3 w-3 shrink-0 accent-[#007bff]"
+                />
+              ) : (
+                <span className="ml-2 h-3 w-3 shrink-0" />
+              )}
               <button
                 type="button"
                 onClick={() => pickVersion(String(v.id))}
