@@ -1345,12 +1345,13 @@ export function SEOModule() {
         ))}
       </div>
 
-      {/* Section nav (left) + section content, side by side. The nav lives in a
-          card surface so it reads as a panel instead of floating. The content
-          toolbar (Views/Columns/Post/Page/Model) lives INSIDE the content column
-          (below) so switching sections never shifts the nav's position. */}
+      {/* Section nav (left) + section content, side by side. The nav floats
+          on the canvas — the blue pill IS the state, whitespace the border
+          (one-canvas law). The content toolbar (Views/Columns/Post/Page/Model)
+          lives INSIDE the content column (below) so switching sections never
+          shifts the nav's position. */}
       <div className="flex gap-6 items-start">
-        <nav className="flex w-44 shrink-0 flex-col gap-1 rounded-lg border border-border bg-card p-2">
+        <nav className="flex w-44 shrink-0 flex-col gap-1 p-2">
           {([['content', 'Content'], ['air', 'AI Readiness'], ['site', 'Site'], ['business', 'Business']] as const).map(([id, label]) => (
             <button
               key={id}
@@ -1457,7 +1458,7 @@ export function SEOModule() {
             onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
           >
             <SelectTrigger
-              className="h-9 w-[190px] gap-1 rounded-full border border-border bg-card px-4 text-xs shadow-sm hover:bg-muted/50"
+              className="h-9 w-[190px] gap-1 rounded-full border border-border bg-card px-4 text-xs hover:bg-muted/50"
               title="Model used for AI generation"
             >
               <SelectValue
@@ -1614,7 +1615,7 @@ export function SEOModule() {
           No content yet — create a post or page to get started.
         </div>
       ) : (
-        <div className="rounded-md border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)] bg-card">
+        <div className="rounded-md border border-border overflow-auto max-h-[calc(100vh-300px)] bg-card">
           {/* Spreadsheet-style grid: gridlines on every cell, a sticky header
               row, and compact single-line cells. Long values truncate with an
               ellipsis — click a cell to edit (and see) the full value. */}
