@@ -594,7 +594,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteContent": {
         endpoint: "seo/sites",
         method: "GET",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content` }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content${input.cached ? '?cached=1' : ''}` }),
     },
     "seo.sitePreview": {
         endpoint: "seo/sites",

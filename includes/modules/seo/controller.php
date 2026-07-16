@@ -246,7 +246,30 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        return $this->success(PCM_SEO_Service::remote_list_content($site));
+        // SWR (gap fad81ea P4): ?cached=1 answers from the hub's stored copy
+        // in milliseconds — the table renders INSTANTLY while the live fetch
+        // runs as a separate background request. A cache miss returns
+        // {miss:true} (not an empty list — an absent copy must never render
+        // as "no content"). The reply shape for rows stays the bare array
+        // (frozen frontend contract).
+        if ($request->get_param('cached')) {
+            $cache = get_option('pcm_remote_content_cache');
+            $rec   = is_array($cache) ? ($cache[(int) $site->id] ?? null) : null;
+            return $this->success(is_array($rec) && is_array($rec['rows'] ?? null)
+                ? $rec['rows']
+                : array('miss' => true));
+        }
+        $rows = PCM_SEO_Service::remote_list_content($site);
+        if (is_array($rows)) {
+            // The live truth feeds the store — next mount opens instantly.
+            $cache = get_option('pcm_remote_content_cache');
+            if (!is_array($cache)) {
+                $cache = array();
+            }
+            $cache[(int) $site->id] = array('rows' => array_slice($rows, 0, 500), 'savedAt' => time());
+            update_option('pcm_remote_content_cache', $cache, false);
+        }
+        return $this->success($rows);
     }
 
     /** POST /seo/sites/{id}/preview — fetch a connected site's page HTML authenticated

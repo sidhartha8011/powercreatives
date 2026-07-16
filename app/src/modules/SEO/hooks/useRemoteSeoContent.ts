@@ -40,15 +40,27 @@ export interface UseRemoteSeoContentResult {
 export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentResult {
   const queryClient = useQueryClient();
 
+  // SWR (gap fad81ea P4): the STORED copy renders the table instantly
+  // (hub-side cache, milliseconds); the live fetch runs in parallel and
+  // its rows SWAP IN when they land — the live truth always wins, the
+  // stored copy only ever bridges the wait. A cache miss answers
+  // {miss:true} (not an array) and the normal loading state shows.
+  const cachedQuery = trpc.seo.remoteContent.useQuery(
+    { siteId: siteId ?? 0, cached: 1 },
+    { enabled: siteId != null, staleTime: Infinity },
+  ) as { data?: unknown };
   const listQuery = trpc.seo.remoteContent.useQuery(
     { siteId: siteId ?? 0 },
     { enabled: siteId != null },
   ) as { data?: unknown; isLoading: boolean };
 
   const rows = useMemo<SeoRow[]>(() => {
-    if (!Array.isArray(listQuery.data)) return [];
-    return (listQuery.data as SeoRow[]).map((r) => ({ ...r, id: Number(r.id), authorId: Number(r.authorId), featuredImageId: Number(r.featuredImageId ?? 0) }));
-  }, [listQuery.data]);
+    const source = Array.isArray(listQuery.data)
+      ? listQuery.data
+      : (Array.isArray(cachedQuery.data) ? cachedQuery.data : null);
+    if (!source) return [];
+    return (source as SeoRow[]).map((r) => ({ ...r, id: Number(r.id), authorId: Number(r.authorId), featuredImageId: Number(r.featuredImageId ?? 0) }));
+  }, [listQuery.data, cachedQuery.data]);
 
   const saveMutation = trpc.seo.remoteSaveCell.useMutation();
 
@@ -212,5 +224,7 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
     [rows, featuredMutation, siteId, queryClient],
   );
 
-  return { rows, isLoading: !!listQuery.isLoading, saveCell, generateField, quickCreate, scanLinks, setSchema, deleteRows, bulkDuplicate, setFeaturedImage };
+  // Loading shows ONLY when neither copy exists — a cache hit renders the
+  // table instantly while the live fetch keeps running silently.
+  return { rows, isLoading: !!listQuery.isLoading && !Array.isArray(cachedQuery.data), saveCell, generateField, quickCreate, scanLinks, setSchema, deleteRows, bulkDuplicate, setFeaturedImage };
 }
