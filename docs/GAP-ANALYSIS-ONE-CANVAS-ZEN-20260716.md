@@ -45,3 +45,9 @@ modules (on grey modules a hairline between white and grey is the
 standard, subtler-than-contrast edge). Also: the stale "Main content
 background: #f8f9fa" header comment in Shell.tsx dies (predates the
 whiteShellModules pattern).
+
+**CORRECTION (same day, before any code):** the fact above is WRONG — the
+Sidebar ALREADY carries a right hairline (`borderRight: '1px solid #ededed'`,
+inline style, Sidebar.tsx:160) that the class-line grep missed. No edge is
+missing; NO code change ships from this addendum. Kept for the record —
+facts law: a wrong committed fact gets a committed correction.
