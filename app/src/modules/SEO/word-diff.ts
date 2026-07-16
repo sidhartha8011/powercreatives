@@ -211,6 +211,31 @@ export interface DocSection {
  * sections — the SAME grouping law as the server's split_unit_sections.
  * Top-level images are lifted out per section (context, never sent to AI).
  */
+/**
+ * Split by REVIEW-IDENTITY headings only (`data-pcm-review-id`) — the
+ * review engine's identity law: a section spans from its anchored heading
+ * to the NEXT anchored heading, so id-LESS headings (sections the AI added
+ * mid-review) belong to the section that produced them. Returned keyed by
+ * the anchor id; top-level images lift out exactly like splitDocSections.
+ */
+export function splitReviewSections(html: string): Record<string, DocSection> {
+  const blocks = parseBlocks(html);
+  const out: Record<string, DocSection> = {};
+  let cur: DocSection | null = null;
+  for (const b of blocks) {
+    const tag = b.tagName.toLowerCase();
+    const rid = /^h[1-6]$/.test(tag) ? b.getAttribute('data-pcm-review-id') : null;
+    if (rid !== null) {
+      cur = { heading: blockText(b), html: b.outerHTML, imgs: [] };
+      out[rid] = cur;
+    } else if (cur) {
+      if (tag === 'img') cur.imgs.push(b.outerHTML);
+      else cur.html += b.outerHTML;
+    }
+  }
+  return out;
+}
+
 export function splitDocSections(html: string): { orphanHtml: string; sections: DocSection[] } {
   const blocks = parseBlocks(html);
   let orphanHtml = '';

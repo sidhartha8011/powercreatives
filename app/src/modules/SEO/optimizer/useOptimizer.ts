@@ -9,7 +9,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
-import { itemKey, type OptimizerItem, type TeacherMeta, type TeacherRun } from './types';
+import { itemKey, type CompiledDirective, type KeywordPackage, type OptimizerItem, type TeacherMeta, type TeacherRun } from './types';
 
 export interface UseOptimizerArgs {
   siteId: number;
@@ -19,6 +19,11 @@ export interface UseOptimizerArgs {
   provider: string;
   /** The live document, diff marks stripped — read at analyze time. */
   getHtml: () => string;
+  /** THE KEYWORD PACKAGE — live editor state, read at analyze time (the
+   *  same source-of-truth law as the html). */
+  getKeywords: () => KeywordPackage;
+  /** The site's other pages — the interlink researcher's map. */
+  pages: Array<{ id: number; title: string; permalink: string }>;
 }
 
 export interface UseOptimizer {
@@ -30,8 +35,10 @@ export interface UseOptimizer {
   /** One purpose — the section's own re-analyze button. */
   analyzeOne: (teacherId: string) => void;
   toggle: (item: OptimizerItem) => void;
-  /** The ticked suggestions compiled into the optimize run's directive text. */
-  buildDirectives: () => string;
+  /** THE COMPILER: merges the ticked suggestions into the run's ordered,
+   *  provenance-tagged to-do list (server-enforced: no intent may drop). */
+  compileBasket: () => Promise<CompiledDirective[]>;
+  compiling: boolean;
   selectedCount: number;
 }
 
@@ -61,16 +68,23 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
         pageType: args.pageType,
         model: args.model,
         provider: args.provider,
+        keywords: args.getKeywords(),
+        pages: args.pages,
       })
       .then((res: any) => {
         if (runSeq.current[teacherId] !== seq) return; // superseded — drop
         const items: OptimizerItem[] = Array.isArray(res?.items) ? res.items : [];
-        setRuns((cur) => ({ ...cur, [teacherId]: { status: 'done', items } }));
-        // Fresh gaps come PRE-TICKED (owner spec); resolved ones leave the basket.
+        // THE PEEK: what this run was actually given (server-reported).
+        const context = res?.contextUsed && typeof res.contextUsed === 'object' ? res.contextUsed : undefined;
+        setRuns((cur) => ({ ...cur, [teacherId]: { status: 'done', items, context } }));
+        // Fresh gaps come PRE-TICKED (owner spec); resolved ones leave the
+        // basket. An informational finding without a directive (e.g. "no
+        // primary keyword set", an unreachable engine) can't ride the
+        // basket — it renders, but never ticks.
         setBasket((cur) => {
           const next = new Set(cur);
           items.forEach((it) => {
-            if (it.found) next.add(itemKey(it));
+            if (it.found && it.instruction !== '') next.add(itemKey(it));
             else next.delete(itemKey(it));
           });
           return next;
@@ -88,7 +102,7 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
         }));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [args.siteId, args.postId, args.pageType, args.model, args.provider]);
+  }, [args.siteId, args.postId, args.pageType, args.model, args.provider, args.pages]);
 
   const analyzeAll = useCallback(() => {
     teachers.forEach((t) => analyzeOne(t.id));
@@ -104,15 +118,33 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
     });
   }, []);
 
-  const buildDirectives = useCallback((): string => {
-    const lines: string[] = [];
+  const compileMutation = trpc.optimizer.compile.useMutation();
+  const [compiling, setCompiling] = useState(false);
+  const compileBasket = useCallback(async (): Promise<CompiledDirective[]> => {
+    const selected: Array<{ instruction: string; teacherId: string; label: string }> = [];
     teachers.forEach((t) => {
       (runs[t.id]?.items ?? []).forEach((it) => {
-        if (basket.has(itemKey(it))) lines.push(`- ${it.instruction}`);
+        if (basket.has(itemKey(it))) selected.push({ instruction: it.instruction, teacherId: it.teacherId, label: it.label });
       });
     });
-    return lines.length > 0 ? `Apply exactly these optimizations to the content:\n${lines.join('\n')}` : '';
-  }, [teachers, runs, basket]);
+    if (selected.length === 0) return [];
+    setCompiling(true);
+    try {
+      const res: any = await compileMutation.mutateAsync({
+        items: selected,
+        model: args.model,
+        provider: args.provider,
+        // The same package the teachers analyzed with — the merge respects
+        // the keyword hierarchy and real business facts (spine D6).
+        siteId: args.siteId,
+        keywords: args.getKeywords(),
+      });
+      return Array.isArray(res?.directives) ? (res.directives as CompiledDirective[]) : [];
+    } finally {
+      setCompiling(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teachers, runs, basket, args.model, args.provider, args.siteId]);
 
   const selectedCount = teachers.reduce(
     (n, t) => n + (runs[t.id]?.items ?? []).filter((it) => basket.has(itemKey(it))).length,
@@ -129,7 +161,8 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
     analyzeAll,
     analyzeOne,
     toggle,
-    buildDirectives,
+    compileBasket,
+    compiling,
     selectedCount,
   };
 }

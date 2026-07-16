@@ -24,12 +24,17 @@ class PCM_Teacher_Search implements PCM_Optimizer_Teacher
 
     public function label(): string
     {
-        return 'Search engine optimization';
+        return 'Structure & language';
     }
 
     public function order(): int
     {
         return 10;
+    }
+
+    public function group(): string
+    {
+        return 'search';
     }
 
     /**
@@ -69,7 +74,11 @@ class PCM_Teacher_Search implements PCM_Optimizer_Teacher
             ),
             array(
                 'role'    => 'user',
-                'content' => 'PAGE TYPE: ' . (string) ($context['pageType'] ?? 'general') . "\n\n"
+                // The context package (research spine D1): the checks judge
+                // with the real keywords and business facts in view — e.g.
+                // "contact visible early" against the ACTUAL phone number.
+                'content' => 'PAGE TYPE: ' . (string) ($context['pageType'] ?? 'general')
+                    . PCM_Optimizer_Service::context_suffix($context) . "\n\n"
                     . "CHECKS (answer every one, by id):\n" . wp_json_encode($questions) . "\n\n"
                     . "PAGE CONTENT (HTML):\n" . (string) $context['html'],
             ),

@@ -25,9 +25,12 @@ class PCM_Keywords_Service
      * @param string $query Search term.
      * @param string $lang  Language code (e.g. 'en', 'sv').
      * @param string $gl    Country code (e.g. 'us', 'se').
-     * @return array List of suggestion strings.
+     * @return array|WP_Error Suggestion strings, or the TRANSPORT failure —
+     *                        an unreachable Google must never read as "no
+     *                        results" (proven live 2026-07-14: timeouts were
+     *                        served as empty successes).
      */
-    public static function google_suggest(string $query, string $lang = 'en', string $gl = ''): array
+    public static function google_suggest(string $query, string $lang = 'en', string $gl = ''): array|WP_Error
     {
         $url = add_query_arg(
             array_filter([
@@ -46,7 +49,15 @@ class PCM_Keywords_Service
 
         if (is_wp_error($response)) {
             error_log('PCM Keywords: Google suggest wp_remote_get failed — ' . $response->get_error_message());
-            return [];
+            return new WP_Error(
+                'pcm_kw_suggest_unreachable',
+                sprintf(
+                    /* translators: %s: transport error message */
+                    __('Google suggestions could not be reached from this server: %s', 'power-creatives'),
+                    $response->get_error_message()
+                ),
+                ['status' => 502]
+            );
         }
 
         $body = wp_remote_retrieve_body($response);
@@ -121,6 +132,122 @@ class PCM_Keywords_Service
     {
         $lower = strtolower($lang_or_country);
         return self::COUNTRY_BY_LANG[$lower] ?? $lower;
+    }
+
+    /** Per-site resolved market: siteId → {country, source, resolvedAt}.
+     *  Resolved ONCE, source-labeled ('brand' | 'ai' | 'default') —
+     *  never re-guessed per request. */
+    private const KW_COUNTRY_OPTION = 'pcm_kw_country_by_site';
+
+    /** The hub-editable default market (owner ruling 2026-07-15: Sweden).
+     *  The ONLY default in the chain — code carries no silent country. */
+    private const KW_DEFAULT_COUNTRY_OPTION = 'pcm_kw_default_country';
+
+    /** ISO reference data (not a tunable): country names as GBP formatted
+     *  addresses print them (English + native), lowercase → alpha-2. */
+    private const COUNTRY_BY_NAME = [
+        'sweden' => 'se', 'sverige' => 'se',
+        'norway' => 'no', 'norge' => 'no',
+        'denmark' => 'dk', 'danmark' => 'dk',
+        'finland' => 'fi', 'suomi' => 'fi',
+        'germany' => 'de', 'deutschland' => 'de',
+        'united states' => 'us', 'usa' => 'us',
+        'united kingdom' => 'gb', 'england' => 'gb',
+        'france' => 'fr', 'spain' => 'es', 'españa' => 'es',
+        'netherlands' => 'nl', 'nederland' => 'nl',
+        'italy' => 'it', 'italia' => 'it',
+    ];
+
+    /** The seeded, hub-editable default market (read-through seed). */
+    public static function default_country(): string
+    {
+        $stored = get_option(self::KW_DEFAULT_COUNTRY_OPTION);
+        if (!is_string($stored) || !preg_match('/^[a-z]{2}$/', $stored)) {
+            $stored = 'se';
+            update_option(self::KW_DEFAULT_COUNTRY_OPTION, $stored, false);
+        }
+        return $stored;
+    }
+
+    /**
+     * THE SMART COUNTRY CHAIN (owner ruling 2026-07-15, gap 2cf0a44):
+     * which market a site's keyword data belongs to.
+     *   1. The site's set location — the brand's GBP address.
+     *   2. A quick AI language/market check on the site's own content.
+     *   3. The hub default (seeded Sweden).
+     * Cached per site with its source. A 'default' reached WITHOUT a
+     * content sample is NOT pinned — a later call carrying content may
+     * still resolve better; every other outcome is final until edited.
+     *
+     * @param object $site           The site row (id, brandId).
+     * @param string $content_sample The site's own text, for step 2 ('' = skip).
+     * @return string ISO 3166-1 alpha-2, lowercase.
+     */
+    public static function resolve_country(object $site, string $content_sample = ''): string
+    {
+        $map    = get_option(self::KW_COUNTRY_OPTION);
+        $map    = is_array($map) ? $map : array();
+        $cached = $map[(string) $site->id] ?? null;
+        if (is_array($cached) && !empty($cached['country'])) {
+            return (string) $cached['country'];
+        }
+        [$country, $source] = self::detect_country($site, $content_sample);
+        if ($source !== 'default' || $content_sample !== '') {
+            $map[(string) $site->id] = array('country' => $country, 'source' => $source, 'resolvedAt' => time());
+            update_option(self::KW_COUNTRY_OPTION, $map, false);
+        }
+        return $country;
+    }
+
+    /** The chain itself — returns [country, source]. */
+    private static function detect_country(object $site, string $content_sample): array
+    {
+        // 1) The brand's set location.
+        $brand_id = (int) ($site->brandId ?? 0);
+        if ($brand_id > 0 && class_exists('PCM_SEO_GBP')) {
+            $brand   = PCM_SEO_GBP::get_for_brand($brand_id);
+            $address = strtolower((string) ($brand['address'] ?? ''));
+            if ($address !== '') {
+                foreach (self::COUNTRY_BY_NAME as $name => $code) {
+                    if (str_contains($address, $name)) {
+                        return array($code, 'brand');
+                    }
+                }
+            }
+        }
+        // 2) The quick AI check on the site's own words.
+        if ($content_sample !== '') {
+            try {
+                $parsed = PCM_LLM::invoke_json(
+                    array(
+                        array(
+                            'role'    => 'system',
+                            // The exact output contract lives IN the prompt (Anthropic law).
+                            'content' => 'Identify the primary market country of a website from a sample of its '
+                                . 'text: judge the LANGUAGE and any location clues. Respond with ONLY this JSON, '
+                                . 'no markdown: {"country":"<ISO 3166-1 alpha-2, lowercase>"}',
+                        ),
+                        array('role' => 'user', 'content' => mb_substr($content_sample, 0, 1200)),
+                    ),
+                    array(
+                        'type'       => 'object',
+                        'properties' => array('country' => array('type' => 'string')),
+                        'required'   => array('country'),
+                    ),
+                    array()
+                );
+                $code = strtolower(trim((string) ($parsed['country'] ?? '')));
+                if (preg_match('/^[a-z]{2}$/', $code)) {
+                    return array($code, 'ai');
+                }
+            } catch (\Throwable $e) {
+                // Documented fallback: the check is best-effort enrichment —
+                // its failure falls to the hub default, logged, never fatal.
+                error_log('[PCM_Keywords] country language check failed: ' . $e->getMessage());
+            }
+        }
+        // 3) The hub default (owner ruling: Sweden).
+        return array(self::default_country(), 'default');
     }
 
     /**
@@ -227,6 +354,11 @@ class PCM_Keywords_Service
         foreach ($prefixes as $i => $prefix) {
             $query       = $prefix . ' ' . $seed;
             $suggestions = self::google_suggest($query, $lang, $gl);
+            if (is_wp_error($suggestions)) {
+                // The batch tolerates per-prefix failures BY DESIGN (logged
+                // by google_suggest) — one dead prefix never kills the run.
+                $suggestions = [];
+            }
 
             $newCount = 0;
             if (!empty($suggestions)) {
@@ -279,7 +411,7 @@ class PCM_Keywords_Service
      * @param string $country  Two-letter country code (default 'us').
      * @return array Enriched keyword data keyed by keyword string.
      */
-    public static function ahrefs_enrich(array $keywords, string $api_key, string $country = 'us'): array
+    public static function ahrefs_enrich(array $keywords, string $api_key, string $country): array
     {
         if (empty($keywords) || empty($api_key)) {
             return [];
@@ -338,6 +470,15 @@ class PCM_Keywords_Service
             $result    = [];
             $batch_size = 50;
 
+            // Ahrefs echoes keywords back LOWERCASED — the result must be keyed
+            // by the CALLER'S casing or "Privacy" never matches "privacy" and a
+            // false "no data" gets cached (gap 71d3cde). Same transform on both
+            // sides, so non-ASCII stays consistent by construction.
+            $input_by_lower = [];
+            foreach ($unique as $input_kw) {
+                $input_by_lower[strtolower($input_kw)] = $input_kw;
+            }
+
             for ($i = 0; $i < count($unique); $i += $batch_size) {
                 $batch = array_slice($unique, $i, $batch_size);
 
@@ -365,6 +506,8 @@ class PCM_Keywords_Service
                     foreach ($kw_items as $item) {
                         $kw = $item['keyword'] ?? null;
                         if (!$kw) continue;
+                        // Re-key to the input casing (see map above).
+                        $kw = $input_by_lower[strtolower((string) $kw)] ?? $kw;
 
                         $result[$kw] = [
                             'volume'     => $item['volume'] ?? 0,
@@ -458,7 +601,7 @@ class PCM_Keywords_Service
      * @param string $country  Two-letter country code.
      * @return array Keyed by keyword → { avgDR, lowDR, serpResults[] }
      */
-    public static function ahrefs_serp_dr(array $keywords, string $api_key, string $country = 'us'): array
+    public static function ahrefs_serp_dr(array $keywords, string $api_key, string $country): array
     {
         if (empty($keywords) || empty($api_key)) {
             return [];

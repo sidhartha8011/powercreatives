@@ -693,7 +693,11 @@ class PCM_REST_SEO extends PCM_REST_Base
         $model       = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
         $provider    = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
         $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
-        $result = PCM_SEO_Service::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id);
+        // REVISE FIDELITY (gap e8fcae5 D3): the draft travels SEPARATELY from
+        // the note so the server can enforce the human-editor contract and
+        // measure retention against it.
+        $draft = wp_kses_post((string) ($params['draft'] ?? ''));
+        $result = PCM_SEO_Service::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id, $draft);
         if ($result instanceof WP_Error) {
             return $result;
         }

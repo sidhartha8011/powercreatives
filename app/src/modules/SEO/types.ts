@@ -2,6 +2,16 @@
  * SEO module — domain types. Mirrors the PCM_SEO_Service row + options shape.
  */
 
+import { type PillVariant } from '@/components/ui/pill';
+
+/** Status → Pill variant (colors live in the global Pill, never here).
+ *  ONE source for the table cell AND the editor header dropdown. */
+export function statusPillVariant(status: string): PillVariant {
+  return (['publish', 'pending', 'private', 'future'] as const).includes(status as any)
+    ? (status as PillVariant)
+    : 'draft';
+}
+
 export interface SeoRow {
   id: number;
   type: string; // 'post' | 'page'

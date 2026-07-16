@@ -13,6 +13,7 @@ import {
   type KeyboardEvent, type PointerEvent as ReactPointerEvent,
   type HTMLAttributes, type ThHTMLAttributes, type TdHTMLAttributes, type TableHTMLAttributes,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, ChevronDown, ChevronRight, RefreshCw, Copy,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
@@ -61,7 +62,7 @@ import { HeadingRows } from './HeadingsPanel';
 import { SectionModal } from './SectionModal';
 import { SEO_TABLE_GRID } from './seo-table';
 import { Pill, type PillVariant } from '@/components/ui/pill';
-import { SEO_TEXT_FIELDS, type SeoRow } from './types';
+import { SEO_TEXT_FIELDS, statusPillVariant, type SeoRow } from './types';
 
 // WordPress media library global (wp_enqueue_media() is called in class-pcm-admin.php).
 declare const wp: any;
@@ -235,12 +236,8 @@ const FIELD_ICONS: Record<string, LucideIcon> = {
   metaKeywords: Tags,
 };
 
-/** Status → Pill variant (colors live in the global Pill, never here). */
-function statusPillVariant(status: string): PillVariant {
-  return (['publish', 'pending', 'private', 'future'] as const).includes(status as any)
-    ? (status as PillVariant)
-    : 'draft';
-}
+// statusPillVariant lives in ./types — ONE source for the table cell and
+// the editor header dropdown (owner order 2026-07-15).
 
 /** Columns that can be shown/hidden + saved in a View (selection col is fixed). */
 const TOGGLE_COLUMNS: { key: string; label: string }[] = [
@@ -1762,14 +1759,26 @@ export function SEOModule() {
             permalink: pageEditRow.permalink || undefined,
             // The table's own inline preview window (renders above the editor).
             onPreview: pageEditRow.permalink ? () => setPreviewRow(pageEditRow) : undefined,
+            // The row's keyword fields seed the editor's keyword drawer.
+            primaryKeyword: pageEditRow.primaryKeyword || undefined,
+            supportingKeyword: pageEditRow.supportingKeyword || undefined,
+            // Drafts have no public URL — Open needs to know (preview=true).
+            status: pageEditRow.status || undefined,
           }}
+          // The drawer's page picker chooses which page's GSC data to read.
+          sitePages={rows
+            .filter((r) => (r.permalink ?? '') !== '')
+            .map((r) => ({ id: Number(r.id), title: r.title || r.slug || String(r.id), permalink: r.permalink ?? '' }))}
           onClose={() => setPageEditRow(null)}
           onSaved={() => {}}
         />
       )}
 
-      {/* Inline page preview — popup (not a new tab). */}
-      {previewRow && previewRow.permalink && (
+      {/* Inline page preview — popup (not a new tab). PORTALED to body:
+          the page editor is body-portaled too, and a preview trapped in
+          the app tree's stacking context painted BEHIND it (owner find
+          2026-07-14) — at body level its z-50 wins over the editor's z-40. */}
+      {previewRow && previewRow.permalink && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
           onClick={() => setPreviewRow(null)}
@@ -1809,7 +1818,8 @@ export function SEOModule() {
               <iframe src={previewRow.permalink} title="Page preview" className="h-full w-full flex-1 bg-white" />
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       </>
       )}

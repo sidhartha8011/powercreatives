@@ -49,7 +49,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus, ScanSearch,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus, ScanSearch, KeyRound,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -57,9 +57,17 @@ import { trpc } from '@/lib/trpc';
 import { ModelDropdown, PillButton, PillSplitButton } from '@/components/shared';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import {
-  diffBlocksHtml, splitDocSections, stripDiffHtml, type DocSection,
+  diffBlocksHtml, splitDocSections, splitReviewSections, stripDiffHtml, type DocSection,
 } from './word-diff';
 import { OptimizerRail } from './optimizer/OptimizerRail';
+import { KeywordsDrawer, type TickedKeyword } from './optimizer/KeywordsDrawer';
+import { useKeywordBucket } from './optimizer/useKeywordBucket';
+import { keywordUses } from './optimizer/keywordStats';
+import { GROUP_PILLS, TEACHER_PILLS, type CompiledDirective, type TeacherMeta } from './optimizer/types';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
+import { Pill } from '@/components/ui/pill';
+import { statusPillVariant } from './types';
+import { DROPDOWN_TRIGGER_STYLE } from '@/components/shared/ModelDropdown';
 
 // The hub's native WP media library (wp_enqueue_media — same pattern as the
 // table's featured-image picker).
@@ -109,7 +117,15 @@ export interface SectionModalProps {
   /** Page mode: the row's title, publish date (the Original row's label),
    *  the WP-editor escape hatch, the live permalink + the inline preview
    *  opener (the table's own preview window). */
-  page?: { title: string; editUrl?: string; date?: string; permalink?: string; onPreview?: () => void };
+  page?: {
+    title: string; editUrl?: string; date?: string; permalink?: string; onPreview?: () => void;
+    /** The row's keyword fields — the keyword drawer's initial values. */
+    primaryKeyword?: string; supportingKeyword?: string;
+    /** The row's WP status — drafts open as previews, never dead links. */
+    status?: string;
+  };
+  /** The site's pages — the keyword drawer's page picker (the table's rows). */
+  sitePages?: Array<{ id: number; title: string; permalink: string }>;
   /** Anchor choices when creating a NEW section. */
   anchors?: SectionAnchor[];
   /** Where the user clicked — the window opens right below it. */
@@ -119,6 +135,18 @@ export interface SectionModalProps {
 }
 
 const WIDTH = 440;
+
+/** The page card's effective width — ONE source of truth. Provably equal
+ *  to the former width/minWidth/maxWidth trio (CSS resolves width → the
+ *  max-width cap → the min-width floor, and min-width wins). While the
+ *  keyword drawer is open the card TAPERS by a fixed amount (owner UX
+ *  2026-07-14) and tapers back on close — a plain width transition; the
+ *  drawer/card PAIR is centered by the page-mode flex wrapper, so no
+ *  anchor math exists anywhere. */
+const PAGE_CARD_WIDTH = 'max(720px, min(980px, 94vw, 100vw - 32px))';
+const PAGE_CARD_TAPER_PX = 280;
+const pageCardWidth = (tapered: boolean): string =>
+  (tapered ? `calc(${PAGE_CARD_WIDTH} - ${PAGE_CARD_TAPER_PX}px)` : PAGE_CARD_WIDTH);
 
 /** Page mode's OWN reading scale (owner order U2): the document must read
  *  like the live page — real paragraph air, stepped heading sizes — while
@@ -239,6 +267,19 @@ const SectionBlocks = Extension.create({
             renderHTML: (attrs: Record<string, unknown>) =>
               attrs['data-pcm-origin'] ? { 'data-pcm-origin': String(attrs['data-pcm-origin']) } : {},
           },
+          // REVIEW IDENTITY (2026-07-14): a section is identified by this
+          // anchor, never by counting headings — the count changes when the
+          // AI legitimately ADDS sections mid-review (subtopic coverage) and
+          // counted indexes then write to shifted ranges. Stamped at review
+          // start, kept alive by the one writer, removed at review end
+          // (+ server strip belt) — it can never reach a save.
+          'data-pcm-review-id': {
+            default: null,
+            keepOnSplit: false,
+            parseHTML: (el: HTMLElement) => el.getAttribute('data-pcm-review-id'),
+            renderHTML: (attrs: Record<string, unknown>) =>
+              attrs['data-pcm-review-id'] != null ? { 'data-pcm-review-id': String(attrs['data-pcm-review-id']) } : {},
+          },
         },
       },
     ];
@@ -280,11 +321,13 @@ const ReviewControls = Extension.create({
             const { sections, resolve } = ext.storage;
             if (!sections.length || !resolve) return DecorationSet.empty;
             const decos: Decoration[] = [];
-            let h = -1;
             state.doc.forEach((node, pos) => {
               if (node.type.name !== 'heading') return;
-              h++;
-              const i = h;
+              // Identity law (2026-07-14): the chip belongs to the heading's
+              // ANCHOR, never to its ordinal — the count changes mid-review.
+              const rid = (node.attrs['data-pcm-review-id'] as string | null) ?? null;
+              if (rid === null) return;
+              const i = Number(rid);
               if (sections[i] !== 'diff') return;
               decos.push(Decoration.widget(pos + 1, () => {
                 const wrap = document.createElement('span');
@@ -455,6 +498,18 @@ function canonicalAiHtml(editor: Editor, html: string): string {
  *  (owner law: amber = edited, sky = added — matches what the server emits
  *  on the next load). `insert` stays platform-added; a version-loaded doc
  *  carries no origins and keeps stating that fact. */
+/** Stamp the review anchor onto the FIRST heading of a section's html.
+ *  Called only by the ONE writer — identity survives every landing and
+ *  resolution no matter how many headings the content carries. */
+function stampReviewId(html: string, i: number): string {
+  const el = document.createElement('div');
+  el.innerHTML = html;
+  const heading = el.querySelector('h1,h2,h3,h4,h5,h6');
+  if (heading === null) return html;
+  heading.setAttribute('data-pcm-review-id', String(i));
+  return el.innerHTML;
+}
+
 function restateOrigin(html: string, sourceHtml: string, changed: boolean): string {
   const src = document.createElement('div');
   src.innerHTML = sourceHtml;
@@ -524,7 +579,7 @@ function ToolButton({ onClick, active, title, children }: {
 }
 
 export function SectionModal({
-  siteId, postId, type, model, provider, readOnly, mode, section, insert, page, anchors, anchorPoint, onClose, onSaved,
+  siteId, postId, type, model, provider, readOnly, mode, section, insert, page, sitePages, anchors, anchorPoint, onClose, onSaved,
 }: SectionModalProps) {
   const isInsert = mode === 'insert';
   const isPage = mode === 'page';
@@ -688,6 +743,26 @@ export function SectionModal({
   /** THE OPTIMIZER's rail (Analyze) — opening runs every teacher; closing
    *  discards the run (Analyze always means a FRESH analysis). */
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  // ── THE KEYWORD DRAWER (left side): primary/supporting live here so the
+  //    drawer edits and the optimize runs read ONE state; the bucket rides
+  //    EVERY run (owner law 2026-07-13). ──
+  const [keywordsOpen, setKeywordsOpen] = useState(false);
+  const [primaryKw, setPrimaryKw] = useState(page?.primaryKeyword ?? '');
+  const [supportingKw, setSupportingKw] = useState(page?.supportingKeyword ?? '');
+  const kwBucket = useKeywordBucket(typeof siteId === 'number' ? siteId : 0, postId, isPage && !readOnly);
+  // THE BACKBONE (owner ruling 2026-07-15): the drawer's ticked keywords —
+  // the selection every action button acts on. [] = no selection = act on
+  // ALL keywords; the drawer reports [] when it closes.
+  const [tickedKw, setTickedKw] = useState<TickedKeyword[]>([]);
+  /** The drawer floats OUTSIDE the card — the outside-click save must know it. */
+  const drawerRef = useRef<HTMLDivElement>(null);
+  // The smart button's LIVE values — recomputed on the existing edit tick.
+  const contentText = isPage && editor ? editor.getText() : '';
+  const kwExtraCount = new Set([
+    ...supportingKw.split(',').map((s) => s.trim()).filter(Boolean),
+    ...kwBucket.keywords,
+  ].filter((k) => k !== primaryKw.trim())).size;
+  const primaryDensity = keywordUses(contentText, primaryKw).density;
   const brandMutation = trpc.sites.update.useMutation();
   const pageTypeMutation = trpc.seo.remoteSavePageType.useMutation();
   const pickBrand = (id: string) => {
@@ -879,7 +954,17 @@ export function SectionModal({
     const onDown = (e: PointerEvent) => {
       const t = e.target as HTMLElement;
       if (rootRef.current?.contains(t)) return;
+      if (drawerRef.current?.contains(t)) return; // the keyword drawer floats outside the card
       if (t.closest('[data-sonner-toaster]')) return; // toasts are not "outside"
+      // Radix portals every popper to document.body — the drawer's role
+      // menu and the column filter menus are INSIDE the editor by intent,
+      // now also by law (the toast exception's exact precedent).
+      if (t.closest('[data-radix-popper-content-wrapper]')) return;
+      // And while ANY such menu is OPEN, Radix sets pointer-events:none on
+      // the body — a click then targets bare <html>, outside every ref
+      // (the owner's "random" closes). An open menu owns that click: it is
+      // a menu dismissal, never an outside click.
+      if (document.querySelector('[data-radix-popper-content-wrapper]')) return;
       if (isDirty()) void save().then((ok) => { if (ok) onClose(); });
       else onClose();
     };
@@ -924,6 +1009,37 @@ export function SectionModal({
   // Live mirror for async workers (their results must be dropped when the
   // user already decided a section — e.g. OK'd the review mid-flight).
   const reviewRef = useRef<ReviewSection[] | null>(null);
+  /** The compiled order behind the CURRENT review (basket runs only) — the
+   *  purpose bullets + pills the user verifies suggestions against. Plain
+   *  Optimize runs carry none, honestly. */
+  const [runDirectives, setRunDirectives] = useState<CompiledDirective[] | null>(null);
+  // Purpose → group/plain-name map for the review pills (same cached query
+  // the rail uses; enabled only while a directive run is showing).
+  const teachersMetaQuery = trpc.optimizer.teachers.useQuery(undefined, {
+    staleTime: 60_000,
+    enabled: isPage && runDirectives !== null,
+  });
+  const teacherById: Record<string, TeacherMeta> = Array.isArray((teachersMetaQuery.data as any)?.teachers)
+    ? Object.fromEntries(((teachersMetaQuery.data as any).teachers as TeacherMeta[]).map((t) => [t.id, t]))
+    : {};
+  const historyStampMutation = trpc.optimizer.historyStamp.useMutation();
+  // ── Status dropdown in the header (owner order 2026-07-15): the SAME
+  //    control + save path as the table's status cell — optimistic by law,
+  //    failure reverts AND says so. Draft honesty: the status is now
+  //    changeable exactly where the draft/preview confusion happened. ──
+  const [pageStatus, setPageStatus] = useState(page?.status ?? '');
+  useEffect(() => { setPageStatus(page?.status ?? ''); }, [page?.status]);
+  const statusMutation = trpc.seo.remoteSaveCell.useMutation();
+  const pickStatus = (v: string) => {
+    const prev = pageStatus;
+    setPageStatus(v); // the UI moves NOW
+    statusMutation.mutateAsync({ siteId: siteId as number, postId, field: 'status', value: v, type })
+      .then(() => toast.success(v === 'publish' ? 'Published — saved changes now render on the live page.' : `Status: ${v}`))
+      .catch((e: unknown) => {
+        setPageStatus(prev); // revert to the truth
+        toast.error(`Could not change the status — ${e instanceof Error ? e.message : 'the save failed'}`);
+      });
+  };
   // (the old whole-doc rebuilder's orphan buffer died with it — the orphan
   // zone is simply never touched by surgery)
 
@@ -934,24 +1050,33 @@ export function SectionModal({
   //    through applySection on its OWN range. The old whole-doc rebuilder is
   //    dead: it overwrote the source of truth from stale copies, which would
   //    wipe the user's manual edits (and reset cursor/scroll on every event).
+  /** Section i's live range BY ANCHOR (identity law 2026-07-14): from its
+   *  id-stamped heading to the NEXT id-carrying heading — id-LESS headings
+   *  (sections the AI added mid-review) belong to the section that produced
+   *  them. Counting headings is banned here: the count changes mid-review. */
   const sectionRange = (i: number): { from: number; to: number } | null => {
     if (!editor) return null;
-    let h = -1;
+    const id = String(i);
     let from = -1;
-    let to = editor.state.doc.content.size;
+    let to = -1;
     editor.state.doc.forEach((node, pos) => {
       if (node.type.name !== 'heading') return;
-      h++;
-      if (h === i) from = pos;
-      if (h === i + 1) to = pos;
+      const rid = (node.attrs['data-pcm-review-id'] as string | null) ?? null;
+      if (from < 0) {
+        if (rid === id) from = pos;
+      } else if (to < 0 && rid !== null) {
+        to = pos;
+      }
     });
-    return from >= 0 ? { from, to: Math.max(from, to) } : null;
+    if (from < 0) return null;
+    return { from, to: to < 0 ? editor.state.doc.content.size : to };
   };
   const applySection = (i: number, html: string) => {
     const r = sectionRange(i);
     if (!editor || !r) return;
     // No .focus(): a landing suggestion must never steal the user's caret.
-    editor.chain().insertContentAt({ from: r.from, to: r.to }, html).run();
+    // The anchor rides EVERY write — identity survives by construction.
+    editor.chain().insertContentAt({ from: r.from, to: r.to }, stampReviewId(html, i)).run();
   };
   /** THE content oracle (review-integrity, 2026-07-13): what a section's
    *  decision keeps. UNTOUCHED since the suggestion landed (live == baseline,
@@ -965,15 +1090,33 @@ export function SectionModal({
    *  none are live. */
   const effectiveContent = (i: number): { html: string; imgs: string } => {
     const s = reviewRef.current?.[i];
-    const live = editor && s ? splitDocSections(editor.getHTML()).sections[i] : undefined;
+    const live = editor && s ? splitReviewSections(editor.getHTML())[String(i)] : undefined;
     const imgs = (live && live.imgs.length > 0 ? live.imgs : s?.imgs ?? []).join('');
     if (!s || !live) return { html: s?.ai ?? s?.html ?? '', imgs };
     const untouched = s.baseline !== undefined && live.html === s.baseline;
     return { html: untouched ? (s.ai ?? s.html) : stripDiffHtml(live.html), imgs };
   };
 
-  const startAiReview = async (topic: string, scope?: { from: number; to: number } | null) => {
+  const startAiReview = async (
+    topic: string,
+    scope?: { from: number; to: number } | null,
+    directives?: CompiledDirective[],
+    opts?: { suppressKeywordRide?: boolean },
+  ) => {
     if (!editor || !pageReady || busy || review) return;
+    setRunDirectives(directives && directives.length > 0 ? directives : null);
+    // THE KEYWORD RIDE (owner law 2026-07-15): ALL the page's keywords —
+    // primary + supporting + additional — join EVERY run as context,
+    // never as stuffing orders. An injection run suppresses the ride:
+    // its topic IS the keyword order (one order per prompt, never two).
+    const kwTargets = [...new Set([
+      primaryKw.trim(),
+      ...supportingKw.split(',').map((s) => s.trim()),
+      ...kwBucket.keywords,
+    ].filter((k) => k !== ''))];
+    if (!opts?.suppressKeywordRide && kwTargets.length > 0) {
+      topic = `${topic}\n\nTarget keywords — incorporate them naturally where they genuinely fit, never force or stuff: ${kwTargets.join(', ')}`;
+    }
     const { sections } = splitDocSections(editor.getHTML());
     if (sections.length === 0) {
       toast.info('No sections to optimize on this page.');
@@ -996,6 +1139,20 @@ export function SectionModal({
       }
     }
     const skip = (i: number): boolean => !!scope && !inScope.has(i);
+    // IDENTITY ANCHORS (2026-07-14): stamp every section heading with its
+    // review id in ONE transaction — the heading ORDINAL is trusted only
+    // HERE, at t0, where it still equals the captured section index. From
+    // now on the AI may add sections freely; identity never counts again.
+    {
+      const tr = editor.state.tr;
+      let h = -1;
+      editor.state.doc.forEach((node, pos) => {
+        if (node.type.name !== 'heading') return;
+        h++;
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, 'data-pcm-review-id': String(h) });
+      });
+      editor.view.dispatch(tr);
+    }
     setAskOpen(false);
     const initial = sections.map((s, i) => ({ ...s, status: (skip(i) ? 'clean' : 'pending') as ReviewStatus }));
     reviewRef.current = initial; // workers may resolve before the sync effect runs
@@ -1023,7 +1180,7 @@ export function SectionModal({
           }
           // Baseline = the landed view read back from the editor (surgery is
           // synchronous) — effectiveContent's untouched-detector.
-          const baseline = changed ? splitDocSections(editor.getHTML()).sections[i]?.html : undefined;
+          const baseline = changed ? splitReviewSections(editor.getHTML())[String(i)]?.html : undefined;
           setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
             ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value, genModel, baseline } : { ...s, status: 'clean' as ReviewStatus })
             : s)) ?? cur);
@@ -1037,6 +1194,33 @@ export function SectionModal({
     await Promise.all(Array.from({ length: Math.min(4, sections.length) }, worker));
   };
 
+  /** THE INJECTION RUN (owner spec d135e3c + the action matrix 2026-07-15):
+   *  weave EXACTLY the ticked keywords into the existing content per THE
+   *  HIERARCHY LAW — the frequent light touch, red/green like every run.
+   *  A text selection narrows it (the matrix); the generic ride is
+   *  suppressed because this topic IS the keyword order. */
+  const runKeywordInsert = () => {
+    const byRole = (role: TickedKeyword['role']): string[] =>
+      tickedKw.filter((t) => t.role === role).map((t) => t.kw);
+    const lines = ([
+      ['primary', "PRIMARY — thread straight through the page (headings + body, the page's spine)"],
+      ['supporting', 'SUPPORTING — present in some headers and some text (structural, not everywhere)'],
+      ['additional', 'ADDITIONAL — light touch, mentioned naturally, roughly ONE paragraph each, never more'],
+    ] as const).flatMap(([role, law]) => {
+      const kws = byRole(role);
+      return kws.length > 0 ? [`${law}: ${kws.join(', ')}`] : [];
+    });
+    const topic = 'Weave the following keywords into the existing content — keep the page\'s structure '
+      + 'and message, no full rework. Placement follows each keyword\'s ROLE; natural inclusion always, '
+      + `keyword stuffing never.\n${lines.join('\n')}`;
+    void startAiReview(
+      topic,
+      hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
+      [{ text: `Insert the selected keywords by role: ${tickedKw.map((t) => t.kw).join(', ')}`, purposes: ['keywords'], sources: [0] }],
+      { suppressKeywordRide: true },
+    );
+  };
+
   /** THE single decision path (chips, rail rows, Accept all, OK — all of
    *  them). Accept = the oracle's answer (untouched → the AI's clean
    *  formatted HTML; edited → the user's live words, marks stripped) with
@@ -1045,6 +1229,15 @@ export function SectionModal({
   const resolveSection = (i: number, action: 'accept' | 'reject') => {
     const s = reviewRef.current?.[i];
     if (!s || s.status !== 'diff') return;
+    if (sectionRange(i) === null) {
+      // The user deleted the section (its anchor is gone): resolve honestly
+      // — never write to a guessed range.
+      toast.info('That section no longer exists in the document — nothing to apply.');
+      setReview((cur) => cur?.map((x, k) => (k === i && x.status === 'diff'
+        ? { ...x, status: 'rejected' as ReviewStatus }
+        : x)) ?? cur);
+      return;
+    }
     const { html: kept, imgs } = effectiveContent(i);
     if (action === 'accept') {
       applySection(i, restateOrigin(kept, s.html, htmlText(kept) !== htmlText(s.html)) + imgs);
@@ -1063,6 +1256,15 @@ export function SectionModal({
   const finishReview = () => {
     (reviewRef.current ?? []).forEach((s, i) => { if (s.status === 'diff') resolveSection(i, 'reject'); });
     setReview((cur) => cur?.map((s) => (s.status === 'pending' ? { ...s, status: 'rejected' as ReviewStatus } : s)) ?? cur);
+    // THE RESULTS LOOP stamp (gap e8fcae5 D5): a review that ends with at
+    // least one ACCEPTED section = an optimization event — the before/after
+    // measurement anchors here. Failure is stated, never silent.
+    const accepted = (reviewRef.current ?? []).filter((s) => s.status === 'accepted').length;
+    if (accepted > 0 && typeof siteId === 'number') {
+      historyStampMutation
+        .mutateAsync({ siteId, postId, purposes: Array.from(new Set((runDirectives ?? []).flatMap((d) => d.purposes))) })
+        .catch((e: unknown) => toast.error(`The optimization was applied but could not be logged for results tracking — ${e instanceof Error ? e.message : 'save failed'}`));
+    }
   };
 
   // ── REVISE (owner F2): send a section BACK to the AI with an adjustment
@@ -1074,15 +1276,27 @@ export function SectionModal({
   const reviseSection = async (i: number, note: string) => {
     const s = reviewRef.current?.[i];
     if (!editor || !s || s.status !== 'diff') return;
+    if (sectionRange(i) === null) {
+      toast.info('That section no longer exists in the document — nothing to revise.');
+      setReview((cur) => cur?.map((x, k) => (k === i && x.status === 'diff'
+        ? { ...x, status: 'rejected' as ReviewStatus }
+        : x)) ?? cur);
+      return;
+    }
     // The draft the AI builds on = the SAME oracle Accept uses: clean
     // formatted for untouched sections, the user's words for edited ones.
     const draft = effectiveContent(i).html;
     setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'pending' as ReviewStatus } : x)) ?? cur);
     try {
+      // REVISE FIDELITY (gap e8fcae5 D3): the note and the draft travel
+      // SEPARATELY — the server enforces the human-editor contract and a
+      // retention check against the draft (a targeted note may never
+      // silently rewrite the whole text).
       const res: any = await optimizeMutation.mutateAsync({
         siteId: siteId as number, postId, type,
         html: s.html,
-        topic: `${note}\n\nThe current suggested rewrite (it may already include the user's own edits — build on it and apply the request above):\n${draft}`,
+        topic: note,
+        draft,
         model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
       });
       const value = canonicalAiHtml(editor, String(res?.value ?? '').trim());
@@ -1091,7 +1305,7 @@ export function SectionModal({
       if (value && htmlText(value) !== htmlText(s.html)) {
         applySection(i, diffBlocksHtml(s.html, value) + s.imgs.join(''));
         // Every landing re-arms the untouched-detector (initial + each revise).
-        const baseline = splitDocSections(editor.getHTML()).sections[i]?.html;
+        const baseline = splitReviewSections(editor.getHTML())[String(i)]?.html;
         setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'diff' as ReviewStatus, ai: value, genModel, baseline } : x)) ?? cur);
       } else {
         applySection(i, s.html + s.imgs.join(''));
@@ -1142,18 +1356,25 @@ export function SectionModal({
   }, [editor, isPage, flashIdx]);
   const focusSection = (i: number) => {
     if (!editor) return;
-    let h = -1;
+    // Locate by ANCHOR (identity law), then translate to the heading's
+    // CURRENT ordinal — the flash decoration indexes every heading.
+    const id = String(i);
     let target: number | null = null;
+    let ordinal = -1;
+    let flashOrdinal: number | null = null;
     editor.state.doc.forEach((node, pos) => {
-      if (node.type.name === 'heading') {
-        h++;
-        if (h === i && target === null) target = pos;
+      if (node.type.name !== 'heading') return;
+      ordinal++;
+      if (target === null && (((node.attrs['data-pcm-review-id'] as string | null) ?? null) === id)) {
+        target = pos;
+        flashOrdinal = ordinal;
       }
     });
-    if (target === null) return;
+    if (target === null || flashOrdinal === null) return;
     (editor.view.nodeDOM(target) as HTMLElement | null)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setFlashIdx(i);
-    window.setTimeout(() => setFlashIdx((cur) => (cur === i ? null : cur)), 2000);
+    const f = flashOrdinal;
+    setFlashIdx(f);
+    window.setTimeout(() => setFlashIdx((cur) => (cur === f ? null : cur)), 2000);
   };
 
   // Completion watcher (the surgery engine replaced the old whole-doc
@@ -1164,6 +1385,17 @@ export function SectionModal({
     reviewRef.current = review;
     if (!editor || !review) return;
     if (review.every((s) => s.status !== 'pending' && s.status !== 'diff')) {
+      // The anchors die WITH the review (one transaction) — a save can never
+      // carry them; the server strip is only the belt.
+      const tr = editor.state.tr;
+      let stamped = false;
+      editor.state.doc.forEach((node, pos) => {
+        if (node.type.name === 'heading' && node.attrs['data-pcm-review-id'] != null) {
+          tr.setNodeMarkup(pos, undefined, { ...node.attrs, 'data-pcm-review-id': null });
+          stamped = true;
+        }
+      });
+      if (stamped) editor.view.dispatch(tr);
       const accepted = review.filter((s) => s.status === 'accepted').length;
       setReview(null);
       if (accepted > 0) toast.success(`AI review done — ${accepted} section${accepted === 1 ? '' : 's'} updated. Press Save to make it live.`);
@@ -1369,16 +1601,40 @@ export function SectionModal({
     </button>
   );
 
-  return createPortal(
-    <>
-    {/* Page mode: dimmed + blurred backdrop (clicks bubble to the document —
-        the existing outside-click flow is untouched). */}
-    {isPage && <div className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-sm" />}
+  /** THE KEYWORD DRAWER — page mode's flex sibling: the wrapper centers
+   *  the [drawer][card] PAIR as one unit (no anchor math anywhere), the
+   *  card tapers while it is open. drawerRef exempts it from the
+   *  outside-click save. */
+  const drawerVisible = isPage && !readOnly && keywordsOpen && pageReady && typeof siteId === 'number';
+  const drawerEl = drawerVisible ? (
+    <div
+      ref={drawerRef}
+      className="h-[86vh] shrink-0 self-center overflow-hidden rounded-l-2xl bg-white shadow-2xl animate-in fade-in slide-in-from-right-10 duration-300"
+    >
+      <KeywordsDrawer
+        siteId={siteId as number}
+        postId={postId}
+        type={type}
+        pageUrl={page?.permalink ?? ''}
+        pages={sitePages ?? []}
+        primaryKeyword={primaryKw}
+        onPrimaryChange={setPrimaryKw}
+        supportingKeywords={supportingKw}
+        onSupportingChange={setSupportingKw}
+        bucket={kwBucket}
+        contentText={contentText}
+        onKeywordSelection={setTickedKw}
+        onClose={() => setKeywordsOpen(false)}
+      />
+    </div>
+  ) : null;
+
+  const cardEl = (
     <div
       ref={rootRef}
-      className={`fixed z-40 flex flex-col overflow-hidden bg-white ${isPage ? 'rounded-2xl shadow-2xl' : 'rounded-lg border border-slate-200 shadow-xl'}`}
+      className={`flex flex-col overflow-hidden bg-white ${isPage ? 'rounded-2xl shadow-2xl' : 'fixed z-40 rounded-lg border border-slate-200 shadow-xl'}`}
       style={isPage
-        ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 'min(980px, 94vw)', minWidth: 720, height: '90vh', maxWidth: 'calc(100vw - 32px)' }
+        ? { width: pageCardWidth(drawerVisible), height: '90vh', transition: 'width 300ms ease' }
         : { left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
       role="dialog"
       aria-label={title}
@@ -1408,6 +1664,20 @@ export function SectionModal({
                 <span className="mt-0.5 block truncate text-[10px] leading-none text-slate-400">{String(page.date).slice(0, 10)}</span>
               )}
             </span>
+            {/* Status — the table's exact control, same save path (owner
+                order 2026-07-15). Sits right of the title by design. */}
+            {!readOnly && pageStatus !== '' && (
+              <Select value={pageStatus} onValueChange={pickStatus}>
+                <SelectTrigger className="h-auto w-auto shrink-0 border-0 bg-transparent p-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
+                  <Pill variant={statusPillVariant(pageStatus)} className="capitalize">{pageStatus}</Pill>
+                </SelectTrigger>
+                <SelectContent>
+                  {['publish', 'draft', 'pending', 'private', 'future'].map((s) => (
+                    <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {page?.editUrl && (
               <a
                 href={page.editUrl}
@@ -1421,10 +1691,16 @@ export function SectionModal({
             )}
             {page?.permalink && (
               <a
-                href={page.permalink}
+                // A DRAFT has no public URL (WP hands drafts a ?page_id= link
+                // that shows nothing to a visitor) — Open carries preview=true
+                // so the REAL page renders as a logged-in preview. The true
+                // permalink itself stays untouched (the GSC drawer filters on it).
+                href={page.status && page.status !== 'publish'
+                  ? `${page.permalink}${page.permalink.includes('?') ? '&' : '?'}preview=true`
+                  : page.permalink}
                 target="_blank"
                 rel="noopener noreferrer"
-                title="Open the live page in a new tab"
+                title={page.status && page.status !== 'publish' ? 'Open this draft as a preview in a new tab' : 'Open the live page in a new tab'}
                 className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
               >
                 <ExternalLink className="h-3 w-3" /> Open
@@ -1463,6 +1739,23 @@ export function SectionModal({
               selectedModel={pageType}
               onModelChange={pickPageType}
             />
+            {/* THE SMART KEYWORDS BUTTON (owner 2026-07-14): the hierarchy's
+                third value — Business → Page type → Keywords. A LIVE display
+                in the dropdown-family look: primary · +count · density%. */}
+            <button
+              type="button"
+              onClick={() => setKeywordsOpen((v) => !v)}
+              title="The page's keywords — they ride every optimization; click to manage"
+              style={DROPDOWN_TRIGGER_STYLE}
+              className="flex items-center gap-1.5"
+            >
+              <KeyRound className="h-3 w-3 shrink-0" />
+              <span className="max-w-[140px] truncate">{primaryKw.trim() || 'Keywords'}</span>
+              {kwExtraCount > 0 && <span className="shrink-0 text-slate-400">+{kwExtraCount}</span>}
+              {primaryKw.trim() !== '' && (
+                <span className="shrink-0 font-semibold text-primary">{primaryDensity}%</span>
+              )}
+            </button>
             <div className="flex-1" />
             <div className="relative shrink-0">
               <button
@@ -1514,6 +1807,13 @@ export function SectionModal({
             <PillSplitButton
               icon={<Sparkles />}
               onClick={() => {
+                // THE ACTION MATRIX (owner law 2026-07-15): ticked keywords
+                // transform the run into the injection; a text selection
+                // narrows either run; nothing selected = everything.
+                if (tickedKw.length > 0) {
+                  runKeywordInsert();
+                  return;
+                }
                 void startAiReview(
                   instruction.trim(),
                   hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
@@ -1521,12 +1821,18 @@ export function SectionModal({
               }}
               onCaretClick={() => setAskOpen((v) => !v)}
               caretActive={askOpen}
-              title={hasSelection
-                ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
-                : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject'}
+              title={tickedKw.length > 0
+                ? (hasSelection
+                  ? 'Weave the ticked keywords into the selected sections by their roles — changes show as red/green'
+                  : 'Weave the ticked keywords into the content by their roles — changes show as red/green')
+                : (hasSelection
+                  ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
+                  : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject')}
               caretTitle="Write instructions for the AI (e.g. “optimize for keyword X”)"
             >
-              {hasSelection ? 'Optimize (selected text)' : 'Optimize page'}
+              {tickedKw.length > 0
+                ? `Insert keywords (${tickedKw.length})`
+                : hasSelection ? 'Optimize (selected text)' : 'Optimize page'}
             </PillSplitButton>
           </div>
         )}
@@ -1741,9 +2047,43 @@ export function SectionModal({
                 className="cursor-pointer border-b border-slate-100 px-2.5 py-1.5 hover:bg-slate-100/60"
               >
                 <div className="truncate text-[11px] font-medium text-slate-700" title={s.heading}>{s.heading || '(untitled section)'}</div>
-                {s.genModel && (
+                {/* PURPOSE VERIFICATION (owner law 2026-07-13): the suggestion
+                    shows WHAT IT WAS ORDERED TO DO — pills + the compiled
+                    to-do — so fulfillment is judged before Accept/Revise.
+                    The model moves into the tooltip; plain runs (no basket)
+                    keep the model line, honestly. */}
+                {runDirectives ? (
+                  <div title={s.genModel ? `Generated by ${s.genModel}` : undefined}>
+                    {/* THE TWO PURPOSES the user knows (owner ruling
+                        2026-07-15): one SEO / one AI pill max, then the
+                        plain category names as a quiet italic line — the
+                        WHY next to the WHAT. */}
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                      {(['search', 'ai'] as const)
+                        .filter((g) => runDirectives.some((d) => d.purposes.some((p) => (teacherById[p]?.group ?? 'search') === g)))
+                        .map((g) => (
+                          <span key={g} className={`rounded-full px-1.5 py-px text-[8px] font-semibold ${GROUP_PILLS[g].className}`}>
+                            {GROUP_PILLS[g].label}
+                          </span>
+                        ))}
+                    </div>
+                    <div className="mt-0.5 text-[9px] italic leading-tight text-slate-400">
+                      {Array.from(new Set(runDirectives.flatMap((d) => d.purposes)))
+                        .map((p) => (teacherById[p]?.label ?? TEACHER_PILLS[p] ?? p).toLowerCase())
+                        .join(', ')}
+                    </div>
+                    <div className="mt-0.5 space-y-px" title={runDirectives.map((d, k) => `${k + 1}. ${d.text}`).join('\n')}>
+                      {runDirectives.slice(0, 3).map((d, k) => (
+                        <div key={k} className="text-[9px] leading-tight text-slate-400">• {d.text}</div>
+                      ))}
+                      {runDirectives.length > 3 && (
+                        <div className="text-[9px] leading-tight text-slate-400">+{runDirectives.length - 3} more…</div>
+                      )}
+                    </div>
+                  </div>
+                ) : s.genModel ? (
                   <div className="truncate text-[9px] text-slate-400" title={`Generated by ${s.genModel}`}>{s.genModel}</div>
-                )}
+                ) : null}
                 {s.status === 'pending' && (
                   <div className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-slate-500">
                     <Loader2 className="h-3 w-3 animate-spin text-primary" /> Rewriting…
@@ -1797,10 +2137,21 @@ export function SectionModal({
           model={aiPick?.id ?? model}
           provider={aiPick?.provider ?? provider}
           getHtml={() => stripDiffHtml(editor?.getHTML() ?? '')}
+          // THE KEYWORD PACKAGE — the drawer's LIVE state rides every
+          // analysis (the html's source-of-truth law, same reasons).
+          getKeywords={() => ({
+            primary: primaryKw.trim(),
+            supporting: supportingKw.split(',').map((s) => s.trim()).filter(Boolean),
+            additional: kwBucket.keywords,
+          })}
+          pages={sitePages ?? []}
           onClose={() => setAnalyzeOpen(false)}
           onOptimize={(directives) => {
             setAnalyzeOpen(false);
-            void startAiReview(directives);
+            const topic = `Apply exactly these optimizations to the content:\n${directives
+              .map((d, i) => `${i + 1}. ${d.text}`)
+              .join('\n')}`;
+            void startAiReview(topic, null, directives);
           }}
         />
       )}
@@ -1917,6 +2268,23 @@ export function SectionModal({
       )}
 
     </div>
+  );
+
+  return createPortal(
+    <>
+      {/* Page mode: dimmed + blurred backdrop (clicks bubble to the document —
+          the existing outside-click flow is untouched). */}
+      {isPage && <div className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-sm" />}
+      {isPage ? (
+        // The centered PAIR: layout derives all geometry — the card tapers
+        // while the drawer is open, the pair stays centered as one unit.
+        <div className="fixed inset-0 z-40 flex items-center justify-center">
+          {drawerEl}
+          {cardEl}
+        </div>
+      ) : (
+        cardEl
+      )}
     </>,
     document.body,
   );

@@ -21,12 +21,16 @@ interface ModelDropdownProps {
   selectedModel: string;
   onModelChange: (id: string) => void;
   disabled?: boolean;
+  /** Long lists (e.g. a site's pages): a filter input at the panel top —
+   *  groups hide while emptied. The query resets on every open. */
+  searchable?: boolean;
 }
 
 // Thin pill on a SOLID white surface (owner 2026-07-13: transparent triggers
 // leaked the background through). Metrics = PillButton's = the sidebar
-// nav-item family (owner order: one button size everywhere).
-const TRIGGER_STYLE = {
+// nav-item family (owner order: one button size everywhere). EXPORTED so
+// sibling triggers (the smart Keywords button) wear the same family look.
+export const DROPDOWN_TRIGGER_STYLE = {
   padding: '4px 10px',
   borderRadius: '9999px',
   fontSize: typography.xs,
@@ -37,8 +41,9 @@ const TRIGGER_STYLE = {
   cursor: 'pointer',
 } as const;
 
-export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disabled }: ModelDropdownProps) {
+export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disabled, searchable = false }: ModelDropdownProps) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   // Window-aware panel side (owner 2026-07-13: panels opened blind and got
   // clipped by overflow-hidden containers): a trigger on the LEFT half of
   // the window grows its panel rightward, one on the RIGHT half leftward —
@@ -50,6 +55,7 @@ export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disab
     if (!open && ref.current) {
       const r = ref.current.getBoundingClientRect();
       setAlignLeft(r.left + r.width / 2 < window.innerWidth / 2);
+      setQuery('');
     }
     setOpen((v) => !v);
   };
@@ -64,10 +70,16 @@ export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disab
 
   const allModels = modelGroups.flatMap((g) => g.models);
   const selectedName = allModels.find((m) => m.id === selectedModel)?.name ?? 'Select model';
+  const q = query.trim().toLowerCase();
+  const visibleGroups = searchable && q !== ''
+    ? modelGroups
+      .map((g) => ({ ...g, models: g.models.filter((m) => m.name.toLowerCase().includes(q)) }))
+      .filter((g) => g.models.length > 0)
+    : modelGroups;
 
   return (
     <div className="relative" ref={ref}>
-      <button type="button" disabled={disabled} onClick={toggleOpen} style={TRIGGER_STYLE} className="flex items-center gap-1.5 disabled:opacity-60">
+      <button type="button" disabled={disabled} onClick={toggleOpen} style={DROPDOWN_TRIGGER_STYLE} className="flex items-center gap-1.5 disabled:opacity-60">
         <span className="truncate max-w-[120px]">{selectedName}</span>
         <ChevronDown className="w-3 h-3 shrink-0" />
       </button>
@@ -80,7 +92,19 @@ export function ModelDropdown({ modelGroups, selectedModel, onModelChange, disab
             minWidth: '200px',
           }}
         >
-          {modelGroups.map((group) => (
+          {searchable && (
+            <div className="px-2 pb-1 pt-0.5">
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search…"
+                className="h-6 w-full rounded border px-1.5 text-xs outline-none"
+                style={{ borderColor: colors.border, color: colors.text }}
+              />
+            </div>
+          )}
+          {visibleGroups.map((group) => (
             <div key={group.label}>
               <div
                 className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"

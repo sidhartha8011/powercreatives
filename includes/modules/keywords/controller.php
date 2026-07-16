@@ -100,6 +100,11 @@ class PCM_REST_Keywords extends PCM_REST_Base
 
         // Single query proxy — frontend handles batching for progressive UX
         $suggestions = PCM_Keywords_Service::google_suggest($query, $lang, $gl);
+        if (is_wp_error($suggestions)) {
+            // An unreachable Google is an ERROR, never an empty result
+            // (proven live 2026-07-14: timeouts read as "zero results").
+            return $this->error($suggestions->get_error_message(), 502);
+        }
 
         return $this->success([
             'query'       => $query,
@@ -121,8 +126,17 @@ class PCM_REST_Keywords extends PCM_REST_Base
     {
         $user             = $this->get_current_pcm_user();
         $keywords         = $request->get_param('keywords');
-        $country          = sanitize_text_field($request->get_param('country') ?? 'us');
         $include_serp_dr  = (bool) $request->get_param('includeSerpDR');
+        // Market: explicit request > the site's resolved country > the hub
+        // default — never a silent hardcoded market (gap 2cf0a44).
+        $country = sanitize_text_field($request->get_param('country') ?? '');
+        if ($country === '') {
+            $site_id = absint($request->get_param('siteId') ?? 0);
+            $site    = $site_id > 0 ? PCM_DB::get_site($site_id, (int) $user->id) : null;
+            $country = $site
+                ? PCM_Keywords_Service::resolve_country($site)
+                : PCM_Keywords_Service::default_country();
+        }
 
         if (empty($keywords) || !is_array($keywords)) {
             return $this->error('Keywords array is required.');

@@ -201,6 +201,17 @@ deselects from the catalog with full control, and the selection goes as a
 BASKET into ONE optimization order. One optimization — its content decided
 entirely by what the user put in the basket.
 
+**THE RAIL TAXONOMY (owner ruling 2026-07-14):** the rail has exactly TWO
+top groups — **Search optimization** (with subsections: e.g. content
+structure for search engines, page-specific checks, rankings-driven
+suggestions) and **AI optimization** (AI mentions/recommendations).
+Teachers declare which group they belong to; a group renders its teachers
+as subsections. OVERLAP BETWEEN GROUPS IS FINE by design (both may demand
+reviews, both may demand the same fact) — the COMPILER is the second step
+that collects and reconciles duplicates, so producers never need to
+coordinate. Priority ruling the same day: FINISH THE CONTENT FEATURES
+FIRST; the client approval card comes after the content work is done.
+
 **THE ANALYZE RAIL UX LAW (owner correction 2026-07-13 — this is for the
 USER doing the optimization, inside the editor):**
 - The rail is organized PER PURPOSE, as sections: first "Search engine
@@ -217,6 +228,28 @@ USER doing the optimization, inside the editor):**
 (The client approval card grouping the changes by the same purposes —
 feature 6 — stays as a bonus the owner sanctioned separately.)
 
+## Keyword injection — the frequent light touch (owner order 2026-07-14)
+THE frequent real-world job: take an EXISTING page and weave keywords in —
+no full rework, just add the keywords (or a section, or a FAQ). FLOW: in
+the keyword drawer's SELECTED table, rows become SELECTABLE (checkboxes);
+with keywords selected, the Optimize button TRANSFORMS — it reads
+"Insert keywords" (short label) — and ONE run weaves exactly the selected
+keywords into the existing content, landing as the normal red/green
+review, exactly like a section optimize.
+
+**THE KEYWORD HIERARCHY LAW (owner): placement follows the ROLE —**
+- PRIMARY: threads straight through the page (headings + body — the
+  page's spine).
+- SUPPORTING: present in some headers and some text — structural but not
+  everywhere.
+- ADDITIONAL: light touch — mentioned naturally in the text, roughly ONE
+  paragraph maximum per keyword, never more.
+The injection prompt encodes this hierarchy so the AI treats each keyword
+according to its role — natural inclusion always, stuffing never. The
+role data already exists (the selected table's P/S/A) — the feature is a
+selection state + a relabeled run, all existing machinery (compiler,
+review, keyword ride).
+
 ## Client approval card for page changes (owner order 2026-07-13 — feature 6)
 Value driver: THE CLIENT SEES THE SAME RED/GREEN VIEW AND APPROVES. MVP: a
 shareable READ-ONLY link rendering this page's pending changes exactly as
@@ -232,6 +265,18 @@ rides along to the approval card for free.) BUILD LAW: this is the FIRST
 SLICE of the already-specced approval-pipeline rails (Autonomy roadmap #1:
 seo_staged_changes + asset-type adapter registry + Before/After cards) —
 never a parallel machinery; nothing thrown away when the full rails land.
+
+## Entity / Knowledge-Graph mapping (owner idea 2026-07-14 — parked, belongs to the knowledge-graph feature)
+Map pages the way GOOGLE thinks: identify the page's TOP ENTITY and the
+sub-entities Google associates with it, so content completes the entity
+instead of guessing topics. FINISHED TOOLS EXIST: Google's Knowledge Graph
+Search API returns real KG entity ids; Google's Natural Language API
+extracts entities from text with salience + Wikipedia/KG links. Flow: page
+content → entity extraction → KG lookup for the canonical entity + its
+neighborhood → feed the subtopics/knowledge-graph feature (NOT the
+keywords module) → eventually an automated identify-and-generate flow with
+no manual steps. Also owner-logged: phrase-match keyword discovery in GSC
+(smarter than the v1 related-token heuristic).
 
 ## Knowledge-graph insert (owner-approved spec 2026-07-13)
 A new Insert-menu item (beside Image and FAQ): insert a SUBTOPIC section
