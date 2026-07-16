@@ -361,6 +361,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `sites/${input.id}/update-connector` }),
     },
+    "sites.health": { endpoint: "sites/health", method: "GET" },
     "sites.test": {
         endpoint: "sites",
         method: "POST",

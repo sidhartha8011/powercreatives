@@ -267,7 +267,7 @@ class PCM_Sites_Service
      * @param object $site Site DB row.
      * @return array Connection result with site info.
      */
-    public static function test_connection(object $site): array
+    public static function test_connection(object $site, int $timeout = 15): array
     {
         $password = self::decrypt_password($site->appPassword);
         // Use the `?rest_route=` form, NOT pretty `/wp-json/...`: the latter 404s
@@ -279,7 +279,7 @@ class PCM_Sites_Service
             'headers' => array(
                 'Authorization' => 'Basic ' . base64_encode($site->username . ':' . $password),
             ),
-            'timeout'   => 15,
+            'timeout'   => max(1, $timeout),
             'sslverify' => true,
         ));
 

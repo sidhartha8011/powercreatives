@@ -4050,8 +4050,21 @@ class PCM_SEO_Service
             add_option('pcm_seo_state_check', $cfg, '', false);
         }
         $rep = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/page-state', array('post_id' => $post_id), array(), max(1, (int) $cfg['timeoutS']));
-        if (is_wp_error($rep) || !is_array($rep['body'] ?? null)) {
-            $out['error'] = is_wp_error($rep) ? $rep->get_error_message() : __('The site did not answer the state check.', 'power-creatives');
+        if (is_wp_error($rep)) {
+            $out['error'] = $rep->get_error_message();
+            return $out;
+        }
+        // remote_rest answers {status, body} for EVERY HTTP status — only a
+        // 200 is an ANSWER. HONESTY (gap 89ef71a, proven probe): 404 means
+        // the site IS reachable but its connector predates the state check —
+        // name the fix, never call a reachable site unreachable.
+        $status = (int) ($rep['status'] ?? 0);
+        if ($status === 404) {
+            $out['error'] = __('The site\'s connector is outdated (needs 3.0.7+) — update it from the Sites module.', 'power-creatives');
+            return $out;
+        }
+        if ($status !== 200 || !is_array($rep['body'] ?? null)) {
+            $out['error'] = sprintf(__('The site answered the state check with HTTP %d.', 'power-creatives'), $status);
             return $out;
         }
         $remote = array(

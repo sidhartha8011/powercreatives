@@ -60,6 +60,8 @@ import { LinksPopup, type LinkKind } from './LinksPopup';
 import { RedirectPopup } from './RedirectPopup';
 import { HeadingRows } from './HeadingsPanel';
 import { SectionModal } from './SectionModal';
+import { SiteStatusDot } from './SiteStatusDot';
+import { useSiteHealth } from './hooks/useSiteHealth';
 import { SEO_TABLE_GRID } from './seo-table';
 import { Pill, type PillVariant } from '@/components/ui/pill';
 import { SEO_TEXT_FIELDS, statusPillVariant, type SeoRow } from './types';
@@ -360,6 +362,8 @@ export function SEOModule() {
   // Remote-site SEO isn't wired in the backend yet — those tabs show a placeholder.
   const { data: sitesRaw } = trpc.sites.list.useQuery() as { data?: any[] };
   const sites: { id: number; name?: string; url?: string }[] = Array.isArray(sitesRaw) ? sitesRaw : [];
+  // Connector health for the tab dots — ONE batched call (gap 89ef71a).
+  const siteHealth = useSiteHealth(sites.length > 0);
   const [siteId, setSiteId] = useState<number | 'local'>('local');
   const isLocal = siteId === 'local';
   // Expandable heading editor: which page rows have their H1–H6 outline open.
@@ -1329,7 +1333,8 @@ export function SEOModule() {
           onClick={() => setSiteId('local')}
           className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm -mb-px border-b-2 whitespace-nowrap ${isLocal ? 'border-primary text-primary font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
         >
-          <Globe className="w-3.5 h-3.5" /> This Site
+          {/* The hub is itself — never health-tested, always the quiet dot. */}
+          <SiteStatusDot ok={null} /> This Site
         </button>
         {sites.map((s) => (
           <button
@@ -1339,7 +1344,7 @@ export function SEOModule() {
             title={s.url}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm -mb-px border-b-2 max-w-[220px] ${siteId === Number(s.id) ? 'border-primary text-primary font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
           >
-            <Globe className="w-3.5 h-3.5 shrink-0" />
+            <SiteStatusDot ok={siteHealth(Number(s.id)).ok} error={siteHealth(Number(s.id)).error} />
             <span className="truncate">{s.name || s.url || `Site #${s.id}`}</span>
           </button>
         ))}

@@ -37,6 +37,8 @@ class PCM_REST_Sites extends PCM_REST_Base
             array('DELETE', '/sites/(?P<id>\d+)',              'delete_site'),
             array('POST',   '/sites/(?P<id>\d+)/publish',      'publish_article'),
             array('POST',   '/sites/(?P<id>\d+)/test',         'test_connection'),
+            // Batch connector health (gap 89ef71a): the SEO tab dots' ONE call.
+            array('GET',    '/sites/health',                   'sites_health'),
             array('POST',   '/sites/(?P<id>\d+)/gsc-verify',   'gsc_verify_site'),
             array('POST',   '/sites/(?P<id>\d+)/gsc-preview',  'gsc_preview'),
             array('POST',   '/sites/update-connectors',        'update_connectors'),
@@ -414,6 +416,38 @@ class PCM_REST_Sites extends PCM_REST_Base
     /**
      * Test connection to a WordPress site.
      */
+    /**
+     * GET /sites/health — every site's connector health in ONE call
+     * (gap 89ef71a). Tests run SEQUENTIALLY server-side (the 2-worker
+     * law: N frontend fan-out would freeze the hub) with a short
+     * hub-tunable timeout; a failing site reports its error honestly,
+     * never blocks the others.
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response
+     */
+    public function sites_health(WP_REST_Request $request): WP_REST_Response
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        // Timeout is hub DATA (read-through seed — the tunables law).
+        $cfg = get_option('pcm_sites_health_check');
+        if (!is_array($cfg) || !isset($cfg['timeoutS'])) {
+            $cfg = array('timeoutS' => 5);
+            add_option('pcm_sites_health_check', $cfg, '', false);
+        }
+        require_once __DIR__ . '/service.php';
+        $health = array();
+        foreach (PCM_DB::get_user_sites((int) $pcm_user->id) as $site) {
+            try {
+                PCM_Sites_Service::test_connection($site, max(1, (int) $cfg['timeoutS']));
+                $health[(int) $site->id] = array('ok' => true, 'error' => null);
+            } catch (\Throwable $e) {
+                $health[(int) $site->id] = array('ok' => false, 'error' => $e->getMessage());
+            }
+        }
+        return $this->success(array('health' => $health));
+    }
+
     public function test_connection(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $pcm_user = $this->get_current_pcm_user();
