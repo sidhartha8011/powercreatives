@@ -428,22 +428,24 @@ class PCM_REST_Sites extends PCM_REST_Base
      */
     public function sites_health(WP_REST_Request $request): WP_REST_Response
     {
+        // STORED reads only (gap fad81ea P2 — the mount-blocking sequential
+        // test loop shipped earlier today is DELETED, replaced by the
+        // heartbeat/probe map): milliseconds at any fleet size. `ok` null =
+        // never measured yet (the probe queue will visit it) — the dot stays
+        // quiet, a failure is never invented.
         $pcm_user = $this->get_current_pcm_user();
-        // Timeout is hub DATA (read-through seed — the tunables law).
-        $cfg = get_option('pcm_sites_health_check');
-        if (!is_array($cfg) || !isset($cfg['timeoutS'])) {
-            $cfg = array('timeoutS' => 5);
-            add_option('pcm_sites_health_check', $cfg, '', false);
-        }
         require_once __DIR__ . '/service.php';
+        $map    = PCM_Sites_Service::health_map();
         $health = array();
         foreach (PCM_DB::get_user_sites((int) $pcm_user->id) as $site) {
-            try {
-                PCM_Sites_Service::test_connection($site, max(1, (int) $cfg['timeoutS']));
-                $health[(int) $site->id] = array('ok' => true, 'error' => null);
-            } catch (\Throwable $e) {
-                $health[(int) $site->id] = array('ok' => false, 'error' => $e->getMessage());
-            }
+            $rec = $map[(int) $site->id] ?? null;
+            $health[(int) $site->id] = $rec === null
+                ? array('ok' => null, 'error' => null, 'ageS' => null)
+                : array(
+                    'ok'    => (bool) $rec['ok'],
+                    'error' => $rec['error'] ?? null,
+                    'ageS'  => max(0, time() - (int) ($rec['at'] ?? 0)),
+                );
         }
         return $this->success(array('health' => $health));
     }

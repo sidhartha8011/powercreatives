@@ -163,6 +163,24 @@ function pcm_init(): void
         && !wp_next_scheduled('pcm_strategy_scheduled_scan')) {
         wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'pcm_strategy_scheduled_scan');
     }
+
+    // THE SITE HEALTH PROBE (gap fad81ea P3): probes only stale-heartbeat
+    // sites, bounded per run — the dots' data source in the background,
+    // never in a user's click path.
+    add_action('pcm_sites_health_probe', array('PCM_Sites_Service', 'probe_stale_sites'));
+    add_filter('cron_schedules', function (array $schedules): array {
+        // Interval is hub DATA (pcm_sites_health_check.intervalS, seed 300).
+        $cfg = get_option('pcm_sites_health_check');
+        $schedules['pcm_sites_health_interval'] = array(
+            'interval' => max(60, (int) ((is_array($cfg) ? ($cfg['intervalS'] ?? 300) : 300))),
+            'display'  => __('Power Creatives site health probe', 'power-creatives'),
+        );
+        return $schedules;
+    });
+    if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event')
+        && !wp_next_scheduled('pcm_sites_health_probe')) {
+        wp_schedule_event(time() + MINUTE_IN_SECONDS, 'pcm_sites_health_interval', 'pcm_sites_health_probe');
+    }
 }
 add_action('plugins_loaded', 'pcm_init');
 
