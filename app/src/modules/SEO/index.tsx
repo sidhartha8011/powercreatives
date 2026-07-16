@@ -95,6 +95,7 @@ function EditableCell({
   onAccept,
   onReject,
   emphasis,
+  onOpen,
 }: {
   value: string;
   placeholder?: string;
@@ -107,9 +108,17 @@ function EditableCell({
   onReject?: () => void;
   /** Render as the primary field (Airtable-style: medium weight, darker). */
   emphasis?: boolean;
+  /** OPT-IN (title cell only, gap cad42df): single click OPENS (the page
+   *  editor), double click enters the inline text edit. Absent = today's
+   *  click-to-edit, byte-identical — the sensitive columns never change. */
+  onOpen?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
+  // Single-vs-double click discriminator (only armed when onOpen exists):
+  // a single click waits 220ms for a possible second click before opening.
+  const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (openTimer.current) clearTimeout(openTimer.current); }, []);
 
   const commit = () => {
     setEditing(false);
@@ -158,9 +167,18 @@ function EditableCell({
     <div className="flex items-center gap-1 group">
       <button
         type="button"
-        onClick={() => { setDraft(value); setEditing(true); }}
+        onClick={() => {
+          if (!onOpen) { setDraft(value); setEditing(true); return; }
+          if (openTimer.current) clearTimeout(openTimer.current);
+          openTimer.current = setTimeout(() => { openTimer.current = null; onOpen(); }, 220);
+        }}
+        onDoubleClick={() => {
+          if (!onOpen) return; // default cells already edit on the first click
+          if (openTimer.current) { clearTimeout(openTimer.current); openTimer.current = null; }
+          setDraft(value); setEditing(true);
+        }}
         className={`flex-1 min-w-0 text-left truncate text-xs leading-snug hover:underline decoration-dotted ${emphasis ? 'font-medium text-foreground' : ''}`}
-        title={value || placeholder}
+        title={onOpen ? `${value || placeholder} — click to open the editor, double-click to edit the title` : (value || placeholder)}
       >
         {value || <span className="text-muted-foreground/60">{placeholder ?? '—'}</span>}
       </button>
@@ -1060,6 +1078,13 @@ export function SEOModule() {
                   value={row.title}
                   placeholder="Untitled"
                   emphasis
+                  // THE TITLE GESTURE (gap cad42df): click = edit the page
+                  // (our editor on connected rows, the WP editor locally —
+                  // same meaning, different destination); double-click =
+                  // edit the title text. Title cell ONLY.
+                  onOpen={isLocal
+                    ? (row.editUrl ? () => window.open(row.editUrl as string, '_blank', 'noopener,noreferrer') : undefined)
+                    : () => setPageEditRow(row)}
                   onSave={(v) => saveCell(row.id, 'title', v)}
                   onGenerate={() => handleGenerate(row.id, 'title')}
                   generating={genKey === `${row.id}:title`}
