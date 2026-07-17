@@ -452,7 +452,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — four dumb jobs: page snapshot (the hub does ALL parsing), builder-aware storage writers (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), guarded render-time apply of hub-precomputed instructions (refuse-if-unsure), and hub-pushed config. Also: SEO meta in REST, fallback meta tags, robots.txt + JSON-LD, /llms.txt + /llm-info/, cache flush on edit, self-update, one-paste connection code.
- * Version: 3.0.7
+ * Version: 3.0.8
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1655,9 +1655,32 @@ function pcm_conn_loopback_release() { delete_transient('pcm_conn_loopback_lock'
  * path). Timeout is hub-pushed config. Returns the HTML body, or '' when
  * locked/failed.
  */
+// Self-authorized loopback (3.0.8, gap f285ced): the connector runs INSIDE
+// the site — its self-fetch must never depend on a browser session or on
+// public visibility. Each fetch mints a one-time 60s pid-bound token; the
+// validator below widens post_status for THAT request only. Drafts render
+// for the connector, and only for it.
+add_action('pre_get_posts', function ($query) {
+    if (is_admin() || !$query->is_main_query()) { return; }
+    $token = isset($_GET['pcm_snap_auth']) ? (string) $_GET['pcm_snap_auth'] : '';
+    if ($token === '' || !preg_match('/^[A-Za-z0-9]{32}$/', $token)) { return; }
+    $pid = (int) get_transient('pcm_snap_auth_' . $token);
+    if ($pid <= 0) { return; }
+    $queried = (int) ($query->get('page_id') ?: $query->get('p'));
+    if ($queried !== $pid) { return; }
+    delete_transient('pcm_snap_auth_' . $token); // single use — a replay changes nothing
+    $query->set('post_status', array('publish', 'draft', 'pending', 'private', 'future'));
+});
 function pcm_conn_loopback_fetch($pid, $bust_arg, $agent_tag) {
     if (!pcm_conn_loopback_acquire()) { return ''; }
-    $resp = wp_remote_get(add_query_arg($bust_arg, (string) time(), get_permalink($pid)), array(
+    $token = wp_generate_password(32, false, false);
+    set_transient('pcm_snap_auth_' . $token, (int) $pid, MINUTE_IN_SECONDS);
+    // Query-var permalink form: pins the exact pid the validator matches on
+    // (drafts have no pretty permalink; published posts accept it equally —
+    // ONE code path for every status).
+    $id_arg = (get_post_type($pid) === 'page') ? 'page_id' : 'p';
+    $url = add_query_arg(array($bust_arg => (string) time(), $id_arg => (int) $pid, 'pcm_snap_auth' => $token), home_url('/'));
+    $resp = wp_remote_get($url, array(
         'timeout'     => (int) pcm_conn_cfg('loopbackTimeout'),
         'redirection' => 3,
         'sslverify'   => apply_filters('https_local_ssl_verify', false),
