@@ -1637,8 +1637,15 @@ export function SEOModule() {
       )}
 
       {isLoading ? (
-        <div className="flex items-center justify-center py-20">
+        <div className="flex flex-col items-center justify-center gap-2 py-20">
           <Loader2 className="w-6 h-6 animate-spin text-primary" />
+          {/* The remote first load has no stored copy yet (gap 02d3cb7 D3) —
+              SAY so; every later open serves the local copy instantly. */}
+          {!isLocal && (
+            <div className="text-xs text-muted-foreground">
+              Fetching content from the site — the first load builds the local copy, next opens are instant…
+            </div>
+          )}
         </div>
       ) : sortedData.length === 0 ? (
         <div className="border border-dashed border-border rounded-xl p-12 text-center text-sm text-muted-foreground">

@@ -684,7 +684,9 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        return $this->success($this->service->list_page_versions((int) $user->id, $site, absint($request->get_param('post'))));
+        // ?rowsOnly=1 = the editor's OPEN path (pure DB read); without it the
+        // reply includes the remote-assembled Original (gap 02d3cb7 D1).
+        return $this->success($this->service->list_page_versions((int) $user->id, $site, absint($request->get_param('post')), (bool) $request->get_param('rowsOnly')));
     }
 
     /** POST /seo/sites/{id}/content/{post}/section-versions/{vid}/delete — delete one saved version. */

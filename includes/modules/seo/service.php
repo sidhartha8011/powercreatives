@@ -4490,8 +4490,16 @@ class PCM_SEO_Service
      *
      * @return array{versions:array[],originalHtml:string}
      */
-    public function list_page_versions(int $user_id, object $site, int $post_id): array
+    public function list_page_versions(int $user_id, object $site, int $post_id, bool $rows_only = false): array
     {
+        // ROWS-ONLY (gap 02d3cb7 D1): the editor's OPEN needs the saved rows
+        // alone — a pure DB read, milliseconds. The Original (a REMOTE
+        // snapshot round-trip) is fetched lazily when the versions dropdown
+        // opens — its only consumer. Gating the open on it was the 30s white.
+        $rows = array('versions' => self::list_versions($user_id, (int) $site->id, $post_id, 'page', '', 0));
+        if ($rows_only) {
+            return $rows;
+        }
         $original = '';
         $in       = self::remote_fetch_snapshot($site, $post_id, 'input');
         if ($in !== null && $in['html'] !== '') {
@@ -4500,10 +4508,7 @@ class PCM_SEO_Service
             $parsed   = self::parse_page_snapshot($in['html']);
             $original = self::assemble_content_html($in['html'], $parsed['headings']);
         }
-        return array(
-            'versions'     => self::list_versions($user_id, (int) $site->id, $post_id, 'page', '', 0),
-            'originalHtml' => $original,
-        );
+        return $rows + array('originalHtml' => $original);
     }
 
     /**

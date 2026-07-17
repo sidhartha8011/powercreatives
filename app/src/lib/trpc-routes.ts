@@ -543,7 +543,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remotePageVersions": {
         endpoint: "seo/sites",
         method: "GET",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-versions` }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-versions${input.rowsOnly ? "?rowsOnly=1" : ""}` }),
     },
     "seo.remoteDeleteSectionVersion": {
         endpoint: "seo/sites",

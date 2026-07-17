@@ -594,11 +594,18 @@ export function SectionModal({
   const isPage = mode === 'page';
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // Page versions: saved page documents + the true no-rules Original
-  // (rules-input snapshot, hub-assembled) — one read.
+  // Page versions — ROWS ONLY (gap 02d3cb7 D1): a pure DB read in
+  // milliseconds; the OPEN gates on this. The Original (a remote snapshot
+  // round-trip) loads LAZILY below, only when the dropdown opens — gating
+  // the open on it was the 30-second white screen.
   const pageVersionsQuery = trpc.seo.remotePageVersions.useQuery(
-    { siteId: siteId as number, postId },
+    { siteId: siteId as number, postId, rowsOnly: 1 },
     { enabled: isPage && !readOnly, staleTime: 0 },
+  );
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const pageOriginalQuery = trpc.seo.remotePageVersions.useQuery(
+    { siteId: siteId as number, postId },
+    { enabled: isPage && !readOnly && versionsOpen, staleTime: 60_000 },
   );
   /** Page mode's saved documents, newest first — W0 (2026-07-16): the open
    *  loads [0]; the versions dropdown lists the same rows. */
@@ -669,7 +676,7 @@ export function SectionModal({
   /** The TRUE original (no rules applied): section mode = live from the scan;
    *  page mode = the hub-assembled rules-input document ('' = honest unavailable). */
   const originalHtml = isPage
-    ? String((pageVersionsQuery.data as any)?.originalHtml ?? '')
+    ? String((pageOriginalQuery.data as any)?.originalHtml ?? '')
     : !isInsert && section
       ? (section.heading.html || `<h${section.heading.level}>${escapeHtml(section.heading.text)}</h${section.heading.level}>`)
         + section.paragraphs.map((p) => p.html).join('')
@@ -728,6 +735,9 @@ export function SectionModal({
   // open waits for NOTHING else — the site-side assembly is fetched and
   // waited for ONLY on the no-versions fallback path.
   const pageLoadedRef = useRef(false);
+  /** Reactive twin of the ref — the honest loading overlay keys on THIS
+   *  (a ref can't re-render; the 30s-white lesson, gap 02d3cb7 D2). */
+  const [docLoaded, setDocLoaded] = useState(false);
   useEffect(() => {
     if (!isPage || !editor || !pageVersionsSettled || pageLoadedRef.current) return;
     if (pageVersions.length > 0) {
@@ -738,6 +748,7 @@ export function SectionModal({
       pageLoadedRef.current = true;
       editor.commands.setContent(pageHtml);
     }
+    setDocLoaded(true);
     setSavedHtml(editor.getHTML());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPage, editor, pageReady, pageVersionsSettled, pageHtml, pageVersions]);
@@ -864,9 +875,9 @@ export function SectionModal({
   const versions: Array<{ id: number; replacement: string; createdAt: string }> = isPage
     ? pageVersions
     : Array.isArray((versionsQuery.data as any)?.versions) ? (versionsQuery.data as any).versions : [];
-  /** '' = viewing the current state; 'original' | version id as string. */
+  /** '' = viewing the current state; 'original' | version id as string.
+   *  (versionsOpen lives beside the lazy Original query above — one owner.) */
   const [versionPick, setVersionPick] = useState('');
-  const [versionsOpen, setVersionsOpen] = useState(false);
   const deleteVersionMutation = trpc.seo.remoteDeleteSectionVersion.useMutation();
   const pickVersion = (v: string) => {
     setVersionPick(v);
@@ -2082,9 +2093,14 @@ export function SectionModal({
         className={`${isPage ? 'min-h-0 flex-1 px-8 py-4' : 'h-[280px] px-3 py-2'} overflow-auto bg-white`}
         title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}
       >
-        {isPage && pageQuery.isLoading && (
-          <div className="flex h-full items-center justify-center gap-2 text-xs text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading the served page…
+        {/* THE STAGED OPEN OVERLAY (gap 02d3cb7 D2): every pre-content phase
+            SAYS what it is doing — a blank editor is never silent again. */}
+        {isPage && !readOnly && !docLoaded && !pageError && (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            {!pageVersionsSettled
+              ? 'Loading your saved version…'
+              : 'Pulling the page from your site — the first open takes longer while the local copy is built…'}
           </div>
         )}
         {isPage && pageError && (
