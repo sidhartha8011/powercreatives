@@ -151,6 +151,32 @@ during an open must show no 20s+ queue outlier on the content path;
 owner-side: content paints in seconds, corner answers after. Changelog +
 AFTER commit ending LOCAL ONLY.
 
+## E2-ADDENDUM (same day, owner-driven) — THE REAL WHITE: pageReady GATES THE SCREEN
+
+My A3 claim ("the content paint gate has NO remote dependency") traced
+setContent and STOPPED — it never traced the RENDER consumer. The owner's
+screenshots on the stamped (provably current) bundle forced the full trace:
+
+**FACT CHAIN (each verified):** exactly 1 version row matches the open query
+(DB) → inventoryNeeded=false because versions exist (SectionModal.tsx:625) →
+pageQuery never enabled (:627-630) → pageReady NEVER true (:632 — built only
+from pageQuery.data) → EditorContent NEVER MOUNTS (:2143 gate) and the same
+flag dead-gates: pageDirty/Draft (:708), SAVE guard (:976 "nothing loaded"),
+selection-AI action (:1221), keywords drawer (:1761), toolbar row (:1912),
+analyze rail (:2322), three action buttons (:2421/:2430/:2440). The
+"instant open" (e48b1ff/02d3cb7/W0 — all UNVERIFIED-IN-BROWSER) replaced the
+open's DATA source but left every SCREEN consumer keyed to the old source.
+White + dead editor on every saved-version open since it shipped.
+
+**FIX (E1b, edits not additions):** the screen/action gates key on
+`docLoaded` (true on BOTH load paths); `pageReady` remains ONLY where the
+inventory data itself is needed: its definition (:632), pageError (:633),
+the fallback load branch (:732), the live-view swap (:765). docLoaded's
+declaration moves above the editor block (TDZ — pageDirty at :708 reads it).
+seo module version 1.0.0 → 1.0.1 (the stamp ritual's first real bump — the
+owner SEES the fix arrived). Verify: tsc 59 / build / byte-serve / grep
+pageReady leaves exactly the four intentional sites.
+
 ## E. E1 IMPLEMENTATION CHECKLIST (owner GO 2026-07-17 "commit and go")
 1. [ ] SectionModal.tsx — RELOCATE the stateQuery block (643-652: query +
        pageState/pageDrifted/stateUnreachable derivations) to directly BELOW
