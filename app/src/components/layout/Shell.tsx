@@ -32,6 +32,7 @@ import { UsersModule } from '@/modules/Users';
 import { SEOModule } from '@/modules/SEO';
 import { LogsModule } from '@/modules/Logs';
 import type { ModuleId } from '@/types';
+import { MODULE_VERSIONS } from '@/lib/module-versions';
 
 // Module registry - maps module IDs to their components
 const moduleRegistry: Record<ModuleId, React.ComponentType> = {
@@ -82,7 +83,7 @@ export function Shell() {
       <Sidebar />
 
       {/* Main Content Area - Module Container */}
-      <main className="flex-1 overflow-hidden">
+      <main className="relative flex-1 overflow-hidden">
         {isFullBleed ? (
           // Full-bleed layout for image/video modules
           <div className="h-full overflow-hidden">
@@ -111,6 +112,18 @@ export function Shell() {
               </div>
             )}
           </div>
+        )}
+        {/* THE MODULE VERSION STAMP (owner order 2026-07-17, gap
+            MODULE-VERSION-STAMP): the active module's own version, quiet
+            bottom-left; hover shows the baked build stamp — a stale tab
+            is visible at a glance. ONE mount for every module. */}
+        {ActiveModuleComponent && (
+          <span
+            className="absolute bottom-1 left-2 z-10 text-[10px] leading-none text-slate-400/60 select-none"
+            title={`build ${__PCM_BUILD__}`}
+          >
+            {activeModule} v{MODULE_VERSIONS[activeModule]}
+          </span>
         )}
       </main>
     </div>
