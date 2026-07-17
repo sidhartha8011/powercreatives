@@ -363,6 +363,42 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   per-site Business card inside SEO (the SEO team never leaves SEO);
   sites CONSUME brands, never the reverse (owner dependency ruling).
   **→ ARCHITECTURE DOC: docs/ARCHITECTURE-BUSINESS-SPINE-20260717.md**
+- 2026-07-17 · **THE CHANGE-CARD REVIEW (owner critical — the review is "a
+  big blob of crap"; PRIORITY over all tab work).** Live findings: every
+  section's rail card repeats the SAME global directive list (per-change
+  attribution §9.1 missing → the whole basket prints under every section);
+  the word-diff is unreadable on heavy rewrites (red strike sea → green
+  blob); acceptance is per-section, never per change. THE REDESIGN: the
+  rewriter's output contract (Anthropic JSON law) gains a per-section
+  CHANGES LIST — each change = {what: plain one-liner, why: purpose →
+  plain category, span}. The review shows CLEAN result text + a stack of
+  small CHANGE CARDS per section (what + why); hovering/clicking a card
+  highlights its span. Heavy rewrites present as ONE "Rewritten" card with
+  a Before/After block toggle (supersedes-and-absorbs the 2026-07-15
+  REVIEW DIFF CONSOLIDATION entry) alongside the itemized what-it-includes
+  list. ACCEPTANCE: per-change controls; span-local changes splice
+  deterministically; overlapping/global changes recompose the section via
+  ONE bounded re-run with only the accepted directives (revise machinery
+  exists). Section Accept = all its cards; rail card shows ONLY its own
+  changes (kills the repeated-text bug). CLIENT MODE LATER (§9.7): the
+  same cards, grouped by the two plain purposes — the change card IS the
+  client surface. Staged: T1 attribution + change cards + clean-text view
+  + Rewritten Before/After (per-section accept stays) · T2 per-change
+  accept w/ splice/recompose.
+- 2026-07-17 · **META-ADS HARNESS — THE THREE TABS (owner detail expansion
+  of the 2026-07-15 META-ADS-STYLE EDIT MODAL entry; LOG ONLY, review fix
+  first).** The editor becomes a harness window: LEFT: page-switcher
+  sidebar (FB-Ads hierarchy feel; clicking a page loads it in place —
+  the near-term slice). TOP TABS per page: (1) **Content** = today's
+  editor unchanged; (2) **Metadata** = the SEO table TRANSPOSED for the
+  one page — rows = field types (title, meta title, description, …),
+  column 1 = current value, column 2 = generated suggestion, SAME table
+  machinery + per-row generate → granular field control; (3)
+  **Performance** = the per-page drawing board: clicks + impressions
+  graph (GSC-style, clicks primary) — and when ICE lands it joins keyword
+  rankings over time, date-stamped notes, keyword table + opportunities
+  (→ docs/ARCHITECTURE-ICE-STEERING-WHEEL-20260717.md unified-graph
+  section: same timeline, this is its per-page home).
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
