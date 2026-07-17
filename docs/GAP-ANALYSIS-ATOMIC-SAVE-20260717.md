@@ -74,6 +74,51 @@ ONE user intent = ONE transaction = ONE push = ONE version. Concretely:
 - The environment (2 workers, 10-16s/request) — owner items, unchanged.
 - E2 stored-first verdict (pipeline gap C2) — separate, still priced.
 
+## E-CHECKLIST (owner GO 2026-07-17 — implement exactly this)
+
+**Corner-truth addendum (owner order):** the status icon must represent the
+site's exact state through the save: during save = spinner ("Saving —
+pushing to your site…"); after a PUSHED save = green seeded from the SAVE's
+own confirmation (the connector accepted the push and echoed the state —
+push_rules only succeeds on acceptance, :4204-4217 law — so no second
+15-30s round-trip re-asking what was just confirmed); a NO-OP save (nothing
+pushed) must NOT overwrite the verdict; a failed save leaves the previous
+verdict + named error. Facts: today the corner is untouched by save —
+stale amber survives a successful save (save() SectionModal:979-1020 never
+writes stateQuery).
+
+1. [ ] service.php — TWO chokepoint deferrals (every routed path flows
+       through them, grep-proven): push_current_rules_or_rollback returns a
+       deferred stub first-line when the txn flag is set; record_version
+       queues instead of inserting. Static flag + queue, private.
+2. [ ] save_page_edits — txn wrapper: ONE snapshot before the W2 flatten;
+       flag set inside try / cleared in finally (leak-proof); the $fail
+       closure becomes TOTAL-ABORT (restore snapshot + clear queue +
+       "Nothing was saved — retry" message); commit at end ONLY when
+       mutated (changed>0 or flattened>0): clear flag → ONE real push
+       (rollback to the txn snapshot on failure) → flush queued version
+       rows → page version row (changed>0, as today) → reply gains
+       `pushed` (bool) + `pageState` {version,fingerprint,savedAt} = the
+       hub record the connector just echoed.
+3. [ ] Section-editor single saves + all non-page callers: UNTOUCHED
+       (flag only ever set inside save_page_edits, finally-cleared).
+4. [ ] SectionModal.tsx — corner glyph: saving state FIRST (busyAction
+       save/saveClose → spinner + "Saving — pushing to your site…" title);
+       save() success with res.pushed → queryClient.setQueryData on
+       ['seo','pageState',{siteId,postId}] with the confirmed state
+       (local=record, remote={version,fingerprint}, drifted:false,
+       error:null, brandId/pageType preserved from prev); no-op → no write.
+5. [ ] page_versioning_test.php — new checks: flag set (reflection) ⇒
+       push_current_rules_or_rollback returns deferred stub touching
+       NOTHING; record_version queues; flag cleared ⇒ behavior unchanged.
+6. [ ] php -l · 88/88 · versioning suite (26 + new) · 34/34.
+7. [ ] tsc 59 zero new · build "built in" · served byte-identical.
+8. [ ] LIVE END-TO-END: mu-plugin probe runs save_page_edits with the
+       CURRENT saved html (no-op) — expect all-skipped, pushed=false,
+       version 38 unchanged in BOTH DBs; probe deleted after (400 check).
+9. [ ] Senior self-review vs this checklist, every edit.
+10. [ ] Changelog + seo module 1.0.2 + AFTER commit "LOCAL ONLY".
+
 ## E. VERIFY PLAN
 
 php -l · harness 88/88 + 26/26 (versioning suite covers page-state
