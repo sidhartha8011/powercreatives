@@ -30,6 +30,6 @@ export const MODULE_VERSIONS: Record<ModuleId, string> = {
   ads: '1.0.0',
   automations: '1.0.0',
   users: '1.0.0',
-  seo: '1.0.0',
+  seo: '1.0.1', // E1b: screen/actions gate on docLoaded — the saved-version open lives
   logs: '1.0.0',
 };

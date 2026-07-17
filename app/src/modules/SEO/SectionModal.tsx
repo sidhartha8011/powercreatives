@@ -679,6 +679,17 @@ export function SectionModal({
   const [position, setPosition] = useState<'before' | 'after'>(insert?.position ?? 'after');
   const [anchorIdx, setAnchorIdx] = useState<number>(() => Math.max(0, (anchors?.length ?? 1) - 1));
 
+  /** One-time page-document load guard (2026-07-11 incident law: the editor
+   *  must NEVER auto-replace its content after the first load). */
+  const pageLoadedRef = useRef(false);
+  /** THE document-on-screen state (reactive twin of the ref — a ref can't
+   *  re-render; the 30s-white lesson, gap 02d3cb7 D2). E1b (gap
+   *  EDITOR-OPEN-PIPELINE addendum): THIS — true on BOTH load paths (saved
+   *  version AND inventory fallback) — is what the screen and every action
+   *  gate on. pageReady is inventory-specific and gates only the fallback/
+   *  live-view machinery that truly consumes inventory data. */
+  const [docLoaded, setDocLoaded] = useState(false);
+
   const editor = useEditor({
     editable: !readOnly,
     extensions: [
@@ -705,7 +716,7 @@ export function SectionModal({
   });
   const [, setEditorTick] = useState(0);
   /** Unsaved edits in page mode — the versions dropdown's Draft state. */
-  const pageDirty = isPage && pageReady && !!editor && editor.getHTML() !== savedHtml;
+  const pageDirty = isPage && docLoaded && !!editor && editor.getHTML() !== savedHtml;
   /** A real text selection — narrows the AI review's SCOPE (never its safety:
    *  every path shows red/green and waits for Accept/Reject). */
   const hasSelection = !!editor && !editor.state.selection.empty && !(editor.state.selection as any).node;
@@ -719,10 +730,6 @@ export function SectionModal({
   // dropdown's Current row. INSTANT OPEN (gap e48b1ff): with versions the
   // open waits for NOTHING else — the site-side assembly is fetched and
   // waited for ONLY on the no-versions fallback path.
-  const pageLoadedRef = useRef(false);
-  /** Reactive twin of the ref — the honest loading overlay keys on THIS
-   *  (a ref can't re-render; the 30s-white lesson, gap 02d3cb7 D2). */
-  const [docLoaded, setDocLoaded] = useState(false);
   useEffect(() => {
     if (!isPage || !editor || !pageVersionsSettled || pageLoadedRef.current) return;
     if (pageVersions.length > 0) {
@@ -973,7 +980,7 @@ export function SectionModal({
     if (readOnly) return true;
     if (busy) return false; // one long action at a time — a guarded click is a no-op
     if (isPage) {
-      if (!pageReady) return true; // nothing loaded — nothing to save
+      if (!docLoaded) return true; // nothing loaded — nothing to save
       if (review) {
         toast.info('Finish the AI review first — accept or reject each change.');
         return false;
@@ -1218,7 +1225,7 @@ export function SectionModal({
     directives?: CompiledDirective[],
     opts?: { suppressKeywordRide?: boolean },
   ) => {
-    if (!editor || !pageReady || busy || review) return;
+    if (!editor || !docLoaded || busy || review) return;
     setRunDirectives(directives && directives.length > 0 ? directives : null);
     // THE KEYWORD RIDE (owner law 2026-07-15): ALL the page's keywords —
     // primary + supporting + additional — join EVERY run as context,
@@ -1758,7 +1765,7 @@ export function SectionModal({
    *  the [drawer][card] PAIR as one unit (no anchor math anywhere), the
    *  card tapers while it is open. drawerRef exempts it from the
    *  outside-click save. */
-  const drawerVisible = isPage && !readOnly && keywordsOpen && pageReady && typeof siteId === 'number';
+  const drawerVisible = isPage && !readOnly && keywordsOpen && docLoaded && typeof siteId === 'number';
   const drawerEl = drawerVisible ? (
     <div
       ref={drawerRef}
@@ -1909,7 +1916,7 @@ export function SectionModal({
         {/* Row 2 — the workbench: the AI's context left (business, page
             type), the tools right (Insert ▸ model ▸ Optimize — reads like a
             sentence: insert things; optimize with this model). */}
-        {isPage && !readOnly && pageReady && !review && (
+        {isPage && !readOnly && docLoaded && !review && (
           <div className="flex items-center gap-1.5 border-t border-slate-100 bg-white px-5 py-1.5">
             <ModelDropdown
               modelGroups={[{
@@ -2140,7 +2147,7 @@ export function SectionModal({
             <ToolButton title="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-3.5 w-3.5" /></ToolButton>
           </BubbleMenu>
         )}
-        {(!isPage || pageReady) && (
+        {(!isPage || docLoaded) && (
           <div className={isPage ? 'mx-auto w-full max-w-[820px] px-8 pb-16 pt-6' : 'contents'}>
             <EditorContent
               editor={editor}
@@ -2319,7 +2326,7 @@ export function SectionModal({
       {/* ── THE ANALYZE RAIL (optimizer spine): teachers' suggestions →
              basket → ONE optimize run through the normal red/green review.
              Yields to the review rail and the image panel. ── */}
-      {isPage && !readOnly && analyzeOpen && !review && !imgSel && pageReady && (
+      {isPage && !readOnly && analyzeOpen && !review && !imgSel && docLoaded && (
         <OptimizerRail
           siteId={siteId as number}
           postId={postId}
@@ -2418,7 +2425,7 @@ export function SectionModal({
             variant="success"
             icon={<Check />}
             loading={busyAction === 'saveClose'}
-            disabled={isPage && (!pageReady || !!review)}
+            disabled={isPage && (!docLoaded || !!review)}
             onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
           >
             {isPage ? 'Save & close' : 'Save'}
@@ -2427,7 +2434,7 @@ export function SectionModal({
             <button
               type="button"
               onClick={() => { void save(undefined, 'save'); }}
-              disabled={!pageReady || !!review}
+              disabled={!docLoaded || !!review}
               title="Save — the window stays open"
               className="inline-flex items-center gap-1 rounded-full border border-green-600 bg-white px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-60"
             >
@@ -2437,7 +2444,7 @@ export function SectionModal({
           <button
             type="button"
             onClick={() => { if (!busy) editor?.commands.setContent(savedHtml); }}
-            disabled={isPage && (!pageReady || !!review)}
+            disabled={isPage && (!docLoaded || !!review)}
             title="Restore the last saved state"
             className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
