@@ -316,6 +316,36 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   replaces the page's rule set (the 63-pile bug dies), compare-before-
   fetch (the GUI lag dies), honest outside-edit conflict. Nothing
   removed; per-section versions stay.
+- 2026-07-17 · **ICE — THE STEERING WHEEL (owner vision, full spec session).**
+  Fuses and supersedes-in-detail the RESULTS-FIRST reminder + results loop
+  where they overlap. (a) **Weekly rank tracking**: per site a Keywords tab —
+  rows = keywords (target page shown under each — the keyword-per-URL law),
+  columns = weeks, newest column auto-appears beside the frozen keyword
+  column, ~104-week window (retention = hub data, cron-pruned, own indexed
+  table — NEVER options/postmeta; ~416k rows at 200 sites × 20 kw × 2y =
+  objectively small). Feed: Pro Rank Tracker as a new Integrations provider,
+  weekly sequential pull, upsert per keyword-week, failed sites = visible
+  named failure rows. (b) **Manual override law**: every weekly cell is
+  click-to-type; manual value IS the effective value everywhere (one graph
+  line), the fetched value is kept underneath as the receipt (hover:
+  "manual — tracker said X") so the next fetch can never clobber a
+  correction and corrected weeks stay auditable. (c) **URL mismatch = data**:
+  each week stores rank + the URL that actually ranked; target-mismatch
+  weeks flagged on the cell (the cannibalization signal → §9.4 fix actions).
+  (d) **The Pages table is the steering wheel** (Meta-Ads pattern): rank +
+  movement + mini-trend per page, fed from the keyword history; the Keywords
+  tab is the once-a-week service hatch. (e) **THE UNIFIED GRAPH per page**:
+  ONE timeline store per page — number series (effective rank, GSC
+  position/impressions/clicks) + event series (results-loop optimization
+  stamps + date-stamped USER NOTES), every point source-labeled
+  (manual/prt/gsc:stored), each series user-toggleable; notes/optimizations
+  draw as date markers so cause-and-effect reads on one picture. Keyword
+  table, pages columns, ICE rollups (improving/flat/declining + avg
+  movement per site + domain) and the graph are all VIEWS of that one
+  timeline — adding a future source = one more labeled series. Scoring
+  stays parked per the standing points/weighting ruling. LANE: touches the
+  Keywords module (other dev's lane) — owner lane ruling pending before
+  any build.
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
