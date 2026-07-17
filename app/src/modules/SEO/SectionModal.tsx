@@ -636,21 +636,6 @@ export function SectionModal({
       : 'Page editing needs the served page view (connector 3.0.1+ on this site) — update it from the Sites module, then re-open.')
     : null;
 
-  // ── THE FEATHERWEIGHT CHECK (gap e48b1ff): one tiny background question —
-  //    "what version + fingerprint are you serving?" — powering the header
-  //    glyph. Never blocks anything; an unanswered check is shown as
-  //    unanswered, never as a verdict. ──
-  const stateQuery = trpc.seo.pageState.useQuery(
-    { siteId: siteId as number, postId },
-    { enabled: isPage && !readOnly, staleTime: 0, refetchOnMount: 'always' },
-  );
-  const pageState: any = isPage ? stateQuery.data : null;
-  const pageDrifted = pageState?.drifted === true;
-  // Unreachable = the site didn't answer (remote null) OR the hub call
-  // itself failed — an unanswered check is SHOWN as unanswered, never as
-  // a silent nothing.
-  const stateUnreachable = (!!pageState && pageState.remote === null) || stateQuery.isError;
-
   // ── Position: right below the click, draggable from the header. ──
   const [pos, setPos] = useState(() => ({
     x: Math.min(Math.max(8, (anchorPoint?.x ?? 120)), Math.max(8, window.innerWidth - WIDTH - 12)),
@@ -752,6 +737,25 @@ export function SectionModal({
     setSavedHtml(editor.getHTML());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPage, editor, pageReady, pageVersionsSettled, pageHtml, pageVersions]);
+
+  // ── THE FEATHERWEIGHT CHECK (gap e48b1ff): "what version + fingerprint are
+  //    you serving?" — powering the header glyph. It never render-blocks, but
+  //    the hub call DOES hold one of the pool's PHP workers for the site's
+  //    whole round-trip — so it fires only AFTER the document has painted
+  //    (docLoaded; gap EDITOR-OPEN-PIPELINE E1: the check must never compete
+  //    with the open; stored-first C2 is the end-state). An unanswered check
+  //    is shown as unanswered, never as a verdict. A page that never loads
+  //    keeps a neutral glyph — its own error line names the failure. ──
+  const stateQuery = trpc.seo.pageState.useQuery(
+    { siteId: siteId as number, postId },
+    { enabled: isPage && !readOnly && docLoaded, staleTime: 0, refetchOnMount: 'always' },
+  );
+  const pageState: any = isPage ? stateQuery.data : null;
+  const pageDrifted = pageState?.drifted === true;
+  // Unreachable = the site didn't answer (remote null) OR the hub call
+  // itself failed — an unanswered check is SHOWN as unanswered, never as
+  // a silent nothing.
+  const stateUnreachable = (!!pageState && pageState.remote === null) || stateQuery.isError;
 
   // The deliberate "load live view" (drift glyph action): enable the heavy
   // fetch, then swap the doc in ONCE when it arrives — version-pick
