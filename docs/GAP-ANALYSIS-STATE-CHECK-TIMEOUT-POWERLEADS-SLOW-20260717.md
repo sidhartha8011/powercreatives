@@ -78,3 +78,37 @@ the owner's browser Network tab on the next occurrence confirms or kills it
   Save — pushes rules + pageState under 3.0.8, clearing the honest amber.
 - NOT touched: connector code (3.0.8 is correct and live), the state-check
   seed default, the open path (already correct), anything in the keywords lane.
+
+## ADDENDUM (same day) — THE DEEPER ROOT CAUSE, PROVEN IN WEB CONTEXT
+
+Owner demanded factual proof the fix works. A temporary mu-plugin probe
+(admin-ajax, web context, deleted after use) ran the hub's REAL
+`page_state_compare(site 2, post 3)` — and it returned HTTP 500. debug.log
+(hub, WP_DEBUG_LOG on) holds the same fatal at 12:31:23 (my probe) AND at
+08:41:22 (the owner's own editor open this morning):
+
+    Uncaught TypeError: http_build_query(): Argument #1 ($data) must be of
+    type array, string given — Requests/Transport/Curl.php:582
+
+**Mechanism:** seo/service.php:4052 passes `array()` as remote_rest()'s
+`$body` for this GET. remote_rest treats any non-null body as payload →
+`wp_json_encode(array())` = the STRING `"[]"` → WP's cURL transport calls
+`http_build_query()` on GET data → TypeError → 500. **The state-check
+request has never left the hub — it crashed on EVERY run since the feature
+shipped.** The red cloud was this crash reported as "unreachable"
+(stateQuery.isError → stateUnreachable). My F1 timing analysis was real but
+SECONDARY — accountability: I claimed the timeout as THE root cause before
+tracing the hub's own call end-to-end in web context. This addendum corrects
+that.
+
+**Sweep (factual):** line 4052 is the ONLY GET `remote_rest` call in the
+codebase passing `array()` as `$body` — every other GET passes null/nothing.
+POST callers passing `array()` are legal (string bodies are valid for POST;
+`update-now` proves it live).
+
+- **F5 (code, one token):** seo/service.php:4052 `array()` → `null`.
+  F1 (timeoutS 15) STAYS — without it the now-working call would genuinely
+  time out (5s < measured 12s).
+- **Proof protocol:** re-run the same web-context probe after F5 — expected:
+  JSON `{local:{version:24,...}, remote:{version:0,...}, drifted:true,
+  error:null}` in ~12s. Then the probe mu-plugin is DELETED.
