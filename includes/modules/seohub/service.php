@@ -389,10 +389,20 @@ class PCM_SEOHub_Service
      *
      * @return array{version:string, sha256:string, zip:string}|array{error:string}
      */
+    /** The template's own version — ONE parser for every consumer
+     *  (filenames, artifact, baking; gap: versioned downloads). */
+    public static function connector_template_version(string $php = ''): string
+    {
+        if ($php === '') {
+            $php = self::connector_php_simple_raw();
+        }
+        return preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
+    }
+
     public static function connector_artifact(): array
     {
         $php = self::connector_php_simple(); // fully baked (hub URL + version)
-        $ver = preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
+        $ver = self::connector_template_version($php);
         $sig = md5($php);
         $cache = get_option('pcm_seohub_conn_pkg', array());
         if (is_array($cache) && ($cache['sig'] ?? '') === $sig && !empty($cache['zip_b64'])) {
@@ -432,7 +442,7 @@ class PCM_SEOHub_Service
         $manifest = rest_url('pcm/v1/seohub/connector-manifest');
         $scheme   = (string) (wp_parse_url($manifest, PHP_URL_SCHEME) ?: 'https');
         $host     = (string) (wp_parse_url($manifest, PHP_URL_HOST) ?: wp_parse_url(home_url('/'), PHP_URL_HOST));
-        $version  = preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
+        $version  = self::connector_template_version($php);
         return strtr($php, array(
             '__PCM_CONN_MANIFEST_URL__'  => $manifest,
             '__PCM_CONN_UPDATE_URI__'    => $scheme . '://' . $host . '/pcm-connector',
