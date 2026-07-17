@@ -53,6 +53,7 @@ import {
   RefreshCw, CloudOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { trpc } from '@/lib/trpc';
 import { ModelDropdown, PillButton, PillSplitButton } from '@/components/shared';
@@ -753,6 +754,7 @@ export function SectionModal({
   //    with the open; stored-first C2 is the end-state). An unanswered check
   //    is shown as unanswered, never as a verdict. A page that never loads
   //    keeps a neutral glyph — its own error line names the failure. ──
+  const queryClient = useQueryClient();
   const stateQuery = trpc.seo.pageState.useQuery(
     { siteId: siteId as number, postId },
     { enabled: isPage && !readOnly && docLoaded, staleTime: 0, refetchOnMount: 'always' },
@@ -1008,6 +1010,21 @@ export function SectionModal({
         (Array.isArray(res?.notes) ? res.notes : []).forEach((nn: string) => toast.info(nn));
         setSavedHtml(html);
         setVersionPick('');
+        // THE CORNER'S TRUTH (gap ATOMIC-SAVE): a PUSHED save is the site's
+        // confirmed state — the connector accepted the commit push and echoed
+        // this exact record — so the verdict is seeded from the save itself
+        // (no 15-30s re-ask of what was just confirmed). A no-op save
+        // (pushed=false) confirmed nothing and must not touch the verdict.
+        if (res?.pushed === true && res?.pageState) {
+          queryClient.setQueryData(['seo', 'pageState', { siteId: siteId as number, postId }], (prev: any) => ({
+            brandId: prev?.brandId ?? brandId,
+            pageType: prev?.pageType ?? pageType,
+            local: res.pageState,
+            remote: { version: Number(res.pageState.version ?? 0), fingerprint: String(res.pageState.fingerprint ?? '') },
+            drifted: false,
+            error: null,
+          }));
+        }
         // Versions list only — the editor content is NEVER auto-replaced
         // (incident fix 2026-07-11: a degraded refetch must not clobber the doc).
         void pageVersionsQuery.refetch();
@@ -1817,7 +1834,13 @@ export function SectionModal({
                 decorative document icon is gone — this square IS the page's
                 one connection status. Four true states; no verdict = the
                 quiet neutral square. Hover tells the truth, click acts. */}
-            {!readOnly && stateQuery.isFetching ? (
+            {!readOnly && (busyAction === 'save' || busyAction === 'saveClose') ? (
+              // Saving = the only moment the verdict is genuinely in flux —
+              // the corner says so instead of showing a stale answer.
+              <span title="Saving — pushing to your site…" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-50">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-400" />
+              </span>
+            ) : !readOnly && stateQuery.isFetching ? (
               <span title="Checking the site connection…" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-50">
                 <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-400" />
               </span>

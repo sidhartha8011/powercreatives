@@ -4195,9 +4195,28 @@ class PCM_SEO_Service
         }
     }
 
+    // ── THE SAVE TRANSACTION (gap ATOMIC-SAVE 2026-07-17): one user intent =
+    //    ONE push = ONE version. save_page_edits sets the flag (try/finally,
+    //    leak-proof); the TWO chokepoints below — every routed save path flows
+    //    through them — then defer instead of acting, and the transaction ends
+    //    with a single real push + a flush of the queued version rows.
+    //    Outside the flag nothing changes: single-section saves keep their
+    //    existing 1-save-1-push behavior. ──
+    /** @var bool Page-save transaction open: pushes stub, version rows queue. */
+    private static $push_deferred = false;
+    /** @var array<int,array{0:int,1:int,2:int,3:string,4:string,5:int,6:string}> record_version args queued until the commit push succeeds. */
+    private static $deferred_versions = array();
+
     /** Push a post's CURRENT hub rule set; on failure restore $snapshot and return the error. */
     private static function push_current_rules_or_rollback(int $user_id, object $site, int $post_id, array $snapshot)
     {
+        if (self::$push_deferred) {
+            // Inside the save transaction the rows ARE the pending truth —
+            // the ONE commit push at the end transmits them (every push sends
+            // the full set, so intermediate pushes are redundant by
+            // construction — the gap's core fact).
+            return array('deferred' => true);
+        }
         $rows   = self::post_rule_rows($user_id, (int) $site->id, $post_id);
         $schema = self::rules_to_schema($rows);
         // Page state rides EVERY push (frozen contract): the payload carries
@@ -4403,6 +4422,12 @@ class PCM_SEO_Service
      */
     private static function record_version(int $user_id, int $site_id, int $post_id, string $target, string $match_text, int $occurrence, string $replacement): void
     {
+        if (self::$push_deferred) {
+            // Save transaction: history rows must only exist for states the
+            // connector ACCEPTED — queued here, flushed after the commit push.
+            self::$deferred_versions[] = array($user_id, $site_id, $post_id, $target, $match_text, $occurrence, $replacement);
+            return;
+        }
         global $wpdb;
         $table = PCM_Schema::table('seo_rule_versions');
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
@@ -5305,23 +5330,21 @@ class PCM_SEO_Service
         $page_rows = self::post_rule_rows($user_id, (int) $site->id, $post_id);
         $dead_ids  = self::superseded_rule_ids($page_rows, $live_ids);
         $flattened = 0;
+        // ── THE SAVE TRANSACTION OPENS (gap ATOMIC-SAVE 2026-07-17):
+        //    $page_rows (pre-mutation) is the WHOLE save's rollback point.
+        //    From here every routed push is a deferred stub and every version
+        //    row queues; EVERY exit path below either aborts ($fail: restore
+        //    + clear) or commits (the ONE real push at the tail). The static
+        //    is request-scoped — PHP request isolation is the leak backstop,
+        //    and the commit/abort paths clear it explicitly. ──
+        self::$push_deferred     = true;
+        self::$deferred_versions = array();
         if (!empty($dead_ids)) {
+            // Superseded-row deletion rides the transaction — the commit push
+            // at the tail transmits the flattened set (W2 law unchanged).
             foreach ($dead_ids as $dead_id) {
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->delete($rules_table, array('id' => $dead_id, 'userId' => $user_id, 'siteId' => (int) $site->id), array('%d', '%d', '%d'));
-            }
-            $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $page_rows);
-            if ($push instanceof WP_Error) {
-                return new WP_Error(
-                    $push->get_error_code(),
-                    sprintf(
-                        /* translators: 1: superseded rule count, 2: reason */
-                        __('Clearing %1$d superseded rule(s) failed: %2$s Nothing was saved — retry.', 'power-creatives'),
-                        count($dead_ids),
-                        rtrim($push->get_error_message()) . (str_ends_with(rtrim($push->get_error_message()), '.') ? '' : '.')
-                    ),
-                    $push->get_error_data()
-                );
             }
             $flattened = count($dead_ids);
         }
@@ -5330,17 +5353,25 @@ class PCM_SEO_Service
         $saved    = 0;
         $inserted = 0;
         $skipped  = 0;
-        $fail     = static fn(string $label, WP_Error $err, int $done): WP_Error => new WP_Error(
-            $err->get_error_code(),
-            sprintf(
-                /* translators: 1: sections already saved, 2: section heading, 3: reason */
-                __('Saved %1$d section(s), then “%2$s” failed: %3$s The remaining sections were not attempted — re-open the editor to continue.', 'power-creatives'),
-                $done,
-                $label,
-                rtrim($err->get_error_message()) . (str_ends_with(rtrim($err->get_error_message()), '.') ? '' : '.')
-            ),
-            $err->get_error_data()
-        );
+        $fail     = static function (string $label, WP_Error $err) use ($user_id, $site, $post_id, $page_rows): WP_Error {
+            // TOTAL ABORT (gap ATOMIC-SAVE — supersedes the partial-progress
+            // law): restore the pre-save rule set, drop the queued history.
+            // Nothing was pushed (every push in the transaction is a stub),
+            // so hub rows return to exactly what the site still serves.
+            self::$push_deferred     = false;
+            self::$deferred_versions = array();
+            self::restore_rule_rows($user_id, (int) $site->id, $post_id, $page_rows);
+            return new WP_Error(
+                $err->get_error_code(),
+                sprintf(
+                    /* translators: 1: section heading, 2: reason */
+                    __('Saving “%1$s” failed: %2$s Nothing was saved — the site still serves its previous state. Fix the reason and save again.', 'power-creatives'),
+                    $label,
+                    rtrim($err->get_error_message()) . (str_ends_with(rtrim($err->get_error_message()), '.') ? '' : '.')
+                ),
+                $err->get_error_data()
+            );
+        };
         foreach ($pairs as $pair) {
             list($bi, $ej) = $pair;
             $b = $baseline[$bi];
@@ -5399,7 +5430,7 @@ class PCM_SEO_Service
                 ));
             }
             if ($res instanceof WP_Error) {
-                return $fail($b['text'], $res, $saved + $inserted);
+                return $fail($b['text'], $res);
             }
             $saved++;
         }
@@ -5425,7 +5456,7 @@ class PCM_SEO_Service
                     'pcm_seo_page_edit_no_anchor',
                     __('Adding a new section needs at least one existing section to anchor to — restore a version first.', 'power-creatives'),
                     array('status' => 409)
-                ), $saved + $inserted);
+                ));
             }
             $anchor = $anchor_for($ej);
             $res    = $this->save_section_insert($user_id, $site, $post_id, array(
@@ -5436,7 +5467,7 @@ class PCM_SEO_Service
                 'replacement'      => $join($strip_img_tags($e['units'])),
             ));
             if ($res instanceof WP_Error) {
-                return $fail($e['label'], $res, $saved + $inserted);
+                return $fail($e['label'], $res);
             }
             $inserted++;
         }
@@ -5519,7 +5550,7 @@ class PCM_SEO_Service
                 ));
             }
             if ($res instanceof WP_Error) {
-                return $fail($b['text'], $res, $saved + $inserted + $removed_count);
+                return $fail($b['text'], $res);
             }
             if ($res !== null) {
                 $removed_count++;
@@ -5538,7 +5569,7 @@ class PCM_SEO_Service
                 'restore'           => true,
             ));
             if ($res instanceof WP_Error) {
-                return $fail((string) $rrow['matchText'], $res, $saved + $inserted + $removed_count);
+                return $fail((string) $rrow['matchText'], $res);
             }
             $restored++;
         }
@@ -5554,7 +5585,7 @@ class PCM_SEO_Service
                 'originalTitle' => $hh['title'],
             ));
             if ($res instanceof WP_Error) {
-                return $fail($hh['src'], $res, $saved + $inserted + $removed_count);
+                return $fail($hh['src'], $res);
             }
             $hidden_count++;
         }
@@ -5566,14 +5597,42 @@ class PCM_SEO_Service
                 'revert'     => true,
             ));
             if ($res instanceof WP_Error) {
-                return $fail($uh['src'], $res, $saved + $inserted + $removed_count);
+                return $fail($uh['src'], $res);
             }
             $unhidden++;
         }
 
+        // ── THE SAVE TRANSACTION COMMITS (gap ATOMIC-SAVE): ONE real push
+        //    carries the final net set with ONE version bump; a failed push
+        //    restores the pre-save set entirely — the site serves ALL of this
+        //    save or NONE of it. History (queued section rows + the page row)
+        //    is written only after the connector ACCEPTED. A no-op save
+        //    pushes nothing and leaves the recorded state untouched. ──
+        $changed = $saved + $inserted + $removed_count + $restored + $hidden_count + $unhidden;
+        self::$push_deferred = false;
+        $pushed = false;
+        if ($changed > 0 || $flattened > 0) {
+            $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $page_rows);
+            if ($push instanceof WP_Error) {
+                self::$deferred_versions = array();
+                return new WP_Error(
+                    $push->get_error_code(),
+                    sprintf(
+                        /* translators: %s: reason */
+                        __('Publishing to the site failed: %s Nothing was saved — the site still serves its previous state. Retry.', 'power-creatives'),
+                        rtrim($push->get_error_message()) . (str_ends_with(rtrim($push->get_error_message()), '.') ? '' : '.')
+                    ),
+                    $push->get_error_data()
+                );
+            }
+            $pushed = true;
+        }
+        foreach (self::$deferred_versions as $v) {
+            self::record_version($v[0], $v[1], $v[2], $v[3], $v[4], $v[5], $v[6]);
+        }
+        self::$deferred_versions = array();
         // Page version: ONE row per changing save — the document as submitted
         // (duplicate-skip + cap ride record_version). No-op saves record nothing.
-        $changed = $saved + $inserted + $removed_count + $restored + $hidden_count + $unhidden;
         if ($changed > 0) {
             self::record_version($user_id, (int) $site->id, $post_id, 'page', '', 0, $html);
         }
@@ -5590,6 +5649,12 @@ class PCM_SEO_Service
             // page-version change above.
             'flattened' => $flattened,
             'notes'     => array_values(array_unique($notes)),
+            // THE CORNER'S TRUTH (gap ATOMIC-SAVE): pushed = the connector
+            // accepted the commit push this request; pageState = the record
+            // the connector echoed. A no-op reply (pushed=false) must never
+            // overwrite the frontend's verdict.
+            'pushed'    => $pushed,
+            'pageState' => self::page_state((int) $site->id, $post_id),
         );
     }
 

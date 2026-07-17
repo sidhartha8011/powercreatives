@@ -119,6 +119,26 @@ writes stateQuery).
 9. [ ] Senior self-review vs this checklist, every edit.
 10. [ ] Changelog + seo module 1.0.2 + AFTER commit "LOCAL ONLY".
 
+## F. BUILT + PROVEN (same day) — and one open observation
+
+All checklist boxes done. Named deviation: no try/finally — every exit path
+between transaction open and commit was return-scanned (exactly two
+non-$fail returns exist, both mine: the commit-push failure and the final
+reply); $fail and commit clear the flag explicitly; PHP request isolation
+is the backstop. Live web-context proof (temporary probe, deleted, 400
+re-check): a save through the new transaction = ONE push, version 39→40
+(+1 exactly), zero duplicate history rows (max row id unchanged), reply
+carries pushed:true + the echoed pageState, 17s total = the two remaining
+site round-trips.
+
+**Open observation (pre-existing, not this pair):** the probe's re-submit
+of the newest saved document reported `removed:1` — the served baseline
+still exposes a "privacy policy" H1 section that saved documents omit
+(sectionRemove rule id 239 now asserts the saved intent; earlier remove
+rules 210-238 span the same page). Whether that H1 section's removal
+APPLIES on the served page needs its own probe when the owner wants it —
+saves converge the site to the saved document either way.
+
 ## E. VERIFY PLAN
 
 php -l · harness 88/88 + 26/26 (versioning suite covers page-state

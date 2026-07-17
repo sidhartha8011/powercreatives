@@ -184,5 +184,36 @@ check('all live = nothing to flatten', PCM_SEO_Service::superseded_rule_ids($row
 check('no rows = nothing to flatten', PCM_SEO_Service::superseded_rule_ids(array(), array(1)) === array());
 check('string ids from the wire still match', PCM_SEO_Service::superseded_rule_ids($rows, array('1', '4')) === array(2, 3));
 
+// ═══ 4. THE SAVE TRANSACTION chokepoints (gap ATOMIC-SAVE 2026-07-17) ═══
+// With the deferral flag set, the two chokepoints every routed save flows
+// through must act on NOTHING: push_current_rules_or_rollback returns the
+// stub before touching rows/state (this harness has no $wpdb — reaching it
+// would fatal, so a passing check IS the proof), and record_version queues.
+echo "save transaction chokepoints\n";
+$flag = new ReflectionProperty('PCM_SEO_Service', 'push_deferred');
+$flag->setAccessible(true);
+$queue = new ReflectionProperty('PCM_SEO_Service', 'deferred_versions');
+$queue->setAccessible(true);
+$flag->setValue(null, true);
+$queue->setValue(null, array());
+
+$push_m = new ReflectionMethod('PCM_SEO_Service', 'push_current_rules_or_rollback');
+$push_m->setAccessible(true);
+$state_before = PCM_SEO_Service::page_state(2, 3);
+$stub = $push_m->invoke(null, 1, (object) array('id' => 2), 3, array());
+check('deferred push returns the stub', is_array($stub) && ($stub['deferred'] ?? false) === true);
+check('deferred push writes NO page state', PCM_SEO_Service::page_state(2, 3) === $state_before);
+
+$rec_m = new ReflectionMethod('PCM_SEO_Service', 'record_version');
+$rec_m->setAccessible(true);
+$rec_m->invoke(null, 1, 2, 3, 'section', 'heading key', 0, '<p>queued</p>');
+$queued = $queue->getValue(null);
+check('deferred record_version queues instead of inserting', count($queued) === 1
+    && $queued[0] === array(1, 2, 3, 'section', 'heading key', 0, '<p>queued</p>'));
+
+$flag->setValue(null, false);
+$queue->setValue(null, array());
+check('flag and queue reset clean', $flag->getValue(null) === false && $queue->getValue(null) === array());
+
 echo "\n{$pass}/" . ($pass + $fail) . " passed\n";
 exit($fail === 0 ? 0 : 1);
