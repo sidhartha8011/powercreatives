@@ -150,3 +150,30 @@ tsc 59 baseline zero new → build ("built in" line) → live: hub request storm
 during an open must show no 20s+ queue outlier on the content path;
 owner-side: content paints in seconds, corner answers after. Changelog +
 AFTER commit ending LOCAL ONLY.
+
+## E. E1 IMPLEMENTATION CHECKLIST (owner GO 2026-07-17 "commit and go")
+1. [ ] SectionModal.tsx — RELOCATE the stateQuery block (643-652: query +
+       pageState/pageDrifted/stateUnreachable derivations) to directly BELOW
+       the doc-load effect (after 754): docLoaded (declared 740) must exist
+       before the query's enabled reads it (TDZ law); the move keeps ONE
+       declaration order that reads as the truth — content machinery first,
+       the question after. Verified safe: zero references to any of the four
+       between lines 654-754 (grep-pinned consumer list: 647/648/652/814/
+       819/1809/1813/1822/1825/1826/1831).
+2. [ ] Same edit: `enabled: isPage && !readOnly` → `&& docLoaded`;
+       staleTime/refetchOnMount unchanged (one check per open, as today).
+3. [ ] Same edit: the false "Never blocks anything" comment (639-642)
+       rewritten to the worker-pool truth (fires AFTER the document paints;
+       a hub worker is held for the site round-trip — stored-first C2 is
+       the end-state). No stale comments = no debt.
+4. [ ] Sweep: brandId/pageType effect (814-819) tolerates the deferral
+       (either source fills it; fallback path unchanged) — re-verify after
+       the move compiles.
+5. [ ] `cd app && npm run check` — 59 pre-existing tsc errors, ZERO new.
+6. [ ] `npm run build` — the "built in" line MUST print.
+7. [ ] LIVE verify: fire the 3-request hub storm while opening the draft
+       Privacy Policy fresh — content path must show no 20s+ outlier;
+       corner must land amber (site still answers v0 until F4 re-save).
+8. [ ] Changelog line in docs/CHANGELOG-20260709-2200.md.
+9. [ ] AFTER commit ending "LOCAL ONLY". No blueprint §10 entry — bugfix,
+       not a feature idea.
