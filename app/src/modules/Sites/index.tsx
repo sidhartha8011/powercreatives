@@ -270,9 +270,16 @@ export function SitesModule() {
       const res = await fetch(`${cfg.restUrl}seohub/connector-download`, { headers: { 'X-WP-Nonce': cfg.nonce } });
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'pcm-connector.zip'; a.click();
-      URL.revokeObjectURL(url);
+      // The SERVER names the file (versioned, e.g. pcm-connector-3.0.8.zip)
+      // — the hardcoded name here silently overrode it (owner-caught
+      // 2026-07-17). One source of truth: the Content-Disposition header.
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const match = disposition.match(/filename="([^"]+)"/);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = match ? match[1] : 'pcm-connector.zip';
+      a.click();
+      URL.revokeObjectURL(a.href);
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Download failed'); }
   }, []);
 
