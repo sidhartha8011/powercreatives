@@ -177,6 +177,25 @@ seo module version 1.0.0 → 1.0.1 (the stamp ritual's first real bump — the
 owner SEES the fix arrived). Verify: tsc 59 / build / byte-serve / grep
 pageReady leaves exactly the four intentional sites.
 
+## E2b. E1b IMPLEMENTATION CHECKLIST (owner GO 2026-07-17)
+1. [x] docLoaded + pageLoadedRef declarations MOVED above the editor block
+       (TDZ: pageDirty reads docLoaded) — ONE declaration, comment carries
+       the E1b law (screen gates on docLoaded; pageReady = inventory only).
+2. [x] Nine gates rewired pageReady → docLoaded: pageDirty · save guard ·
+       selection-AI action · keywords drawer · toolbar row · EditorContent
+       mount · analyze rail · Save&close/Save/Undo buttons (grep-verified).
+3. [x] pageReady survives at EXACTLY four intentional sites: definition,
+       pageError, fallback load branch, live-view swap (grep-verified).
+4. [x] seo module version 1.0.0 → 1.0.1 (first bump under the stamp ritual —
+       the owner SEES the fix arrive bottom-left).
+5. [ ] tsc — 59 pre-existing, ZERO new.
+6. [ ] npm run build — the "built in" line MUST print; served bundle
+       byte-identical to dist.
+7. [ ] Changelog line + AFTER commit "LOCAL ONLY".
+8. [ ] Owner browser check (the only remaining unverified inch): reload →
+       stamp reads seo v1.0.1 → open Privacy Policy → content ON SCREEN in
+       seconds, Save enabled, corner amber → one Save → green.
+
 ## E. E1 IMPLEMENTATION CHECKLIST (owner GO 2026-07-17 "commit and go")
 1. [ ] SectionModal.tsx — RELOCATE the stateQuery block (643-652: query +
        pageState/pageDrifted/stateUnreachable derivations) to directly BELOW
