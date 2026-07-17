@@ -353,6 +353,16 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   platform already stores. The whole ICE build (weekly rank table, PRT
   fetcher, manual override, Pages steering-wheel columns, unified graph
   with notes, ICE rollups) = the SEO/optimizer seat's lane.
+  **→ ARCHITECTURE DOC: docs/ARCHITECTURE-ICE-STEERING-WHEEL-20260717.md**
+- 2026-07-17 · **THE BUSINESS SPINE (owner-confirmed, Google-free).**
+  Brands own all business truth via Business Units (multi-location, one
+  primary); ONE resolution ladder (site SEO override → unit → brand →
+  site) under every generation; two outputs of one record (generation vars
+  + the JSON-LD schema WE place via the connector — the site's own markup
+  is never a source); auto-map sites→brands by domain + create-from-site;
+  per-site Business card inside SEO (the SEO team never leaves SEO);
+  sites CONSUME brands, never the reverse (owner dependency ruling).
+  **→ ARCHITECTURE DOC: docs/ARCHITECTURE-BUSINESS-SPINE-20260717.md**
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
