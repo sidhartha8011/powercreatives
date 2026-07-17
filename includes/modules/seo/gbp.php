@@ -159,37 +159,30 @@ class PCM_SEO_GBP
         );
     }
 
-    // ── Per-brand storage (option, no schema change) + manual overrides ──
-
-    private static function option_key(int $brand_id): string
-    {
-        return 'pcm_seo_gbp_' . $brand_id;
-    }
+    // ── Storage FACADE (Business Spine P1, gap 1aedf65): the record lives in
+    //    the brand's PRIMARY business unit (wp_pcm_brand_business_units, owned
+    //    by PCM_Brands_Service — the old pcm_seo_gbp_{brandId} options were
+    //    migrated there in v1.43.0). These three methods keep their EXACT
+    //    former signatures and reply shapes so every consumer — keywords lane
+    //    included — reads/writes unchanged. gbp ↔ the unit's `fetched` layer,
+    //    overrides ↔ its `manual` layer; manual always wins, survives refresh. ──
 
     /** Stored business record for a brand: GBP snapshot + manual overrides merged. */
     public static function get_for_brand(int $brand_id): array
     {
-        $stored = get_option(self::option_key($brand_id), array());
-        if (!is_array($stored)) {
-            $stored = array();
-        }
-        $gbp       = is_array($stored['gbp'] ?? null) ? $stored['gbp'] : array();
-        $overrides = is_array($stored['overrides'] ?? null) ? $stored['overrides'] : array();
-        // Overrides win, then GBP snapshot.
+        $unit = PCM_Brands_Service::get_business_record($brand_id);
         return array(
-            'gbp'      => $gbp,
-            'overrides' => $overrides,
-            'resolved' => array_merge($gbp, array_filter($overrides, static fn($v) => $v !== '' && $v !== null)),
+            'gbp'       => (array) $unit['fetched'],
+            'overrides' => (array) $unit['manual'],
+            'resolved'  => (array) $unit['resolved'],
         );
     }
 
     /** Save the GBP snapshot for a brand (keeps existing manual overrides). */
     public static function save_snapshot(int $brand_id, array $normalized): array
     {
-        $stored = get_option(self::option_key($brand_id), array());
-        $stored = is_array($stored) ? $stored : array();
-        $stored['gbp'] = $normalized;
-        update_option(self::option_key($brand_id), $stored, false);
+        $unit = PCM_Brands_Service::get_business_record($brand_id);
+        PCM_Brands_Service::save_business_unit($brand_id, array('fetched' => $normalized, 'sourceTag' => 'gbp'), (int) $unit['unitId']);
         return self::get_for_brand($brand_id);
     }
 
@@ -203,10 +196,8 @@ class PCM_SEO_GBP
                 $clean[$k] = is_string($v) ? sanitize_text_field($v) : $v;
             }
         }
-        $stored = get_option(self::option_key($brand_id), array());
-        $stored = is_array($stored) ? $stored : array();
-        $stored['overrides'] = $clean;
-        update_option(self::option_key($brand_id), $stored, false);
+        $unit = PCM_Brands_Service::get_business_record($brand_id);
+        PCM_Brands_Service::save_business_unit($brand_id, array('manual' => $clean), (int) $unit['unitId']);
         return self::get_for_brand($brand_id);
     }
 }

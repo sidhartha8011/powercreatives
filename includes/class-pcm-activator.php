@@ -328,6 +328,16 @@ class PCM_Activator
             // create_tables() dbDelta once here and picks up whichever side it
             // missed. Purely additive — no bespoke migration method.
 
+            // v1.43.0: Business Spine P1 (gap 1aedf65). Adds the
+            // brand_business_units table + sites.businessUnitId (both additive
+            // via the create_tables() dbDelta above) and moves per-brand GBP
+            // option records (`pcm_seo_gbp_{brandId}`) into each brand's
+            // PRIMARY business unit. Idempotent — installs without records
+            // no-op honestly.
+            if (version_compare($installed_version, '1.43.0', '<')) {
+                PCM_Schema::migrate_gbp_to_business_units();
+            }
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }
