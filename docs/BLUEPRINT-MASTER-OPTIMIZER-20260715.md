@@ -343,9 +343,16 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   table, pages columns, ICE rollups (improving/flat/declining + avg
   movement per site + domain) and the graph are all VIEWS of that one
   timeline — adding a future source = one more labeled series. Scoring
-  stays parked per the standing points/weighting ruling. LANE: touches the
-  Keywords module (other dev's lane) — owner lane ruling pending before
-  any build.
+  stays parked per the standing points/weighting ruling.
+- 2026-07-17 · **ICE LANE + HOME CORRECTION (owner confirmed).** The
+  Keywords tab lives INSIDE THE SEO MODULE — a per-site tab exactly like
+  the content tab, scoped to the selected site/domain; its rows are the
+  keywords AGREED to work with for that site. It is NOT the Keywords
+  module and NOT the editor's KeywordsDrawer (other dev's lane) — no
+  shared code, no shared UI; it only READS the keyword-per-page data the
+  platform already stores. The whole ICE build (weekly rank table, PRT
+  fetcher, manual override, Pages steering-wheel columns, unified graph
+  with notes, ICE rollups) = the SEO/optimizer seat's lane.
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
