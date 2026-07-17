@@ -4049,7 +4049,11 @@ class PCM_SEO_Service
             $cfg = array('timeoutS' => 5);
             add_option('pcm_seo_state_check', $cfg, '', false);
         }
-        $rep = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/page-state', array('post_id' => $post_id), array(), max(1, (int) $cfg['timeoutS']));
+        // $body MUST be null on GET: any non-null body is wp_json_encode()d to a
+        // STRING, and WP's cURL transport http_build_query()s GET data — a string
+        // there is a TypeError 500 before the request ever leaves the hub (the
+        // 2026-07-17 red-cloud root cause; this was the codebase's only array()-body GET).
+        $rep = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/page-state', array('post_id' => $post_id), null, max(1, (int) $cfg['timeoutS']));
         if (is_wp_error($rep)) {
             $out['error'] = $rep->get_error_message();
             return $out;
