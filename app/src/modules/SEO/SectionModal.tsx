@@ -49,7 +49,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, FileText, Eye, Plus, ScanSearch, KeyRound,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, Eye, Plus, ScanSearch, KeyRound,
   RefreshCw, CloudOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -1802,9 +1802,41 @@ export function SectionModal({
       >
         {isPage && (
           <div className="flex items-center gap-2 px-5 pb-2 pt-3">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-50">
-              <FileText className="h-4 w-4 text-blue-600" />
-            </span>
+            {/* THE IDENTITY-CORNER STATUS (gap d4aa30b, Jony DoD): the
+                decorative document icon is gone — this square IS the page's
+                one connection status. Four true states; no verdict = the
+                quiet neutral square. Hover tells the truth, click acts. */}
+            {!readOnly && stateQuery.isFetching ? (
+              <span title="Checking the site connection…" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-50">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-400" />
+              </span>
+            ) : !readOnly && pageDrifted ? (
+              <button
+                type="button"
+                onClick={() => setLiveViewWanted(true)}
+                title="The live page differs from your saved version — click to load the live view"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-50 text-amber-500 hover:bg-amber-100"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </button>
+            ) : !readOnly && stateUnreachable ? (
+              <button
+                type="button"
+                onClick={() => { void stateQuery.refetch(); }}
+                title={`Couldn't reach the site to verify — click to retry${pageState?.error ? ` (${pageState.error})` : ''}`}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-red-50 text-red-400 hover:bg-red-100"
+              >
+                <CloudOff className="h-3.5 w-3.5" />
+              </button>
+            ) : !readOnly && pageState?.drifted === false ? (
+              <span title="Live — the site serves your saved version" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-green-50">
+                <span className="h-2 w-2 rounded-full bg-green-500" />
+              </span>
+            ) : (
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-50">
+                <span className="h-2 w-2 rounded-full bg-slate-300" />
+              </span>
+            )}
             <span className="min-w-0">
               <span className="block truncate text-[13px] font-medium leading-[1.4] text-slate-800" title={page?.title ?? 'Page'}>
                 {page?.title ?? 'Page'}
@@ -1826,33 +1858,6 @@ export function SectionModal({
                   ))}
                 </SelectContent>
               </Select>
-            )}
-            {/* THE SYNC GLYPH (gap e48b1ff — the Ive/Woz ruling): one 12px
-                icon, four TRUE states. In-sync renders NOTHING — silence is
-                the success state. Never blocks; never claims what the check
-                didn't answer. */}
-            {!readOnly && stateQuery.isFetching && (
-              <RefreshCw className="h-3 w-3 shrink-0 animate-spin text-slate-300" />
-            )}
-            {!readOnly && !stateQuery.isFetching && pageDrifted && (
-              <button
-                type="button"
-                onClick={() => setLiveViewWanted(true)}
-                title="The live page differs from your saved version — click to load the live view"
-                className="shrink-0 rounded p-0.5 text-amber-500 hover:bg-amber-50"
-              >
-                <RefreshCw className="h-3 w-3" />
-              </button>
-            )}
-            {!readOnly && !stateQuery.isFetching && !pageDrifted && stateUnreachable && (
-              <button
-                type="button"
-                onClick={() => { void stateQuery.refetch(); }}
-                title={`Couldn't reach the site to verify — click to retry${pageState?.error ? ` (${pageState.error})` : ''}`}
-                className="shrink-0 rounded p-0.5 text-red-300 hover:bg-red-50"
-              >
-                <CloudOff className="h-3 w-3" />
-              </button>
             )}
             {page?.editUrl && (
               <a
