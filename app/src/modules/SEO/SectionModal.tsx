@@ -480,6 +480,10 @@ interface ReviewSection extends DocSection {
   /** Server verdict: the section was substantially rewritten — present it
    *  as calm Before/After blocks instead of word confetti. */
   rewritten?: boolean;
+  /** T2 (gap e1eb677): per-change ticks, parallel to `changes`, all true on
+   *  every landing. A partial selection routes through ONE bounded
+   *  recomposition (the existing revise path) — never a splice guess. */
+  kept?: boolean[];
   /** The landed diff VIEW read back from the editor (same serializer as the
    *  live compare) — effectiveContent's untouched-detector: live == baseline
    *  ⇔ the user typed nothing in this section since the suggestion landed. */
@@ -1343,7 +1347,7 @@ export function SectionModal({
           // synchronous) — effectiveContent's untouched-detector.
           const baseline = changed ? splitReviewSections(editor.getHTML())[String(i)]?.html : undefined;
           setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
-            ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value, genModel, baseline, changes, rewritten } : { ...s, status: 'clean' as ReviewStatus })
+            ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value, genModel, baseline, changes, rewritten, kept: changes.map(() => true) } : { ...s, status: 'clean' as ReviewStatus })
             : s)) ?? cur);
         } catch (e: any) {
           setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
@@ -1408,6 +1412,12 @@ export function SectionModal({
     setReview((cur) => cur?.map((x, k) => (k === i && x.status === 'diff'
       ? { ...x, status: (action === 'accept' ? 'accepted' : 'rejected') as ReviewStatus }
       : x)) ?? cur);
+    // A resolve unmounts the hovered card — the quote highlight must not
+    // linger (T1 flaw, gap e1eb677 A4).
+    if (editor) {
+      (editor.storage as any).pcmSectionBlocks.quote = null;
+      editor.view.dispatch(editor.state.tr);
+    }
   };
   const acceptAllDiffs = () =>
     (reviewRef.current ?? []).forEach((s, i) => { if (s.status === 'diff') resolveSection(i, 'accept'); });
@@ -1471,7 +1481,7 @@ export function SectionModal({
         applySection(i, diffBlocksHtml(s.html, value, { consolidated: rewritten }) + s.imgs.join(''));
         // Every landing re-arms the untouched-detector (initial + each revise).
         const baseline = splitReviewSections(editor.getHTML())[String(i)]?.html;
-        setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'diff' as ReviewStatus, ai: value, genModel, baseline, changes, rewritten } : x)) ?? cur);
+        setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'diff' as ReviewStatus, ai: value, genModel, baseline, changes, rewritten, kept: changes.map(() => true) } : x)) ?? cur);
       } else {
         applySection(i, s.html + s.imgs.join(''));
         setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'clean' as ReviewStatus } : x)) ?? cur);
@@ -2349,26 +2359,54 @@ export function SectionModal({
                       </div>
                     )}
                     <div className="mt-0.5 space-y-0.5">
-                      {(s.changes ?? []).slice(0, 4).map((c, k) => (
+                      {(s.changes ?? []).map((c, k) => (
                         <div
                           key={k}
-                          className="cursor-default rounded px-0.5 leading-tight hover:bg-blue-50"
+                          className="flex cursor-default items-start gap-1 rounded px-0.5 leading-tight hover:bg-blue-50"
                           onMouseEnter={() => highlightQuote(i, c.quote)}
                           onMouseLeave={() => setQuoteRange(null)}
                           title="Hover shows exactly where this landed in the text"
                         >
-                          <span className="text-[9px] text-slate-600">• {c.what}</span>
-                          {c.why !== '' && (
-                            <span className="ml-1 text-[8px] italic text-slate-400">
-                              {(teacherById[c.why]?.label ?? TEACHER_PILLS[c.why] ?? c.why).toLowerCase()}
-                            </span>
-                          )}
+                          {/* T2 (gap e1eb677): the per-change tick — untick to
+                              shape the proposal; a partial set rebuilds via
+                              ONE bounded re-run, never a splice guess. */}
+                          <input
+                            type="checkbox"
+                            checked={s.kept?.[k] ?? true}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() => setReview((cur) => cur?.map((x, xi) => (xi === i
+                              ? { ...x, kept: (x.changes ?? []).map((_, ki) => (ki === k ? !(x.kept?.[ki] ?? true) : (x.kept?.[ki] ?? true))) }
+                              : x)) ?? cur)}
+                            className="mt-px h-2.5 w-2.5 shrink-0 accent-green-600"
+                          />
+                          <span className="min-w-0">
+                            <span className="text-[9px] text-slate-600">{c.what}</span>
+                            {c.why !== '' && (
+                              <span className="ml-1 text-[8px] italic text-slate-400">
+                                {(teacherById[c.why]?.label ?? TEACHER_PILLS[c.why] ?? c.why).toLowerCase()}
+                              </span>
+                            )}
+                          </span>
                         </div>
                       ))}
-                      {(s.changes?.length ?? 0) > 4 && (
-                        <div className="text-[9px] leading-tight text-slate-400" title={(s.changes ?? []).map((c, k) => `${k + 1}. ${c.what}`).join('\n')}>
-                          +{(s.changes?.length ?? 0) - 4} more…
-                        </div>
+                      {(s.kept ?? []).some((v) => !v) && (s.kept ?? []).some((v) => v) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const kept = (s.changes ?? []).filter((_, k) => s.kept?.[k] ?? true);
+                            const dropped = (s.changes ?? []).filter((_, k) => !(s.kept?.[k] ?? true));
+                            const note = 'Remove these changes from the draft — revert those parts to how the original text read: '
+                              + dropped.map((c, k) => `${k + 1}) ${c.what} (the part reading: "${c.quote}")`).join('; ')
+                              + '. Keep every other change and ALL other text exactly as the draft reads'
+                              + (kept.length > 0 ? ` — especially: ${kept.map((c) => c.what).join('; ')}` : '')
+                              + '.';
+                            void reviseSection(i, note);
+                          }}
+                          title="Rebuilds this section keeping only the ticked changes — the result comes back for review"
+                          className="mt-0.5 inline-flex items-center rounded-full border border-primary/40 bg-white px-1.5 py-px text-[9px] font-medium text-primary hover:bg-[#e7f5ff]"
+                        >
+                          Update proposal ({(s.kept ?? []).filter(Boolean).length} of {(s.changes ?? []).length})
+                        </button>
                       )}
                     </div>
                   </div>

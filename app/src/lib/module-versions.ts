@@ -30,6 +30,6 @@ export const MODULE_VERSIONS: Record<ModuleId, string> = {
   ads: '1.0.0',
   automations: '1.0.0',
   users: '1.0.0',
-  seo: '1.0.3', // change-card review T1: verified what/why cards + calm rewrite blocks
+  seo: '1.0.4', // change-card review T2: per-change ticks + bounded proposal reshaping
   logs: '1.0.0',
 };
