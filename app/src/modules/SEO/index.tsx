@@ -54,6 +54,7 @@ import { LlmInfoSection } from './LlmInfoEditor';
 import { SiteSettingsPanel } from './SiteSettingsPanel';
 import { RemoteSiteSettingsPanel } from './RemoteSiteSettingsPanel';
 import { BusinessPanel } from './BusinessPanel';
+import { RemoteBusinessCard } from './RemoteBusinessCard';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { LinksPopup, type LinkKind } from './LinksPopup';
@@ -1419,7 +1420,10 @@ export function SEOModule() {
             ? <RemoteSiteSettingsPanel siteId={siteId} siteName={activeSite?.name || activeSite?.url || 'this site'} />
             : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
       ) : tab === 'business' ? (
-        isLocal ? <BusinessPanel /> : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
+        // THE BUSINESS CARD (gap 616870f): a CONNECTED site gets its resolved
+        // per-site record — mapped, inline-editable, source-labeled. The local
+        // site keeps the brand-picker panel until P4 re-homes it.
+        isLocal ? <BusinessPanel /> : <RemoteBusinessCard siteId={Number(activeSite?.id ?? 0)} />
       ) : (
       <>
       {/* Content toolbar: Views (left) · Post / Page / Model + Columns (right). */}

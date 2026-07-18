@@ -639,33 +639,14 @@ class PCM_Optimizer_Service
      */
     public static function business_context(int $site_id): array
     {
-        if ($site_id <= 0) {
+        // THE SITE RESOLVER (gap 616870f): one ladder for every consumer —
+        // site SEO overrides > unit > brand basics > site basics, with unit
+        // pinning. Same shape as before (flat resolved fields incl.
+        // siteUrl); empty record when no site — honest, exactly as before.
+        if ($site_id <= 0 || !class_exists('PCM_SEO_Service')) {
             return array();
         }
-        global $wpdb;
-        $sites = PCM_Schema::table('sites');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $site = $wpdb->get_row($wpdb->prepare("SELECT name, url, brandId FROM {$sites} WHERE id = %d", $site_id));
-        if (!$site) {
-            return array();
-        }
-        $business = array('siteUrl' => (string) $site->url);
-        $brand_id = (int) ($site->brandId ?? 0);
-        if ($brand_id > 0) {
-            $brands = PCM_Schema::table('brands');
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $brand = $wpdb->get_row($wpdb->prepare("SELECT name FROM {$brands} WHERE id = %d", $brand_id));
-            if ($brand && !empty($brand->name)) {
-                $business['name'] = (string) $brand->name;
-            }
-            if (class_exists('PCM_SEO_GBP')) {
-                $resolved = (array) (PCM_SEO_GBP::get_for_brand($brand_id)['resolved'] ?? array());
-                // GBP fields win over the bare brand name (same precedence
-                // as the SEO field vars — one law, two consumers).
-                $business = array_merge($business, array_filter($resolved, static fn($v) => $v !== '' && $v !== null && $v !== array()));
-            }
-        }
-        return $business;
+        return (array) (PCM_SEO_Service::business_record_for_site($site_id)['fields'] ?? array());
     }
 
     /**

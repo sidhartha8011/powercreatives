@@ -674,6 +674,23 @@ class PCM_Brands_Service
             $row['sources'] = wp_json_encode(array_fill_keys(array_keys($data['fetched']), $tag !== '' ? $tag : 'gbp'));
             $fmt[]          = '%s';
         }
+        // THE MULTI-SOURCE DOOR (gap 616870f): mergeFetched ADDS keys to the
+        // fetched layer, tagging each with its sourceTag — maps-paste today,
+        // any future provider tomorrow; a merge never wipes another source's
+        // keys and never touches the manual layer.
+        if (array_key_exists('mergeFetched', $data) && is_array($data['mergeFetched']) && !array_key_exists('fetched', $data)) {
+            $tag      = sanitize_key((string) ($data['sourceTag'] ?? 'gbp'));
+            $existing = $unit_id > 0 ? self::get_business_record($brand_id, $unit_id) : array('fetched' => array(), 'sources' => array());
+            $fetched  = array_merge((array) ($existing['fetched'] ?? array()), $data['mergeFetched']);
+            $sources  = array_merge(
+                (array) ($existing['sources'] ?? array()),
+                array_fill_keys(array_keys($data['mergeFetched']), $tag !== '' ? $tag : 'gbp')
+            );
+            $row['fetched'] = wp_json_encode($fetched);
+            $fmt[]          = '%s';
+            $row['sources'] = wp_json_encode($sources);
+            $fmt[]          = '%s';
+        }
         if (array_key_exists('manual', $data) && is_array($data['manual'])) {
             $row['manual'] = wp_json_encode($data['manual']);
             $fmt[]         = '%s';

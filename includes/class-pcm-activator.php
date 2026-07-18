@@ -338,6 +338,38 @@ class PCM_Activator
                 PCM_Schema::migrate_gbp_to_business_units();
             }
 
+            // v1.44.0: Business Spine P2 (gap 616870f) — one-time auto-map
+            // backfill: every UNMAPPED site whose host EXACTLY matches a
+            // brand's normalized domain (www-insensitive) gets linked. An
+            // exact host match is a deterministic fact, never a guess;
+            // anything less stays unmapped for the SEO card's suggestion.
+            // Idempotent: only brandId-NULL sites are touched.
+            if (version_compare($installed_version, '1.44.0', '<')) {
+                global $wpdb;
+                $sites_t  = PCM_Schema::table('sites');
+                $brands_t = PCM_Schema::table('brands');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $unmapped = $wpdb->get_results("SELECT id, userId, url FROM {$sites_t} WHERE brandId IS NULL");
+                foreach (($unmapped ?: array()) as $s) {
+                    $host = strtolower((string) (wp_parse_url((string) $s->url, PHP_URL_HOST) ?: ''));
+                    if ($host === '') {
+                        continue;
+                    }
+                    $bare = preg_replace('/^www\./', '', $host);
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $brand_id = $wpdb->get_var($wpdb->prepare(
+                        "SELECT id FROM {$brands_t} WHERE userId = %d AND (domain = %s OR domain = %s) LIMIT 1",
+                        (int) $s->userId,
+                        $bare,
+                        'www.' . $bare
+                    ));
+                    if ($brand_id) {
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        $wpdb->update($sites_t, array('brandId' => (int) $brand_id), array('id' => (int) $s->id), array('%d'), array('%d'));
+                    }
+                }
+            }
+
             update_option('pcm_db_version', PCM_DB_VERSION);
         }
     }

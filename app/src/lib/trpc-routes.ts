@@ -540,6 +540,28 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "GET",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-state` }),
     },
+    // ── THE BUSINESS CARD (gap 616870f): SEO consumes the resolved per-site
+    //    record; the site↔brand CONNECTION writes go through sites.update. ──
+    "seo.businessCard": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business` }),
+    },
+    "seo.businessOverrides": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/overrides`, body: { fields: input.fields } }),
+    },
+    "seo.businessRefresh": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/refresh`, body: {} }),
+    },
+    "seo.businessMaps": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/maps`, body: { url: input.url } }),
+    },
     "seo.remotePageVersions": {
         endpoint: "seo/sites",
         method: "GET",

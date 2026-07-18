@@ -275,6 +275,20 @@ class PCM_REST_Sites extends PCM_REST_Base
 
         $site = PCM_DB::get_site($site_id, (int)$pcm_user->id);
 
+        // AUTO-MAP (Business Spine, gap 616870f): an EXACT host match against
+        // a brand's website is a deterministic fact, never a guess — link it
+        // so the business record flows without a manual step. Anything less
+        // than exact stays unmapped (the SEO card offers the suggestion).
+        if (class_exists('PCM_Brands_Service')) {
+            $match = (new PCM_Brands_Service())->find_by_website((int) $pcm_user->id, $url);
+            $host  = strtolower((string) (wp_parse_url($url, PHP_URL_HOST) ?: ''));
+            $bhost = $match ? strtolower((string) (wp_parse_url((string) ($match->website ?? ''), PHP_URL_HOST) ?: ($match->domain ?? ''))) : '';
+            if ($match && $host !== '' && ($bhost === $host || $bhost === 'www.' . $host || 'www.' . $bhost === $host)) {
+                PCM_DB::update_site($site_id, (int) $pcm_user->id, array('brandId' => (int) $match->id));
+                $site = PCM_DB::get_site($site_id, (int) $pcm_user->id);
+            }
+        }
+
         // As soon as a site is added, try to register + verify it in Google Search Console
         // (add property → META token → push to connector → verify). Best-effort by design:
         // the site is saved regardless, and the report tells the UI what happened.
@@ -381,6 +395,13 @@ class PCM_REST_Sites extends PCM_REST_Base
             // The site↔brand link (FK only — brands own the business data).
             // 0 / null disconnects.
             $update['brandId'] = absint($params['brandId']) ?: null;
+        }
+        if (array_key_exists('businessUnitId', $params)) {
+            // The unit pin (Business Spine, gap 616870f): which of the
+            // brand's business units THIS site speaks for; 0/null = the
+            // brand's primary. THE CONNECTION LIVES HERE — sites own the
+            // mapping, SEO only consumes (owner ruling 2026-07-17).
+            $update['businessUnitId'] = absint($params['businessUnitId']) ?: null;
         }
 
         if (empty($update)) {

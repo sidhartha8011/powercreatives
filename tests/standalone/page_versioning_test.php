@@ -253,5 +253,63 @@ for ($ci = 0; $ci < 20; $ci++) {
 $pm = PCM_SEO_Service::parse_section_reply(json_encode($many), array(), true);
 check('change list capped', count($pm['changes']) === 12);
 
+// ═══ 6. THE BUSINESS LADDER + MAPS PARSE (Business Spine, gap 616870f) ═══
+if (!class_exists('WP_Error')) {
+    // Minimal shim — only what these checks read.
+    class WP_Error
+    {
+        private $code;
+        private $message;
+        public function __construct($code = '', $message = '', $data = null)
+        {
+            $this->code    = $code;
+            $this->message = $message;
+        }
+        public function get_error_code()
+        {
+            return $this->code;
+        }
+        public function get_error_message()
+        {
+            return $this->message;
+        }
+    }
+}
+echo "business ladder\n";
+$ladder = PCM_SEO_Service::merge_business_ladder(
+    array('address' => 'Göteborg'),                                      // site override
+    array(
+        'fetched' => array('address' => 'Avenyn 1, Göteborg', 'phone' => '031-111'),
+        'manual'  => array('phone' => '031-222'),
+        'sources' => array('address' => 'gbp', 'phone' => 'gbp'),
+    ),
+    array('name' => 'Profit Media', 'phone' => '031-000', 'website' => 'https://profitmedia.se'),
+    array('name' => 'powerleads', 'siteUrl' => 'http://powerleads.local')
+);
+check('site override wins the ladder', $ladder['fields']['address'] === 'Göteborg' && $ladder['sources']['address'] === 'site');
+check('unit manual beats unit fetched', $ladder['fields']['phone'] === '031-222' && $ladder['sources']['phone'] === 'manual');
+check('brand basics beat site basics', $ladder['fields']['name'] === 'Profit Media' && $ladder['sources']['name'] === 'brand');
+check('site basics survive uncontested', $ladder['fields']['siteUrl'] === 'http://powerleads.local' && $ladder['sources']['siteUrl'] === 'site-basics');
+check('fetched keeps its per-key source tag', PCM_SEO_Service::merge_business_ladder(
+    array(),
+    array('fetched' => array('cid' => '123'), 'manual' => array(), 'sources' => array('cid' => 'maps-paste')),
+    array(),
+    array()
+)['sources']['cid'] === 'maps-paste');
+$empty_ladder = PCM_SEO_Service::merge_business_ladder(array('phone' => ''), array(), array('phone' => ''), array());
+check('empty values never land (no invention)', !isset($empty_ladder['fields']['phone']));
+
+echo "parse_maps_url\n";
+$mp = PCM_SEO_Service::parse_maps_url('https://maps.google.com/maps?cid=12345678901234567890');
+check('cid query parses', !($mp instanceof WP_Error) && $mp['fields']['cid'] === '12345678901234567890');
+check('cid embed built', $mp['fields']['mapsEmbedUrl'] === 'https://maps.google.com/maps?cid=12345678901234567890&output=embed');
+$mp2 = PCM_SEO_Service::parse_maps_url('https://www.google.com/maps/place/X/@57.7089,11.9746,17z/data=!1s0x464ff3abc:0xffffffffffffffff');
+check('hex place ref -> exact 64-bit decimal cid', !($mp2 instanceof WP_Error) && $mp2['fields']['cid'] === '18446744073709551615');
+check('coordinates parse', $mp2['fields']['lat'] === '57.7089' && $mp2['fields']['lng'] === '11.9746');
+$mp3 = PCM_SEO_Service::parse_maps_url('https://example.com/not-maps');
+check('non-maps host = named error', $mp3 instanceof WP_Error && $mp3->get_error_code() === 'pcm_seo_maps_not_maps');
+$mp4 = PCM_SEO_Service::parse_maps_url('https://maps.google.com/maps/nothing-here');
+check('unparseable maps link = named error', $mp4 instanceof WP_Error && $mp4->get_error_code() === 'pcm_seo_maps_unparsed');
+
 echo "\n{$pass}/" . ($pass + $fail) . " passed\n";
 exit($fail === 0 ? 0 : 1);
