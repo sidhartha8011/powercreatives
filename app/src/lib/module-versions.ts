@@ -30,6 +30,6 @@ export const MODULE_VERSIONS: Record<ModuleId, string> = {
   ads: '1.0.0',
   automations: '1.0.0',
   users: '1.0.0',
-  seo: '1.0.8', // maps paste: share.google wall named, find-on-google fill
+  seo: '1.0.9', // card UX: side-by-side rooms, visible fields, working line; SAB centroid guard
   logs: '1.0.0',
 };

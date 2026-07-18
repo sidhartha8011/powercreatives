@@ -162,8 +162,9 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
     ? (brandsQuery.data as any[]).map((b) => ({ id: Number(b.id), name: String(b.name) }))
     : [];
 
+  const fetching = busy === 'find' || busy === 'place' || busy === 'maps' || busy === 'refresh';
   return (
-    <div className="max-w-3xl space-y-4 p-6">
+    <div className="max-w-5xl space-y-4 p-6">
       {/* ── Mapping header: the connection lives in Sites; edited here, written there. ── */}
       <div className="flex flex-wrap items-center gap-2">
         <Building2 className="h-4 w-4 text-slate-400" />
@@ -232,6 +233,15 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
         )}
       </div>
 
+      {/* ── THE WORKING STATE (gap 92c5cc7): a fetch takes up to a minute —
+             the card says so instead of looking frozen. ── */}
+      {fetching && (
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          Working — fetching from Google via Apify; this can take up to a minute…
+        </div>
+      )}
+
       {/* ── ASK-FIRST refresh popover: what you see is what gets scraped. ── */}
       {refreshUrl !== null && (
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
@@ -263,6 +273,7 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
       {/* ── THE TWO ROOMS (owner spec): Business = identity, white ·
              Local SEO = the Google surface, whisper-tinted, the Maps-paste
              row living inside it. One registry, two rooms. ── */}
+      <div className="grid items-start gap-4 md:grid-cols-2">
       {(['business', 'local'] as const).map((room) => (
         <div key={room} className={`rounded-xl border border-slate-200 ${room === 'local' ? 'bg-amber-50/40' : 'bg-white'}`}>
           <div className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
@@ -330,20 +341,23 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
                 <div key={key} className="flex items-start gap-3 px-4 py-2" title={source ? `Source: ${SOURCE_LABEL[source] ?? source}` : undefined}>
                   <div className="w-36 shrink-0 pt-1.5 text-[11px] font-medium text-slate-500">{label}</div>
                   <div className="min-w-0 grow">
+                    {/* VISIBLE FIELDS (gap 92c5cc7): real inputs — white,
+                        bordered, focus ring — an editable field must LOOK
+                        editable. Text sizes unchanged (owner ruling). */}
                     {multiline ? (
                       <textarea
                         value={value}
                         onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
                         onBlur={() => void saveField(key)}
                         rows={2}
-                        className="w-full resize-y rounded-md border border-transparent bg-transparent px-2 py-1 text-xs text-slate-800 hover:border-slate-200 focus:border-slate-300 focus:outline-none"
+                        className="w-full resize-y rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20"
                       />
                     ) : (
                       <input
                         value={value}
                         onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
                         onBlur={() => void saveField(key)}
-                        className="w-full rounded-md border border-transparent bg-transparent px-2 py-1 text-xs text-slate-800 hover:border-slate-200 focus:border-slate-300 focus:outline-none"
+                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20"
                       />
                     )}
                   </div>
@@ -356,6 +370,7 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
           </div>
         </div>
       ))}
+      </div>
     </div>
   );
 }

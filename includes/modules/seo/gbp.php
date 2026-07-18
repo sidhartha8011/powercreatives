@@ -407,6 +407,14 @@ class PCM_SEO_GBP
             );
         }
         $cid = (string) ($raw['cid'] ?? '');
+        // THE CENTROID GUARD (gap 92c5cc7, owner's live nationwide listing):
+        // a service-area business has NO address components — Google then
+        // reports the COUNTRY CENTROID as its point (proven: Sweden's
+        // 62.03/17.38 on a listing with zero address keys). A placeholder
+        // point is not a place; geo lands ONLY beside a real address.
+        $has_address = (string) ($raw['street'] ?? '') !== ''
+            || (string) ($raw['city'] ?? '') !== ''
+            || (string) ($raw['postalCode'] ?? '') !== '';
         return array_filter(array(
             'place_id'      => (string) ($raw['placeId'] ?? ''),
             'name'          => (string) ($raw['title'] ?? ''),
@@ -417,8 +425,8 @@ class PCM_SEO_GBP
             'region'        => (string) ($raw['state'] ?? ''),
             'country'       => (string) ($raw['countryCode'] ?? ''),
             'phone'         => (string) ($raw['phone'] ?? ($raw['phoneUnformatted'] ?? '')),
-            'lat'           => isset($raw['location']['lat']) ? (float) $raw['location']['lat'] : null,
-            'lng'           => isset($raw['location']['lng']) ? (float) $raw['location']['lng'] : null,
+            'lat'           => ($has_address && isset($raw['location']['lat'])) ? (float) $raw['location']['lat'] : null,
+            'lng'           => ($has_address && isset($raw['location']['lng'])) ? (float) $raw['location']['lng'] : null,
             'website'       => (string) ($raw['website'] ?? ''),
             'category'      => (string) ($raw['categoryName'] ?? ''),
             'rating'        => isset($raw['totalScore']) ? (float) $raw['totalScore'] : null,

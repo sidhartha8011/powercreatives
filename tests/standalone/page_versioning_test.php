@@ -382,6 +382,12 @@ check('hours flattened', $a['hours'] === 'Monday: 9 AM–5 PM');
 check('embed built from cid', strpos($a['mapsEmbedUrl'], 'cid=12345678901234567890') !== false);
 check('reviews kept w/ text, textless dropped', count($a['publicReviews']) === 1 && $a['publicReviews'][0]['author'] === 'Anna' && $a['publicReviews'][0]['rating'] === 5.0);
 check('places-v1 shape still routes to the v1 mapper', PCM_SEO_GBP::normalize(array('displayName' => array('text' => 'X'), 'id' => 'ChIJv1'))['place_id'] === 'ChIJv1');
+// THE CENTROID GUARD (gap 92c5cc7): a nationwide listing (no address
+// components) must never land Google's country-centroid as real geo.
+$sab = PCM_SEO_GBP::normalize(array('title' => 'Nationwide AB', 'totalScore' => 5, 'location' => array('lat' => 62.0329767, 'lng' => 17.3787426)));
+check('SAB centroid geo dropped', !array_key_exists('lat', $sab) && !array_key_exists('lng', $sab));
+$located = PCM_SEO_GBP::normalize(array('title' => 'Local AB', 'city' => 'Göteborg', 'location' => array('lat' => 57.7, 'lng' => 11.97)));
+check('real address keeps its geo', $located['lat'] === 57.7 && $located['lng'] === 11.97);
 
 echo "\n{$pass}/" . ($pass + $fail) . " passed\n";
 exit($fail === 0 ? 0 : 1);
