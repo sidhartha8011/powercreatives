@@ -470,19 +470,31 @@ class PCM_SEO_GBP
         if (preg_match('/(ChIJ[0-9A-Za-z_-]{10,})/', $current, $m)) {
             return $m[1];
         }
-        // Fallback: the place NAME from the long URL → one search.
+        // THE share.google WALL (gap 972481e, live-proven): the app-share
+        // domain answers ONLY browsers — server, Chrome-UA and Apify runs
+        // all land on its error page. Name the wall AND the way around it.
+        $final_host = strtolower((string) (wp_parse_url($current, PHP_URL_HOST) ?: ''));
+        if ($final_host === 'share.google' || strpos($current, 'share.google/error') !== false) {
+            return new WP_Error(
+                'pcm_seo_maps_share_google',
+                __('share.google app links can\'t be read by servers — in Google Maps use Share → Copy link, or paste the browser address-bar URL of the place.', 'power-creatives'),
+                array('status' => 422, 'resolvedUrl' => $current)
+            );
+        }
+        // Fallback: the place NAME from the long URL → one search. The
+        // provider can also match Apify-shaped candidates (placeId key).
         if (preg_match('#/maps/place/([^/@]+)#', $current, $m)) {
             $name    = trim(rawurldecode(str_replace('+', ' ', $m[1])));
             $results = self::provider($user_id)->search($name, self::default_lang());
             if (isset($results['error'])) {
-                return new WP_Error('pcm_seo_gbp_error', (string) $results['error'], array('status' => 502));
+                return new WP_Error('pcm_seo_gbp_error', (string) $results['error'], array('status' => 502, 'resolvedUrl' => $current));
             }
-            $pid = (string) ($results[0]['id'] ?? '');
+            $pid = (string) ($results[0]['id'] ?? ($results[0]['placeId'] ?? ''));
             if ($pid !== '') {
                 return $pid;
             }
         }
-        return new WP_Error('pcm_seo_maps_no_place', __('No Google place could be identified from that link — search by name in the Business panel instead.', 'power-creatives'), array('status' => 404));
+        return new WP_Error('pcm_seo_maps_no_place', __('No Google place could be identified from that link — use Find on Google in the Business tab instead.', 'power-creatives'), array('status' => 404, 'resolvedUrl' => $current));
     }
 
     // ── Storage FACADE (Business Spine P1, gap 1aedf65): the record lives in

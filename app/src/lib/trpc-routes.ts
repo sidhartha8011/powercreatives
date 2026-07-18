@@ -564,6 +564,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/maps`, body: { url: input.url } }),
     },
+    "seo.businessPlace": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/place`, body: { placeId: input.placeId } }),
+    },
     "seo.remotePageVersions": {
         endpoint: "seo/sites",
         method: "GET",

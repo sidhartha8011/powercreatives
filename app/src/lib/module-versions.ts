@@ -30,6 +30,6 @@ export const MODULE_VERSIONS: Record<ModuleId, string> = {
   ads: '1.0.0',
   automations: '1.0.0',
   users: '1.0.0',
-  seo: '1.0.7', // apify: one actor = place record + all schema ids + reviews
+  seo: '1.0.8', // maps paste: share.google wall named, find-on-google fill
   logs: '1.0.0',
 };

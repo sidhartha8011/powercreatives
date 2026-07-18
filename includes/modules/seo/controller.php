@@ -143,6 +143,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/business/overrides',  'business_overrides',  array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/business/refresh',    'business_refresh',    array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/business/maps',       'business_maps',       array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/business/place',      'business_place',      array(), 'manage_options'),
             array('POST', '/seo/gbp/search',                   'gbp_search',    array(), 'manage_options'),
             array('POST', '/seo/gbp/brand/(?P<brand>\d+)/save', 'gbp_save',     array(), 'manage_options'),
             array('GET',  '/seo/gbp/brand/(?P<brand>\d+)',      'gbp_get',      array(), 'manage_options'),
@@ -1547,9 +1548,17 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->error(__('Link this site to a brand first — the Maps details belong to the brand\'s business unit.', 'power-creatives'), 409, 'pcm_seo_biz_unmapped');
         }
         $params = $request->get_json_params() ?: array();
-        $parsed = PCM_SEO_Service::parse_maps_url((string) ($params['url'] ?? ''));
+        $url    = (string) ($params['url'] ?? '');
+        $parsed = PCM_SEO_Service::parse_maps_url($url);
+        // FLOW-ORDER FIX (gap 972481e, live-proven): short links (share.google,
+        // maps.app.goo.gl) legitimately parse to NOTHING locally — that is
+        // NOT fatal; the resolver + provider below do the real work. Only a
+        // foreign host stays fatal.
         if ($parsed instanceof WP_Error) {
-            return $parsed;
+            if ($parsed->get_error_code() !== 'pcm_seo_maps_unparsed') {
+                return $parsed;
+            }
+            $parsed = array('fields' => array('mapsShareUrl' => esc_url_raw($url)));
         }
         $saved = PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => $parsed['fields'], 'sourceTag' => 'maps-paste'), $record['unitId']);
         if ($saved instanceof WP_Error) {
@@ -1561,9 +1570,18 @@ class PCM_REST_SEO extends PCM_REST_Base
         // cid/geo fields above stand alone, the reason NAMED in the reply —
         // never a silent half-result.
         $google = array('filled' => false, 'error' => null);
-        $pid    = PCM_SEO_GBP::resolve_share_url((string) ($params['url'] ?? ''), (int) $user->id);
+        $pid    = PCM_SEO_GBP::resolve_share_url($url, (int) $user->id);
         if ($pid instanceof WP_Error) {
             $google['error'] = $pid->get_error_message();
+            // The resolver may still have reached a LONG url whose local
+            // fields (cid/geo) are extractable — salvage them (gap 972481e).
+            $err_data = $pid->get_error_data();
+            if (is_array($err_data) && !empty($err_data['resolvedUrl'])) {
+                $late = PCM_SEO_Service::parse_maps_url((string) $err_data['resolvedUrl']);
+                if (!($late instanceof WP_Error)) {
+                    PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => $late['fields'], 'sourceTag' => 'maps-paste'), $record['unitId']);
+                }
+            }
         } else {
             $raw = PCM_SEO_GBP::provider((int) $user->id)->details($pid, PCM_SEO_GBP::default_lang());
             if (isset($raw['error'])) {
@@ -1580,6 +1598,39 @@ class PCM_REST_SEO extends PCM_REST_Base
         $out = PCM_SEO_Service::business_record_for_site((int) $site->id);
         $out['google'] = $google;
         return $this->success($out);
+    }
+
+    /** POST /seo/sites/{id}/business/place — fill the mapped unit from ONE
+     *  picked place id (the share-link-independent path, gap 972481e):
+     *  Find on Google → pick → the whole record incl. the schema ids. */
+    public function business_place(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        if ($record['brandId'] === 0) {
+            return $this->error(__('Link this site to a brand first — the place details belong to the brand\'s business unit.', 'power-creatives'), 409, 'pcm_seo_biz_unmapped');
+        }
+        $params   = $request->get_json_params() ?: array();
+        $place_id = sanitize_text_field((string) ($params['placeId'] ?? ''));
+        if (!preg_match('/^ChIJ[0-9A-Za-z_-]{10,}$/', $place_id)) {
+            return $this->error(__('A valid Google place id is required.', 'power-creatives'), 400, 'pcm_seo_biz_bad_place');
+        }
+        $raw = PCM_SEO_GBP::provider((int) $user->id)->details($place_id, PCM_SEO_GBP::default_lang());
+        if (isset($raw['error'])) {
+            return $this->error((string) $raw['error'], 502, 'pcm_seo_gbp_error');
+        }
+        if (empty($raw)) {
+            return $this->error(__('No details returned for that place.', 'power-creatives'), 502, 'pcm_seo_gbp_empty');
+        }
+        $saved = PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => PCM_SEO_GBP::normalize($raw), 'sourceTag' => 'gbp'), $record['unitId']);
+        if ($saved instanceof WP_Error) {
+            return $saved;
+        }
+        return $this->success(PCM_SEO_Service::business_record_for_site((int) $site->id));
     }
 
     /** POST /seo/gbp/search — search places (via the configured provider). */

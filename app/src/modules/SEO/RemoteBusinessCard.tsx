@@ -81,6 +81,8 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
   const overridesM = trpc.seo.businessOverrides.useMutation();
   const refreshM = trpc.seo.businessRefresh.useMutation();
   const mapsM = trpc.seo.businessMaps.useMutation();
+  const searchM = trpc.seo.gbpSearch.useMutation();
+  const placeM = trpc.seo.businessPlace.useMutation();
   const siteUpdateM = trpc.sites.update.useMutation();
   const scrapeM = trpc.brands.scrapeUrl.useMutation();
   const brandCreateM = trpc.brands.create.useMutation();
@@ -88,6 +90,9 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
   const card = cardQuery.data;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [mapsUrl, setMapsUrl] = useState('');
+  /** Find on Google (gap 972481e) — the share-link-independent fill. */
+  const [findQuery, setFindQuery] = useState('');
+  const [candidates, setCandidates] = useState<Array<{ place_id: string; name: string; address: string }>>([]);
   const [busy, setBusy] = useState<string | null>(null);
   /** ASK-FIRST refresh (gap 670d0e0): null = closed; string = the URL the
    *  user is confirming — what you see is what gets scraped, and the
@@ -264,7 +269,41 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
             {room === 'business' ? 'Business' : 'Local SEO'}
           </div>
           {room === 'local' && card.brandId > 0 && (
-            <div className="flex items-center gap-2 px-4 pb-2">
+            <div className="space-y-2 px-4 pb-2">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={findQuery}
+                  onChange={(e) => setFindQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && findQuery.trim()) e.currentTarget.blur(); }}
+                  placeholder="Find on Google — business name, city"
+                  className="h-8 bg-white text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={async () => { if (!findQuery.trim()) return; setBusy('find'); setCandidates([]); try { const res: any = await searchM.mutateAsync({ query: findQuery.trim() }); const rows = (Array.isArray(res?.results) ? res.results : []).map((r: any) => ({ place_id: String(r.place_id ?? ''), name: String(r.name ?? ''), address: String(r.address ?? '') })).filter((r: any) => r.place_id); setCandidates(rows); if (rows.length === 0) toast.info('No places found for that search.'); } catch (e: any) { toast.error(e?.message ?? 'Search failed'); } finally { setBusy(null); } }}
+                  disabled={busy !== null || findQuery.trim() === ''}
+                  className="shrink-0 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {busy === 'find' ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Search'}
+                </button>
+              </div>
+              {candidates.length > 0 && (
+                <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+                  {candidates.map((c) => (
+                    <button
+                      key={c.place_id}
+                      type="button"
+                      onClick={async () => { setBusy('place'); try { await placeM.mutateAsync({ siteId, placeId: c.place_id }); setCandidates([]); setFindQuery(''); toast.success(`${c.name} — the Google record filled in.`); refresh(); } catch (e: any) { toast.error(e?.message ?? 'Fill failed'); } finally { setBusy(null); } }}
+                      disabled={busy !== null}
+                      className="flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      <span className="text-xs font-medium text-slate-700">{c.name}</span>
+                      <span className="truncate text-[10px] text-slate-400">{c.address}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
               <MapPin className="h-4 w-4 shrink-0 text-slate-400" />
               <Input
                 value={mapsUrl}
@@ -280,6 +319,7 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
               >
                 {busy === 'maps' ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
               </button>
+              </div>
             </div>
           )}
           <div className="divide-y divide-slate-100">
