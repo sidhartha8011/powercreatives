@@ -399,6 +399,35 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   rankings over time, date-stamped notes, keyword table + opportunities
   (→ docs/ARCHITECTURE-ICE-STEERING-WHEEL-20260717.md unified-graph
   section: same timeline, this is its per-page home).
+- 2026-07-17 · **GOOGLE GOES NATIVE (owner order — supersedes the same-day
+  Google-free ruling; the n8n middleman DIES).** The owner supplied the n8n
+  workflow export; decoded: its GSC half (sites/add/verify/analytics) is
+  ALREADY native in the platform — dead weight. Replicated natively:
+  **Phase A** — `google_places` Integrations provider (API key, regular
+  flow); native PCM_SEO_GBP 'google' provider class (searchText + place
+  details w/ THE WIDE FIELD MASK: addressComponents→postal/city/region/
+  country, intl phone, googleMapsUri, top-5 reviews w/ text, short address,
+  editorialSummary, hours, rating/count, types, category, geo); SHARE-URL
+  RESOLVER (follow redirects → extract ChIJ place id → details; fallback
+  place-name → searchText) — ONE pasted Maps link fills the whole unit
+  (tag 'gbp'), manual corrections untouched; no key = the local cid/geo
+  parse keeps working, labeled. n8n provider class + webhook UI DELETED
+  same commit (replacement lands together). **Phase B (next gap)** — GBP
+  owner-account reviews + location resolve (My Business v4/v1 APIs, OAuth;
+  the n8n-hardcoded account id becomes an Integrations SETTING — never
+  code); full review list beats the public top-5. Reviews remain CONTENT
+  material only — never schema markup (policy law).
+- 2026-07-17 · **THE TWO-ROOM CARD + INDEXED URL (owner order, Jony spec).**
+  The Business card divides into two quiet rooms — **Business** (identity:
+  name, website, INDEXED URL, email, phone, address block, hours, language,
+  description, socials, niche) and **Local SEO** (the Google surface:
+  category, service areas, primary location, CID, KG ID, Maps URLs, geo)
+  on a whisper-tinted background, the Maps-paste row living inside it.
+  Website ≠ Indexed URL — two facts, never conflated. "Refresh from site"
+  stops guessing: a small popover shows the URL it will scrape (prefilled
+  indexed URL > website), you confirm, and the confirmed URL is remembered
+  as the site's Indexed URL. Registry rows gain a `group` key — one
+  registry, two rooms, future fields drop into either with one line.
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
