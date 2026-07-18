@@ -219,6 +219,18 @@ class PCM_Providers
             // Custom capabilities flag — an SEO data provider like Ahrefs/ProRankTracker
             'supportsSeo' => true,
         ),
+        'apify' => array(
+            'id'          => 'apify',
+            'name'        => 'Apify',
+            'apiKeyUrl'   => 'https://console.apify.com/settings/integrations',
+            'isBuiltIn'   => false,
+            // Apify actors supply the FULL Google surface for the Business
+            // card — place record + every schema id (placeId/cid/fid/KGMID)
+            // + reviews — one key, no Google Cloud project (gap 1f38238).
+            // Which actors run is hub DATA (option pcm_seo_apify).
+            'knownModels' => array(),
+            'supportsSeo' => true,
+        ),
         'google_places' => array(
             'id'          => 'google_places',
             'name'        => 'Google Places (Business Profile)',

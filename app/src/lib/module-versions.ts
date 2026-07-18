@@ -30,6 +30,6 @@ export const MODULE_VERSIONS: Record<ModuleId, string> = {
   ads: '1.0.0',
   automations: '1.0.0',
   users: '1.0.0',
-  seo: '1.0.6', // google native A: places key provider + share-URL fill + two-room card
+  seo: '1.0.7', // apify: one actor = place record + all schema ids + reviews
   logs: '1.0.0',
 };

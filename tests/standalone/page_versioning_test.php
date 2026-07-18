@@ -348,5 +348,40 @@ check('public reviews kept w/ text, empty dropped', count($n['publicReviews']) =
 check('empty fields never land (filter law)', !array_key_exists('website', $n) && !array_key_exists('hours', $n));
 check('legacy keys intact', $n['name'] === 'Profit Media' && $n['place_id'] === 'ChIJtest');
 
+// ═══ 8. normalize_apify — THE APIFY DIALECT (gap 1f38238) ═══
+echo "gbp normalize apify\n";
+$a = PCM_SEO_GBP::normalize(array(
+    'title'        => 'Profit Media',
+    'address'      => 'Avenyn 1, 411 36 Göteborg, Sweden',
+    'street'       => 'Avenyn 1',
+    'postalCode'   => '411 36',
+    'city'         => 'Göteborg',
+    'state'        => 'Västra Götaland',
+    'countryCode'  => 'SE',
+    'phone'        => '+46 31 111 111',
+    'location'     => array('lat' => 57.7, 'lng' => 11.97),
+    'website'      => 'https://profitmedia.se',
+    'categoryName' => 'Marketing agency',
+    'totalScore'   => 4.9,
+    'reviewsCount' => 512,
+    'openingHours' => array(array('day' => 'Monday', 'hours' => '9 AM–5 PM')),
+    'placeId'      => 'ChIJapify',
+    'cid'          => '12345678901234567890',
+    'fid'          => '0x464ff3abc:0xffffffffffffffff',
+    'kgmid'        => '/g/1tmgdcj8',
+    'url'          => 'https://www.google.com/maps/place/x',
+    'reviews'      => array(
+        array('name' => 'Anna', 'stars' => 5, 'text' => 'Great agency!', 'publishedAtDate' => '2026-01-01'),
+        array('name' => 'Bo', 'stars' => 4, 'text' => ''),
+    ),
+));
+check('apify shape auto-detected + core mapped', $a['name'] === 'Profit Media' && $a['place_id'] === 'ChIJapify' && $a['category'] === 'Marketing agency');
+check('THE SCHEMA IDS land', $a['cid'] === '12345678901234567890' && $a['fid'] === '0x464ff3abc:0xffffffffffffffff' && $a['kgid'] === '/g/1tmgdcj8');
+check('address parts mapped', $a['postal'] === '411 36' && $a['city'] === 'Göteborg' && $a['region'] === 'Västra Götaland' && $a['country'] === 'SE');
+check('hours flattened', $a['hours'] === 'Monday: 9 AM–5 PM');
+check('embed built from cid', strpos($a['mapsEmbedUrl'], 'cid=12345678901234567890') !== false);
+check('reviews kept w/ text, textless dropped', count($a['publicReviews']) === 1 && $a['publicReviews'][0]['author'] === 'Anna' && $a['publicReviews'][0]['rating'] === 5.0);
+check('places-v1 shape still routes to the v1 mapper', PCM_SEO_GBP::normalize(array('displayName' => array('text' => 'X'), 'id' => 'ChIJv1'))['place_id'] === 'ChIJv1');
+
 echo "\n{$pass}/" . ($pass + $fail) . " passed\n";
 exit($fail === 0 ? 0 : 1);

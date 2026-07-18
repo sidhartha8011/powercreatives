@@ -42,6 +42,7 @@ const FIELD_REGISTRY: Array<{ key: string; label: string; group: BizGroup; multi
   { key: 'primarylocation', label: 'Primary location', group: 'local' },
   { key: 'kgid', label: 'Knowledge Graph ID', group: 'local' },
   { key: 'cid', label: 'Google CID', group: 'local' },
+  { key: 'fid', label: 'Google FID', group: 'local' },
   { key: 'mapsShareUrl', label: 'Maps share URL', group: 'local' },
   { key: 'mapsEmbedUrl', label: 'Maps embed URL', group: 'local' },
   { key: 'lat', label: 'Latitude', group: 'local' },

@@ -119,23 +119,147 @@ class PCM_SEO_GBP_Google_Provider implements PCM_SEO_GBP_Provider
     }
 }
 
+/**
+ * APIFY provider (gap 1f38238): ONE actor run supplies the place record +
+ * ALL FOUR schema ids (placeId / cid / fid / KGMID) + reviews — no Google
+ * Cloud project. Key = the `apify` Integrations provider (regular flow);
+ * WHICH actors run, caps, timeout, language = hub DATA (pcm_seo_apify,
+ * merge-seeded) — never code.
+ */
+class PCM_SEO_GBP_Apify_Provider implements PCM_SEO_GBP_Provider
+{
+    private $user_id;
+
+    public function __construct(int $user_id = 0)
+    {
+        $this->user_id = $user_id;
+    }
+
+    /** Seeded read-through tunables (merge law — new keys reach old installs). */
+    public static function tunables(): array
+    {
+        $seed = array(
+            'actorId'          => 'compass~crawler-google-places',
+            // The cheap reviews-only top-up tap (future weekly refresh) —
+            // stored as DATA now so wiring it later changes no code.
+            'reviewsActorId'   => 'compass~google-maps-reviews-scraper',
+            'timeoutS'         => 90,
+            'searchLimit'      => 5,
+            'maxReviews'       => 20,
+            'storedReviewsCap' => 20,
+            'language'         => '', // '' = the WP-locale default_lang()
+        );
+        $stored = get_option('pcm_seo_apify');
+        if (is_array($stored) && !empty($stored['actorId'])) {
+            return array_replace_recursive($seed, $stored);
+        }
+        add_option('pcm_seo_apify', $seed, '', false);
+        return $seed;
+    }
+
+    private function api_key(): string
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('integrations');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $key = $wpdb->get_var($wpdb->prepare(
+            "SELECT apiKey FROM {$table} WHERE provider = %s AND userId = %d AND isActive = 1 LIMIT 1",
+            'apify',
+            $this->user_id
+        ));
+        return (string) ($key ?: '');
+    }
+
+    /** One synchronous actor run → dataset items. Named errors, fix included. */
+    private function run(array $input): array
+    {
+        $key = $this->api_key();
+        if ($key === '') {
+            return array('error' => __('No Apify key — add the "Apify" integration (Integrations module), then retry.', 'power-creatives'));
+        }
+        $cfg = self::tunables();
+        $url = 'https://api.apify.com/v2/acts/' . rawurlencode((string) $cfg['actorId']) . '/run-sync-get-dataset-items?token=' . rawurlencode($key);
+        $res = wp_remote_post($url, array(
+            'timeout' => max(10, (int) $cfg['timeoutS']),
+            'headers' => array('Content-Type' => 'application/json'),
+            'body'    => wp_json_encode($input),
+        ));
+        if (is_wp_error($res)) {
+            return array('error' => sprintf(
+                /* translators: %s: transport error */
+                __('Apify did not answer: %s', 'power-creatives'),
+                $res->get_error_message()
+            ));
+        }
+        $code = (int) wp_remote_retrieve_response_code($res);
+        $body = json_decode((string) wp_remote_retrieve_body($res), true);
+        if ($code < 200 || $code >= 300) {
+            $msg = is_array($body) ? (string) ($body['error']['message'] ?? '') : '';
+            return array('error' => sprintf(
+                /* translators: 1: HTTP status, 2: Apify's message */
+                __('Apify answered HTTP %1$d%2$s — check the key and the actor id in the pcm_seo_apify settings.', 'power-creatives'),
+                $code,
+                $msg !== '' ? ' (' . $msg . ')' : ''
+            ));
+        }
+        return array('items' => is_array($body) ? array_values($body) : array());
+    }
+
+    private function lang(string $language_code): string
+    {
+        $cfg = self::tunables();
+        return (string) ($cfg['language'] !== '' ? $cfg['language'] : $language_code);
+    }
+
+    public function search(string $query, string $language_code): array
+    {
+        $cfg = self::tunables();
+        $out = $this->run(array(
+            'searchStringsArray'         => array($query),
+            'maxCrawledPlacesPerSearch'  => max(1, (int) $cfg['searchLimit']),
+            'maxReviews'                 => 0,
+            'language'                   => $this->lang($language_code),
+        ));
+        return isset($out['error']) ? $out : (array) $out['items'];
+    }
+
+    public function details(string $place_id, string $language_code): array
+    {
+        $cfg = self::tunables();
+        $out = $this->run(array(
+            'placeIds'    => array($place_id),
+            'maxReviews'  => max(0, (int) $cfg['maxReviews']),
+            'reviewsSort' => 'newest',
+            'language'    => $this->lang($language_code),
+        ));
+        if (isset($out['error'])) {
+            return $out;
+        }
+        return is_array($out['items'][0] ?? null) ? $out['items'][0] : array();
+    }
+}
+
 class PCM_SEO_GBP
 {
-    /** Registered providers by id (n8n RETIRED 2026-07-17, gap 670d0e0 —
-     *  the native Google client replaced it in the same pair). */
+    /** Registered providers by id (n8n RETIRED 2026-07-17, gap 670d0e0;
+     *  apify ADDED 2026-07-18, gap 1f38238 — the hub setting selects). */
     public static function providers(): array
     {
-        $map = array('google' => PCM_SEO_GBP_Google_Provider::class);
+        $map = array(
+            'apify'  => PCM_SEO_GBP_Apify_Provider::class,
+            'google' => PCM_SEO_GBP_Google_Provider::class,
+        );
         return apply_filters('pcm_seo_gbp_providers', $map);
     }
 
     /** The configured provider instance for one user (key resolution is
-     *  per user — the Integrations pattern). */
+     *  per user — the Integrations pattern). Default = apify (owner ruling
+     *  2026-07-18); the SETTING is the switch, never code. */
     public static function provider(int $user_id = 0): PCM_SEO_GBP_Provider
     {
-        $id  = (string) PCM_Settings::get('seo_gbp_provider', 'google');
+        $id  = (string) PCM_Settings::get('seo_gbp_provider', 'apify');
         $map = self::providers();
-        $class = $map[$id] ?? PCM_SEO_GBP_Google_Provider::class;
+        $class = $map[$id] ?? PCM_SEO_GBP_Apify_Provider::class;
         return new $class($user_id);
     }
 
@@ -156,6 +280,12 @@ class PCM_SEO_GBP
      */
     public static function normalize(array $raw): array
     {
+        // SHAPE DETECTION (gap 1f38238): the Apify actor speaks its own
+        // dialect (title/totalScore/kgmid) — one entry point, two mappers,
+        // every caller untouched.
+        if (isset($raw['title']) || isset($raw['kgmid']) || isset($raw['totalScore'])) {
+            return self::normalize_apify($raw);
+        }
         $name = '';
         if (isset($raw['displayName'])) {
             $name = is_array($raw['displayName']) ? (string) ($raw['displayName']['text'] ?? '') : (string) $raw['displayName'];
@@ -230,6 +360,76 @@ class PCM_SEO_GBP
             'description'   => $desc,
             'mapsShareUrl'  => $maps_uri,
             'cid'           => $cid,
+            'mapsEmbedUrl'  => $cid !== '' ? 'https://maps.google.com/maps?cid=' . $cid . '&output=embed' : '',
+            'publicReviews' => $public_reviews,
+        ), static fn($v) => $v !== '' && $v !== null && $v !== array());
+    }
+
+    /**
+     * Apify crawler-google-places item → THE SAME normalized record shape
+     * (gap 1f38238) + the schema ids the direct API never gave: kgid (from
+     * kgmid), fid. Defensive mapping; empty fields never land (filter law).
+     * Pure — harness-pinned.
+     *
+     * @param array $raw One dataset item.
+     * @return array Normalized record.
+     */
+    public static function normalize_apify(array $raw): array
+    {
+        $hours = '';
+        if (!empty($raw['openingHours']) && is_array($raw['openingHours'])) {
+            $lines = array();
+            foreach ($raw['openingHours'] as $h) {
+                if (is_array($h) && isset($h['day'])) {
+                    $lines[] = (string) $h['day'] . ': ' . (string) ($h['hours'] ?? '');
+                }
+            }
+            $hours = implode("\n", $lines);
+        }
+        $cap = 20;
+        if (class_exists('PCM_SEO_GBP_Apify_Provider')) {
+            $cap = max(0, (int) (PCM_SEO_GBP_Apify_Provider::tunables()['storedReviewsCap'] ?? 20));
+        }
+        $public_reviews = array();
+        foreach (array_slice((array) ($raw['reviews'] ?? array()), 0, $cap) as $rv) {
+            if (!is_array($rv)) {
+                continue;
+            }
+            $text = (string) ($rv['text'] ?? ($rv['textTranslated'] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            $public_reviews[] = array(
+                'author' => (string) ($rv['name'] ?? ''),
+                'rating' => isset($rv['stars']) ? (float) $rv['stars'] : null,
+                'text'   => $text,
+                'time'   => (string) ($rv['publishedAtDate'] ?? ''),
+            );
+        }
+        $cid = (string) ($raw['cid'] ?? '');
+        return array_filter(array(
+            'place_id'      => (string) ($raw['placeId'] ?? ''),
+            'name'          => (string) ($raw['title'] ?? ''),
+            'address'       => (string) ($raw['address'] ?? ''),
+            'street'        => (string) ($raw['street'] ?? ''),
+            'postal'        => (string) ($raw['postalCode'] ?? ''),
+            'city'          => (string) ($raw['city'] ?? ''),
+            'region'        => (string) ($raw['state'] ?? ''),
+            'country'       => (string) ($raw['countryCode'] ?? ''),
+            'phone'         => (string) ($raw['phone'] ?? ($raw['phoneUnformatted'] ?? '')),
+            'lat'           => isset($raw['location']['lat']) ? (float) $raw['location']['lat'] : null,
+            'lng'           => isset($raw['location']['lng']) ? (float) $raw['location']['lng'] : null,
+            'website'       => (string) ($raw['website'] ?? ''),
+            'category'      => (string) ($raw['categoryName'] ?? ''),
+            'rating'        => isset($raw['totalScore']) ? (float) $raw['totalScore'] : null,
+            'reviews'       => isset($raw['reviewsCount']) ? (int) $raw['reviewsCount'] : null,
+            'hours'         => $hours,
+            'types'         => !empty($raw['categories']) && is_array($raw['categories']) ? array_values(array_map('strval', $raw['categories'])) : array(),
+            'description'   => (string) ($raw['description'] ?? ''),
+            'mapsShareUrl'  => (string) ($raw['url'] ?? ''),
+            'cid'           => $cid,
+            'fid'           => (string) ($raw['fid'] ?? ''),
+            'kgid'          => (string) ($raw['kgmid'] ?? ''),
             'mapsEmbedUrl'  => $cid !== '' ? 'https://maps.google.com/maps?cid=' . $cid . '&output=embed' : '',
             'publicReviews' => $public_reviews,
         ), static fn($v) => $v !== '' && $v !== null && $v !== array());
