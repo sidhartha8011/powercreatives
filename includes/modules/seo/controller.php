@@ -1505,7 +1505,16 @@ class PCM_REST_SEO extends PCM_REST_Base
         if ($record['brandId'] === 0) {
             return $this->error(__('Link this site to a brand first — the refresh writes into the brand\'s business unit.', 'power-creatives'), 409, 'pcm_seo_biz_unmapped');
         }
-        $scraped = (new PCM_Brands_Service())->scrape_and_prepare((string) $site->url);
+        // ASK-FIRST refresh (gap 670d0e0): the popover's CONFIRMED url is the
+        // one scraped — never a guessed system URL — and it is remembered as
+        // this site's Indexed URL (site layer).
+        $params      = $request->get_json_params() ?: array();
+        $custom_url  = esc_url_raw((string) ($params['url'] ?? ''));
+        $scrape_url  = ($custom_url !== '' && preg_match('#^https?://#i', $custom_url)) ? $custom_url : (string) $site->url;
+        if ($custom_url !== '' && $scrape_url === $custom_url) {
+            PCM_SEO_Service::save_site_business_overrides((int) $site->id, array('indexedurl' => $custom_url));
+        }
+        $scraped = (new PCM_Brands_Service())->scrape_and_prepare($scrape_url);
         $info    = (array) ($scraped['businessInfo'] ?? array());
         $fields  = array_filter(array(
             'name'        => (string) ($info['name'] ?? ''),
@@ -1546,7 +1555,31 @@ class PCM_REST_SEO extends PCM_REST_Base
         if ($saved instanceof WP_Error) {
             return $saved;
         }
-        return $this->success(PCM_SEO_Service::business_record_for_site((int) $site->id));
+        // GOOGLE NATIVE (gap 670d0e0): with a google_places key the SAME paste
+        // fills the WHOLE record — resolve the place, pull the wide-mask
+        // details, merge tagged 'gbp'. No key / resolve failure = the local
+        // cid/geo fields above stand alone, the reason NAMED in the reply —
+        // never a silent half-result.
+        $google = array('filled' => false, 'error' => null);
+        $pid    = PCM_SEO_GBP::resolve_share_url((string) ($params['url'] ?? ''), (int) $user->id);
+        if ($pid instanceof WP_Error) {
+            $google['error'] = $pid->get_error_message();
+        } else {
+            $raw = PCM_SEO_GBP::provider((int) $user->id)->details($pid, PCM_SEO_GBP::default_lang());
+            if (isset($raw['error'])) {
+                $google['error'] = (string) $raw['error'];
+            } elseif (!empty($raw)) {
+                $normalized = PCM_SEO_GBP::normalize($raw);
+                $merge      = PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => $normalized, 'sourceTag' => 'gbp'), $record['unitId']);
+                $google['filled'] = !($merge instanceof WP_Error);
+                if ($merge instanceof WP_Error) {
+                    $google['error'] = $merge->get_error_message();
+                }
+            }
+        }
+        $out = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        $out['google'] = $google;
+        return $this->success($out);
     }
 
     /** POST /seo/gbp/search — search places (via the configured provider). */
@@ -1558,7 +1591,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->error('Search query is required.', 400, 'pcm_seo_gbp_no_query');
         }
         $lang   = sanitize_text_field((string) ($params['language'] ?? PCM_SEO_GBP::default_lang()));
-        $raw    = PCM_SEO_GBP::provider()->search($query, $lang);
+        $raw    = PCM_SEO_GBP::provider((int) $this->get_current_pcm_user()->id)->search($query, $lang);
         if (isset($raw['error'])) {
             return $this->error((string) $raw['error'], 502, 'pcm_seo_gbp_error');
         }
@@ -1576,7 +1609,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->error('brand and placeId are required.', 400, 'pcm_seo_gbp_bad_input');
         }
         $lang = sanitize_text_field((string) ($params['language'] ?? PCM_SEO_GBP::default_lang()));
-        $raw  = PCM_SEO_GBP::provider()->details($place_id, $lang);
+        $raw  = PCM_SEO_GBP::provider((int) $this->get_current_pcm_user()->id)->details($place_id, $lang);
         if (isset($raw['error'])) {
             return $this->error((string) $raw['error'], 502, 'pcm_seo_gbp_error');
         }

@@ -311,5 +311,42 @@ check('non-maps host = named error', $mp3 instanceof WP_Error && $mp3->get_error
 $mp4 = PCM_SEO_Service::parse_maps_url('https://maps.google.com/maps/nothing-here');
 check('unparseable maps link = named error', $mp4 instanceof WP_Error && $mp4->get_error_code() === 'pcm_seo_maps_unparsed');
 
+// ═══ 7. GBP normalize — THE WIDE MASK (Google Native A, gap 670d0e0) ═══
+echo "gbp normalize wide mask\n";
+if (!class_exists('PCM_Settings')) {
+    // Minimal settings shim for the gbp file load (provider config reads).
+    class PCM_Settings
+    {
+        public static function get($k, $d = null)
+        {
+            return $d;
+        }
+    }
+}
+require_once $root . '/includes/modules/seo/gbp.php';
+$n = PCM_SEO_GBP::normalize(array(
+    'id'                  => 'ChIJtest',
+    'displayName'         => array('text' => 'Profit Media'),
+    'formattedAddress'    => 'Avenyn 1, 411 36 Göteborg, Sweden',
+    'addressComponents'   => array(
+        array('longText' => '411 36', 'types' => array('postal_code')),
+        array('longText' => 'Göteborg', 'types' => array('postal_town')),
+        array('longText' => 'Västra Götaland', 'types' => array('administrative_area_level_1')),
+        array('longText' => 'Sweden', 'types' => array('country')),
+    ),
+    'internationalPhoneNumber' => '+46 31 111 111',
+    'googleMapsUri'       => 'https://maps.google.com/?cid=12345678901234567890',
+    'reviews'             => array(
+        array('text' => array('text' => 'Great agency!'), 'rating' => 5, 'authorAttribution' => array('displayName' => 'Anna'), 'publishTime' => '2026-01-01T00:00:00Z'),
+        array('text' => array('text' => ''), 'rating' => 4),
+    ),
+));
+check('address components mapped', $n['postal'] === '411 36' && $n['city'] === 'Göteborg' && $n['region'] === 'Västra Götaland' && $n['country'] === 'Sweden');
+check('intl phone mapped', $n['phoneIntl'] === '+46 31 111 111');
+check('cid extracted from maps uri + embed built', $n['cid'] === '12345678901234567890' && strpos($n['mapsEmbedUrl'], 'cid=12345678901234567890') !== false);
+check('public reviews kept w/ text, empty dropped', count($n['publicReviews']) === 1 && $n['publicReviews'][0]['author'] === 'Anna');
+check('empty fields never land (filter law)', !array_key_exists('website', $n) && !array_key_exists('hours', $n));
+check('legacy keys intact', $n['name'] === 'Profit Media' && $n['place_id'] === 'ChIJtest');
+
 echo "\n{$pass}/" . ($pass + $fail) . " passed\n";
 exit($fail === 0 ? 0 : 1);

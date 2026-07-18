@@ -33,76 +33,110 @@ interface PCM_SEO_GBP_Provider
 }
 
 /**
- * n8n-webhook provider. Posts {action, ...} to the configured webhook (the
- * same contract the source plugin used) and returns the raw Places payload.
+ * NATIVE Google Places (New) v1 provider (Google Native Phase A, gap
+ * 670d0e0 — the n8n middleman is DELETED, this replaces it in the same
+ * pair). Key = the `google_places` Integrations provider entry, per user —
+ * the regular flow: add a key, gain the voice. THE WIDE FIELD MASK carries
+ * the agency cheat sheet's public half (address components, intl phone,
+ * maps URI, public reviews, hours, rating, category). Reviews are CONTENT
+ * material only — never schema markup (policy law).
  */
-class PCM_SEO_GBP_N8N_Provider implements PCM_SEO_GBP_Provider
+class PCM_SEO_GBP_Google_Provider implements PCM_SEO_GBP_Provider
 {
-    private const FIELDS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.websiteUri,places.types,places.rating,places.userRatingCount,places.editorialSummary,places.regularOpeningHours,places.primaryTypeDisplayName';
+    private const MASK = 'id,displayName,formattedAddress,shortFormattedAddress,addressComponents,nationalPhoneNumber,internationalPhoneNumber,location,websiteUri,types,primaryTypeDisplayName,rating,userRatingCount,regularOpeningHours,editorialSummary,googleMapsUri,reviews';
 
-    private function call(string $action, array $data): array
+    /** The calling user's key — resolved per request (set by PCM_SEO_GBP::provider()). */
+    private $user_id;
+
+    public function __construct(int $user_id = 0)
     {
-        $webhook = (string) PCM_Settings::get('seo_gbp_webhook', '');
-        if ($webhook === '') {
-            return array('error' => __('GBP webhook not configured (Settings → SEO).', 'power-creatives'));
+        $this->user_id = $user_id;
+    }
+
+    private function api_key(): string
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('integrations');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $key = $wpdb->get_var($wpdb->prepare(
+            "SELECT apiKey FROM {$table} WHERE provider = %s AND userId = %d AND isActive = 1 LIMIT 1",
+            'google_places',
+            $this->user_id
+        ));
+        return (string) ($key ?: '');
+    }
+
+    private function request(string $url, ?array $body, string $language_code): array
+    {
+        $key = $this->api_key();
+        if ($key === '') {
+            return array('error' => __('No Google Places key — add the "Google Places" integration (Integrations module), then retry.', 'power-creatives'));
         }
-        $payload = array_merge(array('action' => $action, 'source' => 'power_creatives'), $data);
-        $secret  = (string) PCM_Settings::get('seo_gbp_secret', '');
-        $headers = array('Content-Type' => 'application/json');
-        if ($secret !== '') {
-            // Optional shared-secret header — set a matching check on the n8n
-            // side to stop anyone with the URL from spending your Google quota.
-            $headers['X-PCM-Secret'] = $secret;
+        $args = array(
+            'timeout' => 20,
+            'headers' => array(
+                'Content-Type'             => 'application/json',
+                'X-Goog-Api-Key'           => $key,
+                'X-Goog-FieldMask'         => $body !== null ? preg_replace('/(^|,)/', '$1places.', self::MASK) : self::MASK,
+                'languageCode'             => $language_code,
+                'reviews_no_translations'  => 'true',
+            ),
+        );
+        if ($body !== null) {
+            $args['method'] = 'POST';
+            $args['body']   = wp_json_encode($body);
         }
-        $res = wp_remote_post($webhook, array('timeout' => 20, 'headers' => $headers, 'body' => wp_json_encode($payload)));
+        $res = ($body !== null) ? wp_remote_post($url, $args) : wp_remote_get($url, $args);
         if (is_wp_error($res)) {
             return array('error' => $res->get_error_message());
         }
-        $body = json_decode((string) wp_remote_retrieve_body($res), true);
-        return is_array($body) ? $body : array();
+        $code    = (int) wp_remote_retrieve_response_code($res);
+        $decoded = json_decode((string) wp_remote_retrieve_body($res), true);
+        if ($code !== 200) {
+            $msg = is_array($decoded) ? (string) ($decoded['error']['message'] ?? '') : '';
+            return array('error' => sprintf(
+                /* translators: 1: HTTP status, 2: Google's message */
+                __('Google Places answered HTTP %1$d%2$s — check the key and the enabled API in its Google project.', 'power-creatives'),
+                $code,
+                $msg !== '' ? ' (' . $msg . ')' : ''
+            ));
+        }
+        return is_array($decoded) ? $decoded : array();
     }
 
     public function search(string $query, string $language_code): array
     {
-        $body = $this->call('search_places', array('business_name' => $query, 'input_type' => 'textquery', 'language_code' => $language_code, 'fields' => self::FIELDS));
+        $body = $this->request('https://places.googleapis.com/v1/places:searchText', array('textQuery' => $query), $language_code);
         if (isset($body['error'])) {
             return $body;
         }
-        // n8n may wrap as {success,data} or return {places:[...]} directly.
-        $places = $body['places'] ?? ($body['data']['places'] ?? ($body['data'] ?? array()));
-        return is_array($places) ? array_values($places) : array();
+        return is_array($body['places'] ?? null) ? array_values($body['places']) : array();
     }
 
     public function details(string $place_id, string $language_code): array
     {
-        $body = $this->call('get_business_details', array('place_id' => $place_id, 'language_code' => $language_code, 'fields' => 'id,displayName,formattedAddress,location,nationalPhoneNumber,websiteUri,regularOpeningHours,rating,userRatingCount,types,primaryTypeDisplayName,editorialSummary'));
-        if (isset($body['error'])) {
-            return $body;
-        }
-        $place = $body['place'] ?? ($body['data'] ?? $body);
-        if (isset($place['places'][0])) {
-            $place = $place['places'][0];
-        }
-        return is_array($place) ? $place : array();
+        return $this->request('https://places.googleapis.com/v1/places/' . rawurlencode($place_id), null, $language_code);
     }
 }
 
 class PCM_SEO_GBP
 {
-    /** Registered providers by id. Add 'google' here later. */
+    /** Registered providers by id (n8n RETIRED 2026-07-17, gap 670d0e0 —
+     *  the native Google client replaced it in the same pair). */
     public static function providers(): array
     {
-        $map = array('n8n' => PCM_SEO_GBP_N8N_Provider::class);
+        $map = array('google' => PCM_SEO_GBP_Google_Provider::class);
         return apply_filters('pcm_seo_gbp_providers', $map);
     }
 
-    /** The configured provider instance (defaults to n8n). */
-    public static function provider(): PCM_SEO_GBP_Provider
+    /** The configured provider instance for one user (key resolution is
+     *  per user — the Integrations pattern). */
+    public static function provider(int $user_id = 0): PCM_SEO_GBP_Provider
     {
-        $id  = (string) PCM_Settings::get('seo_gbp_provider', 'n8n');
+        $id  = (string) PCM_Settings::get('seo_gbp_provider', 'google');
         $map = self::providers();
-        $class = $map[$id] ?? PCM_SEO_GBP_N8N_Provider::class;
-        return new $class();
+        $class = $map[$id] ?? PCM_SEO_GBP_Google_Provider::class;
+        return new $class($user_id);
     }
 
     /** Default UI language code from the WP locale (e.g. 'sv'). */
@@ -142,11 +176,49 @@ class PCM_SEO_GBP
         if (isset($raw['editorialSummary'])) {
             $desc = is_array($raw['editorialSummary']) ? (string) ($raw['editorialSummary']['text'] ?? '') : (string) $raw['editorialSummary'];
         }
-        return array(
+        // THE WIDE MASK additions (gap 670d0e0) — all additive, nothing renamed.
+        $components = array();
+        foreach ((array) ($raw['addressComponents'] ?? array()) as $c) {
+            if (!is_array($c) || empty($c['types']) || !is_array($c['types'])) {
+                continue;
+            }
+            $text = is_array($c['longText'] ?? null) ? '' : (string) ($c['longText'] ?? ($c['long_name'] ?? ''));
+            foreach ($c['types'] as $t) {
+                $components[(string) $t] = $text;
+            }
+        }
+        $maps_uri = (string) ($raw['googleMapsUri'] ?? '');
+        $cid      = '';
+        if ($maps_uri !== '' && preg_match('/[?&]cid=(\d+)/', $maps_uri, $cm)) {
+            $cid = $cm[1];
+        }
+        $public_reviews = array();
+        foreach (array_slice((array) ($raw['reviews'] ?? array()), 0, 5) as $rv) {
+            if (!is_array($rv)) {
+                continue;
+            }
+            $text = is_array($rv['text'] ?? null) ? (string) ($rv['text']['text'] ?? '') : (string) ($rv['text'] ?? '');
+            if ($text === '') {
+                continue;
+            }
+            $public_reviews[] = array(
+                'author' => is_array($rv['authorAttribution'] ?? null) ? (string) ($rv['authorAttribution']['displayName'] ?? '') : '',
+                'rating' => isset($rv['rating']) ? (float) $rv['rating'] : null,
+                'text'   => $text,
+                'time'   => (string) ($rv['publishTime'] ?? ''),
+            );
+        }
+        return array_filter(array(
             'place_id'      => (string) ($raw['id'] ?? $raw['place_id'] ?? $raw['placeId'] ?? ''),
             'name'          => $name,
             'address'       => (string) ($raw['formattedAddress'] ?? $raw['formatted_address'] ?? ''),
+            'shortAddress'  => (string) ($raw['shortFormattedAddress'] ?? ''),
+            'postal'        => (string) ($components['postal_code'] ?? ''),
+            'city'          => (string) ($components['postal_town'] ?? $components['locality'] ?? ''),
+            'region'        => (string) ($components['administrative_area_level_1'] ?? ''),
+            'country'       => (string) ($components['country'] ?? ''),
             'phone'         => (string) ($raw['nationalPhoneNumber'] ?? $raw['formatted_phone_number'] ?? ''),
+            'phoneIntl'     => (string) ($raw['internationalPhoneNumber'] ?? ''),
             'lat'           => $lat !== null ? (float) $lat : null,
             'lng'           => $lng !== null ? (float) $lng : null,
             'website'       => (string) ($raw['websiteUri'] ?? $raw['website'] ?? ''),
@@ -156,7 +228,61 @@ class PCM_SEO_GBP
             'hours'         => $hours,
             'types'         => !empty($raw['types']) && is_array($raw['types']) ? array_values(array_map('strval', $raw['types'])) : array(),
             'description'   => $desc,
-        );
+            'mapsShareUrl'  => $maps_uri,
+            'cid'           => $cid,
+            'mapsEmbedUrl'  => $cid !== '' ? 'https://maps.google.com/maps?cid=' . $cid . '&output=embed' : '',
+            'publicReviews' => $public_reviews,
+        ), static fn($v) => $v !== '' && $v !== null && $v !== array());
+    }
+
+    /**
+     * Share-URL → place id (Google Native Phase A, gap 670d0e0). Follows the
+     * short link's redirects manually (max 5), then extracts the ChIJ place
+     * id from the long URL; falls back to the /maps/place/{name}/ segment →
+     * ONE searchText call → the best match. Named errors — never a guess
+     * presented as a fact.
+     *
+     * @param string $url     The pasted share URL (already host-validated by parse_maps_url callers).
+     * @param int    $user_id Key owner for the fallback search.
+     * @return string|\WP_Error The place id.
+     */
+    public static function resolve_share_url(string $url, int $user_id)
+    {
+        $current = $url;
+        for ($hop = 0; $hop < 5; $hop++) {
+            if (preg_match('/(ChIJ[0-9A-Za-z_-]{10,})/', $current, $m)) {
+                return $m[1];
+            }
+            $res = wp_remote_get($current, array('timeout' => 15, 'redirection' => 0, 'headers' => array('User-Agent' => 'Mozilla/5.0 (compatible; PowerCreatives)')));
+            if (is_wp_error($res)) {
+                return new WP_Error('pcm_seo_maps_resolve', sprintf(
+                    /* translators: %s: transport error */
+                    __('Could not follow the Maps link: %s', 'power-creatives'),
+                    $res->get_error_message()
+                ), array('status' => 502));
+            }
+            $location = (string) wp_remote_retrieve_header($res, 'location');
+            if ($location === '') {
+                break; // final URL reached
+            }
+            $current = $location;
+        }
+        if (preg_match('/(ChIJ[0-9A-Za-z_-]{10,})/', $current, $m)) {
+            return $m[1];
+        }
+        // Fallback: the place NAME from the long URL → one search.
+        if (preg_match('#/maps/place/([^/@]+)#', $current, $m)) {
+            $name    = trim(rawurldecode(str_replace('+', ' ', $m[1])));
+            $results = self::provider($user_id)->search($name, self::default_lang());
+            if (isset($results['error'])) {
+                return new WP_Error('pcm_seo_gbp_error', (string) $results['error'], array('status' => 502));
+            }
+            $pid = (string) ($results[0]['id'] ?? '');
+            if ($pid !== '') {
+                return $pid;
+            }
+        }
+        return new WP_Error('pcm_seo_maps_no_place', __('No Google place could be identified from that link — search by name in the Business panel instead.', 'power-creatives'), array('status' => 404));
     }
 
     // ── Storage FACADE (Business Spine P1, gap 1aedf65): the record lives in

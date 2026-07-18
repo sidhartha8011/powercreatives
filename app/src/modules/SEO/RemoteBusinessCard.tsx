@@ -17,31 +17,35 @@ import { trpc } from '@/lib/trpc';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-/** THE FIELD REGISTRY — the card's rows. Add a field = add a row. */
-const FIELD_REGISTRY: Array<{ key: string; label: string; multiline?: boolean }> = [
-  { key: 'name', label: 'Business name' },
-  { key: 'address', label: 'Address' },
-  { key: 'postal', label: 'Postal number' },
-  { key: 'city', label: 'City' },
-  { key: 'region', label: 'Region' },
-  { key: 'country', label: 'Country' },
-  { key: 'phone', label: 'Phone' },
-  { key: 'email', label: 'Business email' },
-  { key: 'website', label: 'Website' },
-  { key: 'hours', label: 'Hours', multiline: true },
-  { key: 'category', label: 'Category' },
-  { key: 'niche', label: 'Niche' },
-  { key: 'serviceareas', label: 'Service areas' },
-  { key: 'primarylocation', label: 'Primary location' },
-  { key: 'language', label: 'Business language' },
-  { key: 'description', label: 'Description', multiline: true },
-  { key: 'socialprofiles', label: 'Social profiles', multiline: true },
-  { key: 'kgid', label: 'Knowledge Graph ID' },
-  { key: 'cid', label: 'Google CID' },
-  { key: 'mapsShareUrl', label: 'Maps share URL' },
-  { key: 'mapsEmbedUrl', label: 'Maps embed URL' },
-  { key: 'lat', label: 'Latitude' },
-  { key: 'lng', label: 'Longitude' },
+/** THE FIELD REGISTRY — the card's rows in their two rooms (owner spec:
+ *  Business = identity · Local SEO = the Google surface, tinted). Add a
+ *  field = add a row; it lands in its room, zero backend change. */
+type BizGroup = 'business' | 'local';
+const FIELD_REGISTRY: Array<{ key: string; label: string; group: BizGroup; multiline?: boolean }> = [
+  { key: 'name', label: 'Business name', group: 'business' },
+  { key: 'website', label: 'Website', group: 'business' },
+  { key: 'indexedurl', label: 'Indexed URL', group: 'business' },
+  { key: 'email', label: 'Business email', group: 'business' },
+  { key: 'phone', label: 'Phone', group: 'business' },
+  { key: 'address', label: 'Address', group: 'business' },
+  { key: 'postal', label: 'Postal number', group: 'business' },
+  { key: 'city', label: 'City', group: 'business' },
+  { key: 'region', label: 'Region', group: 'business' },
+  { key: 'country', label: 'Country', group: 'business' },
+  { key: 'hours', label: 'Hours', group: 'business', multiline: true },
+  { key: 'language', label: 'Business language', group: 'business' },
+  { key: 'description', label: 'Description', group: 'business', multiline: true },
+  { key: 'socialprofiles', label: 'Social profiles', group: 'business', multiline: true },
+  { key: 'niche', label: 'Niche', group: 'business' },
+  { key: 'category', label: 'Category', group: 'local' },
+  { key: 'serviceareas', label: 'Service areas', group: 'local' },
+  { key: 'primarylocation', label: 'Primary location', group: 'local' },
+  { key: 'kgid', label: 'Knowledge Graph ID', group: 'local' },
+  { key: 'cid', label: 'Google CID', group: 'local' },
+  { key: 'mapsShareUrl', label: 'Maps share URL', group: 'local' },
+  { key: 'mapsEmbedUrl', label: 'Maps embed URL', group: 'local' },
+  { key: 'lat', label: 'Latitude', group: 'local' },
+  { key: 'lng', label: 'Longitude', group: 'local' },
 ];
 
 /** Plain names for the source tags (hover captions). */
@@ -84,6 +88,10 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [mapsUrl, setMapsUrl] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  /** ASK-FIRST refresh (gap 670d0e0): null = closed; string = the URL the
+   *  user is confirming — what you see is what gets scraped, and the
+   *  confirmed URL becomes this site's Indexed URL. */
+  const [refreshUrl, setRefreshUrl] = useState<string | null>(null);
   useEffect(() => { setDrafts({}); }, [card?.brandId, card?.unitId, siteId]);
 
   const refresh = () => { void utils.seo.businessCard.invalidate(); cardQuery.refetch(); };
@@ -179,11 +187,11 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
             <span className="grow" />
             <button
               type="button"
-              onClick={async () => { setBusy('refresh'); try { await refreshM.mutateAsync({ siteId }); toast.success('Refreshed from the site — your corrections kept.'); refresh(); } catch (e: any) { toast.error(e?.message ?? 'Refresh failed'); } finally { setBusy(null); } }}
+              onClick={() => setRefreshUrl(String(card.fields['indexedurl'] ?? card.fields['website'] ?? card.fields['siteUrl'] ?? ''))}
               disabled={busy !== null}
               className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60"
             >
-              {busy === 'refresh' ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Refresh from site
+              <RefreshCw className="h-3 w-3" /> Refresh from site
             </button>
           </>
         ) : (
@@ -218,60 +226,95 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
         )}
       </div>
 
-      {/* ── Maps paste: one Share URL → CID + coordinates + embed, zero API. ── */}
-      {card.brandId > 0 && (
-        <div className="flex items-center gap-2">
-          <MapPin className="h-4 w-4 shrink-0 text-slate-400" />
+      {/* ── ASK-FIRST refresh popover: what you see is what gets scraped. ── */}
+      {refreshUrl !== null && (
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+          <RefreshCw className="h-4 w-4 shrink-0 text-slate-400" />
           <Input
-            value={mapsUrl}
-            onChange={(e) => setMapsUrl(e.target.value)}
-            placeholder="Paste the Google Maps share URL"
-            className="h-8 text-xs"
+            value={refreshUrl}
+            onChange={(e) => setRefreshUrl(e.target.value)}
+            placeholder="The indexed URL to scrape"
+            className="h-8 bg-white text-xs"
           />
           <button
             type="button"
-            onClick={async () => { if (!mapsUrl.trim()) return; setBusy('maps'); try { await mapsM.mutateAsync({ siteId, url: mapsUrl.trim() }); setMapsUrl(''); toast.success('Maps details saved to the brand.'); refresh(); } catch (e: any) { toast.error(e?.message ?? 'Maps link not usable'); } finally { setBusy(null); } }}
-            disabled={busy !== null || mapsUrl.trim() === ''}
-            className="shrink-0 rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            onClick={async () => { const u = (refreshUrl ?? '').trim(); if (!u) return; setBusy('refresh'); try { await refreshM.mutateAsync({ siteId, url: u }); toast.success('Refreshed — your corrections kept, the URL remembered as Indexed URL.'); setRefreshUrl(null); refresh(); } catch (e: any) { toast.error(e?.message ?? 'Refresh failed'); } finally { setBusy(null); } }}
+            disabled={busy !== null || (refreshUrl ?? '').trim() === ''}
+            className="shrink-0 rounded-full border border-primary/40 bg-white px-2.5 py-1 text-xs font-medium text-primary hover:bg-[#e7f5ff] disabled:opacity-60"
           >
-            {busy === 'maps' ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+            {busy === 'refresh' ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Fetch'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setRefreshUrl(null)}
+            className="shrink-0 rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-500 hover:bg-white"
+          >
+            Cancel
           </button>
         </div>
       )}
 
-      {/* ── The registry-driven card: value + source; edits = this-site layer. ── */}
-      <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-        {FIELD_REGISTRY.map(({ key, label, multiline }) => {
-          const value = drafts[key] ?? String(card.fields[key] ?? '');
-          const source = card.sources[key] ?? '';
-          return (
-            <div key={key} className="flex items-start gap-3 px-4 py-2" title={source ? `Source: ${SOURCE_LABEL[source] ?? source}` : undefined}>
-              <div className="w-36 shrink-0 pt-1.5 text-[11px] font-medium text-slate-500">{label}</div>
-              <div className="min-w-0 grow">
-                {multiline ? (
-                  <textarea
-                    value={value}
-                    onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
-                    onBlur={() => void saveField(key)}
-                    rows={2}
-                    className="w-full resize-y rounded-md border border-transparent px-2 py-1 text-xs text-slate-800 hover:border-slate-200 focus:border-slate-300 focus:outline-none"
-                  />
-                ) : (
-                  <input
-                    value={value}
-                    onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
-                    onBlur={() => void saveField(key)}
-                    className="w-full rounded-md border border-transparent px-2 py-1 text-xs text-slate-800 hover:border-slate-200 focus:border-slate-300 focus:outline-none"
-                  />
-                )}
-              </div>
-              <div className="w-24 shrink-0 pt-1.5 text-right text-[9px] text-slate-300">
-                {busy === key ? <Loader2 className="ml-auto h-3 w-3 animate-spin" /> : (source === 'site' ? 'this site' : '')}
-              </div>
+      {/* ── THE TWO ROOMS (owner spec): Business = identity, white ·
+             Local SEO = the Google surface, whisper-tinted, the Maps-paste
+             row living inside it. One registry, two rooms. ── */}
+      {(['business', 'local'] as const).map((room) => (
+        <div key={room} className={`rounded-xl border border-slate-200 ${room === 'local' ? 'bg-amber-50/40' : 'bg-white'}`}>
+          <div className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            {room === 'business' ? 'Business' : 'Local SEO'}
+          </div>
+          {room === 'local' && card.brandId > 0 && (
+            <div className="flex items-center gap-2 px-4 pb-2">
+              <MapPin className="h-4 w-4 shrink-0 text-slate-400" />
+              <Input
+                value={mapsUrl}
+                onChange={(e) => setMapsUrl(e.target.value)}
+                placeholder="Paste the Google Maps share URL"
+                className="h-8 bg-white text-xs"
+              />
+              <button
+                type="button"
+                onClick={async () => { if (!mapsUrl.trim()) return; setBusy('maps'); try { const res: any = await mapsM.mutateAsync({ siteId, url: mapsUrl.trim() }); setMapsUrl(''); if (res?.google?.filled) { toast.success('Place found — the full Google record filled in.'); } else { toast.success('Maps details saved.'); if (res?.google?.error) toast.info(String(res.google.error)); } refresh(); } catch (e: any) { toast.error(e?.message ?? 'Maps link not usable'); } finally { setBusy(null); } }}
+                disabled={busy !== null || mapsUrl.trim() === ''}
+                className="shrink-0 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              >
+                {busy === 'maps' ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+              </button>
             </div>
-          );
-        })}
-      </div>
+          )}
+          <div className="divide-y divide-slate-100">
+            {FIELD_REGISTRY.filter((f) => f.group === room).map(({ key, label, multiline }) => {
+              const value = drafts[key] ?? String(card.fields[key] ?? '');
+              const source = card.sources[key] ?? '';
+              return (
+                <div key={key} className="flex items-start gap-3 px-4 py-2" title={source ? `Source: ${SOURCE_LABEL[source] ?? source}` : undefined}>
+                  <div className="w-36 shrink-0 pt-1.5 text-[11px] font-medium text-slate-500">{label}</div>
+                  <div className="min-w-0 grow">
+                    {multiline ? (
+                      <textarea
+                        value={value}
+                        onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
+                        onBlur={() => void saveField(key)}
+                        rows={2}
+                        className="w-full resize-y rounded-md border border-transparent bg-transparent px-2 py-1 text-xs text-slate-800 hover:border-slate-200 focus:border-slate-300 focus:outline-none"
+                      />
+                    ) : (
+                      <input
+                        value={value}
+                        onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
+                        onBlur={() => void saveField(key)}
+                        className="w-full rounded-md border border-transparent bg-transparent px-2 py-1 text-xs text-slate-800 hover:border-slate-200 focus:border-slate-300 focus:outline-none"
+                      />
+                    )}
+                  </div>
+                  <div className="w-24 shrink-0 pt-1.5 text-right text-[9px] text-slate-300">
+                    {busy === key ? <Loader2 className="ml-auto h-3 w-3 animate-spin" /> : (source === 'site' ? 'this site' : '')}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

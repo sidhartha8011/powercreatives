@@ -555,7 +555,9 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.businessRefresh": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/refresh`, body: {} }),
+        // The ASK-FIRST url (gap 670d0e0): the popover's confirmed URL is
+        // what gets scraped and becomes the site's Indexed URL.
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/refresh`, body: { url: input.url } }),
     },
     "seo.businessMaps": {
         endpoint: "seo/sites",

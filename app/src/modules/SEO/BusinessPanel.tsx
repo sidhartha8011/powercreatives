@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { trpc, apiFetch } from '@/lib/trpc';
+import { trpc } from '@/lib/trpc';
 
 interface Place { place_id: string; name: string; address: string; phone: string; category: string; website: string }
 const OVERRIDE_FIELDS: { key: string; label: string }[] = [
@@ -34,7 +34,6 @@ export function BusinessPanel() {
     : [];
 
   const [brandId, setBrandId] = useState<string>('');
-  const [webhook, setWebhook] = useState('');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Place[]>([]);
   const [resolved, setResolved] = useState<Record<string, any>>({});
@@ -56,16 +55,6 @@ export function BusinessPanel() {
       setOverrides(Object.fromEntries(Object.entries(rec.overrides ?? {}).map(([k, v]) => [k, String(v ?? '')])));
     }
   }, [getQuery.data]);
-
-  const handleSaveWebhook = useCallback(async () => {
-    setBusy(true);
-    try {
-      await apiFetch('settings', { method: 'POST', body: JSON.stringify({ seo_gbp_webhook: webhook.trim() }) });
-      toast.success('GBP webhook saved');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Save failed');
-    } finally { setBusy(false); }
-  }, [webhook]);
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return;
@@ -109,16 +98,8 @@ export function BusinessPanel() {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      {/* Webhook config */}
-      <section className="rounded-xl border border-border bg-card p-4 space-y-2">
-        <Label className="text-sm font-medium">GBP fetch webhook (n8n)</Label>
-        <p className="text-xs text-muted-foreground">The provider is swappable — a direct Google Places client can replace this later without changing anything else.</p>
-        <div className="flex gap-2">
-          <Input value={webhook} onChange={(e) => setWebhook(e.target.value)} placeholder="https://…/webhook/…" className="text-xs font-mono" />
-          <Button onClick={handleSaveWebhook} disabled={busy || !webhook.trim()} variant="outline">Save</Button>
-        </div>
-      </section>
-
+      {/* n8n webhook config REMOVED (Google Native Phase A, gap 670d0e0):
+          the fetch runs through the native google_places Integrations key. */}
       {/* Brand + search */}
       <section className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div className="grid grid-cols-[200px_1fr] gap-3">
