@@ -759,6 +759,11 @@ class PCM_Optimizer_Service
             // targeted revise is judged over-rewritten (retry, then an
             // honest error — never a silent 80% text loss).
             'revise'  => array('minRetention' => 0.6),
+            // THE CHANGE-CARD REVIEW (gap 0a0a3c3): maxChanges caps the
+            // verified per-section change list; below rewriteRetention the
+            // section presents as REWRITTEN (calm Before/After blocks
+            // instead of word confetti).
+            'review'  => array('maxChanges' => 12, 'rewriteRetention' => 0.35),
         );
         $stored = get_option(self::RESEARCH_OPTION);
         if (is_array($stored) && !empty($stored['onpage'])) {

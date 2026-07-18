@@ -217,7 +217,7 @@ const BLOCK_ORIGIN_CLASS: Record<string, string> = {
   owned: 'pcm-blk-owned',
   insert: 'pcm-blk-added',
 };
-function blockDecorations(doc: PMNode, flash: number | null): DecorationSet {
+function blockDecorations(doc: PMNode, flash: number | null, quote: { from: number; to: number } | null = null): DecorationSet {
   const blocks: Array<{ pos: number; end: number; heading: boolean; origin: string | null }> = [];
   doc.forEach((node, pos) => {
     blocks.push({
@@ -250,12 +250,17 @@ function blockDecorations(doc: PMNode, flash: number | null): DecorationSet {
       decos.push(Decoration.node(b.pos, b.end, { class: `pcm-blk ${origin}${role}${pulse}` }));
     });
   });
+  // The quote highlight (gap 0a0a3c3): one inline decoration on the exact
+  // words a hovered change card produced.
+  if (quote && quote.to > quote.from) {
+    decos.push(Decoration.inline(quote.from, quote.to, { class: 'pcm-quote-flash' }));
+  }
   return DecorationSet.create(doc, decos);
 }
 const SectionBlocks = Extension.create({
   name: 'pcmSectionBlocks',
   addStorage() {
-    return { flash: null as number | null };
+    return { flash: null as number | null, quote: null as { from: number; to: number } | null };
   },
   addGlobalAttributes() {
     return [
@@ -292,7 +297,7 @@ const SectionBlocks = Extension.create({
       new Plugin({
         key: new PluginKey('pcmSectionBlocks'),
         props: {
-          decorations: (state) => blockDecorations(state.doc, ext.storage.flash),
+          decorations: (state) => blockDecorations(state.doc, ext.storage.flash, ext.storage.quote),
         },
       }),
     ];
@@ -445,6 +450,9 @@ const BLOCK_STYLES =
   // Focus flash (click a rail card): dark-blue lane + soft wash, eased both ways.
   '[&_.pcm-blk]:transition-colors [&_.pcm-blk]:duration-500 ' +
   '[&_.pcm-blk-flash]:!border-l-blue-600 [&_.pcm-blk-flash]:bg-blue-50/70 ' +
+  // Quote highlight (gap 0a0a3c3): hovering a change card lights the exact
+  // words that change produced — the claim-to-text verification.
+  '[&_.pcm-quote-flash]:bg-blue-100 [&_.pcm-quote-flash]:rounded-sm ' +
   // Inline review chips: float on the changed section's first line. Hover
   // law (owner 2026-07-13): SELF-hover only (`.pcm-chip-x:hover`, never a
   // container-hover — that darkened every chip from anywhere in the text)
@@ -464,6 +472,14 @@ interface ReviewSection extends DocSection {
   error?: string;
   /** What ACTUALLY generated this suggestion — the API's own report. */
   genModel?: string;
+  /** THE CHANGE CARDS (gap 0a0a3c3): the section's OWN verified changes —
+   *  server-checked claims (quote found in the produced text, why ∈ the
+   *  run's purposes). Absent/empty = the honest floor: the card falls back
+   *  to the global run summary exactly as before. */
+  changes?: Array<{ what: string; why: string; quote: string }>;
+  /** Server verdict: the section was substantially rewritten — present it
+   *  as calm Before/After blocks instead of word confetti. */
+  rewritten?: boolean;
   /** The landed diff VIEW read back from the editor (same serializer as the
    *  live compare) — effectiveContent's untouched-detector: live == baseline
    *  ⇔ the user typed nothing in this section since the suggestion landed. */
@@ -1299,6 +1315,9 @@ export function SectionModal({
     // The editor stays EDITABLE (owner F1): the doc is the source of truth,
     // suggestions land by surgery — nothing rebuilds, nothing locks.
     // Bounded pool: 4 sections in flight; a slow/failed section fails ALONE.
+    // THE CHANGE CARDS (gap 0a0a3c3): every run asks for the envelope; the
+    // run's purposes are the only legal `why` ids (server-verified).
+    const runPurposes = Array.from(new Set((directives ?? []).flatMap((d) => d.purposes)));
     let next = 0;
     const worker = async () => {
       while (next < sections.length) {
@@ -1309,19 +1328,22 @@ export function SectionModal({
             siteId: siteId as number, postId, type,
             html: sections[i].html, topic,
             model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
+            reportChanges: true, purposes: runPurposes,
           });
           const value = canonicalAiHtml(editor, String(res?.value ?? '').trim());
           const genModel = String(res?.model ?? '');
+          const changes = Array.isArray(res?.changes) ? res.changes : [];
+          const rewritten = res?.rewritten === true;
           const changed = value !== '' && htmlText(value) !== htmlText(sections[i].html);
           if (reviewRef.current?.[i]?.status !== 'pending') continue; // user already finished — drop the result
           if (changed) {
-            applySection(i, diffBlocksHtml(sections[i].html, value) + sections[i].imgs.join(''));
+            applySection(i, diffBlocksHtml(sections[i].html, value, { consolidated: rewritten }) + sections[i].imgs.join(''));
           }
           // Baseline = the landed view read back from the editor (surgery is
           // synchronous) — effectiveContent's untouched-detector.
           const baseline = changed ? splitReviewSections(editor.getHTML())[String(i)]?.html : undefined;
           setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
-            ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value, genModel, baseline } : { ...s, status: 'clean' as ReviewStatus })
+            ? (changed ? { ...s, status: 'diff' as ReviewStatus, ai: value, genModel, baseline, changes, rewritten } : { ...s, status: 'clean' as ReviewStatus })
             : s)) ?? cur);
         } catch (e: any) {
           setReview((cur) => cur?.map((s, k) => (k === i && s.status === 'pending'
@@ -1437,15 +1459,19 @@ export function SectionModal({
         topic: note,
         draft,
         model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
+        reportChanges: true,
+        purposes: Array.from(new Set((runDirectives ?? []).flatMap((d) => d.purposes))),
       });
       const value = canonicalAiHtml(editor, String(res?.value ?? '').trim());
       const genModel = String(res?.model ?? '');
+      const changes = Array.isArray(res?.changes) ? res.changes : [];
+      const rewritten = res?.rewritten === true;
       if (reviewRef.current?.[i]?.status !== 'pending') return; // decided meanwhile — drop
       if (value && htmlText(value) !== htmlText(s.html)) {
-        applySection(i, diffBlocksHtml(s.html, value) + s.imgs.join(''));
+        applySection(i, diffBlocksHtml(s.html, value, { consolidated: rewritten }) + s.imgs.join(''));
         // Every landing re-arms the untouched-detector (initial + each revise).
         const baseline = splitReviewSections(editor.getHTML())[String(i)]?.html;
-        setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'diff' as ReviewStatus, ai: value, genModel, baseline } : x)) ?? cur);
+        setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'diff' as ReviewStatus, ai: value, genModel, baseline, changes, rewritten } : x)) ?? cur);
       } else {
         applySection(i, s.html + s.imgs.join(''));
         setReview((cur) => cur?.map((x, k) => (k === i ? { ...x, status: 'clean' as ReviewStatus } : x)) ?? cur);
@@ -1514,6 +1540,50 @@ export function SectionModal({
     const f = flashOrdinal;
     setFlashIdx(f);
     window.setTimeout(() => setFlashIdx((cur) => (cur === f ? null : cur)), 2000);
+  };
+
+  // ── Quote highlight (gap 0a0a3c3): hovering a change card lights the
+  //    exact words that change produced — claim-to-text verification.
+  //    Char-accurate normalized search inside the section's range; a quote
+  //    the user has since edited away falls back to the section flash —
+  //    honest, never a fake highlight. ──
+  const setQuoteRange = (range: { from: number; to: number } | null) => {
+    if (!editor) return;
+    (editor.storage as any).pcmSectionBlocks.quote = range;
+    editor.view.dispatch(editor.state.tr); // refresh decorations
+  };
+  const highlightQuote = (i: number, quote: string) => {
+    if (!editor) return;
+    const range = sectionRange(i);
+    if (!range) return;
+    // Build the section's text with a position for every character, then
+    // search whitespace-collapsed + case-folded — exact mapping back.
+    const chars: Array<{ ch: string; pos: number }> = [];
+    editor.state.doc.nodesBetween(range.from, range.to, (node, pos) => {
+      if (!node.isText || !node.text) return;
+      for (let k = 0; k < node.text.length; k++) chars.push({ ch: node.text[k], pos: pos + k });
+    });
+    const kept: Array<{ ch: string; pos: number }> = [];
+    for (const c of chars) {
+      if (/\s/.test(c.ch)) {
+        if (kept.length > 0 && kept[kept.length - 1].ch === ' ') continue;
+        kept.push({ ch: ' ', pos: c.pos });
+      } else {
+        kept.push({ ch: c.ch.toLowerCase(), pos: c.pos });
+      }
+    }
+    const haystack = kept.map((c) => c.ch).join('');
+    const needle = quote.toLowerCase().replace(/\s+/g, ' ').trim();
+    const at = needle ? haystack.indexOf(needle) : -1;
+    if (at < 0) {
+      focusSection(i); // quote edited away — flash the section instead
+      return;
+    }
+    const from = kept[at].pos;
+    const last = kept[at + needle.length - 1];
+    setQuoteRange({ from, to: last.pos + 1 });
+    const dom: globalThis.Node | null = editor.view.domAtPos(from).node;
+    ((dom instanceof HTMLElement ? dom : dom?.parentElement) ?? null)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   // Completion watcher (the surgery engine replaced the old whole-doc
@@ -2267,12 +2337,46 @@ export function SectionModal({
                 className="cursor-pointer border-b border-slate-100 px-2.5 py-1.5 hover:bg-slate-100/60"
               >
                 <div className="truncate text-[11px] font-medium text-slate-700" title={s.heading}>{s.heading || '(untitled section)'}</div>
-                {/* PURPOSE VERIFICATION (owner law 2026-07-13): the suggestion
-                    shows WHAT IT WAS ORDERED TO DO — pills + the compiled
-                    to-do — so fulfillment is judged before Accept/Revise.
-                    The model moves into the tooltip; plain runs (no basket)
-                    keep the model line, honestly. */}
-                {runDirectives ? (
+                {/* THE CHANGE CARDS (gap 0a0a3c3): the section's OWN verified
+                    changes — WHAT was done + WHY, hover lights the exact words
+                    in the text (claim-to-text verification). Server-checked:
+                    every line's quote was found in the produced text. */}
+                {s.status === 'diff' && (s.changes?.length ?? 0) > 0 ? (
+                  <div title={s.genModel ? `Generated by ${s.genModel}` : undefined}>
+                    {s.rewritten && (
+                      <div className="mt-0.5 inline-flex rounded-full bg-slate-100 px-1.5 py-px text-[8px] font-semibold text-slate-500">
+                        Section rewritten
+                      </div>
+                    )}
+                    <div className="mt-0.5 space-y-0.5">
+                      {(s.changes ?? []).slice(0, 4).map((c, k) => (
+                        <div
+                          key={k}
+                          className="cursor-default rounded px-0.5 leading-tight hover:bg-blue-50"
+                          onMouseEnter={() => highlightQuote(i, c.quote)}
+                          onMouseLeave={() => setQuoteRange(null)}
+                          title="Hover shows exactly where this landed in the text"
+                        >
+                          <span className="text-[9px] text-slate-600">• {c.what}</span>
+                          {c.why !== '' && (
+                            <span className="ml-1 text-[8px] italic text-slate-400">
+                              {(teacherById[c.why]?.label ?? TEACHER_PILLS[c.why] ?? c.why).toLowerCase()}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                      {(s.changes?.length ?? 0) > 4 && (
+                        <div className="text-[9px] leading-tight text-slate-400" title={(s.changes ?? []).map((c, k) => `${k + 1}. ${c.what}`).join('\n')}>
+                          +{(s.changes?.length ?? 0) - 4} more…
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : /* PURPOSE VERIFICATION (owner law 2026-07-13): the
+                    suggestion shows WHAT IT WAS ORDERED TO DO — pills + the
+                    compiled to-do. THE FLOOR (gap 0a0a3c3): sections without
+                    a verified change list keep this exact display. */
+                runDirectives ? (
                   <div title={s.genModel ? `Generated by ${s.genModel}` : undefined}>
                     {/* THE TWO PURPOSES the user knows (owner ruling
                         2026-07-15): one SEO / one AI pill max, then the

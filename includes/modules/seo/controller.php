@@ -741,7 +741,12 @@ class PCM_REST_SEO extends PCM_REST_Base
         // the note so the server can enforce the human-editor contract and
         // measure retention against it.
         $draft = wp_kses_post((string) ($params['draft'] ?? ''));
-        $result = PCM_SEO_Service::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id, $draft);
+        // THE CHANGE-CARD REVIEW (gap 0a0a3c3): the envelope contract is
+        // requested per call; purposes = the run's teacher ids, the only
+        // legal `why` values (the verifier blanks anything else).
+        $report_changes = !empty($params['reportChanges']);
+        $purposes       = array_values(array_filter(array_map('sanitize_key', (array) ($params['purposes'] ?? array()))));
+        $result = PCM_SEO_Service::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id, $draft, $report_changes, $purposes);
         if ($result instanceof WP_Error) {
             return $result;
         }

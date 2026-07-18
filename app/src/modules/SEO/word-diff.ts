@@ -144,7 +144,22 @@ const pairByClass = (a: HTMLElement[], b: HTMLElement[]): Array<[HTMLElement | n
  * sections / the user's stripped live text for edited ones, Reject restores
  * the original verbatim.)
  */
-export function diffBlocksHtml(originalHtml: string, aiHtml: string): string {
+export function diffBlocksHtml(originalHtml: string, aiHtml: string, opts?: { consolidated?: boolean }): string {
+  // CONSOLIDATED VIEW (gap 0a0a3c3): a section the server judged REWRITTEN
+  // renders as ONE calm struck group (every original block in its own
+  // shape) followed by ONE green group — never word confetti. Same marks,
+  // same strip guard, same accept/reject semantics; presentation only.
+  if (opts?.consolidated) {
+    const olds = parseBlocks(originalHtml);
+    const news = parseBlocks(aiHtml);
+    // The origin lane must survive on the first NEW heading exactly as the
+    // paired path guarantees (identity law) — carry it from the first
+    // original heading.
+    const oHead = olds.find((b) => /^H[1-6]$/.test(b.tagName)) ?? null;
+    const firstNewHead = news.findIndex((b) => /^H[1-6]$/.test(b.tagName));
+    return olds.map((b) => markBlock(b, 'removed')).join('')
+      + news.map((b, i) => markBlock(oHead && i === firstNewHead ? withOrigin(oHead, b) : b, 'added')).join('');
+  }
   const out: string[] = [];
   for (const [o, nw] of pairByClass(parseBlocks(originalHtml), parseBlocks(aiHtml))) {
     if (o && nw) {

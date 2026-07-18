@@ -6013,7 +6013,7 @@ class PCM_SEO_Service
      *  With $draft (a revise): THE HUMAN-EDITOR CONTRACT + retention check ride
      *  the run — a targeted note may never silently rewrite the whole draft
      *  (gap e8fcae5 D3). */
-    public static function remote_optimize_section(object $site, int $post_id, string $type, string $html, string $topic = '', ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null, string $draft = '')
+    public static function remote_optimize_section(object $site, int $post_id, string $type, string $html, string $topic = '', ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null, string $draft = '', bool $report_changes = false, array $purposes = array())
     {
         self::ensure_sites_service();
         $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
@@ -6030,33 +6030,134 @@ class PCM_SEO_Service
             $vars['topic'] = $contract . "\n\nUSER REQUEST: " . $topic
                 . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft;
         }
+        // THE CHANGE-CARD REVIEW (gap 0a0a3c3): the append-envelope contract —
+        // the exact output contract lives IN the prompt (Anthropic JSON law),
+        // appended server-side around the template like the revise contract
+        // above, so user-customized templates need no migration. The reply is
+        // PARSED AND VERIFIED by parse_section_reply(); an unparseable reply
+        // falls back to raw — byte-identical legacy behavior, the floor.
+        $envelope = '';
+        if ($report_changes) {
+            $why = !empty($purposes)
+                ? 'one of these purpose ids: ' . implode(', ', array_map('sanitize_key', $purposes)) . ' (or an empty string when none fits)'
+                : 'an empty string';
+            $envelope = "\n\nOUTPUT FORMAT (mandatory): respond with ONLY this JSON, no markdown fences, no text around it: "
+                . '{"html":"<the COMPLETE revised section HTML>","changes":[{"what":"one plain sentence describing ONE change you actually made","why":"<' . $why . '>","quote":"5-12 words copied VERBATIM from your revised html"}]}'
+                . ' List every real change you made; NEVER list a change you did not make.';
+            $vars['topic'] .= $envelope;
+        }
         $mode  = ($html !== '') ? 'optimize' : 'generate';
         $max   = (int) (self::field_prompts()['section']['max'] ?? 1200);
         $val   = self::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
         if ($val instanceof WP_Error) {
             return $val;
         }
+        // Parse BEFORE any retention math — with the envelope the raw reply
+        // is JSON and retention must measure the extracted html, never the
+        // JSON wrapper (gap 0a0a3c3).
+        $parsed = self::parse_section_reply((string) $val['value'], $purposes, $report_changes);
         if ($draft !== '') {
             $min_retention = (float) ((PCM_Optimizer_Service::research_tunables()['revise']['minRetention'] ?? 0.6));
-            $retention     = self::sentence_retention($draft, (string) $val['value']);
+            $retention     = self::sentence_retention($draft, $parsed['value']);
             if ($retention < $min_retention && !self::note_wants_broad_rewrite($topic, $model, $user_id, $provider)) {
                 // ONE retry with the contract restated — then honesty, never a
                 // silent 80% text loss.
                 $vars['topic'] = $contract . ' THIS IS A RETRY: the previous attempt rewrote text the request did not '
                     . 'cover. Copy the draft exactly and change ONLY what the request demands.'
-                    . "\n\nUSER REQUEST: " . $topic . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft;
+                    . "\n\nUSER REQUEST: " . $topic . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft
+                    . $envelope;
                 $retry = self::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
-                if (!($retry instanceof WP_Error) && self::sentence_retention($draft, (string) $retry['value']) > $retention) {
-                    $val       = $retry;
-                    $retention = self::sentence_retention($draft, (string) $val['value']);
+                if (!($retry instanceof WP_Error)) {
+                    $retry_parsed = self::parse_section_reply((string) $retry['value'], $purposes, $report_changes);
+                    if (self::sentence_retention($draft, $retry_parsed['value']) > $retention) {
+                        $val       = $retry;
+                        $parsed    = $retry_parsed;
+                        $retention = self::sentence_retention($draft, $parsed['value']);
+                    }
                 }
                 if ($retention < $min_retention) {
                     return new WP_Error('pcm_seo_revise_overwrote', __('The AI changed much more of the text than the note asked for — try again, or rephrase the note (say explicitly if you WANT a full rewrite).', 'power-creatives'), array('status' => 502));
                 }
             }
         }
+        // REWRITTEN verdict (gap 0a0a3c3): measured server-side against the
+        // ORIGINAL section with the hub-data threshold — the review presents
+        // such sections as calm Before/After blocks instead of word confetti.
+        $review_cfg = (array) (PCM_Optimizer_Service::research_tunables()['review'] ?? array());
+        $rewritten  = $html !== ''
+            && self::sentence_retention($html, $parsed['value']) < (float) ($review_cfg['rewriteRetention'] ?? 0.35);
         // The UI shows what ACTUALLY generated (the API's own report).
-        return array('value' => wp_kses_post((string) $val['value']), 'model' => (string) $val['model'], 'provider' => (string) $val['provider']);
+        return array(
+            'value'     => wp_kses_post($parsed['value']),
+            'model'     => (string) $val['model'],
+            'provider'  => (string) $val['provider'],
+            // Verified per-section changes (what/why/quote) — empty when the
+            // model answered without the envelope contract (the honest floor).
+            'changes'   => $parsed['changes'],
+            'rewritten' => $rewritten,
+        );
+    }
+
+    /**
+     * Parse + VERIFY the section reply under the change-card envelope
+     * (gap 0a0a3c3). Reply contract: {"html": "...", "changes":
+     * [{what, why, quote}]}. Every change survives ONLY if its quote is
+     * found VERBATIM (whitespace/case-normalized) in the html's text and
+     * its why is one of the run's purposes ('' otherwise) — the model's
+     * confession is checked, never believed. Any parse failure returns the
+     * RAW reply with no changes: byte-identical legacy behavior, the floor.
+     *
+     * @param string   $raw      The model's raw reply.
+     * @param string[] $purposes Allowed why ids for this run.
+     * @param bool     $expected Whether the envelope was requested at all.
+     * @return array{value:string,changes:array<int,array{what:string,why:string,quote:string}>}
+     */
+    public static function parse_section_reply(string $raw, array $purposes = array(), bool $expected = true): array
+    {
+        $fallback = array('value' => $raw, 'changes' => array());
+        if (!$expected) {
+            return $fallback;
+        }
+        $body = trim($raw);
+        // Tolerate fenced replies (```json ... ```) — the contract forbids
+        // them but a recoverable reply beats a discarded one.
+        if (preg_match('/^```[a-z]*\s*(.*?)\s*```$/s', $body, $m)) {
+            $body = trim($m[1]);
+        }
+        $decoded = json_decode($body, true);
+        if (!is_array($decoded) || !isset($decoded['html']) || !is_string($decoded['html']) || trim($decoded['html']) === '') {
+            return $fallback;
+        }
+        $value      = trim($decoded['html']);
+        $norm       = static fn(string $s): string => strtolower(trim((string) preg_replace('/\s+/u', ' ', $s)));
+        $value_text = $norm(wp_strip_all_tags($value));
+        $allowed    = array_map('sanitize_key', $purposes);
+        // class_exists = standalone-harness compatibility (bare PHP loads the
+        // seo service alone); the default mirrors the seeded tunable.
+        $max = (int) (class_exists('PCM_Optimizer_Service')
+            ? (PCM_Optimizer_Service::research_tunables()['review']['maxChanges'] ?? 12)
+            : 12);
+        $changes    = array();
+        foreach ((array) ($decoded['changes'] ?? array()) as $c) {
+            if (!is_array($c)) {
+                continue;
+            }
+            $what  = sanitize_text_field((string) ($c['what'] ?? ''));
+            $quote = sanitize_text_field((string) ($c['quote'] ?? ''));
+            if ($what === '' || $quote === '' || strpos($value_text, $norm($quote)) === false) {
+                continue; // unverifiable claim — never shown as a card
+            }
+            $why       = sanitize_key((string) ($c['why'] ?? ''));
+            $changes[] = array(
+                'what'  => $what,
+                'why'   => in_array($why, $allowed, true) ? $why : '',
+                'quote' => $quote,
+            );
+            if (count($changes) >= max(1, $max)) {
+                break;
+            }
+        }
+        return array('value' => $value, 'changes' => $changes);
     }
 
     /**

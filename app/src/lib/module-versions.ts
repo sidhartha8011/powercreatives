@@ -30,6 +30,6 @@ export const MODULE_VERSIONS: Record<ModuleId, string> = {
   ads: '1.0.0',
   automations: '1.0.0',
   users: '1.0.0',
-  seo: '1.0.2', // atomic save: one push per save + the corner's confirmed-green truth
+  seo: '1.0.3', // change-card review T1: verified what/why cards + calm rewrite blocks
   logs: '1.0.0',
 };

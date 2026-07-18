@@ -215,5 +215,43 @@ $flag->setValue(null, false);
 $queue->setValue(null, array());
 check('flag and queue reset clean', $flag->getValue(null) === false && $queue->getValue(null) === array());
 
+// ═══ 5. parse_section_reply — THE CHANGE-CARD contract (gap 0a0a3c3) ═══
+// The model's confession is CHECKED, never believed: quotes must exist in
+// the produced text, foreign why ids blank, parse failure = raw fallback.
+echo "parse_section_reply\n";
+$reply = json_encode(array(
+    'html'    => '<h2>Privacy</h2><p>We protect your personal data with care.</p>',
+    'changes' => array(
+        array('what' => 'Added a direct answer', 'why' => 'answerability', 'quote' => 'protect your personal data'),
+        array('what' => 'Claimed but absent',    'why' => 'answerability', 'quote' => 'this text is nowhere'),
+        array('what' => 'Foreign purpose',       'why' => 'made-up-id',    'quote' => 'We protect your'),
+        array('what' => '',                      'why' => 'answerability', 'quote' => 'personal data'),
+    ),
+));
+$p = PCM_SEO_Service::parse_section_reply($reply, array('answerability'), true);
+check('html extracted as the value', strpos($p['value'], '<h2>Privacy</h2>') === 0);
+check('verified change kept', count($p['changes']) === 2 && $p['changes'][0]['what'] === 'Added a direct answer');
+check('verified why kept', $p['changes'][0]['why'] === 'answerability');
+check('unverifiable quote dropped', !in_array('Claimed but absent', array_column($p['changes'], 'what'), true));
+check('foreign why blanked, change kept', $p['changes'][1]['why'] === '' && $p['changes'][1]['what'] === 'Foreign purpose');
+check('empty what dropped', count($p['changes']) === 2);
+
+$fenced = "```json\n" . $reply . "\n```";
+$pf = PCM_SEO_Service::parse_section_reply($fenced, array('answerability'), true);
+check('fenced reply still parses', strpos($pf['value'], '<h2>Privacy</h2>') === 0 && count($pf['changes']) === 2);
+
+$raw = '<h2>Plain</h2><p>Just html, no JSON envelope.</p>';
+$pr = PCM_SEO_Service::parse_section_reply($raw, array(), true);
+check('non-JSON falls back to the raw reply (the floor)', $pr['value'] === $raw && $pr['changes'] === array());
+$pn = PCM_SEO_Service::parse_section_reply($raw, array(), false);
+check('envelope not requested = raw untouched', $pn['value'] === $raw && $pn['changes'] === array());
+
+$many = array('html' => '<p>' . str_repeat('word ', 50) . 'quoted words here.</p>', 'changes' => array());
+for ($ci = 0; $ci < 20; $ci++) {
+    $many['changes'][] = array('what' => 'Change ' . $ci, 'why' => '', 'quote' => 'quoted words here');
+}
+$pm = PCM_SEO_Service::parse_section_reply(json_encode($many), array(), true);
+check('change list capped', count($pm['changes']) === 12);
+
 echo "\n{$pass}/" . ($pass + $fail) . " passed\n";
 exit($fail === 0 ? 0 : 1);

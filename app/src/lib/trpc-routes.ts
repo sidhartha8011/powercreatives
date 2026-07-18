@@ -558,7 +558,10 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteOptimizeSection": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-optimize`, body: { type: input.type, html: input.html, topic: input.topic, model: input.model, provider: input.provider, templateId: input.templateId } }),
+        // `draft` restored 2026-07-17 (gap 0a0a3c3 fact A6): it was dropped
+        // here since revise fidelity shipped — the server never received the
+        // draft, so the retention contract was dead on the wire.
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-optimize`, body: { type: input.type, html: input.html, topic: input.topic, draft: input.draft, model: input.model, provider: input.provider, templateId: input.templateId, reportChanges: input.reportChanges, purposes: input.purposes } }),
     },
     "seo.remoteGetHeadings": {
         endpoint: "seo/sites",
