@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { trpc } from '@/lib/trpc';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { CreatableCombobox } from '@/components/ui/creatable-combobox';
 
 /** THE FIELD REGISTRY — the card's rows in their two rooms (owner spec:
  *  Business = identity · Local SEO = the Google surface, tinted). Add a
@@ -70,6 +71,9 @@ interface CardData {
   unitLabel: string;
   units: Array<{ unitId: number; label: string; isPrimary: boolean }>;
   suggestion: { brandId: number; name: string } | null;
+  /** The ACTUAL configured fetcher's display name (Integrations registry) —
+   *  dynamic, never hardcoded (owner law, gap 23955b9). */
+  providerName?: string;
 }
 
 export function RemoteBusinessCard({ siteId }: { siteId: number }) {
@@ -165,24 +169,38 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
   const fetching = busy === 'find' || busy === 'place' || busy === 'maps' || busy === 'refresh';
   return (
     <div className="max-w-5xl space-y-4 p-6">
-      {/* ── Mapping header: the connection lives in Sites; edited here, written there. ── */}
+      {/* ── Mapping header (gap 23955b9): the brand = a searchable dropdown,
+             pre-selected with the mapped brand (the shared combobox — the
+             connection still writes through SITES). ── */}
       <div className="flex flex-wrap items-center gap-2">
         <Building2 className="h-4 w-4 text-slate-400" />
+        <CreatableCombobox
+          options={brands.map((b) => b.name)}
+          value={card.brandId > 0 ? card.brandName : null}
+          onChange={(name) => {
+            if (name === null) return;
+            const match = brands.find((b) => b.name === name);
+            if (!match) { toast.info('Pick an existing brand — new brands are created in the Brands module or via "Create from this site".'); return; }
+            void mapBrand(match.id);
+          }}
+          placeholder="Link a brand…"
+          className="h-8 w-56 text-xs"
+          disabled={busy !== null}
+        />
+        {card.brandId > 0 && card.units.length > 1 && (
+          <Select value={String(card.unitId || card.units.find((u) => u.isPrimary)?.unitId || '')} onValueChange={(v) => void mapBrand(card.brandId, Number(v))}>
+            <SelectTrigger className="h-8 w-44 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {card.units.map((u) => (
+                <SelectItem key={u.unitId} value={String(u.unitId)}>
+                  {u.label || (u.isPrimary ? 'Primary location' : `Unit ${u.unitId}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         {card.brandId > 0 ? (
           <>
-            <span className="text-sm font-medium text-slate-800">{card.brandName}</span>
-            {card.units.length > 1 && (
-              <Select value={String(card.unitId || card.units.find((u) => u.isPrimary)?.unitId || '')} onValueChange={(v) => void mapBrand(card.brandId, Number(v))}>
-                <SelectTrigger className="h-7 w-44 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {card.units.map((u) => (
-                    <SelectItem key={u.unitId} value={String(u.unitId)}>
-                      {u.label || (u.isPrimary ? 'Primary location' : `Unit ${u.unitId}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
             <button
               type="button"
               onClick={() => void mapBrand(0)}
@@ -203,7 +221,6 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
           </>
         ) : (
           <>
-            <span className="text-sm text-slate-500">Not linked to a brand</span>
             {card.suggestion && (
               <button
                 type="button"
@@ -215,12 +232,6 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
                 Link {card.suggestion.name}
               </button>
             )}
-            <Select onValueChange={(v) => void mapBrand(Number(v))}>
-              <SelectTrigger className="h-7 w-44 text-xs"><SelectValue placeholder="Pick a brand" /></SelectTrigger>
-              <SelectContent>
-                {brands.map((b) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
             <button
               type="button"
               onClick={() => void createFromSite()}
@@ -232,15 +243,6 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
           </>
         )}
       </div>
-
-      {/* ── THE WORKING STATE (gap 92c5cc7): a fetch takes up to a minute —
-             the card says so instead of looking frozen. ── */}
-      {fetching && (
-        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-          Working — fetching from Google via Apify; this can take up to a minute…
-        </div>
-      )}
 
       {/* ── ASK-FIRST refresh popover: what you see is what gets scraped. ── */}
       {refreshUrl !== null && (
@@ -274,10 +276,26 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
              Local SEO = the Google surface, whisper-tinted, the Maps-paste
              row living inside it. One registry, two rooms. ── */}
       <div className="grid items-start gap-4 md:grid-cols-2">
-      {(['business', 'local'] as const).map((room) => (
-        <div key={room} className={`rounded-xl border border-slate-200 ${room === 'local' ? 'bg-amber-50/40' : 'bg-white'}`}>
-          <div className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-            {room === 'business' ? 'Business' : 'Local SEO'}
+      {(['business', 'local'] as const).map((room) => {
+        // Per-room working state (gap 23955b9): the status lives IN the
+        // header's reserved slot — zero layout shift, exactly where the
+        // change will land. Local room owns find/pick/paste; a refresh
+        // touches both rooms.
+        const roomWorking = room === 'local' ? fetching : busy === 'refresh';
+        return (
+        <div key={room} className="rounded-xl border border-slate-200 bg-slate-50">
+          <div className="flex h-9 items-center justify-between border-b border-slate-200 px-4">
+            <span className="text-xs font-semibold text-slate-700">
+              {room === 'business' ? 'Business' : 'Local SEO'}
+            </span>
+            <span className="flex items-center gap-1.5 text-[10px] text-slate-400">
+              {roomWorking && (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                  Fetching via {card.providerName || 'the configured provider'} — up to a minute…
+                </>
+              )}
+            </span>
           </div>
           {room === 'local' && card.brandId > 0 && (
             <div className="space-y-2 px-4 pb-2">
@@ -341,23 +359,23 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
                 <div key={key} className="flex items-start gap-3 px-4 py-2" title={source ? `Source: ${SOURCE_LABEL[source] ?? source}` : undefined}>
                   <div className="w-36 shrink-0 pt-1.5 text-[11px] font-medium text-slate-500">{label}</div>
                   <div className="min-w-0 grow">
-                    {/* VISIBLE FIELDS (gap 92c5cc7): real inputs — white,
-                        bordered, focus ring — an editable field must LOOK
-                        editable. Text sizes unchanged (owner ruling). */}
+                    {/* THE FIELD (owner spec, gap 23955b9): white on the gray
+                        room, HAIRLINE light-gray border, rounded, NO shadow —
+                        one style everywhere. Text sizes unchanged. */}
                     {multiline ? (
                       <textarea
                         value={value}
                         onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
                         onBlur={() => void saveField(key)}
                         rows={2}
-                        className="w-full resize-y rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-full resize-y rounded-md border border-slate-200/80 bg-white px-2 py-1 text-xs text-slate-800 focus:border-slate-400 focus:outline-none"
                       />
                     ) : (
                       <input
                         value={value}
                         onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
                         onBlur={() => void saveField(key)}
-                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-full rounded-md border border-slate-200/80 bg-white px-2 py-1 text-xs text-slate-800 focus:border-slate-400 focus:outline-none"
                       />
                     )}
                   </div>
@@ -369,7 +387,8 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
             })}
           </div>
         </div>
-      ))}
+        );
+      })}
       </div>
     </div>
   );

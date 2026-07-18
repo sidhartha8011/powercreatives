@@ -200,11 +200,29 @@ class PCM_Sites_Service
         if (!is_array($map)) {
             $map = array();
         }
+        // THE FLAP GUARD (gap 23955b9 — the random red dot): ONE transport
+        // blip (this machine's proven intermittent AV SSL-timeouts, a slow
+        // site's cURL 28) must never paint a healthy site red. The stored
+        // verdict flips to unhealthy only after failThreshold CONSECUTIVE
+        // failures (hub data, merge-seeded); ONE success heals instantly
+        // and resets the counter. The dots read the same map as always —
+        // the entry's `fails` counter is additive.
+        $cfg = get_option('pcm_sites_health_check');
+        $cfg = is_array($cfg) ? $cfg : array();
+        if (!isset($cfg['failThreshold'])) {
+            $cfg['failThreshold'] = 2;
+            update_option('pcm_sites_health_check', $cfg, false);
+        }
+        $threshold = max(1, (int) $cfg['failThreshold']);
+        $prev      = is_array($map[$site_id] ?? null) ? $map[$site_id] : array();
+        $fails     = $ok ? 0 : ((int) ($prev['fails'] ?? 0)) + 1;
+        $verdict   = $ok ? true : ($fails >= $threshold ? false : (bool) ($prev['ok'] ?? true));
         $map[$site_id] = array(
-            'ok'     => $ok,
-            'error'  => $ok ? null : (string) ($error ?? __('The site did not answer.', 'power-creatives')),
+            'ok'     => $verdict,
+            'error'  => $verdict ? null : (string) ($error ?? __('The site did not answer.', 'power-creatives')),
             'at'     => time(),
             'source' => $source,
+            'fails'  => $fails,
         );
         update_option('pcm_site_health', $map, false);
     }

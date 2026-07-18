@@ -1467,6 +1467,13 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
         $record['units'] = $record['brandId'] > 0 ? PCM_Brands_Service::list_business_units($record['brandId']) : array();
+        // The DYNAMIC provider name (owner correction, gap 23955b9): the
+        // working line names the ACTUAL configured fetcher — registry
+        // display name of whatever seo_gbp_provider points at. Never a
+        // hardcoded vendor string anywhere in the UI.
+        $provider_id = (string) PCM_Settings::get('seo_gbp_provider', 'apify');
+        $reg = PCM_Providers::get($provider_id);
+        $record['providerName'] = is_array($reg) ? (string) ($reg['name'] ?? $provider_id) : $provider_id;
         $record['suggestion'] = null;
         if ($record['brandId'] === 0) {
             $match = (new PCM_Brands_Service())->find_by_website((int) $user->id, (string) $site->url);

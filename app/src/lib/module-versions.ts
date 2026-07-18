@@ -30,6 +30,6 @@ export const MODULE_VERSIONS: Record<ModuleId, string> = {
   ads: '1.0.0',
   automations: '1.0.0',
   users: '1.0.0',
-  seo: '1.0.9', // card UX: side-by-side rooms, visible fields, working line; SAB centroid guard
+  seo: '1.0.10', // card polish: gray rooms, hairline fields, in-header working, brand combobox
   logs: '1.0.0',
 };
