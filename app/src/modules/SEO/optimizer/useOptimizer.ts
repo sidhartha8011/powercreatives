@@ -9,6 +9,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { splitDocSections } from '../word-diff';
 import { itemKey, type CompiledDirective, type KeywordPackage, type OptimizerItem, type TeacherMeta, type TeacherRun } from './types';
 
 export interface UseOptimizerArgs {
@@ -138,6 +139,9 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
         // the keyword hierarchy and real business facts (spine D6).
         siteId: args.siteId,
         keywords: args.getKeywords(),
+        // THE ROUTER (gap eeec6b9): the live outline lets the compiler
+        // assign every directive its target sections in the same call.
+        outline: splitDocSections(args.getHtml()).sections.map((s) => s.heading || '(untitled section)'),
       });
       return Array.isArray(res?.directives) ? (res.directives as CompiledDirective[]) : [];
     } finally {

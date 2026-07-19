@@ -49,7 +49,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, Eye, Plus, ScanSearch, KeyRound,
+  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, Eye, Plus, KeyRound,
   RefreshCw, CloudOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -57,6 +57,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { trpc } from '@/lib/trpc';
 import { ModelDropdown, PillButton, PillSplitButton } from '@/components/shared';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import {
   diffBlocksHtml, splitDocSections, splitReviewSections, stripDiffHtml, type DocSection,
@@ -1260,7 +1261,7 @@ export function SectionModal({
     topic: string,
     scope?: { from: number; to: number } | null,
     directives?: CompiledDirective[],
-    opts?: { suppressKeywordRide?: boolean },
+    opts?: { suppressKeywordRide?: boolean; strict?: boolean },
   ) => {
     if (!editor || !docLoaded || busy || review) return;
     setRunDirectives(directives && directives.length > 0 ? directives : null);
@@ -1273,9 +1274,9 @@ export function SectionModal({
       ...supportingKw.split(',').map((s) => s.trim()),
       ...kwBucket.keywords,
     ].filter((k) => k !== ''))];
-    if (!opts?.suppressKeywordRide && kwTargets.length > 0) {
-      topic = `${topic}\n\nTarget keywords — incorporate them naturally where they genuinely fit, never force or stuff: ${kwTargets.join(', ')}`;
-    }
+    const kwLine = !opts?.suppressKeywordRide && kwTargets.length > 0
+      ? `\n\nTarget keywords — incorporate them naturally where they genuinely fit, never force or stuff: ${kwTargets.join(', ')}`
+      : '';
     const { sections } = splitDocSections(editor.getHTML());
     if (sections.length === 0) {
       toast.info('No sections to optimize on this page.');
@@ -1297,7 +1298,19 @@ export function SectionModal({
         return;
       }
     }
-    const skip = (i: number): boolean => !!scope && !inScope.has(i);
+    // THE ROUTER (gap eeec6b9): a directive with targets is delivered ONLY
+    // to its sections; unrouted directives broadcast (the honest floor —
+    // never a dropped intent). With routing live, a section nobody ordered
+    // work on is never sent at all — the rewrite-everything cause dies.
+    const routedDirectives = (directives ?? []).filter((d) => (d.targets?.length ?? 0) > 0);
+    const broadcastDirectives = (directives ?? []).filter((d) => (d.targets?.length ?? 0) === 0);
+    const routingActive = routedDirectives.length > 0;
+    const sectionDirectives = (i: number): CompiledDirective[] => [
+      ...routedDirectives.filter((d) => (d.targets ?? []).includes(i)),
+      ...broadcastDirectives,
+    ];
+    const skip = (i: number): boolean =>
+      (!!scope && !inScope.has(i)) || (routingActive && sectionDirectives(i).length === 0);
     // IDENTITY ANCHORS (2026-07-14): stamp every section heading with its
     // review id in ONE transaction — the heading ORDINAL is trusted only
     // HERE, at t0, where it still equals the captured section index. From
@@ -1322,17 +1335,29 @@ export function SectionModal({
     // THE CHANGE CARDS (gap 0a0a3c3): every run asks for the envelope; the
     // run's purposes are the only legal `why` ids (server-verified).
     const runPurposes = Array.from(new Set((directives ?? []).flatMap((d) => d.purposes)));
+    // THE PAGE MAP (gap eeec6b9 D4): every call names where it edits —
+    // the server appends it so the model never duplicates other sections.
+    const outline = sections.map((s) => s.heading || '(untitled section)');
     let next = 0;
     const worker = async () => {
       while (next < sections.length) {
         const i = next++;
         if (skip(i)) continue;
+        // A routed section receives ONLY its own orders (+ broadcasts).
+        const own = routingActive ? sectionDirectives(i) : null;
+        const sectionTopic = (own
+          ? `Apply exactly these optimizations to this section:\n${own.map((d, k) => `${k + 1}. ${d.text}`).join('\n')}`
+          : topic) + kwLine;
+        const sectionPurposes = own
+          ? Array.from(new Set(own.flatMap((d) => d.purposes)))
+          : runPurposes;
         try {
           const res: any = await optimizeMutation.mutateAsync({
             siteId: siteId as number, postId, type,
-            html: sections[i].html, topic,
+            html: sections[i].html, topic: sectionTopic,
             model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
-            reportChanges: true, purposes: runPurposes,
+            reportChanges: true, purposes: sectionPurposes,
+            outline, sectionIndex: i, strict: !!opts?.strict,
           });
           const value = canonicalAiHtml(editor, String(res?.value ?? '').trim());
           const genModel = String(res?.model ?? '');
@@ -1357,6 +1382,23 @@ export function SectionModal({
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, sections.length) }, worker));
+  };
+
+  /** QUICK OPTIMIZE (gap eeec6b9 D1) — the main click, exactly the
+   *  behavior the owner likes: the action matrix decides the shape, and a
+   *  TYPED instruction makes the run strict (a custom order is surgical —
+   *  change only what it says). */
+  const runQuickOptimize = () => {
+    if (tickedKw.length > 0) {
+      runKeywordInsert();
+      return;
+    }
+    void startAiReview(
+      instruction.trim(),
+      hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
+      undefined,
+      instruction.trim() !== '' ? { strict: true } : undefined,
+    );
   };
 
   /** THE INJECTION RUN (owner spec d135e3c + the action matrix 2026-07-15):
@@ -2083,39 +2125,13 @@ export function SectionModal({
               )}
             </div>
             {aiModelSelect}
-            {/* ANALYZE (the optimizer spine): blue OUTLINE pill — the
-                generate family, visually distinct from the filled Optimize
-                beside it. Opens the rail and runs every teacher. */}
-            <PillButton
-              variant="outline"
-              icon={<ScanSearch />}
-              onClick={() => setAnalyzeOpen((v) => !v)}
-              title="Analyze this page — every purpose contributes suggestions you pick from"
-            >
-              Analyze
-            </PillButton>
-            {/* ONE AI entry point (the shared blue generate pill, split): EVERY
-                run goes through the red/green review — no AI text ever lands
-                without Accept/Reject. A text selection only narrows the SCOPE;
-                the label always states it. The caret opens the instruction
-                field that steers the run. */}
+            {/* ONE AI entry point (gap eeec6b9 D1 — the Analyze pill died
+                into this menu): EVERY run goes through the red/green review.
+                Main click = Quick (the action matrix decides its shape);
+                the caret menu holds the three modes. */}
             <PillSplitButton
               icon={<Sparkles />}
-              onClick={() => {
-                // THE ACTION MATRIX (owner law 2026-07-15): ticked keywords
-                // transform the run into the injection; a text selection
-                // narrows either run; nothing selected = everything.
-                if (tickedKw.length > 0) {
-                  runKeywordInsert();
-                  return;
-                }
-                void startAiReview(
-                  instruction.trim(),
-                  hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
-                );
-              }}
-              onCaretClick={() => setAskOpen((v) => !v)}
-              caretActive={askOpen}
+              onClick={runQuickOptimize}
               title={tickedKw.length > 0
                 ? (hasSelection
                   ? 'Weave the ticked keywords into the selected sections by their roles — changes show as red/green'
@@ -2123,7 +2139,20 @@ export function SectionModal({
                 : (hasSelection
                   ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
                   : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject')}
-              caretTitle="Write instructions for the AI (e.g. “optimize for keyword X”)"
+              caretTitle="Optimization modes"
+              menu={
+                <>
+                  <DropdownMenuItem onClick={runQuickOptimize}>
+                    Quick optimize
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setAnalyzeOpen(true)}>
+                    Super optimize…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setAskOpen(true)}>
+                    Custom instruction…
+                  </DropdownMenuItem>
+                </>
+              }
             >
               {tickedKw.length > 0
                 ? `Insert keywords (${tickedKw.length})`
@@ -2510,10 +2539,13 @@ export function SectionModal({
           onClose={() => setAnalyzeOpen(false)}
           onOptimize={(directives) => {
             setAnalyzeOpen(false);
+            // SUPER OPTIMIZE (gap eeec6b9): routed directives scope each
+            // section's order inside startAiReview; this topic is only the
+            // unrouted floor. Strict = the careful-editor contract.
             const topic = `Apply exactly these optimizations to the content:\n${directives
               .map((d, i) => `${i + 1}. ${d.text}`)
               .join('\n')}`;
-            void startAiReview(topic, null, directives);
+            void startAiReview(topic, null, directives, { strict: true });
           }}
         />
       )}

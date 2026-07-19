@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { colors, typography, spacing } from './design-tokens';
 
 export type PillButtonVariant = 'active' | 'default' | 'subtle' | 'success' | 'outline';
@@ -178,6 +179,9 @@ interface PillSplitButtonProps {
   disabled?: boolean;
   title?: string;
   caretTitle?: string;
+  /** Additive (gap eeec6b9): menu items for the caret zone — when set,
+   *  the caret opens a Radix dropdown instead of calling onCaretClick. */
+  menu?: React.ReactNode;
 }
 
 export function PillSplitButton({
@@ -190,6 +194,7 @@ export function PillSplitButton({
   disabled = false,
   title,
   caretTitle,
+  menu,
 }: PillSplitButtonProps) {
   const isDisabled = disabled || loading;
   const zone = {
@@ -230,16 +235,33 @@ export function PillSplitButton({
         {children}
       </button>
       <span aria-hidden style={{ width: 1, background: 'rgba(0, 123, 255, 0.25)', margin: '5px 0' }} />
-      <button
-        type="button"
-        onClick={onCaretClick}
-        disabled={isDisabled}
-        title={caretTitle}
-        className="flex items-center"
-        style={{ ...zone, padding: '4px 8px', background: caretActive ? 'rgba(0, 123, 255, 0.12)' : 'transparent' }}
-      >
-        ▾
-      </button>
+      {menu ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={isDisabled}
+              title={caretTitle}
+              className="flex items-center"
+              style={{ ...zone, padding: '4px 8px' }}
+            >
+              ▾
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">{menu}</DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <button
+          type="button"
+          onClick={onCaretClick}
+          disabled={isDisabled}
+          title={caretTitle}
+          className="flex items-center"
+          style={{ ...zone, padding: '4px 8px', background: caretActive ? 'rgba(0, 123, 255, 0.12)' : 'transparent' }}
+        >
+          ▾
+        </button>
+      )}
     </div>
   );
 }

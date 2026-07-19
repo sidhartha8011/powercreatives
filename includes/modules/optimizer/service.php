@@ -140,7 +140,15 @@ class PCM_Optimizer_Service
      */
     public static function compile(array $items, array $context): array
     {
-        if (count($items) === 1) {
+        // THE ROUTER (gap eeec6b9): with a page outline present the ONE
+        // compile call ALSO assigns each directive its target sections —
+        // so even a single item earns the model hop (routing has value).
+        $outline = array_values(array_filter(array_map(
+            static fn($h): string => trim((string) $h),
+            (array) ($context['outline'] ?? array())
+        ), static fn(string $h): bool => $h !== ''));
+
+        if (count($items) === 1 && empty($outline)) {
             return array(array(
                 'text'     => $items[0]['instruction'],
                 'purposes' => array($items[0]['teacherId']),
@@ -153,6 +161,23 @@ class PCM_Optimizer_Service
             $numbered[] = array('index' => $i, 'purpose' => $it['teacherId'], 'instruction' => $it['instruction']);
         }
 
+        $routing_rules = '';
+        $routing_json  = '';
+        $outline_block = '';
+        if (!empty($outline)) {
+            $routing_rules = ' Additionally ROUTE every directive: "targets" lists the indexes of the page sections '
+                . '(from THE PAGE OUTLINE) the directive concerns — every directive gets at least one target; a '
+                . 'directive that ADDS new content targets the ONE section the new content should follow; a '
+                . 'page-wide directive targets only the sections that truly need that work, never all sections '
+                . 'reflexively.';
+            $routing_json  = ',"targets":[1,3]';
+            $lines         = array();
+            foreach ($outline as $i => $h) {
+                $lines[] = $i . '. ' . $h;
+            }
+            $outline_block = "\n\nTHE PAGE OUTLINE (section index. heading):\n" . implode("\n", $lines);
+        }
+
         $messages = array(
             array(
                 'role'    => 'system',
@@ -163,13 +188,15 @@ class PCM_Optimizer_Service
                     . 'directive\'s sources; MERGE overlapping directives into one stronger directive; when two '
                     . 'directives collide, produce one directive that explicitly preserves both intents; order by '
                     . 'execution sense (structure first, then content, then wording). Keep each directive one '
-                    . 'sentence, imperative, self-contained. Respond with ONLY this JSON, no markdown: '
-                    . '{"directives":[{"text":"...","sources":[0,2]}]} — sources are the input indexes each '
-                    . 'directive covers.',
+                    . 'sentence, imperative, self-contained.' . $routing_rules
+                    . ' Respond with ONLY this JSON, no markdown: '
+                    . '{"directives":[{"text":"...","sources":[0,2]' . $routing_json . '}]} — sources are the input '
+                    . 'indexes each directive covers.',
             ),
             array(
                 'role'    => 'user',
                 'content' => "INPUT DIRECTIVES:\n" . wp_json_encode($numbered)
+                    . $outline_block
                     . self::context_suffix($context),
             ),
         );
@@ -186,6 +213,7 @@ class PCM_Optimizer_Service
                             'properties' => array(
                                 'text'    => array('type' => 'string'),
                                 'sources' => array('type' => 'array', 'items' => array('type' => 'integer')),
+                                'targets' => array('type' => 'array', 'items' => array('type' => 'integer')),
                             ),
                             'required'   => array('text', 'sources'),
                         ),
@@ -221,10 +249,21 @@ class PCM_Optimizer_Service
             if (empty($sources)) {
                 continue;
             }
+            // Targets: valid outline indexes only. A directive with none
+            // stays UNROUTED (the run broadcasts it — honest floor, never
+            // a dropped intent; the sources contract above is the law).
+            $targets = array();
+            foreach ((array) ($row['targets'] ?? array()) as $t) {
+                $t = (int) $t;
+                if ($t >= 0 && $t < count($outline)) {
+                    $targets[] = $t;
+                }
+            }
             $out[] = array(
                 'text'     => trim((string) $row['text']),
                 'purposes' => array_keys($purposes),
                 'sources'  => $sources,
+                'targets'  => array_values(array_unique($targets)),
             );
         }
 

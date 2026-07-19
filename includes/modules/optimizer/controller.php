@@ -339,12 +339,19 @@ class PCM_REST_Optimizer extends PCM_REST_Base
             // The same context package the teachers analyzed with rides the
             // reconciliation (research spine D6) — merge order respects the
             // keyword hierarchy and real business facts.
+            // THE ROUTER (gap eeec6b9): the page outline lets the same call
+            // assign every directive its target sections. Capped, sanitized.
+            $outline = array();
+            foreach ((is_array($p) && is_array($p['outline'] ?? null)) ? array_slice($p['outline'], 0, 60) : array() as $h) {
+                $outline[] = sanitize_text_field((string) $h);
+            }
             $directives = PCM_Optimizer_Service::compile($items, array(
                 'model'    => is_array($p) ? sanitize_text_field((string) ($p['model'] ?? '')) : '',
                 'provider' => is_array($p) ? sanitize_key((string) ($p['provider'] ?? '')) : '',
                 'userId'   => get_current_user_id(),
                 'keywords' => $this->sanitize_keywords(is_array($p) ? ($p['keywords'] ?? null) : null),
                 'business' => PCM_Optimizer_Service::business_context(is_array($p) ? (int) ($p['siteId'] ?? 0) : 0),
+                'outline'  => $outline,
             ));
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 502);
