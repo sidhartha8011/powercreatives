@@ -152,13 +152,14 @@ export function diffBlocksHtml(originalHtml: string, aiHtml: string, opts?: { co
   if (opts?.consolidated) {
     const olds = parseBlocks(originalHtml);
     const news = parseBlocks(aiHtml);
-    // The origin lane must survive on the first NEW heading exactly as the
-    // paired path guarantees (identity law) — carry it from the first
-    // original heading.
+    // ONE LANE for the whole rewrite (owner report 2026-07-19, e533bc5 F3):
+    // EVERY new heading inherits the original's origin — the rewritten
+    // group draws one color instead of an amber first chunk + sky rest,
+    // and after Accept every sub-heading correctly reads as part of the
+    // edited section (never "platform-added").
     const oHead = olds.find((b) => /^H[1-6]$/.test(b.tagName)) ?? null;
-    const firstNewHead = news.findIndex((b) => /^H[1-6]$/.test(b.tagName));
     return olds.map((b) => markBlock(b, 'removed')).join('')
-      + news.map((b, i) => markBlock(oHead && i === firstNewHead ? withOrigin(oHead, b) : b, 'added')).join('');
+      + news.map((b) => markBlock(oHead && /^H[1-6]$/.test(b.tagName) ? withOrigin(oHead, b) : b, 'added')).join('');
   }
   const out: string[] = [];
   for (const [o, nw] of pairByClass(parseBlocks(originalHtml), parseBlocks(aiHtml))) {
