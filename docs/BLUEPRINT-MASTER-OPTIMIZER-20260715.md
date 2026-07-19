@@ -443,6 +443,28 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   `menu`), router, scoped run, params ready. SLICE B HELD — server page
   map + strict guard in seo/service+controller (the other dev's
   in-flight files); lands the moment they are clean.]**
+- 2026-07-19 · **THE OPEN FIXES + THE STRUCTURAL MANDATE (owner ruling —
+  surface this list after every completed round until empty):**
+  1. LOAD SPEED IS A BUG: table hard-refresh ~10s, page open 20-30s
+     ("building the local copy" loaders) — data the hub owns must render
+     INSTANTLY from the hub DB; no browser-cache workarounds. Root-cause
+     gap required (the instant-open arc is marked UNVERIFIED-IN-BROWSER).
+  2. Analyze rail cannot SCROLL (regression suspect: the outside rail
+     host's overflow-hidden — same round as the portal move).
+  3. Analyze-rail hierarchy still wrong (owner: sub-text outweighs
+     headers); verify the categories are teacher-data, never hardcoded,
+     and SHOW it.
+  4. STATE LEAK: after accepting a custom edit the UI starts saying
+     "super optimize" — run-mode state must be ONE explicit object, not
+     scattered flags.
+  5. GROUP D still held: the language-law root fix (hub-locale
+     masquerade), page map, strict guard, pinned original — lands when
+     the other dev's seo files are clean.
+  6. THE MANDATE: decompose SectionModal (~2,850 lines, nine concerns)
+     into narrow modules — editor core · run engine (one state machine) ·
+     review rail · analyze glue · versions/original · image panel ·
+     drawer glue · shared layout — each its own file with an explicit
+     contract; no new state flags in the monolith ever again.
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
