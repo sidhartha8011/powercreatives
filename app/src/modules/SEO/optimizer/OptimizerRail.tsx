@@ -122,7 +122,7 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
         {open && (
           <div className="mb-1 ml-[18px] space-y-1">
             {it.evidence !== '' && (
-              <div className="text-[10px] leading-snug text-slate-500">{it.evidence}</div>
+              <div className="text-[9px] leading-snug text-slate-400">{it.evidence}</div>
             )}
             {actionable && (
               /* The FIX — exactly what rides the basket when ticked. */
@@ -148,7 +148,9 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
     return (
       <section key={t.id} className="mx-2 mb-1.5 rounded border border-slate-200/70 bg-white px-2 py-1.5 shadow-[0_1px_1px_rgba(0,0,0,0.03)]">
         <div className="flex items-center gap-1.5">
-          <div className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-700" title={t.label}>
+          {/* Hierarchy (gap e533bc5 F5): the researcher TITLE leads —
+              same scale as the review rail's section titles. */}
+          <div className="min-w-0 flex-1 truncate text-[12px] font-semibold text-slate-800" title={t.label}>
             {t.label}
           </div>
           {run.context !== undefined && (
@@ -235,7 +237,10 @@ export function OptimizerRail({ onClose, onOptimize, ...args }: OptimizerRailPro
   };
 
   return (
-    <aside className="flex w-[250px] shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
+    // h-full: the OUTSIDE host (overflow-hidden) clips anything taller —
+    // without a bounded height the list's overflow-auto never engages
+    // (the couldn't-scroll regression, blueprint §10 fix 2).
+    <aside className="flex h-full w-[250px] shrink-0 flex-col bg-slate-50/60">
       <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5">
         <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700">Analyze</div>
         <button
