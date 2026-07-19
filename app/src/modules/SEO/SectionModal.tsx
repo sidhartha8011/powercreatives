@@ -148,8 +148,13 @@ const WIDTH = 440;
  *  anchor math exists anywhere. */
 const PAGE_CARD_WIDTH = 'max(720px, min(980px, 94vw, 100vw - 32px))';
 const PAGE_CARD_TAPER_PX = 280;
-const pageCardWidth = (tapered: boolean): string =>
-  (tapered ? `calc(${PAGE_CARD_WIDTH} - ${PAGE_CARD_TAPER_PX}px)` : PAGE_CARD_WIDTH);
+/** The outside rail's width — the card cedes exactly this when a rail is
+ *  open (gap e533bc5 F6), the drawer's taper law mirrored right. */
+const RAIL_TAPER_PX = 250;
+const pageCardWidth = (drawerOpen: boolean, railOpen: boolean): string => {
+  const cut = (drawerOpen ? PAGE_CARD_TAPER_PX : 0) + (railOpen ? RAIL_TAPER_PX : 0);
+  return cut > 0 ? `calc(${PAGE_CARD_WIDTH} - ${cut}px)` : PAGE_CARD_WIDTH;
+};
 
 /** Page mode's OWN reading scale (owner order U2): the document must read
  *  like the live page — real paragraph air, stepped heading sizes — while
@@ -872,6 +877,16 @@ export function SectionModal({
   const [tickedKw, setTickedKw] = useState<TickedKeyword[]>([]);
   /** The drawer floats OUTSIDE the card — the outside-click save must know it. */
   const drawerRef = useRef<HTMLDivElement>(null);
+  /** THE OUTSIDE RAIL HOST (gap e533bc5 F6): the analyze/review/image
+   *  panels PORTAL here — a flex sibling on the card's right, the drawer's
+   *  mirror. State (not only a ref) so the portals mount on first render;
+   *  the ref mirror keeps the outside-click exemption closure-safe. */
+  const [railHost, setRailHost] = useState<HTMLDivElement | null>(null);
+  const railHostRef = useRef<HTMLDivElement | null>(null);
+  const attachRailHost = (node: HTMLDivElement | null) => {
+    railHostRef.current = node;
+    setRailHost(node);
+  };
   // The smart button's LIVE values — recomputed on the existing edit tick.
   const contentText = isPage && editor ? editor.getText() : '';
   const kwExtraCount = new Set([
@@ -1119,6 +1134,7 @@ export function SectionModal({
       const t = e.target as HTMLElement;
       if (rootRef.current?.contains(t)) return;
       if (drawerRef.current?.contains(t)) return; // the keyword drawer floats outside the card
+      if (railHostRef.current?.contains(t)) return; // the outside rails are the drawer's mirror (F6)
       if (t.closest('[data-sonner-toaster]')) return; // toasts are not "outside"
       // Radix portals every popper to document.body — the drawer's role
       // menu and the column filter menus are INSIDE the editor by intent,
@@ -1959,6 +1975,13 @@ export function SectionModal({
    *  card tapers while it is open. drawerRef exempts it from the
    *  outside-click save. */
   const drawerVisible = isPage && !readOnly && keywordsOpen && docLoaded && typeof siteId === 'number';
+  /** A rail is open — the union of the three outside-panel mount gates
+   *  (review · analyze · image); drives the card's right taper (F6). */
+  const railVisible = isPage && (
+    !!review
+    || (!readOnly && analyzeOpen && !imgSel && docLoaded)
+    || (!readOnly && !!imgSel)
+  );
   const drawerEl = drawerVisible ? (
     <div
       ref={drawerRef}
@@ -1987,7 +2010,7 @@ export function SectionModal({
       ref={rootRef}
       className={`flex flex-col overflow-hidden bg-white ${isPage ? 'rounded-2xl shadow-2xl' : 'fixed z-40 rounded-lg border border-slate-200 shadow-xl'}`}
       style={isPage
-        ? { width: pageCardWidth(drawerVisible), height: '90vh', transition: 'width 300ms ease' }
+        ? { width: pageCardWidth(drawerVisible, railVisible), height: '90vh', transition: 'width 300ms ease' }
         : { left: pos.x, top: pos.y, width: WIDTH, maxWidth: 'calc(100vw - 16px)' }}
       role="dialog"
       aria-label={title}
@@ -2347,9 +2370,11 @@ export function SectionModal({
 
       {/* ── AI review rail (code-review style): one row per section — Accept /
              Reject per diff, Accept all, Reject all. The editor is read-only
-             until every section is resolved. ── */}
-      {isPage && review && (
-        <aside className="flex w-[250px] shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
+             until every section is resolved. PORTALS to the OUTSIDE host
+             (gap e533bc5 F6) — an add-on beside the card, the drawer's
+             mirror; the JSX lives here, the DOM lives there. ── */}
+      {isPage && review && railHost !== null && createPortal(
+        <aside className="flex h-full w-[250px] shrink-0 flex-col bg-slate-50/60">
           <div className="border-b border-slate-200 px-2.5 py-1.5">
             <div className="text-[11px] font-medium text-slate-700">
               AI review — {review.filter((s) => s.status === 'pending' || s.status === 'diff').length} of {review.filter((s) => s.status !== 'clean').length} left
@@ -2644,13 +2669,15 @@ export function SectionModal({
               </div>
             ))}
           </div>
-        </aside>
+        </aside>,
+        railHost,
       )}
 
       {/* ── THE ANALYZE RAIL (optimizer spine): teachers' suggestions →
              basket → ONE optimize run through the normal red/green review.
-             Yields to the review rail and the image panel. ── */}
-      {isPage && !readOnly && analyzeOpen && !review && !imgSel && docLoaded && (
+             Yields to the review rail and the image panel. Outside host
+             portal (F6), exactly like the review rail. ── */}
+      {isPage && !readOnly && analyzeOpen && !review && !imgSel && docLoaded && railHost !== null && createPortal(
         <OptimizerRail
           siteId={siteId as number}
           postId={postId}
@@ -2677,13 +2704,15 @@ export function SectionModal({
               .join('\n')}`;
             void startAiReview(topic, null, directives, { strict: true });
           }}
-        />
+        />,
+        railHost,
       )}
 
       {/* ── Image metadata panel (V3): alt/title as a dynamic rule — the image
-             itself is locked (position/existence never change). ── */}
-      {isPage && !review && !readOnly && imgSel && (
-        <aside className="flex w-[250px] shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
+             itself is locked (position/existence never change). Outside host
+             portal (F6). ── */}
+      {isPage && !review && !readOnly && imgSel && railHost !== null && createPortal(
+        <aside className="flex h-full w-[250px] shrink-0 flex-col bg-slate-50/60">
           <div className="border-b border-slate-200 px-2.5 py-1.5">
             <div className="text-[11px] font-medium text-slate-700">Image metadata</div>
             <div className="truncate text-[10px] text-slate-400" title={imgSel.src}>{imgSel.src}</div>
@@ -2738,7 +2767,8 @@ export function SectionModal({
               Served dynamically — the image file is never touched. Hiding stops it serving; deleting it in the text (or with its section) does the same on save.
             </p>
           </div>
-        </aside>
+        </aside>,
+        railHost,
       )}
       </div>
 
@@ -2805,6 +2835,12 @@ export function SectionModal({
         <div className="fixed inset-0 z-40 flex items-center justify-center">
           {drawerEl}
           {cardEl}
+          {/* THE OUTSIDE RAIL HOST (F6): the drawer's mirror on the right —
+              the analyze/review/image panels portal in; empty = invisible. */}
+          <div
+            ref={attachRailHost}
+            className="h-[86vh] shrink-0 self-center overflow-hidden rounded-r-2xl bg-white shadow-2xl [&:empty]:hidden"
+          />
         </div>
       ) : (
         cardEl
