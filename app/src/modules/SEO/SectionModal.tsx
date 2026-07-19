@@ -2564,10 +2564,15 @@ export function SectionModal({
                       </div>
                     )}
                     <div className="mt-1 space-y-1">
+                      {/* THE CHANGE ROW (owner 2026-07-19): a FIXED grid —
+                          12px checkbox column + text column. The box sits
+                          centered on the FIRST text line by construction;
+                          wrapped lines stay in their column, never under
+                          the box. Geometry that cannot drift. */}
                       {(s.changes ?? []).map((c, k) => ((filterActive && !changeMatches(c.why)) ? null : (
                         <div
                           key={k}
-                          className="flex cursor-default items-start gap-1.5 rounded px-0.5 leading-snug hover:bg-blue-50"
+                          className="grid cursor-default grid-cols-[12px_1fr] items-start gap-x-1.5 rounded px-0.5 py-px hover:bg-blue-50"
                           onMouseEnter={() => highlightQuote(i, c.quote)}
                           onMouseLeave={() => setQuoteRange(null)}
                           title="Hover shows exactly where this landed in the text"
@@ -2582,10 +2587,10 @@ export function SectionModal({
                             onChange={() => setReview((cur) => cur?.map((x, xi) => (xi === i
                               ? { ...x, kept: (x.changes ?? []).map((_, ki) => (ki === k ? !(x.kept?.[ki] ?? true) : (x.kept?.[ki] ?? true))) }
                               : x)) ?? cur)}
-                            className="h-3.5 w-3.5 shrink-0 accent-green-600"
+                            className="mt-[2px] h-3 w-3 accent-green-600"
                           />
-                          <span className="min-w-0">
-                            <span className="text-[10px] text-slate-500">{c.what}</span>
+                          <span className="min-w-0 text-[10px] leading-4 text-slate-500">
+                            {c.what}
                             {c.why !== '' && (
                               <span className="ml-1 text-[8px] italic text-slate-400">
                                 {(teacherById[c.why]?.label ?? TEACHER_PILLS[c.why] ?? c.why).toLowerCase()}
