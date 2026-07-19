@@ -87,3 +87,31 @@ in useAiReview, a save bug in usePageDocument — the file IS the error map.
 - **S5 ImagePanel + EditorToolbar** — the composer reaches its end state.
 - **NEXT ARC:** index.tsx (1,872) + HeadingsPanel (791) decompose under
   the same law once the editor domain is done.
+
+---
+
+## ADDENDUM 2 — THE COMPLETION MAP (owner GO: "complete the restructure properly")
+
+**Verified state:** S1/S2/S3/S5a landed (e8a5739, 4d909f9, 574c5e2,
+48fdd1e); monolith 1,450; every editor/ file inside budget (581 max);
+consumers untouched; tsc 59/0 new, build green, harness 88/88 at every
+commit. NOT DONE: the composer is still 2x the law.
+
+**What remains inside SectionModal (grep-mapped):** the page document
+machinery (open queries + savedHtml/dirty + save flow), the versions
+machinery (pick/labels/delete + the dropdown JSX incl. the Original's
+three states), the workbench header (title/status/brand/pageType/keywords
+button/buttons row), the toolbar + insert menu JSX, the drawer glue, the
+portal shell + outside-click law.
+
+**The completion slices (order):**
+- **S4a `useSectionVersions.ts` + `VersionsMenu.tsx`** — the versions
+  logic + dropdown UI (the Original states live there).
+- **S4b `usePageDocument.ts`** — open/savedHtml/dirty/save/saveClose/
+  remove.
+- **S5b `EditorChrome.tsx`** — bubble menu + toolbar + insert menu.
+- **S5c `WorkbenchHeader.tsx`** — the header row block.
+- End state: SectionModal = THE COMPOSER ≤700 (states + editor init +
+  wiring + portal pair + outside-click law).
+Read-in-full before every move (no reconstruction, ever); verify + commit
+per slice; budget check per slice — anything crossing 700 splits first.
