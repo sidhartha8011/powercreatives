@@ -428,6 +428,21 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   indexed URL > website), you confirm, and the confirmed URL is remembered
   as the site's Indexed URL. Registry rows gain a `group` key — one
   registry, two rooms, future fields drop into either with one line.
+- 2026-07-18 · **THE OPTIMIZE CONSOLIDATION (owner order).** The Analyze
+  button DIES — Optimize is THE one entry with a caret menu of three
+  modes: Quick (today's click, untouched) · Super (the full analysis
+  flow inside an optimizing move) · Custom (a plain surgical order).
+  THE ROUTER: the compiler also assigns every directive its target
+  sections from the live page outline — each section receives ONLY its
+  own orders, untargeted sections are never sent (the rewrite-everything
+  cause dies); additions target their anchor section (sky lane). THE
+  PAGE MAP: every section call names where it edits. STRICT runs
+  (Super/Custom/typed instruction): the careful-editor contract +
+  retention guard. Gap: GAP-ANALYSIS-OPTIMIZE-CONSOLIDATION-20260718.
+  **[SLICE A BUILT 7db4c7a — button + menu (additive PillSplitButton
+  `menu`), router, scoped run, params ready. SLICE B HELD — server page
+  map + strict guard in seo/service+controller (the other dev's
+  in-flight files); lands the moment they are clean.]**
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE
