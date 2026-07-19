@@ -89,3 +89,46 @@ Accept/Reject/Revise semantics untouched everywhere · identity anchors
 untouched (F3 changes color only) · quick runs byte-identical except
 where the owner ordered shared format (F4) · filters are view-state only
 (no data model change) · the held seo files stay untouched until clean.
+
+---
+
+## ADDENDUM — THE SENIOR PLAN, REGROUPED BY FILE (owner GO 2026-07-19)
+
+One file = one editing session = zero rework. Verified buildable with
+full functionality per group; the held group is named, not hidden.
+
+**GROUP A — ui/sonner.tsx (1 touch):** explicit toaster z-index above
+every modal layer (F2).
+
+**GROUP B — word-diff.ts (1 touch):** consolidated view renders ALL new
+blocks in ONE lane — the origin attribute survives for identity but a
+`data-pcm-rewrite` flag suppresses its lane color there (F3).
+
+**GROUP C — SectionModal.tsx (ONE session, seven changes):**
+C1 ReviewSection gains its OWN routed directives (captured at run start
+   from the router's targets).
+C2 Cards: pending = the section's own orders · finished = its verified
+   changes · the run-level order renders ONCE at the rail top · the
+   per-card run dump DIES (F4/F8).
+C3 Hierarchy: title dominant, details quiet, tags smallest (F5).
+C4 Checkboxes sized + centered (F7).
+C5 THE FILTER: SEO/AI tabs + multi-select tag chips + per-level clears +
+   stated empty state; filters match changes by why→teacher→group and
+   pending cards by their directives' purposes (F9).
+C6 RAILS OUTSIDE: the analyze/review rails move out of the card into the
+   flex pair ([drawer][card][rail]) with their own ref exempted in the
+   outside-click flow (the drawer's exact precedent) and the card taper
+   extended to count the rail (F6).
+C7 The Original row ALWAYS renders: loading state, unavailable-with-retry
+   state, pickable when loaded (frontend half of the Original pair).
+
+**GROUP D — HELD (seo/service.php + controller + prompts.php are the
+other dev's LIVE in-flight set, re-verified this minute):** the language
+law (F1), the page map + strict guard (Slice B), the pinned original
+(server half) + the fetch probe. Lands as ONE server group the moment
+the files are clean — the frontend above already sends/renders
+everything it needs.
+
+Ritual: build per group → tsc 59/0 new → build "built in" → harness
+88/88 + research 34/34 → changelog → pathspec AFTER commits (A+B one
+display commit, C one commit) — LOCAL ONLY.
