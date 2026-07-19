@@ -48,3 +48,42 @@ image panel + drawer glue. Each slice = one ritual pair, one gap fold.
 Behavior byte-identical by construction (moves, not rewrites) · public
 exports preserved via re-export (index.tsx untouched, verified) · the
 component body untouched this slice · tsc is the wiring proof.
+
+---
+
+## ADDENDUM — THE TARGET ARCHITECTURE + THE 700-LINE LAW (owner ruling 2026-07-19)
+
+**Owner ruling:** max ~700 lines per file, aim 400-500 — "you need to know
+exactly what's going on by just looking at the file very quickly."
+S1's 2,361 is a first cut, NOT the standard. The standard is this map.
+
+### THE FILE BUDGET LAW (binding from now)
+No file in the editor domain may cross 700 lines. A slice that would
+cross it splits further BEFORE it lands. The module's oversized files
+(measured now): SectionModal.tsx 2,361 · index.tsx 1,872 · HeadingsPanel
+791 — all in scope; the editor first (this arc), the table + panel as
+the NEXT arc.
+
+### THE TARGET MAP — app/src/modules/SEO/editor/
+| File | Owns | Budget |
+|---|---|---|
+| types.ts / layout.ts / content-laws.ts / extensions.ts / ToolButton.tsx | BUILT S1 (e8a5739) | ≤300 each ✓ |
+| **ReviewRail.tsx** (S2) | the review rail UI: header/actions, the run-order block, THE FILTER (state lives HERE — pure view state leaves the monolith), the section cards | ≤500 |
+| **useAiReview.ts** (S3) | THE RUN ENGINE + THE MODE MACHINE: one `runMode` object ('idle'\|'quick'\|'super'\|'custom'\|'insert'\|'reviewing') replaces the leaky flag web; startAiReview/worker pool/inject/revise/resolve/accept-all/finish/effectiveContent/history stamp | ≤700 |
+| **usePageDocument.ts** (S4) | open/save/savedHtml/dirty, versions + the Original (states, pinning glue when Group D lands), page status | ≤500 |
+| **VersionsMenu.tsx** (S4) | the dropdown UI | ≤300 |
+| **ImagePanel.tsx** (S5) | imgSel + image rules + the panel | ≤300 |
+| **EditorToolbar.tsx** (S5) | bubble menu + toolbar + insert menu (FAQ/heading/list/link) | ≤300 |
+| **SectionModal.tsx** (end state) | THE COMPOSER ONLY: mounts editor + hooks + panels, the portal pair, outside-click law | ≤700 |
+
+Diagnosability by construction: a rail bug lives in ReviewRail, a run bug
+in useAiReview, a save bug in usePageDocument — the file IS the error map.
+
+### Slice order (adjusted; each = one ritual pair)
+- **S2 ReviewRail.tsx** — carries TWO open fixes with it (the rail scroll
+  regression + the hierarchy pass): extraction makes them clean, one pair.
+- **S3 useAiReview.ts** — the mode machine kills the flag-leak bug class.
+- **S4 usePageDocument + VersionsMenu** — the Original's frontend home.
+- **S5 ImagePanel + EditorToolbar** — the composer reaches its end state.
+- **NEXT ARC:** index.tsx (1,872) + HeadingsPanel (791) decompose under
+  the same law once the editor domain is done.
