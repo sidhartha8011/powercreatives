@@ -151,6 +151,13 @@ const PAGE_CARD_TAPER_PX = 280;
 /** The outside rail's width — the card cedes exactly this when a rail is
  *  open (gap e533bc5 F6), the drawer's taper law mirrored right. */
 const RAIL_TAPER_PX = 250;
+
+/** THE LANGUAGE LAW (owner ruling 2026-07-19, gap e533bc5 F1): appended
+ *  LAST to EVERY AI order so it outranks everything before it — the
+ *  content's own language is the truth, translation is forbidden. Interim
+ *  guard until the server's hub-locale masquerade dies (the held group);
+ *  the root fix removes the broken variable, never this law. */
+const LANGUAGE_LAW = '\n\nTHE LANGUAGE LAW (overrides everything above): write in the SAME language as the current content. NEVER translate it to another language.';
 const pageCardWidth = (drawerOpen: boolean, railOpen: boolean): string => {
   const cut = (drawerOpen ? PAGE_CARD_TAPER_PX : 0) + (railOpen ? RAIL_TAPER_PX : 0);
   return cut > 0 ? `calc(${PAGE_CARD_WIDTH} - ${cut}px)` : PAGE_CARD_WIDTH;
@@ -1166,7 +1173,7 @@ export function SectionModal({
       const current = editor?.getText().trim() ? (editor?.getHTML() ?? '') : '';
       const res: any = await optimizeMutation.mutateAsync({
         siteId: siteId as number, postId, type,
-        html: current, topic: withInstruction,
+        html: current, topic: withInstruction + LANGUAGE_LAW,
         model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
       });
       const value = String(res?.value ?? '').trim();
@@ -1387,11 +1394,12 @@ export function SectionModal({
       while (next < sections.length) {
         const i = next++;
         if (skip(i)) continue;
-        // A routed section receives ONLY its own orders (+ broadcasts).
+        // A routed section receives ONLY its own orders (+ broadcasts);
+        // THE LANGUAGE LAW rides last on every order.
         const own = routingActive ? sectionDirectives(i) : null;
         const sectionTopic = (own
           ? `Apply exactly these optimizations to this section:\n${own.map((d, k) => `${k + 1}. ${d.text}`).join('\n')}`
-          : topic) + kwLine;
+          : topic) + kwLine + LANGUAGE_LAW;
         const sectionPurposes = own
           ? Array.from(new Set(own.flatMap((d) => d.purposes)))
           : runPurposes;
@@ -1552,7 +1560,7 @@ export function SectionModal({
       const res: any = await optimizeMutation.mutateAsync({
         siteId: siteId as number, postId, type,
         html: s.html,
-        topic: note,
+        topic: note + LANGUAGE_LAW,
         draft,
         model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
         reportChanges: true,
