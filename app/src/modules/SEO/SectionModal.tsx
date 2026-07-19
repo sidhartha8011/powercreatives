@@ -41,6 +41,7 @@ import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
+import type { Editor as TiptapEditor } from '@tiptap/core';
 import {
   X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
@@ -68,6 +69,7 @@ import type { ImgSelection, InsertData, SectionAnchor, SectionData, SectionParag
 import { ReviewRail } from './editor/ReviewRail';
 import { useAiReview } from './editor/useAiReview';
 import { useImagePanel } from './editor/useImagePanel';
+import { useSectionVersions } from './editor/useSectionVersions';
 
 // The public contract other files import from here (HeadingsPanel) —
 // unchanged by the decomposition.
@@ -122,29 +124,27 @@ export function SectionModal({
   const isInsert = mode === 'insert';
   const isPage = mode === 'page';
   const rootRef = useRef<HTMLDivElement>(null);
+  /** The editor instance's ref mirror — hooks that mount BEFORE useEditor
+   *  (versions) resolve it at event time, never at render order. */
+  const editorRef = useRef<TiptapEditor | null>(null);
 
-  // Page versions — ROWS ONLY (gap 02d3cb7 D1): a pure DB read in
-  // milliseconds; the OPEN gates on this. The Original (a remote snapshot
-  // round-trip) loads LAZILY below, only when the dropdown opens — gating
-  // the open on it was the 30-second white screen.
-  const pageVersionsQuery = trpc.seo.remotePageVersions.useQuery(
-    { siteId: siteId as number, postId, rowsOnly: 1 },
-    { enabled: isPage && !readOnly, staleTime: 0 },
-  );
-  const [versionsOpen, setVersionsOpen] = useState(false);
-  const pageOriginalQuery = trpc.seo.remotePageVersions.useQuery(
-    { siteId: siteId as number, postId },
-    { enabled: isPage && !readOnly && versionsOpen, staleTime: 60_000 },
-  );
-  /** Page mode's saved documents, newest first — W0 (2026-07-16): the open
-   *  loads [0]; the versions dropdown lists the same rows. */
-  const pageVersions: Array<{ id: number; replacement: string; createdAt: string }> =
-    isPage && Array.isArray((pageVersionsQuery.data as any)?.versions)
-      ? (pageVersionsQuery.data as any).versions
-      : [];
-  /** Settled = answered, either way — the one-time load must not wait forever
-   *  on a failed versions read (the assembly is then the honest fallback). */
-  const pageVersionsSettled = pageVersionsQuery.isSuccess || pageVersionsQuery.isError;
+  // ── THE VERSIONS MACHINERY (decomposition S4a): rows, the lazy Original,
+  //    picks, labels, deletion — one owner in useSectionVersions. ──
+  const {
+    pageVersionsQuery, pageOriginalQuery, pageVersions, pageVersionsSettled,
+    versionsOpen, setVersionsOpen, originalHtml,
+    versionsQuery, versions, versionPick, setVersionPick, pickVersion,
+    pageRowLabel, pageOriginalLabel, versionLabelFor,
+    deleteVersion, versionSel, setVersionSel, bulkDeleting, toggleVersionSel,
+    deletableVersionIds, deleteSelectedVersions,
+  } = useSectionVersions({
+    editorRef, isPage, isInsert, readOnly, siteId, postId, section,
+    pageDate: page?.date,
+    sectionOriginalHtml: !isInsert && section
+      ? (section.heading.html || `<h${section.heading.level}>${escapeHtml(section.heading.text)}</h${section.heading.level}>`)
+        + section.paragraphs.map((p) => p.html).join('')
+      : '',
+  });
 
   // ── INSTANT OPEN (gap e48b1ff): the heavy served-page assembly is LAZY —
   //    fetched only when there is no saved version to open from, or when the
@@ -187,14 +187,6 @@ export function SectionModal({
 
   // ── Content: ONE state — the editor. `savedHtml` = last saved/opened state. ──
   const openedHtml = isInsert ? (insert?.replacement ?? '') : (section ? composeSectionHtml(section) : '');
-  /** The TRUE original (no rules applied): section mode = live from the scan;
-   *  page mode = the hub-assembled rules-input document ('' = honest unavailable). */
-  const originalHtml = isPage
-    ? String((pageOriginalQuery.data as any)?.originalHtml ?? '')
-    : !isInsert && section
-      ? (section.heading.html || `<h${section.heading.level}>${escapeHtml(section.heading.text)}</h${section.heading.level}>`)
-        + section.paragraphs.map((p) => p.html).join('')
-      : '';
   const [savedHtml, setSavedHtml] = useState(openedHtml);
   /** WHICH control is running (owner law 2026-07-13): every long action
    *  names itself here and only THAT control may look busy — the rest keep
@@ -246,6 +238,9 @@ export function SectionModal({
   const [, setEditorTick] = useState(0);
   /** Unsaved edits in page mode — the versions dropdown's Draft state. */
   const pageDirty = isPage && docLoaded && !!editor && editor.getHTML() !== savedHtml;
+  /** The versions hook mounted before useEditor — keep its ref current. */
+  editorRef.current = editor ?? null;
+  const versionLabel = versionLabelFor(pageDirty);
   /** A real text selection — narrows the AI review's SCOPE (never its safety:
    *  every path shows red/green and waits for Accept/Reject). */
   const hasSelection = !!editor && !editor.state.selection.empty && !(editor.state.selection as any).node;
@@ -413,102 +408,6 @@ export function SectionModal({
     { id: 'service', name: 'Service' },
     { id: 'landing', name: 'Landing page' },
   ];
-
-  // ── Version history (replace-sections only — inserts have no Original). ──
-  const versionsQuery = trpc.seo.remoteSectionVersions.useQuery(
-    {
-      siteId: siteId as number, postId,
-      text: section?.heading.text ?? '', occurrence: section?.heading.occurrence ?? 0,
-    },
-    { enabled: !readOnly && !isInsert && !!section, staleTime: 0 },
-  );
-  const versions: Array<{ id: number; replacement: string; createdAt: string }> = isPage
-    ? pageVersions
-    : Array.isArray((versionsQuery.data as any)?.versions) ? (versionsQuery.data as any).versions : [];
-  /** '' = viewing the current state; 'original' | version id as string.
-   *  (versionsOpen lives beside the lazy Original query above — one owner.) */
-  const [versionPick, setVersionPick] = useState('');
-  const deleteVersionMutation = trpc.seo.remoteDeleteSectionVersion.useMutation();
-  const pickVersion = (v: string) => {
-    setVersionPick(v);
-    setVersionsOpen(false);
-    if (v === 'original') editor?.commands.setContent(originalHtml);
-    else if (v !== '') {
-      const row = versions.find((x) => String(x.id) === v);
-      if (row) editor?.commands.setContent(row.replacement);
-    }
-  };
-  /** Page rows (owner order 2026-07-11): NO separate Current choice — the
-   *  newest saved version IS what the site serves and carries the suffix;
-   *  the Original row shows the page's own date. When the newest save IS a
-   *  restore of the original, the label SAYS so (2026-07-13, live-caught:
-   *  a perfect restore looked like "another version" and read as a bug). */
-  const normDoc = (h: string) => h.replace(/\s*data-pcm-origin="[^"]*"/g, '').replace(/\s+/g, ' ').trim();
-  const currentIsOriginal = versions.length > 0 && originalHtml !== ''
-    && normDoc(String((versions[0] as any).replacement ?? '')) === normDoc(originalHtml);
-  const pageRowLabel = (v: { createdAt: string }, idx: number) =>
-    `${v.createdAt.slice(0, 16)}${idx === 0 ? (currentIsOriginal ? ' (Current — original)' : ' (Current)') : ''}`;
-  const pageOriginalLabel = page?.date ? `${String(page.date).slice(0, 16)} (original)` : 'Original';
-  /** The dropdown ALWAYS names a state (owner law — never a counter). */
-  const hasActiveRule = !isInsert && !isPage && !!section?.sectionRuleReplacement;
-  const versionLabel = versionPick === 'original'
-    ? (isPage ? pageOriginalLabel : 'Original')
-    : versionPick !== ''
-      ? (isPage
-        ? (versions.some((x) => String(x.id) === versionPick)
-          ? pageRowLabel(
-            versions[versions.findIndex((x) => String(x.id) === versionPick)],
-            versions.findIndex((x) => String(x.id) === versionPick),
-          )
-          : 'Version')
-        : (versions.find((v) => String(v.id) === versionPick)?.createdAt.slice(0, 16) ?? 'Version'))
-      : isPage && pageDirty
-        ? 'Draft (unsaved)'
-      : isPage
-        ? (versions.length > 0 ? pageRowLabel(versions[0], 0) : pageOriginalLabel)
-        : (hasActiveRule && versions.length > 0 ? versions[0].createdAt.slice(0, 16) : 'Original');
-  const deleteVersion = async (id: number) => {
-    try {
-      await deleteVersionMutation.mutateAsync({ siteId: siteId as number, postId, versionId: id });
-      if (versionPick === String(id)) setVersionPick('');
-      await (isPage ? pageVersionsQuery : versionsQuery).refetch();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Could not delete the version');
-    }
-  };
-  // ── Bulk version cleanup (owner order 2026-07-16): tick many / select
-  //    all, ONE delete. The CURRENT version (idx 0) is excluded from
-  //    select-all and carries no checkbox — deleting what the editor opens
-  //    from would recreate the old-version trap (W0). Sequential deletes
-  //    (the bulk-status precedent), one refetch, one honest summary. ──
-  const [versionSel, setVersionSel] = useState<Set<number>>(new Set());
-  const [bulkDeleting, setBulkDeleting] = useState(false);
-  const toggleVersionSel = (id: number) => setVersionSel((cur) => {
-    const next = new Set(cur);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    return next;
-  });
-  const deletableVersionIds = versions.slice(1).map((v) => Number(v.id));
-  const deleteSelectedVersions = async () => {
-    const ids = Array.from(versionSel);
-    if (ids.length === 0 || bulkDeleting) return;
-    setBulkDeleting(true);
-    let failed = 0;
-    for (const id of ids) {
-      try {
-        await deleteVersionMutation.mutateAsync({ siteId: siteId as number, postId, versionId: id });
-      } catch {
-        failed++;
-      }
-    }
-    setBulkDeleting(false);
-    setVersionSel(new Set());
-    if (ids.some((id) => versionPick === String(id))) setVersionPick('');
-    await (isPage ? pageVersionsQuery : versionsQuery).refetch();
-    if (failed > 0) toast.error(`${failed} of ${ids.length} versions could not be deleted — the rest are gone.`);
-    else toast.success(`${ids.length} version${ids.length === 1 ? '' : 's'} deleted.`);
-  };
 
   const isDirty = () => !readOnly && !!editor && editor.getHTML() !== savedHtml;
 
