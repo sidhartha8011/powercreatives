@@ -38,15 +38,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useEditor, EditorContent } from '@tiptap/react';
-import { BubbleMenu } from '@tiptap/react/menus';
+import { useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import type { Editor as TiptapEditor } from '@tiptap/core';
-import {
-  X, Loader2,
-  BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List,
-} from 'lucide-react';
+import { X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -61,8 +56,7 @@ import {
   DiffAdded, DiffRemoved, FaqItem, FaqSummary, LockedImage, ReviewControls, SectionBlocks,
 } from './editor/extensions';
 import { composeSectionHtml, escapeHtml, faqTemplate, stripPcmAnchors } from './editor/content-laws';
-import { BLOCK_STYLES, PAGE_TYPE_SCALE, TYPE_SCALE, WIDTH, pageCardWidth } from './editor/layout';
-import { ToolButton } from './editor/ToolButton';
+import { WIDTH, pageCardWidth } from './editor/layout';
 import type { InsertData, SectionAnchor, SectionData } from './editor/types';
 import { ReviewRail } from './editor/ReviewRail';
 import { useAiReview } from './editor/useAiReview';
@@ -72,6 +66,8 @@ import { VersionsMenu } from './editor/VersionsMenu';
 import { EditorHeader } from './editor/EditorHeader';
 import { EditorFooter } from './editor/EditorFooter';
 import { ImagePanel } from './editor/ImagePanel';
+import { useSaveFlow } from './editor/useSaveFlow';
+import { EditorBody } from './editor/EditorBody';
 
 // The public contract other files import from here (HeadingsPanel) —
 // unchanged by the decomposition.
@@ -297,8 +293,6 @@ export function SectionModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveViewWanted, editor, pageReady, pageHtml]);
 
-  const saveMutation = trpc.seo.remoteSaveSectionRule.useMutation();
-  const savePageMutation = trpc.seo.remoteSavePageEdits.useMutation();
 
   // ── AI model choice (owner order 2026-07-13): ONE dropdown in the modal;
   //    every AI action here uses it. Resolution: the user's saved pick →
@@ -376,120 +370,40 @@ export function SectionModal({
     ...kwBucket.keywords,
   ].filter((k) => k !== primaryKw.trim())).size;
   const primaryDensity = keywordUses(contentText, primaryKw).density;
-  const isDirty = () => !readOnly && !!editor && editor.getHTML() !== savedHtml;
 
-  // ── Save (save buttons / click outside): live rules, engine handles
-  //    UPSERT/revert. `action` names the control that invoked it — that one
-  //    alone shows the working state. ──
-  const save = async (replacementOverride?: string, action: BusyAction = 'saveClose'): Promise<boolean> => {
-    if (readOnly) return true;
-    if (busy) return false; // one long action at a time — a guarded click is a no-op
-    if (isPage) {
-      if (!docLoaded) return true; // nothing loaded — nothing to save
-      if (review) {
-        toast.info('Finish the AI review first — accept or reject each change.');
-        return false;
-      }
-      // Guard: diff marks are presentation and must NEVER reach a save.
-      const html = stripDiffHtml(replacementOverride ?? (editor?.getHTML() ?? ''));
-      setBusyAction(action);
-      try {
-        // The hub slices the document back into sections and routes each
-        // change through the existing rule paths — page-level editing,
-        // section-level storage. Removals/hides are reversible via versions.
-        const res: any = await savePageMutation.mutateAsync({ siteId: siteId as number, postId, html });
-        onSaved();
-        const parts: string[] = [];
-        const n = (k: string) => Number(res?.[k] ?? 0);
-        if (n('saved') > 0) parts.push(`${n('saved')} section${n('saved') === 1 ? '' : 's'} updated`);
-        if (n('inserted') > 0) parts.push(`${n('inserted')} added`);
-        if (n('removed') > 0) parts.push(`${n('removed')} removed`);
-        if (n('restored') > 0) parts.push(`${n('restored')} restored`);
-        if (n('hidden') > 0) parts.push(`${n('hidden')} image${n('hidden') === 1 ? '' : 's'} hidden`);
-        if (n('unhidden') > 0) parts.push(`${n('unhidden')} image${n('unhidden') === 1 ? '' : 's'} back`);
-        toast.success(parts.length > 0
-          ? `Saved — ${parts.join(', ')} (page/CDN caches may need a purge).`
-          : 'No content changes to save.');
-        (Array.isArray(res?.notes) ? res.notes : []).forEach((nn: string) => toast.info(nn));
-        setSavedHtml(html);
-        setVersionPick('');
-        // THE CORNER'S TRUTH (gap ATOMIC-SAVE): a PUSHED save is the site's
-        // confirmed state — the connector accepted the commit push and echoed
-        // this exact record — so the verdict is seeded from the save itself
-        // (no 15-30s re-ask of what was just confirmed). A no-op save
-        // (pushed=false) confirmed nothing and must not touch the verdict.
-        if (res?.pushed === true && res?.pageState) {
-          queryClient.setQueryData(['seo', 'pageState', { siteId: siteId as number, postId }], (prev: any) => ({
-            brandId: prev?.brandId ?? 0,
-            pageType: prev?.pageType ?? pageType,
-            local: res.pageState,
-            remote: { version: Number(res.pageState.version ?? 0), fingerprint: String(res.pageState.fingerprint ?? '') },
-            drifted: false,
-            error: null,
-          }));
-        }
-        // Versions list only — the editor content is NEVER auto-replaced
-        // (incident fix 2026-07-11: a degraded refetch must not clobber the doc).
-        void pageVersionsQuery.refetch();
-        return true;
-      } catch (e: any) {
-        toast.error(e?.message ?? 'Could not save the page');
-        return false;
-      } finally {
-        setBusyAction(null);
-      }
-    }
-    if (!isInsert && !section) return true;
-    const replacement = replacementOverride ?? (editor?.getHTML() ?? '');
-    setBusyAction(action);
-    try {
-      let res: any;
-      if (isInsert) {
-        const anchor = insert?.ruleId
-          ? { text: insert.anchorText, level: insert.anchorLevel, occurrence: insert.anchorOccurrence }
-          : anchors?.[anchorIdx];
-        if (!anchor) { toast.error('Pick a section to anchor the new one to.'); return false; }
-        res = await saveMutation.mutateAsync({
-          siteId: siteId as number, postId, kind: 'insert',
-          anchorText: anchor.text, anchorLevel: anchor.level, anchorOccurrence: anchor.occurrence,
-          position, replacement, ruleId: insert?.ruleId,
-        });
-      } else if (section?.slice) {
-        // Rule-born section (served-truth): the edit splices the owning rule.
-        res = await saveMutation.mutateAsync({
-          siteId: siteId as number, postId, kind: 'slice',
-          ruleId: section.slice.ruleId,
-          unitFrom: section.slice.unitFrom,
-          unitTo: section.slice.unitTo,
-          replacement,
-        });
-      } else if (section) {
-        res = await saveMutation.mutateAsync({
-          siteId: siteId as number, postId, kind: 'replace',
-          headingText: section.heading.text, // ALWAYS the scan's ORIGINAL — rule identity
-          headingLevel: section.heading.level,
-          headingOccurrence: section.heading.occurrence,
-          // Identity = the SCAN's section membership (anchors) — the fix that
-          // makes the serving-side verify agree with what we saved.
-          paragraphs: section.paragraphs.map((p) => ({ text: p.text, occurrence: p.occurrence })),
-          replacement,
-        });
-      }
-      onSaved();
-      if (res?.removed) toast.success('Section removed — the page serves without it again.');
-      else if (res?.reverted) toast.success('Reverted — the original section serves again.');
-      else toast.success('Saved — the site serves it now (page/CDN caches may need a purge).');
-      setSavedHtml(replacement);
-      setVersionPick('');
-      if (!isInsert) void versionsQuery.refetch(); // the accepted state is a new version
-      return true;
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Could not save the section');
-      return false;
-    } finally {
-      setBusyAction(null);
-    }
-  };
+  // zone is simply never touched by surgery)
+
+  // ── THE RUN ENGINE (decomposition S3): every AI run + the whole review
+  //    lifecycle live in useAiReview — one owner, one file (the 700 law).
+  //    The composer only wires the live inputs in and the surface out. ──
+  const {
+    review, setReview, runDirectives, teacherById,
+    reviseTarget, setReviseTarget, reviseNote, setReviseNote,
+    runAi, startAiReview, runQuickOptimize,
+    resolveSection, acceptAllDiffs, finishReview,
+    reviseSection, runRevise,
+    focusSection, highlightQuote, setQuoteRange,
+  } = useAiReview({
+    editor, isPage, docLoaded, busy, siteId, postId, type, model, provider,
+    aiPick: aiPick ?? null,
+    instruction, hasSelection, primaryKw, supportingKw,
+    bucketKeywords: kwBucket.keywords,
+    tickedKw,
+    closeAsk: () => setAskOpen(false),
+    beginAiAction: () => setBusyAction('ai'),
+    endAiAction: () => setBusyAction(null),
+  });
+  // ── THE SAVE FLOW (decomposition final squeeze): page + section/insert
+  //    saves live in useSaveFlow — one owner, one file. ──
+  const { save, isDirty } = useSaveFlow({
+    editor, isPage, isInsert, readOnly, docLoaded,
+    reviewOpen: !!review, busy, siteId, postId, pageType,
+    section, insert, anchors, anchorIdx, position,
+    savedHtml, setSavedHtml, setVersionPick,
+    refetchPageVersions: () => { void pageVersionsQuery.refetch(); },
+    refetchSectionVersions: () => { void versionsQuery.refetch(); },
+    setBusyAction, onSaved,
+  });
 
   // ── Click OUTSIDE = save (when changed) then close. Esc = close without saving. ──
   useEffect(() => {
@@ -522,28 +436,6 @@ export function SectionModal({
   }, [editor, savedHtml, busy, position, anchorIdx]);
 
   // (the old whole-doc rebuilder's orphan buffer died with it — the orphan
-  // zone is simply never touched by surgery)
-
-  // ── THE RUN ENGINE (decomposition S3): every AI run + the whole review
-  //    lifecycle live in useAiReview — one owner, one file (the 700 law).
-  //    The composer only wires the live inputs in and the surface out. ──
-  const {
-    review, setReview, runDirectives, teacherById,
-    reviseTarget, setReviseTarget, reviseNote, setReviseNote,
-    runAi, startAiReview, runQuickOptimize,
-    resolveSection, acceptAllDiffs, finishReview,
-    reviseSection, runRevise,
-    focusSection, highlightQuote, setQuoteRange,
-  } = useAiReview({
-    editor, isPage, docLoaded, busy, siteId, postId, type, model, provider,
-    aiPick: aiPick ?? null,
-    instruction, hasSelection, primaryKw, supportingKw,
-    bucketKeywords: kwBucket.keywords,
-    tickedKw,
-    closeAsk: () => setAskOpen(false),
-    beginAiAction: () => setBusyAction('ai'),
-    endAiAction: () => setBusyAction(null),
-  });
 
   // ── THE IMAGE MACHINERY (decomposition S5): selection watcher, rule
   //    form, delivery, save/revert/hide — one owner in useImagePanel;
@@ -683,59 +575,14 @@ export function SectionModal({
              lives in the SELECT-TEXT popover (owner correction — no permanent
              toolbar): select text → the floating B/I/U/Link/H1/H2/• menu. ── */}
       <div className={isPage ? 'flex min-h-0 flex-1' : 'contents'}>
-      <div
-        className={`${isPage ? 'min-h-0 flex-1 px-8 py-4' : 'h-[280px] px-3 py-2'} overflow-auto bg-white`}
-        title={readOnly ? 'Read-only here — section editing runs via dynamic rules on connected sites.' : undefined}
-      >
-        {/* THE STAGED OPEN OVERLAY (gap 02d3cb7 D2): every pre-content phase
-            SAYS what it is doing — a blank editor is never silent again. */}
-        {isPage && !readOnly && !docLoaded && !pageError && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            {!pageVersionsSettled
-              ? 'Loading your saved version…'
-              : 'Pulling the page from your site — the first open takes longer while the local copy is built…'}
-          </div>
-        )}
-        {isPage && pageError && (
-          <div className="flex h-full items-center justify-center px-8 text-center text-xs text-slate-500">{pageError}</div>
-        )}
-        {!readOnly && editor && (
-          <BubbleMenu
-            editor={editor}
-            shouldShow={({ state }: { state: any }) => !state.selection.empty && !state.selection.node}
-            className="flex items-center gap-0.5 rounded-md border border-slate-200 bg-white p-0.5 shadow-md"
-          >
-            <ToolButton title="Bold" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><BoldIcon className="h-3.5 w-3.5" /></ToolButton>
-            <ToolButton title="Italic" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><ItalicIcon className="h-3.5 w-3.5" /></ToolButton>
-            <ToolButton title="Underline" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon className="h-3.5 w-3.5" /></ToolButton>
-            <ToolButton
-              title={editor.isActive('link') ? 'Remove link' : 'Add link'}
-              active={editor.isActive('link')}
-              onClick={() => {
-                if (editor.isActive('link')) { editor.chain().focus().unsetLink().run(); return; }
-                // eslint-disable-next-line no-alert
-                const url = window.prompt('Link URL');
-                if (url) editor.chain().focus().setLink({ href: url }).run();
-              }}
-            ><LinkIcon className="h-3.5 w-3.5" /></ToolButton>
-            <div className="mx-0.5 h-4 w-px bg-slate-200" />
-            <ToolButton title="Heading 1" active={editor.isActive('heading', { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="h-3.5 w-3.5" /></ToolButton>
-            <ToolButton title="Heading 2" active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="h-3.5 w-3.5" /></ToolButton>
-            <ToolButton title="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-3.5 w-3.5" /></ToolButton>
-          </BubbleMenu>
-        )}
-        {(!isPage || docLoaded) && (
-          <div className={isPage ? 'mx-auto w-full max-w-[820px] px-8 pb-16 pt-6' : 'contents'}>
-            <EditorContent
-              editor={editor}
-              className={`${isPage ? `${PAGE_TYPE_SCALE} ${BLOCK_STYLES}` : TYPE_SCALE} [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[250px]`
-                // Locked context images: visible, clearly not editable.
-                + (isPage ? ' [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_img[data-pcm-locked]]:cursor-not-allowed [&_img[data-pcm-locked]]:opacity-90' : '')}
-            />
-          </div>
-        )}
-      </div>
+      <EditorBody
+        editor={editor}
+        isPage={isPage}
+        readOnly={readOnly}
+        docLoaded={docLoaded}
+        pageError={pageError}
+        pageVersionsSettled={pageVersionsSettled}
+      />
 
       {/* ── AI review rail (code-review style): one row per section — Accept /
              Reject per diff, Accept all, Reject all. The editor is read-only
