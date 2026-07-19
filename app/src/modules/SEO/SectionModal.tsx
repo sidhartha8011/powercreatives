@@ -489,6 +489,10 @@ interface ReviewSection extends DocSection {
    *  live compare) — effectiveContent's untouched-detector: live == baseline
    *  ⇔ the user typed nothing in this section since the suggestion landed. */
   baseline?: string;
+  /** THE SECTION'S OWN ORDERS (gap e533bc5 F4): the routed directives this
+   *  section was sent — shown while pending and as the card-less floor.
+   *  The run-level dump under every card died with this field. */
+  directives?: CompiledDirective[];
 }
 
 /** Visible text of an HTML fragment (whitespace-collapsed) — clean-result check. */
@@ -1182,6 +1186,24 @@ export function SectionModal({
   const teacherById: Record<string, TeacherMeta> = Array.isArray((teachersMetaQuery.data as any)?.teachers)
     ? Object.fromEntries(((teachersMetaQuery.data as any).teachers as TeacherMeta[]).map((t) => [t.id, t]))
     : {};
+  // ── THE REVIEW FILTER (gap e533bc5 F9): pure view-state — the SEO/AI tab
+  //    and the multi-select purpose tags narrow what the rail lists; the
+  //    review data and every decision path stay untouched. ──
+  const [filterGroup, setFilterGroup] = useState<'search' | 'ai' | null>(null);
+  const [filterTags, setFilterTags] = useState<Set<string>>(new Set());
+  const tagGroup = (p: string): 'search' | 'ai' => teacherById[p]?.group ?? 'search';
+  const filterActive = filterGroup !== null || filterTags.size > 0;
+  const tagMatches = (p: string): boolean =>
+    (filterGroup === null || tagGroup(p) === filterGroup)
+    && (filterTags.size === 0 || filterTags.has(p));
+  /** A change without a purpose tag passes only an inactive filter. */
+  const changeMatches = (why: string): boolean => (why === '' ? !filterActive : tagMatches(why));
+  const sectionMatches = (s: ReviewSection): boolean => {
+    if (!filterActive) return true;
+    if (s.status === 'failed') return true; // failures always show — honesty law
+    if (s.status === 'diff' && (s.changes?.length ?? 0) > 0) return (s.changes ?? []).some((c) => changeMatches(c.why));
+    return (s.directives ?? []).some((d) => d.purposes.some(tagMatches));
+  };
   const historyStampMutation = trpc.optimizer.historyStamp.useMutation();
   // ── Status dropdown in the header (owner order 2026-07-15): the SAME
   //    control + save path as the table's status cell — optimistic by law,
@@ -1326,7 +1348,13 @@ export function SectionModal({
       editor.view.dispatch(tr);
     }
     setAskOpen(false);
-    const initial = sections.map((s, i) => ({ ...s, status: (skip(i) ? 'clean' : 'pending') as ReviewStatus }));
+    const initial = sections.map((s, i) => ({
+      ...s,
+      status: (skip(i) ? 'clean' : 'pending') as ReviewStatus,
+      // The section's OWN orders (F4): routed + broadcast for routed runs,
+      // every directive for unrouted ones, none for plain quick runs.
+      directives: !skip(i) && (directives?.length ?? 0) > 0 ? sectionDirectives(i) : undefined,
+    }));
     reviewRef.current = initial; // workers may resolve before the sync effect runs
     setReview(initial);
     // The editor stays EDITABLE (owner F1): the doc is the source of truth,
@@ -1817,14 +1845,40 @@ export function SectionModal({
               Draft (unsaved)
             </button>
           )}
-          {(!isPage || originalHtml !== '') && (
+          {/* THE ORIGINAL ROW ALWAYS EXISTS (owner law 2026-07-19, gap
+              e533bc5 C7): the original is the original on the site — an
+              in-flight or failed fetch is a STATED state with a retry,
+              never a vanishing row (the versions-delete "fix" was a race). */}
+          {!isPage ? (
             <button
               type="button"
               onClick={() => pickVersion('original')}
               className="block w-full px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
             >
               {versionPick === 'original' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
-              {isPage ? pageOriginalLabel : 'Original'}
+              Original
+            </button>
+          ) : originalHtml !== '' ? (
+            <button
+              type="button"
+              onClick={() => pickVersion('original')}
+              className="block w-full px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
+            >
+              {versionPick === 'original' && <Check className="mr-1 inline h-3 w-3 text-primary" />}
+              {pageOriginalLabel}
+            </button>
+          ) : pageOriginalQuery.isFetching ? (
+            <div className="flex w-full items-center gap-1 px-2 py-1 text-left text-[11px] text-slate-400">
+              <Loader2 className="h-3 w-3 animate-spin text-primary" /> {pageOriginalLabel} — loading…
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void pageOriginalQuery.refetch()}
+              title="The site didn't answer with the original — press to retry"
+              className="block w-full px-2 py-1 text-left text-[11px] text-amber-600 hover:bg-amber-50"
+            >
+              {pageOriginalLabel} — unavailable, retry
             </button>
           )}
           {/* Bulk cleanup bar — shown when there is history to clean. The
@@ -2328,6 +2382,89 @@ export function SectionModal({
               </button>
             </div>
           </div>
+          {/* THE RUN'S ORDER — stated ONCE at the top (gap e533bc5 F4); the
+              identical dump under every card died with this block. */}
+          {runDirectives && (
+            <div className="border-b border-slate-200 bg-white px-2.5 py-1.5">
+              <div className="text-[8px] font-semibold uppercase tracking-wide text-slate-400">This run's order</div>
+              <div className="mt-0.5 max-h-24 space-y-px overflow-auto">
+                {runDirectives.map((d, k) => (
+                  <div key={k} className="text-[9px] leading-tight text-slate-500">{k + 1}. {d.text}</div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* THE FILTER (gap e533bc5 F9): SEO/AI tabs, then the run's own
+              purpose tags (multi-select). Each level carries its own Clear. */}
+          {(() => {
+            const railTags = Array.from(new Set(review.flatMap((s) => [
+              ...(s.changes ?? []).map((c) => c.why).filter((w) => w !== ''),
+              ...(s.directives ?? []).flatMap((d) => d.purposes),
+            ])));
+            if (railTags.length === 0) return null;
+            const visibleTags = filterGroup === null ? railTags : railTags.filter((t) => tagGroup(t) === filterGroup);
+            return (
+              <div className="border-b border-slate-200 bg-white px-2.5 py-1.5">
+                <div className="flex items-center gap-1">
+                  {(['search', 'ai'] as const).map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => {
+                        const next = filterGroup === g ? null : g;
+                        setFilterGroup(next);
+                        // Tags outside the chosen group would filter invisibly — prune.
+                        if (next !== null) setFilterTags((cur) => new Set([...cur].filter((t) => tagGroup(t) === next)));
+                      }}
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                        filterGroup === g ? 'bg-[#e7f5ff] text-primary' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                      }`}
+                    >
+                      {GROUP_PILLS[g].label}
+                    </button>
+                  ))}
+                  {filterGroup !== null && (
+                    <button
+                      type="button"
+                      onClick={() => setFilterGroup(null)}
+                      className="ml-auto text-[9px] text-slate-400 hover:text-slate-600"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  {visibleTags.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setFilterTags((cur) => {
+                        const next = new Set(cur);
+                        next.has(t) ? next.delete(t) : next.add(t);
+                        return next;
+                      })}
+                      className={`rounded-full border px-1.5 py-px text-[9px] ${
+                        filterTags.has(t)
+                          ? 'border-primary/40 bg-[#e7f5ff] font-medium text-primary'
+                          : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >
+                      {(teacherById[t]?.label ?? TEACHER_PILLS[t] ?? t).toLowerCase()}
+                    </button>
+                  ))}
+                </div>
+                {filterTags.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterTags(new Set())}
+                    className="mt-1 text-[9px] text-slate-400 hover:text-slate-600"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            );
+          })()}
           {/* The Revise box (owner F2): one note, Adjust sends it. Serves both
               a single section (chip or rail Revise) and Revise-all. */}
           {reviseTarget !== null && (
@@ -2368,14 +2505,20 @@ export function SectionModal({
             </div>
           )}
           <div className="min-h-0 flex-1 overflow-auto py-1">
-            {review.map((s, i) => s.status === 'clean' ? null : (
+            {filterActive && review.every((s) => s.status === 'clean' || !sectionMatches(s)) && (
+              <div className="px-2.5 py-3 text-[10px] text-slate-500">
+                No changes match the filter — clear it to see everything.
+              </div>
+            )}
+            {review.map((s, i) => (s.status === 'clean' || !sectionMatches(s)) ? null : (
               <div
                 key={`${s.heading}-${i}`}
                 onClick={() => focusSection(i)}
                 title="Click to jump to this section"
                 className="cursor-pointer border-b border-slate-100 px-2.5 py-1.5 hover:bg-slate-100/60"
               >
-                <div className="truncate text-[11px] font-medium text-slate-700" title={s.heading}>{s.heading || '(untitled section)'}</div>
+                {/* Hierarchy (gap e533bc5 F5): the section TITLE leads. */}
+                <div className="truncate text-[12px] font-semibold text-slate-800" title={s.heading}>{s.heading || '(untitled section)'}</div>
                 {/* THE CHANGE CARDS (gap 0a0a3c3): the section's OWN verified
                     changes — WHAT was done + WHY, hover lights the exact words
                     in the text (claim-to-text verification). Server-checked:
@@ -2387,11 +2530,11 @@ export function SectionModal({
                         Section rewritten
                       </div>
                     )}
-                    <div className="mt-0.5 space-y-0.5">
-                      {(s.changes ?? []).map((c, k) => (
+                    <div className="mt-1 space-y-1">
+                      {(s.changes ?? []).map((c, k) => ((filterActive && !changeMatches(c.why)) ? null : (
                         <div
                           key={k}
-                          className="flex cursor-default items-start gap-1 rounded px-0.5 leading-tight hover:bg-blue-50"
+                          className="flex cursor-default items-start gap-1.5 rounded px-0.5 leading-snug hover:bg-blue-50"
                           onMouseEnter={() => highlightQuote(i, c.quote)}
                           onMouseLeave={() => setQuoteRange(null)}
                           title="Hover shows exactly where this landed in the text"
@@ -2406,10 +2549,10 @@ export function SectionModal({
                             onChange={() => setReview((cur) => cur?.map((x, xi) => (xi === i
                               ? { ...x, kept: (x.changes ?? []).map((_, ki) => (ki === k ? !(x.kept?.[ki] ?? true) : (x.kept?.[ki] ?? true))) }
                               : x)) ?? cur)}
-                            className="mt-px h-2.5 w-2.5 shrink-0 accent-green-600"
+                            className="h-3.5 w-3.5 shrink-0 accent-green-600"
                           />
                           <span className="min-w-0">
-                            <span className="text-[9px] text-slate-600">{c.what}</span>
+                            <span className="text-[10px] text-slate-500">{c.what}</span>
                             {c.why !== '' && (
                               <span className="ml-1 text-[8px] italic text-slate-400">
                                 {(teacherById[c.why]?.label ?? TEACHER_PILLS[c.why] ?? c.why).toLowerCase()}
@@ -2417,7 +2560,7 @@ export function SectionModal({
                             )}
                           </span>
                         </div>
-                      ))}
+                      )))}
                       {(s.kept ?? []).some((v) => !v) && (s.kept ?? []).some((v) => v) && (
                         <button
                           type="button"
@@ -2439,38 +2582,25 @@ export function SectionModal({
                       )}
                     </div>
                   </div>
-                ) : /* PURPOSE VERIFICATION (owner law 2026-07-13): the
-                    suggestion shows WHAT IT WAS ORDERED TO DO — pills + the
-                    compiled to-do. THE FLOOR (gap 0a0a3c3): sections without
-                    a verified change list keep this exact display. */
-                runDirectives ? (
-                  <div title={s.genModel ? `Generated by ${s.genModel}` : undefined}>
-                    {/* THE TWO PURPOSES the user knows (owner ruling
-                        2026-07-15): one SEO / one AI pill max, then the
-                        plain category names as a quiet italic line — the
-                        WHY next to the WHAT. */}
-                    <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                      {(['search', 'ai'] as const)
-                        .filter((g) => runDirectives.some((d) => d.purposes.some((p) => (teacherById[p]?.group ?? 'search') === g)))
-                        .map((g) => (
-                          <span key={g} className={`rounded-full px-1.5 py-px text-[8px] font-semibold ${GROUP_PILLS[g].className}`}>
-                            {GROUP_PILLS[g].label}
+                ) : /* THE SECTION'S OWN ORDERS (gap e533bc5 F4): while
+                    pending and as the card-less floor, the card shows what
+                    was ordered HERE — never the run-level dump (that lives
+                    once at the rail top now). */
+                (s.directives?.length ?? 0) > 0 ? (
+                  <div title={s.genModel ? `Generated by ${s.genModel}` : undefined} className="mt-1 space-y-1">
+                    {(s.directives ?? [])
+                      .filter((d) => !filterActive || d.purposes.some(tagMatches))
+                      .map((d, k) => (
+                        <div key={k} className="flex items-start gap-1.5 leading-snug">
+                          <span className="text-slate-300">•</span>
+                          <span className="min-w-0">
+                            <span className="text-[10px] text-slate-500">{d.text}</span>
+                            <span className="ml-1 text-[8px] italic text-slate-400">
+                              {d.purposes.map((p) => (teacherById[p]?.label ?? TEACHER_PILLS[p] ?? p).toLowerCase()).join(', ')}
+                            </span>
                           </span>
-                        ))}
-                    </div>
-                    <div className="mt-0.5 text-[9px] italic leading-tight text-slate-400">
-                      {Array.from(new Set(runDirectives.flatMap((d) => d.purposes)))
-                        .map((p) => (teacherById[p]?.label ?? TEACHER_PILLS[p] ?? p).toLowerCase())
-                        .join(', ')}
-                    </div>
-                    <div className="mt-0.5 space-y-px" title={runDirectives.map((d, k) => `${k + 1}. ${d.text}`).join('\n')}>
-                      {runDirectives.slice(0, 3).map((d, k) => (
-                        <div key={k} className="text-[9px] leading-tight text-slate-400">• {d.text}</div>
+                        </div>
                       ))}
-                      {runDirectives.length > 3 && (
-                        <div className="text-[9px] leading-tight text-slate-400">+{runDirectives.length - 3} more…</div>
-                      )}
-                    </div>
                   </div>
                 ) : s.genModel ? (
                   <div className="truncate text-[9px] text-slate-400" title={`Generated by ${s.genModel}`}>{s.genModel}</div>
