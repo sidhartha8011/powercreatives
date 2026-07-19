@@ -43,17 +43,15 @@ import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import type { Editor as TiptapEditor } from '@tiptap/core';
 import {
-  X, Sparkles, Loader2, Check, Undo2, Trash2, MessageSquarePlus,
+  X, Loader2,
   BoldIcon, ItalicIcon, UnderlineIcon, Link as LinkIcon,
-  Heading1, Heading2, List, ExternalLink, Save, ImagePlus, MessageCircleQuestion, Eye, Plus, KeyRound,
-  RefreshCw, CloudOff,
+  Heading1, Heading2, List,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { trpc } from '@/lib/trpc';
-import { ModelDropdown, PillButton, PillSplitButton } from '@/components/shared';
-import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { ModelDropdown } from '@/components/shared';
 import { useTextModels } from '@/modules/Copy/useTextModels';
 import { stripDiffHtml } from './word-diff';
 // THE DECOMPOSITION (S1-S3, gap 325d280/10a0233): the editor's laws,
@@ -62,15 +60,18 @@ import { stripDiffHtml } from './word-diff';
 import {
   DiffAdded, DiffRemoved, FaqItem, FaqSummary, LockedImage, ReviewControls, SectionBlocks,
 } from './editor/extensions';
-import { composeSectionHtml, escapeHtml, faqTemplate, normSrc, stripPcmAnchors } from './editor/content-laws';
+import { composeSectionHtml, escapeHtml, faqTemplate, stripPcmAnchors } from './editor/content-laws';
 import { BLOCK_STYLES, PAGE_TYPE_SCALE, TYPE_SCALE, WIDTH, pageCardWidth } from './editor/layout';
 import { ToolButton } from './editor/ToolButton';
-import type { ImgSelection, InsertData, SectionAnchor, SectionData, SectionParagraph } from './editor/types';
+import type { InsertData, SectionAnchor, SectionData } from './editor/types';
 import { ReviewRail } from './editor/ReviewRail';
 import { useAiReview } from './editor/useAiReview';
 import { useImagePanel } from './editor/useImagePanel';
 import { useSectionVersions } from './editor/useSectionVersions';
 import { VersionsMenu } from './editor/VersionsMenu';
+import { EditorHeader } from './editor/EditorHeader';
+import { EditorFooter } from './editor/EditorFooter';
+import { ImagePanel } from './editor/ImagePanel';
 
 // The public contract other files import from here (HeadingsPanel) —
 // unchanged by the decomposition.
@@ -79,14 +80,9 @@ import { OptimizerRail } from './optimizer/OptimizerRail';
 import { KeywordsDrawer, type TickedKeyword } from './optimizer/KeywordsDrawer';
 import { useKeywordBucket } from './optimizer/useKeywordBucket';
 import { keywordUses } from './optimizer/keywordStats';
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
-import { Pill } from '@/components/ui/pill';
-import { statusPillVariant } from './types';
-import { DROPDOWN_TRIGGER_STYLE } from '@/components/shared/ModelDropdown';
 
 // The hub's native WP media library (wp_enqueue_media — same pattern as the
 // table's featured-image picker).
-declare const wp: any;
 
 export interface SectionModalProps {
   siteId: number | 'local';
@@ -143,7 +139,7 @@ export function SectionModal({
   // through <VersionsMenu v={versionsApi}> — one contract, zero drift.
   const {
     pageVersionsQuery, pageVersions, pageVersionsSettled,
-    originalHtml, versionsQuery, versionLabelFor, setVersionPick,
+    versionsQuery, versionLabelFor, setVersionPick,
   } = versionsApi;
 
   // ── INSTANT OPEN (gap e48b1ff): the heavy served-page assembly is LAZY —
@@ -336,23 +332,17 @@ export function SectionModal({
   //    feeds real business details (phone/address/…) into every AI run, and
   //    the page type tells the AI WHAT it's optimizing (local/blog/…). Both
   //    visible in the header — you SEE the context the AI actually gets. ──
-  const brandsQuery = trpc.brands.list.useQuery(undefined, { enabled: isPage && !readOnly });
-  const brands = Array.isArray(brandsQuery.data)
-    ? (brandsQuery.data as any[]).map((b) => ({ id: Number(b.id), name: String(b.name) }))
-    : [];
-  const [brandId, setBrandId] = useState(0);
   const [pageType, setPageType] = useState('general');
-  // brandId/pageType arrive on the FEATHERWEIGHT check (instant-open path,
-  // gap e48b1ff); the heavy inventory reply keeps carrying them for the
-  // fallback path — whichever answers first fills the header context.
+  // pageType arrives on the FEATHERWEIGHT check (instant-open path, gap
+  // e48b1ff); the heavy inventory reply keeps carrying it for the fallback
+  // path — whichever answers first fills the context. (The brand's twin
+  // lives in EditorHeader — the header owns the business link end-to-end.)
   useEffect(() => {
     const src: any = (isPage && stateQuery.data) || (isPage && pageQuery.data) || null;
     if (!src) return;
-    setBrandId(Number(src.brandId ?? 0));
     setPageType(String(src.pageType ?? '') || 'general');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPage, stateQuery.data, pageQuery.data]);
-  const [insertOpen, setInsertOpen] = useState(false);
   /** THE OPTIMIZER's rail (Analyze) — opening runs every teacher; closing
    *  discards the run (Analyze always means a FRESH analysis). */
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
@@ -386,29 +376,6 @@ export function SectionModal({
     ...kwBucket.keywords,
   ].filter((k) => k !== primaryKw.trim())).size;
   const primaryDensity = keywordUses(contentText, primaryKw).density;
-  const brandMutation = trpc.sites.update.useMutation();
-  const pageTypeMutation = trpc.seo.remoteSavePageType.useMutation();
-  const pickBrand = (id: string) => {
-    const n = Number(id);
-    setBrandId(n);
-    brandMutation.mutateAsync({ id: siteId, brandId: n })
-      .then(() => toast.success(n > 0 ? 'Business linked — the AI now uses its details' : 'Business unlinked'))
-      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : 'Failed to link the business'));
-  };
-  const pickPageType = (t: string) => {
-    setPageType(t);
-    pageTypeMutation.mutateAsync({ siteId, postId, type: t === 'general' ? '' : t })
-      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : 'Failed to save the page type'));
-  };
-  const PAGE_TYPE_OPTIONS = [
-    { id: 'general', name: 'General' },
-    { id: 'local', name: 'Local search' },
-    { id: 'blog', name: 'Blog article' },
-    { id: 'product', name: 'Product' },
-    { id: 'service', name: 'Service' },
-    { id: 'landing', name: 'Landing page' },
-  ];
-
   const isDirty = () => !readOnly && !!editor && editor.getHTML() !== savedHtml;
 
   // ── Save (save buttons / click outside): live rules, engine handles
@@ -453,7 +420,7 @@ export function SectionModal({
         // (pushed=false) confirmed nothing and must not touch the verdict.
         if (res?.pushed === true && res?.pageState) {
           queryClient.setQueryData(['seo', 'pageState', { siteId: siteId as number, postId }], (prev: any) => ({
-            brandId: prev?.brandId ?? brandId,
+            brandId: prev?.brandId ?? 0,
             pageType: prev?.pageType ?? pageType,
             local: res.pageState,
             remote: { version: Number(res.pageState.version ?? 0), fingerprint: String(res.pageState.fingerprint ?? '') },
@@ -554,23 +521,6 @@ export function SectionModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, savedHtml, busy, position, anchorIdx]);
 
-  // ── Status dropdown in the header (owner order 2026-07-15): the SAME
-  //    control + save path as the table's status cell — optimistic by law,
-  //    failure reverts AND says so. Draft honesty: the status is now
-  //    changeable exactly where the draft/preview confusion happened. ──
-  const [pageStatus, setPageStatus] = useState(page?.status ?? '');
-  useEffect(() => { setPageStatus(page?.status ?? ''); }, [page?.status]);
-  const statusMutation = trpc.seo.remoteSaveCell.useMutation();
-  const pickStatus = (v: string) => {
-    const prev = pageStatus;
-    setPageStatus(v); // the UI moves NOW
-    statusMutation.mutateAsync({ siteId: siteId as number, postId, field: 'status', value: v, type })
-      .then(() => toast.success(v === 'publish' ? 'Published — saved changes now render on the live page.' : `Status: ${v}`))
-      .catch((e: unknown) => {
-        setPageStatus(prev); // revert to the truth
-        toast.error(`Could not change the status — ${e instanceof Error ? e.message : 'the save failed'}`);
-      });
-  };
   // (the old whole-doc rebuilder's orphan buffer died with it — the orphan
   // zone is simply never touched by surgery)
 
@@ -580,7 +530,7 @@ export function SectionModal({
   const {
     review, setReview, runDirectives, teacherById,
     reviseTarget, setReviseTarget, reviseNote, setReviseNote,
-    runAi, startAiReview, runQuickOptimize, runKeywordInsert,
+    runAi, startAiReview, runQuickOptimize,
     resolveSection, acceptAllDiffs, finishReview,
     reviseSection, runRevise,
     focusSection, highlightQuote, setQuoteRange,
@@ -596,12 +546,12 @@ export function SectionModal({
   });
 
   // ── THE IMAGE MACHINERY (decomposition S5): selection watcher, rule
-  //    form, delivery, save/revert/hide — one owner in useImagePanel. ──
-  const {
-    imgSel, imgForm, setImgForm, imgHasRule, addImage, saveImageMeta,
-  } = useImagePanel({
+  //    form, delivery, save/revert/hide — one owner in useImagePanel;
+  //    the panel consumes the whole api, the composer only two names. ──
+  const imagePanelApi = useImagePanel({
     editor, isPage, readOnly, busy, siteId, postId, setBusyAction,
   });
+  const { imgSel, addImage } = imagePanelApi;
 
   const title = isPage
     ? `📄 ${page?.title ?? 'Page'}`
@@ -666,301 +616,69 @@ export function SectionModal({
       role="dialog"
       aria-label={title}
     >
-      {/* ── Header. PAGE mode (owner UX 2026-07-13): TWO rows — row 1 = the
-             document (identity, escape hatches, versions, close), row 2 = the
-             workbench (AI context left, tools right). The title keeps its
-             size; only the DATE is small, stacked underneath (owner order —
-             never on the same line). SECTION mode: the original draggable
-             single row. ── */}
-      <div
-        className={`select-none border-b bg-white ${isPage ? 'border-slate-100' : 'flex items-center gap-1.5 border-slate-200 px-2.5 py-1.5 cursor-grab active:cursor-grabbing'}`}
-        onPointerDown={isPage ? undefined : onDragStart}
-        onPointerMove={isPage ? undefined : onDragMove}
-        onPointerUp={isPage ? undefined : onDragEnd}
-      >
-        {isPage && (
-          <div className="flex items-center gap-2 px-5 pb-2 pt-3">
-            {/* THE IDENTITY-CORNER STATUS (gap d4aa30b, Jony DoD): the
-                decorative document icon is gone — this square IS the page's
-                one connection status. Four true states; no verdict = the
-                quiet neutral square. Hover tells the truth, click acts. */}
-            {!readOnly && (busyAction === 'save' || busyAction === 'saveClose') ? (
-              // Saving = the only moment the verdict is genuinely in flux —
-              // the corner says so instead of showing a stale answer.
-              <span title="Saving — pushing to your site…" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-50">
-                <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-400" />
-              </span>
-            ) : !readOnly && stateQuery.isFetching ? (
-              <span title="Checking the site connection…" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-50">
-                <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-400" />
-              </span>
-            ) : !readOnly && pageDrifted ? (
-              <button
-                type="button"
-                onClick={() => setLiveViewWanted(true)}
-                title="The live page differs from your saved version — click to load the live view"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-50 text-amber-500 hover:bg-amber-100"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </button>
-            ) : !readOnly && stateUnreachable ? (
-              <button
-                type="button"
-                onClick={() => { void stateQuery.refetch(); }}
-                title={`Couldn't reach the site to verify — click to retry${pageState?.error ? ` (${pageState.error})` : ''}`}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-red-50 text-red-400 hover:bg-red-100"
-              >
-                <CloudOff className="h-3.5 w-3.5" />
-              </button>
-            ) : !readOnly && pageState?.drifted === false ? (
-              <span title="Live — the site serves your saved version" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-green-50">
-                <span className="h-2 w-2 rounded-full bg-green-500" />
-              </span>
-            ) : (
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-50">
-                <span className="h-2 w-2 rounded-full bg-slate-300" />
-              </span>
-            )}
-            <span className="min-w-0">
-              <span className="block truncate text-[13px] font-medium leading-[1.4] text-slate-800" title={page?.title ?? 'Page'}>
-                {page?.title ?? 'Page'}
-              </span>
-              {page?.date && (
-                <span className="mt-0.5 block truncate text-[10px] leading-none text-slate-400">{String(page.date).slice(0, 10)}</span>
-              )}
-            </span>
-            {/* Status — the table's exact control, same save path (owner
-                order 2026-07-15). Sits right of the title by design. */}
-            {!readOnly && pageStatus !== '' && (
-              <Select value={pageStatus} onValueChange={pickStatus}>
-                <SelectTrigger className="h-auto w-auto shrink-0 border-0 bg-transparent p-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
-                  <Pill variant={statusPillVariant(pageStatus)} className="capitalize">{pageStatus}</Pill>
-                </SelectTrigger>
-                <SelectContent>
-                  {['publish', 'draft', 'pending', 'private', 'future'].map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {page?.editUrl && (
-              <a
-                href={page.editUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Open this page in the site’s WP editor (source editing)"
-                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-              >
-                <ExternalLink className="h-3 w-3" /> Edit
-              </a>
-            )}
-            {page?.permalink && (
-              <a
-                // A DRAFT has no public URL (WP hands drafts a ?page_id= link
-                // that shows nothing to a visitor) — Open carries preview=true
-                // so the REAL page renders as a logged-in preview. The true
-                // permalink itself stays untouched (the GSC drawer filters on it).
-                href={page.status && page.status !== 'publish'
-                  ? `${page.permalink}${page.permalink.includes('?') ? '&' : '?'}preview=true`
-                  : page.permalink}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={page.status && page.status !== 'publish' ? 'Open this draft as a preview in a new tab' : 'Open the live page in a new tab'}
-                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-              >
-                <ExternalLink className="h-3 w-3" /> Open
-              </a>
-            )}
-            {page?.onPreview && (
-              <button
-                type="button"
-                onClick={page.onPreview}
-                title="Preview the live page here, in the inline preview window"
-                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-              >
-                <Eye className="h-3 w-3" /> Preview
-              </button>
-            )}
-            <div className="flex-1" />
-            {versionsControl}
-            {closeButton}
-          </div>
-        )}
-        {/* Row 2 — the workbench: the AI's context left (business, page
-            type), the tools right (Insert ▸ model ▸ Optimize — reads like a
-            sentence: insert things; optimize with this model). */}
-        {isPage && !readOnly && docLoaded && !review && (
-          <div className="flex items-center gap-1.5 border-t border-slate-100 bg-white px-5 py-1.5">
-            <ModelDropdown
-              modelGroups={[{
-                label: 'Business',
-                models: [{ id: '0', name: 'No business' }, ...brands.map((b) => ({ id: String(b.id), name: b.name }))],
-              }]}
-              selectedModel={String(brandId)}
-              onModelChange={pickBrand}
-            />
-            <ModelDropdown
-              modelGroups={[{ label: 'Page type', models: PAGE_TYPE_OPTIONS }]}
-              selectedModel={pageType}
-              onModelChange={pickPageType}
-            />
-            {/* THE SMART KEYWORDS BUTTON (owner 2026-07-14): the hierarchy's
-                third value — Business → Page type → Keywords. A LIVE display
-                in the dropdown-family look: primary · +count · density%. */}
-            <button
-              type="button"
-              onClick={() => setKeywordsOpen((v) => !v)}
-              title="The page's keywords — they ride every optimization; click to manage"
-              style={DROPDOWN_TRIGGER_STYLE}
-              className="flex items-center gap-1.5"
-            >
-              <KeyRound className="h-3 w-3 shrink-0" />
-              <span className="max-w-[140px] truncate">{primaryKw.trim() || 'Keywords'}</span>
-              {kwExtraCount > 0 && <span className="shrink-0 text-slate-400">+{kwExtraCount}</span>}
-              {primaryKw.trim() !== '' && (
-                <span className="shrink-0 font-semibold text-primary">{primaryDensity}%</span>
-              )}
-            </button>
-            <div className="flex-1" />
-            <div className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => setInsertOpen((v) => !v)}
-                title="Insert content at the cursor"
-                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium hover:bg-slate-100 ${insertOpen ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
-              >
-                {busyAction === 'imageAdd'
-                  ? <Loader2 className="h-3 w-3 animate-spin text-primary" />
-                  : <Plus className="h-3 w-3" />} Insert <span className="text-slate-400">▾</span>
-              </button>
-              {insertOpen && (
-                <div className="absolute right-0 top-full z-10 mt-1 w-[150px] overflow-hidden rounded-md border border-slate-200 bg-white py-0.5 shadow-md">
-                  <button
-                    type="button"
-                    onClick={() => { setInsertOpen(false); addImage(); }}
-                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
-                  >
-                    <ImagePlus className="h-3 w-3 text-slate-400" /> Image
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setInsertOpen(false); editor?.chain().focus().insertContent(faqTemplate()).run(); }}
-                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-slate-50"
-                  >
-                    <MessageCircleQuestion className="h-3 w-3 text-slate-400" /> FAQ
-                  </button>
-                </div>
-              )}
-            </div>
-            {aiModelSelect}
-            {/* ONE AI entry point (gap eeec6b9 D1 — the Analyze pill died
-                into this menu): EVERY run goes through the red/green review.
-                Main click = Quick (the action matrix decides its shape);
-                the caret menu holds the three modes. */}
-            <PillSplitButton
-              icon={<Sparkles />}
-              onClick={runQuickOptimize}
-              title={tickedKw.length > 0
-                ? (hasSelection
-                  ? 'Weave the ticked keywords into the selected sections by their roles — changes show as red/green'
-                  : 'Weave the ticked keywords into the content by their roles — changes show as red/green')
-                : (hasSelection
-                  ? 'Rewrite the selected sections with AI — changes show as red/green for you to accept or reject'
-                  : 'Rewrite the whole page with AI — every change shows as red/green for you to accept or reject')}
-              caretTitle="Optimization modes"
-              menu={
-                <>
-                  <DropdownMenuItem onClick={runQuickOptimize}>
-                    Quick optimize
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setAnalyzeOpen(true)}>
-                    Super optimize…
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setAskOpen(true)}>
-                    Custom instruction…
-                  </DropdownMenuItem>
-                </>
-              }
-            >
-              {tickedKw.length > 0
-                ? `Insert keywords (${tickedKw.length})`
-                : hasSelection ? 'Optimize (selected text)' : 'Optimize page'}
-            </PillSplitButton>
-          </div>
-        )}
-        {!isPage && (
-          <>
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="min-w-0 truncate text-xs font-medium text-slate-800" title={title}>
-                {served && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" title="Optimized — a section rule serves this content" />}
-                {title}
-              </span>
-            </div>
-            {versionsControl}
-            {!readOnly && (
-              <>
-                {aiModelSelect}
-                <button
-                  type="button"
-                  onClick={() => setAskOpen((v) => !v)}
-                  title="Tell the AI what to do with this section"
-                  className={`inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50 ${askOpen ? 'text-primary border-primary/40' : 'text-slate-600'}`}
-                >
-                  <MessageSquarePlus className="h-3 w-3" /> Ask AI
-                </button>
-                <button
-                  type="button"
-                  onClick={() => runAi('')}
-                  title={isInsert ? 'Draft this section with AI' : 'Rewrite this section with AI'}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-primary"
-                >
-                  {busyAction === 'ai' ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <Sparkles className="h-3 w-3" />}
-                  {isInsert ? 'Generate' : 'Re-write'}
-                </button>
-              </>
-            )}
-            {closeButton}
-          </>
-        )}
-      </div>
-
-      {/* ── Ask-AI instruction (Enter runs it) ── */}
-      {askOpen && !readOnly && (
-        <div className="border-b border-slate-200 px-2.5 py-1.5">
-          <input
-            autoFocus
-            value={instruction}
-            onChange={(e) => setInstruction(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter' || !instruction.trim()) return;
-              if (!isPage) { void runAi(instruction.trim()); return; }
-              void startAiReview(
-                instruction.trim(),
-                hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
-              );
-            }}
-            placeholder="e.g. “optimize for keyword X” or “inject keyword Y five times” — Enter to run"
-            className="h-6 w-full rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-800 outline-none focus:border-primary"
-          />
-        </div>
-      )}
-
-      {/* ── New-section placement (create mode only) ── */}
-      {isInsert && !insert?.ruleId && (
-        <div className="flex items-center gap-1.5 border-b border-slate-200 px-2.5 py-1.5 text-[11px]">
-          <span className="shrink-0 text-slate-500">Place</span>
-          <select value={position} onChange={(e) => setPosition(e.target.value === 'before' ? 'before' : 'after')} className="h-6 rounded border border-slate-200 bg-white px-1 text-[11px]">
-            <option value="after">after</option>
-            <option value="before">before</option>
-          </select>
-          <select value={anchorIdx} onChange={(e) => setAnchorIdx(Number(e.target.value))} className="h-6 min-w-0 flex-1 truncate rounded border border-slate-200 bg-white px-1 text-[11px]">
-            {(anchors ?? []).map((a, i) => (
-              <option key={`${a.text}-${i}`} value={i}>{`H${a.level}: ${a.text}`}</option>
-            ))}
-          </select>
-        </div>
-      )}
-
+      {/* ── THE HEADER STACK (decomposition final pair): both header rows,
+             the Ask-AI box, and the placement row live in EditorHeader —
+             the composer only wires. ── */}
+      <EditorHeader
+        isPage={isPage}
+        isInsert={isInsert}
+        readOnly={readOnly}
+        docLoaded={docLoaded}
+        reviewOpen={!!review}
+        siteId={siteId}
+        postId={postId}
+        type={type}
+        page={page}
+        title={title}
+        served={served}
+        onDragStart={onDragStart}
+        onDragMove={onDragMove}
+        onDragEnd={onDragEnd}
+        cornerSaving={busyAction === 'save' || busyAction === 'saveClose'}
+        stateFetching={stateQuery.isFetching}
+        pageDrifted={pageDrifted}
+        stateUnreachable={stateUnreachable}
+        stateErrorDetail={String(pageState?.error ?? '')}
+        stateLive={pageState?.drifted === false}
+        onLoadLiveView={() => setLiveViewWanted(true)}
+        onRetryState={() => { void stateQuery.refetch(); }}
+        versionsControl={versionsControl}
+        closeButton={closeButton}
+        aiModelSelect={aiModelSelect}
+        pageType={pageType}
+        onPageTypeChange={setPageType}
+        primaryKw={primaryKw}
+        kwExtraCount={kwExtraCount}
+        primaryDensity={primaryDensity}
+        onToggleKeywords={() => setKeywordsOpen((v) => !v)}
+        busyImageAdd={busyAction === 'imageAdd'}
+        onAddImage={addImage}
+        onInsertFaq={() => editor?.chain().focus().insertContent(faqTemplate()).run()}
+        tickedCount={tickedKw.length}
+        hasSelection={hasSelection}
+        runQuickOptimize={runQuickOptimize}
+        onOpenAnalyze={() => setAnalyzeOpen(true)}
+        onOpenAsk={() => setAskOpen(true)}
+        askOpen={askOpen}
+        onToggleAsk={() => setAskOpen((v) => !v)}
+        busyAi={busyAction === 'ai'}
+        onRunAi={() => { void runAi(''); }}
+        instruction={instruction}
+        onInstructionChange={setInstruction}
+        onRunInstruction={() => {
+          if (!isPage) { void runAi(instruction.trim()); return; }
+          void startAiReview(
+            instruction.trim(),
+            hasSelection && editor ? { from: editor.state.selection.from, to: editor.state.selection.to } : null,
+          );
+        }}
+        showPlacement={isInsert && !insert?.ruleId}
+        position={position}
+        onPositionChange={setPosition}
+        anchorIdx={anchorIdx}
+        onAnchorIdxChange={setAnchorIdx}
+        anchors={anchors}
+      />
       {/* ── The text: ONE fixed-shape, directly editable surface. Formatting
              lives in the SELECT-TEXT popover (owner correction — no permanent
              toolbar): select text → the floating B/I/U/Link/H1/H2/• menu. ── */}
@@ -1087,115 +805,26 @@ export function SectionModal({
              itself is locked (position/existence never change). Outside host
              portal (F6). ── */}
       {isPage && !review && !readOnly && imgSel && railHost !== null && createPortal(
-        <aside className="flex h-full w-[250px] shrink-0 flex-col bg-slate-50/60">
-          <div className="border-b border-slate-200 px-2.5 py-1.5">
-            <div className="text-[11px] font-medium text-slate-700">Image metadata</div>
-            <div className="truncate text-[10px] text-slate-400" title={imgSel.src}>{imgSel.src}</div>
-          </div>
-          <div className="space-y-2 px-2.5 py-2">
-            <label className="block">
-              <span className="text-[10px] font-medium text-slate-500">Alt text</span>
-              <input
-                value={imgForm.alt}
-                onChange={(e) => setImgForm((f) => ({ ...f, alt: e.target.value }))}
-                placeholder="Describe the image"
-                className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
-              />
-            </label>
-            <label className="block">
-              <span className="text-[10px] font-medium text-slate-500">Title</span>
-              <input
-                value={imgForm.title}
-                onChange={(e) => setImgForm((f) => ({ ...f, title: e.target.value }))}
-                placeholder="Tooltip title (optional)"
-                className="mt-0.5 h-6 w-full rounded border border-slate-200 bg-white px-1.5 text-[11px] text-slate-800 outline-none focus:border-primary"
-              />
-            </label>
-            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-              <button
-                type="button"
-                onClick={() => { void saveImageMeta('save'); }}
-                className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-green-500"
-              >
-                {busyAction === 'imageSave' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save
-              </button>
-              <button
-                type="button"
-                onClick={() => { void saveImageMeta('hide'); }}
-                title="Stop serving this image — it stays in the media library; restore it via the versions dropdown"
-                className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-[10px] text-red-600 hover:bg-red-50"
-              >
-                {busyAction === 'imageHide' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Hide image
-              </button>
-              {imgHasRule && (
-                <button
-                  type="button"
-                  onClick={() => { void saveImageMeta('revert'); }}
-                  title="Delete this image's metadata rule — the original alt/title serve again"
-                  className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-600 hover:bg-slate-50"
-                >
-                  {busyAction === 'imageRevert' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Revert to original
-                </button>
-              )}
-            </div>
-            <p className="text-[10px] leading-relaxed text-slate-400">
-              Served dynamically — the image file is never touched. Hiding stops it serving; deleting it in the text (or with its section) does the same on save.
-            </p>
-          </div>
-        </aside>,
+        <ImagePanel img={imagePanelApi} busyAction={busyAction} />,
         railHost,
       )}
       </div>
 
-      {/* ── [✓ Save] [↶ Undo] (+ Remove for existing added sections) ── */}
+      {/* ── The save bar (decomposition final pair): EditorFooter. ── */}
       {!readOnly && (
-        <div className="flex items-center gap-1.5 border-t border-slate-200 bg-white px-2.5 py-1.5">
-          {/* Order (owner): Save & close → Save (page mode, stays open) → Undo.
-              The pill family (owner 2026-07-13): Save & close = the SHARED
-              green success pill; the rest are rounded siblings, same height. */}
-          <PillButton
-            variant="success"
-            icon={<Check />}
-            loading={busyAction === 'saveClose'}
-            disabled={isPage && (!docLoaded || !!review)}
-            onClick={() => { void save().then((ok) => { if (ok) onClose(); }); }}
-          >
-            {isPage ? 'Save & close' : 'Save'}
-          </PillButton>
-          {isPage && (
-            <button
-              type="button"
-              onClick={() => { void save(undefined, 'save'); }}
-              disabled={!docLoaded || !!review}
-              title="Save — the window stays open"
-              className="inline-flex items-center gap-1 rounded-full border border-green-600 bg-white px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-60"
-            >
-              {busyAction === 'save' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => { if (!busy) editor?.commands.setContent(savedHtml); }}
-            disabled={isPage && (!docLoaded || !!review)}
-            title="Restore the last saved state"
-            className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-          >
-            <Undo2 className="h-3 w-3" /> Undo
-          </button>
-          <div className="flex-1" />
-          {isInsert && !!insert?.ruleId && (
-            <button
-              type="button"
-              onClick={() => { void save('', 'remove').then((ok) => { if (ok) onClose(); }); }}
-              title="Remove this added section from the live page"
-              className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-destructive"
-            >
-              {busyAction === 'remove' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Remove
-            </button>
-          )}
-        </div>
+        <EditorFooter
+          isPage={isPage}
+          isInsert={isInsert}
+          insertHasRule={!!insert?.ruleId}
+          docLoaded={docLoaded}
+          reviewOpen={!!review}
+          busyAction={busyAction}
+          onSaveClose={() => { void save().then((ok) => { if (ok) onClose(); }); }}
+          onSave={() => { void save(undefined, 'save'); }}
+          onUndo={() => { if (!busy) editor?.commands.setContent(savedHtml); }}
+          onRemove={() => { void save('', 'remove').then((ok) => { if (ok) onClose(); }); }}
+        />
       )}
-
     </div>
   );
 
