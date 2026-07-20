@@ -31,6 +31,12 @@ export const pageCardWidth = (drawerOpen: boolean, railOpen: boolean): string =>
  *  the root fix removes the broken variable, never this law. */
 export const LANGUAGE_LAW = '\n\nTHE LANGUAGE LAW (overrides everything above): write in the SAME language as the current content. NEVER translate it to another language.';
 
+/** THE CONTENT-INTEGRITY LAW (owner report 2026-07-20, gap 795298f):
+ *  WordPress shortcodes, markup, and code carry MEANING the model must
+ *  never "improve". Appended beside the language law on EVERY order —
+ *  one source; the server-side echo lands with the held Group D pair. */
+export const CONTENT_INTEGRITY_LAW = '\n\nTHE CONTENT-INTEGRITY LAW: square-bracket shortcodes like [contact-form id="1"], HTML tags and their attributes/classes/ids, HTML entities, and any embedded code are UNTOUCHABLE tokens — reproduce each one byte-identically, in place, unless the order explicitly names it. Never rewrite, translate, reformat, or delete them.';
+
 /** Page mode's OWN reading scale (owner order U2): the document must read
  *  like the live page — real paragraph air, stepped heading sizes — while
  *  section mode keeps the compact scale below, byte-identical. */

@@ -21,7 +21,7 @@ import {
 } from '../word-diff';
 import type { CompiledDirective, TeacherMeta } from '../optimizer/types';
 import type { TickedKeyword } from '../optimizer/KeywordsDrawer';
-import { LANGUAGE_LAW } from './layout';
+import { CONTENT_INTEGRITY_LAW, LANGUAGE_LAW } from './layout';
 import { canonicalAiHtml, htmlText, restateOrigin, stampReviewId } from './content-laws';
 import type { ReviewSection, ReviewStatus } from './types';
 
@@ -68,7 +68,7 @@ export function useAiReview(args: UseAiReviewArgs) {
       const current = editor?.getText().trim() ? (editor?.getHTML() ?? '') : '';
       const res: any = await optimizeMutation.mutateAsync({
         siteId: siteId as number, postId, type,
-        html: current, topic: withInstruction + LANGUAGE_LAW,
+        html: current, topic: withInstruction + CONTENT_INTEGRITY_LAW + LANGUAGE_LAW,
         model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
       });
       const value = String(res?.value ?? '').trim();
@@ -248,7 +248,7 @@ export function useAiReview(args: UseAiReviewArgs) {
         const own = routingActive ? sectionDirectives(i) : null;
         const sectionTopic = (own
           ? `Apply exactly these optimizations to this section:\n${own.map((d, k) => `${k + 1}. ${d.text}`).join('\n')}`
-          : topic) + kwLine + LANGUAGE_LAW;
+          : topic) + kwLine + CONTENT_INTEGRITY_LAW + LANGUAGE_LAW;
         const sectionPurposes = own
           ? Array.from(new Set(own.flatMap((d) => d.purposes)))
           : runPurposes;
@@ -409,7 +409,7 @@ export function useAiReview(args: UseAiReviewArgs) {
       const res: any = await optimizeMutation.mutateAsync({
         siteId: siteId as number, postId, type,
         html: s.html,
-        topic: note + LANGUAGE_LAW,
+        topic: note + CONTENT_INTEGRITY_LAW + LANGUAGE_LAW,
         draft,
         model: aiPick?.id ?? model, provider: aiPick?.provider ?? provider,
         reportChanges: true,
