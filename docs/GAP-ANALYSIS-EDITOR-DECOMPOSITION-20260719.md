@@ -115,3 +115,27 @@ portal shell + outside-click law.
   wiring + portal pair + outside-click law).
 Read-in-full before every move (no reconstruction, ever); verify + commit
 per slice; budget check per slice — anything crossing 700 splits first.
+
+---
+
+## ADDENDUM 3 — THE TWO CRITICAL CLOSERS (owner GO 2026-07-20)
+
+**Fact (the regression, pinned):** the old composer fed brandId from TWO
+sources — the featherweight check OR the inventory fallback
+(`(isPage && stateQuery.data) || (isPage && pageQuery.data)`, SectionModal
+:335 keeps this for pageType). My EditorHeader extraction gave the header
+its OWN `pageState` query as the ONLY source (EditorHeader.tsx:132-140) —
+on the no-saved-version path the business picker can briefly read
+"No business". Also a duplicate query subscription (leaner without it).
+
+**The surgical plan:**
+1. EditorHeader: DELETE brandStateQuery; new prop `brandContext: any`
+   (the composer's two-source expression, verbatim); the brandId effect
+   reads the prop. One query owner again, fallback restored.
+2. SectionModal: pass `brandContext={(isPage && stateQuery.data) || (isPage && pageQuery.data) || null}`.
+3. Verify: tsc 59/0 · build · harness 88/88 + research 34/34 · changelog
+   · pathspec commit.
+4. THE BROWSER PROOF (the other critical) is the OWNER'S round — the
+   exact script ships with the report: open page → edit → save →
+   versions + Original → quick optimize → review accept/reject/revise →
+   filter → insert keywords → image panel → section mode.
