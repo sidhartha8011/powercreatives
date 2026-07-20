@@ -71,6 +71,9 @@ export interface EditorHeaderProps {
   /** Page type — state lives in the composer (the analyze rail reads it). */
   pageType: string;
   onPageTypeChange: (t: string) => void;
+  /** The composer's page context (featherweight check OR the inventory
+   *  fallback) — the brand link's two-source truth (addendum 3). */
+  brandContext: any;
   /** The smart keywords button's live values. */
   primaryKw: string;
   kwExtraCount: number;
@@ -129,15 +132,14 @@ export function EditorHeader(p: EditorHeaderProps) {
     ? (brandsQuery.data as any[]).map((b) => ({ id: Number(b.id), name: String(b.name) }))
     : [];
   const [brandId, setBrandId] = useState(0);
-  const brandStateQuery = trpc.seo.pageState.useQuery(
-    { siteId: p.siteId as number, postId: p.postId },
-    { enabled: p.isPage && !p.readOnly && p.docLoaded, staleTime: 60_000 },
-  );
+  // brandId arrives via the COMPOSER's context (featherweight check OR the
+  // inventory fallback — whichever answers first, the original two-source
+  // law); the composer stays the ONE page-state query owner (addendum 3).
   useEffect(() => {
-    const src: any = p.isPage ? brandStateQuery.data : null;
+    const src: any = p.brandContext;
     if (!src) return;
     setBrandId(Number(src.brandId ?? 0));
-  }, [p.isPage, brandStateQuery.data]);
+  }, [p.brandContext]);
   const brandMutation = trpc.sites.update.useMutation();
   const pickBrand = (id: string) => {
     const n = Number(id);

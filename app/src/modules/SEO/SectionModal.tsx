@@ -539,6 +539,7 @@ export function SectionModal({
         aiModelSelect={aiModelSelect}
         pageType={pageType}
         onPageTypeChange={setPageType}
+        brandContext={(isPage && stateQuery.data) || (isPage && pageQuery.data) || null}
         primaryKw={primaryKw}
         kwExtraCount={kwExtraCount}
         primaryDensity={primaryDensity}
