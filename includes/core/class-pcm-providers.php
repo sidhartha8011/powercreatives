@@ -219,17 +219,25 @@ class PCM_Providers
             // Custom capabilities flag — an SEO data provider like Ahrefs/ProRankTracker
             'supportsSeo' => true,
         ),
+        // MERGE UNION — both lines independently registered 'apify'. A PHP array
+        // silently keeps only the LAST duplicate key, so the two entries are
+        // folded into this one; it must carry BOTH capability flags.
         'apify' => array(
             'id'          => 'apify',
             'name'        => 'Apify',
             'apiKeyUrl'   => 'https://console.apify.com/settings/integrations',
             'isBuiltIn'   => false,
-            // Apify actors supply the FULL Google surface for the Business
-            // card — place record + every schema id (placeId/cid/fid/KGMID)
-            // + reviews — one key, no Google Cloud project (gap 1f38238).
-            // Which actors run is hub DATA (option pcm_seo_apify).
+            // One key, two consumers, no AI models (key-only integration):
+            //   SEO  — actors supply the FULL Google surface for the Business
+            //          card: place record + every schema id (placeId/cid/fid/
+            //          KGMID) + reviews, no Google Cloud project (gap 1f38238).
+            //          Which actors run is hub DATA (option pcm_seo_apify).
+            //   Social — account watching (Instagram, TikTok, X, Facebook) for
+            //          Social strategies.
             'knownModels' => array(),
-            'supportsSeo' => true,
+            // Custom capability flags — an SEO data provider AND a social-scraping provider.
+            'supportsSeo'    => true,
+            'supportsSocial' => true,
         ),
         'google_places' => array(
             'id'          => 'google_places',
@@ -252,18 +260,6 @@ class PCM_Providers
             // not an AI generation provider, so knownModels is empty.
             'knownModels' => array(),
             'supportsEmail' => true,
-        ),
-        'apify' => array(
-            'id'          => 'apify',
-            'name'        => 'Apify',
-            'apiKeyUrl'   => 'https://console.apify.com/settings/integrations',
-            'isBuiltIn'   => false,
-            // Apify provides social media account watching (Instagram, TikTok,
-            // X, Facebook) for Social strategies — not AI generation models,
-            // so knownModels is empty (key-only integration).
-            'knownModels' => array(),
-            // Custom capabilities flag — a social-scraping data provider
-            'supportsSocial' => true,
         ),
     );
 
