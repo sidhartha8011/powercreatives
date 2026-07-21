@@ -8238,3 +8238,28 @@ Verified: live browser — order confirmed, Trigger+Volume merged, Research fold
 both ways (Social hides structure + shows note; Keywords restores). tsc 59 baseline (none in
 this file), build ✓. spec-verifier APPROVED (0 P0/P1/P2; every control still wired, JSX balanced,
 ids unique; 2 pre-existing P3 dead-state notes left as-is per minimal diff).
+
+## 2026-07-21 — Merged web-team feat/seo-editor-decomposition (98 commits) + pushed
+Committed this session's work (30e1c28: social/Apify source, RSS+social reliability, Scan now,
+LLM salvage, dialog/row UX), then merged origin/feat/seo-editor-decomposition and pushed
+feat/seo-suite-port (770708d..459e929).
+Brief corrections (verified, not assumed): the "10 uncommitted Group D files" blocker was STALE
+(already committed in 157a1cd) — the real uncommitted set was this session's 24 files; and only
+2 files conflicted, not 4 (trpc-routes.ts + class-pcm-schema.php auto-merged, both additive).
+PCM_DB_VERSION collision resolved as a union to 1.45.0 (not the briefed 1.44.0): BOTH lines
+shipped a "1.43.0" (ours = additive article_revisions table; theirs = migrate_gbp_to_business_units
+under `<1.43.0`, plus `<1.44.0` site->brand auto-map). Kept both of their gates verbatim and added
+a `<1.45.0` catch-up re-running the GBP move, because an install already on OUR 1.43.0 fails their
+`<1.43.0` gate and would never receive it. Idempotency confirmed by reading the implementation
+(inserts only when the brand has no unit, deletes the source option; the $brand_id<=0 guard runs
+before delete_option).
+spec-verifier round 1 caught a P1 the conflict list HID: both sides had added an 'apify' provider
+key to class-pcm-providers.php; git accepted both insertions (file never marked conflicted), PHP
+keeps only the last duplicate key, so their supportsSeo entry was silently discarded. Folded into
+one entry carrying supportsSeo + supportsSocial; runtime-verified via PCM_Providers::get('apify').
+Gates on the pushed tree: harness 88/88, optimizer 34/34, page_versioning 67/67, phpunit 465
+(1 error + 3 failures = exactly ours ∪ theirs), tsc 59 baseline, build green.
+LEFT FOR THE SEO OWNER (their lane, not merge-caused — reproduced on their branch in an isolated
+worktree): SeoIntegrationTest::test_gbp_provider_factory_defaults_to_n8n asserts
+PCM_SEO_GBP_N8N_Provider which their gbp.php no longer defines; brand_business_units missing from
+the uninstall drop list; tests/standalone/page_versioning_test.php not wired into run.php.
