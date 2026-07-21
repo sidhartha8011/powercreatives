@@ -7832,3 +7832,409 @@ live @1.43.0; 2 updates→2 revisions; restore roundtrip YES + own 'restore' sna
 ownership gates hold; all 3 revision routes + publish route registered. spec-verifier APPROVED (no
 P0/P1; P3s: REST strings untranslated per module convention, ignored extra id in publish body,
 empty-state split into two spans). Not committed.
+
+## 2026-07-16 — Pull + merge teammate batch (research spine / value batch / status dropdown)
+Committed the local stack first (157a1cd: strategy round + Writer UX round + proposal docs), then
+merged origin/feat/seo-suite-port 5ccd56c..3951961 (25 teammate commits: 9-researcher spine, context
+package, two-group rail, revise-fidelity, SERP winners-content, results loop, header status dropdown,
+gap docs + master blueprint + keywords-lane handoff). ZERO conflicts (only shared file trpc-routes.ts,
+disjoint regions); no incoming DB bump so our 1.43.0 stands. Merged-tree gates: suite 347/3-known,
+tsc 59, frontend rebuilt ✓. Pushed 770708d to origin (standing workflow). Zip rebuilt (672 files,
+1.43.0 stamped). LANES (per HANDOFF-KEYWORDS-LANE-20260715 superseding ruling): optimizer module +
+ALL teachers + every SectionModal.tsx edit = teammate's, DO NOT TOUCH; keywords module + KeywordsDrawer
+= ours. Our open keyword-lane tasks per handoff: (1) injection selection state (drawer-internal),
+(2) phrase-match discovery, (3) domain-wide related scan. BLUEPRINT-MASTER-OPTIMIZER-20260715.md is
+the never-lose doc.
+
+## 2026-07-16 — Strategy sections round: Filip's six-section model + RSS Autopilot (/task, fable workers per user override)
+Supersedes the "strategy type" proposal per Filip's comments: NO type picker — a strategy is six
+labeled choices, and the create dialog becomes the shared AccordionSections (Video/Ads style).
+Sections: top strip (name/template/model) + Source (Keywords|RSS: 1-5 feed URLs + angle) / Trigger
+(Manual|Scheduled w/ recurrence moved in; RSS locks to "New source item") / Volume & cadence (N
+articles readout; RSS posts-per-week 1-21) / Publishing (Draft|Automatic radio + site + approvals) /
+Duration (Ongoing|Until date|Article limit) / Research (3-pass checklist replacing the researchMode
+select; landscape default) / Content (structure/hierarchy/media/interlinks verbatim). FROZEN CONFIG
+CONTRACT in plan-worker.md: sourceMode/rssFeeds/rssAngle/rssCadence.perWeek/trigger/publishing/
+duration/researchPasses; publishingMode derived (scheduled→schedule else auto→publish else draft).
+Backend: sanitize_config_fields whitelists all keys (PATCH merge preserves watcher state); draft-gate
+in maybe_auto_publish (config.publishing='draft' → never auto-publish, absent=legacy); research runs
+exactly the checked passes w/ byte-identical prompts (StrategyResearchTest untouched+green); RSS
+zero-keyword create. RSS watcher: hourly pcm_strategy_rss_scan (lazy-armed in service.php init),
+fetch_feed 900s cache, guid dedupe (seen cap 200), freshest-first queue cap 10, backpressure =
+perWeek − items last 7d, duration gates, items via create_rss_strategy_item (position MAX+1) →
+existing generate pipeline; rssAngle+source rider = build_prompt 9th param. NO schema change (config
+JSON only, DB stays 1.43.0). Driver fixes post-verifier: duration→recurrence-ends mapping for
+scheduled; RSS create sends keywords:[] (Keywords/index.tsx — our lane); dialog feed check mirrors
+backend http(s) rule; 'until' requires a date; mb_substr title. Routing: steps 1+3 opus (pre-override),
+step 2 fable (user: "for this whole task use fable"; opus attempt misfired 1×, stopped 1× w/ zero
+edits), verifier fable, driver fable. Gates: suite 358→365 (+18 new tests this round)/3 known; tsc 59;
+build ✓. Real-WP smoke vs live wordpress.org feed: 2 items @ perWeek cap w/ sourceLink, rescan 0 new +
+seen stable, limit blocks, draft-gate proven both ways, hourly event armed. spec-verifier APPROVED
+(2 P2s fixed by driver, P3 guards fixed; open P3s: duplicate copies watcher state (defensible),
+backpressure TZ drift (bounded)). Known gap for owner: RSS create is only reachable via the Keywords
+page (needs ≥1 keyword selected to OPEN the dialog); a source-agnostic "New strategy" entry point is
+a candidate next step. Not committed.
+
+## 2026-07-16 — Double-check pass (user ask): sections round verified live, UI-to-DB
+Gates re-run: suite 365/3-known, tsc 59, build ✓. LIVE LLM E2E: RSS strategy → watcher item
+("WordPress 7.1 Beta 1", real feed) → run_queue_tick w/ gpt-4o-mini → 4,888-char draft article in
+128.7s, title shaped by the angle, stayed draft (draft-gate), source rider verified in prompt path.
+(First attempt failed on the env's dead Google key — resolve_model defaults gemini-2.5-flash when
+strategy sets no model; pinned openai in the smoke. NOTE for owner: strategies without an explicit
+model default to Gemini.) FULL BROWSER PASS on localhost:8080 (temp admin, deleted after): Keyword
+Explorer search (151 results) → 2 selected → Create Strategy dialog renders Filip's sections exactly
+(top strip + Source/Trigger open, Volume/Publishing/Duration/Research/Content closed; RSS toggle
+reveals feeds+angle+red guard, trigger locks to "New source item"; posts-per-week 3 w/ backpressure
+helper; Draft|Automatic; Ongoing|Until|Limit; 3-pass checklist w/ one-liners, landscape default) →
+created via UI → DB row verified byte-for-byte per frozen contract (sourceMode rss, feeds, angle,
+perWeek 3, trigger new_source_item, publishing draft, duration ongoing, researchPasses [landscape])
+and 0 keyword items seeded (P2 fix proven). All test data + temp user cleaned. Not committed.
+
+## 2026-07-16 — Owner round: invalid-JSON hardening + Publish-button root cause (driver on fable, no workers)
+(1) Strategy "LLM returned invalid JSON (json_object mode)" on client prod: added a mechanical
+repair tier in PCM_LLM ahead of the terminal error — repair_json() escapes raw control chars INSIDE
+string literals (state-machine byte walk; Gemini emits literal newlines in long HTML values) + strips
+trailing commas; wired into parse_json_result (tier-2 soft path) and invoke_json_fallback; plus ONE
+corrective reprompt (pcm_json_reprompt guard) telling the model the exact parse error when output is
+broken beyond repair and NOT truncated (truncation keeps its doubled-budget retry). Refuses to rescue
+mid-string truncation (half an article would be worse). 9 new unit tests (LlmJsonRepairTest, loads
+the real hook-free class): control chars/trailing commas/both, escaped-quote state, multibyte,
+structural whitespace, truncated→null, garbage→null, clean passthrough. Reprompt branch is
+fake-untestable (network) — noted honestly. (2) Writer Publish "not done": ROOT CAUSE found —
+serverToLocal() never hydrated article.siteId into generationSettings, so EVERY server-loaded
+article read "no Target Site" and Publish rendered permanently disabled/dim (the owner's screenshot).
+Fix: hydrate siteId on load + persist it in the autosave PATCH payload + writer PATCH whitelist gains
+siteId ((int) cast; publish handler already ownership-checks the site). Visually proven on local WP
+(temp admin, deleted): Draft article w/ site → Publish solid blue lit, Send to Approvals muted grey.
+Gates: suite 365→374 (+9)/3 known; tsc 59; build ✓. Zip rebuilt. NOTE: client prod also needs THIS
+zip — the error in their screenshot predates these fixes. Not committed.
+
+## 2026-07-16 — Traffic-independent background scanning (external cron tick; driver on fable)
+Owner: RSS generation "should be automatic, not dependent on anyone to visit" (WP-cron only fires
+on traffic). Built the external-tick seam: PUBLIC route GET|POST /pcm/v1/strategies/cron-tick on the
+base controller's existing public tier (handler enforces its own auth per the public-tier law) —
+hash_equals check against pcm_cron_token (40-char, lazily generated in the strategy module's init
+block AND on first cron-info read), 5-min transient throttle (extra pings → honest {ran:false,
+reason:throttled}), then runs run_rss_scan() + run_scheduled_scan() directly. run_rss_scan now stamps
+pcm_rss_last_scan (health). Authed GET /strategies/cron-info returns {tickUrl, lastScan,
+nextScheduled}. UI: "Auto-scan" chip in the Strategies header → dialog w/ last-scan/next-run, the
+copy-paste tick URL, and the external-scheduler explainer (n8n / cPanel cron / cron-job.org every
+10-15 min). trpc strategy.cronInfo. Note: first attempt overrode register() mirroring approvals —
+REVERTED on reading base-controller.php: the base already has a 'public' tier AND the override would
+have dropped guard_callback; routes just declare the 5th element. property_exists guard for the fake
+base's missing $namespace. Tests: 6 new (StrategyCronTickTest — token missing/wrong/empty, run+stamp+
+lock, throttle, cron_info lazy token + URL shape) reusing sections-suite REST fakes + suite-local
+minimal PCM_DB. Gates: suite 374→380/3 known; tsc 59; build ✓. LIVE HTTP smoke on local WP: wrong
+token → 403; right token → {"ran":true,"lastScan":...}; immediate repeat → throttled. Token
+auto-generated on init proven via wp-cli. Zip rebuilt. Not committed.
+
+## 2026-07-17 — Internal keep-alive chain: traffic independence WITHOUT external cron (/task, driver on fable)
+Owner: "can it do internal itself instead of relying on external like n8n". Platform truth stated
+up front: PHP has no persistent process — the ONE internal workaround is a self-perpetuating
+loopback chain that holds a PHP worker while it sleeps. Shipped OPT-IN (owner-visible tradeoff copy;
+the hub's 2-worker host is exactly where it should stay off). Mechanics: run_keepalive_chain() takes
+ownership (pcm_keepalive_owner; newest link wins, old link exits next slice → max 1-slice overlap),
+beats pcm_keepalive_beat every slice (slice = pcm_keepalive_slice option, clamped 3-30s, default 20;
+15 slices ≈ 5 min/link, under host process caps), ignore_user_abort + fastcgi_finish_request, at
+handoff runs RSS scan ONLY when stamp stale ≥55min (keepalive_rss_due) + the cheap scheduled scan,
+then spawn_keepalive() fires the next link (wp_remote_post non-blocking, token in body, sslverify
+false per input-resolver loopback precedent). Instantly stoppable: enabled/owner checked EVERY slice
+(keepalive_tick_decision, pure). Self-healing: init hook respawns when enabled && beat stale >3min
+(transient-guarded 120s) — any visit after a host-kill resurrects it. Routes: public GET|POST
+/strategies/keepalive (same token auth as cron-tick); authed POST /strategies/cron-keepalive toggle
+(enable=spawn immediately); cron_info gains keepalive{enabled,lastBeat,aliveNow}. UI: checkbox in
+the Auto-scan dialog w/ running/waking badge + honest worker-cost warning. Tests: 9 new
+(StrategyKeepaliveTest: tick decision enabled/owner, rss-due gate incl garbage stamp, spawn no-op
+guards + request shape, toggle enable-spawns/disable-doesn't, link token gate + disabled no-op).
+Gates: suite 380→389/3 known; tsc 59; build ✓. LIVE ZERO-TRAFFIC smoke (own PHP_CLI_SERVER_WORKERS=4
+server, 3s slices, all polling via wp-cli/DB — no HTTP after the first spawn): beats advanced every
+slice for 45s; at link end the OVERDUE RSS SCAN RAN (lastScan 22:47→07:13) and the next link
+self-spawned + kept beating (full handoff proven); disable → beat froze within one slice. Smoke
+options cleaned, keepalive left OFF. Zip rebuilt. Not committed.
+
+## 2026-07-17 — RSS instant first pull (/worker, fable worker + fable verifier)
+Owner: adding a feed should generate from the feed's LATEST EXISTING post immediately, not wait for
+a new item. Gap was purely trigger timing (the first scan already ingests current items freshest-
+first). Fix: one-off event pcm_strategy_rss_first_scan (strategyId,userId) armed at the end of
+create_from_keywords — the single funnel all creation doors use — gated on the STORED config
+(sourceMode rss + feeds), wp_next_scheduled dedupe, fires run_rss_first_scan (ownership-checked,
+rss re-verified, isolated try/catch, no global-scan stamp) → scan_rss_strategy. The SPA's own
+refetch after create runs the due event within seconds (and tick/keepalive also pick it up). RSS
+create toast: "Strategy created — pulling the latest feed item now". 7 new tests incl a positive
+pure-queue pass. Routing: 1 fable worker (1st try) + driver. Gates: suite 389→396/3 known; tsc 59;
+build ✓. Real-WP smoke: create→event armed for NOW→fire→exactly 1 pending item from the feed's
+newest post w/ sourceLink + generation continuation armed→second fire 0 dupes. spec-verifier
+APPROVED (P3s only: two shim-level test gaps + an unreachable blank-feed edge). Not committed.
+
+## 2026-07-18 — Auto-scan → always-on default; n8n + toggle removed (/task, driver on opus)
+Owner: "not working properly, remove the n8n completely, scan should be default, remove the option to
+turn off." ROOT CAUSE of the old flakiness: 5-min chain links were killed by strict hosts'
+request_terminate_timeout (counts sleep), then waited for a visit to respawn = still traffic-dependent.
+REDESIGN: (1) Always-on semantics — only the hidden brake option pcm_keepalive_enabled='0' stops it;
+absent/empty = ON (run_keepalive_chain / keepalive_tick_decision / spawn_keepalive all gate on '===0'
+now, never '!==1'). (2) Removed the external cron-tick route + handler + throttle, and the set_keepalive
+toggle route + handler — n8n path gone entirely. (3) cron_info is status-only (no tickUrl/token/enabled).
+(4) UI AutoScanStatus rewritten: pure status (Running/Waking badge, last scan, heartbeat) — no checkbox,
+no URL, no n8n copy; trpc strategy.cronKeepalive removed. (5) ROBUSTNESS: links shortened to ~45s
+(3×15s slices) to survive strict hosts; work-FIRST — the due RSS + scheduled scans run BEFORE the sleep
+loop, so scans execute on every spawn even if the link dies instantly; run_rss_scan re-arms a dead chain
+(third self-heal lane alongside init-visit + wp-cron); spawn timeout 0.5s→2s (sub-second non-blocking
+loopbacks never established). Init self-heal now bootstraps on fresh install (beat absent = stale).
+Tests: StrategyCronTickTest rewritten (status-only cron_info, keepalive token gate — 6 tests);
+StrategyKeepaliveTest updated to default-on semantics (7 tests); toggle tests removed. Gates: suite
+389→394/3 known (net -2: removed toggle tests, kept coverage); tsc 59; build ✓.
+LIVE evidence (local WP): blocking loopback to /strategies/keepalive → HTTP 200 {"success":true} + scan
+ran work-first (lastScan updated <5s) + link beat through a full 45s lifecycle. HONEST LIMITATION: the
+non-blocking self-spawn HANDOFF cannot be exercised on `php -S` (dev server can't service blocking=false
+loopbacks — proven: 0 inbound vs blocking=200 to same URL); production PHP-FPM services them (identical
+to WP core spawn_cron). Graceful degradation: even with zero loopback, scans run on every visit (stale
+self-heal) + hourly wp-cron — never worse than stock WP. RISK FLAGGED for client's 2-worker host: an
+always-on sleeping link holds ~1 worker continuously; hidden wp-cli brake `option update
+pcm_keepalive_enabled 0` is the escape hatch. NOTE: n8n refs remaining in SEO/BusinessPanel.tsx +
+trpc-routes.ts:763 are the SEPARATE GBP webhook feature, not auto-scan — deliberately untouched. Not committed.
+
+## 2026-07-18 — Invalid-JSON on long listicles: truncation coverage gap closed (screenshot report, driver on opus)
+Production (create.widgetify.co, Auto-scan chip present → confirms 07-16+ build w/ repair_json IS
+deployed) still throwing "LLM returned invalid JSON (json_object mode): Syntax error" on the RSS
+strategy's long "12 Best NY SEO Companies" listicle items 1 & 2 (item 3 shorter → OK). ROOT CAUSE:
+truncation was detected ONLY via finish_reason='length'; Gemini's OpenAI-compat endpoint (and
+gpt-4o-mini here) truncate long articles WITHOUT reliably flagging it → the doubled-budget retry
+never fired → repair_json can't rebuild a half-article → the reprompt REUSED the same 8192 budget →
+re-truncated → threw. FIX (class-pcm-llm.php, my code): (1) new public looks_truncated() structural
+detector (string/escape-state + brace/bracket-depth scan, UTF-8 byte-safe) — fires the doubled-budget
+retry when the JSON is structurally incomplete even if finish_reason is absent; (2) the truncation gate
+now ORs finish_reason='length' with looks_truncated(); (3) the corrective reprompt dropped its
+finish_reason!='length' guard AND now RAISES max_tokens to max(16384, orig*2) so a reprompt of a long
+article isn't re-truncated; (4) generation base max_tokens 8192→12288 (both call sites) for headroom,
+auto-reduced by invoke() on models that cap lower. Tests: +5 looks_truncated cases in LlmJsonRepairTest
+(14 total). Gates: suite 394→399/3 known; php -l clean. LIVE PROOF: forced truncation (max_tokens=700
+on a 1500-word "12 Best NY SEO Companies" prompt — same title as the prod failure) → recovery chain
+escalated (log: json_schema→json_object→truncated→retry 2048→reprompt 16384) and RETURNED a valid
+7,415-char HTML article instead of throwing. Client must upload THIS zip; then hit Retry on the two
+failed items (they'll recover). Not committed.
+
+## 2026-07-18 — Strategy rows: RSS vs Keyword source badge + feed list (/task, driver on opus)
+Owner: "in the strategy tab we cannot see which one is rss and which is keyword and which rss feeds."
+Single-file UI change (Strategies/index.tsx): (1) a source badge in each row header — grey "Keywords"
+(Search icon) vs accent "RSS" (Rss icon), read from parseStrategyConfig().sourceMode; RSS badge's
+tooltip lists all feed URLs. (2) A dedicated feed line under the item-count meta for RSS strategies,
+showing all feed hostnames (new feedHost() helper: hostname sans www + path, 48-char cap, try/catch
+on bad URLs) comma-joined, truncated with full URLs in the title tooltip. Guards: Array.isArray on
+rssFeeds, line only renders when isRss && feeds.length>0. Gates: tsc 59; build ✓. LIVE visual verify
+on local WP (temp admin + seeded 1 keyword + 1 RSS strategy, both deleted after): keyword row shows
+grey "Keywords" badge no feed line; RSS row shows accent "RSS" badge + dedicated line
+"wordpress.org/news/feed, searchengineland.com/feed, moz.com/blog/feed" (all 3 feeds). Verification:
+self-reviewed the diff (edge cases: malformed feeds→[], bad URL→fallback, 0-feed RSS→badge only) —
+skipped formal spec-verifier for this small, live-verified single-file change per anti-overengineering.
+Not committed.
+
+## 2026-07-18 — Social media source w/ Apify account-watching (/task "implement the apify one", fable workers + driver)
+Filip confirmed Apify. Third Source in the create dialog: Keywords / RSS feeds / Social media. Post
+links → one article EACH, created instantly at create-time w/ context (WP core oEmbed → og:meta →
+URL-label, never fails) and a rider that embeds the post's link in the article ("Write an article
+about this social media post… INCLUDE a visible link to the original post in the article HTML" +
+post text + angle). Account links: YouTube/Bluesky/Reddit → converted to native feeds (YT channelId
+page-resolve) → existing RSS watcher; Instagram/TikTok/X/Facebook → config.socialAccounts → NEW
+watcher Apify branch (run-sync-get-dataset-items, Bearer token from pcm_integrations provider
+'apify' — query mirrors PCM_LLM::get_api_key verbatim; ≥4h social_scan_due cost gate; resultsLimit
+10; items mapped drift-safely per platform via the pcm_apify_actor_map-filterable actor map:
+apify~instagram-scraper, clockworks~tiktok-scraper, apidojo~tweet-scraper,
+apify~facebook-posts-scraper) → SAME ingest/queue/backpressure; captions carried queue→item
+(sourceText cap 1000). Create-time guard: Apify-platform account link w/o key → honest error naming
+the platform + Integrations. 'Apify' added to the provider registry (core/class-pcm-providers.php —
+justified allowlist deviation; validation via api.apify.com/v2/users/me rides the generic Bearer-GET
+branch); UI is list-driven, untouched. Strategies rows: 3-way source badge + link line. NO schema
+change; no trpc change. Routing: 4 fable + 1 sonnet + driver; all 1st-try (one transient dispatch
+misfire re-sent). Driver fixes: Keywords/index.tsx strip-gate+toast → social; first-scan armed for
+apify-only strategies; post-verifier P2 mitigation — 20s context-fetch budget in split_social_links
++ post_context(bool $network) flag so many-link creates never stall. Tests: +43 this round
+(classify 24, apify client 7, social source 12); suite 399→442/3 known; tsc 59; build ✓. LIVE
+smokes: classify 10/10 real URLs; create split w/ REAL YouTube oEmbed ('Me at the zoo') + channel→
+videos.xml + IG→socialAccounts + instant first-pull armed; faked-Apify watcher e2e (Bearer+actor
+verified, 3 posts→2 items at cadence cap w/ captions+canonical permalinks, 1 queued, 4h gate,
+rider complete). Browser: Apify in the Integrations provider dropdown; Social media source UI w/
+helper + locked trigger verified. spec-verifier APPROVED (0 P0/P1; open P3s: stamp-on-failure
+delays retry 4h (defensible), account-tab URLs classify as post, cross-source dupe possible for a
+pasted post later re-seen via its account scan, dead strategy on failed feed-conversion-only
+creates — all error_logged/edge). SETUP for prod: create apify.com account → Settings→Integrations
+→API token → paste in plugin Integrations→Add Integration→Apify. Not committed.
+
+## 2026-07-20 — RSS/Social error investigation (diagnose + fix round)
+Task: "errors in the social media and rss one — check carefully and report".
+Root cause found: hosts with DISABLE_WP_CRON (incl. local box, plausibly prod) never fire
+pcm single events → first-pull + generation queue events sit due forever (strategy stuck 0/0,
+items Pending). Fixes (PHP only, no schema/version change):
+1. service.php: process_due_pcm_events() — cron-of-last-resort inside the keep-alive chain's
+   work-first block; drains due pcm_strategy_rss_first_scan / process_queue / scheduled_scan
+   events (unschedule-then-fire, re-entrancy guard, 240s deadline, per-event try/catch).
+2. Apify hardening: lastSocialScan stamped BEFORE the fetch loop + per-account set_time_limit
+   (no billing loop under host kills); client timeout 120→45s (test updated).
+3. split_social_links 3-phase restructure: config/accounts/feeds persisted + first-scan armed
+   BEFORE slow post_context fetches (no zombie strategy on create timeout).
+4. set_item_config: preserve-non-override merge (sourceLink/sourceTitle/sourceText/social no
+   longer wiped by template/publishing overrides).
+5. Reddit account feed URL rebuilt via parse_url (query strings no longer corrupt the .rss URL).
+Verification: suite 442/3-known; live worst-case E2E on the DISABLE_WP_CRON box — stuck RSS
+strategy recovered via chain links alone: first-scan drained → 3 items → 2 real gpt-4o-mini
+articles generated (one per link, re-arm confirmed). Documented-not-fixed P2/P3s in report.
+Temp state (server, echeck admin, pcm user 24, strategy 29, integration 11, hooks) cleaned.
+
+## 2026-07-20 — "post is not fetched" root cause + Apify post enrichment
+User supplied a real Apify key; pasted social POST links produced articles with no
+post content. Diagnosed against the live API: token/actor/input all work (fetched NASA
+posts in 33s), so the bug was NOT the Apify client. Real cause: a pasted POST link is
+enriched by post_context() (oEmbed → og-scrape), and Instagram/X/Facebook killed public
+oEmbed (IG returns 302) — so create-time stored only the bare URL and the LLM wrote about
+a naked link. Apify CAN read a single post (proved: 1 item, full caption), but our code
+used Apify only for ACCOUNT watching, never for post links.
+Fix (service.php): new maybe_enrich_social_post() called in the BACKGROUND generation
+path (generate_next_item), before rss_source_instruction. When a social item has an empty
+sourceText, a URL-targeted Apify platform (instagram/x/facebook — tiktok's actor is
+profile-based so a single fetch would grab the wrong/latest video → deliberately skipped),
+and the owner has an Apify key: fetch the post (limit 1), fill sourceText + upgrade the
+URL-placeholder title, and persist onto the item (idempotent — a re-run never re-bills).
+Degrades to unchanged bare-link behavior on any failure. Runs background-only (the ~30s
+run-sync is unsafe in the user-facing create path).
+Verified: live reflection E2E with the real key — empty caption → 7.7s fetch → 736-char
+real caption persisted → LLM rider now "Write an article about this social media post:
+'Mars in motion…' … The post says: …". 5 new unit tests (fake Apify): fetch+persist,
+no-op when text present, no-op without key, skip free platforms + tiktok, ignore non-social.
+Suite 447/3-known. Key was used only for diagnosis; not stored in the repo.
+
+## 2026-07-20 — "no scan / 0 items" on a social account strategy: Apify timeout too low
+Report: a Social strategy watching instagram.com/hailthegame showed 0/0 items despite 2 posts
+made that morning. Diagnosed live with the real key: Apify returns 10 posts for the account
+(incl. today's), so API/account/key/input are all fine — but a full local watcher E2E (real
+key, same account, run_rss_first_scan direct) ingested ZERO items and took 45.2s. Root cause:
+the Apify client HTTP timeout, which I lowered to 45s earlier this session to dodge host
+wall-clock kills, is BELOW the request URL's own timeout=110 server cap. A 10-result Instagram
+account scan runs ~40-60s (measured 41.7s, and the watcher run hit 45.2s), so the client
+aborted before Apify responded → fetch_account_items() returned [] → nothing ingested, while
+lastSocialScan still got stamped (4h gate then hid the failure until the next window).
+Fix (class-pcm-apify.php): client timeout 45→120s so it exceeds the 110s server cap. Safe:
+background-only (cron/keepalive), stamp-before-fetch prevents a billing loop on a mid-pass
+kill, per-account @set_time_limit(120). Post-enrichment (limit 1, ~8s) unaffected — 120s is
+just a ceiling. Test assertion updated 45→120.
+Verified: re-ran the identical local E2E → 10 pending items created (real captions 200-1000ch,
+incl. the morning posts), 30.8s, rssSeen=10. Suite 447/3-known.
+PROD NOTE for the report: this fix ships in the zip; production also needs (a) the Apify key
+set under Integrations for the owner, and (b) this build deployed — without the build, prod
+keeps timing out at 45s (or, if on an even older build, has no social watcher drain on
+cron-dead hosts).
+
+## 2026-07-20 — Manual "Scan now" button (per-strategy, apart from auto-scan)
+Request: a button to scan now, separate from the 4h auto-scan. Added a per-row "Scan now"
+on RSS/Social strategies that forces an immediate watcher pull.
+- service.php: scan_rss_strategy() gains `bool $force=false` and now returns int (inserted
+  count); force bypasses ONLY the social 4h cadence gate — duration + weekly backpressure
+  still enforced. New scan_strategy_now(id,uid):array {created} — ownership-scoped,
+  @set_time_limit(180), runs synchronously.
+- controller.php: POST /strategies/{id}/scan → scan_now (nonce+manage_options via base;
+  ownership get_strategy; rejects non-rss/social with 400).
+- trpc-routes.ts: strategy.scanNow. Strategies/index.tsx: scanNowMutation + handleScanNow +
+  scanningId; button gated on isRss||isSocial, spinner + result toast + refetch.
+Verified: live browser — clicked on an RSS strategy → toast "Pulled 10 new posts", row
+0/0→0/10. Live PHP — with lastSocialScan=now (auto-scan would skip), normal pass created 0,
+scan_strategy_now created 10 (force bypass proven). 2 new unit tests. Suite 449/3-known,
+tsc 59 baseline, build ✓. spec-verifier APPROVED (0 P0/P1/P2; 4 P3s accepted-by-design:
+corrupt-config uses the keyword-rejection wording; manual scans re-bill Apify with no
+cooldown (admin-only, in-flight disable only); scanNowMutation `as any` per codebase pattern;
+synchronous 40-60s social scan may hit an upstream proxy timeout on multi-account strategies).
+
+## 2026-07-20 — Scan now on prod returned "no new posts" for 0 items: diagnostics + zombie self-heal
+Prod (create.widgetify.co): Scan now on the fifa/hailthegame Social strategy completed but
+created 0 ("no new posts" toast) — endpoint/auth/force-gate all work, so the zero comes from
+inside the fetch, and the generic toast hid which of the possible causes applies. Changes:
+- class-pcm-apify.php: static ?string $last_error — reset per fetch, set on every degradation
+  path (no token / WP_Error / non-2xx / bad JSON) so callers can surface WHY.
+- service.php scan_strategy_now(): (a) SELF-HEAL — sourceMode=social with socialLinks but NO
+  socialAccounts/rssFeeds (the old build's create-timeout zombie shape, prime suspect for the
+  prod strategy) → re-runs split_social_links, persists accounts/feeds, counts split-created
+  post items into 'created', reloads, scans; (b) zero-item REASONS returned in order:
+  no_sources / duration_complete / no_apify_key / fetch_failed(+detail from $last_error) /
+  volume_capped (rssQueue non-empty after scan) / no_new_posts.
+- Strategies/index.tsx: toast per reason (error tone for no_apify_key/fetch_failed/no_sources;
+  success tone for duration_complete/volume_capped/no_new_posts).
+- Tests: fake PCM_DB::get_strategy now reflects the last persisted config write; fake PCM_Apify
+  gains $last_error/$failWith; 4 new tests (no_apify_key, fetch_failed+detail, volume_capped
+  under forced scan, zombie self-heal end-to-end). Suite 453/3-known; tsc 59; build ✓.
+Live E2E (real key, real hailthegame): zombie+no key → {created:0,reason:no_apify_key};
+zombie+key → {created:10} in 13.8s with socialAccounts persisted (heal proven); re-click →
+{created:0,reason:no_new_posts}. NEXT PROD STEP: deploy this zip, click Scan now once — the
+toast now states the actual blocker (missing key vs broken config vs Apify failure), and if
+the config was the zombie shape the click itself repairs it and pulls the posts.
+
+## 2026-07-21 — Prod "Apify returned HTTP 400" root-caused: IG share-link query strings
+The new Scan-now diagnostics surfaced the real prod blocker: HTTP 400 from Apify. Reproduced
+live with the real key: clean URL → 201/10 items; the SAME account as an app SHARE link
+(instagram.com/hailthegame?igsh=…) → 400 invalid-input in 1.2s — the instagram-scraper's
+directUrls regex rejects any query string. Prod stored the pasted share link verbatim, so
+every scan (auto + manual) died on input validation since create. Fixes:
+- class-pcm-social-source.php: strip_tracking_query() — query+fragment+trailing-slash
+  stripped from URLs before they become Apify actor input (choke point apify_request, so
+  watcher scans AND post enrichment are covered); facebook exempt (profile.php?id=123 carries
+  identity in the query).
+- class-pcm-apify.php: $last_error now includes Apify's own error.message (≤180ch) alongside
+  the HTTP code — the toast names the actual problem, not a bare status.
+- service.php scan_strategy_now(): after self-heal, wp_clear_scheduled_hook the just-armed
+  first-scan (we scan synchronously — prevents a concurrent duplicate paid Apify run).
+Tests: +2 (share-link strip matrix incl. facebook exemption; error-message surfacing); enrich
+test updated to the normalized URL. Suite 455/3-known. Live E2E: strategy whose stored account
+link IS the igsh share link + real key → scan_strategy_now → {created:10} in 51.6s.
+PROD: deploy zip → click Scan now on fifa → posts pull despite the dirty stored link.
+
+## 2026-07-21 — Strategies row de-congestion (UI)
+Report: the strategy row crammed name + 2 badges + 4 dropdowns + progress + ~8 buttons onto
+one flex-wrap line → name truncated ("fifa f..."), badges overlapped dropdowns, controls
+messed up. Restructured the header (Strategies/index.tsx, single file) into two lines:
+- Line 1 (identity, full width): checkbox, expand chevron, full name + status/source badges +
+  meta + RSS/social link line; right-aligned cluster = progress bar + icon utilities
+  (Settings2 / Duplicate / Sync / Delete) — the rare/config actions demoted to icons.
+- Line 2 (own row, flex-wrap, stopPropagation): every editable dropdown (publishing/site/
+  template/approval/frequency) + primary actions (Generate All / Generate / Scan now /
+  Interlinks / Pause). Wrapping now only reflows CONTROLS, never the identity line.
+Progress bar moved from mid-controls to line 1 beside the item count (hidden on <sm).
+Verified in-browser at 1600px, 1280px and 1100px: full names, zero overlap, expand still
+toggles. tsc 59 baseline, build ✓. T1 UI-only change (low-stakes) — self-verified visually,
+no spec-verifier per the done-gate tier rule.
+
+## 2026-07-21 — Generation "invalid JSON (json_object): Syntax error" — schema-aware salvage
+Prod: after the share-link fix pulled the hailthegame posts, article generation failed on the
+emoji/quote-heavy captions with "LLM returned invalid JSON (json_object mode): Syntax error".
+Cause (inferred — raw not captured; fix is a safe last-resort): Gemini json_object mode does
+NOT truly guarantee valid JSON, and the model leaves UNESCAPED inner double-quotes inside the
+large HTML `content` string → json_decode + repair_json (control chars/trailing commas only)
+both fail. Fix (class-pcm-llm.php):
+- salvage_json_by_keys() — final rescue in invoke_json_fallback before the terminal throw:
+  reconstructs known string fields from their `"key":` markers, lenient-decoding inner quotes/
+  escapes/emoji. Gated on structural completeness (finish_reason!=length AND ends in '}') — NOT
+  looks_truncated(), which an odd unescaped-quote count fools.
+- locate_key_marker() requires a structural [{,] before each marker; bounds every string value
+  by the NEXT marker of ANY type (string OR null key) so a trailing/interleaved non-string key
+  (media_assets) can't bleed into metaDescription.
+- decode_json_string_lenient() combines high+low \u surrogate pairs into astral codepoints.
+- Post-salvage sanity gate: if a recovered value still contains a structural `[{,]"schemaKey":`
+  marker (mis-slice signature) → return null (fail loudly, never publish garbage).
+- schema_key_partition() splits required keys into string vs null from the json_schema.
+Verified via 2 rounds of fresh-context spec-verifier. Round 1 caught a real P1 (trailing
+media_assets swallowed into metaDescription + a test that hid it) — fixed. Round 2 caught the
+surrogate test not exercising the escaped pair + the residual comma-lookalike mis-slice — fixed
+(guard + real escaped-pair test). 9 salvage tests; suite 465/3-known.
+CAVEAT for user: cause is inferred (prod raw was truncated in the UI). If it recurs post-deploy,
+the expanded item error's full raw payload confirms it. Salvaged drafts are reviewable before publish.
+
+## 2026-07-21 — Create Strategy dialog: declutter (7→5 accordions, natural order, source-gated)
+Request: combine relevant accordions, rank-order naturally, enable/disable per source.
+CreateStrategyDialog.tsx reorganized (deterministic comment-marker split + reassemble):
+- Combined Trigger + Volume & cadence → one "Schedule" accordion (sub-labelled Trigger/Volume);
+  folded Research into Content as a "Research depth" sub-block. 7 → 5 accordions.
+- Reordered: Source → Schedule → Duration → Content → Publishing (was Source, Trigger, Volume,
+  Publishing, Duration, Research, Content). Source + Schedule default-open; rest collapsed.
+- Source-gating: the keyword-only controls (Content per Keyword / Hierarchy / Parent URL /
+  Parent Keyword) render only for sourceMode='keywords'; RSS/Social show a "one article per
+  post/feed item" note instead. Generation options + Research depth stay for all sources. No
+  submit-payload change (handleSave reads state, not DOM; defaults still submit).
+Verified: live browser — order confirmed, Trigger+Volume merged, Research folded, gating works
+both ways (Social hides structure + shows note; Keywords restores). tsc 59 baseline (none in
+this file), build ✓. spec-verifier APPROVED (0 P0/P1/P2; every control still wired, JSX balanced,
+ids unique; 2 pre-existing P3 dead-state notes left as-is per minimal diff).

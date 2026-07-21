@@ -272,10 +272,20 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `strategies/${input.id}/sync-status` }),
     },
+    "strategy.scanNow": {
+        endpoint: "strategies",
+        method: "POST",
+        transform: (input: any) => ({ url: `strategies/${input.id}/scan` }),
+    },
     "strategy.reapplyParent": {
         endpoint: "strategies",
         method: "POST",
         transform: (input: any) => ({ url: `strategies/${input.id}/reapply-parent` }),
+    },
+    "strategy.cronInfo": {
+        endpoint: "strategies",
+        method: "GET",
+        transform: () => ({ url: `strategies/cron-info` }),
     },
     "strategy.updateItem": {
         endpoint: "strategies",

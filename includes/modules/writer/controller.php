@@ -179,6 +179,7 @@ class PCM_REST_Writer extends PCM_REST_Base
             'status',
             'featuredImage',
             'seoScore',
+            'siteId',
         );
 
         $update = array();
@@ -187,7 +188,7 @@ class PCM_REST_Writer extends PCM_REST_Base
                 // Content (HTML) gets wp_kses_post, text fields get sanitize_text_field
                 if ($field === 'content') {
                     $update[$field] = wp_kses_post($params[$field]);
-                } elseif ($field === 'seoScore') {
+                } elseif ($field === 'seoScore' || $field === 'siteId') {
                     $update[$field] = (int) $params[$field];
                 } else {
                     $update[$field] = sanitize_text_field($params[$field]);

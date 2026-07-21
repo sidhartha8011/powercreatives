@@ -285,8 +285,14 @@ class PCM_LLM
      */
     private static function parse_json_result(array $result): ?array
     {
-        $parsed = json_decode(self::extract_json($result['content'] ?? ''), true);
-        return (json_last_error() === JSON_ERROR_NONE && is_array($parsed)) ? $parsed : null;
+        $raw    = self::extract_json($result['content'] ?? '');
+        $parsed = json_decode($raw, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($parsed)) {
+            return $parsed;
+        }
+        // Mechanical repair (in-string control chars, trailing commas) before
+        // giving up on this tier — see repair_json().
+        return self::repair_json($raw);
     }
 
     /**
@@ -331,26 +337,122 @@ class PCM_LLM
         $content = $result['content'] ?? '';
         $parsed = json_decode(self::extract_json($content), true);
 
-        // Truncation rescue: finish_reason 'length' means the output hit the
-        // token cap mid-JSON — unparseable by construction (live failure: a
-        // long article cut off inside its unterminated ```json fence). One
-        // retry with double the budget recovers it; a second truncation at the
-        // doubled budget is a genuine oversize and falls through to the error.
+        // Truncation rescue. The output hit the token cap mid-JSON — an
+        // unterminated string / unclosed braces that json_decode can't parse
+        // by construction. We detect this TWO ways: the API's own
+        // finish_reason='length' flag AND a structural look_truncated() scan —
+        // because Gemini's OpenAI-compat endpoint frequently truncates a long
+        // article WITHOUT setting finish_reason (the observed live failure:
+        // "Syntax error" on long listicles). Either signal → one retry with
+        // double the budget; a second truncation at the doubled budget is a
+        // genuine oversize and falls through to the reprompt/error below.
         if ((json_last_error() !== JSON_ERROR_NONE || !is_array($parsed))
-            && ($result['finish_reason'] ?? '') === 'length'
+            && (($result['finish_reason'] ?? '') === 'length' || self::looks_truncated(self::extract_json($content)))
             && empty($options['pcm_truncation_retry'])
         ) {
             $bumped = $options;
             $bumped['pcm_truncation_retry'] = true;
             $bumped['max_tokens'] = max(1024, (int) ($options['max_tokens'] ?? 4096)) * 2;
             error_log(sprintf(
-                '[PCM_LLM] JSON output truncated at the token cap (model=%s); retrying once with max_tokens=%d.',
+                '[PCM_LLM] JSON output truncated (model=%s, finish_reason=%s); retrying once with max_tokens=%d.',
                 (string) ($result['model'] ?? ''),
+                (string) ($result['finish_reason'] ?? ''),
                 $bumped['max_tokens']
             ));
             $result = self::invoke($msgs, $bumped);
             $content = $result['content'] ?? '';
             $parsed = json_decode(self::extract_json($content), true);
+        }
+
+        // Mechanical repair: Gemini's known decode-fatal quirks (raw control
+        // chars inside string values, trailing commas) are fixable without an
+        // extra API call — try that before spending a reprompt.
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($parsed)) {
+            $repaired = self::repair_json(self::extract_json($content));
+            if ($repaired !== null) {
+                error_log(sprintf(
+                    '[PCM_LLM] Invalid JSON mechanically repaired (model=%s, %s mode).',
+                    (string) ($result['model'] ?? ''),
+                    $use_json_object ? 'json_object' : 'prompt-only'
+                ));
+                return $repaired;
+            }
+        }
+
+        // Corrective reprompt: the output is broken in a way neither the
+        // truncation retry nor repair_json() could fix — unescaped quotes,
+        // stray prose, or an article STILL too long even after the doubled
+        // budget. One retry that (a) tells the model exactly what broke and
+        // (b) carries a raised token budget, so a reprompt of a long article
+        // isn't re-truncated at the same cap. The pcm_json_reprompt guard
+        // keeps this from ever looping.
+        if ((json_last_error() !== JSON_ERROR_NONE || !is_array($parsed))
+            && empty($options['pcm_json_reprompt'])
+        ) {
+            error_log(sprintf(
+                '[PCM_LLM] Invalid JSON (model=%s, %s): reprompting once with the parse error.',
+                (string) ($result['model'] ?? ''),
+                json_last_error_msg()
+            ));
+            $opts2 = $options;
+            $opts2['pcm_json_reprompt'] = true;
+            // Raise the ceiling — the failure may have been budget-starved.
+            $opts2['max_tokens'] = max(16384, (int) ($options['max_tokens'] ?? 4096) * 2);
+            if ($use_json_object) {
+                $opts2['response_format'] = array('type' => 'json_object');
+            }
+            $msgs2   = $msgs;
+            $msgs2[] = array(
+                'role'    => 'user',
+                'content' => 'Your previous reply was not valid JSON (' . json_last_error_msg()
+                    . '). Reply again with ONLY the complete, valid JSON object'
+                    . $schema_hint . ' No markdown, no code fences, no commentary.',
+            );
+            $result  = self::invoke($msgs2, $opts2);
+            $content = $result['content'] ?? '';
+            $parsed  = json_decode(self::extract_json($content), true);
+            if (json_last_error() !== JSON_ERROR_NONE || !is_array($parsed)) {
+                $parsed = self::repair_json(self::extract_json($content));
+                if ($parsed !== null) {
+                    return $parsed;
+                }
+                $parsed = null; // fall through to the terminal error below
+            } else {
+                return $parsed;
+            }
+        }
+
+        // Schema-aware salvage: the standard parse, the mechanical repair, AND
+        // the reprompt all failed — most often an unescaped inner quote in a
+        // large HTML `content` string that positional repair can't fix. As a
+        // final rescue, reconstruct the known string fields directly from their
+        // `"key":` markers.
+        //
+        // Guard on STRUCTURAL COMPLETENESS, not looks_truncated(): an unescaped
+        // inner quote throws off looks_truncated()'s quote counting (an odd
+        // count reads as "still in a string" → false-positive truncated),
+        // which would wrongly block salvage on the very payloads it targets. A
+        // genuinely truncated reply was cut mid-value and does NOT end in `}`;
+        // a complete-but-malformed reply does. That closing brace is what
+        // salvage needs to bound the final field, so it is the right gate.
+        $salvage_src = rtrim(self::extract_json($content));
+        if ((json_last_error() !== JSON_ERROR_NONE || !is_array($parsed))
+            && ($result['finish_reason'] ?? '') !== 'length'
+            && $salvage_src !== ''
+            && substr($salvage_src, -1) === '}'
+        ) {
+            list($string_keys, $null_keys) = self::schema_key_partition($schema);
+            if ($string_keys !== array()) {
+                $salvaged = self::salvage_json_by_keys($salvage_src, $string_keys, $null_keys);
+                if (is_array($salvaged)) {
+                    error_log(sprintf(
+                        '[PCM_LLM] Invalid JSON salvaged field-by-field from the schema keys (model=%s, %s mode).',
+                        (string) ($result['model'] ?? ''),
+                        $use_json_object ? 'json_object' : 'prompt-only'
+                    ));
+                    return $salvaged;
+                }
+            }
         }
 
         if (json_last_error() !== JSON_ERROR_NONE || !is_array($parsed)) {
@@ -541,13 +643,413 @@ class PCM_LLM
             // Find the matching end character
             $end_char = $content[$start] === '{' ? '}' : ']';
             $end = strrpos($content, $end_char);
-            
+
             if ($end !== false && $end > $start) {
                 return substr($content, $start, $end - $start + 1);
             }
         }
-        
+
         return $content;
+    }
+
+    /**
+     * Structural truncation detector — is this JSON cut off mid-output?
+     * Scans once, tracking string/escape state and brace/bracket depth; a
+     * result that ends while still inside a string, or with unclosed
+     * containers, or that is empty, was truncated. Used to fire the
+     * doubled-budget retry even when the API omits finish_reason='length'
+     * (Gemini's OpenAI-compat endpoint routinely does on long articles).
+     * Byte-safe for UTF-8: multibyte lead/continuation bytes are all >= 0x80,
+     * so they never collide with the ASCII structural characters scanned here.
+     *
+     * @param string $json Candidate JSON (already through extract_json()).
+     * @return bool True if the text looks truncated / empty.
+     */
+    public static function looks_truncated(string $json): bool
+    {
+        $json = trim($json);
+        if ($json === '') {
+            return true; // empty output — the model returned nothing usable
+        }
+
+        $in_string = false;
+        $escaped   = false;
+        $depth     = 0;
+        $len       = strlen($json);
+
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $json[$i];
+            if ($in_string) {
+                if ($escaped) {
+                    $escaped = false;
+                } elseif ($ch === '\\') {
+                    $escaped = true;
+                } elseif ($ch === '"') {
+                    $in_string = false;
+                }
+                continue;
+            }
+            if ($ch === '"') {
+                $in_string = true;
+            } elseif ($ch === '{' || $ch === '[') {
+                $depth++;
+            } elseif ($ch === '}' || $ch === ']') {
+                $depth--;
+            }
+        }
+
+        return $in_string || $depth > 0;
+    }
+
+    /**
+     * Last-resort repair for ALMOST-valid LLM JSON. Gemini in particular emits
+     * two decode-fatal quirks even in json_object mode: raw control characters
+     * (literal newlines/tabs) inside string values of long HTML fields, and
+     * trailing commas before a closing brace/bracket. Both are mechanical to
+     * fix without touching the payload's meaning — anything beyond that (e.g.
+     * output cut mid-string) is NOT repaired here; truncation has its own
+     * doubled-budget retry (see looks_truncated()), and rescuing half an
+     * article would be worse than failing loudly.
+     *
+     * @param string $json Candidate JSON (already through extract_json()).
+     * @return array|null Parsed array on successful repair, null otherwise.
+     */
+    public static function repair_json(string $json): ?array
+    {
+        if ($json === '') {
+            return null;
+        }
+
+        // 1. Escape raw control characters that appear INSIDE string literals
+        //    (a char-walk that tracks in-string/escape state — control chars
+        //    outside strings are legal JSON whitespace and left alone).
+        $fixed  = self::escape_control_chars_in_strings($json);
+        $parsed = json_decode($fixed, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($parsed)) {
+            return $parsed;
+        }
+
+        // 2. Trailing commas: {"a":1,} / [1,2,] → valid. Applied on top of the
+        //    control-char fix so both quirks in one payload still recover.
+        $fixed = preg_replace('/,\s*([}\]])/', '$1', $fixed);
+        if (is_string($fixed)) {
+            $parsed = json_decode($fixed, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($parsed)) {
+                return $parsed;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Escape raw ASCII control characters (< 0x20) occurring inside JSON string
+     * literals — \n, \r, \t map to their two-char escapes, anything else to
+     * \u00XX. Tracks quote and backslash state so already-escaped sequences and
+     * structural whitespace are untouched. Byte-safe for UTF-8 (multibyte lead/
+     * continuation bytes are all >= 0x80).
+     *
+     * @param string $json Raw JSON text.
+     * @return string JSON text with in-string control characters escaped.
+     */
+    private static function escape_control_chars_in_strings(string $json): string
+    {
+        $out       = '';
+        $in_string = false;
+        $escaped   = false;
+        $len       = strlen($json);
+
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $json[$i];
+
+            if (!$in_string) {
+                if ($ch === '"') {
+                    $in_string = true;
+                }
+                $out .= $ch;
+                continue;
+            }
+
+            if ($escaped) {
+                $escaped = false;
+                $out    .= $ch;
+                continue;
+            }
+            if ($ch === '\\') {
+                $escaped = true;
+                $out    .= $ch;
+                continue;
+            }
+            if ($ch === '"') {
+                $in_string = false;
+                $out      .= $ch;
+                continue;
+            }
+
+            $ord = ord($ch);
+            if ($ord < 0x20) {
+                $map  = array("\n" => '\n', "\r" => '\r', "\t" => '\t');
+                $out .= $map[$ch] ?? sprintf('\u%04x', $ord);
+                continue;
+            }
+
+            $out .= $ch;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Last-resort SCHEMA-AWARE salvage for JSON that survives neither
+     * json_decode() nor repair_json().
+     *
+     * The dominant unrepaired failure on real content generation is an
+     * UNESCAPED double-quote inside a big HTML `content` string (the model
+     * writes an attribute or a quoted phrase — e.g. Argentina to Messi:
+     * "Thank You" — without escaping it), which ends the string early and
+     * yields a bare "Syntax error". That is ambiguous to fix positionally, but
+     * TRIVIAL when the top-level string keys are known: each field's value runs
+     * from its own `"key":` marker to the next known marker (or the closing
+     * brace). We slice those spans and lenient-decode each, so inner quotes /
+     * stray control chars / emoji can't break the reconstruction.
+     *
+     * Only string-typed keys are recovered; any other required key (e.g. an
+     * optional media array) is set to null. Returns null unless EVERY requested
+     * string key was located, so a partial mangle never yields a half article.
+     * Runs ONLY after the normal parse + repair have failed — it can never turn
+     * a good parse bad.
+     *
+     * @param string   $raw         Candidate JSON (already extract_json()'d).
+     * @param string[] $string_keys Top-level string properties to recover, in any order.
+     * @param string[] $null_keys   Required non-string keys to set to null.
+     * @return array|null Reconstructed map, or null when any string key is missing.
+     */
+    /**
+     * Split a json_schema wrapper's REQUIRED top-level keys into the string
+     * fields (salvageable field-by-field) and the rest (set to null on
+     * salvage). A property whose type is 'string' — or a union that includes
+     * 'string' — is treated as salvageable text.
+     *
+     * @param array $schema The {name, schema:{properties, required}} wrapper.
+     * @return array{0: string[], 1: string[]} [stringKeys, nullKeys].
+     */
+    private static function schema_key_partition(array $schema): array
+    {
+        $props    = $schema['schema']['properties'] ?? null;
+        $required = $schema['schema']['required'] ?? null;
+        if (!is_array($props)) {
+            return array(array(), array());
+        }
+        // With no explicit required list, treat every property as a candidate.
+        $keys = is_array($required) && $required !== array() ? $required : array_keys($props);
+
+        $string_keys = array();
+        $null_keys   = array();
+        foreach ($keys as $key) {
+            $type = $props[$key]['type'] ?? null;
+            $is_string = $type === 'string' || (is_array($type) && in_array('string', $type, true));
+            if ($is_string) {
+                $string_keys[] = $key;
+            } else {
+                $null_keys[] = $key;
+            }
+        }
+        return array($string_keys, $null_keys);
+    }
+
+    public static function salvage_json_by_keys(string $raw, array $string_keys, array $null_keys = array()): ?array
+    {
+        if ($raw === '' || $string_keys === array()) {
+            return null;
+        }
+
+        // Locate the top-level marker for EVERY key — string keys (whose value
+        // we extract) AND null keys (used ONLY as value boundaries, so a
+        // trailing or interleaved non-string key like `media_assets` can never
+        // be swallowed into the preceding string value). A real top-level key
+        // marker is preceded by `{` or `,`; requiring that structural char
+        // makes a `"key":` lookalike inside content HTML far less likely to be
+        // mistaken for a field boundary.
+        $key_start  = array(); // key => offset of the key's opening quote
+        $value_from = array(); // string key => offset of its value's first char
+        foreach ($string_keys as $key) {
+            $mark = self::locate_key_marker($raw, $key, true);
+            if ($mark === null) {
+                return null; // a required string key is absent — refuse to guess
+            }
+            $key_start[$key]  = $mark['keyStart'];
+            $value_from[$key] = $mark['valueFrom'];
+        }
+        foreach ($null_keys as $key) {
+            $mark = self::locate_key_marker($raw, $key, false);
+            if ($mark !== null) {
+                $key_start[$key] = $mark['keyStart']; // boundary only — value not read
+            }
+        }
+
+        // Order ALL located markers by position; a string field's value ends at
+        // the next marker of ANY type.
+        asort($key_start);
+        $ordered = array_keys($key_start);
+        $count   = count($ordered);
+
+        $out = array();
+        for ($i = 0; $i < $count; $i++) {
+            $key = $ordered[$i];
+            if (!isset($value_from[$key])) {
+                continue; // a null-key marker — a boundary only, nothing to extract
+            }
+            $inner_from = $value_from[$key];
+            if ($i + 1 < $count) {
+                // End the value just before the next key's marker (string OR
+                // null), then drop this value's own closing `"` + comma.
+                $chunk = substr($raw, $inner_from, $key_start[$ordered[$i + 1]] - $inner_from);
+                $chunk = preg_replace('/"\s*,\s*$/', '', $chunk);
+            } else {
+                // Final field (no key follows): cut at the last closing brace,
+                // then drop the trailing closing quote (+ optional comma).
+                $chunk = substr($raw, $inner_from);
+                $last_brace = strrpos($chunk, '}');
+                if ($last_brace !== false) {
+                    $chunk = substr($chunk, 0, $last_brace);
+                }
+                $chunk = preg_replace('/"\s*,?\s*$/', '', $chunk);
+            }
+            $out[$key] = self::decode_json_string_lenient((string) $chunk);
+        }
+
+        // Sanity gate against a mis-slice: a correctly-bounded value can never
+        // still contain a STRUCTURAL `{`/`,` + `"schemaKey":` marker (that would
+        // mean a real field boundary was swallowed — e.g. content HTML that
+        // literally prints `,"metaTitle":"…"`). When that signature survives,
+        // refuse the salvage (→ terminal error) rather than publish garbage.
+        $all_keys = array_merge($string_keys, $null_keys);
+        foreach ($string_keys as $key) {
+            foreach ($all_keys as $other) {
+                if (preg_match('/[{,]\s*"' . preg_quote($other, '/') . '"\s*:/', (string) $out[$key])) {
+                    return null;
+                }
+            }
+        }
+
+        foreach ($null_keys as $key) {
+            $out[$key] = null;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Locate a top-level JSON key's marker inside malformed JSON.
+     *
+     * A real field is preceded by a structural `{` or `,` (after optional
+     * whitespace) — requiring that keeps a `"key":` lookalike buried in content
+     * HTML from being mistaken for a field boundary. First structural match
+     * wins.
+     *
+     * @param string $raw    The candidate JSON.
+     * @param string $key    Key name to find.
+     * @param bool   $string True → the value is a string (require the opening
+     *                       `"`; return where the value text begins). False →
+     *                       any value type (boundary use only).
+     * @return array{keyStart:int, valueFrom:int}|null keyStart = offset of the
+     *   key's opening quote; valueFrom = first char of a string value (0 when
+     *   $string is false). Null when not found.
+     */
+    private static function locate_key_marker(string $raw, string $key, bool $string): ?array
+    {
+        $q       = preg_quote($key, '/');
+        $pattern = $string
+            ? '/([{,]\s*)"' . $q . '"\s*:\s*"/'
+            : '/([{,]\s*)"' . $q . '"\s*:/';
+        if (!preg_match($pattern, $raw, $m, PREG_OFFSET_CAPTURE)) {
+            return null;
+        }
+        $key_start = $m[0][1] + strlen($m[1][0]); // skip the leading { or , + whitespace
+        return array(
+            'keyStart'  => $key_start,
+            'valueFrom' => $string ? $m[0][1] + strlen($m[0][0]) : 0,
+        );
+    }
+
+    /**
+     * Decode the INNER text of a JSON string literal without ever failing.
+     *
+     * Honors the standard escapes a well-formed model still emits (\" \\ \/ \n
+     * \r \t \b \f \uXXXX) so escaped content round-trips correctly, while
+     * treating any OTHER character — including a raw unescaped `"` that broke
+     * the surrounding parse — as a literal. Used only by salvage_json_by_keys().
+     *
+     * @param string $inner Raw bytes between a field value's quotes.
+     * @return string The decoded string value.
+     */
+    private static function decode_json_string_lenient(string $inner): string
+    {
+        $out = '';
+        $len = strlen($inner);
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $inner[$i];
+            if ($ch !== '\\' || $i + 1 >= $len) {
+                $out .= $ch;
+                continue;
+            }
+            $next = $inner[$i + 1];
+            switch ($next) {
+                case '"':  $out .= '"';  $i++; break;
+                case '\\': $out .= '\\'; $i++; break;
+                case '/':  $out .= '/';  $i++; break;
+                case 'n':  $out .= "\n"; $i++; break;
+                case 'r':  $out .= "\r"; $i++; break;
+                case 't':  $out .= "\t"; $i++; break;
+                case 'b':  $out .= "\x08"; $i++; break;
+                case 'f':  $out .= "\x0C"; $i++; break;
+                case 'u':
+                    if ($i + 5 < $len && ctype_xdigit(substr($inner, $i + 2, 4))) {
+                        $cp = hexdec(substr($inner, $i + 2, 4));
+                        // Combine a high+low surrogate pair (e.g. an emoji sent
+                        // as 😀) into one astral codepoint — decoding
+                        // each half alone would yield U+FFFD replacement chars.
+                        if ($cp >= 0xD800 && $cp <= 0xDBFF
+                            && $i + 11 < $len
+                            && $inner[$i + 6] === '\\' && $inner[$i + 7] === 'u'
+                            && ctype_xdigit(substr($inner, $i + 8, 4))
+                        ) {
+                            $lo = hexdec(substr($inner, $i + 8, 4));
+                            if ($lo >= 0xDC00 && $lo <= 0xDFFF) {
+                                $cp   = 0x10000 + (($cp - 0xD800) << 10) + ($lo - 0xDC00);
+                                $out .= self::codepoint_to_utf8($cp);
+                                $i   += 11;
+                                break;
+                            }
+                        }
+                        $out .= self::codepoint_to_utf8($cp);
+                        $i   += 5;
+                    } else {
+                        $out .= $ch; // malformed \u — keep the backslash literally
+                    }
+                    break;
+                default:
+                    $out .= $ch; // unknown escape — keep the backslash literally
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Codepoint → UTF-8. Handles the full range including astral-plane
+     * codepoints (emoji), which the caller passes after combining a high+low
+     * surrogate pair. A LONE surrogate (unpaired D800–DFFF) is invalid on its
+     * own and maps to the U+FFFD replacement char.
+     */
+    private static function codepoint_to_utf8(int $cp): string
+    {
+        if ($cp >= 0xD800 && $cp <= 0xDFFF) {
+            return "\u{FFFD}";
+        }
+        if (function_exists('mb_convert_encoding')) {
+            return mb_convert_encoding(pack('N', $cp), 'UTF-8', 'UTF-32BE');
+        }
+        return "\u{FFFD}";
     }
 
     /**

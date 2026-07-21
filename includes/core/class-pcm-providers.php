@@ -229,6 +229,18 @@ class PCM_Providers
             'knownModels' => array(),
             'supportsEmail' => true,
         ),
+        'apify' => array(
+            'id'          => 'apify',
+            'name'        => 'Apify',
+            'apiKeyUrl'   => 'https://console.apify.com/settings/integrations',
+            'isBuiltIn'   => false,
+            // Apify provides social media account watching (Instagram, TikTok,
+            // X, Facebook) for Social strategies — not AI generation models,
+            // so knownModels is empty (key-only integration).
+            'knownModels' => array(),
+            // Custom capabilities flag — a social-scraping data provider
+            'supportsSocial' => true,
+        ),
     );
 
     /**
@@ -351,6 +363,9 @@ class PCM_Providers
             'ahrefs'    => 'https://api.ahrefs.com/mcp/mcp',
             'brevo'     => 'https://api.brevo.com/v3/account',
             'proranktracker' => 'https://api.proranktracker.com/v3/user/quota',
+            // Apify: Bearer-authenticated whoami — 200 with a valid token, 401 otherwise.
+            // Handled by the generic Bearer GET branch below (no models to discover).
+            'apify'          => 'https://api.apify.com/v2/users/me',
         );
 
         // Built-in providers don't need validation

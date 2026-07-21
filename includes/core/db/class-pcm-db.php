@@ -1140,6 +1140,102 @@ class PCM_DB
     }
 
     /**
+     * Every strategy whose config opts into the RSS source mode
+     * (`config.sourceMode === 'rss'`) — consumed by the hourly RSS watcher
+     * (PCM_Strategy_Service::run_rss_scan()), a global, cross-user scan like
+     * get_due_scheduled_strategies() above, and mirroring its status filter:
+     * paused strategies are excluded (D2 — a pause must stop the watcher from
+     * queueing new work), every other status is scanned ('completed' included,
+     * since an ongoing RSS strategy keeps accepting new feed items after its
+     * current batch finishes). The LIKE probe on the config JSON is a cheap
+     * pre-filter; the service re-decodes and re-verifies sourceMode per row.
+     *
+     * @return object[] Full strategy rows.
+     */
+    public static function get_rss_strategies(): array
+    {
+        global $wpdb;
+        $table = self::t('strategies');
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$table} WHERE config LIKE %s AND status != 'paused'",
+                '%' . $wpdb->esc_like('"sourceMode":"rss"') . '%'
+            )
+        );
+    }
+
+    /**
+     * Count a strategy's items — all of them, or only those created at/after
+     * $since. The RSS watcher uses both shapes: the bare count enforces a
+     * `duration.mode='limit'` article cap, and the $since count implements the
+     * per-week backpressure window (items created in the last 7 days vs
+     * `rssCadence.perWeek`).
+     *
+     * @param int         $strategy_id Strategy ID.
+     * @param string|null $since       Optional MySQL DATETIME lower bound on createdAt.
+     * @return int
+     */
+    public static function count_strategy_items(int $strategy_id, ?string $since = null): int
+    {
+        global $wpdb;
+        $table = self::t('strategy_items');
+        if ($since !== null) {
+            return (int)$wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$table} WHERE strategyId = %d AND createdAt >= %s",
+                    $strategy_id,
+                    $since
+                )
+            );
+        }
+        return (int)$wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$table} WHERE strategyId = %d",
+                $strategy_id
+            )
+        );
+    }
+
+    /**
+     * Insert ONE strategy item created by the RSS watcher. Mirrors
+     * create_strategy_items()'s row exactly (same columns, same 'pending'
+     * status — so generate_next_item()'s next-pending picker treats it like
+     * any keyword-born item) with two watcher-specific differences: the item's
+     * `config` column carries the source-item context JSON
+     * ({sourceLink, sourceTitle} — read back by the generation prompt's RSS
+     * rider), and `position` is appended after the current tail so
+     * get_next_pending_item()'s position-ASC ordering stays stable as the
+     * watcher adds items over time (bulk create derives position from the
+     * keyword array index, which would collide at 0 here).
+     *
+     * @param int    $strategy_id Strategy ID.
+     * @param int    $user_id     Owner ID.
+     * @param string $keyword     Item keyword (the feed item's title).
+     * @param array  $config      Item config JSON payload ({sourceLink, sourceTitle}).
+     * @return int|false New item ID, or false on insert failure.
+     */
+    public static function create_rss_strategy_item(int $strategy_id, int $user_id, string $keyword, array $config): int|false
+    {
+        global $wpdb;
+        $table = self::t('strategy_items');
+        $position = (int)$wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM {$table} WHERE strategyId = %d",
+                $strategy_id
+            )
+        );
+        $result = $wpdb->insert($table, array(
+            'strategyId' => $strategy_id,
+            'userId'     => $user_id,
+            'keyword'    => sanitize_text_field($keyword),
+            'position'   => $position,
+            'status'     => 'pending',
+            'config'     => wp_json_encode($config),
+        ));
+        return $result ? $wpdb->insert_id : false;
+    }
+
+    /**
      * Find the strategy item linked to an Approvals-module set. Scoped by
      * userId (strategy_items carries its own owner column) so a set from a
      * different user can never resolve here. Used by the strategy module's

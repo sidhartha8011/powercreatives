@@ -14,6 +14,7 @@ import {
   Layers, ChevronRight, ChevronDown, Play, Pause, Trash2, Zap, RefreshCw,
   CheckCircle2, Clock, AlertCircle, Loader2, FileText, ExternalLink,
   Link2, Send, Crown, X, List, CalendarClock, Copy, Settings2, SlidersHorizontal,
+  Rss, Search, Share2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -88,6 +89,17 @@ interface Strategy {
   items?: StrategyItem[];
   /** JSON string — target site (siteId) + generation options. Parse with parseStrategyConfig(). */
   config?: string;
+}
+
+/** Compact display label for a feed URL — hostname (sans www) + path, for the
+ *  strategy row so the user can tell WHICH feeds an RSS strategy watches. */
+function feedHost(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname.replace(/^www\./, '')}${u.pathname}`.replace(/\/$/, '').slice(0, 48);
+  } catch {
+    return url.replace(/^https?:\/\//, '').slice(0, 48);
+  }
 }
 
 /** Safely parse a strategy's stored config JSON (malformed/absent → {}). */
@@ -281,6 +293,49 @@ export function StrategiesModule() {
   const handleSyncStatus = useCallback((strategyId: number) => {
     syncStatusMutation.mutate({ id: strategyId });
   }, [syncStatusMutation]);
+
+  // Manual "Scan now" — force an immediate watcher pass for one RSS/Social
+  // strategy, bypassing the auto-scan 4h cadence. Synchronous: a social (Apify)
+  // pass can take ~40-60s, so the button shows a spinner while it runs.
+  const [scanningId, setScanningId] = useState<number | null>(null);
+  const scanNowMutation = trpc.strategy.scanNow.useMutation({
+    onSuccess: (data: any) => {
+      const created = data?.created ?? 0;
+      if (created > 0) {
+        toast.success(`Pulled ${created} new post${created === 1 ? '' : 's'} — generating now`);
+      } else {
+        // Zero items — the backend says WHY, so a misconfiguration (missing
+        // Apify key, broken source config, failed fetch) surfaces here
+        // instead of hiding behind a generic "no new posts".
+        switch (data?.reason) {
+          case 'no_apify_key':
+            toast.error('Scan ran, but no Apify API key is set for this account — add it under Integrations to watch Instagram/TikTok/X/Facebook accounts.');
+            break;
+          case 'fetch_failed':
+            toast.error(`The source fetch failed: ${data?.detail ?? 'unknown error'}`);
+            break;
+          case 'no_sources':
+            toast.error('This strategy has no watched accounts or feeds — edit it and re-add the source links.');
+            break;
+          case 'duration_complete':
+            toast.success('This strategy reached its end date / article limit — no more posts will be pulled.');
+            break;
+          case 'volume_capped':
+            toast.success('New posts found, but your weekly volume cap is reached — they are queued for the next free slot.');
+            break;
+          default:
+            toast.success('Scan complete — no new posts to pull right now');
+        }
+      }
+      refetch();
+    },
+    onError: (err: any) => toast.error(err.message ?? 'Scan failed'),
+    onSettled: () => setScanningId(null),
+  }) as any;
+  const handleScanNow = useCallback((strategyId: number) => {
+    setScanningId(strategyId);
+    scanNowMutation.mutate({ id: strategyId });
+  }, [scanNowMutation]);
 
   // Pause / resume generation (Task D2) — a status flip through the existing
   // PATCH /strategies/{id} whitelist. Paused strategies are skipped by the
@@ -608,6 +663,8 @@ export function StrategiesModule() {
             : `${strategyList.length} ${strategyList.length === 1 ? 'strategy' : 'strategies'}`}
         </Badge>
 
+        <AutoScanStatus />
+
         {/* List | Schedule view toggle */}
         <div className="flex items-center gap-1 ml-auto rounded-md p-0.5" style={{ border: `1px solid ${colors.border}` }}>
           <Button
@@ -704,18 +761,29 @@ export function StrategiesModule() {
           {visibleList.map((strategy) => {
             const config = parseStrategyConfig(strategy.config);
             const siteIdValue = config.siteId ? String(config.siteId) : '';
+            const isRss = config.sourceMode === 'rss';
+            const isSocial = config.sourceMode === 'social';
+            const rssFeeds: string[] = Array.isArray(config.rssFeeds) ? config.rssFeeds : [];
+            const socialLinks: string[] = Array.isArray(config.socialLinks) ? config.socialLinks : [];
+            // Social strategies may also carry converted rssFeeds (free-platform accounts);
+            // show the de-duplicated union on the link line.
+            const socialFeedLinks: string[] = isSocial ? Array.from(new Set([...socialLinks, ...rssFeeds])) : [];
             return (
             <div
               key={strategy.id}
               className="rounded-lg overflow-hidden"
               style={{ border: `1px solid ${colors.border}`, background: colors.bgSurface, boxShadow: shadows.card }}
             >
-              {/* Strategy header row */}
+              {/* Strategy header — two lines so the ~10 controls never squeeze
+                  the title into wrap/overlap chaos: line 1 is identity (name,
+                  badges, meta — full width) + icon utilities; line 2 is every
+                  editing control and action button. */}
               <div
-                className="flex flex-wrap items-center gap-3 px-4 py-3 cursor-pointer"
+                className="px-4 py-3 cursor-pointer"
                 style={{ borderBottom: expandedId === strategy.id ? `1px solid ${colors.borderLight}` : 'none' }}
                 onClick={() => toggleExpand(strategy.id)}
               >
+              <div className="flex items-center gap-3">
                 {/* Bulk-select checkbox — leftmost; stops row-toggle propagation */}
                 <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
                   <Checkbox
@@ -738,6 +806,25 @@ export function StrategiesModule() {
                       {strategy.name}
                     </span>
                     <StatusBadge status={strategy.status} />
+                    {/* Source badge — tells RSS/Social from Keyword strategies at a glance;
+                        RSS/Social carry their link list in the tooltip. */}
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full shrink-0"
+                      style={{
+                        fontSize: typography.xs,
+                        fontWeight: typography.medium,
+                        color: isRss ? colors.accent : isSocial ? colors.primary : colors.textSecondary,
+                        backgroundColor: isRss ? colors.accentLight : isSocial ? colors.primaryLight : colors.bgHover,
+                      }}
+                      title={isRss
+                        ? (rssFeeds.length ? `RSS feeds:\n${rssFeeds.join('\n')}` : 'RSS strategy')
+                        : isSocial
+                        ? (socialLinks.length ? socialLinks.join('\n') : 'Social strategy')
+                        : 'Keyword strategy'}
+                    >
+                      {isRss ? <Rss className="w-3 h-3" /> : isSocial ? <Share2 className="w-3 h-3" /> : <Search className="w-3 h-3" />}
+                      {isRss ? 'RSS' : isSocial ? 'Social' : 'Keywords'}
+                    </span>
                     {config.parentKeyword && (
                       <span title="Has a parent (hub) article" className="shrink-0">
                         <Crown className="w-3.5 h-3.5 shrink-0 text-amber-500" />
@@ -749,14 +836,101 @@ export function StrategiesModule() {
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '2px' }}>
+                  <div style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '2px' }} className="truncate">
                     {strategy.completedItems}/{strategy.totalItems} items completed
                     {strategy.failedItems > 0 && (
                       <span style={{ color: colors.danger }}> · {strategy.failedItems} failed</span>
                     )}
                     <span> · {new Date(strategy.createdAt).toLocaleDateString()}</span>
                   </div>
+                  {/* RSS/Social link list — its own line so all watched feeds/accounts are
+                      visible at a glance (full URLs in the tooltip). Social shows the
+                      de-duplicated union of pasted links + any converted feeds. */}
+                  {isRss && rssFeeds.length > 0 && (
+                    <div
+                      className="flex items-center gap-1 truncate"
+                      style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '1px' }}
+                      title={rssFeeds.join('\n')}
+                    >
+                      <Rss className="w-3 h-3 shrink-0" style={{ color: colors.accent }} />
+                      <span className="truncate">{rssFeeds.map(feedHost).join(', ')}</span>
+                    </div>
+                  )}
+                  {isSocial && socialFeedLinks.length > 0 && (
+                    <div
+                      className="flex items-center gap-1 truncate"
+                      style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '1px' }}
+                      title={socialFeedLinks.join('\n')}
+                    >
+                      <Share2 className="w-3 h-3 shrink-0" style={{ color: colors.primary }} />
+                      <span className="truncate">{socialFeedLinks.map(feedHost).join(', ')}</span>
+                    </div>
+                  )}
                 </div>
+
+                {/* Progress — belongs beside the item count, not in the
+                    control line. */}
+                <div className="w-24 shrink-0 hidden sm:block">
+                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: colors.bgHover }}>
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${strategy.totalItems > 0 ? (strategy.completedItems / strategy.totalItems) * 100 : 0}%`,
+                        background: strategy.status === 'completed' ? statusColors.ready.text : colors.primary,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Icon utilities — rare, destructive-or-config actions stay
+                    small and out of the main control line. */}
+                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  {/* Parent / anchor settings editor (G1) */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Parent & anchor settings"
+                    onClick={() => setParentSettingsStrategy(strategy)}
+                  >
+                    <Settings2 className="w-3.5 h-3.5" />
+                  </Button>
+                  {/* Duplicate strategy (E1) */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Duplicate this strategy"
+                    disabled={duplicateMutation.isPending}
+                    onClick={() => handleDuplicate(strategy.id)}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </Button>
+                  {/* Sync published status from WordPress (D3) — only worth
+                      offering once at least one item has actually published. */}
+                  {(strategy.items ?? []).some((it) => !!it.articlePublishedUrl) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title="Check published items' status on WordPress"
+                      disabled={syncStatusMutation.isPending}
+                      onClick={() => handleSyncStatus(strategy.id)}
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${syncStatusMutation.isPending ? 'animate-spin' : ''}`} />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(strategy.id, strategy.name)}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Line 2 — every editing control + action button. flex-wrap here
+                  only ever wraps CONTROLS (never the identity line above). */}
+              <div className="flex flex-wrap items-center gap-2 mt-2.5" onClick={(e) => e.stopPropagation()}>
 
                 {/* Publishing Mode — inline-editable (AutoPress row parity).
                     Switching an existing draft strategy to Auto-publish makes
@@ -862,21 +1036,8 @@ export function StrategiesModule() {
                   </div>
                 )}
 
-                {/* Progress bar mini */}
-                <div className="w-20 shrink-0">
-                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: colors.bgHover }}>
-                    <div
-                      className="h-full rounded-full transition-all duration-300"
-                      style={{
-                        width: `${strategy.totalItems > 0 ? (strategy.completedItems / strategy.totalItems) * 100 : 0}%`,
-                        background: strategy.status === 'completed' ? statusColors.ready.text : colors.primary,
-                      }}
-                    />
-                  </div>
-                </div>
-
                 {/* Actions */}
-                <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2 shrink-0">
                   {strategy.status !== 'completed' && (
                     <Button
                       variant="default"
@@ -905,6 +1066,24 @@ export function StrategiesModule() {
                     )}
                     Generate
                   </Button>
+                  {/* Scan now — force an immediate pull for RSS/Social strategies,
+                      independent of the auto-scan 4h cadence. */}
+                  {(isRss || isSocial) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      title="Check the source for new posts right now, instead of waiting for the auto-scan"
+                      disabled={scanningId === strategy.id}
+                      onClick={() => handleScanNow(strategy.id)}
+                    >
+                      {scanningId === strategy.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                      {scanningId === strategy.id ? 'Scanning…' : 'Scan now'}
+                    </Button>
+                  )}
                   {Number(strategy.completedItems) >= 2 && (
                     <Button
                       variant="outline"
@@ -933,48 +1112,8 @@ export function StrategiesModule() {
                       {strategy.status === 'paused' ? 'Resume' : 'Pause'}
                     </Button>
                   )}
-                  {/* Parent / anchor settings editor (G1) */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    title="Parent & anchor settings"
-                    onClick={() => setParentSettingsStrategy(strategy)}
-                  >
-                    <Settings2 className="w-3.5 h-3.5" />
-                  </Button>
-                  {/* Duplicate strategy (E1) */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    title="Duplicate this strategy"
-                    disabled={duplicateMutation.isPending}
-                    onClick={() => handleDuplicate(strategy.id)}
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </Button>
-                  {/* Sync published status from WordPress (D3) — only worth
-                      offering once at least one item has actually published. */}
-                  {(strategy.items ?? []).some((it) => !!it.articlePublishedUrl) && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="Check published items' status on WordPress"
-                      disabled={syncStatusMutation.isPending}
-                      onClick={() => handleSyncStatus(strategy.id)}
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${syncStatusMutation.isPending ? 'animate-spin' : ''}`} />
-                      Sync
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDelete(strategy.id, strategy.name)}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
                 </div>
+              </div>
               </div>
 
               {/* Expanded items list */}
@@ -1304,5 +1443,76 @@ export function StrategiesModule() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * Header chip: background-scanning health. Scanning is ALWAYS-ON — the
+ * internal keep-alive chain bootstraps itself on any visit and re-spawns
+ * itself in short links, so RSS + scheduled strategies run with zero setup
+ * and zero external services. This dialog is pure status.
+ */
+function AutoScanStatus() {
+  const [open, setOpen] = useState(false);
+  const infoQuery = trpc.strategy.cronInfo.useQuery(undefined, { enabled: open }) as any;
+  const info = infoQuery.data as
+    | {
+        lastScan?: string | null;
+        nextScheduled?: string | null;
+        keepalive?: { lastBeat: string | null; aliveNow: boolean };
+      }
+    | undefined;
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 text-xs"
+        onClick={() => setOpen(true)}
+        title="Background scanning status"
+      >
+        <Clock className="w-3.5 h-3.5 mr-1" />
+        Auto-scan
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Background scanning</DialogTitle>
+          </DialogHeader>
+          {infoQuery.isLoading ? (
+            <div className="flex justify-center py-6">
+              <Spinner />
+            </div>
+          ) : (
+            <div className="space-y-4 py-1 text-sm">
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary">
+                  {info?.keepalive?.aliveNow ? 'Running' : 'Waking up…'}
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  Automatic — no setup needed.
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs text-muted-foreground mb-0.5">Last feed scan</div>
+                  <div>{info?.lastScan ?? 'Not yet run'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-0.5">Last heartbeat</div>
+                  <div>{info?.keepalive?.lastBeat ? `${info.keepalive.lastBeat} UTC` : '—'}</div>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                RSS feeds and scheduled strategies are watched continuously by a built-in
+                background process. It starts on its own and restarts itself automatically —
+                new feed items and due articles generate even when nobody has the site open.
+              </p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

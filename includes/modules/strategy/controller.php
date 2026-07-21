@@ -55,7 +55,19 @@ class PCM_REST_Strategy extends PCM_REST_Base
             array('POST',   '/strategies/(?P<id>\d+)/items/(?P<itemId>\d+)/publish', 'publish_item'),
             array('POST',   '/strategies/(?P<id>\d+)/interlinks', 'run_interlinks'),
             array('POST',   '/strategies/(?P<id>\d+)/sync-status', 'sync_status'),
+            // Manual "Scan now" — force an immediate watcher pass for one
+            // RSS/Social strategy, bypassing the auto-scan 4h cadence.
+            array('POST',   '/strategies/(?P<id>\d+)/scan',       'scan_now'),
             array('POST',   '/strategies/(?P<id>\d+)/reapply-parent', 'reapply_parent'),
+            // Keep-alive chain link — PUBLIC tier (the spawner is a
+            // session-less loopback request; base register() wires
+            // __return_true); the handler enforces its own secret-token auth
+            // per the base-controller public-tier law. `\d+` can't match
+            // 'keepalive', so the id routes never collide.
+            array('GET',    '/strategies/keepalive',            'keepalive_link', array(), 'public'),
+            array('POST',   '/strategies/keepalive',            'keepalive_link', array(), 'public'),
+            // Admin-side: background-scanning health for the Auto-scan dialog.
+            array('GET',    '/strategies/cron-info',            'cron_info'),
         );
     }
 
@@ -77,6 +89,37 @@ class PCM_REST_Strategy extends PCM_REST_Base
         }
 
         $result = PCM_Strategy_Service::reapply_parent_links($strategy_id, (int)$pcm_user->id);
+        return $this->success($result);
+    }
+
+    /**
+     * Manual "Scan now" — force an immediate watcher pass for one RSS/Social
+     * strategy, bypassing the auto-scan 4h cadence so the user can pull the
+     * latest posts on demand (e.g. right after adding an account, without
+     * waiting for the next scheduled tick). Keyword strategies have nothing to
+     * scan and are rejected. The scan runs synchronously (a social account
+     * pass can take ~40-60s) and reports how many new items it created.
+     */
+    public function scan_now(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user    = $this->get_current_pcm_user();
+        $strategy_id = (int)$request->get_param('id');
+
+        $strategy = PCM_DB::get_strategy($strategy_id, (int)$pcm_user->id);
+        if (!$strategy) {
+            return $this->not_found('Strategy');
+        }
+
+        $config      = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
+        $source_mode = is_array($config) ? (string)($config['sourceMode'] ?? '') : '';
+        if (!in_array($source_mode, array('rss', 'social'), true)) {
+            return $this->error(
+                __('Only RSS and Social strategies can be scanned — keyword strategies have no source to pull from.', 'power-creatives'),
+                400
+            );
+        }
+
+        $result = PCM_Strategy_Service::scan_strategy_now($strategy_id, (int)$pcm_user->id);
         return $this->success($result);
     }
 
@@ -189,8 +232,53 @@ class PCM_REST_Strategy extends PCM_REST_Base
         if (empty($params['templateId'])) {
             return $this->error('Template ID is required.');
         }
+        // RSS- and Social-sourced strategies start with ZERO keywords — the
+        // watcher (RSS) / create-time link split (Social) adds items as source
+        // entries arrive, so an empty selection is valid for both. Every other
+        // source keeps the existing requirement (and its exact error message).
+        // sourceMode is a top-level field on create (the dialog spreads config
+        // flat, exactly like the other config keys sanitize_config_fields()
+        // reads below) — so this reads the same slot that ends up stored.
+        $source_mode = (string)($params['sourceMode'] ?? '');
+        $is_feed_source = in_array($source_mode, array('rss', 'social'), true);
         if (empty($params['keywords']) || !is_array($params['keywords'])) {
-            return $this->error('Keywords array is required.');
+            if (!$is_feed_source) {
+                return $this->error('Keywords array is required.');
+            }
+            $params['keywords'] = array(); // zero-keyword rss/social create — normalized for the service
+        }
+
+        // ── Social create-time guard — validated BEFORE anything persists, so
+        //    a rejected create never leaves a half-configured strategy behind.
+        //    The links checked here are the SAME sanitized set that ends up
+        //    stored (sanitize_config_fields() again below — deterministic).
+        //    Post links never require Apify; only watching an ACCOUNT on an
+        //    Apify-scraped platform (instagram/tiktok/x/facebook — exactly the
+        //    platforms apify_request() maps) needs the user's token. ──
+        if ($source_mode === 'social') {
+            $social_links = $this->sanitize_config_fields(
+                array('socialLinks' => $params['socialLinks'] ?? null)
+            )['socialLinks'] ?? array();
+            if ($social_links === array()) {
+                return $this->error('At least one social post or account link is required.');
+            }
+            require_once __DIR__ . '/class-pcm-social-source.php';
+            if (!class_exists('PCM_Apify', false)) {
+                require_once __DIR__ . '/class-pcm-apify.php';
+            }
+            foreach ($social_links as $social_link) {
+                $classified = PCM_Social_Source::classify($social_link);
+                if (($classified['kind'] ?? '') === 'account'
+                    && PCM_Social_Source::apify_request((string)$classified['platform'], $social_link, 1) !== null
+                    && !PCM_Apify::has_key($user_id)
+                ) {
+                    return $this->error(sprintf(
+                        'Watching %s accounts needs your Apify API token — add it under Integrations first. (%s)',
+                        (string)$classified['platform'],
+                        $social_link
+                    ));
+                }
+            }
         }
 
         try {
@@ -538,6 +626,134 @@ class PCM_REST_Strategy extends PCM_REST_Base
         }
         if (array_key_exists('imageModel', $fields)) {
             $config['imageModel'] = sanitize_text_field($fields['imageModel'] ?? '');
+        }
+
+        // ── Filip's strategy-sections model (Source / Trigger / Volume &
+        //    cadence / Publishing / Duration / Research). Every key below is
+        //    OPTIONAL and whitelisted; an unrecognized value DROPS the key
+        //    (never persisted), so a partial PATCH-merge preserves the existing
+        //    stored value instead of overwriting it with junk — same "drop
+        //    unknowns" discipline as mediaType/researchMode above. The
+        //    watcher-internal keys (rssSeen/rssQueue, and the social watcher's
+        //    socialAccounts/lastSocialScan) are deliberately NOT accepted here
+        //    (only server-side writes ever set them); the PATCH config-merge
+        //    preserves them regardless, because it shallow-merges only the
+        //    keys present in this sanitized subset onto the existing config
+        //    and never touches keys it wasn't handed. ──
+
+        // Source: keyword-driven (default/legacy, absent key) vs RSS-feed-driven
+        // vs social-link-driven.
+        if (array_key_exists('sourceMode', $fields)
+            && in_array($fields['sourceMode'], array('keywords', 'rss', 'social'), true)
+        ) {
+            $config['sourceMode'] = $fields['sourceMode'];
+        }
+        // 1–5 http(s) feed URLs. esc_url_raw() strips dangerous bits; the scheme
+        // check then rejects anything that isn't http/https (esc_url_raw alone
+        // would still pass mailto:, tel:, etc.). Malformed/over-cap entries are
+        // dropped; the whole key is omitted when nothing valid survives.
+        if (array_key_exists('rssFeeds', $fields)) {
+            $feeds = array();
+            if (is_array($fields['rssFeeds'] ?? null)) {
+                foreach ($fields['rssFeeds'] as $raw_url) {
+                    if (count($feeds) >= 5) {
+                        break; // hard cap at 5 valid feeds
+                    }
+                    $url = esc_url_raw((string)$raw_url);
+                    if ($url !== '' && preg_match('#^https?://#i', $url)) {
+                        $feeds[] = $url;
+                    }
+                }
+            }
+            if (!empty($feeds)) {
+                $config['rssFeeds'] = array_values($feeds);
+            }
+        }
+        // 1–10 pasted social post/account links (Source=Social). Mirrors the
+        // rssFeeds handling above exactly — esc_url_raw() + http(s) scheme
+        // check, malformed/over-cap entries dropped, whole key omitted when
+        // nothing valid survives — just with the social contract's cap of 10.
+        if (array_key_exists('socialLinks', $fields)) {
+            $links = array();
+            if (is_array($fields['socialLinks'] ?? null)) {
+                foreach ($fields['socialLinks'] as $raw_url) {
+                    if (count($links) >= 10) {
+                        break; // hard cap at 10 valid links
+                    }
+                    $url = esc_url_raw((string)$raw_url);
+                    if ($url !== '' && preg_match('#^https?://#i', $url)) {
+                        $links[] = $url;
+                    }
+                }
+            }
+            if (!empty($links)) {
+                $config['socialLinks'] = array_values($links);
+            }
+        }
+        // The primary keyword/angle each RSS rewrite is tailored to — plain text, ~200 chars.
+        if (array_key_exists('rssAngle', $fields)) {
+            $config['rssAngle'] = mb_substr(sanitize_text_field((string)$fields['rssAngle']), 0, 200);
+        }
+        // Backpressure cap: how many articles per week the RSS watcher may create. Clamp 1–21.
+        if (array_key_exists('rssCadence', $fields)) {
+            if (is_array($fields['rssCadence'] ?? null) && isset($fields['rssCadence']['perWeek'])) {
+                $config['rssCadence'] = array(
+                    'perWeek' => min(21, max(1, absint($fields['rssCadence']['perWeek']))),
+                );
+            }
+        }
+        // Trigger (stored for display; the engine stays driven by
+        // publishingMode + scheduleConfig + sourceMode). Whitelist only.
+        if (array_key_exists('trigger', $fields)
+            && in_array($fields['trigger'], array('manual', 'scheduled', 'new_source_item'), true)
+        ) {
+            $config['trigger'] = $fields['trigger'];
+        }
+        // Publishing split (Draft vs Automatic). Consumed by
+        // PCM_Strategy_Service::maybe_auto_publish()'s draft-gate.
+        if (array_key_exists('publishing', $fields)
+            && in_array($fields['publishing'], array('draft', 'auto'), true)
+        ) {
+            $config['publishing'] = $fields['publishing'];
+        }
+        // Duration: ongoing / until a date / capped article count. `mode` is the
+        // required discriminator — drop the whole key if it isn't whitelisted;
+        // endDate must be a Y-m-d (else dropped, same regex as scheduleConfig
+        // ends.date above); maxArticles clamps 1–500.
+        if (array_key_exists('duration', $fields)) {
+            if (is_array($fields['duration'] ?? null)
+                && in_array($fields['duration']['mode'] ?? null, array('ongoing', 'until', 'limit'), true)
+            ) {
+                $duration = array('mode' => $fields['duration']['mode']);
+                if (isset($fields['duration']['endDate'])) {
+                    $end_date = sanitize_text_field((string)$fields['duration']['endDate']);
+                    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $end_date)) {
+                        $duration['endDate'] = $end_date;
+                    }
+                }
+                if (isset($fields['duration']['maxArticles'])
+                    && $fields['duration']['maxArticles'] !== '' && $fields['duration']['maxArticles'] !== null
+                ) {
+                    $duration['maxArticles'] = min(500, max(1, absint($fields['duration']['maxArticles'])));
+                }
+                $config['duration'] = $duration;
+            }
+        }
+        // Research checklist: a subset of the 3 passes. Intersect against the
+        // whitelist in CANONICAL order (landscape, questions, gaps) — this
+        // dedupes, drops unknowns, and keeps the order deep-mode parity relies
+        // on. An explicit empty array is KEPT (stored as []) — the contract's
+        // "research off" signal, distinct from omitting the key (which lets
+        // PCM_Strategy_Service::research_passes() derive passes from
+        // research_mode()).
+        if (array_key_exists('researchPasses', $fields)) {
+            if (is_array($fields['researchPasses'] ?? null)) {
+                $pass_whitelist = array('landscape', 'questions', 'gaps');
+                $config['researchPasses'] = array_values(array_filter(
+                    $pass_whitelist,
+                    static fn($p) => in_array($p, $fields['researchPasses'], true)
+                ));
+            }
         }
 
         return $config;
@@ -891,5 +1107,49 @@ class PCM_REST_Strategy extends PCM_REST_Base
         } catch (\Throwable $e) {
             return $this->error($e->getMessage(), 500);
         }
+    }
+
+    /**
+     * PUBLIC keep-alive chain link. Auth = the secret token in `pcm_cron_token`
+     * (per the base-controller public-tier law: the handler authenticates by
+     * its own means, never a nonce). The body of the work (ownership takeover,
+     * sliced sleep + heartbeat, due scans, next spawn) lives in
+     * PCM_Strategy_Service::run_keepalive_chain().
+     */
+    public function keepalive_link(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $token  = (string) $request->get_param('token');
+        $stored = (string) get_option('pcm_cron_token', '');
+        if ($stored === '' || $token === '' || !hash_equals($stored, $token)) {
+            return $this->error('Invalid or missing token.', 403);
+        }
+
+        require_once __DIR__ . '/service.php';
+        PCM_Strategy_Service::run_keepalive_chain();
+
+        // Nobody reads this (the spawner is non-blocking) — returned for
+        // manual/diagnostic calls only.
+        return $this->success(array('alive' => (string) get_option('pcm_keepalive_enabled', '') !== '0'));
+    }
+
+    /**
+     * Background-scanning health for the Auto-scan dialog. Scanning is
+     * always-on (the keep-alive chain bootstraps itself on any visit) —
+     * this is status only, nothing to configure.
+     */
+    public function cron_info(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $next = function_exists('wp_next_scheduled') ? wp_next_scheduled('pcm_strategy_rss_scan') : false;
+        $beat = (int) get_option('pcm_keepalive_beat', 0);
+
+        return $this->success(array(
+            'lastScan'      => get_option('pcm_rss_last_scan', null),
+            'nextScheduled' => $next ? gmdate('Y-m-d H:i:s', (int) $next) : null,
+            'keepalive'     => array(
+                'lastBeat' => $beat > 0 ? gmdate('Y-m-d H:i:s', $beat) : null,
+                // "alive" = a beat within the last ~3 slices.
+                'aliveNow' => $beat > 0 && (time() - $beat) < 50,
+            ),
+        ));
     }
 }

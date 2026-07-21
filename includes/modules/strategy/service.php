@@ -204,11 +204,193 @@ class PCM_Strategy_Service
             self::maybe_schedule_queue_continuation($strategy_id, $user_id);
         }
 
+        // ── RSS instant first pull: a Source=RSS strategy must generate from
+        // the feed's newest EXISTING item right away instead of waiting for
+        // the hourly watcher's next pass. One-off event, same shape (and
+        // wp_next_scheduled() dedupe) as maybe_schedule_queue_continuation();
+        // it fires run_rss_first_scan() → scan_rss_strategy() in the
+        // background. Living here — the one funnel every creation door uses
+        // (REST create, site-schedule rules) — it covers them all. ──
+        if (($guarded['config']['sourceMode'] ?? '') === 'rss'
+            && is_array($guarded['config']['rssFeeds'] ?? null)
+            && $guarded['config']['rssFeeds'] !== array()
+            && function_exists('wp_next_scheduled') && function_exists('wp_schedule_single_event')
+        ) {
+            $args = array($strategy_id, $user_id);
+            if (!wp_next_scheduled('pcm_strategy_rss_first_scan', $args)) {
+                wp_schedule_single_event(time(), 'pcm_strategy_rss_first_scan', $args);
+            }
+        }
+
+        // ── Social create-time split (Source=Social strategies): classify
+        // every pasted link once — post links become pending items NOW (one
+        // article each, generated from the post's own fetched context), free-
+        // platform account links (YouTube/Bluesky/Reddit) convert to native
+        // feeds merged into rssFeeds (the existing RSS watcher takes over,
+        // including the instant first pull above), and Apify-platform account
+        // links land on config.socialAccounts for the watcher's ≥4h Apify
+        // branch. Same funnel rationale as the RSS kick above — every
+        // creation door passes through here. ──
+        if (($guarded['config']['sourceMode'] ?? '') === 'social'
+            && is_array($guarded['config']['socialLinks'] ?? null)
+            && $guarded['config']['socialLinks'] !== array()
+        ) {
+            self::split_social_links($strategy_id, $user_id, $guarded['config']);
+        }
+
         // ── Return the complete strategy with items ──
         $strategy = PCM_DB::get_strategy($strategy_id, $user_id);
         $strategy->items = PCM_DB::get_strategy_items($strategy_id);
 
         return (array)$strategy;
+    }
+
+    /**
+     * Create-time split for a Source=Social strategy's pasted links (called by
+     * create_from_keywords() right after the strategy row + config persist).
+     * Each stored socialLink is classified exactly once:
+     *
+     *   - kind 'post' (any platform, incl unknown hosts) → ONE pending item
+     *     immediately, keyword = the post's best-effort context title
+     *     (PCM_Social_Source::post_context() NEVER throws — a fetch failure
+     *     still yields the URL-label fallback, so create always succeeds);
+     *   - kind 'account' on an Apify platform (apify_request() non-null:
+     *     instagram/tiktok/x/facebook) → {url, platform} collected onto
+     *     config.socialAccounts for the watcher's ≥4h Apify branch;
+     *   - kind 'account' on a free platform with a native feed
+     *     (account_feed_url() non-null: YouTube/Bluesky/Reddit) → the feed URL
+     *     merged (deduped) into config.rssFeeds; the EXISTING RSS instant
+     *     first pull is armed so the newest post generates right away. Items
+     *     created from these feeds are plain RSS items (standard rss rider) —
+     *     deliberate: the feed entries carry no post text, so the richer
+     *     social rider has nothing extra to say;
+     *   - kind 'account' on a free platform whose feed conversion failed
+     *     (e.g. a YouTube handle whose channelId resolve failed) → skipped
+     *     with an error_log — an account link must never become a one-off
+     *     "post" article.
+     *
+     * The derived watcher config persists exactly the way scan_rss_strategy()
+     * persists its merged state — ONE update_strategy() write of the whole
+     * config — and totalItems is bumped the same way the watcher does after
+     * inserting items. Post-item inserts arm the existing background queue
+     * once (same placement rationale as the RSS kick).
+     *
+     * @param int   $strategy_id Freshly created strategy ID.
+     * @param int   $user_id     Owner ID.
+     * @param array $config      The stored (guarded) create config.
+     */
+    private static function split_social_links(int $strategy_id, int $user_id, array $config): void
+    {
+        if (!class_exists('PCM_Social_Source', false)) {
+            require_once __DIR__ . '/class-pcm-social-source.php';
+        }
+
+        $feeds    = array();
+        $accounts = array();
+        $posts    = array();
+        $inserted = 0;
+
+        // Wall-clock budget for ALL network fetches in this create-path run
+        // (post_context's oEmbed/meta fetches AND YouTube channelId resolves).
+        // This runs synchronously inside the REST create — a many-link paste
+        // must not blow past host request caps (60s FPM kills are common).
+        // Once ~20s is spent, remaining lookups skip the network: post links
+        // fall back to their URL-derived label; a YouTube handle that can't
+        // resolve without network is skipped with an error_log.
+        $context_deadline = microtime(true) + 20.0;
+        @set_time_limit(120);
+
+        // ── PHASE 1 (fast, no slow network): classify every link; collect
+        //    Apify accounts + free-platform feeds. Only the YouTube handle
+        //    resolve fetches, and it is under the deadline. ──
+        foreach ((array)$config['socialLinks'] as $url) {
+            $url = trim((string)$url);
+            if ($url === '') {
+                continue;
+            }
+            $classified = PCM_Social_Source::classify($url);
+            $platform   = (string)($classified['platform'] ?? 'unknown');
+
+            if (($classified['kind'] ?? '') === 'account') {
+                if (PCM_Social_Source::apify_request($platform, $url, 1) !== null) {
+                    $accounts[] = array('url' => $url, 'platform' => $platform);
+                    continue;
+                }
+                $feed = microtime(true) < $context_deadline
+                    ? PCM_Social_Source::account_feed_url($url, $classified)
+                    : null;
+                if ($feed !== null && $feed !== '') {
+                    $feeds[] = $feed;
+                    continue;
+                }
+                error_log(sprintf(
+                    '[PCM_Strategy_Service] Social create #%d: could not derive a feed for account link %s (%s) — skipped.',
+                    $strategy_id,
+                    $url,
+                    $platform
+                ));
+                continue;
+            }
+
+            $posts[] = $url; // slow context fetches deferred to phase 3
+        }
+
+        // ── PHASE 2: persist the watcher config + arm the instant first pull
+        //    BEFORE any slow post-context work. If the host kills this request
+        //    mid-phase-3, the accounts/feeds are already durable and the
+        //    watcher takes over — no zombie strategy (adversarial-review P1). ──
+        $config_dirty = false;
+        if ($feeds !== array()) {
+            $existing_feeds = is_array($config['rssFeeds'] ?? null) ? $config['rssFeeds'] : array();
+            $merged_feeds   = array_values(array_unique(array_merge($existing_feeds, $feeds)));
+            if ($merged_feeds !== $existing_feeds) {
+                $config['rssFeeds'] = $merged_feeds;
+                $config_dirty = true;
+            }
+        }
+        if ($accounts !== array()) {
+            $config['socialAccounts'] = $accounts;
+            $config_dirty = true;
+        }
+        if ($config_dirty) {
+            PCM_DB::update_strategy($strategy_id, $user_id, array('config' => wp_json_encode($config)));
+        }
+        if (($feeds !== array() || $accounts !== array())
+            && function_exists('wp_next_scheduled') && function_exists('wp_schedule_single_event')
+        ) {
+            $args = array($strategy_id, $user_id);
+            if (!wp_next_scheduled('pcm_strategy_rss_first_scan', $args)) {
+                wp_schedule_single_event(time(), 'pcm_strategy_rss_first_scan', $args);
+            }
+        }
+
+        // ── PHASE 3 (slow): one pending item per post link, carrying the
+        //    source context the social prompt rider reads back. ──
+        foreach ($posts as $url) {
+            $context = PCM_Social_Source::post_context($url, microtime(true) < $context_deadline);
+            $title   = trim((string)($context['title'] ?? ''));
+            if ($title === '') {
+                $title = $url; // post_context() guarantees a title, but stay defensive
+            }
+            $item_id = PCM_DB::create_rss_strategy_item($strategy_id, $user_id, $title, array(
+                'sourceLink'  => $url,
+                'sourceTitle' => $title,
+                'sourceText'  => (string)($context['text'] ?? ''),
+                'social'      => true,
+            ));
+            if ($item_id) {
+                $inserted++;
+            }
+        }
+
+        if ($inserted > 0) {
+            PCM_DB::update_strategy($strategy_id, $user_id, array(
+                'totalItems' => PCM_DB::count_strategy_items($strategy_id),
+            ));
+            // Kick the existing background queue exactly once (it dedupes
+            // itself), mirroring the rss watcher.
+            self::maybe_schedule_queue_continuation($strategy_id, $user_id);
+        }
     }
 
     /**
@@ -580,7 +762,9 @@ class PCM_Strategy_Service
             list($model, $provider) = self::resolve_model($strategy);
             $llm_options = array(
                 'model'      => $model,
-                'max_tokens' => 8192,
+                'max_tokens' => 12288, // headroom for long listicle HTML; the
+                                       // LLM layer auto-retries at a doubled cap
+                                       // if a longer article still truncates.
                 // Owner-scoped key lookup (PCM user id), not get_current_user_id():
                 // under wp-cron there is no current user (id 0), which is why the
                 // consolidated batch failed with "No active API key" even though
@@ -1068,16 +1252,26 @@ class PCM_Strategy_Service
                 $brand = PCM_DB::get_brand_by_id((int)$strategy->brandId, $user_id);
             }
 
+            // A pasted social POST link has no caption yet — Instagram/X/Facebook
+            // killed public oEmbed, so create-time post_context() stored only the
+            // bare URL. Here, in the BACKGROUND path where a ~30s Apify run-sync
+            // is safe, pull the real post via the owner's Apify key so the article
+            // is written ABOUT the post, not a naked link. No-ops for every item
+            // that already has context (RSS, free platforms, watcher-fed posts).
+            $item_cfg = self::maybe_enrich_social_post($item, $item_cfg, $user_id);
+
             // ── 4. Build prompt with variable injection (+ optional live research) ──
             $research = self::maybe_research_context($strategy, array($item->keyword), $user_id);
-            $messages = self::build_prompt(array($item->keyword), $template, $brand, $research, self::in_content_media_enabled($strategy), self::media_count($strategy), self::media_type($strategy), self::media_guidance($strategy));
+            $messages = self::build_prompt(array($item->keyword), $template, $brand, $research, self::in_content_media_enabled($strategy), self::media_count($strategy), self::media_type($strategy), self::media_guidance($strategy), self::rss_source_instruction($item_cfg, self::rss_angle($strategy)));
 
             // ── 5. Invoke LLM — user-selected model/provider (data-driven), with a
             //       fallback for strategies created before model selection existed. ──
             list($model, $provider) = self::resolve_model($strategy);
             $llm_options = array(
                 'model'      => $model,
-                'max_tokens' => 8192,
+                'max_tokens' => 12288, // headroom for long listicle HTML; the
+                                       // LLM layer auto-retries at a doubled cap
+                                       // if a longer article still truncates.
                 // The API key is scoped to the strategy OWNER (the PCM user id
                 // threaded through this whole flow — the same id the integrations
                 // table is keyed by and that maybe_generate_featured_image() uses).
@@ -1490,6 +1684,684 @@ class PCM_Strategy_Service
         return $next !== false && strtotime($now) >= $next;
     }
 
+    // =========================================================================
+    // RSS WATCHER (Filip's Source=RSS strategies)
+    // =========================================================================
+    //
+    // Hourly wp-cron scan (hook 'pcm_strategy_rss_scan', wired + armed at the
+    // bottom of this file) that turns NEW feed items into strategy items, which
+    // then ride the EXISTING generation pipeline unchanged
+    // (maybe_schedule_queue_continuation() → run_queue_tick() →
+    // generate_next_item() → maybe_auto_publish()). All watcher state lives in
+    // the strategy's config JSON per the frozen contract — rssSeen (GUID hashes,
+    // cap 200) and rssQueue ({guid,title,link,ts}, freshest-first, cap 10) — so
+    // the DB schema stays untouched. The impure edges (feed fetch, DB writes)
+    // are kept thin; the decision logic below is pure static seams, directly
+    // unit-tested (StrategyRssWatcherTest).
+
+    /**
+     * Hourly wp-cron callback: scan every RSS-sourced strategy for new feed
+     * items. Per-strategy failure isolation (same contract as
+     * run_site_schedules()): one strategy's dead feed or DB hiccup must not
+     * stop the others.
+     */
+    public static function run_rss_scan(): void
+    {
+        // Health stamp read by the cron-info route and the UI — "when did
+        // scanning actually last run", regardless of what fired it (wp-cron,
+        // the keep-alive chain, or a manual trigger).
+        if (function_exists('update_option') && function_exists('current_time')) {
+            update_option('pcm_rss_last_scan', current_time('mysql'), false);
+        }
+
+        // Third re-arm lane: any wp-cron execution of this scan resurrects a
+        // dead keep-alive chain. Stale-gated, so a scan running INSIDE a live
+        // link (which beat seconds ago) never double-spawns.
+        if (function_exists('get_option')
+            && (time() - (int) get_option('pcm_keepalive_beat', 0)) > 120) {
+            self::spawn_keepalive();
+        }
+
+        // Social strategies ride the SAME per-strategy watcher pass — their
+        // converted rssFeeds are fetched every pass, and their Apify-watched
+        // accounts on the ≥4h cost-controlled branch inside scan_rss_strategy().
+        foreach (array_merge(PCM_DB::get_rss_strategies(), self::get_social_strategies()) as $strategy) {
+            try {
+                self::scan_rss_strategy($strategy);
+            } catch (\Throwable $e) {
+                error_log(sprintf(
+                    '[PCM_Strategy_Service] RSS scan for strategy #%d failed: %s',
+                    (int)($strategy->id ?? 0),
+                    $e->getMessage()
+                ));
+            }
+        }
+    }
+
+    /**
+     * All non-paused Source=Social strategies — the social twin of
+     * PCM_DB::get_rss_strategies() (same LIKE pre-filter shape on the config
+     * JSON; scan_rss_strategy() re-verifies the decoded sourceMode, so a LIKE
+     * false positive is harmless). Lives here rather than in PCM_DB to keep
+     * this round's diff inside the strategy module; degrades to an empty list
+     * when the full $wpdb surface is absent (unit-test harness).
+     *
+     * @return object[] Strategy rows.
+     */
+    private static function get_social_strategies(): array
+    {
+        global $wpdb;
+        if (!is_object($wpdb ?? null)
+            || !method_exists($wpdb, 'get_results') || !method_exists($wpdb, 'esc_like')
+            || !class_exists('PCM_Schema')
+        ) {
+            return array();
+        }
+        $table = PCM_Schema::table('strategies');
+        $rows  = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$table} WHERE config LIKE %s AND status != 'paused'",
+                '%' . $wpdb->esc_like('"sourceMode":"social"') . '%'
+            )
+        );
+        return is_array($rows) ? $rows : array();
+    }
+
+    /**
+     * One-off create-time first scan for a single RSS strategy (wp-cron
+     * callback for 'pcm_strategy_rss_first_scan', armed by
+     * create_from_keywords()). Runs the exact same per-strategy watcher pass
+     * as the hourly run_rss_scan() — a brand-new strategy's rssSeen is empty,
+     * so the pass ingests the feed's current items freshest-first and
+     * generates from the newest EXISTING post immediately, instead of waiting
+     * for the next hourly tick. Deliberately does NOT stamp
+     * pcm_rss_last_scan: that health option means "the GLOBAL scan ran", and
+     * this is a single-strategy pass.
+     *
+     * @param int $strategy_id Strategy ID (from the scheduled event args).
+     * @param int $user_id     Owner ID (ownership-checked via get_strategy()).
+     */
+    public static function run_rss_first_scan(int $strategy_id, int $user_id): void
+    {
+        $strategy = PCM_DB::get_strategy($strategy_id, $user_id);
+        if (!$strategy) {
+            return; // deleted (or never owned by this user) since the event was armed
+        }
+        // Re-verify the source config — same guards scan_rss_strategy() applies
+        // (the config may have been edited between arming and firing). Social
+        // strategies arm this same event when their account links converted to
+        // native feeds, so 'social' passes too — with either feeds OR watched
+        // Apify accounts as the thing to scan.
+        $config = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
+        if (!is_array($config) || !in_array(($config['sourceMode'] ?? ''), array('rss', 'social'), true)) {
+            return;
+        }
+        $feeds    = $config['rssFeeds'] ?? null;
+        $accounts = $config['socialAccounts'] ?? null;
+        if ((!is_array($feeds) || $feeds === array())
+            && (!is_array($accounts) || $accounts === array())
+        ) {
+            return;
+        }
+        try {
+            self::scan_rss_strategy($strategy);
+        } catch (\Throwable $e) {
+            error_log(sprintf(
+                '[PCM_Strategy_Service] RSS first scan for strategy #%d failed: %s',
+                $strategy_id,
+                $e->getMessage()
+            ));
+        }
+    }
+
+    /**
+     * One strategy's full watcher pass: duration gate → fetch feeds → ingest
+     * new items into the config queue → backpressure-limited pop → insert
+     * pending strategy items → arm the existing background queue → persist the
+     * updated watcher state (rssSeen/rssQueue) back onto the config JSON.
+     *
+     * @param object $strategy Strategy DB row (from get_rss_strategies()).
+     * @param bool   $force    When true, bypass the social 4h cadence gate so a
+     *                         manual "Scan now" pulls immediately. The duration
+     *                         and backpressure gates always still apply — force
+     *                         overrides only the every-4h Apify cadence, never
+     *                         the user's volume/limit rules.
+     * @return int Number of new pending strategy items created this pass.
+     */
+    private static function scan_rss_strategy(object $strategy, bool $force = false): int
+    {
+        $config = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
+        if (!is_array($config)
+            || !in_array(($config['sourceMode'] ?? ''), array('rss', 'social'), true)
+        ) {
+            return 0; // LIKE pre-filter false positive — not a watched source
+        }
+        $feeds    = is_array($config['rssFeeds'] ?? null) ? $config['rssFeeds'] : array();
+        $accounts = is_array($config['socialAccounts'] ?? null) ? $config['socialAccounts'] : array();
+        if ($feeds === array() && $accounts === array()) {
+            return 0; // nothing to watch
+        }
+
+        $strategy_id = (int)$strategy->id;
+        $user_id     = (int)$strategy->userId;
+
+        // ── Duration gate: an expired 'until' date or a reached 'limit' cap
+        //    stops the watcher outright (no fetch, no new items) — a manual
+        //    scan never overrides this business rule. ──
+        $item_count = PCM_DB::count_strategy_items($strategy_id);
+        if (self::rss_duration_blocked($config, $item_count)) {
+            return 0;
+        }
+
+        // ── Fetch + ingest: every new feed item lands in rssQueue (and its
+        //    guid in rssSeen) regardless of backpressure — slots only gate how
+        //    many become strategy items THIS pass. ──
+        $config = self::ingest_feed_items(self::fetch_rss_feed_items($feeds), $config);
+
+        // ── Social branch: Apify-watched accounts are scanned at most every
+        //    4h (Apify bills per result — hourly would burn credits for
+        //    nothing), 10 items per account per scan. The mapped items feed
+        //    the SAME ingest path the rss items use, so seen-dedupe, the
+        //    queue cap and backpressure all apply identically; their queue
+        //    entries additionally carry the post text + a social flag the pop
+        //    below writes into the item config for the social prompt rider.
+        //    PCM_Apify degrades to [] on ANY failure, so a dead actor/token
+        //    can never break the pass. lastSocialScan stamps site-local
+        //    current_time like the rss health stamp, and persists with the
+        //    same config write below. ──
+        if ($accounts !== array()
+            && ($force || self::social_scan_due((string)($config['lastSocialScan'] ?? ''), (int)strtotime(current_time('mysql'))))
+        ) {
+            if (!class_exists('PCM_Social_Source', false)) {
+                require_once __DIR__ . '/class-pcm-social-source.php';
+            }
+            if (!class_exists('PCM_Apify', false)) {
+                require_once __DIR__ . '/class-pcm-apify.php';
+            }
+            // Stamp + persist BEFORE fetching: a host wall-clock kill mid-call
+            // must not leave the branch "still due" — that would re-run the
+            // paid Apify actors every pass in a billing loop while never
+            // completing (adversarial-review P1). At-most-once per 4h window
+            // even under repeated kills; a lost window self-heals next pass.
+            $config['lastSocialScan'] = current_time('mysql');
+            PCM_DB::update_strategy((int)$strategy->id, $user_id, array('config' => wp_json_encode($config)));
+
+            $social_raw = array();
+            foreach ($accounts as $account) {
+                if (!is_array($account)) {
+                    continue;
+                }
+                $account_url      = trim((string)($account['url'] ?? ''));
+                $account_platform = trim((string)($account['platform'] ?? ''));
+                if ($account_url === '' || $account_platform === '') {
+                    continue;
+                }
+                $request = PCM_Social_Source::apify_request($account_platform, $account_url, 10);
+                if ($request === null) {
+                    continue; // not an Apify platform — nothing to fetch
+                }
+                @set_time_limit(120); // headroom per account against CPU caps
+                $items = PCM_Apify::fetch_account_items($request, $user_id); // [] on any failure
+                foreach (PCM_Social_Source::apify_map_items($account_platform, $items) as $mapped) {
+                    $mapped['social'] = true; // rides ingest → pop → item config
+                    $social_raw[] = $mapped;
+                }
+            }
+            if ($social_raw !== array()) {
+                $config = self::ingest_feed_items($social_raw, $config);
+            }
+        }
+
+        // ── Backpressure: perWeek cadence minus items created in the last 7
+        //    days; a 'limit' duration additionally caps this pass so the
+        //    watcher can never insert PAST maxArticles. ──
+        $week_ago = date('Y-m-d H:i:s', (int)strtotime(current_time('mysql')) - 7 * 86400);
+        $slots = self::rss_free_slots(PCM_DB::count_strategy_items($strategy_id, $week_ago), $config);
+        $duration = is_array($config['duration'] ?? null) ? $config['duration'] : array();
+        if ((string)($duration['mode'] ?? '') === 'limit' && (int)($duration['maxArticles'] ?? 0) > 0) {
+            $slots = min($slots, max(0, (int)$duration['maxArticles'] - $item_count));
+        }
+
+        // ── Pop freshest-first into pending strategy items. keyword = the feed
+        //    item's title; the item config carries the source context the
+        //    generation prompt's RSS rider reads back (rss_source_instruction()). ──
+        $pop      = self::rss_pop_due_items($config, $slots);
+        $config   = $pop['config'];
+        $inserted = 0;
+        foreach ($pop['popped'] as $entry) {
+            $keyword = trim((string)($entry['title'] ?? ''));
+            if ($keyword === '') {
+                $keyword = trim((string)($entry['link'] ?? ''));
+            }
+            if ($keyword === '') {
+                continue; // nothing usable as a keyword — drop (guid already seen)
+            }
+            $item_cfg = array(
+                'sourceLink'  => (string)($entry['link'] ?? ''),
+                'sourceTitle' => (string)($entry['title'] ?? ''),
+            );
+            // Social (Apify) queue entries additionally carry the post text +
+            // flag — written into the item config for the social prompt rider.
+            // RSS-feed entries never have either key, so their item config
+            // stays byte-identical to before.
+            if (isset($entry['text']) && (string)$entry['text'] !== '') {
+                $item_cfg['sourceText'] = (string)$entry['text'];
+            }
+            if (!empty($entry['social'])) {
+                $item_cfg['social'] = true;
+            }
+            $item_id = PCM_DB::create_rss_strategy_item($strategy_id, $user_id, $keyword, $item_cfg);
+            if ($item_id) {
+                $inserted++;
+            }
+        }
+
+        // ── Persist the updated watcher state (rssSeen/rssQueue) — the WHOLE
+        //    merged config, so every other key survives byte-for-byte. Skipped
+        //    when nothing changed, so idle strategies aren't rewritten hourly.
+        //    totalItems tracks the real item count so recompute_counters()'s
+        //    completed>=total logic stays honest as the watcher appends. ──
+        $update      = array();
+        $config_json = wp_json_encode($config);
+        if ($config_json !== (string)($strategy->config ?? '')) {
+            $update['config'] = $config_json;
+        }
+        if ($inserted > 0) {
+            $update['totalItems'] = PCM_DB::count_strategy_items($strategy_id);
+        }
+        if ($update !== array()) {
+            PCM_DB::update_strategy($strategy_id, $user_id, $update);
+        }
+
+        // ── Kick the EXISTING background queue exactly once — it dedupes
+        //    itself and generates the new pending items one tick at a time. ──
+        if ($inserted > 0) {
+            self::maybe_schedule_queue_continuation($strategy_id, $user_id);
+        }
+
+        return $inserted;
+    }
+
+    /**
+     * Force an immediate watcher pass for ONE strategy — the "Scan now" button.
+     *
+     * Bypasses only the social 4h cadence gate (force=true); the duration and
+     * weekly-backpressure gates still apply, so a manual scan can pull new
+     * posts on demand but never past the user's volume or article-limit rules.
+     * Runs the fetch synchronously (an Instagram account scan can take ~40-60s
+     * via Apify), so it raises the time limit and is only ever reached from an
+     * authenticated admin click — never a background/public path.
+     *
+     * @param int $strategy_id Strategy ID (ownership already checked by caller).
+     * @param int $user_id     Owner PCM user ID.
+     * @return array{created:int} Count of new pending items created this pass.
+     */
+    public static function scan_strategy_now(int $strategy_id, int $user_id): array
+    {
+        $strategy = PCM_DB::get_strategy($strategy_id, $user_id);
+        if (!$strategy) {
+            return array('created' => 0);
+        }
+        @set_time_limit(180); // a social (Apify) pass can hold ~40-60s per account
+
+        $config = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : array();
+        $config = is_array($config) ? $config : array();
+        $feeds    = is_array($config['rssFeeds'] ?? null) ? $config['rssFeeds'] : array();
+        $accounts = is_array($config['socialAccounts'] ?? null) ? $config['socialAccounts'] : array();
+        $links    = is_array($config['socialLinks'] ?? null) ? $config['socialLinks'] : array();
+
+        // ── Self-heal a "zombie" social strategy: sourceMode=social with pasted
+        //    links but NEITHER watched accounts NOR converted feeds persisted.
+        //    That is the create-timeout failure shape (the old build could die
+        //    mid-create after saving socialLinks but before split_social_links
+        //    persisted the derived accounts/feeds) — the watcher then scans
+        //    nothing forever. Re-running the split here classifies the links
+        //    again, persists accounts/feeds, creates post items, and arms the
+        //    first pull — one click repairs the strategy. Idempotent: with
+        //    accounts or feeds already present this branch never runs.
+        $healed = 0;
+        if (($config['sourceMode'] ?? '') === 'social'
+            && $accounts === array() && $feeds === array() && $links !== array()
+        ) {
+            $pre_heal = PCM_DB::count_strategy_items($strategy_id);
+            self::split_social_links($strategy_id, $user_id, $config);
+            // Post links become items directly inside the split (not via the
+            // scan below) — count them into this scan's reported total.
+            $healed   = max(0, PCM_DB::count_strategy_items($strategy_id) - $pre_heal);
+            // The split armed a background first-scan, but we scan synchronously
+            // right below — cancel it so the keep-alive chain can't run the SAME
+            // Apify fetch concurrently (a duplicate paid run, and a second
+            // sync request the plan may reject).
+            if (function_exists('wp_clear_scheduled_hook')) {
+                wp_clear_scheduled_hook('pcm_strategy_rss_first_scan', array($strategy_id, $user_id));
+            }
+            $strategy = PCM_DB::get_strategy($strategy_id, $user_id); // reload the repaired config
+            if (!$strategy) {
+                return array('created' => $healed);
+            }
+            $config   = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : array();
+            $config   = is_array($config) ? $config : array();
+            $feeds    = is_array($config['rssFeeds'] ?? null) ? $config['rssFeeds'] : array();
+            $accounts = is_array($config['socialAccounts'] ?? null) ? $config['socialAccounts'] : array();
+        }
+
+        if (!class_exists('PCM_Apify', false)) {
+            require_once __DIR__ . '/class-pcm-apify.php';
+        }
+        PCM_Apify::$last_error = null;
+
+        $created = self::scan_rss_strategy($strategy, true) + $healed;
+        if ($created > 0) {
+            return array('created' => $created);
+        }
+
+        // ── Zero items: say WHY, so a prod misconfiguration is visible in the
+        //    toast instead of hiding behind "no new posts". Checked in order of
+        //    how definitively each explains the zero. ──
+        if ($feeds === array() && $accounts === array()) {
+            return array('created' => 0, 'reason' => 'no_sources');
+        }
+        if (self::rss_duration_blocked($config, PCM_DB::count_strategy_items($strategy_id))) {
+            return array('created' => 0, 'reason' => 'duration_complete');
+        }
+        if ($accounts !== array() && !PCM_Apify::has_key($user_id)) {
+            return array('created' => 0, 'reason' => 'no_apify_key');
+        }
+        if (PCM_Apify::$last_error !== null) {
+            return array('created' => 0, 'reason' => 'fetch_failed', 'detail' => PCM_Apify::$last_error);
+        }
+        // Posts were found (or already known) but the weekly volume cap left no
+        // slot this pass — they wait in the queue for the next free slot.
+        $fresh = PCM_DB::get_strategy($strategy_id, $user_id);
+        $fresh_cfg = ($fresh && !empty($fresh->config)) ? json_decode((string)$fresh->config, true) : array();
+        if (is_array($fresh_cfg) && count($fresh_cfg['rssQueue'] ?? array()) > 0) {
+            return array('created' => 0, 'reason' => 'volume_capped');
+        }
+        return array('created' => 0, 'reason' => 'no_new_posts');
+    }
+
+    /**
+     * Fetch raw items from every configured feed URL via WP-core SimplePie
+     * (fetch_feed()), capped at ~20 items per feed, with the feed cache
+     * shortened to ~15 minutes for the duration of the calls (the watcher runs
+     * hourly; core's 12-hour default would make it near-blind). A dead feed
+     * (WP_Error) skips THAT feed only — the other feeds still contribute.
+     *
+     * Impure edge — deliberately returns plain scalar arrays so everything
+     * downstream (ingest_feed_items()) is pure and unit-testable without
+     * SimplePie.
+     *
+     * @param string[] $feeds Feed URLs (already esc_url_raw'd at config write).
+     * @return array<int,array{permalink:string,id:string,title:string,date:int}>
+     */
+    private static function fetch_rss_feed_items(array $feeds): array
+    {
+        if (!function_exists('fetch_feed')) {
+            if (!defined('ABSPATH') || !defined('WPINC') || !file_exists(ABSPATH . WPINC . '/feed.php')) {
+                return array();
+            }
+            include_once ABSPATH . WPINC . '/feed.php';
+        }
+        if (!function_exists('fetch_feed')) {
+            return array();
+        }
+
+        $shorten = static function () {
+            return 900; // ~15 min — fresh enough for an hourly watcher
+        };
+        add_filter('wp_feed_cache_transient_lifetime', $shorten);
+        $raw = array();
+        try {
+            foreach ($feeds as $url) {
+                $url = trim((string)$url);
+                if ($url === '') {
+                    continue;
+                }
+                $feed = fetch_feed($url);
+                if (is_wp_error($feed) || !is_object($feed)) {
+                    continue; // dead feed — skip this feed only
+                }
+                $quantity = $feed->get_item_quantity(20);
+                $items    = $quantity > 0 ? $feed->get_items(0, $quantity) : array();
+                foreach ((array)$items as $item) {
+                    $raw[] = array(
+                        'permalink' => (string)$item->get_permalink(),
+                        'id'        => (string)$item->get_id(),
+                        'title'     => (string)$item->get_title(),
+                        'date'      => (int)$item->get_date('U'),
+                    );
+                }
+            }
+        } finally {
+            remove_filter('wp_feed_cache_transient_lifetime', $shorten);
+        }
+        return $raw;
+    }
+
+    /**
+     * Pure ingest seam: fold freshly-fetched raw feed items into the config's
+     * watcher state per the frozen contract.
+     *
+     *   - guid = md5(permalink ?: id ?: title) — skipped when already in
+     *     rssSeen or already queued.
+     *   - queue entry {guid, title (sanitized, cap 200), link (esc_url_raw),
+     *     ts (item date unix, or "now" when the feed omits one)}. Social
+     *     (Apify) raw items may additionally carry `text` (cap 1000) and a
+     *     `social` flag — both ride the queue entry ONLY when present, so
+     *     plain RSS entries keep their exact historical shape (absent keys,
+     *     never empty strings).
+     *   - every NEWLY ingested guid is marked seen immediately — queue
+     *     membership dedupes in-flight items, rssSeen dedupes history, and
+     *     popping never has to write back to the seen list. Queue overflow
+     *     (cap 10) is thereby "marked seen anyway": the dropped entries'
+     *     guids stay in rssSeen so they are never re-ingested.
+     *   - rssQueue normalized freshest-first (ts DESC), deduped by guid, cap 10.
+     *   - rssSeen capped at the 200 NEWEST guids (append order).
+     *
+     * @param array $raw_items Items shaped like fetch_rss_feed_items() output.
+     * @param array $config    Decoded strategy config.
+     * @return array The config with rssQueue/rssSeen updated (all other keys untouched).
+     */
+    public static function ingest_feed_items(array $raw_items, array $config): array
+    {
+        $seen = array();
+        foreach ((array)($config['rssSeen'] ?? array()) as $guid) {
+            if (is_string($guid) && $guid !== '') {
+                $seen[] = $guid;
+            }
+        }
+        $queue = array();
+        $queued_guids = array();
+        foreach ((array)($config['rssQueue'] ?? array()) as $entry) {
+            if (is_array($entry) && !empty($entry['guid'])) {
+                $guid = (string)$entry['guid'];
+                $normalized = array(
+                    'guid'  => $guid,
+                    'title' => (string)($entry['title'] ?? ''),
+                    'link'  => (string)($entry['link'] ?? ''),
+                    'ts'    => (int)($entry['ts'] ?? 0),
+                );
+                // Social carry-through: text/social survive re-normalization
+                // ONLY when present — rss entries keep their exact shape.
+                if (isset($entry['text']) && (string)$entry['text'] !== '') {
+                    $normalized['text'] = (string)$entry['text'];
+                }
+                if (!empty($entry['social'])) {
+                    $normalized['social'] = true;
+                }
+                $queue[] = $normalized;
+                $queued_guids[$guid] = true;
+            }
+        }
+
+        $now_ts = (int)strtotime(current_time('mysql'));
+        foreach ($raw_items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $basis = trim((string)($item['permalink'] ?? ''));
+            if ($basis === '') {
+                $basis = trim((string)($item['id'] ?? ''));
+            }
+            if ($basis === '') {
+                $basis = trim((string)($item['title'] ?? ''));
+            }
+            if ($basis === '') {
+                continue; // nothing identifiable — unusable item
+            }
+            $guid = md5($basis);
+            if (in_array($guid, $seen, true) || isset($queued_guids[$guid])) {
+                continue; // already ingested on a previous scan (or earlier this one)
+            }
+            $ts = (int)($item['date'] ?? 0);
+            $new_entry = array(
+                'guid'  => $guid,
+                'title' => mb_substr(sanitize_text_field((string)($item['title'] ?? '')), 0, 200),
+                'link'  => esc_url_raw((string)($item['permalink'] ?? '')),
+                'ts'    => $ts > 0 ? $ts : $now_ts,
+            );
+            // Social (Apify) items carry the post text + flag through to the
+            // pop; rss feed items have neither key, keeping their exact shape.
+            $text = trim((string)($item['text'] ?? ''));
+            if ($text !== '') {
+                $new_entry['text'] = mb_substr(sanitize_text_field($text), 0, 1000);
+            }
+            if (!empty($item['social'])) {
+                $new_entry['social'] = true;
+            }
+            $queue[] = $new_entry;
+            $queued_guids[$guid] = true;
+            $seen[] = $guid;
+        }
+
+        // Freshest-first, dedupe by guid (first = freshest wins), cap 10 —
+        // overflow entries drop from the queue but their guids remain seen.
+        usort($queue, static fn(array $a, array $b): int => (int)$b['ts'] <=> (int)$a['ts']);
+        $deduped = array();
+        $have = array();
+        foreach ($queue as $entry) {
+            if (isset($have[$entry['guid']])) {
+                continue;
+            }
+            $have[$entry['guid']] = true;
+            $deduped[] = $entry;
+        }
+
+        $config['rssQueue'] = array_slice($deduped, 0, 10);
+        $config['rssSeen']  = array_values(array_slice(array_values(array_unique($seen)), -200));
+        return $config;
+    }
+
+    /**
+     * Pure backpressure seam: how many NEW strategy items this pass may create
+     * — the strategy's perWeek cadence (config.rssCadence.perWeek, default 3,
+     * clamped 1–21 to mirror the controller's sanitize clamp) minus how many
+     * items were already created in the trailing 7-day window. Never negative.
+     *
+     * @param int   $recent_count Items created on this strategy in the last 7 days.
+     * @param array $config       Decoded strategy config.
+     * @return int Free slots (>= 0).
+     */
+    public static function rss_free_slots(int $recent_count, array $config): int
+    {
+        $per_week = 3;
+        $cadence  = $config['rssCadence'] ?? null;
+        if (is_array($cadence) && isset($cadence['perWeek'])) {
+            $per_week = max(1, min(21, (int)$cadence['perWeek']));
+        }
+        return max(0, $per_week - max(0, $recent_count));
+    }
+
+    /**
+     * Pure pop seam: take up to $slots entries off the FRONT of the queue
+     * (freshest-first — the whole queue is re-sorted ts DESC defensively, so a
+     * hand-edited/legacy config still pops newest work first) and return both
+     * the popped entries and the config with the shrunken queue. Popped guids
+     * need no rssSeen write-back — ingest_feed_items() already marked every
+     * queued guid seen.
+     *
+     * @param array $config Decoded strategy config.
+     * @param int   $slots  Max entries to pop (<= 0 pops nothing).
+     * @return array{popped: array<int,array>, config: array}
+     */
+    public static function rss_pop_due_items(array $config, int $slots): array
+    {
+        $queue = array();
+        foreach ((array)($config['rssQueue'] ?? array()) as $entry) {
+            if (is_array($entry) && !empty($entry['guid'])) {
+                $queue[] = $entry;
+            }
+        }
+        usort($queue, static fn(array $a, array $b): int => (int)($b['ts'] ?? 0) <=> (int)($a['ts'] ?? 0));
+        $slots = max(0, $slots);
+        $config['rssQueue'] = array_values(array_slice($queue, $slots));
+        return array(
+            'popped' => array_slice($queue, 0, $slots),
+            'config' => $config,
+        );
+    }
+
+    /**
+     * Pure duration seam (config.duration, frozen contract): whether the
+     * watcher must stop creating items for this strategy.
+     *
+     *   - mode 'until':  blocked once the endDate has fully passed (the end
+     *     date itself still counts — comparison is against endDate 23:59:59).
+     *   - mode 'limit':  blocked once the strategy's item count has reached
+     *     maxArticles.
+     *   - mode 'ongoing' (or absent/unknown): never blocked.
+     *
+     * "Now" comes from current_time('mysql') — resolved here (not injected)
+     * to match the other config readers; unit tests drive it via the shared
+     * current_time() fake.
+     *
+     * @param array $config     Decoded strategy config.
+     * @param int   $item_count The strategy's current TOTAL item count.
+     * @return bool True when the watcher must skip this strategy.
+     */
+    public static function rss_duration_blocked(array $config, int $item_count): bool
+    {
+        $duration = is_array($config['duration'] ?? null) ? $config['duration'] : array();
+        $mode = (string)($duration['mode'] ?? 'ongoing');
+
+        if ($mode === 'until') {
+            $end = (string)($duration['endDate'] ?? '');
+            $end_ts = $end !== '' ? strtotime($end . ' 23:59:59') : false;
+            if ($end_ts !== false && (int)strtotime(current_time('mysql')) > (int)$end_ts) {
+                return true;
+            }
+        }
+
+        if ($mode === 'limit') {
+            $max = (int)($duration['maxArticles'] ?? 0);
+            if ($max > 0 && $item_count >= $max) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Pure social-scan staleness seam (mirrors keepalive_rss_due()): whether
+     * the watcher's Apify branch may scan this strategy's watched accounts —
+     * true when lastSocialScan is absent/unparseable or ≥4 hours old. Apify
+     * bills per result, so social accounts scan every ≥4h, NOT hourly like
+     * the RSS feeds (cost control — see the plan's verified facts).
+     *
+     * @param string $last config.lastSocialScan ('' when never scanned).
+     * @param int    $now  Site-local "now" as a unix timestamp.
+     * @return bool True when the Apify branch is due.
+     */
+    public static function social_scan_due(string $last, int $now): bool
+    {
+        if ($last === '') {
+            return true;
+        }
+        $ts = strtotime($last);
+        return $ts === false || ($now - $ts) >= 4 * 3600;
+    }
+
     /**
      * Resolve the LLM model + provider for a strategy from its stored config.
      * Falls back to the historical default (`gemini-2.5-flash`, no explicit
@@ -1524,6 +2396,12 @@ class PCM_Strategy_Service
      * Ownership-scoped (a siteId from another user's site never resolves here,
      * since PCM_DB::get_site() is scoped to $user_id).
      *
+     * Draft-gate (Filip's Publishing split): a strategy whose `config.publishing`
+     * is `'draft'` NEVER auto-publishes — this returns null right after the
+     * publishingMode check, even when publishingMode is `'schedule'`/`'publish'`.
+     * Absent/any-other value = the legacy behavior exactly, so pre-split
+     * strategies are unaffected (zero back-compat break).
+     *
      * @param object      $strategy Strategy DB row (publishingMode + config JSON).
      * @param object|null $article  The just-created article row. Nullable defensively —
      *   the caller re-fetches by the id it just inserted, so this should never actually
@@ -1539,6 +2417,16 @@ class PCM_Strategy_Service
     {
         if (!in_array((string)($strategy->publishingMode ?? ''), array('publish', 'schedule'), true)) {
             return null;
+        }
+        // Draft-gate (Filip's Publishing split): when the strategy's config opts
+        // into 'draft' publishing, NEVER auto-publish — even in 'schedule'/'publish'
+        // mode. Any absent/other value leaves the legacy behavior exactly intact
+        // (this gate is a no-op), so pre-split strategies are unaffected.
+        if (!empty($strategy->config)) {
+            $publishing_gate = json_decode((string)$strategy->config, true);
+            if (is_array($publishing_gate) && ($publishing_gate['publishing'] ?? '') === 'draft') {
+                return null;
+            }
         }
         $site_id = 0;
         if (!empty($strategy->config)) {
@@ -1731,6 +2619,183 @@ class PCM_Strategy_Service
         }
         $cfg = json_decode((string)$strategy->config, true);
         return is_array($cfg) ? trim((string)($cfg['mediaGuidance'] ?? '')) : '';
+    }
+
+    /**
+     * Optional angle/primary keyword every RSS rewrite is tailored to
+     * (config.rssAngle, frozen contract) — same config-reader pattern as
+     * media_guidance() above. Sanitized + capped at the controller; '' when
+     * unset or the strategy isn't RSS-sourced.
+     *
+     * @param object $strategy Strategy DB row.
+     * @return string
+     */
+    private static function rss_angle(object $strategy): string
+    {
+        if (empty($strategy->config)) {
+            return '';
+        }
+        $cfg = json_decode((string)$strategy->config, true);
+        return is_array($cfg) ? trim((string)($cfg['rssAngle'] ?? '')) : '';
+    }
+
+    /**
+     * The RSS-source prompt rider: when the ITEM being generated was created
+     * by the RSS watcher (its item config carries the {sourceLink, sourceTitle}
+     * context written at insert time), steer the article to respond to — and
+     * outdo — that specific feed item, optionally tailored to the strategy's
+     * rssAngle. Returns '' for every non-RSS item, leaving the prompt
+     * byte-identical to before (same optionality contract as media_guidance()).
+     * Items whose config carries social=true (Source=Social post items, and
+     * watcher items from Apify-watched accounts) get the social variant
+     * instead — write ABOUT the post (quoting its sourceText when captured)
+     * and visibly link back to it.
+     *
+     * Pure/deterministic — directly unit-testable (StrategyRssWatcherTest).
+     *
+     * @param array  $item_cfg  Decoded ITEM config (item_config()'s output).
+     * @param string $rss_angle The strategy's rssAngle ('' when unset).
+     * @return string Extra user-prompt instruction, or ''.
+     */
+    /**
+     * Fetch a pasted social POST link's real caption via Apify — at generation
+     * time only.
+     *
+     * WHY THIS EXISTS: Instagram, X, and Facebook killed public oEmbed years
+     * ago, so post_context() (create-time) can't read a pasted post's caption
+     * and stores only the bare URL. The article then gets written around a
+     * naked link — the "post is not fetched" symptom. Apify CAN read these
+     * posts (its run-sync actor returns the full caption for a single post
+     * URL), but that call blocks ~30s, so it is unsafe in the user-facing
+     * create path and MUST run here, in the BACKGROUND generation path.
+     *
+     * SCOPE — only URL-targeted Apify platforms:
+     *   - instagram (directUrls), x (startUrls), facebook (startUrls) accept
+     *     the pasted post URL directly, so the fetched post IS the pasted one.
+     *   - tiktok's actor is PROFILE-based (input is a handle, not a post URL),
+     *     so a single-post fetch would return the account's LATEST video, not
+     *     the pasted one — we deliberately skip it and keep the bare link
+     *     rather than write about the wrong video.
+     *   - free platforms (youtube/bluesky/reddit) never reach here — their
+     *     oEmbed still works, so sourceText is already populated.
+     *
+     * Cheap-exit + idempotent: fires only for social items whose sourceText is
+     * still empty AND whose link is a URL-targeted Apify platform AND when the
+     * owner has an active Apify key. The fetched caption is persisted back onto
+     * the item, so a re-run (or a later publish) never re-bills Apify.
+     * Degrades safely: any failure returns the config unchanged and generation
+     * proceeds around the bare link exactly as before.
+     *
+     * @param object $item     The strategy item row (needs ->id).
+     * @param array  $item_cfg Decoded item config (item_config()'s output).
+     * @param int    $user_id  Owner PCM user id whose Apify token is used.
+     * @return array The item config, enriched with sourceText/sourceTitle when the fetch succeeds.
+     */
+    private static function maybe_enrich_social_post(object $item, array $item_cfg, int $user_id): array
+    {
+        if (empty($item_cfg['social'])) {
+            return $item_cfg;
+        }
+        $link = trim((string)($item_cfg['sourceLink'] ?? ''));
+        if ($link === '') {
+            return $item_cfg;
+        }
+        // Caption already captured (free-platform oEmbed worked, the watcher's
+        // Apify branch filled it, or a prior enrich ran) — nothing to fetch.
+        if (trim((string)($item_cfg['sourceText'] ?? '')) !== '') {
+            return $item_cfg;
+        }
+
+        if (!class_exists('PCM_Social_Source', false)) {
+            require_once __DIR__ . '/class-pcm-social-source.php';
+        }
+        if (!class_exists('PCM_Apify', false)) {
+            require_once __DIR__ . '/class-pcm-apify.php';
+        }
+
+        $classified = PCM_Social_Source::classify($link);
+        $platform   = (string)($classified['platform'] ?? 'unknown');
+
+        // Only platforms whose Apify input targets the exact post URL — see the
+        // SCOPE note above (tiktok's profile-based actor is intentionally out).
+        if (!in_array($platform, array('instagram', 'x', 'facebook'), true)) {
+            return $item_cfg;
+        }
+        $request = PCM_Social_Source::apify_request($platform, $link, 1);
+        if ($request === null) {
+            return $item_cfg;
+        }
+        if (!PCM_Apify::has_key($user_id)) {
+            error_log(sprintf(
+                '[PCM_Strategy_Service] Social post item #%d (%s) needs Apify to read its caption, but no active Apify key is set for user %d — generating around the bare link.',
+                (int)$item->id,
+                $platform,
+                $user_id
+            ));
+            return $item_cfg;
+        }
+
+        @set_time_limit(120);
+        $raw    = PCM_Apify::fetch_account_items($request, $user_id); // [] on any failure
+        $mapped = PCM_Social_Source::apify_map_items($platform, $raw);
+        if ($mapped === array()) {
+            return $item_cfg; // fetch failed — unchanged behavior (bare link)
+        }
+
+        $text = trim((string)($mapped[0]['text'] ?? ''));
+        if ($text === '') {
+            return $item_cfg;
+        }
+        $item_cfg['sourceText'] = $text;
+
+        // Upgrade a URL-placeholder title (post_context stores the link as the
+        // title when it can't read the post) to the caption's lead.
+        $cur_title = trim((string)($item_cfg['sourceTitle'] ?? ''));
+        if ($cur_title === '' || $cur_title === $link) {
+            $new_title = trim((string)($mapped[0]['title'] ?? ''));
+            if ($new_title !== '') {
+                $item_cfg['sourceTitle'] = $new_title;
+            }
+        }
+
+        // Persist so the published article's stored context shows the caption
+        // and a re-run never re-bills Apify for the same post.
+        PCM_DB::update_strategy_item((int)$item->id, array('config' => wp_json_encode($item_cfg)));
+
+        return $item_cfg;
+    }
+
+    private static function rss_source_instruction(array $item_cfg, string $rss_angle): string
+    {
+        $title = trim((string)($item_cfg['sourceTitle'] ?? ''));
+        $link  = trim((string)($item_cfg['sourceLink'] ?? ''));
+        if ($title === '' && $link === '') {
+            return '';
+        }
+
+        // Social variant: the item config carries social=true when the item
+        // was created from a pasted social post link (create-time split) or by
+        // the watcher's Apify branch — the article is ABOUT the post (with its
+        // text when captured, sourceText) and must link back to it visibly.
+        // Non-social items fall through to the byte-identical rss wording.
+        if (!empty($item_cfg['social'])) {
+            $instruction = "Write an article about this social media post: '" . $title . "' (" . $link . ").";
+            $text = trim((string)($item_cfg['sourceText'] ?? ''));
+            if ($text !== '') {
+                $instruction .= ' The post says: "' . $text . '".';
+            }
+            if ($rss_angle !== '') {
+                $instruction .= " Tailor it to the angle/primary keyword: '" . $rss_angle . "'.";
+            }
+            return $instruction . ' INCLUDE a visible link to the original post in the article HTML.';
+        }
+
+        $instruction = "This article responds to a new industry item: '" . $title . "' (" . $link . "). "
+            . 'Write a better, more complete take on that topic';
+        if ($rss_angle !== '') {
+            $instruction .= ", tailored to the angle/primary keyword: '" . $rss_angle . "'";
+        }
+        return $instruction . '. Do not copy the source; outdo it.';
     }
 
     /**
@@ -2992,8 +4057,27 @@ class PCM_Strategy_Service
             throw new \RuntimeException('Item not found in this strategy.');
         }
 
+        // Preserve non-override keys, replace the override set: RSS/social
+        // items carry sourceLink/sourceTitle/sourceText/social in this same
+        // column, and the controller's sanitize passes ONLY the override keys
+        // — a blind replace silently wiped an item's source context the
+        // moment any per-item override was set (adversarial-review finding).
+        // The UI clears an override by OMITTING its key, so the override keys
+        // are authoritative-by-absence (absent = back to inherit) while every
+        // other stored key survives untouched.
+        $override_keys = array('templateId', 'publishingMode', 'approvalMode');
+        $existing = array();
+        if (!empty($item->config)) {
+            $decoded = json_decode((string)$item->config, true);
+            if (is_array($decoded)) {
+                $existing = $decoded;
+            }
+        }
+        $preserved = array_diff_key($existing, array_flip($override_keys));
+        $merged    = array_merge($preserved, $config);
+
         PCM_DB::update_strategy_item($item_id, array(
-            'config' => !empty($config) ? wp_json_encode($config) : null,
+            'config' => !empty($merged) ? wp_json_encode($merged) : null,
         ));
 
         return PCM_DB::get_strategy_items($strategy_id);
@@ -3150,22 +4234,64 @@ class PCM_Strategy_Service
      *   option and the integrations table's keying. (Previously used
      *   get_current_user_id(), which is 0 under wp-cron, so research silently
      *   never ran for cron-driven items.)
-     * @return string Research summary (trimmed, capped ~4000 chars for 'grounded'
-     *   / ~6000 chars for 'deep'), or '' when opted out ('off') or on failure.
+     * Which passes actually run is resolved by research_passes() (valid
+     * `config.researchPasses` wins; else derived from research_mode()). A SINGLE
+     * selected pass keeps grounded parity — its raw summary, capped ~4000 chars,
+     * with NO section label. MULTIPLE passes use the labeled-section merge
+     * (SEARCH LANDSCAPE / QUESTIONS & DATA / CONTENT GAPS), capped ~6000 chars.
+     * The three prompt strings are byte-identical to the original grounded/deep
+     * implementations, so legacy strategies behave exactly as before.
+     *
+     * @return string Research summary (trimmed, capped ~4000 chars for a single
+     *   pass / ~6000 chars for multiple), or '' when no pass is selected or on failure.
      */
     private static function maybe_research_context(object $strategy, array $keywords, int $user_id): string
     {
-        $mode = self::research_mode($strategy);
-
-        if ($mode === 'off') {
+        $passes = self::research_passes($strategy);
+        if (empty($passes)) {
             return '';
         }
 
-        if ($mode === 'deep') {
-            return self::deep_research_context($keywords, $user_id);
+        $query = implode('", "', $keywords);
+
+        // Each pass -> its VERBATIM prompt (byte-identical to the original
+        // grounded_research_context / deep_research_context prompt strings) and
+        // its section label (used only in the multi-pass merge).
+        $prompts = array(
+            'landscape' => 'Research the current top-ranking content, dominant themes, common questions, and content gaps for the search query: "' . $query . '". Summarize concisely: key themes to cover, questions to answer, angles competitors miss.',
+            'questions' => 'For the search query: "' . $query . '", identify the most common questions real users ask AND concrete, citable statistics or data points (with sources) relevant to this topic — include specific numbers that could be used in a chart or infographic.',
+            'gaps'      => 'For the search query: "' . $query . '", identify angles and subtopics that competitors\' top-ranking pages commonly miss or under-cover.',
+        );
+        $labels = array(
+            'landscape' => 'SEARCH LANDSCAPE',
+            'questions' => 'QUESTIONS & DATA',
+            'gaps'      => 'CONTENT GAPS',
+        );
+
+        // A single selected pass reproduces grounded mode byte-for-byte: raw
+        // content, 4000-char cap, no label. Multiple passes reproduce deep mode:
+        // labeled sections joined by a blank line, 6000-char cap.
+        if (count($passes) === 1) {
+            $content = self::run_grounding_call($prompts[$passes[0]], $user_id);
+            if ($content === '') {
+                return '';
+            }
+            return strlen($content) > 4000 ? substr($content, 0, 4000) : $content;
         }
 
-        return self::grounded_research_context($keywords, $user_id);
+        $sections = array();
+        foreach ($passes as $pass) {
+            $content = self::run_grounding_call($prompts[$pass], $user_id);
+            if ($content !== '') {
+                $sections[] = $labels[$pass] . ":\n" . $content;
+            }
+        }
+
+        $result = implode("\n\n", $sections);
+        if (strlen($result) > 6000) {
+            $result = substr($result, 0, 6000);
+        }
+        return $result;
     }
 
     /**
@@ -3194,90 +4320,50 @@ class PCM_Strategy_Service
     }
 
     /**
-     * Today's single-call research behaviour (byte-identical prompt/options to
-     * the original B1/B2 implementation) — used for research_mode() === 'grounded'.
+     * Resolve the ORDERED set of research passes a strategy runs, drawn from
+     * the whitelist ['landscape','questions','gaps'] (Filip's research checklist).
      *
-     * @param array $keywords Keyword(s) driving the research query.
-     * @param int   $user_id  Strategy owner (PCM user id).
-     * @return string Research summary (trimmed, capped ~4000 chars), or '' on failure.
+     * Precedence:
+     *   1. A valid `config.researchPasses` array WINS — intersected against the
+     *      whitelist in CANONICAL order (dedupes + drops unknowns; an explicit
+     *      empty array is a legitimate "research off" signal → []).
+     *   2. Otherwise derive from research_mode() for full back-compat:
+     *      off → [], grounded → ['landscape'], deep → ['landscape','questions','gaps'].
+     *
+     * Canonical order matters: it keeps deep-mode's three-pass output
+     * byte-identical (landscape, then questions, then gaps) to the pre-refactor
+     * deep_research_context().
+     *
+     * @param object $strategy Strategy DB row.
+     * @return string[] Ordered subset of ['landscape','questions','gaps'] (possibly empty).
      */
-    private static function grounded_research_context(array $keywords, int $user_id): string
+    private static function research_passes(object $strategy): array
     {
-        $query    = implode('", "', $keywords);
-        $messages = array(array(
-            'role'    => 'user',
-            'content' => 'Research the current top-ranking content, dominant themes, common questions, and content gaps for the search query: "' . $query . '". Summarize concisely: key themes to cover, questions to answer, angles competitors miss.',
-        ));
+        $whitelist = array('landscape', 'questions', 'gaps');
 
-        try {
-            $result  = PCM_LLM::invoke_with_grounding($messages, array(
-                'model'      => 'gemini-2.5-flash',
-                'max_tokens' => 2048,
-                'user_id'    => $user_id,
+        $cfg = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
+        if (is_array($cfg) && array_key_exists('researchPasses', $cfg) && is_array($cfg['researchPasses'])) {
+            return array_values(array_filter(
+                $whitelist,
+                static fn($p) => in_array($p, $cfg['researchPasses'], true)
             ));
-            $content = trim((string)($result['content'] ?? ''));
-            if (strlen($content) > 4000) {
-                $content = substr($content, 0, 4000);
-            }
-            return $content;
-        } catch (\Throwable $e) {
-            error_log('[PCM_Strategy_Service] Research enrichment failed: ' . $e->getMessage());
-            return '';
-        }
-    }
-
-    /**
-     * 'deep' research mode: three sequential, individually failure-isolated
-     * invoke_with_grounding() calls — search landscape (today's prompt),
-     * questions + citable statistics, and competitor content gaps — merged
-     * into labeled sections. One call failing only drops its own section;
-     * the others are still used. Never throws.
-     *
-     * @param array $keywords Keyword(s) driving the research query.
-     * @param int   $user_id  Strategy owner (PCM user id).
-     * @return string Merged, labeled research summary (capped ~6000 chars), or ''
-     *   when every call failed/returned empty.
-     */
-    private static function deep_research_context(array $keywords, int $user_id): string
-    {
-        $query = implode('", "', $keywords);
-
-        $landscape = self::run_grounding_call(
-            'Research the current top-ranking content, dominant themes, common questions, and content gaps for the search query: "' . $query . '". Summarize concisely: key themes to cover, questions to answer, angles competitors miss.',
-            $user_id
-        );
-        $questions = self::run_grounding_call(
-            'For the search query: "' . $query . '", identify the most common questions real users ask AND concrete, citable statistics or data points (with sources) relevant to this topic — include specific numbers that could be used in a chart or infographic.',
-            $user_id
-        );
-        $gaps = self::run_grounding_call(
-            'For the search query: "' . $query . '", identify angles and subtopics that competitors\' top-ranking pages commonly miss or under-cover.',
-            $user_id
-        );
-
-        $sections = array();
-        if ($landscape !== '') {
-            $sections[] = "SEARCH LANDSCAPE:\n" . $landscape;
-        }
-        if ($questions !== '') {
-            $sections[] = "QUESTIONS & DATA:\n" . $questions;
-        }
-        if ($gaps !== '') {
-            $sections[] = "CONTENT GAPS:\n" . $gaps;
         }
 
-        $result = implode("\n\n", $sections);
-        if (strlen($result) > 6000) {
-            $result = substr($result, 0, 6000);
+        switch (self::research_mode($strategy)) {
+            case 'deep':
+                return array('landscape', 'questions', 'gaps');
+            case 'grounded':
+                return array('landscape');
+            default:
+                return array();
         }
-        return $result;
     }
 
     /**
      * Runs a single invoke_with_grounding() call, fully failure-isolated: any
      * throwable is caught, error_log()'d, and degrades to '' — this section is
-     * simply omitted from the merged research context, per-call, without
-     * affecting sibling calls in deep_research_context().
+     * simply omitted from the (single- or multi-pass) research context, per-call,
+     * without affecting sibling passes in maybe_research_context().
      *
      * @param string $prompt  User-role prompt content for this grounding call.
      * @param int    $user_id Strategy owner (PCM user id).
@@ -3301,7 +4387,7 @@ class PCM_Strategy_Service
         }
     }
 
-    private static function build_prompt(array $keywords, array $template, ?object $brand, string $research_context = '', bool $in_content_media = false, int $media_count = 3, string $media_type = 'both', string $media_guidance = ''): array
+    private static function build_prompt(array $keywords, array $template, ?object $brand, string $research_context = '', bool $in_content_media = false, int $media_count = 3, string $media_type = 'both', string $media_guidance = '', string $rss_source = ''): array
     {
         $messages = array();
 
@@ -3421,6 +4507,16 @@ class PCM_Strategy_Service
                 . "exceed " . $count . ".";
         }
 
+        // RSS-source rider (Source=RSS strategies): the per-item path passes
+        // rss_source_instruction()'s output here when the item was created by
+        // the RSS watcher — rides exactly like the media-guidance extra above,
+        // an optional instruction appended to the user message. '' (every
+        // non-RSS path, including the consolidated batch) leaves the prompt
+        // byte-identical to before.
+        if ($rss_source !== '') {
+            $user_content .= "\n\n" . $rss_source;
+        }
+
         $messages[] = array(
             'role'    => 'user',
             'content' => $user_content,
@@ -3511,6 +4607,234 @@ class PCM_Strategy_Service
             ),
         );
     }
+
+    // ========================================
+    // Internal keep-alive chain (always-on)
+    // ========================================
+    //
+    // PHP has no persistent process — nothing inside WordPress can wake itself
+    // at a future time, which is why WP-cron depends on traffic. This chain is
+    // the ONE internal workaround: a background request that sleeps in short
+    // slices (beating a heartbeat option), does the due scan work, then
+    // re-spawns itself with a non-blocking loopback request. It runs BY
+    // DEFAULT (owner ruling: automatic, no setup, no toggle) — links are kept
+    // SHORT (~45s) so hosts with strict wall-clock request kills
+    // (request_terminate_timeout counts sleep!) never get to kill one, and a
+    // stale heartbeat + any visit → the init hook below respawns it anyway.
+    // Emergency brake (no UI, wp-cli only): `option update pcm_keepalive_enabled 0`.
+
+    /**
+     * One link of the chain. Takes ownership (a newer link always wins — an
+     * older one sees the owner change on its next slice and exits, so at most
+     * two overlap for a single slice), sleeps 3 short slices with a
+     * heartbeat, runs due work, then spawns the next link.
+     */
+    public static function run_keepalive_chain(): void
+    {
+        if (!function_exists('get_option') || (string) get_option('pcm_keepalive_enabled', '') === '0') {
+            return; // '0' is the hidden emergency brake; absent/anything else = on
+        }
+
+        $me = function_exists('wp_generate_password')
+            ? wp_generate_password(12, false, false)
+            : (string) getmypid() . '-' . (string) mt_rand(1000, 9999);
+        update_option('pcm_keepalive_owner', $me, false);
+        update_option('pcm_keepalive_beat', time(), false);
+
+        if (function_exists('ignore_user_abort')) {
+            ignore_user_abort(true);
+        }
+        // Release the spawner's socket where the SAPI supports it (the spawner
+        // is non-blocking and never reads the response anyway).
+        if (function_exists('fastcgi_finish_request')) {
+            @fastcgi_finish_request();
+        }
+
+        // Slice length is option-tunable (bounded 3–30s; default 15) so tests/
+        // smokes can compress the loop. 3 slices ≈ 45s per link — deliberately
+        // SHORT: FPM request_terminate_timeout counts wall-clock sleep, and
+        // 60s is a common cap; a link that hands off in 45s survives strict
+        // hosts where a 5-minute link would be killed mid-sleep every time.
+        $slice = max(3, min(30, (int) get_option('pcm_keepalive_slice', 15)));
+        // Due work FIRST — before any sleep. Some SAPIs (php -S; FPM without
+        // fastcgi_finish_request; aggressive proxies) kill the handler when
+        // the non-blocking spawner disconnects, which can be seconds in. A
+        // work-first link means even a 100%-mortality host still runs the due
+        // scans on every spawn (each visit's self-heal spawn ⇒ scans run);
+        // the sleep+respawn tail is pure upside where the SAPI lets it live.
+        try {
+            $now = function_exists('current_time') ? (int) current_time('timestamp') : time();
+            if (self::keepalive_rss_due((string) get_option('pcm_rss_last_scan', ''), $now)) {
+                self::run_rss_scan();
+            }
+            self::run_scheduled_scan();
+            // Drain due PCM cron events DIRECTLY. On hosts with
+            // DISABLE_WP_CRON (no system cron) or broken cron loopbacks,
+            // single events — the instant first pull AND every generation
+            // queue continuation — would otherwise NEVER fire: strategies sit
+            // at 0/0 and items stay Pending forever (observed live). The
+            // chain is the one execution context guaranteed to exist, so it
+            // is also the cron-of-last-resort for this plugin's own events.
+            self::process_due_pcm_events();
+        } catch (\Throwable $e) {
+            error_log('[PCM_Strategy_Service] keep-alive work failed: ' . $e->getMessage());
+        }
+
+        for ($i = 0; $i < 3; $i++) {
+            @set_time_limit($slice + 40);
+            sleep($slice);
+            $state = array(
+                'enabled' => (string) get_option('pcm_keepalive_enabled', ''),
+                'owner'   => (string) get_option('pcm_keepalive_owner', ''),
+            );
+            if (self::keepalive_tick_decision($state, $me) === 'stop') {
+                return;
+            }
+            update_option('pcm_keepalive_beat', time(), false);
+        }
+
+        self::spawn_keepalive();
+    }
+
+    /**
+     * Cron-of-last-resort: run this plugin's own DUE single events directly.
+     *
+     * WHY: pcm_strategy_rss_first_scan (the instant first pull) and
+     * pcm_strategy_process_queue (every article generation) are wp-cron
+     * single events. On hosts with DISABLE_WP_CRON and no working system
+     * cron — or with broken cron-spawn loopbacks — those events pile up
+     * forever and the whole pipeline visibly stalls (strategies 0/0, items
+     * Pending). The keep-alive chain runs regardless of wp-cron, so it
+     * drains them itself.
+     *
+     * Scope-limited to an allowlist of OUR hooks (never touches other
+     * plugins' events), unschedules-then-dispatches (the same order wp-cron
+     * uses, so a crash mid-handler can't loop the same event), re-entrancy
+     * guarded, and time-budgeted (~4 min — generation runs ~1-2 min each; a
+     * long backlog drains across successive links rather than one marathon).
+     */
+    public static function process_due_pcm_events(): void
+    {
+        static $running = false;
+        if ($running
+            || !function_exists('_get_cron_array')
+            || !function_exists('wp_unschedule_event')
+            || !function_exists('do_action')
+        ) {
+            return;
+        }
+        $running = true;
+
+        $allowed  = array('pcm_strategy_rss_first_scan', 'pcm_strategy_process_queue', 'pcm_strategy_scheduled_scan');
+        $deadline = microtime(true) + 240.0;
+
+        try {
+            $cron = _get_cron_array();
+            if (!is_array($cron)) {
+                return;
+            }
+            ksort($cron);
+            foreach ($cron as $timestamp => $hooks) {
+                if ($timestamp > time() || microtime(true) > $deadline) {
+                    break;
+                }
+                foreach ((array) $hooks as $hook => $events) {
+                    if (!in_array($hook, $allowed, true)) {
+                        continue;
+                    }
+                    foreach ((array) $events as $event) {
+                        if (microtime(true) > $deadline) {
+                            break 3;
+                        }
+                        $args = is_array($event['args'] ?? null) ? $event['args'] : array();
+                        wp_unschedule_event($timestamp, $hook, $args);
+                        @set_time_limit(300);
+                        try {
+                            do_action_ref_array($hook, $args);
+                        } catch (\Throwable $e) {
+                            error_log(sprintf(
+                                '[PCM_Strategy_Service] due-event %s failed: %s',
+                                $hook,
+                                $e->getMessage()
+                            ));
+                        }
+                    }
+                }
+            }
+        } finally {
+            $running = false;
+        }
+    }
+
+    /**
+     * Pure slice decision: keep looping only while the feature is enabled AND
+     * this link is still the owner (a newer link taking over = stop).
+     *
+     * @param array{enabled?:string,owner?:string} $state Current option values.
+     * @param string $me This link's owner id.
+     * @return string 'continue'|'stop'
+     */
+    public static function keepalive_tick_decision(array $state, string $me): string
+    {
+        // Always-on semantics: only the hidden emergency brake ('0') stops the
+        // chain — absent/empty/anything else means enabled.
+        if (($state['enabled'] ?? '') === '0') {
+            return 'stop';
+        }
+        if (($state['owner'] ?? '') !== $me) {
+            return 'stop';
+        }
+        return 'continue';
+    }
+
+    /**
+     * Pure staleness check: is the hourly-grade RSS scan due? Empty/garbage
+     * stamps count as due (never scanned, or an unparseable stamp is useless).
+     *
+     * @param string $last_scan 'Y-m-d H:i:s' site-local stamp (pcm_rss_last_scan).
+     * @param int    $now       Site-local timestamp to compare against.
+     * @return bool
+     */
+    public static function keepalive_rss_due(string $last_scan, int $now): bool
+    {
+        if ($last_scan === '') {
+            return true;
+        }
+        $ts = strtotime($last_scan);
+        return $ts === false || ($now - $ts) >= 55 * 60;
+    }
+
+    /**
+     * Fire-and-forget loopback that starts the next chain link. No-op only
+     * when the hidden emergency brake is set or the secret token is missing
+     * (the public /strategies/keepalive route authenticates with that token).
+     * Uses a non-blocking self-request — the same primitive WordPress core
+     * uses to spawn its own cron (works on FPM; a dev `php -S` server cannot
+     * service non-blocking loopbacks, but the work runs anyway, see below).
+     */
+    public static function spawn_keepalive(): void
+    {
+        if (!function_exists('get_option') || (string) get_option('pcm_keepalive_enabled', '') === '0') {
+            return; // hidden emergency brake only — default is on
+        }
+        $token = (string) get_option('pcm_cron_token', '');
+        if ($token === '' || !function_exists('rest_url') || !function_exists('wp_remote_post')) {
+            return;
+        }
+        // timeout 2 (not 0.1-0.5): fire-and-forget requests with sub-second
+        // timeouts frequently disconnect BEFORE the connection is even
+        // established — the spawn silently never lands (observed live). Two
+        // seconds guarantees the handshake while still not blocking anything
+        // user-facing for long (this runs from init self-heal / chain tails).
+        wp_remote_post(rest_url('pcm/v1/strategies/keepalive'), array(
+            'timeout'   => 2,
+            'blocking'  => false,
+            // Local self-request may sit behind a self-signed cert — same
+            // exemption as PCM_Input_Resolver's loopback fetches.
+            'sslverify' => false,
+            'body'      => array('token' => $token),
+        ));
+    }
 }
 
 // wp-cron callback for the background queue continuation (see
@@ -3523,4 +4847,44 @@ if (function_exists('add_action')) {
     // scheduled once in power-creatives.php; this just wires the hook so it exists
     // whenever wp-cron dispatches it.
     add_action('pcm_strategy_scheduled_scan', array('PCM_Strategy_Service', 'run_scheduled_scan'));
+    // Hourly RSS watcher (Filip's Source=RSS strategies). Hook wired at file
+    // load like the two above. Unlike pcm_strategy_scheduled_scan (whose
+    // recurring event power-creatives.php arms), the RSS event is armed LAZILY
+    // right here on init — deliberately, so the entire RSS-watcher surface
+    // stays inside this module and no shared bootstrap file changes. The
+    // wp_next_scheduled() guard makes re-arming a no-op on every subsequent
+    // load, exactly like pcm_init()'s own once-only scheduling.
+    add_action('pcm_strategy_rss_scan', array('PCM_Strategy_Service', 'run_rss_scan'));
+    // Create-time first scan for a single RSS strategy (instant first pull —
+    // generates from the feed's newest EXISTING item instead of waiting for
+    // the hourly watcher). One-off event armed by create_from_keywords().
+    add_action('pcm_strategy_rss_first_scan', array('PCM_Strategy_Service', 'run_rss_first_scan'), 10, 2);
+    add_action('init', static function (): void {
+        if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event')
+            && !wp_next_scheduled('pcm_strategy_rss_scan')) {
+            wp_schedule_event(time(), 'hourly', 'pcm_strategy_rss_scan');
+        }
+        // The keep-alive loopback authenticates with this secret (spawn_keepalive
+        // sends it; keepalive_link's hash_equals checks it), so it must exist
+        // before the first spawn — generate it once, lazily, the same way the
+        // event above is armed. Never rotated automatically.
+        if (function_exists('get_option') && function_exists('update_option')
+            && function_exists('wp_generate_password')
+            && (string) get_option('pcm_cron_token', '') === '') {
+            update_option('pcm_cron_token', wp_generate_password(40, false, false), false);
+        }
+        // Keep-alive bootstrap + self-heal (ALWAYS-ON): background scanning is
+        // the default — no setup, no toggle. A fresh install has no heartbeat
+        // (stale by definition), so the very first visit starts the chain; if
+        // a host ever kills a link, the next visit — ANY visit — resurrects
+        // it. Transient-guarded so a burst of requests spawns once. Hidden
+        // emergency brake: option pcm_keepalive_enabled = '0' (wp-cli only).
+        if (function_exists('get_option') && function_exists('get_transient')
+            && (string) get_option('pcm_keepalive_enabled', '') !== '0'
+            && (time() - (int) get_option('pcm_keepalive_beat', 0)) > 120
+            && !get_transient('pcm_keepalive_respawn_lock')) {
+            set_transient('pcm_keepalive_respawn_lock', 1, 90);
+            PCM_Strategy_Service::spawn_keepalive();
+        }
+    });
 }

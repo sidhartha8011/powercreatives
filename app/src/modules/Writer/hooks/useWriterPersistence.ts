@@ -67,6 +67,12 @@ function serverToLocal(article: ServerArticle): WriterDocument {
     featuredImage: article.featuredImage || '',
     projectId: article.strategyId ? String(article.strategyId) : '',
     projectName: '',
+    // Hydrate the article's Target Site into the doc settings — without this,
+    // every server-loaded article read as "no Target Site selected" and the
+    // Publish button stayed disabled even though the row carries a siteId
+    // (strategy-generated articles always do). Partial objects are safe: the
+    // settings panel reads `doc.generationSettings || {}` and merges writes.
+    ...(article.siteId ? { generationSettings: { siteId: article.siteId } } : {}),
     // Preserve the server ID for future API calls
     _serverId: article.id,
   } as WriterDocument & { _serverId: number };
@@ -83,6 +89,9 @@ function localToUpdatePayload(doc: WriterDocument): Record<string, unknown> {
     schemaType: doc.schemaType,
     status: doc.status,
     featuredImage: doc.featuredImage,
+    // Persist the Target Site picked in the settings panel (round-trips the
+    // hydration above; the writer PATCH whitelists siteId server-side).
+    ...(doc.generationSettings?.siteId ? { siteId: doc.generationSettings.siteId } : {}),
   };
 }
 

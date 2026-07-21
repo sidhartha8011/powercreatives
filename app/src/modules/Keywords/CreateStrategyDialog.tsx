@@ -11,15 +11,64 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { KeywordPicker } from '@/components/shared';
+import { KeywordPicker, AccordionSection } from '@/components/shared';
+import { cn } from '@/lib/utils';
 import { trpc } from '@/lib/trpc';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Plus, X } from 'lucide-react';
 import {
   RecurrenceEditor,
   recurrenceFromConfig,
   recurrenceToConfig,
   type ScheduleRecurrence,
 } from '../Strategies/RecurrenceEditor';
+
+/**
+ * Compact segmented radio — used for Filip's Source / Trigger / Publishing /
+ * Duration section choices. Real focusable buttons with radio semantics keep it
+ * keyboard-accessible while staying horizontal in the compact dialog.
+ */
+function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+  disabled = false,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+  disabled?: boolean;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      className={cn(
+        'inline-flex flex-wrap gap-1 rounded-md border border-border bg-muted/20 p-1',
+        disabled && 'opacity-60',
+      )}
+    >
+      {options.map((opt) => {
+        const active = value === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={disabled}
+            onClick={() => !disabled && onChange(opt.value)}
+            className={cn(
+              'px-3 py-1 text-xs font-medium rounded transition-colors',
+              active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              disabled ? 'cursor-default' : 'cursor-pointer',
+            )}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export interface StrategyPayload {
   name: string;
@@ -51,6 +100,104 @@ export interface StrategyPayload {
   researchMode?: string;
   interlinksConfig?: any;
   scheduleConfig?: any;
+  // ── Filip's simplified-model sections (FROZEN CONFIG CONTRACT) ──
+  /** 'keywords' (default) | 'rss' | 'social'. */
+  sourceMode?: string;
+  /** RSS feed URLs (1–5) when sourceMode === 'rss'. */
+  rssFeeds?: string[];
+  /** Social post/account links (1–10) when sourceMode === 'social'. */
+  socialLinks?: string[];
+  /** Optional angle / primary keyword each RSS/social rewrite is tailored to. */
+  rssAngle?: string;
+  /** RSS backpressure cap. */
+  rssCadence?: { perWeek: number };
+  /** 'manual' | 'scheduled' | 'new_source_item' (RSS). */
+  trigger?: string;
+  /** 'draft' | 'auto' — the publishing split gate. */
+  publishing?: string;
+  /** { mode:'ongoing'|'until'|'limit', endDate?, maxArticles? }. */
+  duration?: { mode: string; endDate?: string; maxArticles?: number };
+  /** Subset of ['landscape','questions','gaps']. Replaces researchMode. */
+  researchPasses?: string[];
+}
+
+type SocialLinkInfo =
+  | { state: 'empty' }
+  | { state: 'invalid' }
+  | { state: 'ok'; platform: string; kind: 'post' | 'account'; needsApify: boolean };
+
+const APIFY_PLATFORMS = new Set(['Instagram', 'TikTok', 'X', 'Facebook']);
+const INSTAGRAM_RESERVED = new Set(['explore', 'accounts', 'stories', 'direct', 'about', 'developer', 'legal']);
+const X_RESERVED = new Set(['home', 'explore', 'search', 'i', 'hashtag', 'notifications', 'messages', 'settings', 'login', 'signup', 'intent', 'share']);
+const FACEBOOK_POST_MARKERS = new Set(['posts', 'videos', 'reel', 'reels', 'watch', 'photo', 'photo.php', 'story.php', 'permalink.php']);
+
+/**
+ * Lite mirror of the backend classifier (PCM_Social_Source::classify) — same
+ * rules, so what the row preview says matches what create will actually do.
+ * The backend stays authoritative; this only powers the per-link hint.
+ */
+function classifySocialLink(raw: string): SocialLinkInfo {
+  const url = raw.trim();
+  if (!url) return { state: 'empty' };
+  if (!/^https?:\/\//i.test(url)) return { state: 'invalid' };
+  let host: string;
+  let seg: string[];
+  let query = '';
+  try {
+    const u = new URL(url);
+    host = u.hostname.replace(/^www\./i, '').toLowerCase();
+    seg = u.pathname.split('/').filter(Boolean);
+    query = u.search;
+  } catch {
+    return { state: 'invalid' };
+  }
+  const is = (base: string) => host === base || host.endsWith('.' + base);
+  const ok = (platform: string, kind: 'post' | 'account'): SocialLinkInfo => ({
+    state: 'ok',
+    platform,
+    kind,
+    needsApify: kind === 'account' && APIFY_PLATFORMS.has(platform),
+  });
+
+  if (host === 'youtu.be') return ok('YouTube', 'post');
+  if (is('youtube.com')) {
+    const first = seg[0] ?? '';
+    if (first.startsWith('@') || ['channel', 'c', 'user'].includes(first)) return ok('YouTube', 'account');
+    return ok('YouTube', 'post');
+  }
+  if (is('bsky.app')) {
+    if (seg[0] === 'profile' && seg[1]) return ok('Bluesky', seg[2] === 'post' && seg[3] ? 'post' : 'account');
+    return ok('Bluesky', 'post');
+  }
+  if (is('reddit.com') || host === 'redd.it') {
+    if (host === 'redd.it' || seg.includes('comments')) return ok('Reddit', 'post');
+    if (['r', 'user', 'u'].includes(seg[0] ?? '') && seg[1]) return ok('Reddit', 'account');
+    return ok('Reddit', 'post');
+  }
+  if (is('instagram.com')) {
+    if (['p', 'reel', 'reels', 'tv'].includes(seg[0] ?? '')) return ok('Instagram', 'post');
+    if (seg.length === 1 && !INSTAGRAM_RESERVED.has(seg[0])) return ok('Instagram', 'account');
+    return ok('Instagram', 'post');
+  }
+  if (host === 'vm.tiktok.com' || host === 'vt.tiktok.com') return ok('TikTok', 'post');
+  if (is('tiktok.com')) {
+    const first = seg[0] ?? '';
+    if (first.startsWith('@')) return ok('TikTok', seg.length === 1 ? 'account' : 'post');
+    return ok('TikTok', 'post');
+  }
+  if (is('x.com') || is('twitter.com')) {
+    if (seg[1] === 'status') return ok('X', 'post');
+    if (seg.length === 1 && !X_RESERVED.has(seg[0])) return ok('X', 'account');
+    return ok('X', 'post');
+  }
+  if (host === 'fb.watch') return ok('Facebook', 'post');
+  if (is('facebook.com') || is('fb.com')) {
+    if (seg.some((s) => FACEBOOK_POST_MARKERS.has(s))) return ok('Facebook', 'post');
+    if (seg[0] === 'profile.php' && query.includes('id=')) return ok('Facebook', 'account');
+    if (seg.length === 1) return ok('Facebook', 'account');
+    return ok('Facebook', 'post');
+  }
+  return ok('Link', 'post'); // unknown hosts = generic post link, never rejected
 }
 
 interface CreateStrategyDialogProps {
@@ -81,7 +228,7 @@ export function CreateStrategyDialog({
   const [parentTargetType, setParentTargetType] = useState('custom');
   const [parentTargetUrl, setParentTargetUrl] = useState('');
   const [parentKeywordIndex, setParentKeywordIndex] = useState(0);
-  
+
   const [autoInterlink, setAutoInterlink] = useState(false);
   const [interlinkAnchorMode, setInterlinkAnchorMode] = useState('keyword');
   const [interlinkQuantity, setInterlinkQuantity] = useState(3);
@@ -91,11 +238,24 @@ export function CreateStrategyDialog({
   const [mediaType, setMediaType] = useState('both');
   const [mediaCount, setMediaCount] = useState(3);
   const [mediaGuidance, setMediaGuidance] = useState('');
-  // Effective default preserved from the old "Research the topic before writing"
-  // checkbox, which defaulted to checked → 'grounded' (single Google-grounded pass).
-  const [researchMode, setResearchMode] = useState('grounded');
 
-  const [publishingMode, setPublishingMode] = useState('draft');
+  // ── Filip's sections ──
+  const [sourceMode, setSourceMode] = useState('keywords');
+  const [rssFeeds, setRssFeeds] = useState<string[]>(['']);
+  const [socialLinks, setSocialLinks] = useState<string[]>(['']);
+  const [rssAngle, setRssAngle] = useState('');
+  const [rssPerWeek, setRssPerWeek] = useState(3);
+  const [trigger, setTrigger] = useState('manual');
+  const [publishing, setPublishing] = useState('draft');
+  const [durationMode, setDurationMode] = useState('ongoing');
+  const [durationEndDate, setDurationEndDate] = useState('');
+  const [durationMaxArticles, setDurationMaxArticles] = useState(10);
+  // Research checklist — default = Search landscape only (mirrors the old
+  // "grounded" single-pass default, now the 'landscape' pass).
+  const [researchLandscape, setResearchLandscape] = useState(true);
+  const [researchQuestions, setResearchQuestions] = useState(false);
+  const [researchGaps, setResearchGaps] = useState(false);
+
   const [siteId, setSiteId] = useState<string>('');
   const [approvalMode, setApprovalMode] = useState('none');
   const [recurrence, setRecurrence] = useState<ScheduleRecurrence>(() => recurrenceFromConfig({}));
@@ -120,8 +280,21 @@ export function CreateStrategyDialog({
       setMediaCount(3);
     setMediaGuidance('');
     setInterlinkAnchorMode('keyword');
-      setResearchMode('grounded');
-      setPublishingMode('draft');
+      // Opened with no keywords selected (header "New Strategy" button) →
+      // the keyword source is a dead end, so start on Social media.
+      setSourceMode(selectedCount === 0 ? 'social' : 'keywords');
+      setRssFeeds(['']);
+      setSocialLinks(['']);
+      setRssAngle('');
+      setRssPerWeek(3);
+      setTrigger('manual');
+      setPublishing('draft');
+      setDurationMode('ongoing');
+      setDurationEndDate('');
+      setDurationMaxArticles(10);
+      setResearchLandscape(true);
+      setResearchQuestions(false);
+      setResearchGaps(false);
       setSiteId('');
       setApprovalMode('none');
       setRecurrence(recurrenceFromConfig({}));
@@ -164,6 +337,20 @@ export function CreateStrategyDialog({
     }
   };
 
+  // RSS needs at least one feed URL the backend will accept — mirror its
+  // http(s) scheme check so a typo'd feed can't create a strategy the
+  // watcher would silently skip forever.
+  const validFeeds = rssFeeds.map((f) => f.trim()).filter((f) => /^https?:\/\//i.test(f));
+  // Social mirrors the same scheme check: post/account links the backend
+  // classifier can't fetch would otherwise create a strategy that never fires.
+  const validSocialLinks = socialLinks.map((l) => l.trim()).filter((l) => /^https?:\/\//i.test(l));
+  const missingSite = publishing === 'auto' && !siteId;
+  const missingFeeds = sourceMode === 'rss' && validFeeds.length === 0;
+  const missingSocialLinks = sourceMode === 'social' && validSocialLinks.length === 0;
+  // 'Until date' with no date would store an inert duration (backend drops the
+  // invalid endDate but keeps mode 'until', which then never blocks).
+  const missingEndDate = durationMode === 'until' && !durationEndDate;
+
   const handleSave = () => {
     if (!templateId) return;
 
@@ -176,6 +363,37 @@ export function CreateStrategyDialog({
       structure === 'consolidated' && hierarchyMode === 'parent_and_children'
         ? 'parent_only'
         : hierarchyMode;
+
+    // ── Filip's sections → FROZEN CONFIG CONTRACT ──
+    // RSS/social lock the trigger to 'new_source_item'; keywords use manual/scheduled.
+    const effectiveTrigger =
+      sourceMode === 'rss' || sourceMode === 'social' ? 'new_source_item' : trigger;
+    // publishingMode = trigger==='scheduled' ? 'schedule' : (publishing==='auto' ? 'publish' : 'draft')
+    const publishingMode =
+      effectiveTrigger === 'scheduled' ? 'schedule' : publishing === 'auto' ? 'publish' : 'draft';
+
+    const researchPasses = [
+      researchLandscape ? 'landscape' : null,
+      researchQuestions ? 'questions' : null,
+      researchGaps ? 'gaps' : null,
+    ].filter(Boolean) as string[];
+
+    const duration =
+      durationMode === 'until'
+        ? { mode: 'until', endDate: durationEndDate }
+        : durationMode === 'limit'
+          ? { mode: 'limit', maxArticles: durationMaxArticles }
+          : { mode: 'ongoing' };
+
+    // Duration drives the schedule too: for a scheduled strategy the pick here
+    // overrides the recurrence's own `ends` (the plan's "scheduled maps onto
+    // recurrence ends") — the engine's date spreader already honors ends caps.
+    const scheduledRecurrence =
+      durationMode === 'until' && durationEndDate
+        ? { ...recurrence, ends: { type: 'on' as const, date: durationEndDate } }
+        : durationMode === 'limit'
+          ? { ...recurrence, ends: { type: 'after' as const, count: durationMaxArticles } }
+          : recurrence;
 
     onSave({
       name: finalName,
@@ -192,23 +410,44 @@ export function CreateStrategyDialog({
       featuredImages,
       inContentMedia,
       ...(inContentMedia ? { mediaType, mediaCount, ...(mediaGuidance.trim() ? { mediaGuidance: mediaGuidance.trim() } : {}) } : {}),
-      research: researchMode !== 'off',
-      researchMode,
+      // researchPasses is the source of truth now; `research` stays for back-compat
+      // display paths. researchMode is intentionally NOT sent.
+      research: researchPasses.length > 0,
+      researchPasses,
       interlinksConfig: autoInterlink ? { mode: interlinkMode, quantity: interlinkQuantity, anchorMode: interlinkAnchorMode } : undefined,
-      scheduleConfig: publishingMode === 'schedule' ? { ...recurrenceToConfig(recurrence), startDate } : undefined,
+      scheduleConfig: publishingMode === 'schedule' ? { ...recurrenceToConfig(scheduledRecurrence), startDate } : undefined,
+      // Filip's sections
+      sourceMode,
+      ...(sourceMode === 'rss'
+        ? { rssFeeds: validFeeds, ...(rssAngle.trim() ? { rssAngle: rssAngle.trim() } : {}), rssCadence: { perWeek: rssPerWeek } }
+        : {}),
+      // Social rides the rssAngle/rssCadence keys on purpose — the backend rider
+      // and backpressure read those regardless of sourceMode.
+      ...(sourceMode === 'social'
+        ? { socialLinks: validSocialLinks, ...(rssAngle.trim() ? { rssAngle: rssAngle.trim() } : {}), rssCadence: { perWeek: rssPerWeek } }
+        : {}),
+      trigger: effectiveTrigger,
+      publishing,
+      duration,
     });
   };
+
+  const articleCount = selectedKeywords?.length ?? 0;
+  const missingKeywords = sourceMode === 'keywords' && articleCount === 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create Strategy ({selectedCount} Keywords)</DialogTitle>
+          <DialogTitle>
+            {selectedCount > 0 ? `Create Strategy (${selectedCount} Keywords)` : 'Create Strategy'}
+          </DialogTitle>
         </DialogHeader>
-        
-        <div className="py-2 space-y-4">
 
-          <div className="grid grid-cols-2 gap-3">
+        <div className="py-2 space-y-3">
+
+          {/* ── Basics (top strip — NOT an accordion) ── */}
+          <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="strategy-name">Strategy Name (Optional)</Label>
               <Input
@@ -219,357 +458,670 @@ export function CreateStrategyDialog({
                 className="w-full bg-background"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label
-                htmlFor="target-site"
-                title="The site this strategy is for. When Publishing Mode is Publish Automatically, each generated article is published here."
-              >
-                Target Site
-              </Label>
-              <Select value={siteId} onValueChange={setSiteId}>
-                <SelectTrigger id="target-site" className="w-full bg-background">
-                  <SelectValue placeholder={sitesLoading ? 'Loading sites…' : 'Select a connected site...'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {(sites as any[]).length > 0 ? (
-                    (sites as any[]).map((s) => (
-                      <SelectItem key={s.id} value={s.id.toString()}>
-                        {s.name || s.url}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <div className="p-2 text-sm text-muted-foreground text-center">
-                      No connected sites — add one in the Sites module.
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Workflow (Prompt)</Label>
+                <Select value={templateId} onValueChange={setTemplateId}>
+                  <SelectTrigger className="w-full bg-background">
+                    <SelectValue placeholder="Select Template..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templatesLoading ? (
+                      <div className="flex items-center p-2 text-sm text-muted-foreground">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Fetching...
+                      </div>
+                    ) : templates && templates.length > 0 ? (
+                      templates.map((t: any) => (
+                        <SelectItem key={t.id} value={t.id.toString()}>
+                          {t.name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <div className="p-2 text-sm text-muted-foreground text-center">
+                        No Writer templates found.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="ai-model"
+                  title="Which model writes each article. Leave unset to use the default."
+                >
+                  AI Model
+                </Label>
+                <Select value={modelId} onValueChange={setModelId}>
+                  <SelectTrigger id="ai-model" className="w-full bg-background">
+                    <SelectValue placeholder={modelsLoading ? 'Loading models…' : 'Default (Gemini 2.5 Flash)'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(genModels as any[]).length > 0 ? (
+                      (genModels as any[]).map((m) => (
+                        <SelectItem key={m.modelId} value={m.modelId}>
+                          {(m.customName || m.originalName || m.modelId)} ({m.provider})
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <div className="p-2 text-sm text-muted-foreground text-center">
+                        No text models registered — add one in Settings → Models.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-               <Label>Workflow (Prompt)</Label>
-               <Select value={templateId} onValueChange={setTemplateId}>
-                 <SelectTrigger className="w-full bg-background">
-                   <SelectValue placeholder="Select Template..." />
-                 </SelectTrigger>
-                 <SelectContent>
-                   {templatesLoading ? (
-                     <div className="flex items-center p-2 text-sm text-muted-foreground">
-                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Fetching...
-                     </div>
-                   ) : templates && templates.length > 0 ? (
-                     templates.map((t: any) => (
-                       <SelectItem key={t.id} value={t.id.toString()}>
-                         {t.name}
-                       </SelectItem>
-                     ))
-                   ) : (
-                     <div className="p-2 text-sm text-muted-foreground text-center">
-                       No Writer templates found.
-                     </div>
-                   )}
-                 </SelectContent>
-               </Select>
-            </div>
-            <div className="space-y-1.5">
-               <Label>Content per Keyword</Label>
-               <Select value={structure} onValueChange={handleStructureChange}>
-                 <SelectTrigger className="w-full bg-background">
-                   <SelectValue />
-                 </SelectTrigger>
-                 <SelectContent>
-                   <SelectItem value="individual">1 per Keyword</SelectItem>
-                   <SelectItem value="consolidated">Consolidated</SelectItem>
-                 </SelectContent>
-               </Select>
-            </div>
-          </div>
+          {/* ① SOURCE */}
+          <AccordionSection title="Source" defaultOpen>
+            <Segmented
+              value={sourceMode}
+              onChange={setSourceMode}
+              options={[
+                { value: 'keywords', label: 'Keywords' },
+                { value: 'rss', label: 'RSS feeds' },
+                { value: 'social', label: 'Social media' },
+              ]}
+            />
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label
-                htmlFor="ai-model"
-                title="Which model writes each article. Leave unset to use the default."
-              >
-                AI Model
-              </Label>
-              <Select value={modelId} onValueChange={setModelId}>
-                <SelectTrigger id="ai-model" className="w-full bg-background">
-                  <SelectValue placeholder={modelsLoading ? 'Loading models…' : 'Default (Gemini 2.5 Flash)'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {(genModels as any[]).length > 0 ? (
-                    (genModels as any[]).map((m) => (
-                      <SelectItem key={m.modelId} value={m.modelId}>
-                        {(m.customName || m.originalName || m.modelId)} ({m.provider})
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <div className="p-2 text-sm text-muted-foreground text-center">
-                      No text models registered — add one in Settings → Models.
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Content Hierarchy</Label>
-              <Select value={hierarchyMode} onValueChange={setHierarchyMode}>
-                <SelectTrigger className="w-full bg-background">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="children_only">Children of an Existing Page</SelectItem>
-                  {structure === 'consolidated' ? (
-                    <SelectItem value="parent_only">Parent (this is the pillar)</SelectItem>
-                  ) : (
-                    <SelectItem value="parent_and_children">Parent + Children</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-              {structure === 'consolidated' && (
+            {sourceMode === 'keywords' ? (
+              articleCount > 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  A consolidated strategy produces one article — it can be a child of an existing page, but not a parent.
+                  {articleCount} keyword{articleCount === 1 ? '' : 's'} selected in the drawer
                 </p>
+              ) : (
+                <p className="text-xs text-destructive">
+                  No keywords selected — pick keywords in the table first, or switch the source
+                  to RSS feeds or Social media.
+                </p>
+              )
+            ) : sourceMode === 'social' ? (
+              <div className="space-y-2">
+                <Label>Post or account links</Label>
+                {socialLinks.map((link, i) => {
+                  const info = classifySocialLink(link);
+                  return (
+                    <div key={i} className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="url"
+                          value={link}
+                          onChange={(e) =>
+                            setSocialLinks((prev) => prev.map((l, idx) => (idx === i ? e.target.value : l)))
+                          }
+                          placeholder="https://instagram.com/... or any post/account link"
+                          className="flex-1 h-8 text-xs bg-background"
+                        />
+                        {socialLinks.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            aria-label="Remove link"
+                            onClick={() => setSocialLinks((prev) => prev.filter((_, idx) => idx !== i))}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                      {info.state === 'invalid' && (
+                        <p className="pl-1 text-[0.7rem] text-destructive">
+                          Enter a full link starting with https://
+                        </p>
+                      )}
+                      {info.state === 'ok' && (
+                        <p
+                          className={cn(
+                            'pl-1 text-[0.7rem]',
+                            info.needsApify ? 'text-amber-600 dark:text-amber-500' : 'text-muted-foreground',
+                          )}
+                        >
+                          {info.kind === 'post'
+                            ? `${info.platform === 'Link' ? 'Post link' : `${info.platform} post`} — one article will be created from it`
+                            : info.needsApify
+                              ? `${info.platform} account — watched for new posts via Apify (API key required)`
+                              : `${info.platform} account — watched for new posts automatically (free)`}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+                {socialLinks.length < 10 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => setSocialLinks((prev) => (prev.length < 10 ? [...prev, ''] : prev))}
+                  >
+                    <Plus className="mr-1 h-3.5 w-3.5" /> Add link
+                  </Button>
+                )}
+
+                <div className="space-y-1.5 pt-1">
+                  <Label htmlFor="social-angle">Angle / primary keyword (optional)</Label>
+                  <Input
+                    id="social-angle"
+                    value={rssAngle}
+                    onChange={(e) => setRssAngle(e.target.value)}
+                    placeholder="e.g. sustainable packaging"
+                    className="h-8 text-xs bg-background"
+                  />
+                </div>
+
+                <p className="text-xs text-muted-foreground text-pretty">
+                  Every article embeds a link back to the original post. Watched accounts on
+                  Instagram/TikTok/X/Facebook need your Apify API key (add it under Integrations).
+                </p>
+                {missingSocialLinks && (
+                  <p className="text-[0.8rem] text-destructive">
+                    Add at least one post or account link.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>Feed URLs</Label>
+                {rssFeeds.map((feed, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      type="url"
+                      value={feed}
+                      onChange={(e) =>
+                        setRssFeeds((prev) => prev.map((f, idx) => (idx === i ? e.target.value : f)))
+                      }
+                      placeholder="https://example.com/feed"
+                      className="flex-1 h-8 text-xs bg-background"
+                    />
+                    {rssFeeds.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        aria-label="Remove feed"
+                        onClick={() => setRssFeeds((prev) => prev.filter((_, idx) => idx !== i))}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                {rssFeeds.length < 5 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => setRssFeeds((prev) => (prev.length < 5 ? [...prev, ''] : prev))}
+                  >
+                    <Plus className="mr-1 h-3.5 w-3.5" /> Add feed
+                  </Button>
+                )}
+
+                <div className="space-y-1.5 pt-1">
+                  <Label htmlFor="rss-angle">Angle / primary keyword (optional)</Label>
+                  <Input
+                    id="rss-angle"
+                    value={rssAngle}
+                    onChange={(e) => setRssAngle(e.target.value)}
+                    placeholder="e.g. sustainable packaging"
+                    className="h-8 text-xs bg-background"
+                  />
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Watches these feeds and writes a better article on each new item.
+                </p>
+                {missingFeeds && (
+                  <p className="text-[0.8rem] text-destructive">
+                    Add at least one feed URL to create an RSS strategy.
+                  </p>
+                )}
+              </div>
+            )}
+          </AccordionSection>
+
+          {/* ② SCHEDULE — when it runs & how often */}
+          <AccordionSection title="Schedule" defaultOpen>
+            <div className="space-y-1.5">
+              <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">Trigger</Label>
+            {sourceMode === 'rss' || sourceMode === 'social' ? (
+              <div className="space-y-1.5">
+                <Segmented
+                  value="new_source_item"
+                  onChange={() => {}}
+                  options={[{ value: 'new_source_item', label: 'New source item' }]}
+                  disabled
+                />
+                <p className="text-xs text-muted-foreground">
+                  {sourceMode === 'rss'
+                    ? 'RSS strategies trigger on new feed items.'
+                    : 'Social strategies trigger on new posts.'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <Segmented
+                  value={trigger}
+                  onChange={setTrigger}
+                  options={[
+                    { value: 'manual', label: 'Manual' },
+                    { value: 'scheduled', label: 'Scheduled' },
+                  ]}
+                />
+                {trigger === 'scheduled' && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Frequency</Label>
+                      <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Start Date</Label>
+                      <Input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="w-full bg-background"
+                      />
+                      <p className="text-[0.8rem] text-muted-foreground">Leave blank to start today.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">Volume</Label>
+            {sourceMode === 'keywords' ? (
+              <div className="space-y-1">
+                <p className="text-sm">
+                  {articleCount} article{articleCount === 1 ? '' : 's'} (one per keyword)
+                </p>
+                {trigger === 'scheduled' && (
+                  <p className="text-xs text-muted-foreground">
+                    Posting frequency lives with the schedule above.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="rss-per-week">Posts per week</Label>
+                <Input
+                  id="rss-per-week"
+                  type="number"
+                  min={1}
+                  max={21}
+                  value={rssPerWeek}
+                  onChange={(e) => setRssPerWeek(Math.min(21, Math.max(1, parseInt(e.target.value, 10) || 1)))}
+                  className="w-24 h-8 text-xs bg-background"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Extra source items queue for the next slot — your site is never flooded.
+                </p>
+              </div>
+            )}
+            </div>
+          </AccordionSection>
+
+          {/* ③ DURATION — how long it keeps running */}
+          <AccordionSection title="Duration">
+            <div className="space-y-3">
+              <Segmented
+                value={durationMode}
+                onChange={setDurationMode}
+                options={[
+                  { value: 'ongoing', label: 'Ongoing' },
+                  { value: 'until', label: 'Until date' },
+                  { value: 'limit', label: 'Article limit' },
+                ]}
+              />
+              {durationMode === 'until' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="duration-end">End date</Label>
+                  <Input
+                    id="duration-end"
+                    type="date"
+                    value={durationEndDate}
+                    onChange={(e) => setDurationEndDate(e.target.value)}
+                    className="w-full bg-background"
+                  />
+                  {missingEndDate && (
+                    <p className="text-[0.75rem] text-destructive">Pick an end date to use “Until date”.</p>
+                  )}
+                </div>
+              )}
+              {durationMode === 'limit' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="duration-max">Maximum articles</Label>
+                  <Input
+                    id="duration-max"
+                    type="number"
+                    min={1}
+                    value={durationMaxArticles}
+                    onChange={(e) => setDurationMaxArticles(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="w-24 h-8 text-xs bg-background"
+                  />
+                </div>
               )}
             </div>
-          </div>
+          </AccordionSection>
 
-          {hierarchyMode === 'children_only' && (
-            <div className="space-y-1.5">
-              <Label htmlFor="parent-url" title="All generated content will link to this parent.">
-                Target Parent URL
-              </Label>
-              <Input
-                 id="parent-url"
-                 type="url"
-                 value={parentTargetUrl}
-                 onChange={(e) => setParentTargetUrl(e.target.value)}
-                 placeholder="https://example.com/parent-page"
-                 className="w-full bg-background"
-              />
-            </div>
-          )}
-
-          {structure !== 'consolidated' && hierarchyMode === 'parent_and_children' && selectedKeywords?.length > 0 && (
-            <div className="space-y-1.5">
-              <Label title="First article becomes parent, others link to it.">Select Parent Keyword</Label>
-              <KeywordPicker
-                keywords={selectedKeywords}
-                selectedIndex={parentKeywordIndex}
-                onSelect={setParentKeywordIndex}
-                selectedLabel="Parent"
-                unselectedLabel={null}
-                maxHeight="8rem"
-              />
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">Generation options</Label>
-            <div className="space-y-2">
-              <div
-                className="flex items-center space-x-2"
-                title="Automatically generate a featured image for each article when content is generated."
-              >
-                <Checkbox
-                  id="featured-images"
-                  checked={featuredImages}
-                  onCheckedChange={(c) => setFeaturedImages(c as boolean)}
-                />
-                <Label htmlFor="featured-images" className="cursor-pointer font-medium leading-none">
-                  Generate featured images
-                </Label>
-              </div>
-
-              <div
-                className="flex items-center space-x-2"
-                title="Let the writer place supporting images and charts inline within each article body."
-              >
-                <Checkbox
-                  id="in-content-media"
-                  checked={inContentMedia}
-                  onCheckedChange={(c) => setInContentMedia(c as boolean)}
-                />
-                <Label htmlFor="in-content-media" className="cursor-pointer font-medium leading-none">
-                  In-content images &amp; charts
-                </Label>
-              </div>
-
-              {inContentMedia && (
-                <div className="ml-6 flex items-center gap-3 text-sm">
-                  <span className="font-medium text-muted-foreground">Type:</span>
-                  <Select value={mediaType} onValueChange={setMediaType}>
-                    <SelectTrigger className="h-8 w-32 text-xs bg-background">
+          {/* ④ CONTENT — how each article is written (incl. research) */}
+          <AccordionSection title="Content">
+            <div className="space-y-4">
+              {sourceMode === 'keywords' ? (
+              <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Content per Keyword</Label>
+                  <Select value={structure} onValueChange={handleStructureChange}>
+                    <SelectTrigger className="w-full bg-background">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="images">Images</SelectItem>
-                      <SelectItem value="charts">Charts</SelectItem>
-                      <SelectItem value="both">Images + Charts</SelectItem>
+                      <SelectItem value="individual">1 per Keyword</SelectItem>
+                      <SelectItem value="consolidated">Consolidated</SelectItem>
                     </SelectContent>
                   </Select>
-                  <span className="font-medium text-muted-foreground">Count:</span>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={8}
-                    value={mediaCount}
-                    onChange={(e) => setMediaCount(parseInt(e.target.value, 10) || 3)}
-                    className="w-16 h-8 text-xs bg-background"
-                  />
                 </div>
-              )}
-
-              {inContentMedia && (
-                <div className="ml-6">
-                  <Input
-                    value={mediaGuidance}
-                    onChange={(e) => setMediaGuidance(e.target.value)}
-                    maxLength={500}
-                    placeholder="Optional: what should the images show / what data should the charts present? e.g. “clean product photos; charts comparing yearly market growth”"
-                    className="h-8 text-xs bg-background"
-                    title="Creative direction passed to the writer: image subjects/style and the data charts should visualize."
-                  />
+                <div className="space-y-1.5">
+                  <Label>Content Hierarchy</Label>
+                  <Select value={hierarchyMode} onValueChange={setHierarchyMode}>
+                    <SelectTrigger className="w-full bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="children_only">Children of an Existing Page</SelectItem>
+                      {structure === 'consolidated' ? (
+                        <SelectItem value="parent_only">Parent (this is the pillar)</SelectItem>
+                      ) : (
+                        <SelectItem value="parent_and_children">Parent + Children</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {structure === 'consolidated' && (
+                    <p className="text-xs text-muted-foreground">
+                      A consolidated strategy produces one article — it can be a child of an existing page, but not a parent.
+                    </p>
+                  )}
                 </div>
-              )}
-
-              <div
-                className="flex items-center space-x-2"
-                title="Summarize the current search landscape (top themes, common questions, content gaps) and feed it into generation."
-              >
-                <Label htmlFor="research-mode" className="font-medium leading-none">
-                  Research:
-                </Label>
-                <Select value={researchMode} onValueChange={setResearchMode}>
-                  <SelectTrigger id="research-mode" className="h-8 w-32 text-xs bg-background">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="off">Off</SelectItem>
-                    <SelectItem value="grounded" title="One Google-grounded pass.">
-                      Standard
-                    </SelectItem>
-                    <SelectItem
-                      value="deep"
-                      title="3-pass workflow — landscape, questions & statistics, competitor gaps."
-                    >
-                      Deep
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <span className="text-xs text-muted-foreground">
-                  {researchMode === 'off' && 'No research — writes from the model’s own knowledge.'}
-                  {researchMode === 'grounded' && 'One live Google search summarizing what currently ranks for the keyword.'}
-                  {researchMode === 'deep' && 'Three live searches: search landscape, questions & statistics (chart-ready data), competitor gaps.'}
-                </span>
               </div>
 
+              {hierarchyMode === 'children_only' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="parent-url" title="All generated content will link to this parent.">
+                    Target Parent URL
+                  </Label>
+                  <Input
+                     id="parent-url"
+                     type="url"
+                     value={parentTargetUrl}
+                     onChange={(e) => setParentTargetUrl(e.target.value)}
+                     placeholder="https://example.com/parent-page"
+                     className="w-full bg-background"
+                  />
+                </div>
+              )}
+
+              {structure !== 'consolidated' && hierarchyMode === 'parent_and_children' && selectedKeywords?.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label title="First article becomes parent, others link to it.">Select Parent Keyword</Label>
+                  <KeywordPicker
+                    keywords={selectedKeywords}
+                    selectedIndex={parentKeywordIndex}
+                    onSelect={setParentKeywordIndex}
+                    selectedLabel="Parent"
+                    unselectedLabel={null}
+                    maxHeight="8rem"
+                  />
+                </div>
+              )}
+
+              </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  One article is written per {sourceMode === 'social' ? 'post' : 'feed item'} — there is no keyword hierarchy to set.
+                </p>
+              )}
+
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Generation options</Label>
+                <div className="space-y-2">
+                  <div
+                    className="flex items-center space-x-2"
+                    title="Automatically generate a featured image for each article when content is generated."
+                  >
+                    <Checkbox
+                      id="featured-images"
+                      checked={featuredImages}
+                      onCheckedChange={(c) => setFeaturedImages(c as boolean)}
+                    />
+                    <Label htmlFor="featured-images" className="cursor-pointer font-medium leading-none">
+                      Generate featured images
+                    </Label>
+                  </div>
+
+                  <div
+                    className="flex items-center space-x-2"
+                    title="Let the writer place supporting images and charts inline within each article body."
+                  >
+                    <Checkbox
+                      id="in-content-media"
+                      checked={inContentMedia}
+                      onCheckedChange={(c) => setInContentMedia(c as boolean)}
+                    />
+                    <Label htmlFor="in-content-media" className="cursor-pointer font-medium leading-none">
+                      In-content images &amp; charts
+                    </Label>
+                  </div>
+
+                  {inContentMedia && (
+                    <div className="ml-6 flex items-center gap-3 text-sm">
+                      <span className="font-medium text-muted-foreground">Type:</span>
+                      <Select value={mediaType} onValueChange={setMediaType}>
+                        <SelectTrigger className="h-8 w-32 text-xs bg-background">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="images">Images</SelectItem>
+                          <SelectItem value="charts">Charts</SelectItem>
+                          <SelectItem value="both">Images + Charts</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <span className="font-medium text-muted-foreground">Count:</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={8}
+                        value={mediaCount}
+                        onChange={(e) => setMediaCount(parseInt(e.target.value, 10) || 3)}
+                        className="w-16 h-8 text-xs bg-background"
+                      />
+                    </div>
+                  )}
+
+                  {inContentMedia && (
+                    <div className="ml-6">
+                      <Input
+                        value={mediaGuidance}
+                        onChange={(e) => setMediaGuidance(e.target.value)}
+                        maxLength={500}
+                        placeholder="Optional: what should the images show / what data should the charts present? e.g. “clean product photos; charts comparing yearly market growth”"
+                        className="h-8 text-xs bg-background"
+                        title="Creative direction passed to the writer: image subjects/style and the data charts should visualize."
+                      />
+                    </div>
+                  )}
+
+                  <div
+                    className="flex items-center space-x-2"
+                    title="Automatically inject internal links between articles when content is generated."
+                  >
+                    <Checkbox
+                      id="auto-interlink"
+                      checked={autoInterlink}
+                      onCheckedChange={(c) => setAutoInterlink(c as boolean)}
+                    />
+                    <Label htmlFor="auto-interlink" className="cursor-pointer font-medium leading-none">
+                      Auto-Interlink after generation
+                    </Label>
+                  </div>
+
+                  {autoInterlink && (
+                    <div className="ml-6 flex items-center justify-between gap-4 p-3 bg-muted/20 border rounded-md text-sm">
+                      <div className="flex items-center space-x-3">
+                        <span className="font-medium text-muted-foreground">Max Links:</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={interlinkQuantity}
+                          onChange={(e) => setInterlinkQuantity(parseInt(e.target.value) || 3)}
+                          className="w-16 h-8 bg-background"
+                        />
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-medium text-muted-foreground">Anchor:</span>
+                        <Select value={interlinkAnchorMode} onValueChange={setInterlinkAnchorMode}>
+                          <SelectTrigger className="h-8 w-40 text-xs bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="keyword" title="Link the exact keyword of the destination article where it already appears.">Destination keyword</SelectItem>
+                            <SelectItem value="synonym" title="AI finds a synonym of the destination keyword already present in the text and links that.">Synonym</SelectItem>
+                            <SelectItem value="ai" title="AI picks the most natural existing phrase to link.">AI decides</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Research depth</Label>
+            <div className="space-y-2.5">
               <div
-                className="flex items-center space-x-2"
-                title="Automatically inject internal links between articles when content is generated."
+                className="flex items-start space-x-2"
+                title="Summarize what currently ranks for the topic before writing."
               >
                 <Checkbox
-                  id="auto-interlink"
-                  checked={autoInterlink}
-                  onCheckedChange={(c) => setAutoInterlink(c as boolean)}
+                  id="research-landscape"
+                  className="mt-0.5"
+                  checked={researchLandscape}
+                  onCheckedChange={(c) => setResearchLandscape(c as boolean)}
                 />
-                <Label htmlFor="auto-interlink" className="cursor-pointer font-medium leading-none">
-                  Auto-Interlink after generation
+                <Label htmlFor="research-landscape" className="cursor-pointer font-medium leading-tight">
+                  Search landscape
+                  <span className="block text-xs font-normal text-muted-foreground">what currently ranks</span>
                 </Label>
               </div>
 
-              {autoInterlink && (
-                <div className="ml-6 flex items-center justify-between gap-4 p-3 bg-muted/20 border rounded-md text-sm">
-                  <div className="flex items-center space-x-3">
-                    <span className="font-medium text-muted-foreground">Max Links:</span>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={interlinkQuantity}
-                      onChange={(e) => setInterlinkQuantity(parseInt(e.target.value) || 3)}
-                      className="w-16 h-8 bg-background"
-                    />
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-medium text-muted-foreground">Anchor:</span>
-                    <Select value={interlinkAnchorMode} onValueChange={setInterlinkAnchorMode}>
-                      <SelectTrigger className="h-8 w-40 text-xs bg-background">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="keyword" title="Link the exact keyword of the destination article where it already appears.">Destination keyword</SelectItem>
-                        <SelectItem value="synonym" title="AI finds a synonym of the destination keyword already present in the text and links that.">Synonym</SelectItem>
-                        <SelectItem value="ai" title="AI picks the most natural existing phrase to link.">AI decides</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+              <div
+                className="flex items-start space-x-2"
+                title="Pull real questions people ask plus chart-ready statistics."
+              >
+                <Checkbox
+                  id="research-questions"
+                  className="mt-0.5"
+                  checked={researchQuestions}
+                  onCheckedChange={(c) => setResearchQuestions(c as boolean)}
+                />
+                <Label htmlFor="research-questions" className="cursor-pointer font-medium leading-tight">
+                  Questions &amp; data
+                  <span className="block text-xs font-normal text-muted-foreground">real questions + chart-ready statistics</span>
+                </Label>
+              </div>
+
+              <div
+                className="flex items-start space-x-2"
+                title="Find what rival articles miss so this one covers more."
+              >
+                <Checkbox
+                  id="research-gaps"
+                  className="mt-0.5"
+                  checked={researchGaps}
+                  onCheckedChange={(c) => setResearchGaps(c as boolean)}
+                />
+                <Label htmlFor="research-gaps" className="cursor-pointer font-medium leading-tight">
+                  Competitor gaps
+                  <span className="block text-xs font-normal text-muted-foreground">what rivals miss</span>
+                </Label>
+              </div>
+            </div>
+              </div>
+            </div>
+          </AccordionSection>
+
+          {/* ⑤ PUBLISHING — where finished articles go */}
+          <AccordionSection title="Publishing">
+            <div className="space-y-3">
+              <Segmented
+                value={publishing}
+                onChange={setPublishing}
+                options={[
+                  { value: 'draft', label: 'Draft' },
+                  { value: 'auto', label: 'Automatic' },
+                ]}
+              />
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="target-site"
+                    title="The site this strategy is for. When Publishing is Automatic, each generated article is published here."
+                  >
+                    Target Site
+                  </Label>
+                  <Select value={siteId} onValueChange={setSiteId}>
+                    <SelectTrigger id="target-site" className="w-full bg-background">
+                      <SelectValue placeholder={sitesLoading ? 'Loading sites…' : 'Select a connected site...'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(sites as any[]).length > 0 ? (
+                        (sites as any[]).map((s) => (
+                          <SelectItem key={s.id} value={s.id.toString()}>
+                            {s.name || s.url}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <div className="p-2 text-sm text-muted-foreground text-center">
+                          No connected sites — add one in the Sites module.
+                        </div>
+                      )}
+                    </SelectContent>
+                  </Select>
                 </div>
+                <div className="space-y-1.5">
+                  <Label>Approvals</Label>
+                  <Select value={approvalMode} onValueChange={setApprovalMode}>
+                    <SelectTrigger className="w-full bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="internal">Internal Only</SelectItem>
+                      <SelectItem value="client">Client Only</SelectItem>
+                      <SelectItem value="both" title="Both your team and the client must approve before the post publishes.">
+                        Internal + Client
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {missingSite && (
+                <p className="text-[0.8rem] text-destructive">
+                  {(sites as any[]).length > 0
+                    ? 'Select a Target Site above to publish automatically.'
+                    : 'Connect a site in the Sites module to publish automatically.'}
+                </p>
               )}
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-               <Label>Publishing Mode</Label>
-               <Select value={publishingMode} onValueChange={setPublishingMode}>
-                 <SelectTrigger className="w-full bg-background">
-                   <SelectValue />
-                 </SelectTrigger>
-                 <SelectContent>
-                   <SelectItem value="draft">Draft (Manual Publish)</SelectItem>
-                   <SelectItem value="publish">Publish Automatically</SelectItem>
-                   <SelectItem value="schedule">Schedule Mode</SelectItem>
-                 </SelectContent>
-               </Select>
-            </div>
-            <div className="space-y-1.5">
-               <Label>Approvals</Label>
-               <Select value={approvalMode} onValueChange={setApprovalMode}>
-                 <SelectTrigger className="w-full bg-background">
-                   <SelectValue />
-                 </SelectTrigger>
-                 <SelectContent>
-                   <SelectItem value="none">None</SelectItem>
-                   <SelectItem value="internal">Internal Only</SelectItem>
-                   <SelectItem value="client">Client Only</SelectItem>
-                   <SelectItem value="both" title="Both your team and the client must approve before the post publishes.">
-                     Internal + Client
-                   </SelectItem>
-                 </SelectContent>
-               </Select>
-            </div>
-          </div>
-
-          {publishingMode === 'schedule' && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Frequency</Label>
-                <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Start Date</Label>
-                <Input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full bg-background"
-                />
-                <p className="text-[0.8rem] text-muted-foreground">Leave blank to start today.</p>
-              </div>
-            </div>
-          )}
-
-          {(publishingMode === 'publish' || publishingMode === 'schedule') && !siteId && (
-            <p className="text-[0.8rem] text-destructive">
-              {(sites as any[]).length > 0
-                ? `Select a Target Site above to ${publishingMode === 'schedule' ? 'schedule' : 'publish'} automatically.`
-                : `Connect a site in the Sites module to ${publishingMode === 'schedule' ? 'schedule' : 'publish'} automatically.`}
-            </p>
-          )}
+          </AccordionSection>
 
         </div>
 
@@ -583,7 +1135,7 @@ export function CreateStrategyDialog({
           </Button>
           <Button
             onClick={handleSave}
-            disabled={isSaving || !templateId || ((publishingMode === 'publish' || publishingMode === 'schedule') && !siteId)}
+            disabled={isSaving || !templateId || missingKeywords || missingSite || missingFeeds || missingSocialLinks || missingEndDate}
           >
             {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             Create Strategy

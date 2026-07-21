@@ -514,8 +514,12 @@ export function KeywordsModule() {
   const [strategyDialogOpen, setStrategyDialogOpen] = useState(false);
 
   const createStrategyMutation = (trpc as any).strategy.create.useMutation({
-    onSuccess: () => {
-      toast.success('Strategy created successfully!');
+    onSuccess: (_data: any, variables: any) => {
+      // RSS/social strategies arm an immediate first source scan on the
+      // backend — the latest existing post is being pulled right now.
+      toast.success(variables?.sourceMode === 'rss' || variables?.sourceMode === 'social'
+        ? 'Strategy created — pulling the latest posts now'
+        : 'Strategy created successfully!');
       setStrategyDialogOpen(false);
       setRowSelection({}); // Clear selection when done
     },
@@ -531,6 +535,14 @@ export function KeywordsModule() {
   }, [selectedKeywords.length]);
 
   const handlePerformCreateStrategy = useCallback((payload: StrategyPayload) => {
+    // An RSS/social strategy's items come from its sources — sending the
+    // selected keywords would seed keyword items that also consume the weekly
+    // backpressure window. Sources only.
+    const src = (payload as any).sourceMode;
+    if (src === 'rss' || src === 'social') {
+      createStrategyMutation.mutate({ ...payload, keywords: [], keywordMeta: [] });
+      return;
+    }
     const keywords = selectedKeywords.map(k => k.keyword);
     // F3: carry the display-only SEO metrics (Ahrefs search volume + keyword
     // difficulty) from the selected Keyword Explorer rows onto the strategy's
@@ -626,6 +638,16 @@ export function KeywordsModule() {
             {totalCount} results
           </Badge>
         )}
+        {/* RSS/social strategies need no keyword selection — always reachable. */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto h-8 text-xs"
+          onClick={() => setStrategyDialogOpen(true)}
+        >
+          <Zap className="mr-1.5 h-3.5 w-3.5 text-primary" />
+          New Strategy
+        </Button>
       </div>
 
       {/* Search Bar */}
@@ -929,7 +951,7 @@ export function KeywordsModule() {
       <CreateStrategyDialog
         open={strategyDialogOpen}
         onOpenChange={setStrategyDialogOpen}
-        defaultName={`${selectedCount} keywords - Strategy`}
+        defaultName={selectedCount > 0 ? `${selectedCount} keywords - Strategy` : 'New Strategy'}
         onSave={handlePerformCreateStrategy}
         isSaving={createStrategyMutation.isPending}
         selectedCount={selectedCount}
