@@ -140,7 +140,15 @@ class PCM_Optimizer_Service
      */
     public static function compile(array $items, array $context): array
     {
-        if (count($items) === 1) {
+        // THE ROUTER (gap eeec6b9): with a page outline present the ONE
+        // compile call ALSO assigns each directive its target sections —
+        // so even a single item earns the model hop (routing has value).
+        $outline = array_values(array_filter(array_map(
+            static fn($h): string => trim((string) $h),
+            (array) ($context['outline'] ?? array())
+        ), static fn(string $h): bool => $h !== ''));
+
+        if (count($items) === 1 && empty($outline)) {
             return array(array(
                 'text'     => $items[0]['instruction'],
                 'purposes' => array($items[0]['teacherId']),
@@ -153,6 +161,23 @@ class PCM_Optimizer_Service
             $numbered[] = array('index' => $i, 'purpose' => $it['teacherId'], 'instruction' => $it['instruction']);
         }
 
+        $routing_rules = '';
+        $routing_json  = '';
+        $outline_block = '';
+        if (!empty($outline)) {
+            $routing_rules = ' Additionally ROUTE every directive: "targets" lists the indexes of the page sections '
+                . '(from THE PAGE OUTLINE) the directive concerns — every directive gets at least one target; a '
+                . 'directive that ADDS new content targets the ONE section the new content should follow; a '
+                . 'page-wide directive targets only the sections that truly need that work, never all sections '
+                . 'reflexively.';
+            $routing_json  = ',"targets":[1,3]';
+            $lines         = array();
+            foreach ($outline as $i => $h) {
+                $lines[] = $i . '. ' . $h;
+            }
+            $outline_block = "\n\nTHE PAGE OUTLINE (section index. heading):\n" . implode("\n", $lines);
+        }
+
         $messages = array(
             array(
                 'role'    => 'system',
@@ -163,13 +188,15 @@ class PCM_Optimizer_Service
                     . 'directive\'s sources; MERGE overlapping directives into one stronger directive; when two '
                     . 'directives collide, produce one directive that explicitly preserves both intents; order by '
                     . 'execution sense (structure first, then content, then wording). Keep each directive one '
-                    . 'sentence, imperative, self-contained. Respond with ONLY this JSON, no markdown: '
-                    . '{"directives":[{"text":"...","sources":[0,2]}]} — sources are the input indexes each '
-                    . 'directive covers.',
+                    . 'sentence, imperative, self-contained.' . $routing_rules
+                    . ' Respond with ONLY this JSON, no markdown: '
+                    . '{"directives":[{"text":"...","sources":[0,2]' . $routing_json . '}]} — sources are the input '
+                    . 'indexes each directive covers.',
             ),
             array(
                 'role'    => 'user',
                 'content' => "INPUT DIRECTIVES:\n" . wp_json_encode($numbered)
+                    . $outline_block
                     . self::context_suffix($context),
             ),
         );
@@ -186,6 +213,7 @@ class PCM_Optimizer_Service
                             'properties' => array(
                                 'text'    => array('type' => 'string'),
                                 'sources' => array('type' => 'array', 'items' => array('type' => 'integer')),
+                                'targets' => array('type' => 'array', 'items' => array('type' => 'integer')),
                             ),
                             'required'   => array('text', 'sources'),
                         ),
@@ -221,10 +249,21 @@ class PCM_Optimizer_Service
             if (empty($sources)) {
                 continue;
             }
+            // Targets: valid outline indexes only. A directive with none
+            // stays UNROUTED (the run broadcasts it — honest floor, never
+            // a dropped intent; the sources contract above is the law).
+            $targets = array();
+            foreach ((array) ($row['targets'] ?? array()) as $t) {
+                $t = (int) $t;
+                if ($t >= 0 && $t < count($outline)) {
+                    $targets[] = $t;
+                }
+            }
             $out[] = array(
                 'text'     => trim((string) $row['text']),
                 'purposes' => array_keys($purposes),
                 'sources'  => $sources,
+                'targets'  => array_values(array_unique($targets)),
             );
         }
 
@@ -639,33 +678,14 @@ class PCM_Optimizer_Service
      */
     public static function business_context(int $site_id): array
     {
-        if ($site_id <= 0) {
+        // THE SITE RESOLVER (gap 616870f): one ladder for every consumer —
+        // site SEO overrides > unit > brand basics > site basics, with unit
+        // pinning. Same shape as before (flat resolved fields incl.
+        // siteUrl); empty record when no site — honest, exactly as before.
+        if ($site_id <= 0 || !class_exists('PCM_SEO_Service')) {
             return array();
         }
-        global $wpdb;
-        $sites = PCM_Schema::table('sites');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $site = $wpdb->get_row($wpdb->prepare("SELECT name, url, brandId FROM {$sites} WHERE id = %d", $site_id));
-        if (!$site) {
-            return array();
-        }
-        $business = array('siteUrl' => (string) $site->url);
-        $brand_id = (int) ($site->brandId ?? 0);
-        if ($brand_id > 0) {
-            $brands = PCM_Schema::table('brands');
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $brand = $wpdb->get_row($wpdb->prepare("SELECT name FROM {$brands} WHERE id = %d", $brand_id));
-            if ($brand && !empty($brand->name)) {
-                $business['name'] = (string) $brand->name;
-            }
-            if (class_exists('PCM_SEO_GBP')) {
-                $resolved = (array) (PCM_SEO_GBP::get_for_brand($brand_id)['resolved'] ?? array());
-                // GBP fields win over the bare brand name (same precedence
-                // as the SEO field vars — one law, two consumers).
-                $business = array_merge($business, array_filter($resolved, static fn($v) => $v !== '' && $v !== null && $v !== array()));
-            }
-        }
-        return $business;
+        return (array) (PCM_SEO_Service::business_record_for_site($site_id)['fields'] ?? array());
     }
 
     /**
@@ -759,6 +779,11 @@ class PCM_Optimizer_Service
             // targeted revise is judged over-rewritten (retry, then an
             // honest error — never a silent 80% text loss).
             'revise'  => array('minRetention' => 0.6),
+            // THE CHANGE-CARD REVIEW (gap 0a0a3c3): maxChanges caps the
+            // verified per-section change list; below rewriteRetention the
+            // section presents as REWRITTEN (calm Before/After blocks
+            // instead of word confetti).
+            'review'  => array('maxChanges' => 12, 'rewriteRetention' => 0.35),
         );
         $stored = get_option(self::RESEARCH_OPTION);
         if (is_array($stored) && !empty($stored['onpage'])) {

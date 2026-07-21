@@ -335,6 +335,59 @@ class PCM_Activator
             // create_tables() dbDelta above; no bespoke migration method needed
             // (same precedent as delivery_logs v1.35.0 and the additive
             // strategy-item columns v1.37.0–v1.39.0).
+            // v1.43.0: Business Spine P1 (gap 1aedf65). Adds the
+            // brand_business_units table + sites.businessUnitId (both additive
+            // via the create_tables() dbDelta above) and moves per-brand GBP
+            // option records (`pcm_seo_gbp_{brandId}`) into each brand's
+            // PRIMARY business unit. Idempotent — installs without records
+            // no-op honestly.
+            if (version_compare($installed_version, '1.43.0', '<')) {
+                PCM_Schema::migrate_gbp_to_business_units();
+            }
+
+            // v1.44.0: Business Spine P2 (gap 616870f) — one-time auto-map
+            // backfill: every UNMAPPED site whose host EXACTLY matches a
+            // brand's normalized domain (www-insensitive) gets linked. An
+            // exact host match is a deterministic fact, never a guess;
+            // anything less stays unmapped for the SEO card's suggestion.
+            // Idempotent: only brandId-NULL sites are touched.
+            if (version_compare($installed_version, '1.44.0', '<')) {
+                global $wpdb;
+                $sites_t  = PCM_Schema::table('sites');
+                $brands_t = PCM_Schema::table('brands');
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $unmapped = $wpdb->get_results("SELECT id, userId, url FROM {$sites_t} WHERE brandId IS NULL");
+                foreach (($unmapped ?: array()) as $s) {
+                    $host = strtolower((string) (wp_parse_url((string) $s->url, PHP_URL_HOST) ?: ''));
+                    if ($host === '') {
+                        continue;
+                    }
+                    $bare = preg_replace('/^www\./', '', $host);
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $brand_id = $wpdb->get_var($wpdb->prepare(
+                        "SELECT id FROM {$brands_t} WHERE userId = %d AND (domain = %s OR domain = %s) LIMIT 1",
+                        (int) $s->userId,
+                        $bare,
+                        'www.' . $bare
+                    ));
+                    if ($brand_id) {
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        $wpdb->update($sites_t, array('brandId' => (int) $brand_id), array('id' => (int) $s->id), array('%d'), array('%d'));
+                    }
+                }
+            }
+
+            // v1.45.0: MERGE CATCH-UP (version-namespace collision). Both lines
+            // shipped a "1.43.0": ours was the additive article-revisions table,
+            // theirs was the GBP -> business-units move above. An install that
+            // already recorded OUR 1.43.0 fails the `< 1.43.0` gate and would
+            // NEVER run that migration, so re-run it once here. Safe by
+            // construction: migrate_gbp_to_business_units() only inserts when the
+            // brand has no unit yet and deletes the source option, so a second
+            // pass over an already-migrated install is a no-op.
+            if (version_compare($installed_version, '1.45.0', '<')) {
+                PCM_Schema::migrate_gbp_to_business_units();
+            }
 
             update_option('pcm_db_version', PCM_DB_VERSION);
         }

@@ -54,12 +54,15 @@ import { LlmInfoSection } from './LlmInfoEditor';
 import { SiteSettingsPanel } from './SiteSettingsPanel';
 import { RemoteSiteSettingsPanel } from './RemoteSiteSettingsPanel';
 import { BusinessPanel } from './BusinessPanel';
+import { RemoteBusinessCard } from './RemoteBusinessCard';
 import { SchemaCell } from './SchemaCell';
 import { OptimizeModal } from './OptimizeModal';
 import { LinksPopup, type LinkKind } from './LinksPopup';
 import { RedirectPopup } from './RedirectPopup';
 import { HeadingRows } from './HeadingsPanel';
 import { SectionModal } from './SectionModal';
+import { SiteStatusDot } from './SiteStatusDot';
+import { useSiteHealth } from './hooks/useSiteHealth';
 import { SEO_TABLE_GRID } from './seo-table';
 import { Pill, type PillVariant } from '@/components/ui/pill';
 import { SEO_TEXT_FIELDS, statusPillVariant, type SeoRow } from './types';
@@ -93,6 +96,7 @@ function EditableCell({
   onAccept,
   onReject,
   emphasis,
+  onOpen,
 }: {
   value: string;
   placeholder?: string;
@@ -105,9 +109,17 @@ function EditableCell({
   onReject?: () => void;
   /** Render as the primary field (Airtable-style: medium weight, darker). */
   emphasis?: boolean;
+  /** OPT-IN (title cell only, gap cad42df): single click OPENS (the page
+   *  editor), double click enters the inline text edit. Absent = today's
+   *  click-to-edit, byte-identical — the sensitive columns never change. */
+  onOpen?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
+  // Single-vs-double click discriminator (only armed when onOpen exists):
+  // a single click waits 220ms for a possible second click before opening.
+  const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (openTimer.current) clearTimeout(openTimer.current); }, []);
 
   const commit = () => {
     setEditing(false);
@@ -156,9 +168,18 @@ function EditableCell({
     <div className="flex items-center gap-1 group">
       <button
         type="button"
-        onClick={() => { setDraft(value); setEditing(true); }}
+        onClick={() => {
+          if (!onOpen) { setDraft(value); setEditing(true); return; }
+          if (openTimer.current) clearTimeout(openTimer.current);
+          openTimer.current = setTimeout(() => { openTimer.current = null; onOpen(); }, 220);
+        }}
+        onDoubleClick={() => {
+          if (!onOpen) return; // default cells already edit on the first click
+          if (openTimer.current) { clearTimeout(openTimer.current); openTimer.current = null; }
+          setDraft(value); setEditing(true);
+        }}
         className={`flex-1 min-w-0 text-left truncate text-xs leading-snug hover:underline decoration-dotted ${emphasis ? 'font-medium text-foreground' : ''}`}
-        title={value || placeholder}
+        title={onOpen ? `${value || placeholder} — click to open the editor, double-click to edit the title` : (value || placeholder)}
       >
         {value || <span className="text-muted-foreground/60">{placeholder ?? '—'}</span>}
       </button>
@@ -360,6 +381,8 @@ export function SEOModule() {
   // Remote-site SEO isn't wired in the backend yet — those tabs show a placeholder.
   const { data: sitesRaw } = trpc.sites.list.useQuery() as { data?: any[] };
   const sites: { id: number; name?: string; url?: string }[] = Array.isArray(sitesRaw) ? sitesRaw : [];
+  // Connector health for the tab dots — ONE batched call (gap 89ef71a).
+  const siteHealth = useSiteHealth(sites.length > 0);
   const [siteId, setSiteId] = useState<number | 'local'>('local');
   const isLocal = siteId === 'local';
   // Expandable heading editor: which page rows have their H1–H6 outline open.
@@ -1056,6 +1079,13 @@ export function SEOModule() {
                   value={row.title}
                   placeholder="Untitled"
                   emphasis
+                  // THE TITLE GESTURE (gap cad42df): click = edit the page
+                  // (our editor on connected rows, the WP editor locally —
+                  // same meaning, different destination); double-click =
+                  // edit the title text. Title cell ONLY.
+                  onOpen={isLocal
+                    ? (row.editUrl ? () => window.open(row.editUrl as string, '_blank', 'noopener,noreferrer') : undefined)
+                    : () => setPageEditRow(row)}
                   onSave={(v) => saveCell(row.id, 'title', v)}
                   onGenerate={() => handleGenerate(row.id, 'title')}
                   generating={genKey === `${row.id}:title`}
@@ -1329,7 +1359,8 @@ export function SEOModule() {
           onClick={() => setSiteId('local')}
           className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm -mb-px border-b-2 whitespace-nowrap ${isLocal ? 'border-primary text-primary font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
         >
-          <Globe className="w-3.5 h-3.5" /> This Site
+          {/* The hub is itself — never health-tested, always the quiet dot. */}
+          <SiteStatusDot ok={null} /> This Site
         </button>
         {sites.map((s) => (
           <button
@@ -1339,18 +1370,19 @@ export function SEOModule() {
             title={s.url}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm -mb-px border-b-2 max-w-[220px] ${siteId === Number(s.id) ? 'border-primary text-primary font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
           >
-            <Globe className="w-3.5 h-3.5 shrink-0" />
+            <SiteStatusDot ok={siteHealth(Number(s.id)).ok} error={siteHealth(Number(s.id)).error} />
             <span className="truncate">{s.name || s.url || `Site #${s.id}`}</span>
           </button>
         ))}
       </div>
 
-      {/* Section nav (left) + section content, side by side. The nav lives in a
-          card surface so it reads as a panel instead of floating. The content
-          toolbar (Views/Columns/Post/Page/Model) lives INSIDE the content column
-          (below) so switching sections never shifts the nav's position. */}
+      {/* Section nav (left) + section content, side by side. The nav floats
+          on the canvas — the blue pill IS the state, whitespace the border
+          (one-canvas law). The content toolbar (Views/Columns/Post/Page/Model)
+          lives INSIDE the content column (below) so switching sections never
+          shifts the nav's position. */}
       <div className="flex gap-6 items-start">
-        <nav className="flex w-44 shrink-0 flex-col gap-1 rounded-lg border border-border bg-card p-2">
+        <nav className="flex w-44 shrink-0 flex-col gap-1 p-2">
           {([['content', 'Content'], ['air', 'AI Readiness'], ['site', 'Site'], ['business', 'Business']] as const).map(([id, label]) => (
             <button
               key={id}
@@ -1388,7 +1420,10 @@ export function SEOModule() {
             ? <RemoteSiteSettingsPanel siteId={siteId} siteName={activeSite?.name || activeSite?.url || 'this site'} />
             : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
       ) : tab === 'business' ? (
-        isLocal ? <BusinessPanel /> : <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
+        // THE BUSINESS CARD (gap 616870f): a CONNECTED site gets its resolved
+        // per-site record — mapped, inline-editable, source-labeled. The local
+        // site keeps the brand-picker panel until P4 re-homes it.
+        isLocal ? <BusinessPanel /> : <RemoteBusinessCard siteId={Number(activeSite?.id ?? 0)} />
       ) : (
       <>
       {/* Content toolbar: Views (left) · Post / Page / Model + Columns (right). */}
@@ -1457,7 +1492,7 @@ export function SEOModule() {
             onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
           >
             <SelectTrigger
-              className="h-9 w-[190px] gap-1 rounded-full border border-border bg-card px-4 text-xs shadow-sm hover:bg-muted/50"
+              className="h-9 w-[190px] gap-1 rounded-full border border-border bg-card px-4 text-xs hover:bg-muted/50"
               title="Model used for AI generation"
             >
               <SelectValue
@@ -1606,15 +1641,22 @@ export function SEOModule() {
       )}
 
       {isLoading ? (
-        <div className="flex items-center justify-center py-20">
+        <div className="flex flex-col items-center justify-center gap-2 py-20">
           <Loader2 className="w-6 h-6 animate-spin text-primary" />
+          {/* The remote first load has no stored copy yet (gap 02d3cb7 D3) —
+              SAY so; every later open serves the local copy instantly. */}
+          {!isLocal && (
+            <div className="text-xs text-muted-foreground">
+              Fetching content from the site — the first load builds the local copy, next opens are instant…
+            </div>
+          )}
         </div>
       ) : sortedData.length === 0 ? (
         <div className="border border-dashed border-border rounded-xl p-12 text-center text-sm text-muted-foreground">
           No content yet — create a post or page to get started.
         </div>
       ) : (
-        <div className="rounded-md border border-border shadow-sm overflow-auto max-h-[calc(100vh-300px)] bg-card">
+        <div className="rounded-md border border-border overflow-auto max-h-[calc(100vh-300px)] bg-card">
           {/* Spreadsheet-style grid: gridlines on every cell, a sticky header
               row, and compact single-line cells. Long values truncate with an
               ellipsis — click a cell to edit (and see) the full value. */}

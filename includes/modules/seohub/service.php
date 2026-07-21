@@ -389,10 +389,20 @@ class PCM_SEOHub_Service
      *
      * @return array{version:string, sha256:string, zip:string}|array{error:string}
      */
+    /** The template's own version — ONE parser for every consumer
+     *  (filenames, artifact, baking; gap: versioned downloads). */
+    public static function connector_template_version(string $php = ''): string
+    {
+        if ($php === '') {
+            $php = self::connector_php_simple_raw();
+        }
+        return preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
+    }
+
     public static function connector_artifact(): array
     {
         $php = self::connector_php_simple(); // fully baked (hub URL + version)
-        $ver = preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
+        $ver = self::connector_template_version($php);
         $sig = md5($php);
         $cache = get_option('pcm_seohub_conn_pkg', array());
         if (is_array($cache) && ($cache['sig'] ?? '') === $sig && !empty($cache['zip_b64'])) {
@@ -432,7 +442,7 @@ class PCM_SEOHub_Service
         $manifest = rest_url('pcm/v1/seohub/connector-manifest');
         $scheme   = (string) (wp_parse_url($manifest, PHP_URL_SCHEME) ?: 'https');
         $host     = (string) (wp_parse_url($manifest, PHP_URL_HOST) ?: wp_parse_url(home_url('/'), PHP_URL_HOST));
-        $version  = preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
+        $version  = self::connector_template_version($php);
         return strtr($php, array(
             '__PCM_CONN_MANIFEST_URL__'  => $manifest,
             '__PCM_CONN_UPDATE_URI__'    => $scheme . '://' . $host . '/pcm-connector',
@@ -452,7 +462,7 @@ class PCM_SEOHub_Service
 /**
  * Plugin Name: Power Creatives Connector
  * Description: Connects this site to a Power Creatives hub — four dumb jobs: page snapshot (the hub does ALL parsing), builder-aware storage writers (post content + Elementor/Bricks/Divi/WPBakery/Oxygen/Breakdance/Brizy + any custom field, incl. base64-encoded builder data, PLUS Elementor Theme Builder templates + Gutenberg reusable blocks, with cache regeneration + verification), guarded render-time apply of hub-precomputed instructions (refuse-if-unsure), and hub-pushed config. Also: SEO meta in REST, fallback meta tags, robots.txt + JSON-LD, /llms.txt + /llm-info/, cache flush on edit, self-update, one-paste connection code.
- * Version: 3.0.5
+ * Version: 3.0.8
  * Update URI: __PCM_CONN_UPDATE_URI__
  */
 if (!defined('ABSPATH')) { exit; }
@@ -1326,6 +1336,20 @@ add_action('rest_api_init', function () {
             return call_user_func($read);
         }),
     ));
+    // Featherweight page-state (3.0.7, gap e48b1ff): version+fingerprint ONLY —
+    // no page render, no rule application. version 0 / '' = never pushed under
+    // versioning (the true baseline, never an invention).
+    register_rest_route('pcm-conn/v1', '/page-state', array(
+        'methods' => 'GET', 'permission_callback' => $perm,
+        'callback' => function ($req) {
+            $pid = absint($req->get_param('post_id'));
+            $s   = get_option('pcm_conn_page_state_' . $pid, null);
+            return new WP_REST_Response(array(
+                'version'     => (is_array($s) && isset($s['version'])) ? (int) $s['version'] : 0,
+                'fingerprint' => (is_array($s) && isset($s['fingerprint'])) ? (string) $s['fingerprint'] : '',
+            ), 200);
+        },
+    ));
     // Instant self-update: the hub POSTs here to force an update NOW (bypassing WP's twice-daily
     // poll). Same admin/app-password auth as every other route — the hub already holds that key,
     // so no separate per-site secret is needed. Runs a fresh update check, then upgrades if newer.
@@ -1641,9 +1665,32 @@ function pcm_conn_loopback_release() { delete_transient('pcm_conn_loopback_lock'
  * path). Timeout is hub-pushed config. Returns the HTML body, or '' when
  * locked/failed.
  */
+// Self-authorized loopback (3.0.8, gap f285ced): the connector runs INSIDE
+// the site — its self-fetch must never depend on a browser session or on
+// public visibility. Each fetch mints a one-time 60s pid-bound token; the
+// validator below widens post_status for THAT request only. Drafts render
+// for the connector, and only for it.
+add_action('pre_get_posts', function ($query) {
+    if (is_admin() || !$query->is_main_query()) { return; }
+    $token = isset($_GET['pcm_snap_auth']) ? (string) $_GET['pcm_snap_auth'] : '';
+    if ($token === '' || !preg_match('/^[A-Za-z0-9]{32}$/', $token)) { return; }
+    $pid = (int) get_transient('pcm_snap_auth_' . $token);
+    if ($pid <= 0) { return; }
+    $queried = (int) ($query->get('page_id') ?: $query->get('p'));
+    if ($queried !== $pid) { return; }
+    delete_transient('pcm_snap_auth_' . $token); // single use — a replay changes nothing
+    $query->set('post_status', array('publish', 'draft', 'pending', 'private', 'future'));
+});
 function pcm_conn_loopback_fetch($pid, $bust_arg, $agent_tag) {
     if (!pcm_conn_loopback_acquire()) { return ''; }
-    $resp = wp_remote_get(add_query_arg($bust_arg, (string) time(), get_permalink($pid)), array(
+    $token = wp_generate_password(32, false, false);
+    set_transient('pcm_snap_auth_' . $token, (int) $pid, MINUTE_IN_SECONDS);
+    // Query-var permalink form: pins the exact pid the validator matches on
+    // (drafts have no pretty permalink; published posts accept it equally —
+    // ONE code path for every status).
+    $id_arg = (get_post_type($pid) === 'page') ? 'page_id' : 'p';
+    $url = add_query_arg(array($bust_arg => (string) time(), $id_arg => (int) $pid, 'pcm_snap_auth' => $token), home_url('/'));
+    $resp = wp_remote_get($url, array(
         'timeout'     => (int) pcm_conn_cfg('loopbackTimeout'),
         'redirection' => 3,
         'sslverify'   => apply_filters('https_local_ssl_verify', false),
@@ -1938,6 +1985,17 @@ function pcm_conn_rules_save($pid, $rules) {
         if (!in_array($pid, array_map('intval', $idx), true)) { $idx[] = $pid; }
     }
     update_option('pcm_conn_rules_index', $idx, false);
+}
+/** Echo the hub-declared page state {version, fingerprint} on a snapshot reply
+ *  (page-versioning contract, 3.0.6). Stored beside the rules on push; when the
+ *  hub never declared one the reply carries NO pageState key — a fabricated
+ *  value would read as agreement on the hub's compare. */
+function pcm_conn_page_state_echo($reply, $pid) {
+    $s = get_option('pcm_conn_page_state_' . (int) $pid, null);
+    if (is_array($s) && isset($s['version'], $s['fingerprint'])) {
+        $reply['pageState'] = array('version' => (int) $s['version'], 'fingerprint' => (string) $s['fingerprint']);
+    }
+    return $reply;
 }
 /** Per-post serve/miss counters (throttled writes — min gap is hub-pushed config). */
 function pcm_conn_rules_bump_stats($pid, $applied, $missed) {
@@ -2417,6 +2475,15 @@ add_action('rest_api_init', function () {
                 else { update_option('pcm_conn_rules_site', array_values($clean), true); }
                 return array('stored' => count($clean), 'schemaVersion' => 3, 'scope' => 'site');
             }
+            // Page state (3.0.6, page-versioning contract): the hub's {version, fingerprint}
+            // for the rule set just stored — kept beside the rules, echoed on the snapshot
+            // reply. Both values are hub-computed; the connector never derives either. A push
+            // WITHOUT one clears the stored state: it described a rule set this push replaced.
+            $state = (isset($p['pageState']) && is_array($p['pageState']) && isset($p['pageState']['version'], $p['pageState']['fingerprint']))
+                ? array('version' => (int) $p['pageState']['version'], 'fingerprint' => (string) $p['pageState']['fingerprint'])
+                : null;
+            if ($state !== null) { update_option('pcm_conn_page_state_' . $pid, $state, false); } // autoload OFF — same as the rules
+            else { delete_option('pcm_conn_page_state_' . $pid); }
             pcm_conn_rules_save($pid, $clean);
             delete_transient('pcm_conn_snap_' . $pid); // rules changed → snapshot cache is stale
             pcm_conn_purge_caches($pid);
@@ -2446,8 +2513,10 @@ add_action('rest_api_init', function () {
             $cache_key = $served
                 ? 'pcm_conn_snap_served_' . (int) get_option('pcm_conn_view_ver', 0) . '_' . $pid
                 : 'pcm_conn_snap_' . $pid;
+            // pageState (3.0.6) is attached AFTER the cache on every reply — never
+            // baked into the transient, so a cached document can't echo stale state.
             $cached = get_transient($cache_key);
-            if (is_array($cached)) { return $cached; }
+            if (is_array($cached)) { return pcm_conn_page_state_echo($cached, $pid); }
             $result = null;
             // Tier 1 — rendered page via the LOCKED loopback (TRUE serving order,
             // incl. builder output).
@@ -2493,7 +2562,7 @@ add_action('rest_api_init', function () {
             // trusting a response as served.
             $result['view'] = $served ? 'served' : 'input';
             set_transient($cache_key, $result, max(1, (int) pcm_conn_cfg('snapshotCacheTtl')));
-            return $result;
+            return pcm_conn_page_state_echo($result, $pid);
         },
     ));
 });

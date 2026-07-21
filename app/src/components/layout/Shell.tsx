@@ -32,6 +32,7 @@ import { UsersModule } from '@/modules/Users';
 import { SEOModule } from '@/modules/SEO';
 import { LogsModule } from '@/modules/Logs';
 import type { ModuleId } from '@/types';
+import { MODULE_VERSIONS } from '@/lib/module-versions';
 
 // Module registry - maps module IDs to their components
 const moduleRegistry: Record<ModuleId, React.ComponentType> = {
@@ -70,13 +71,11 @@ export function Shell() {
   const isFullBleed = fullBleedModules.includes(activeModule);
 
   // Conditional shell background. Default is the platform-wide grey
-  // (#f8f9fa) that list/form modules rely on. Board modules with their
-  // own white surface (Deliveries — and in time Approvals/Projects)
-  // opt into a white shell so the page reads as a single white canvas
-  // instead of a white module floating inside a grey frame.
-  // Trivially reversible: drop this constant + revert the two style
-  // bindings below to the literal '#f8f9fa'.
-  const shellBg = activeModule === 'deliveries' ? '#ffffff' : '#f8f9fa';
+  // (#f8f9fa) that list/form modules rely on. Modules with their own
+  // white surface opt into a white shell so the page reads as a single
+  // white canvas instead of a white module floating inside a grey frame.
+  const whiteShellModules: ModuleId[] = ['deliveries', 'seo'];
+  const shellBg = whiteShellModules.includes(activeModule) ? '#ffffff' : '#f8f9fa';
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: shellBg }}>
@@ -84,7 +83,7 @@ export function Shell() {
       <Sidebar />
 
       {/* Main Content Area - Module Container */}
-      <main className="flex-1 overflow-hidden">
+      <main className="relative flex-1 overflow-hidden">
         {isFullBleed ? (
           // Full-bleed layout for image/video modules
           <div className="h-full overflow-hidden">
@@ -113,6 +112,18 @@ export function Shell() {
               </div>
             )}
           </div>
+        )}
+        {/* THE MODULE VERSION STAMP (owner order 2026-07-17, gap
+            MODULE-VERSION-STAMP): the active module's own version, quiet
+            bottom-left; hover shows the baked build stamp — a stale tab
+            is visible at a glance. ONE mount for every module. */}
+        {ActiveModuleComponent && (
+          <span
+            className="absolute bottom-1 left-2 z-10 text-[10px] leading-none text-slate-400/60 select-none"
+            title={`build ${__PCM_BUILD__}`}
+          >
+            {activeModule} v{MODULE_VERSIONS[activeModule]}
+          </span>
         )}
       </main>
     </div>

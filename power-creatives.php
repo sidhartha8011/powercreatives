@@ -28,9 +28,15 @@ define('PCM_VERSION', '1.7.0');
 // the merged version must exceed BOTH stored values so maybe_upgrade fires
 // on every install and dbDelta applies the union schema (all three changes
 // are additive dbDelta, no custom gates).
-// 1.43.0 = Writer article revision history — adds the additive wp_pcm_article_revisions
-// table (applied by create_tables() dbDelta; no bespoke migration method).
-define('PCM_DB_VERSION', '1.43.0');
+// MERGE UNION (both lines independently shipped a "1.43.0"):
+//   ours   1.43.0 = Writer article revision history (additive wp_pcm_article_revisions
+//                   table, applied by create_tables() dbDelta; no bespoke migration).
+//   theirs 1.43.0 = Business Spine P1 (GBP records -> brand_business_units)
+//          1.44.0 = Business Spine P2 (exact-host site->brand auto-map backfill).
+// Resolved ABOVE both to 1.45.0 so installs that already sat on OUR 1.43.0 (and would
+// therefore fail the `< 1.43.0` gate) still receive the Business Spine migration via
+// the idempotent catch-up step in PCM_Activator::maybe_upgrade().
+define('PCM_DB_VERSION', '1.45.0');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -164,6 +170,24 @@ function pcm_init(): void
     if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event')
         && !wp_next_scheduled('pcm_strategy_scheduled_scan')) {
         wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'pcm_strategy_scheduled_scan');
+    }
+
+    // THE SITE HEALTH PROBE (gap fad81ea P3): probes only stale-heartbeat
+    // sites, bounded per run — the dots' data source in the background,
+    // never in a user's click path.
+    add_action('pcm_sites_health_probe', array('PCM_Sites_Service', 'probe_stale_sites'));
+    add_filter('cron_schedules', function (array $schedules): array {
+        // Interval is hub DATA (pcm_sites_health_check.intervalS, seed 300).
+        $cfg = get_option('pcm_sites_health_check');
+        $schedules['pcm_sites_health_interval'] = array(
+            'interval' => max(60, (int) ((is_array($cfg) ? ($cfg['intervalS'] ?? 300) : 300))),
+            'display'  => __('Power Creatives site health probe', 'power-creatives'),
+        );
+        return $schedules;
+    });
+    if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event')
+        && !wp_next_scheduled('pcm_sites_health_probe')) {
+        wp_schedule_event(time() + MINUTE_IN_SECONDS, 'pcm_sites_health_interval', 'pcm_sites_health_probe');
     }
 }
 add_action('plugins_loaded', 'pcm_init');

@@ -17,6 +17,13 @@ import { defineConfig } from "vite";
 export default defineConfig({
     plugins: [react(), tailwindcss()],
 
+    // THE BUILD STAMP (gap MODULE-VERSION-STAMP): baked at build time, shown
+    // on the Shell's module-version stamp hover — the machine truth that
+    // makes a stale SPA tab visible regardless of version-bump discipline.
+    define: {
+        __PCM_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC"),
+    },
+
     resolve: {
         alias: {
             // Match the original app's path aliases

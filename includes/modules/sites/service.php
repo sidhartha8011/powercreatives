@@ -164,12 +164,117 @@ class PCM_Sites_Service
         }
         $response = wp_remote_request($url, $args);
         if (is_wp_error($response)) {
+            // THE HEARTBEAT (gap fad81ea P1): a transport failure IS a health
+            // signal — recorded for free, no probe spent.
+            self::record_heartbeat((int) $site->id, false, $response->get_error_message());
             return $response;
         }
+        $status = (int) wp_remote_retrieve_response_code($response);
+        // Any HTTP ANSWER proves the site alive (a 404/401 is an answer);
+        // only 5xx = the site is up but broken — recorded as unhealthy.
+        self::record_heartbeat((int) $site->id, $status < 500, $status >= 500 ? sprintf('HTTP %d', $status) : null);
         return array(
-            'status' => (int) wp_remote_retrieve_response_code($response),
+            'status' => $status,
             'body'   => json_decode(wp_remote_retrieve_body($response), true),
         );
+    }
+
+    /**
+     * Per-site health record (gap fad81ea): every real site interaction
+     * writes it (source 'heartbeat'); the cron probe writes the same shape
+     * (source 'probe'). ONE map, autoload off — the dashboard's dots read
+     * THIS, never live tests.
+     *
+     * @param int         $site_id Site id.
+     * @param bool        $ok      Healthy?
+     * @param string|null $error   The failure, when not.
+     * @param string      $source  'heartbeat' | 'probe'.
+     * @return void
+     */
+    public static function record_heartbeat(int $site_id, bool $ok, ?string $error = null, string $source = 'heartbeat'): void
+    {
+        if ($site_id <= 0) {
+            return;
+        }
+        $map = get_option('pcm_site_health', array());
+        if (!is_array($map)) {
+            $map = array();
+        }
+        // THE FLAP GUARD (gap 23955b9 — the random red dot): ONE transport
+        // blip (this machine's proven intermittent AV SSL-timeouts, a slow
+        // site's cURL 28) must never paint a healthy site red. The stored
+        // verdict flips to unhealthy only after failThreshold CONSECUTIVE
+        // failures (hub data, merge-seeded); ONE success heals instantly
+        // and resets the counter. The dots read the same map as always —
+        // the entry's `fails` counter is additive.
+        $cfg = get_option('pcm_sites_health_check');
+        $cfg = is_array($cfg) ? $cfg : array();
+        if (!isset($cfg['failThreshold'])) {
+            $cfg['failThreshold'] = 2;
+            update_option('pcm_sites_health_check', $cfg, false);
+        }
+        $threshold = max(1, (int) $cfg['failThreshold']);
+        $prev      = is_array($map[$site_id] ?? null) ? $map[$site_id] : array();
+        $fails     = $ok ? 0 : ((int) ($prev['fails'] ?? 0)) + 1;
+        $verdict   = $ok ? true : ($fails >= $threshold ? false : (bool) ($prev['ok'] ?? true));
+        $map[$site_id] = array(
+            'ok'     => $verdict,
+            'error'  => $verdict ? null : (string) ($error ?? __('The site did not answer.', 'power-creatives')),
+            'at'     => time(),
+            'source' => $source,
+            'fails'  => $fails,
+        );
+        update_option('pcm_site_health', $map, false);
+    }
+
+    /**
+     * The stored health map — millisecond reads at ANY fleet size.
+     *
+     * @return array<int, array{ok:bool,error:?string,at:int,source:string}>
+     */
+    public static function health_map(): array
+    {
+        $map = get_option('pcm_site_health', array());
+        return is_array($map) ? $map : array();
+    }
+
+    /**
+     * THE PROBE QUEUE (gap fad81ea P3): actively test ONLY the sites whose
+     * heartbeat is stale — real traffic keeps busy sites verified for free;
+     * the probe visits the silent ones. Cadence/staleness/batch are hub
+     * DATA. Runs on WP-cron; each run is bounded (maxPerRun × timeout).
+     *
+     * @return void
+     */
+    public static function probe_stale_sites(): void
+    {
+        $cfg = get_option('pcm_sites_health_check');
+        if (!is_array($cfg)) {
+            $cfg = array();
+        }
+        $cfg += array('timeoutS' => 5, 'staleS' => 900, 'maxPerRun' => 3, 'intervalS' => 300);
+        update_option('pcm_sites_health_check', $cfg, false);
+
+        global $wpdb;
+        $table = PCM_Schema::table('sites');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $sites = $wpdb->get_results("SELECT * FROM {$table}");
+        $map   = self::health_map();
+        $now   = time();
+        $stale = array_values(array_filter((array) $sites, static function ($s) use ($map, $now, $cfg) {
+            $rec = $map[(int) $s->id] ?? null;
+            return $rec === null || ($now - (int) ($rec['at'] ?? 0)) > (int) $cfg['staleS'];
+        }));
+        // Oldest heartbeat first — nobody starves.
+        usort($stale, static fn($a, $b): int => ((int) ($map[(int) $a->id]['at'] ?? 0)) <=> ((int) ($map[(int) $b->id]['at'] ?? 0)));
+        foreach (array_slice($stale, 0, max(1, (int) $cfg['maxPerRun'])) as $site) {
+            try {
+                self::test_connection($site, max(1, (int) $cfg['timeoutS']));
+                self::record_heartbeat((int) $site->id, true, null, 'probe');
+            } catch (\Throwable $e) {
+                self::record_heartbeat((int) $site->id, false, $e->getMessage(), 'probe');
+            }
+        }
     }
 
     /**
@@ -267,7 +372,7 @@ class PCM_Sites_Service
      * @param object $site Site DB row.
      * @return array Connection result with site info.
      */
-    public static function test_connection(object $site): array
+    public static function test_connection(object $site, int $timeout = 15): array
     {
         $password = self::decrypt_password($site->appPassword);
         // Use the `?rest_route=` form, NOT pretty `/wp-json/...`: the latter 404s
@@ -279,7 +384,7 @@ class PCM_Sites_Service
             'headers' => array(
                 'Authorization' => 'Basic ' . base64_encode($site->username . ':' . $password),
             ),
-            'timeout'   => 15,
+            'timeout'   => max(1, $timeout),
             'sslverify' => true,
         ));
 

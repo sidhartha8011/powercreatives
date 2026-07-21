@@ -334,6 +334,29 @@ class PCM_Schema
         self::migrate_brands_columns($prefix);
         self::migrate_brands_domain($prefix);
 
+        // ── Brand business units (Business Spine P1, v1.43.0) ──
+        // A brand's 0..n physical/logical locations; exactly one PRIMARY.
+        // Two-layer storage per unit (the proven refresh-survival law):
+        // `fetched` = auto-sourced fields JSON, `manual` = human corrections
+        // JSON (always win, survive every refresh), `sources` = per-key
+        // origin of fetched values (gbp / scrape / maps-paste / platform).
+        // Brands never reference sites — sites carry businessUnitId and
+        // CONSUME this table (owner dependency ruling 2026-07-17).
+        $sql = "CREATE TABLE {$prefix}brand_business_units (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            brandId int(11) NOT NULL,
+            label varchar(256) DEFAULT '' NOT NULL,
+            isPrimary tinyint(1) DEFAULT 0 NOT NULL,
+            fetched longtext DEFAULT NULL,
+            manual longtext DEFAULT NULL,
+            sources longtext DEFAULT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_brandId (brandId)
+        ) $charset_collate;";
+        dbDelta($sql);
+
         // ── Brand Assets ──
         $sql = "CREATE TABLE {$prefix}brand_assets (
             id int(11) NOT NULL AUTO_INCREMENT,
@@ -501,6 +524,7 @@ class PCM_Schema
             status varchar(50) DEFAULT 'active' NOT NULL,
             connectMethod varchar(20) DEFAULT 'password' NOT NULL,
             brandId int(11) DEFAULT NULL,
+            businessUnitId int(11) DEFAULT NULL,
             lastSyncAt datetime DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -911,6 +935,52 @@ class PCM_Schema
                 $dupe->domain,
                 (int)$dupe->keep_id
             ));
+        }
+    }
+
+    /**
+     * Business Spine P1 (v1.43.0): move per-brand GBP option records
+     * (`pcm_seo_gbp_{brandId}` = {gbp, overrides}) into the brand's PRIMARY
+     * business unit (fetched = gbp, manual = overrides, sources = all-'gbp').
+     * Idempotent: a brand that already has units is skipped; each option is
+     * DELETED only after its unit row landed (the named deletion that ships
+     * with its replacement). Installs with no options no-op honestly.
+     *
+     * @return void
+     */
+    public static function migrate_gbp_to_business_units(): void
+    {
+        global $wpdb;
+        $units = self::table('brand_business_units');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $names = $wpdb->get_col(
+            "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE 'pcm\\_seo\\_gbp\\_%'"
+        );
+        foreach (($names ?: array()) as $name) {
+            $brand_id = (int) substr((string) $name, strlen('pcm_seo_gbp_'));
+            if ($brand_id <= 0) {
+                continue;
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $has = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$units} WHERE brandId = %d",
+                $brand_id
+            ));
+            if ($has === 0) {
+                $stored    = get_option($name, array());
+                $gbp       = is_array($stored['gbp'] ?? null) ? $stored['gbp'] : array();
+                $overrides = is_array($stored['overrides'] ?? null) ? $stored['overrides'] : array();
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->insert($units, array(
+                    'brandId'   => $brand_id,
+                    'label'     => '',
+                    'isPrimary' => 1,
+                    'fetched'   => wp_json_encode($gbp),
+                    'manual'    => wp_json_encode($overrides),
+                    'sources'   => wp_json_encode(array_fill_keys(array_keys($gbp), 'gbp')),
+                ), array('%d', '%s', '%d', '%s', '%s', '%s'));
+            }
+            delete_option($name);
         }
     }
 

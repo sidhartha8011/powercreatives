@@ -37,6 +37,8 @@ class PCM_REST_Sites extends PCM_REST_Base
             array('DELETE', '/sites/(?P<id>\d+)',              'delete_site'),
             array('POST',   '/sites/(?P<id>\d+)/publish',      'publish_article'),
             array('POST',   '/sites/(?P<id>\d+)/test',         'test_connection'),
+            // Batch connector health (gap 89ef71a): the SEO tab dots' ONE call.
+            array('GET',    '/sites/health',                   'sites_health'),
             array('POST',   '/sites/(?P<id>\d+)/gsc-verify',   'gsc_verify_site'),
             array('POST',   '/sites/(?P<id>\d+)/gsc-preview',  'gsc_preview'),
             array('POST',   '/sites/update-connectors',        'update_connectors'),
@@ -273,6 +275,20 @@ class PCM_REST_Sites extends PCM_REST_Base
 
         $site = PCM_DB::get_site($site_id, (int)$pcm_user->id);
 
+        // AUTO-MAP (Business Spine, gap 616870f): an EXACT host match against
+        // a brand's website is a deterministic fact, never a guess — link it
+        // so the business record flows without a manual step. Anything less
+        // than exact stays unmapped (the SEO card offers the suggestion).
+        if (class_exists('PCM_Brands_Service')) {
+            $match = (new PCM_Brands_Service())->find_by_website((int) $pcm_user->id, $url);
+            $host  = strtolower((string) (wp_parse_url($url, PHP_URL_HOST) ?: ''));
+            $bhost = $match ? strtolower((string) (wp_parse_url((string) ($match->website ?? ''), PHP_URL_HOST) ?: ($match->domain ?? ''))) : '';
+            if ($match && $host !== '' && ($bhost === $host || $bhost === 'www.' . $host || 'www.' . $bhost === $host)) {
+                PCM_DB::update_site($site_id, (int) $pcm_user->id, array('brandId' => (int) $match->id));
+                $site = PCM_DB::get_site($site_id, (int) $pcm_user->id);
+            }
+        }
+
         // As soon as a site is added, try to register + verify it in Google Search Console
         // (add property → META token → push to connector → verify). Best-effort by design:
         // the site is saved regardless, and the report tells the UI what happened.
@@ -380,6 +396,13 @@ class PCM_REST_Sites extends PCM_REST_Base
             // 0 / null disconnects.
             $update['brandId'] = absint($params['brandId']) ?: null;
         }
+        if (array_key_exists('businessUnitId', $params)) {
+            // The unit pin (Business Spine, gap 616870f): which of the
+            // brand's business units THIS site speaks for; 0/null = the
+            // brand's primary. THE CONNECTION LIVES HERE — sites own the
+            // mapping, SEO only consumes (owner ruling 2026-07-17).
+            $update['businessUnitId'] = absint($params['businessUnitId']) ?: null;
+        }
 
         if (empty($update)) {
             return $this->error('No valid fields to update.');
@@ -414,6 +437,40 @@ class PCM_REST_Sites extends PCM_REST_Base
     /**
      * Test connection to a WordPress site.
      */
+    /**
+     * GET /sites/health — every site's connector health in ONE call
+     * (gap 89ef71a). Tests run SEQUENTIALLY server-side (the 2-worker
+     * law: N frontend fan-out would freeze the hub) with a short
+     * hub-tunable timeout; a failing site reports its error honestly,
+     * never blocks the others.
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response
+     */
+    public function sites_health(WP_REST_Request $request): WP_REST_Response
+    {
+        // STORED reads only (gap fad81ea P2 — the mount-blocking sequential
+        // test loop shipped earlier today is DELETED, replaced by the
+        // heartbeat/probe map): milliseconds at any fleet size. `ok` null =
+        // never measured yet (the probe queue will visit it) — the dot stays
+        // quiet, a failure is never invented.
+        $pcm_user = $this->get_current_pcm_user();
+        require_once __DIR__ . '/service.php';
+        $map    = PCM_Sites_Service::health_map();
+        $health = array();
+        foreach (PCM_DB::get_user_sites((int) $pcm_user->id) as $site) {
+            $rec = $map[(int) $site->id] ?? null;
+            $health[(int) $site->id] = $rec === null
+                ? array('ok' => null, 'error' => null, 'ageS' => null)
+                : array(
+                    'ok'    => (bool) $rec['ok'],
+                    'error' => $rec['error'] ?? null,
+                    'ageS'  => max(0, time() - (int) ($rec['at'] ?? 0)),
+                );
+        }
+        return $this->success(array('health' => $health));
+    }
+
     public function test_connection(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $pcm_user = $this->get_current_pcm_user();

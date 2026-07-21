@@ -94,6 +94,8 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/sites/(?P<id>\d+)/url-usage', 'remote_url_usage', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-type', 'remote_save_page_type', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-optimize', 'remote_optimize_section', array(), 'manage_options'),
+            // THE FEATHERWEIGHT CHECK (gap e48b1ff): version+fingerprint compare, no render.
+            array('GET', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-state', 'remote_page_state', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions', 'remote_section_versions', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/page-versions', 'remote_page_versions', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/section-versions/(?P<vid>\d+)/delete', 'remote_delete_section_version', array(), 'manage_options'),
@@ -133,6 +135,15 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/site/generate', 'site_generate', array(), 'manage_options'),
             array('POST', '/seo/site/restore',  'site_restore',  array(), 'manage_options'),
             // GBP (business identity → admin only).
+            // THE BUSINESS CARD (gap 616870f): SEO consumes — reads the
+            // resolved per-site record, writes ONLY its own site-override
+            // layer + orchestrates brand-unit merges; the site↔brand
+            // CONNECTION itself is written through the SITES module.
+            array('GET',  '/seo/sites/(?P<id>\d+)/business',            'business_card',       array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/business/overrides',  'business_overrides',  array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/business/refresh',    'business_refresh',    array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/business/maps',       'business_maps',       array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/business/place',      'business_place',      array(), 'manage_options'),
             array('POST', '/seo/gbp/search',                   'gbp_search',    array(), 'manage_options'),
             array('POST', '/seo/gbp/brand/(?P<brand>\d+)/save', 'gbp_save',     array(), 'manage_options'),
             array('GET',  '/seo/gbp/brand/(?P<brand>\d+)',      'gbp_get',      array(), 'manage_options'),
@@ -244,7 +255,30 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        return $this->success(PCM_SEO_Service::remote_list_content($site));
+        // SWR (gap fad81ea P4): ?cached=1 answers from the hub's stored copy
+        // in milliseconds — the table renders INSTANTLY while the live fetch
+        // runs as a separate background request. A cache miss returns
+        // {miss:true} (not an empty list — an absent copy must never render
+        // as "no content"). The reply shape for rows stays the bare array
+        // (frozen frontend contract).
+        if ($request->get_param('cached')) {
+            $cache = get_option('pcm_remote_content_cache');
+            $rec   = is_array($cache) ? ($cache[(int) $site->id] ?? null) : null;
+            return $this->success(is_array($rec) && is_array($rec['rows'] ?? null)
+                ? $rec['rows']
+                : array('miss' => true));
+        }
+        $rows = PCM_SEO_Service::remote_list_content($site);
+        if (is_array($rows)) {
+            // The live truth feeds the store — next mount opens instantly.
+            $cache = get_option('pcm_remote_content_cache');
+            if (!is_array($cache)) {
+                $cache = array();
+            }
+            $cache[(int) $site->id] = array('rows' => array_slice($rows, 0, 500), 'savedAt' => time());
+            update_option('pcm_remote_content_cache', $cache, false);
+        }
+        return $this->success($rows);
     }
 
     /** POST /seo/sites/{id}/preview — fetch a connected site's page HTML authenticated
@@ -659,7 +693,9 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        return $this->success($this->service->list_page_versions((int) $user->id, $site, absint($request->get_param('post'))));
+        // ?rowsOnly=1 = the editor's OPEN path (pure DB read); without it the
+        // reply includes the remote-assembled Original (gap 02d3cb7 D1).
+        return $this->success($this->service->list_page_versions((int) $user->id, $site, absint($request->get_param('post')), (bool) $request->get_param('rowsOnly')));
     }
 
     /** POST /seo/sites/{id}/content/{post}/section-versions/{vid}/delete — delete one saved version. */
@@ -679,6 +715,23 @@ class PCM_REST_SEO extends PCM_REST_Base
 
     /** POST /seo/sites/{id}/content/{post}/section-optimize — AI-rewrite a whole
      *  section / draft a new one (block HTML, NOT saved — staged). */
+    /**
+     * GET /seo/sites/{id}/content/{post}/page-state — the featherweight
+     * sync check the editor's glyph runs in the background (gap e48b1ff).
+     *
+     * @param WP_REST_Request $request Request object.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function remote_page_state(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(PCM_SEO_Service::page_state_compare($site, absint($request->get_param('post')), (int) $user->id));
+    }
+
     public function remote_optimize_section(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $user = $this->get_current_pcm_user();
@@ -697,7 +750,12 @@ class PCM_REST_SEO extends PCM_REST_Base
         // the note so the server can enforce the human-editor contract and
         // measure retention against it.
         $draft = wp_kses_post((string) ($params['draft'] ?? ''));
-        $result = PCM_SEO_Service::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id, $draft);
+        // THE CHANGE-CARD REVIEW (gap 0a0a3c3): the envelope contract is
+        // requested per call; purposes = the run's teacher ids, the only
+        // legal `why` values (the verifier blanks anything else).
+        $report_changes = !empty($params['reportChanges']);
+        $purposes       = array_values(array_filter(array_map('sanitize_key', (array) ($params['purposes'] ?? array()))));
+        $result = PCM_SEO_Service::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id, $draft, $report_changes, $purposes);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -1395,6 +1453,193 @@ class PCM_REST_SEO extends PCM_REST_Base
     // GBP (Google Business Profile)
     // =====================================================================
 
+    // ── THE BUSINESS CARD (gap 616870f) ──
+
+    /** GET /seo/sites/{id}/business — the resolved per-site record + mapping
+     *  context (units of the mapped brand; exact-domain suggestion when
+     *  unmapped — a deterministic fact, never a guess). */
+    public function business_card(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        $record['units'] = $record['brandId'] > 0 ? PCM_Brands_Service::list_business_units($record['brandId']) : array();
+        // The DYNAMIC provider name (owner correction, gap 23955b9): the
+        // working line names the ACTUAL configured fetcher — registry
+        // display name of whatever seo_gbp_provider points at. Never a
+        // hardcoded vendor string anywhere in the UI.
+        $provider_id = (string) PCM_Settings::get('seo_gbp_provider', 'apify');
+        $reg = PCM_Providers::get($provider_id);
+        $record['providerName'] = is_array($reg) ? (string) ($reg['name'] ?? $provider_id) : $provider_id;
+        $record['suggestion'] = null;
+        if ($record['brandId'] === 0) {
+            $match = (new PCM_Brands_Service())->find_by_website((int) $user->id, (string) $site->url);
+            $host  = strtolower((string) (wp_parse_url((string) $site->url, PHP_URL_HOST) ?: ''));
+            $b_host = $match ? strtolower((string) (wp_parse_url((string) ($match->website ?? ''), PHP_URL_HOST) ?: ($match->domain ?? ''))) : '';
+            if ($match && $host !== '' && ($b_host === $host || $b_host === 'www.' . $host || 'www.' . $b_host === $host)) {
+                $record['suggestion'] = array('brandId' => (int) $match->id, 'name' => (string) $match->name);
+            }
+        }
+        return $this->success($record);
+    }
+
+    /** POST /seo/sites/{id}/business/overrides — the SITE layer (SEO's own). */
+    public function business_overrides(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = PCM_SEO_Service::save_site_business_overrides((int) $site->id, (array) ($params['fields'] ?? array()));
+        return $result instanceof WP_Error ? $result : $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/business/refresh — re-scrape the site's OWN
+     *  visible HTML into the mapped unit's fetched layer (tag 'scrape');
+     *  manual corrections survive by construction. */
+    public function business_refresh(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        if ($record['brandId'] === 0) {
+            return $this->error(__('Link this site to a brand first — the refresh writes into the brand\'s business unit.', 'power-creatives'), 409, 'pcm_seo_biz_unmapped');
+        }
+        // ASK-FIRST refresh (gap 670d0e0): the popover's CONFIRMED url is the
+        // one scraped — never a guessed system URL — and it is remembered as
+        // this site's Indexed URL (site layer).
+        $params      = $request->get_json_params() ?: array();
+        $custom_url  = esc_url_raw((string) ($params['url'] ?? ''));
+        $scrape_url  = ($custom_url !== '' && preg_match('#^https?://#i', $custom_url)) ? $custom_url : (string) $site->url;
+        if ($custom_url !== '' && $scrape_url === $custom_url) {
+            PCM_SEO_Service::save_site_business_overrides((int) $site->id, array('indexedurl' => $custom_url));
+        }
+        $scraped = (new PCM_Brands_Service())->scrape_and_prepare($scrape_url);
+        $info    = (array) ($scraped['businessInfo'] ?? array());
+        $fields  = array_filter(array(
+            'name'        => (string) ($info['name'] ?? ''),
+            'description' => (string) ($info['business_summary'] ?? ''),
+            'niche'       => (string) ($info['niche'] ?? ''),
+            'website'     => (string) ($info['website'] ?? ''),
+        ), static fn($v) => $v !== '');
+        if (empty($fields)) {
+            return $this->error(__('The site scrape returned no usable business fields — nothing was changed.', 'power-creatives'), 502, 'pcm_seo_biz_scrape_empty');
+        }
+        $saved = PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => $fields, 'sourceTag' => 'scrape'), $record['unitId']);
+        if ($saved instanceof WP_Error) {
+            return $saved;
+        }
+        return $this->success(PCM_SEO_Service::business_record_for_site((int) $site->id));
+    }
+
+    /** POST /seo/sites/{id}/business/maps — ONE pasted Maps Share URL →
+     *  CID + coordinates + embed URL into the mapped unit (tag 'maps-paste').
+     *  The zero-API Google surface. */
+    public function business_maps(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        if ($record['brandId'] === 0) {
+            return $this->error(__('Link this site to a brand first — the Maps details belong to the brand\'s business unit.', 'power-creatives'), 409, 'pcm_seo_biz_unmapped');
+        }
+        $params = $request->get_json_params() ?: array();
+        $url    = (string) ($params['url'] ?? '');
+        $parsed = PCM_SEO_Service::parse_maps_url($url);
+        // FLOW-ORDER FIX (gap 972481e, live-proven): short links (share.google,
+        // maps.app.goo.gl) legitimately parse to NOTHING locally — that is
+        // NOT fatal; the resolver + provider below do the real work. Only a
+        // foreign host stays fatal.
+        if ($parsed instanceof WP_Error) {
+            if ($parsed->get_error_code() !== 'pcm_seo_maps_unparsed') {
+                return $parsed;
+            }
+            $parsed = array('fields' => array('mapsShareUrl' => esc_url_raw($url)));
+        }
+        $saved = PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => $parsed['fields'], 'sourceTag' => 'maps-paste'), $record['unitId']);
+        if ($saved instanceof WP_Error) {
+            return $saved;
+        }
+        // GOOGLE NATIVE (gap 670d0e0): with a google_places key the SAME paste
+        // fills the WHOLE record — resolve the place, pull the wide-mask
+        // details, merge tagged 'gbp'. No key / resolve failure = the local
+        // cid/geo fields above stand alone, the reason NAMED in the reply —
+        // never a silent half-result.
+        $google = array('filled' => false, 'error' => null);
+        $pid    = PCM_SEO_GBP::resolve_share_url($url, (int) $user->id);
+        if ($pid instanceof WP_Error) {
+            $google['error'] = $pid->get_error_message();
+            // The resolver may still have reached a LONG url whose local
+            // fields (cid/geo) are extractable — salvage them (gap 972481e).
+            $err_data = $pid->get_error_data();
+            if (is_array($err_data) && !empty($err_data['resolvedUrl'])) {
+                $late = PCM_SEO_Service::parse_maps_url((string) $err_data['resolvedUrl']);
+                if (!($late instanceof WP_Error)) {
+                    PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => $late['fields'], 'sourceTag' => 'maps-paste'), $record['unitId']);
+                }
+            }
+        } else {
+            $raw = PCM_SEO_GBP::provider((int) $user->id)->details($pid, PCM_SEO_GBP::default_lang());
+            if (isset($raw['error'])) {
+                $google['error'] = (string) $raw['error'];
+            } elseif (!empty($raw)) {
+                $normalized = PCM_SEO_GBP::normalize($raw);
+                $merge      = PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => $normalized, 'sourceTag' => 'gbp'), $record['unitId']);
+                $google['filled'] = !($merge instanceof WP_Error);
+                if ($merge instanceof WP_Error) {
+                    $google['error'] = $merge->get_error_message();
+                }
+            }
+        }
+        $out = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        $out['google'] = $google;
+        return $this->success($out);
+    }
+
+    /** POST /seo/sites/{id}/business/place — fill the mapped unit from ONE
+     *  picked place id (the share-link-independent path, gap 972481e):
+     *  Find on Google → pick → the whole record incl. the schema ids. */
+    public function business_place(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        if ($record['brandId'] === 0) {
+            return $this->error(__('Link this site to a brand first — the place details belong to the brand\'s business unit.', 'power-creatives'), 409, 'pcm_seo_biz_unmapped');
+        }
+        $params   = $request->get_json_params() ?: array();
+        $place_id = sanitize_text_field((string) ($params['placeId'] ?? ''));
+        if (!preg_match('/^ChIJ[0-9A-Za-z_-]{10,}$/', $place_id)) {
+            return $this->error(__('A valid Google place id is required.', 'power-creatives'), 400, 'pcm_seo_biz_bad_place');
+        }
+        $raw = PCM_SEO_GBP::provider((int) $user->id)->details($place_id, PCM_SEO_GBP::default_lang());
+        if (isset($raw['error'])) {
+            return $this->error((string) $raw['error'], 502, 'pcm_seo_gbp_error');
+        }
+        if (empty($raw)) {
+            return $this->error(__('No details returned for that place.', 'power-creatives'), 502, 'pcm_seo_gbp_empty');
+        }
+        $saved = PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => PCM_SEO_GBP::normalize($raw), 'sourceTag' => 'gbp'), $record['unitId']);
+        if ($saved instanceof WP_Error) {
+            return $saved;
+        }
+        return $this->success(PCM_SEO_Service::business_record_for_site((int) $site->id));
+    }
+
     /** POST /seo/gbp/search — search places (via the configured provider). */
     public function gbp_search(WP_REST_Request $request): WP_REST_Response
     {
@@ -1404,7 +1649,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->error('Search query is required.', 400, 'pcm_seo_gbp_no_query');
         }
         $lang   = sanitize_text_field((string) ($params['language'] ?? PCM_SEO_GBP::default_lang()));
-        $raw    = PCM_SEO_GBP::provider()->search($query, $lang);
+        $raw    = PCM_SEO_GBP::provider((int) $this->get_current_pcm_user()->id)->search($query, $lang);
         if (isset($raw['error'])) {
             return $this->error((string) $raw['error'], 502, 'pcm_seo_gbp_error');
         }
@@ -1422,7 +1667,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->error('brand and placeId are required.', 400, 'pcm_seo_gbp_bad_input');
         }
         $lang = sanitize_text_field((string) ($params['language'] ?? PCM_SEO_GBP::default_lang()));
-        $raw  = PCM_SEO_GBP::provider()->details($place_id, $lang);
+        $raw  = PCM_SEO_GBP::provider((int) $this->get_current_pcm_user()->id)->details($place_id, $lang);
         if (isset($raw['error'])) {
             return $this->error((string) $raw['error'], 502, 'pcm_seo_gbp_error');
         }

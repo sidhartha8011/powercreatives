@@ -73,6 +73,10 @@ export interface CompiledDirective {
   text: string;
   purposes: string[];
   sources: number[];
+  /** THE ROUTER (gap eeec6b9): the section indexes this directive
+   *  concerns. Absent/empty = unrouted — it rides every sent section
+   *  (the honest floor, never a dropped intent). */
+  targets?: number[];
 }
 
 /** Purpose pill labels (presentation only — teacherIds stay the truth). */

@@ -2442,25 +2442,14 @@ class PCM_SEO_Service
     {
         $url    = (string) $site->url;
         $host   = (string) wp_parse_url($url, PHP_URL_HOST);
-        $name   = !empty($site->name) ? (string) $site->name : $host;
         $locale = get_locale();
-        $gbp    = array();
-        $brand_id = (int) ($site->brandId ?? 0);
-        if ($brand_id > 0) {
-            global $wpdb;
-            $brands = PCM_Schema::table('brands');
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $brand = $wpdb->get_row($wpdb->prepare("SELECT name FROM {$brands} WHERE id = %d", $brand_id));
-            if ($brand && !empty($brand->name)) {
-                $name = (string) $brand->name;
-            }
-            if (class_exists('PCM_SEO_GBP')) {
-                $gbp = (array) (PCM_SEO_GBP::get_for_brand($brand_id)['resolved'] ?? array());
-                if (!empty($gbp['name'])) {
-                    $name = (string) $gbp['name'];
-                }
-            }
-        }
+        // THE SITE RESOLVER (gap 616870f): the full ladder — site SEO
+        // overrides > unit > brand basics > site basics — reaches EVERY
+        // remote generation; unit pinning + the owner's per-site
+        // corrections included. Fallbacks preserved: no brand = site
+        // name/url exactly as before.
+        $gbp  = (array) (self::business_record_for_site((int) ($site->id ?? 0))['fields'] ?? array());
+        $name = !empty($gbp['name']) ? (string) $gbp['name'] : (!empty($site->name) ? (string) $site->name : $host);
         return array(
             'title'                     => (string) ($row['title'] ?? ''),
             'primary_keyword'           => (string) ($row['primaryKeyword'] ?? ''),
@@ -2925,6 +2914,13 @@ class PCM_SEO_Service
             // the missing marker tells callers the served view is unavailable.
             'view'  => (string) ($res['body']['view'] ?? 'input'),
             'error' => isset($res['body']['error']) ? (string) $res['body']['error'] : '',
+            // The connector's page-state ECHO (frozen contract: the value the
+            // last accepted push carried, stored — never recomputed). NULL on
+            // pre-versioning connectors: honest ignorance, not a state.
+            'pageState' => (isset($res['body']['pageState']) && is_array($res['body']['pageState'])) ? array(
+                'version'     => (int) ($res['body']['pageState']['version'] ?? 0),
+                'fingerprint' => (string) ($res['body']['pageState']['fingerprint'] ?? ''),
+            ) : null,
         );
     }
 
@@ -3151,15 +3147,16 @@ class PCM_SEO_Service
                 // SAME parse the rows come from, never raw builder soup.
                 'contentHtml' => self::assemble_content_html($served['html'], $parsed['headings']),
                 'error'       => '',
+                'pageState'   => $served['pageState'],
             );
         }
         $in = self::remote_fetch_snapshot($site, $post_id, 'input');
         if ($in !== null && $in['html'] !== '') {
             $rules  = $user_id ? self::heading_instructions((int) $user_id, (int) $site->id, $post_id) : array();
             $parsed = self::parse_page_snapshot($in['html'], $rules);
-            return array('view' => 'input', 'tier' => $in['tier'], 'headings' => $parsed['headings'], 'nodes' => $parsed['nodes'], 'error' => '');
+            return array('view' => 'input', 'tier' => $in['tier'], 'headings' => $parsed['headings'], 'nodes' => $parsed['nodes'], 'error' => '', 'pageState' => $in['pageState']);
         }
-        return array('view' => 'served', 'tier' => (string) $served['tier'], 'headings' => array(), 'nodes' => array(), 'error' => (string) ($served['error'] !== '' ? $served['error'] : 'loopback_blocked'));
+        return array('view' => 'served', 'tier' => (string) $served['tier'], 'headings' => array(), 'nodes' => array(), 'error' => (string) ($served['error'] !== '' ? $served['error'] : 'loopback_blocked'), 'pageState' => $served['pageState']);
     }
 
     /**
@@ -3504,6 +3501,9 @@ class PCM_SEO_Service
                 // The editor header's context controls (owner order 2026-07-13).
                 'pageType'  => $user_id ? self::get_page_type($user_id, (int) $site->id, $post_id) : '',
                 'brandId'   => (int) ($site->brandId ?? 0),
+                // Page versioning (frozen contract, 2026-07-16): hub record +
+                // drift verdict from the connector's echo in this snapshot.
+                'pageState' => self::page_state_reply((int) $site->id, $post_id, $inv['pageState']),
             );
             if (isset($inv['contentHtml'])) {
                 $out['contentHtml'] = (string) $inv['contentHtml'];
@@ -3521,6 +3521,9 @@ class PCM_SEO_Service
             'view'      => 'input',
             'headings'  => $headings,
             'nodes'     => (array) $meta['nodes'],
+            // Pre-3.0 fleet: no snapshot, no echo — the record with an honest
+            // no-echo verdict (drifted:false).
+            'pageState' => self::page_state_reply((int) $site->id, $post_id, null),
         );
         if (!empty($meta['error'])) {
             $out['error'] = (string) $meta['error'];
@@ -3764,9 +3767,13 @@ class PCM_SEO_Service
      * caches). Capability-checked first so an old connector fails honestly.
      *
      * @param array[] $rules Rule rows shaped per rule schema v1.
+     * @param array{version:int,fingerprint:string} $page_state The state this
+     *        push establishes (frozen contract keys) — the connector stores it
+     *        beside the set and echoes it in the snapshot reply; pre-versioning
+     *        connectors ignore the key.
      * @return array{stored:int}|\WP_Error
      */
-    public static function push_rules(object $site, int $post_id, array $rules)
+    public static function push_rules(object $site, int $post_id, array $rules, array $page_state)
     {
         self::ensure_sites_service();
         // v2 ONLY when the set contains section targets — posts with plain
@@ -3835,6 +3842,10 @@ class PCM_SEO_Service
             'schemaVersion' => $needs_v5 ? 5 : ($needs_v4 ? 4 : ($needs_v3 ? 3 : ($needs_v2 ? 2 : 1))),
             'postId'        => $post_id,
             'rules'         => array_values($rules),
+            'pageState'     => array(
+                'version'     => (int) ($page_state['version'] ?? 0),
+                'fingerprint' => (string) ($page_state['fingerprint'] ?? ''),
+            ),
         ), 60);
         if (is_wp_error($res)) {
             return new WP_Error('pcm_seo_rules_push', $res->get_error_message(), array('status' => 502));
@@ -3936,6 +3947,189 @@ class PCM_SEO_Service
         }, $rows);
     }
 
+    // =====================================================================
+    // PAGE STATE (page versioning, frozen contracts 2026-07-16) — ONE
+    // version+fingerprint per "siteId:postId": the hub records it beside
+    // every accepted push, the connector stores the VALUE and echoes it
+    // (never recomputes), the inventory reply compares echo vs record.
+    // =====================================================================
+
+    /**
+     * Content fingerprint of a NET rule set (schema shape, rules_to_schema
+     * output) — sha1 of its normalized JSON. THE one fingerprint function
+     * (frozen contract): the connector receives the value and echoes it,
+     * nothing anywhere recomputes it from served HTML.
+     *
+     * Normalization = CONTENT identity, not storage identity: row ids are
+     * dropped (rollback/replace re-creates rows without changing what
+     * serves), map keys sort recursively, and the rule LIST sorts by its
+     * encoded form (row order is a storage accident). Lists inside a rule
+     * (paragraphs, units) keep their order — order there IS content.
+     */
+    public static function page_fingerprint(array $rules): string
+    {
+        $normalize = static function ($value) use (&$normalize) {
+            if (!is_array($value)) {
+                return $value;
+            }
+            $out = array();
+            foreach ($value as $k => $v) {
+                $out[$k] = $normalize($v);
+            }
+            if ($out !== array_values($out)) {
+                ksort($out);
+            }
+            return $out;
+        };
+        $encoded = array();
+        foreach ($rules as $rule) {
+            $rule = (array) $rule;
+            unset($rule['id']);
+            $encoded[] = (string) wp_json_encode($normalize($rule));
+        }
+        sort($encoded, SORT_STRING);
+        return sha1('[' . implode(',', $encoded) . ']');
+    }
+
+    /**
+     * The recorded page state for one "siteId:postId" (option 'pcm_page_state',
+     * the proven option-map pattern — no schema change). version 0 +
+     * fingerprint '' = never saved under versioning: the documented baseline,
+     * which the inventory reply reports as drifted:false (nothing recorded =
+     * nothing to drift from).
+     *
+     * @return array{version:int,fingerprint:string,savedAt:int}
+     */
+    public static function page_state(int $site_id, int $post_id): array
+    {
+        $map = get_option('pcm_page_state', array());
+        $rec = is_array($map) ? ($map[$site_id . ':' . $post_id] ?? null) : null;
+        return array(
+            'version'     => is_array($rec) ? (int) ($rec['version'] ?? 0) : 0,
+            'fingerprint' => is_array($rec) ? (string) ($rec['fingerprint'] ?? '') : '',
+            'savedAt'     => is_array($rec) ? (int) ($rec['savedAt'] ?? 0) : 0,
+        );
+    }
+
+    /**
+     * THE FEATHERWEIGHT CHECK (gap e48b1ff): local record vs the connector's
+     * /page-state answer — no page render anywhere. remote=null + error set
+     * when the site could not answer (an unanswered question is reported as
+     * unanswered, never as a verdict). brandId/pageType ride along so the
+     * editor's instant-open path needs NO inventory fetch for them.
+     *
+     * @return array{local:array,remote:?array,drifted:?bool,error:?string,brandId:int,pageType:string}
+     */
+    public static function page_state_compare(object $site, int $post_id, ?int $user_id = null): array
+    {
+        self::ensure_sites_service();
+        $local = self::page_state((int) $site->id, $post_id);
+        $out   = array(
+            'local'    => $local,
+            'remote'   => null,
+            'drifted'  => null,
+            'error'    => null,
+            'brandId'  => (int) ($site->brandId ?? 0),
+            'pageType' => ($user_id && $post_id) ? self::get_page_type($user_id, (int) $site->id, $post_id) : '',
+        );
+        // Timeout is hub DATA (read-through seed — the tunables law).
+        $cfg = get_option('pcm_seo_state_check');
+        if (!is_array($cfg) || !isset($cfg['timeoutS'])) {
+            $cfg = array('timeoutS' => 5);
+            add_option('pcm_seo_state_check', $cfg, '', false);
+        }
+        // $body MUST be null on GET: any non-null body is wp_json_encode()d to a
+        // STRING, and WP's cURL transport http_build_query()s GET data — a string
+        // there is a TypeError 500 before the request ever leaves the hub (the
+        // 2026-07-17 red-cloud root cause; this was the codebase's only array()-body GET).
+        $rep = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/page-state', array('post_id' => $post_id), null, max(1, (int) $cfg['timeoutS']));
+        if (is_wp_error($rep)) {
+            $out['error'] = $rep->get_error_message();
+            return $out;
+        }
+        // remote_rest answers {status, body} for EVERY HTTP status — only a
+        // 200 is an ANSWER. HONESTY (gap 89ef71a, proven probe): 404 means
+        // the site IS reachable but its connector predates the state check —
+        // name the fix, never call a reachable site unreachable.
+        $status = (int) ($rep['status'] ?? 0);
+        if ($status === 404) {
+            $out['error'] = __('The site\'s connector is outdated (needs 3.0.7+) — update it from the Sites module.', 'power-creatives');
+            return $out;
+        }
+        if ($status !== 200 || !is_array($rep['body'] ?? null)) {
+            $out['error'] = sprintf(__('The site answered the state check with HTTP %d.', 'power-creatives'), $status);
+            return $out;
+        }
+        $remote = array(
+            'version'     => (int) ($rep['body']['version'] ?? 0),
+            'fingerprint' => (string) ($rep['body']['fingerprint'] ?? ''),
+        );
+        $out['remote'] = $remote;
+        // Nothing recorded on either side = nothing to drift from (the
+        // documented pre-versioning baseline).
+        $out['drifted'] = ($local['version'] !== 0 || $remote['version'] !== 0)
+            ? ($local['fingerprint'] !== $remote['fingerprint'])
+            : false;
+        return $out;
+    }
+
+    /**
+     * The inventory reply's pageState block (frozen contract keys): the HUB
+     * RECORD is the reported state; drifted = the connector's ECHO disagreeing
+     * with it. An absent echo (pre-versioning connector, or a reply without
+     * the field) is honest ignorance — reported drifted:false, never a guess
+     * presented as truth.
+     *
+     * @param array{version:int,fingerprint:string}|null $echo Connector echo.
+     * @return array{version:int,fingerprint:string,drifted:bool}
+     */
+    private static function page_state_reply(int $site_id, int $post_id, ?array $echo): array
+    {
+        $record = self::page_state($site_id, $post_id);
+        return array(
+            'version'     => $record['version'],
+            'fingerprint' => $record['fingerprint'],
+            'drifted'     => is_array($echo) && (
+                (int) ($echo['version'] ?? 0) !== $record['version']
+                || (string) ($echo['fingerprint'] ?? '') !== $record['fingerprint']
+            ),
+        );
+    }
+
+    /** Record an ACCEPTED push's page state — called only after the connector stored the same pair. */
+    private static function write_page_state(int $site_id, int $post_id, int $version, string $fingerprint): void
+    {
+        $map = get_option('pcm_page_state', array());
+        $map = is_array($map) ? $map : array();
+        $map[$site_id . ':' . $post_id] = array('version' => $version, 'fingerprint' => $fingerprint, 'savedAt' => time());
+        update_option('pcm_page_state', $map, false);
+    }
+
+    /**
+     * W2 (replace-not-append): ids of page rule rows SUPERSEDED by the served
+     * truth — section/sectionInsert rows the served view attributes to no
+     * section serve nothing and can only stack (the observed 63-rule pile).
+     * sectionRemove rows are part of the NET set BY LAW (they stay while the
+     * doc omits their baseline section); every other target keeps its own
+     * lifecycle law (absorb/clean-revert) and is never swept here.
+     *
+     * @param array[] $rows          The page's rule rows (post_rule_rows shape).
+     * @param int[]   $live_rule_ids Rule ids the served inventory attributed.
+     * @return int[] Row ids that must die with the save.
+     */
+    public static function superseded_rule_ids(array $rows, array $live_rule_ids): array
+    {
+        $live = array_map('intval', $live_rule_ids);
+        $dead = array();
+        foreach ($rows as $r) {
+            $target = (string) ($r['target'] ?? '');
+            if (($target === 'section' || $target === 'sectionInsert') && !in_array((int) ($r['id'] ?? 0), $live, true)) {
+                $dead[] = (int) $r['id'];
+            }
+        }
+        return $dead;
+    }
+
     // NOTE (consolidation, 2026-07-11): save_paragraph_rule was DELETED with
     // its endpoints — paragraph-rule CREATION had zero UI callers (the page +
     // section editors superseded it). Existing paragraph rules keep serving
@@ -3990,15 +4184,45 @@ class PCM_SEO_Service
         }
     }
 
+    // ── THE SAVE TRANSACTION (gap ATOMIC-SAVE 2026-07-17): one user intent =
+    //    ONE push = ONE version. save_page_edits sets the flag (try/finally,
+    //    leak-proof); the TWO chokepoints below — every routed save path flows
+    //    through them — then defer instead of acting, and the transaction ends
+    //    with a single real push + a flush of the queued version rows.
+    //    Outside the flag nothing changes: single-section saves keep their
+    //    existing 1-save-1-push behavior. ──
+    /** @var bool Page-save transaction open: pushes stub, version rows queue. */
+    private static $push_deferred = false;
+    /** @var array<int,array{0:int,1:int,2:int,3:string,4:string,5:int,6:string}> record_version args queued until the commit push succeeds. */
+    private static $deferred_versions = array();
+
     /** Push a post's CURRENT hub rule set; on failure restore $snapshot and return the error. */
     private static function push_current_rules_or_rollback(int $user_id, object $site, int $post_id, array $snapshot)
     {
-        $rows = self::post_rule_rows($user_id, (int) $site->id, $post_id);
-        $push = self::push_rules($site, $post_id, self::rules_to_schema($rows));
+        if (self::$push_deferred) {
+            // Inside the save transaction the rows ARE the pending truth —
+            // the ONE commit push at the end transmits them (every push sends
+            // the full set, so intermediate pushes are redundant by
+            // construction — the gap's core fact).
+            return array('deferred' => true);
+        }
+        $rows   = self::post_rule_rows($user_id, (int) $site->id, $post_id);
+        $schema = self::rules_to_schema($rows);
+        // Page state rides EVERY push (frozen contract): the payload carries
+        // the NEXT record, the hub records it only after the connector
+        // accepted — hub record and connector echo can never disagree about
+        // an accepted push. A rejected push rolls the rows back and leaves
+        // the record untouched (the connector kept the previous set).
+        $next = array(
+            'version'     => self::page_state((int) $site->id, $post_id)['version'] + 1,
+            'fingerprint' => self::page_fingerprint($schema),
+        );
+        $push = self::push_rules($site, $post_id, $schema, $next);
         if ($push instanceof WP_Error) {
             self::restore_rule_rows($user_id, (int) $site->id, $post_id, $snapshot);
             return $push;
         }
+        self::write_page_state((int) $site->id, $post_id, $next['version'], $next['fingerprint']);
         return $push;
     }
 
@@ -4187,6 +4411,12 @@ class PCM_SEO_Service
      */
     private static function record_version(int $user_id, int $site_id, int $post_id, string $target, string $match_text, int $occurrence, string $replacement): void
     {
+        if (self::$push_deferred) {
+            // Save transaction: history rows must only exist for states the
+            // connector ACCEPTED — queued here, flushed after the commit push.
+            self::$deferred_versions[] = array($user_id, $site_id, $post_id, $target, $match_text, $occurrence, $replacement);
+            return;
+        }
         global $wpdb;
         $table = PCM_Schema::table('seo_rule_versions');
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
@@ -4278,8 +4508,16 @@ class PCM_SEO_Service
      *
      * @return array{versions:array[],originalHtml:string}
      */
-    public function list_page_versions(int $user_id, object $site, int $post_id): array
+    public function list_page_versions(int $user_id, object $site, int $post_id, bool $rows_only = false): array
     {
+        // ROWS-ONLY (gap 02d3cb7 D1): the editor's OPEN needs the saved rows
+        // alone — a pure DB read, milliseconds. The Original (a REMOTE
+        // snapshot round-trip) is fetched lazily when the versions dropdown
+        // opens — its only consumer. Gating the open on it was the 30s white.
+        $rows = array('versions' => self::list_versions($user_id, (int) $site->id, $post_id, 'page', '', 0));
+        if ($rows_only) {
+            return $rows;
+        }
         $original = '';
         $in       = self::remote_fetch_snapshot($site, $post_id, 'input');
         if ($in !== null && $in['html'] !== '') {
@@ -4288,10 +4526,7 @@ class PCM_SEO_Service
             $parsed   = self::parse_page_snapshot($in['html']);
             $original = self::assemble_content_html($in['html'], $parsed['headings']);
         }
-        return array(
-            'versions'     => self::list_versions($user_id, (int) $site->id, $post_id, 'page', '', 0),
-            'originalHtml' => $original,
-        );
+        return $rows + array('originalHtml' => $original);
     }
 
     /**
@@ -4687,7 +4922,8 @@ class PCM_SEO_Service
      * Each routed save pushes and rolls itself back (existing atomicity law);
      * a mid-sequence failure stops honestly, reporting what already saved.
      *
-     * @return array{saved:int,inserted:int,skipped:int,notes:array<int,string>}|\WP_Error
+     * @return array{saved:int,inserted:int,skipped:int,removed:int,restored:int,
+     *               hidden:int,unhidden:int,flattened:int,notes:array<int,string>}|\WP_Error
      */
     public function save_page_edits(int $user_id, object $site, int $post_id, string $html)
     {
@@ -5064,21 +5300,67 @@ class PCM_SEO_Service
             }
         }
 
+        // ── W2 REPLACE-NOT-APPEND (page versioning, 2026-07-16): the save must
+        //    leave the page's rows as the NET set. section/sectionInsert rows
+        //    the served view attributes to NOTHING are superseded identities —
+        //    they serve nothing and can only stack (the live-probed 63-rule
+        //    pile). They die BEFORE routing so an identity upsert below can
+        //    never resurrect a dead row; the routed saves and their version
+        //    rows then run exactly as before. sectionRemove rows stay (net by
+        //    law while the doc omits their baseline section; restores above
+        //    already deleted theirs). Same atomicity law as every rule write:
+        //    the deletion pushes or rolls back. ──
+        $live_ids = array();
+        foreach ($inv['headings'] as $h) {
+            if (isset($h['rule']['id']) && in_array((string) ($h['rule']['target'] ?? ''), array('section', 'sectionInsert'), true)) {
+                $live_ids[] = (int) $h['rule']['id'];
+            }
+        }
+        $page_rows = self::post_rule_rows($user_id, (int) $site->id, $post_id);
+        $dead_ids  = self::superseded_rule_ids($page_rows, $live_ids);
+        $flattened = 0;
+        // ── THE SAVE TRANSACTION OPENS (gap ATOMIC-SAVE 2026-07-17):
+        //    $page_rows (pre-mutation) is the WHOLE save's rollback point.
+        //    From here every routed push is a deferred stub and every version
+        //    row queues; EVERY exit path below either aborts ($fail: restore
+        //    + clear) or commits (the ONE real push at the tail). The static
+        //    is request-scoped — PHP request isolation is the leak backstop,
+        //    and the commit/abort paths clear it explicitly. ──
+        self::$push_deferred     = true;
+        self::$deferred_versions = array();
+        if (!empty($dead_ids)) {
+            // Superseded-row deletion rides the transaction — the commit push
+            // at the tail transmits the flattened set (W2 law unchanged).
+            foreach ($dead_ids as $dead_id) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->delete($rules_table, array('id' => $dead_id, 'userId' => $user_id, 'siteId' => (int) $site->id), array('%d', '%d', '%d'));
+            }
+            $flattened = count($dead_ids);
+        }
+
         // ── Route every pair through the existing save paths, document order. ──
         $saved    = 0;
         $inserted = 0;
         $skipped  = 0;
-        $fail     = static fn(string $label, WP_Error $err, int $done): WP_Error => new WP_Error(
-            $err->get_error_code(),
-            sprintf(
-                /* translators: 1: sections already saved, 2: section heading, 3: reason */
-                __('Saved %1$d section(s), then “%2$s” failed: %3$s The remaining sections were not attempted — re-open the editor to continue.', 'power-creatives'),
-                $done,
-                $label,
-                rtrim($err->get_error_message()) . (str_ends_with(rtrim($err->get_error_message()), '.') ? '' : '.')
-            ),
-            $err->get_error_data()
-        );
+        $fail     = static function (string $label, WP_Error $err) use ($user_id, $site, $post_id, $page_rows): WP_Error {
+            // TOTAL ABORT (gap ATOMIC-SAVE — supersedes the partial-progress
+            // law): restore the pre-save rule set, drop the queued history.
+            // Nothing was pushed (every push in the transaction is a stub),
+            // so hub rows return to exactly what the site still serves.
+            self::$push_deferred     = false;
+            self::$deferred_versions = array();
+            self::restore_rule_rows($user_id, (int) $site->id, $post_id, $page_rows);
+            return new WP_Error(
+                $err->get_error_code(),
+                sprintf(
+                    /* translators: 1: section heading, 2: reason */
+                    __('Saving “%1$s” failed: %2$s Nothing was saved — the site still serves its previous state. Fix the reason and save again.', 'power-creatives'),
+                    $label,
+                    rtrim($err->get_error_message()) . (str_ends_with(rtrim($err->get_error_message()), '.') ? '' : '.')
+                ),
+                $err->get_error_data()
+            );
+        };
         foreach ($pairs as $pair) {
             list($bi, $ej) = $pair;
             $b = $baseline[$bi];
@@ -5137,7 +5419,7 @@ class PCM_SEO_Service
                 ));
             }
             if ($res instanceof WP_Error) {
-                return $fail($b['text'], $res, $saved + $inserted);
+                return $fail($b['text'], $res);
             }
             $saved++;
         }
@@ -5163,7 +5445,7 @@ class PCM_SEO_Service
                     'pcm_seo_page_edit_no_anchor',
                     __('Adding a new section needs at least one existing section to anchor to — restore a version first.', 'power-creatives'),
                     array('status' => 409)
-                ), $saved + $inserted);
+                ));
             }
             $anchor = $anchor_for($ej);
             $res    = $this->save_section_insert($user_id, $site, $post_id, array(
@@ -5174,7 +5456,7 @@ class PCM_SEO_Service
                 'replacement'      => $join($strip_img_tags($e['units'])),
             ));
             if ($res instanceof WP_Error) {
-                return $fail($e['label'], $res, $saved + $inserted);
+                return $fail($e['label'], $res);
             }
             $inserted++;
         }
@@ -5257,7 +5539,7 @@ class PCM_SEO_Service
                 ));
             }
             if ($res instanceof WP_Error) {
-                return $fail($b['text'], $res, $saved + $inserted + $removed_count);
+                return $fail($b['text'], $res);
             }
             if ($res !== null) {
                 $removed_count++;
@@ -5276,7 +5558,7 @@ class PCM_SEO_Service
                 'restore'           => true,
             ));
             if ($res instanceof WP_Error) {
-                return $fail((string) $rrow['matchText'], $res, $saved + $inserted + $removed_count);
+                return $fail((string) $rrow['matchText'], $res);
             }
             $restored++;
         }
@@ -5292,7 +5574,7 @@ class PCM_SEO_Service
                 'originalTitle' => $hh['title'],
             ));
             if ($res instanceof WP_Error) {
-                return $fail($hh['src'], $res, $saved + $inserted + $removed_count);
+                return $fail($hh['src'], $res);
             }
             $hidden_count++;
         }
@@ -5304,26 +5586,64 @@ class PCM_SEO_Service
                 'revert'     => true,
             ));
             if ($res instanceof WP_Error) {
-                return $fail($uh['src'], $res, $saved + $inserted + $removed_count);
+                return $fail($uh['src'], $res);
             }
             $unhidden++;
         }
 
+        // ── THE SAVE TRANSACTION COMMITS (gap ATOMIC-SAVE): ONE real push
+        //    carries the final net set with ONE version bump; a failed push
+        //    restores the pre-save set entirely — the site serves ALL of this
+        //    save or NONE of it. History (queued section rows + the page row)
+        //    is written only after the connector ACCEPTED. A no-op save
+        //    pushes nothing and leaves the recorded state untouched. ──
+        $changed = $saved + $inserted + $removed_count + $restored + $hidden_count + $unhidden;
+        self::$push_deferred = false;
+        $pushed = false;
+        if ($changed > 0 || $flattened > 0) {
+            $push = self::push_current_rules_or_rollback($user_id, $site, $post_id, $page_rows);
+            if ($push instanceof WP_Error) {
+                self::$deferred_versions = array();
+                return new WP_Error(
+                    $push->get_error_code(),
+                    sprintf(
+                        /* translators: %s: reason */
+                        __('Publishing to the site failed: %s Nothing was saved — the site still serves its previous state. Retry.', 'power-creatives'),
+                        rtrim($push->get_error_message()) . (str_ends_with(rtrim($push->get_error_message()), '.') ? '' : '.')
+                    ),
+                    $push->get_error_data()
+                );
+            }
+            $pushed = true;
+        }
+        foreach (self::$deferred_versions as $v) {
+            self::record_version($v[0], $v[1], $v[2], $v[3], $v[4], $v[5], $v[6]);
+        }
+        self::$deferred_versions = array();
         // Page version: ONE row per changing save — the document as submitted
         // (duplicate-skip + cap ride record_version). No-op saves record nothing.
-        $changed = $saved + $inserted + $removed_count + $restored + $hidden_count + $unhidden;
         if ($changed > 0) {
             self::record_version($user_id, (int) $site->id, $post_id, 'page', '', 0, $html);
         }
         return array(
-            'saved'    => $saved,
-            'inserted' => $inserted,
-            'skipped'  => $skipped,
-            'removed'  => $removed_count,
-            'restored' => $restored,
-            'hidden'   => $hidden_count,
-            'unhidden' => $unhidden,
-            'notes'    => array_values(array_unique($notes)),
+            'saved'     => $saved,
+            'inserted'  => $inserted,
+            'skipped'   => $skipped,
+            'removed'   => $removed_count,
+            'restored'  => $restored,
+            'hidden'    => $hidden_count,
+            'unhidden'  => $unhidden,
+            // Superseded rows the net-set law deleted (W2) — reported, never
+            // silent; they change no served output, so they don't count as a
+            // page-version change above.
+            'flattened' => $flattened,
+            'notes'     => array_values(array_unique($notes)),
+            // THE CORNER'S TRUTH (gap ATOMIC-SAVE): pushed = the connector
+            // accepted the commit push this request; pageState = the record
+            // the connector echoed. A no-op reply (pushed=false) must never
+            // overwrite the frontend's verdict.
+            'pushed'    => $pushed,
+            'pageState' => self::page_state((int) $site->id, $post_id),
         );
     }
 
@@ -5682,7 +6002,7 @@ class PCM_SEO_Service
      *  With $draft (a revise): THE HUMAN-EDITOR CONTRACT + retention check ride
      *  the run — a targeted note may never silently rewrite the whole draft
      *  (gap e8fcae5 D3). */
-    public static function remote_optimize_section(object $site, int $post_id, string $type, string $html, string $topic = '', ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null, string $draft = '')
+    public static function remote_optimize_section(object $site, int $post_id, string $type, string $html, string $topic = '', ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null, string $draft = '', bool $report_changes = false, array $purposes = array())
     {
         self::ensure_sites_service();
         $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
@@ -5699,33 +6019,358 @@ class PCM_SEO_Service
             $vars['topic'] = $contract . "\n\nUSER REQUEST: " . $topic
                 . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft;
         }
+        // THE CHANGE-CARD REVIEW (gap 0a0a3c3): the append-envelope contract —
+        // the exact output contract lives IN the prompt (Anthropic JSON law),
+        // appended server-side around the template like the revise contract
+        // above, so user-customized templates need no migration. The reply is
+        // PARSED AND VERIFIED by parse_section_reply(); an unparseable reply
+        // falls back to raw — byte-identical legacy behavior, the floor.
+        $envelope = '';
+        if ($report_changes) {
+            $why = !empty($purposes)
+                ? 'one of these purpose ids: ' . implode(', ', array_map('sanitize_key', $purposes)) . ' (or an empty string when none fits)'
+                : 'an empty string';
+            $envelope = "\n\nOUTPUT FORMAT (mandatory): respond with ONLY this JSON, no markdown fences, no text around it: "
+                . '{"html":"<the COMPLETE revised section HTML>","changes":[{"what":"one plain sentence describing ONE change you actually made","why":"<' . $why . '>","quote":"5-12 words copied VERBATIM from your revised html"}]}'
+                . ' List every real change you made; NEVER list a change you did not make.';
+            $vars['topic'] .= $envelope;
+        }
         $mode  = ($html !== '') ? 'optimize' : 'generate';
         $max   = (int) (self::field_prompts()['section']['max'] ?? 1200);
         $val   = self::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
         if ($val instanceof WP_Error) {
             return $val;
         }
+        // Parse BEFORE any retention math — with the envelope the raw reply
+        // is JSON and retention must measure the extracted html, never the
+        // JSON wrapper (gap 0a0a3c3).
+        $parsed = self::parse_section_reply((string) $val['value'], $purposes, $report_changes);
         if ($draft !== '') {
             $min_retention = (float) ((PCM_Optimizer_Service::research_tunables()['revise']['minRetention'] ?? 0.6));
-            $retention     = self::sentence_retention($draft, (string) $val['value']);
+            $retention     = self::sentence_retention($draft, $parsed['value']);
             if ($retention < $min_retention && !self::note_wants_broad_rewrite($topic, $model, $user_id, $provider)) {
                 // ONE retry with the contract restated — then honesty, never a
                 // silent 80% text loss.
                 $vars['topic'] = $contract . ' THIS IS A RETRY: the previous attempt rewrote text the request did not '
                     . 'cover. Copy the draft exactly and change ONLY what the request demands.'
-                    . "\n\nUSER REQUEST: " . $topic . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft;
+                    . "\n\nUSER REQUEST: " . $topic . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft
+                    . $envelope;
                 $retry = self::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
-                if (!($retry instanceof WP_Error) && self::sentence_retention($draft, (string) $retry['value']) > $retention) {
-                    $val       = $retry;
-                    $retention = self::sentence_retention($draft, (string) $val['value']);
+                if (!($retry instanceof WP_Error)) {
+                    $retry_parsed = self::parse_section_reply((string) $retry['value'], $purposes, $report_changes);
+                    if (self::sentence_retention($draft, $retry_parsed['value']) > $retention) {
+                        $val       = $retry;
+                        $parsed    = $retry_parsed;
+                        $retention = self::sentence_retention($draft, $parsed['value']);
+                    }
                 }
                 if ($retention < $min_retention) {
                     return new WP_Error('pcm_seo_revise_overwrote', __('The AI changed much more of the text than the note asked for — try again, or rephrase the note (say explicitly if you WANT a full rewrite).', 'power-creatives'), array('status' => 502));
                 }
             }
         }
+        // REWRITTEN verdict (gap 0a0a3c3): measured server-side against the
+        // ORIGINAL section with the hub-data threshold — the review presents
+        // such sections as calm Before/After blocks instead of word confetti.
+        $review_cfg = (array) (PCM_Optimizer_Service::research_tunables()['review'] ?? array());
+        $rewritten  = $html !== ''
+            && self::sentence_retention($html, $parsed['value']) < (float) ($review_cfg['rewriteRetention'] ?? 0.35);
         // The UI shows what ACTUALLY generated (the API's own report).
-        return array('value' => wp_kses_post((string) $val['value']), 'model' => (string) $val['model'], 'provider' => (string) $val['provider']);
+        return array(
+            'value'     => wp_kses_post($parsed['value']),
+            'model'     => (string) $val['model'],
+            'provider'  => (string) $val['provider'],
+            // Verified per-section changes (what/why/quote) — empty when the
+            // model answered without the envelope contract (the honest floor).
+            'changes'   => $parsed['changes'],
+            'rewritten' => $rewritten,
+        );
+    }
+
+    /**
+     * Parse + VERIFY the section reply under the change-card envelope
+     * (gap 0a0a3c3). Reply contract: {"html": "...", "changes":
+     * [{what, why, quote}]}. Every change survives ONLY if its quote is
+     * found VERBATIM (whitespace/case-normalized) in the html's text and
+     * its why is one of the run's purposes ('' otherwise) — the model's
+     * confession is checked, never believed. Any parse failure returns the
+     * RAW reply with no changes: byte-identical legacy behavior, the floor.
+     *
+     * @param string   $raw      The model's raw reply.
+     * @param string[] $purposes Allowed why ids for this run.
+     * @param bool     $expected Whether the envelope was requested at all.
+     * @return array{value:string,changes:array<int,array{what:string,why:string,quote:string}>}
+     */
+    public static function parse_section_reply(string $raw, array $purposes = array(), bool $expected = true): array
+    {
+        $fallback = array('value' => $raw, 'changes' => array());
+        if (!$expected) {
+            return $fallback;
+        }
+        $body = trim($raw);
+        // Tolerate fenced replies (```json ... ```) — the contract forbids
+        // them but a recoverable reply beats a discarded one.
+        if (preg_match('/^```[a-z]*\s*(.*?)\s*```$/s', $body, $m)) {
+            $body = trim($m[1]);
+        }
+        $decoded = json_decode($body, true);
+        if (!is_array($decoded) || !isset($decoded['html']) || !is_string($decoded['html']) || trim($decoded['html']) === '') {
+            return $fallback;
+        }
+        $value      = trim($decoded['html']);
+        $norm       = static fn(string $s): string => strtolower(trim((string) preg_replace('/\s+/u', ' ', $s)));
+        $value_text = $norm(wp_strip_all_tags($value));
+        $allowed    = array_map('sanitize_key', $purposes);
+        // class_exists = standalone-harness compatibility (bare PHP loads the
+        // seo service alone); the default mirrors the seeded tunable.
+        $max = (int) (class_exists('PCM_Optimizer_Service')
+            ? (PCM_Optimizer_Service::research_tunables()['review']['maxChanges'] ?? 12)
+            : 12);
+        $changes    = array();
+        foreach ((array) ($decoded['changes'] ?? array()) as $c) {
+            if (!is_array($c)) {
+                continue;
+            }
+            $what  = sanitize_text_field((string) ($c['what'] ?? ''));
+            $quote = sanitize_text_field((string) ($c['quote'] ?? ''));
+            if ($what === '' || $quote === '' || strpos($value_text, $norm($quote)) === false) {
+                continue; // unverifiable claim — never shown as a card
+            }
+            $why       = sanitize_key((string) ($c['why'] ?? ''));
+            $changes[] = array(
+                'what'  => $what,
+                'why'   => in_array($why, $allowed, true) ? $why : '',
+                'quote' => $quote,
+            );
+            if (count($changes) >= max(1, $max)) {
+                break;
+            }
+        }
+        return array('value' => $value, 'changes' => $changes);
+    }
+
+    // =====================================================================
+    // THE BUSINESS CARD (Business Spine P2+P3, gap 616870f). Ownership law:
+    // brands own brand truth · SITES own the connection (brandId +
+    // businessUnitId FKs) · SEO consumes and owns exactly ONE layer — the
+    // per-site SEO overrides. The ladder is a PURE function (harness-
+    // tested); the resolver is data reads + that call. Malleable by
+    // construction: fields are open keys (the frontend registry decides
+    // what renders), sources ride every field.
+    // =====================================================================
+
+    /**
+     * THE LADDER — pure. Precedence upward: site basics < brand basics <
+     * unit fetched (its own per-key sources) < unit manual < site override.
+     * Empty values never overwrite (empty stays empty, never invents);
+     * every landed field carries its source tag.
+     *
+     * @param array $site_overrides Sparse per-site SEO fields.
+     * @param array $unit           Brands unit record {fetched,manual,sources} (may be empty).
+     * @param array $brand_basics   Flat brand-row fields (may be empty).
+     * @param array $site_basics    Flat site fields (name/siteUrl).
+     * @return array{fields:array<string,mixed>,sources:array<string,string>}
+     */
+    public static function merge_business_ladder(array $site_overrides, array $unit, array $brand_basics, array $site_basics): array
+    {
+        $fields  = array();
+        $sources = array();
+        $lay = static function (array $layer, $tag) use (&$fields, &$sources): void {
+            foreach ($layer as $k => $v) {
+                if ($v === '' || $v === null || $v === array()) {
+                    continue;
+                }
+                $fields[$k]  = $v;
+                $sources[$k] = is_array($tag) ? (string) ($tag[$k] ?? 'gbp') : (string) $tag;
+            }
+        };
+        $lay($site_basics, 'site-basics');
+        $lay($brand_basics, 'brand');
+        $lay((array) ($unit['fetched'] ?? array()), (array) ($unit['sources'] ?? array()));
+        $lay((array) ($unit['manual'] ?? array()), 'manual');
+        $lay($site_overrides, 'site');
+        return array('fields' => $fields, 'sources' => $sources);
+    }
+
+    /** The per-site SEO override layer's option key. */
+    private static function biz_site_option(int $site_id): string
+    {
+        return 'pcm_seo_biz_site_' . $site_id;
+    }
+
+    /**
+     * The resolved business record for a SITE — what every generation and
+     * the card consume. Site row (FKs) → brands unit API → SEO site layer
+     * → the pure ladder. No brand linked = brand layers empty, honest.
+     *
+     * @return array{fields:array,sources:array,brandId:int,brandName:string,unitId:int,unitLabel:string}
+     */
+    public static function business_record_for_site(int $site_id): array
+    {
+        $empty = array('fields' => array(), 'sources' => array(), 'brandId' => 0, 'brandName' => '', 'unitId' => 0, 'unitLabel' => '');
+        if ($site_id <= 0) {
+            return $empty;
+        }
+        global $wpdb;
+        $sites = PCM_Schema::table('sites');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $site = $wpdb->get_row($wpdb->prepare("SELECT name, url, brandId, businessUnitId FROM {$sites} WHERE id = %d", $site_id));
+        if (!$site) {
+            return $empty;
+        }
+        $site_basics = array(
+            'name'    => (string) ($site->name ?? ''),
+            'website' => (string) ($site->url ?? ''),
+            'siteUrl' => (string) ($site->url ?? ''),
+        );
+        $brand_id     = (int) ($site->brandId ?? 0);
+        $unit_id      = (int) ($site->businessUnitId ?? 0);
+        $brand_basics = array();
+        $unit         = array();
+        $brand_name   = '';
+        $unit_label   = '';
+        if ($brand_id > 0) {
+            $brands = PCM_Schema::table('brands');
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $brand = $wpdb->get_row($wpdb->prepare(
+                "SELECT name, website, phone, location, language, businessSummary FROM {$brands} WHERE id = %d",
+                $brand_id
+            ));
+            if ($brand) {
+                $brand_name   = (string) ($brand->name ?? '');
+                $brand_basics = array(
+                    'name'        => (string) ($brand->name ?? ''),
+                    'website'     => (string) ($brand->website ?? ''),
+                    'phone'       => (string) ($brand->phone ?? ''),
+                    'address'     => (string) ($brand->location ?? ''),
+                    'language'    => (string) ($brand->language ?? ''),
+                    'description' => (string) ($brand->businessSummary ?? ''),
+                );
+            }
+            if (class_exists('PCM_Brands_Service')) {
+                $unit       = PCM_Brands_Service::get_business_record($brand_id, $unit_id);
+                $unit_label = (string) ($unit['label'] ?? '');
+                $unit_id    = (int) ($unit['unitId'] ?? 0);
+            }
+        }
+        $overrides = get_option(self::biz_site_option($site_id), array());
+        $ladder    = self::merge_business_ladder(is_array($overrides) ? $overrides : array(), $unit, $brand_basics, $site_basics);
+        return array(
+            'fields'    => $ladder['fields'],
+            'sources'   => $ladder['sources'],
+            'brandId'   => $brand_id,
+            'brandName' => $brand_name,
+            'unitId'    => $unit_id,
+            'unitLabel' => $unit_label,
+        );
+    }
+
+    /**
+     * Save the per-site SEO override layer (sparse). Open keys by design —
+     * the frontend registry decides what exists; the server guards shape:
+     * sanitized keys, textarea-sanitized scalar values, caps on count and
+     * length. An EMPTY value removes the override (back to the brand
+     * truth). Returns the fresh resolved record.
+     *
+     * @param int   $site_id Site id.
+     * @param array $fields  key => value (scalar).
+     * @return array|\WP_Error business_record_for_site() shape.
+     */
+    public static function save_site_business_overrides(int $site_id, array $fields)
+    {
+        if ($site_id <= 0) {
+            return new WP_Error('pcm_seo_biz_no_site', __('A site is required.', 'power-creatives'), array('status' => 400));
+        }
+        $stored = get_option(self::biz_site_option($site_id), array());
+        $stored = is_array($stored) ? $stored : array();
+        $n      = 0;
+        foreach ($fields as $k => $v) {
+            $key = sanitize_key((string) $k);
+            if ($key === '' || !is_scalar($v)) {
+                continue;
+            }
+            if (++$n > 40) {
+                return new WP_Error('pcm_seo_biz_too_many', __('Too many fields in one save (max 40).', 'power-creatives'), array('status' => 400));
+            }
+            $val = sanitize_textarea_field((string) $v);
+            if (function_exists('mb_substr')) {
+                $val = mb_substr($val, 0, 2000);
+            } else {
+                $val = substr($val, 0, 2000);
+            }
+            if ($val === '') {
+                unset($stored[$key]); // clearing = back to the brand truth
+            } else {
+                $stored[$key] = $val;
+            }
+        }
+        update_option(self::biz_site_option($site_id), $stored, false);
+        return self::business_record_for_site($site_id);
+    }
+
+    /**
+     * Parse a pasted Google Maps share URL — pure, harness-tested. ONE
+     * human paste yields CID + coordinates + a buildable embed URL: the
+     * zero-API Google surface (Business Spine, Google-free ruling).
+     *
+     * @param string $url The pasted URL.
+     * @return array{fields:array<string,string>}|\WP_Error Named error when nothing parses.
+     */
+    public static function parse_maps_url(string $url)
+    {
+        $url  = trim($url);
+        $host = strtolower((string) (wp_parse_url($url, PHP_URL_HOST) ?: ''));
+        if ($host === '' || (strpos($host, 'google') === false && strpos($host, 'goo.gl') === false)) {
+            return new WP_Error('pcm_seo_maps_not_maps', __('That is not a Google Maps link — paste the Share URL from Google Maps.', 'power-creatives'), array('status' => 400));
+        }
+        $fields = array('mapsShareUrl' => esc_url_raw($url));
+        if (preg_match('/[?&]cid=(\d+)/', $url, $m)) {
+            $fields['cid'] = $m[1];
+        } elseif (preg_match('/!1s0x[0-9a-f]+:0x([0-9a-f]+)/i', $url, $m)) {
+            // The hex place ref's second half IS the CID in decimal. CIDs are
+            // 64-bit — hexdec() would overflow to float; exact string math.
+            $fields['cid'] = self::hex_to_dec($m[1]);
+        }
+        if (preg_match('/@(-?\d+\.\d+),(-?\d+\.\d+)/', $url, $m)
+            || preg_match('/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/', $url, $m)) {
+            $fields['lat'] = $m[1];
+            $fields['lng'] = $m[2];
+        }
+        if (!empty($fields['cid'])) {
+            $fields['mapsEmbedUrl'] = 'https://maps.google.com/maps?cid=' . $fields['cid'] . '&output=embed';
+        } elseif (!empty($fields['lat'])) {
+            $fields['mapsEmbedUrl'] = 'https://maps.google.com/maps?q=' . $fields['lat'] . ',' . $fields['lng'] . '&output=embed';
+        }
+        if (count($fields) === 1) {
+            return new WP_Error('pcm_seo_maps_unparsed', __('Nothing recognizable in that Maps link — use the Share button in Google Maps and paste that URL.', 'power-creatives'), array('status' => 400));
+        }
+        return array('fields' => $fields);
+    }
+
+    /** Exact hex → decimal string (64-bit CIDs overflow hexdec) — pure string math, no extension dependency. */
+    private static function hex_to_dec(string $hex): string
+    {
+        $dec = '0';
+        $len = strlen($hex);
+        for ($i = 0; $i < $len; $i++) {
+            $digit = (int) hexdec($hex[$i]);
+            $carry = $digit;
+            $out   = '';
+            for ($j = strlen($dec) - 1; $j >= 0; $j--) {
+                $v     = ((int) $dec[$j]) * 16 + $carry;
+                $out   = (string) ($v % 10) . $out;
+                $carry = intdiv($v, 10);
+            }
+            while ($carry > 0) {
+                $out   = (string) ($carry % 10) . $out;
+                $carry = intdiv($carry, 10);
+            }
+            $dec = ltrim($out, '0');
+            if ($dec === '') {
+                $dec = '0';
+            }
+        }
+        return $dec;
     }
 
     /**

@@ -316,6 +316,155 @@ Built ONCE in the controller, handed to EVERY teacher, the compiler, and
   replaces the page's rule set (the 63-pile bug dies), compare-before-
   fetch (the GUI lag dies), honest outside-edit conflict. Nothing
   removed; per-section versions stay.
+- 2026-07-17 · **ICE — THE STEERING WHEEL (owner vision, full spec session).**
+  Fuses and supersedes-in-detail the RESULTS-FIRST reminder + results loop
+  where they overlap. (a) **Weekly rank tracking**: per site a Keywords tab —
+  rows = keywords (target page shown under each — the keyword-per-URL law),
+  columns = weeks, newest column auto-appears beside the frozen keyword
+  column, ~104-week window (retention = hub data, cron-pruned, own indexed
+  table — NEVER options/postmeta; ~416k rows at 200 sites × 20 kw × 2y =
+  objectively small). Feed: Pro Rank Tracker as a new Integrations provider,
+  weekly sequential pull, upsert per keyword-week, failed sites = visible
+  named failure rows. (b) **Manual override law**: every weekly cell is
+  click-to-type; manual value IS the effective value everywhere (one graph
+  line), the fetched value is kept underneath as the receipt (hover:
+  "manual — tracker said X") so the next fetch can never clobber a
+  correction and corrected weeks stay auditable. (c) **URL mismatch = data**:
+  each week stores rank + the URL that actually ranked; target-mismatch
+  weeks flagged on the cell (the cannibalization signal → §9.4 fix actions).
+  (d) **The Pages table is the steering wheel** (Meta-Ads pattern): rank +
+  movement + mini-trend per page, fed from the keyword history; the Keywords
+  tab is the once-a-week service hatch. (e) **THE UNIFIED GRAPH per page**:
+  ONE timeline store per page — number series (effective rank, GSC
+  position/impressions/clicks) + event series (results-loop optimization
+  stamps + date-stamped USER NOTES), every point source-labeled
+  (manual/prt/gsc:stored), each series user-toggleable; notes/optimizations
+  draw as date markers so cause-and-effect reads on one picture. Keyword
+  table, pages columns, ICE rollups (improving/flat/declining + avg
+  movement per site + domain) and the graph are all VIEWS of that one
+  timeline — adding a future source = one more labeled series. Scoring
+  stays parked per the standing points/weighting ruling.
+- 2026-07-17 · **ICE LANE + HOME CORRECTION (owner confirmed).** The
+  Keywords tab lives INSIDE THE SEO MODULE — a per-site tab exactly like
+  the content tab, scoped to the selected site/domain; its rows are the
+  keywords AGREED to work with for that site. It is NOT the Keywords
+  module and NOT the editor's KeywordsDrawer (other dev's lane) — no
+  shared code, no shared UI; it only READS the keyword-per-page data the
+  platform already stores. The whole ICE build (weekly rank table, PRT
+  fetcher, manual override, Pages steering-wheel columns, unified graph
+  with notes, ICE rollups) = the SEO/optimizer seat's lane.
+  **→ ARCHITECTURE DOC: docs/ARCHITECTURE-ICE-STEERING-WHEEL-20260717.md**
+- 2026-07-17 · **THE BUSINESS SPINE (owner-confirmed, Google-free).**
+  Brands own all business truth via Business Units (multi-location, one
+  primary); ONE resolution ladder (site SEO override → unit → brand →
+  site) under every generation; two outputs of one record (generation vars
+  + the JSON-LD schema WE place via the connector — the site's own markup
+  is never a source); auto-map sites→brands by domain + create-from-site;
+  per-site Business card inside SEO (the SEO team never leaves SEO);
+  sites CONSUME brands, never the reverse (owner dependency ruling).
+  **→ ARCHITECTURE DOC: docs/ARCHITECTURE-BUSINESS-SPINE-20260717.md**
+- 2026-07-17 · **THE CHANGE-CARD REVIEW (owner critical — the review is "a
+  big blob of crap"; PRIORITY over all tab work).** Live findings: every
+  section's rail card repeats the SAME global directive list (per-change
+  attribution §9.1 missing → the whole basket prints under every section);
+  the word-diff is unreadable on heavy rewrites (red strike sea → green
+  blob); acceptance is per-section, never per change. THE REDESIGN: the
+  rewriter's output contract (Anthropic JSON law) gains a per-section
+  CHANGES LIST — each change = {what: plain one-liner, why: purpose →
+  plain category, span}. The review shows CLEAN result text + a stack of
+  small CHANGE CARDS per section (what + why); hovering/clicking a card
+  highlights its span. Heavy rewrites present as ONE "Rewritten" card with
+  a Before/After block toggle (supersedes-and-absorbs the 2026-07-15
+  REVIEW DIFF CONSOLIDATION entry) alongside the itemized what-it-includes
+  list. ACCEPTANCE: per-change controls; span-local changes splice
+  deterministically; overlapping/global changes recompose the section via
+  ONE bounded re-run with only the accepted directives (revise machinery
+  exists). Section Accept = all its cards; rail card shows ONLY its own
+  changes (kills the repeated-text bug). CLIENT MODE LATER (§9.7): the
+  same cards, grouped by the two plain purposes — the change card IS the
+  client surface. Staged: T1 attribution + change cards + clean-text view
+  + Rewritten Before/After (per-section accept stays) · T2 per-change
+  accept w/ splice/recompose.
+- 2026-07-17 · **META-ADS HARNESS — THE THREE TABS (owner detail expansion
+  of the 2026-07-15 META-ADS-STYLE EDIT MODAL entry; LOG ONLY, review fix
+  first).** The editor becomes a harness window: LEFT: page-switcher
+  sidebar (FB-Ads hierarchy feel; clicking a page loads it in place —
+  the near-term slice). TOP TABS per page: (1) **Content** = today's
+  editor unchanged; (2) **Metadata** = the SEO table TRANSPOSED for the
+  one page — rows = field types (title, meta title, description, …),
+  column 1 = current value, column 2 = generated suggestion, SAME table
+  machinery + per-row generate → granular field control; (3)
+  **Performance** = the per-page drawing board: clicks + impressions
+  graph (GSC-style, clicks primary) — and when ICE lands it joins keyword
+  rankings over time, date-stamped notes, keyword table + opportunities
+  (→ docs/ARCHITECTURE-ICE-STEERING-WHEEL-20260717.md unified-graph
+  section: same timeline, this is its per-page home).
+- 2026-07-17 · **GOOGLE GOES NATIVE (owner order — supersedes the same-day
+  Google-free ruling; the n8n middleman DIES).** The owner supplied the n8n
+  workflow export; decoded: its GSC half (sites/add/verify/analytics) is
+  ALREADY native in the platform — dead weight. Replicated natively:
+  **Phase A** — `google_places` Integrations provider (API key, regular
+  flow); native PCM_SEO_GBP 'google' provider class (searchText + place
+  details w/ THE WIDE FIELD MASK: addressComponents→postal/city/region/
+  country, intl phone, googleMapsUri, top-5 reviews w/ text, short address,
+  editorialSummary, hours, rating/count, types, category, geo); SHARE-URL
+  RESOLVER (follow redirects → extract ChIJ place id → details; fallback
+  place-name → searchText) — ONE pasted Maps link fills the whole unit
+  (tag 'gbp'), manual corrections untouched; no key = the local cid/geo
+  parse keeps working, labeled. n8n provider class + webhook UI DELETED
+  same commit (replacement lands together). **Phase B (next gap)** — GBP
+  owner-account reviews + location resolve (My Business v4/v1 APIs, OAuth;
+  the n8n-hardcoded account id becomes an Integrations SETTING — never
+  code); full review list beats the public top-5. Reviews remain CONTENT
+  material only — never schema markup (policy law).
+- 2026-07-17 · **THE TWO-ROOM CARD + INDEXED URL (owner order, Jony spec).**
+  The Business card divides into two quiet rooms — **Business** (identity:
+  name, website, INDEXED URL, email, phone, address block, hours, language,
+  description, socials, niche) and **Local SEO** (the Google surface:
+  category, service areas, primary location, CID, KG ID, Maps URLs, geo)
+  on a whisper-tinted background, the Maps-paste row living inside it.
+  Website ≠ Indexed URL — two facts, never conflated. "Refresh from site"
+  stops guessing: a small popover shows the URL it will scrape (prefilled
+  indexed URL > website), you confirm, and the confirmed URL is remembered
+  as the site's Indexed URL. Registry rows gain a `group` key — one
+  registry, two rooms, future fields drop into either with one line.
+- 2026-07-18 · **THE OPTIMIZE CONSOLIDATION (owner order).** The Analyze
+  button DIES — Optimize is THE one entry with a caret menu of three
+  modes: Quick (today's click, untouched) · Super (the full analysis
+  flow inside an optimizing move) · Custom (a plain surgical order).
+  THE ROUTER: the compiler also assigns every directive its target
+  sections from the live page outline — each section receives ONLY its
+  own orders, untargeted sections are never sent (the rewrite-everything
+  cause dies); additions target their anchor section (sky lane). THE
+  PAGE MAP: every section call names where it edits. STRICT runs
+  (Super/Custom/typed instruction): the careful-editor contract +
+  retention guard. Gap: GAP-ANALYSIS-OPTIMIZE-CONSOLIDATION-20260718.
+  **[SLICE A BUILT 7db4c7a — button + menu (additive PillSplitButton
+  `menu`), router, scoped run, params ready. SLICE B HELD — server page
+  map + strict guard in seo/service+controller (the other dev's
+  in-flight files); lands the moment they are clean.]**
+- 2026-07-19 · **THE OPEN FIXES + THE STRUCTURAL MANDATE (owner ruling —
+  surface this list after every completed round until empty):**
+  1. LOAD SPEED IS A BUG: table hard-refresh ~10s, page open 20-30s
+     ("building the local copy" loaders) — data the hub owns must render
+     INSTANTLY from the hub DB; no browser-cache workarounds. Root-cause
+     gap required (the instant-open arc is marked UNVERIFIED-IN-BROWSER).
+  2. Analyze rail cannot SCROLL (regression suspect: the outside rail
+     host's overflow-hidden — same round as the portal move).
+  3. Analyze-rail hierarchy still wrong (owner: sub-text outweighs
+     headers); verify the categories are teacher-data, never hardcoded,
+     and SHOW it.
+  4. STATE LEAK: after accepting a custom edit the UI starts saying
+     "super optimize" — run-mode state must be ONE explicit object, not
+     scattered flags.
+  5. GROUP D still held: the language-law root fix (hub-locale
+     masquerade), page map, strict guard, pinned original — lands when
+     the other dev's seo files are clean.
+  6. THE MANDATE: decompose SectionModal (~2,850 lines, nine concerns)
+     into narrow modules — editor core · run engine (one state machine) ·
+     review rail · analyze glue · versions/original · image panel ·
+     drawer glue · shared layout — each its own file with an explicit
+     contract; no new state flags in the monolith ever again.
 - (append below this line)
 
 ## 11. STANDING LAWS THAT BIND EVERY FEATURE ABOVE

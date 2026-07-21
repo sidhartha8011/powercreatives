@@ -593,4 +593,177 @@ class PCM_Brands_Service
 
         return $map[$mime] ?? '.png';
     }
+
+    // =========================================================================
+    // BUSINESS UNITS (Business Spine P1, gap 1aedf65) — the brand's 0..n
+    // locations, exactly one primary. Two layers per unit: `fetched`
+    // (auto-sourced, per-key origin in `sources`) + `manual` (human
+    // corrections — always win, survive every refresh). Brands never know
+    // sites; sites/SEO CONSUME this API (owner dependency ruling 2026-07-17).
+    // Static — consumed cross-module exactly like PCM_SEO_GBP was.
+    // =========================================================================
+
+    /** All units of a brand, primary first. @return array<int,array> */
+    public static function list_business_units(int $brand_id): array
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('brand_business_units');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $rows = (array) $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE brandId = %d ORDER BY isPrimary DESC, id ASC",
+            $brand_id
+        ), ARRAY_A);
+        return array_map(static fn(array $r): array => self::format_unit($r), $rows);
+    }
+
+    /**
+     * The resolved business record for a brand. $unit_id 0 = the PRIMARY
+     * unit (a site with no pinned unit reads this). No units = empty record
+     * — honest, never invented.
+     *
+     * @return array{unitId:int,label:string,isPrimary:bool,fetched:array,manual:array,sources:array,resolved:array}
+     */
+    public static function get_business_record(int $brand_id, int $unit_id = 0): array
+    {
+        $empty = array('unitId' => 0, 'label' => '', 'isPrimary' => false, 'fetched' => array(), 'manual' => array(), 'sources' => array(), 'resolved' => array());
+        if ($brand_id <= 0) {
+            return $empty;
+        }
+        $units = self::list_business_units($brand_id);
+        if (empty($units)) {
+            return $empty;
+        }
+        $unit = $units[0]; // primary-first ordering
+        if ($unit_id > 0) {
+            foreach ($units as $u) {
+                if ((int) $u['unitId'] === $unit_id) {
+                    $unit = $u;
+                    break;
+                }
+            }
+        }
+        return $unit;
+    }
+
+    /**
+     * Upsert one unit. $data keys (all optional on update): label, isPrimary,
+     * fetched (REPLACES the fetched layer + its sources), manual (REPLACES
+     * the manual layer), sourceTag (origin label for fetched keys, default
+     * 'gbp'). Setting isPrimary clears every sibling — exactly one primary.
+     * The first unit of a brand is ALWAYS primary.
+     *
+     * @return array|\WP_Error The saved unit (formatted) or a named error.
+     */
+    public static function save_business_unit(int $brand_id, array $data, int $unit_id = 0)
+    {
+        global $wpdb;
+        if ($brand_id <= 0) {
+            return new WP_Error('pcm_brand_unit_no_brand', __('A business unit needs a brand.', 'power-creatives'), array('status' => 400));
+        }
+        $table = PCM_Schema::table('brand_business_units');
+        $row   = array('brandId' => $brand_id);
+        $fmt   = array('%d');
+        if (array_key_exists('label', $data)) {
+            $row['label'] = sanitize_text_field((string) $data['label']);
+            $fmt[]        = '%s';
+        }
+        if (array_key_exists('fetched', $data) && is_array($data['fetched'])) {
+            $tag            = sanitize_key((string) ($data['sourceTag'] ?? 'gbp'));
+            $row['fetched'] = wp_json_encode($data['fetched']);
+            $fmt[]          = '%s';
+            $row['sources'] = wp_json_encode(array_fill_keys(array_keys($data['fetched']), $tag !== '' ? $tag : 'gbp'));
+            $fmt[]          = '%s';
+        }
+        // THE MULTI-SOURCE DOOR (gap 616870f): mergeFetched ADDS keys to the
+        // fetched layer, tagging each with its sourceTag — maps-paste today,
+        // any future provider tomorrow; a merge never wipes another source's
+        // keys and never touches the manual layer.
+        if (array_key_exists('mergeFetched', $data) && is_array($data['mergeFetched']) && !array_key_exists('fetched', $data)) {
+            $tag      = sanitize_key((string) ($data['sourceTag'] ?? 'gbp'));
+            $existing = $unit_id > 0 ? self::get_business_record($brand_id, $unit_id) : array('fetched' => array(), 'sources' => array());
+            $fetched  = array_merge((array) ($existing['fetched'] ?? array()), $data['mergeFetched']);
+            $sources  = array_merge(
+                (array) ($existing['sources'] ?? array()),
+                array_fill_keys(array_keys($data['mergeFetched']), $tag !== '' ? $tag : 'gbp')
+            );
+            $row['fetched'] = wp_json_encode($fetched);
+            $fmt[]          = '%s';
+            $row['sources'] = wp_json_encode($sources);
+            $fmt[]          = '%s';
+        }
+        if (array_key_exists('manual', $data) && is_array($data['manual'])) {
+            $row['manual'] = wp_json_encode($data['manual']);
+            $fmt[]         = '%s';
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $count        = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE brandId = %d", $brand_id));
+        $make_primary = !empty($data['isPrimary']) || ($unit_id === 0 && $count === 0);
+        if ($make_primary) {
+            $row['isPrimary'] = 1;
+            $fmt[]            = '%d';
+        }
+        if ($unit_id > 0) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $ok = $wpdb->update($table, $row, array('id' => $unit_id, 'brandId' => $brand_id), $fmt, array('%d', '%d'));
+            if ($ok === false) {
+                return new WP_Error('pcm_brand_unit_save_failed', __('Saving the business unit failed — retry.', 'power-creatives'), array('status' => 500));
+            }
+        } else {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            if ($wpdb->insert($table, $row, $fmt) === false) {
+                return new WP_Error('pcm_brand_unit_save_failed', __('Saving the business unit failed — retry.', 'power-creatives'), array('status' => 500));
+            }
+            $unit_id = (int) $wpdb->insert_id;
+        }
+        if ($make_primary) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+            $wpdb->query($wpdb->prepare(
+                "UPDATE {$table} SET isPrimary = 0 WHERE brandId = %d AND id != %d",
+                $brand_id,
+                $unit_id
+            ));
+        }
+        return self::get_business_record($brand_id, $unit_id);
+    }
+
+    /** Delete one unit; if it was primary, the oldest sibling inherits primary. */
+    public static function delete_business_unit(int $brand_id, int $unit_id): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('brand_business_units');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $deleted = (bool) $wpdb->delete($table, array('id' => $unit_id, 'brandId' => $brand_id), array('%d', '%d'));
+        if ($deleted) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+            $has_primary = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$table} WHERE brandId = %d AND isPrimary = 1",
+                $brand_id
+            ));
+            if ($has_primary === 0) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE {$table} SET isPrimary = 1 WHERE brandId = %d ORDER BY id ASC LIMIT 1",
+                    $brand_id
+                ));
+            }
+        }
+        return $deleted;
+    }
+
+    /** Row → API shape; resolved = fetched with non-empty manual keys winning. */
+    private static function format_unit(array $r): array
+    {
+        $fetched = is_array($d = json_decode((string) ($r['fetched'] ?? ''), true)) ? $d : array();
+        $manual  = is_array($d = json_decode((string) ($r['manual'] ?? ''), true)) ? $d : array();
+        $sources = is_array($d = json_decode((string) ($r['sources'] ?? ''), true)) ? $d : array();
+        return array(
+            'unitId'    => (int) $r['id'],
+            'label'     => (string) ($r['label'] ?? ''),
+            'isPrimary' => (bool) ($r['isPrimary'] ?? false),
+            'fetched'   => $fetched,
+            'manual'    => $manual,
+            'sources'   => $sources,
+            'resolved'  => array_merge($fetched, array_filter($manual, static fn($v) => $v !== '' && $v !== null)),
+        );
+    }
 }

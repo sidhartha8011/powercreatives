@@ -383,6 +383,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `sites/${input.id}/update-connector` }),
     },
+    "sites.health": { endpoint: "sites/health", method: "GET" },
     "sites.test": {
         endpoint: "sites",
         method: "POST",
@@ -556,10 +557,44 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/image-rule`, body: { src: input.src, occurrence: input.occurrence, alt: input.alt, title: input.title, originalAlt: input.originalAlt, originalTitle: input.originalTitle, revert: input.revert } }),
     },
+    "seo.pageState": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-state` }),
+    },
+    // ── THE BUSINESS CARD (gap 616870f): SEO consumes the resolved per-site
+    //    record; the site↔brand CONNECTION writes go through sites.update. ──
+    "seo.businessCard": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business` }),
+    },
+    "seo.businessOverrides": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/overrides`, body: { fields: input.fields } }),
+    },
+    "seo.businessRefresh": {
+        endpoint: "seo/sites",
+        method: "POST",
+        // The ASK-FIRST url (gap 670d0e0): the popover's confirmed URL is
+        // what gets scraped and becomes the site's Indexed URL.
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/refresh`, body: { url: input.url } }),
+    },
+    "seo.businessMaps": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/maps`, body: { url: input.url } }),
+    },
+    "seo.businessPlace": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/business/place`, body: { placeId: input.placeId } }),
+    },
     "seo.remotePageVersions": {
         endpoint: "seo/sites",
         method: "GET",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-versions` }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/page-versions${input.rowsOnly ? "?rowsOnly=1" : ""}` }),
     },
     "seo.remoteDeleteSectionVersion": {
         endpoint: "seo/sites",
@@ -574,7 +609,10 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteOptimizeSection": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-optimize`, body: { type: input.type, html: input.html, topic: input.topic, model: input.model, provider: input.provider, templateId: input.templateId } }),
+        // `draft` restored 2026-07-17 (gap 0a0a3c3 fact A6): it was dropped
+        // here since revise fidelity shipped — the server never received the
+        // draft, so the retention contract was dead on the wire.
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/section-optimize`, body: { type: input.type, html: input.html, topic: input.topic, draft: input.draft, model: input.model, provider: input.provider, templateId: input.templateId, reportChanges: input.reportChanges, purposes: input.purposes } }),
     },
     "seo.remoteGetHeadings": {
         endpoint: "seo/sites",
@@ -610,7 +648,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteContent": {
         endpoint: "seo/sites",
         method: "GET",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content` }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content${input.cached ? '?cached=1' : ''}` }),
     },
     "seo.sitePreview": {
         endpoint: "seo/sites",

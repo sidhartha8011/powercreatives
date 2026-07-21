@@ -161,8 +161,6 @@
   /* PowerKeys Color Palette */
   --sidebar-bg: oklch(1 0 0);
   /* #ffffff */
-  --main-bg: oklch(0.98 0.002 250);
-  /* #f8f9fa */
   --text-primary: oklch(0.15 0.01 250);
   /* #1a1a1a */
   --text-secondary: oklch(0.45 0.01 250);
@@ -508,12 +506,12 @@
     line-height: 1.5;
   }
 
-  /* Module container */
+  /* Module container — NO background: the Shell owns the canvas color
+     per module (whiteShellModules). One canvas, one owner. */
   .module-container {
     padding: 1.25rem;
     height: 100%;
     overflow: auto;
-    background-color: var(--main-bg);
   }
 
   /* Text utilities */

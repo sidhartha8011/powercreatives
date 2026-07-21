@@ -144,7 +144,23 @@ const pairByClass = (a: HTMLElement[], b: HTMLElement[]): Array<[HTMLElement | n
  * sections / the user's stripped live text for edited ones, Reject restores
  * the original verbatim.)
  */
-export function diffBlocksHtml(originalHtml: string, aiHtml: string): string {
+export function diffBlocksHtml(originalHtml: string, aiHtml: string, opts?: { consolidated?: boolean }): string {
+  // CONSOLIDATED VIEW (gap 0a0a3c3): a section the server judged REWRITTEN
+  // renders as ONE calm struck group (every original block in its own
+  // shape) followed by ONE green group — never word confetti. Same marks,
+  // same strip guard, same accept/reject semantics; presentation only.
+  if (opts?.consolidated) {
+    const olds = parseBlocks(originalHtml);
+    const news = parseBlocks(aiHtml);
+    // ONE LANE for the whole rewrite (owner report 2026-07-19, e533bc5 F3):
+    // EVERY new heading inherits the original's origin — the rewritten
+    // group draws one color instead of an amber first chunk + sky rest,
+    // and after Accept every sub-heading correctly reads as part of the
+    // edited section (never "platform-added").
+    const oHead = olds.find((b) => /^H[1-6]$/.test(b.tagName)) ?? null;
+    return olds.map((b) => markBlock(b, 'removed')).join('')
+      + news.map((b) => markBlock(oHead && /^H[1-6]$/.test(b.tagName) ? withOrigin(oHead, b) : b, 'added')).join('');
+  }
   const out: string[] = [];
   for (const [o, nw] of pairByClass(parseBlocks(originalHtml), parseBlocks(aiHtml))) {
     if (o && nw) {

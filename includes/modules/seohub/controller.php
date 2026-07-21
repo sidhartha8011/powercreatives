@@ -69,7 +69,9 @@ class PCM_REST_SEOHub extends PCM_REST_Base
         }
         nocache_headers();
         header('Content-Type: application/zip');
-        header('Content-Disposition: attachment; filename="pcm-connector.zip"');
+        // Version in the filename (owner order 2026-07-17): every download
+        // names what it is — no more guessing which zip is which.
+        header('Content-Disposition: attachment; filename="pcm-connector-' . (string) $a['version'] . '.zip"');
         header('Content-Length: ' . strlen((string) $a['zip']));
         echo $a['zip']; // phpcs:ignore WordPress.Security.EscapeOutput -- binary zip
         exit;
@@ -139,7 +141,7 @@ class PCM_REST_SEOHub extends PCM_REST_Base
         }
         nocache_headers();
         header('Content-Type: application/zip');
-        header('Content-Disposition: attachment; filename="pcm-connector-' . $tenant->clientId . '.zip"');
+        header('Content-Disposition: attachment; filename="pcm-connector-' . $tenant->clientId . '-' . PCM_SEOHub_Service::connector_template_version() . '.zip"');
         header('Content-Length: ' . filesize($path));
         readfile($path);
         @unlink($path); // don't leave the secret-bearing ZIP on disk
@@ -159,7 +161,7 @@ class PCM_REST_SEOHub extends PCM_REST_Base
         }
         nocache_headers();
         header('Content-Type: application/zip');
-        header('Content-Disposition: attachment; filename="pcm-connector.zip"');
+        header('Content-Disposition: attachment; filename="pcm-connector-' . PCM_SEOHub_Service::connector_template_version() . '.zip"');
         header('Content-Length: ' . filesize($path));
         readfile($path);
         @unlink($path);

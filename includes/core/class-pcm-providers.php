@@ -219,6 +219,30 @@ class PCM_Providers
             // Custom capabilities flag — an SEO data provider like Ahrefs/ProRankTracker
             'supportsSeo' => true,
         ),
+        'apify' => array(
+            'id'          => 'apify',
+            'name'        => 'Apify',
+            'apiKeyUrl'   => 'https://console.apify.com/settings/integrations',
+            'isBuiltIn'   => false,
+            // Apify actors supply the FULL Google surface for the Business
+            // card — place record + every schema id (placeId/cid/fid/KGMID)
+            // + reviews — one key, no Google Cloud project (gap 1f38238).
+            // Which actors run is hub DATA (option pcm_seo_apify).
+            'knownModels' => array(),
+            'supportsSeo' => true,
+        ),
+        'google_places' => array(
+            'id'          => 'google_places',
+            'name'        => 'Google Places (Business Profile)',
+            'apiKeyUrl'   => 'https://console.cloud.google.com/apis/credentials',
+            'isBuiltIn'   => false,
+            // Places (New) v1 supplies the BUSINESS record (NAP, hours,
+            // category, geo, public reviews) for the Business card + the
+            // {{business.*}} generation context — not AI models. Replaced
+            // the retired n8n webhook (Google Native Phase A, gap 670d0e0).
+            'knownModels' => array(),
+            'supportsSeo' => true,
+        ),
         'brevo' => array(
             'id'          => 'brevo',
             'name'        => 'Brevo (Email)',
