@@ -200,6 +200,43 @@ function classifySocialLink(raw: string): SocialLinkInfo {
   return ok('Link', 'post'); // unknown hosts = generic post link, never rejected
 }
 
+// ── Cadence helpers (presentational only — derive a plain-English summary of
+//    the posting schedule from the existing dialog state; no new state, no new
+//    payload keys. Kept module-level + pure so the summary stays in sync with
+//    the controls below.) ──
+const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function formatStartLabel(iso: string): string {
+  if (!iso) return 'today';
+  const d = new Date(iso + 'T00:00:00');
+  return isNaN(d.getTime()) ? 'today' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function describeRecurrence(r: ScheduleRecurrence): string {
+  const { interval, unit, byDays } = r;
+  const freq =
+    unit === 'day'
+      ? interval === 1 ? 'daily' : interval === 2 ? 'every other day' : `every ${interval} days`
+      : unit === 'month'
+        ? interval === 1 ? 'monthly' : `every ${interval} months`
+        : interval === 1 ? 'weekly' : `every ${interval} weeks`;
+  let onDays = '';
+  if (unit === 'week' && byDays.length > 0) {
+    const labels = [...byDays].sort((a, b) => a - b).map((iso) => WEEKDAY_LABELS[iso - 1] ?? '');
+    onDays = ' on ' + (labels.length > 2
+      ? `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
+      : labels.join(' and '));
+  }
+  return freq + onDays;
+}
+
+/** Duration as a trailing clause (", until <date|N articles>") — '' for ongoing. */
+function describeDurationSuffix(mode: string, endDate: string, maxArticles: number): string {
+  if (mode === 'until' && endDate) return `, until ${formatStartLabel(endDate)}`;
+  if (mode === 'limit') return `, until ${maxArticles} article${maxArticles === 1 ? '' : 's'} are published`;
+  return '';
+}
+
 interface CreateStrategyDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -684,85 +721,89 @@ export function CreateStrategyDialog({
             )}
           </AccordionSection>
 
-          {/* ② SCHEDULE — when it runs & how often */}
-          <AccordionSection title="Schedule" defaultOpen>
-            <div className="space-y-1.5">
-              <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">Trigger</Label>
-            {sourceMode === 'rss' || sourceMode === 'social' ? (
-              <div className="space-y-1.5">
-                <Segmented
-                  value="new_source_item"
-                  onChange={() => {}}
-                  options={[{ value: 'new_source_item', label: 'New source item' }]}
-                  disabled
-                />
-                <p className="text-xs text-muted-foreground">
-                  {sourceMode === 'rss'
-                    ? 'RSS strategies trigger on new feed items.'
-                    : 'Social strategies trigger on new posts.'}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <Segmented
-                  value={trigger}
-                  onChange={setTrigger}
-                  options={[
-                    { value: 'manual', label: 'Manual' },
-                    { value: 'scheduled', label: 'Scheduled' },
-                  ]}
-                />
-                {trigger === 'scheduled' && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label>Frequency</Label>
-                      <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
+          {/* ② SCHEDULE & CADENCE — how often finished articles publish */}
+          <AccordionSection title="Schedule & cadence" defaultOpen>
+            <div className="space-y-3">
+              {sourceMode === 'keywords' ? (
+                <>
+                  <div className="space-y-1.5">
+                    <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                      When to publish
+                    </Label>
+                    <Segmented
+                      value={trigger}
+                      onChange={setTrigger}
+                      options={[
+                        { value: 'manual', label: 'On demand' },
+                        { value: 'scheduled', label: 'On a schedule' },
+                      ]}
+                    />
+                  </div>
+
+                  {trigger === 'scheduled' && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>Frequency</Label>
+                        <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Start date</Label>
+                        <Input
+                          type="date"
+                          value={startDate}
+                          onChange={(e) => setStartDate(e.target.value)}
+                          className="w-full bg-background"
+                        />
+                        <p className="text-[0.7rem] text-muted-foreground">Leave blank to start today.</p>
+                      </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>Start Date</Label>
+                  )}
+
+                  <div className="rounded-md border border-border bg-muted/20 p-2.5 text-xs text-foreground text-pretty">
+                    {trigger === 'manual'
+                      ? `${articleCount} article${articleCount === 1 ? '' : 's'} generate on demand — click Generate in the Strategies list to write each one.`
+                      : <>
+                          Articles publish{' '}
+                          <span className="font-medium">{describeRecurrence(recurrence)}</span>, starting{' '}
+                          <span className="font-medium">{formatStartLabel(startDate)}</span>
+                          {describeDurationSuffix(durationMode, durationEndDate, durationMaxArticles)}.
+                          {articleCount > 0 && (
+                            <> Your {articleCount} keyword{articleCount === 1 ? '' : 's'} publish one per slot.</>
+                          )}
+                        </>
+                    }
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    <Label
+                      htmlFor="rss-per-week"
+                      className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground"
+                    >
+                      Posting cadence
+                    </Label>
+                    <div className="flex items-center gap-2">
                       <Input
-                        type="date"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="w-full bg-background"
+                        id="rss-per-week"
+                        type="number"
+                        min={1}
+                        max={21}
+                        value={rssPerWeek}
+                        onChange={(e) => setRssPerWeek(Math.min(21, Math.max(1, parseInt(e.target.value, 10) || 1)))}
+                        className="w-20 h-8 text-xs bg-background"
                       />
-                      <p className="text-[0.8rem] text-muted-foreground">Leave blank to start today.</p>
+                      <span className="text-xs text-muted-foreground">posts per week</span>
                     </div>
                   </div>
-                )}
-              </div>
-            )}
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">Volume</Label>
-            {sourceMode === 'keywords' ? (
-              <div className="space-y-1">
-                <p className="text-sm">
-                  {articleCount} article{articleCount === 1 ? '' : 's'} (one per keyword)
-                </p>
-                {trigger === 'scheduled' && (
-                  <p className="text-xs text-muted-foreground">
-                    Posting frequency lives with the schedule above.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                <Label htmlFor="rss-per-week">Posts per week</Label>
-                <Input
-                  id="rss-per-week"
-                  type="number"
-                  min={1}
-                  max={21}
-                  value={rssPerWeek}
-                  onChange={(e) => setRssPerWeek(Math.min(21, Math.max(1, parseInt(e.target.value, 10) || 1)))}
-                  className="w-24 h-8 text-xs bg-background"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Extra source items queue for the next slot — your site is never flooded.
-                </p>
-              </div>
-            )}
+
+                  <div className="rounded-md border border-border bg-muted/20 p-2.5 text-xs text-foreground text-pretty">
+                    New {sourceMode === 'social' ? 'posts' : 'feed items'} publish up to{' '}
+                    <span className="font-medium">{rssPerWeek}</span> per week. Anything extra queues for the
+                    next free slot — your site is never flooded.
+                  </div>
+                </>
+              )}
             </div>
           </AccordionSection>
 

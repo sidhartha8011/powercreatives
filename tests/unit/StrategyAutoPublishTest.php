@@ -156,15 +156,25 @@ function pcm_test_define_strategy_fakes(): void
         class PCM_Test_FakeWpdb
         {
             public $postmeta = 'wp_postmeta';
+            /** @var string The template's single prompt entry — settable so a
+             *  test can supply one carrying {{ post_* }} variables. */
+            public static $promptEntry = 'SYS PROMPT';
+            /** @var array|null Full entries list, overriding $promptEntry — lets a
+             *  test include NON-prompt categories (only 'prompt' entries may be
+             *  read for variables or rider suppression). */
+            public static $entries = null;
             public function prepare($q, ...$a)
             {
                 return $q;
             }
             public function get_row($q)
             {
+                $entries = is_array(self::$entries)
+                    ? self::$entries
+                    : array(array('category' => 'prompt', 'value' => self::$promptEntry));
                 return (object)array(
                     'name'     => 'Tmpl',
-                    'formData' => json_encode(array('entries' => array(array('category' => 'prompt', 'value' => 'SYS PROMPT')))),
+                    'formData' => json_encode(array('entries' => $entries)),
                 );
             }
         }
@@ -183,6 +193,11 @@ function pcm_test_define_strategy_fakes(): void
             /** @var string|null The last call's user-role message content, for
              *  asserting on prompt content (Step 8: "all keywords in prompt"). */
             public static $lastUserMessage = null;
+            /** @var array|null Overrides the generated article (emoji-strip wiring tests). */
+            public static $nextResult = null;
+            /** @var string|null The last call's system message — the template prompt,
+             *  for asserting {{ post_* }} substitution reached the model. */
+            public static $lastSystemMessage = null;
             public static function invoke_json($messages, $schema, $options)
             {
                 self::$lastOptions = $options;
@@ -192,10 +207,19 @@ function pcm_test_define_strategy_fakes(): void
                     if (($m['role'] ?? '') === 'user') {
                         $user = $m['content'];
                     }
+                    if (($m['role'] ?? '') === 'system') {
+                        self::$lastSystemMessage = $m['content'];
+                    }
                 }
                 self::$lastUserMessage = $user;
                 if (self::$throwOn && strpos($user, self::$throwOn) !== false) {
                     throw new \RuntimeException('LLM boom');
+                }
+                // Overridable so a test can hand back emoji-laden output and
+                // assert on what actually gets PERSISTED; null = the default
+                // clean article every other test in this suite relies on.
+                if (is_array(self::$nextResult)) {
+                    return self::$nextResult;
                 }
                 return array('title' => 'Generated Title', 'content' => '<p>body</p>', 'metaTitle' => 'MT', 'metaDescription' => 'MD');
             }
@@ -277,6 +301,20 @@ function pcm_test_define_strategy_fakes(): void
                 }
                 return true;
             }
+            /** Faithful CAS: writes only while the item is still 'generating'. */
+            public static function complete_strategy_item_if_generating($id, $data)
+            {
+                if (self::$forceCompleteFail
+                    || !isset(self::$items[$id])
+                    || (string) (self::$items[$id]->status ?? '') !== 'generating'
+                ) {
+                    return false;
+                }
+                foreach ($data as $k => $v) {
+                    self::$items[$id]->$k = $v;
+                }
+                return true;
+            }
             public static function delete_strategy_item($id)
             {
                 if (!isset(self::$items[$id])) {
@@ -337,6 +375,9 @@ function pcm_test_define_strategy_fakes(): void
             /** Forces the atomic claim to lose -- simulates a concurrent caller
              *  already having won the race. */
             public static $forceClaimFail = false;
+            /** Forces the completion CAS to lose -- simulates the stale-generating
+             *  reclaim having handed this item to another generator mid-run. */
+            public static $forceCompleteFail = false;
             public static function advance_strategy_item_from_in_review($id)
             {
                 if (self::$forceClaimFail) {
@@ -465,7 +506,266 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
         PCM_Approvals_Service::$createSetCalls = array();
         PCM_Approvals_Service::$nextSetId = 501;
         PCM_DB::$forceClaimFail = false;
+        PCM_DB::$forceCompleteFail = false;
         PCM_DB::$loseGenerationClaims = 0;
+        PCM_LLM::$nextResult = null;
+        PCM_LLM::$lastSystemMessage = null;
+        PCM_Test_FakeWpdb::$promptEntry = 'SYS PROMPT';
+        PCM_Test_FakeWpdb::$entries = null;
+    }
+
+    // ── {{ post_* }} template variables: the CALL SITE ───────────────────
+
+    public function test_only_prompt_entries_are_read_for_variables_and_suppression(): void
+    {
+        // A variable sitting in a NON-prompt entry (a title/outline/reference
+        // field) must neither be substituted nor suppress the rider — those
+        // entries never become the system prompt.
+        PCM_Test_FakeWpdb::$entries = array(
+            array('category' => 'title', 'value' => 'Ignore me: {{ post_content }}'),
+            array('category' => 'prompt', 'value' => 'SYS PROMPT'),
+        );
+        $this->seedItems(array(array(
+            'id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0,
+            'config' => json_encode(array('social' => true, 'sourceTitle' => 'T', 'sourceText' => 'C', 'sourceLink' => 'https://x/1')),
+        )));
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        // The rider must still fire — the prompt entry has no variables.
+        $this->assertStringContainsString('Write an article about this social media post', (string)PCM_LLM::$lastUserMessage);
+        $this->assertStringNotContainsString('Ignore me', (string)PCM_LLM::$lastSystemMessage);
+    }
+
+    public function test_template_source_variables_are_substituted_into_the_system_prompt(): void
+    {
+        PCM_Test_FakeWpdb::$promptEntry =
+            "Rewrite this post.\nTITLE: {{ post_title }}\nBODY: {{post_content}}\nSOURCE: {{ post_link }}";
+        $this->seedItems(array(array(
+            'id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0,
+            'config' => json_encode(array(
+                'social'      => true,
+                'sourceTitle' => 'Spain win the final',
+                'sourceText'  => 'What a match tonight.',
+                'sourceLink'  => 'https://insta/p/abc',
+            )),
+        )));
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $sys = (string)PCM_LLM::$lastSystemMessage;
+        $this->assertStringContainsString('TITLE: Spain win the final', $sys);
+        $this->assertStringContainsString('BODY: What a match tonight.', $sys);
+        $this->assertStringContainsString('SOURCE: https://insta/p/abc', $sys);
+        $this->assertStringNotContainsString('{{', $sys, 'no known token may reach the model raw');
+    }
+
+    public function test_a_template_using_the_variables_suppresses_the_hardcoded_rider(): void
+    {
+        // The template now OWNS how the post is used; appending the built-in
+        // sentence as well would duplicate and can contradict it.
+        PCM_Test_FakeWpdb::$promptEntry = 'Rewrite: {{ post_content }}';
+        $this->seedItems(array(array(
+            'id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0,
+            'config' => json_encode(array('social' => true, 'sourceTitle' => 'T', 'sourceText' => 'C', 'sourceLink' => 'https://x/1')),
+        )));
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $this->assertStringNotContainsString('Write an article about this social media post', (string)PCM_LLM::$lastUserMessage);
+    }
+
+    public function test_a_variable_free_template_still_gets_the_rider(): void
+    {
+        // Keyed off the template TEXT, not the source mode — otherwise every
+        // existing social strategy would silently lose its post context.
+        PCM_Test_FakeWpdb::$promptEntry = 'SYS PROMPT';
+        $this->seedItems(array(array(
+            'id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0,
+            'config' => json_encode(array('social' => true, 'sourceTitle' => 'T', 'sourceText' => 'C', 'sourceLink' => 'https://x/1')),
+        )));
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $this->assertStringContainsString('Write an article about this social media post', (string)PCM_LLM::$lastUserMessage);
+    }
+
+    public function test_an_RSS_item_populates_post_content_and_still_suppresses_the_rider(): void
+    {
+        // The owner's headline case: "RSS reposting with variables". An RSS item
+        // is NOT social — it must still resolve {{ post_content }} (from the feed
+        // entry's description, captured by fetch_rss_feed_items()).
+        PCM_Test_FakeWpdb::$promptEntry = 'Repost this feed item: {{ post_content }} ({{ post_link }})';
+        $this->seedItems(array(array(
+            'id' => 1, 'keyword' => 'Fed cuts rates', 'status' => 'pending', 'position' => 0,
+            'config' => json_encode(array(
+                'sourceTitle' => 'Fed cuts rates',
+                'sourceText'  => 'The central bank lowered rates by 25bps.',
+                'sourceLink'  => 'https://news.example/a',
+            )), // note: no 'social' key — this is a plain RSS item
+        )));
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $sys = (string)PCM_LLM::$lastSystemMessage;
+        $this->assertStringContainsString('The central bank lowered rates by 25bps.', $sys);
+        $this->assertStringContainsString('https://news.example/a', $sys);
+        $this->assertStringNotContainsString('This article responds to a new industry item', (string)PCM_LLM::$lastUserMessage);
+    }
+
+    public function test_an_empty_referenced_variable_keeps_the_rider_rather_than_losing_the_source(): void
+    {
+        // The trap: template references only {{ post_content }}, but this feed
+        // entry shipped no description. Suppressing on the TOKEN alone would
+        // leave the model with no source item AND no attribution link — strictly
+        // worse than before the feature existed.
+        PCM_Test_FakeWpdb::$promptEntry = 'Repost: {{ post_content }}';
+        $this->seedItems(array(array(
+            'id' => 1, 'keyword' => 'Fed cuts rates', 'status' => 'pending', 'position' => 0,
+            'config' => json_encode(array(
+                'sourceTitle' => 'Fed cuts rates',
+                'sourceText'  => '',                       // feed had no description
+                'sourceLink'  => 'https://news.example/a',
+            )),
+        )));
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $this->assertStringContainsString('This article responds to a new industry item', (string)PCM_LLM::$lastUserMessage);
+    }
+
+    public function test_variables_resolve_to_empty_for_a_plain_keyword_item(): void
+    {
+        // A keyword strategy has no source post — the tokens must vanish, not
+        // reach the model raw.
+        PCM_Test_FakeWpdb::$promptEntry = 'Body:{{ post_content }}|Link:{{ post_link }}';
+        $this->seedItems(array(array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0)));
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $this->assertStringContainsString('Body:|Link:', (string)PCM_LLM::$lastSystemMessage);
+    }
+
+    // ── REQ 2/3 wiring: the CALL SITES, not just the pure helpers ────────
+    //
+    // A verifier proved these requirements could each be deleted outright with
+    // the whole suite staying green — every test covered strip_emoji() and
+    // social_source_image() in isolation, none covered generate_next_item()
+    // actually calling them. These four close that.
+
+    /** A social item whose config carries the post's captured image + text. */
+    private function seedSocialItem(array $extraCfg = array()): void
+    {
+        $cfg = array_merge(array('social' => true, 'sourceLink' => 'https://insta/p/x', 'sourceText' => 'caption'), $extraCfg);
+        $this->seedItems(array(array(
+            'id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0,
+            'config' => json_encode($cfg),
+        )));
+    }
+
+    private function emojiArticle(): array
+    {
+        return array(
+            'title'           => 'Spain win 🇪🇸 ⭐',
+            'content'         => '<p>What a match 😱 tonight.</p>',
+            'metaTitle'       => 'Spain win 🎉',
+            'metaDescription' => 'A recap 🔥 of the final.',
+        );
+    }
+
+    public function test_generate_strips_emoji_from_every_persisted_article_field_for_a_social_item(): void
+    {
+        $this->seedSocialItem();
+        PCM_LLM::$nextResult = $this->emojiArticle();
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $article = end(PCM_DB::$articles);
+        $this->assertSame('Spain win', $article['title']);
+        $this->assertSame('<p>What a match tonight.</p>', $article['content']);
+        // metaTitle/metaDescription reach _yoast_wpseo_* on the client's site —
+        // an unstripped one puts the post's emojis in the SERP snippet.
+        $this->assertSame('Spain win', $article['metaTitle']);
+        $this->assertSame('A recap of the final.', $article['metaDescription']);
+    }
+
+    public function test_generate_leaves_emoji_alone_for_a_NON_social_item(): void
+    {
+        // The strip is scoped to social items — a keyword strategy's article
+        // keeps whatever the model wrote.
+        $this->seedItems(array(array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0)));
+        PCM_LLM::$nextResult = $this->emojiArticle();
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'config' => null, 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $article = end(PCM_DB::$articles);
+        $this->assertStringContainsString('🇪🇸', $article['title']);
+        $this->assertStringContainsString('😱', $article['content']);
+    }
+
+    public function test_consolidated_batch_also_strips_emoji_when_the_batch_is_social(): void
+    {
+        // The consolidated path returns before any $item_cfg is read, so the
+        // no-emoji rule silently did not apply to a shared article.
+        $this->seedItems(array(
+            array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0, 'config' => json_encode(array('social' => true))),
+            array('id' => 2, 'keyword' => 'kw two', 'status' => 'pending', 'position' => 1, 'config' => json_encode(array('social' => true))),
+        ));
+        PCM_LLM::$nextResult = $this->emojiArticle();
+        $strategy = (object)array(
+            'id' => 7, 'templateId' => 3, 'brandId' => null,
+            'config' => json_encode(array('structure' => 'consolidated')),
+            'totalItems' => 2, 'completedItems' => 0, 'failedItems' => 0,
+        );
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $article = end(PCM_DB::$articles);
+        $this->assertSame('Spain win', $article['title']);
+        $this->assertSame('<p>What a match tonight.</p>', $article['content']);
+        $this->assertSame('A recap of the final.', $article['metaDescription']);
+    }
+
+    public function test_generate_reuses_the_social_post_image_as_the_featured_image(): void
+    {
+        $this->seedSocialItem(array('sourceImage' => 'https://cdn.example/post.jpg'));
+        $strategy = (object)array(
+            'id' => 7, 'templateId' => 3, 'brandId' => null,
+            'config' => json_encode(array('featuredImages' => true)),
+            'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0,
+        );
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $article = end(PCM_DB::$articles);
+        $this->assertSame('https://cdn.example/post.jpg', $article['featuredImage']);
+    }
+
+    public function test_the_featured_image_opt_out_also_blocks_the_social_post_image(): void
+    {
+        // The opt-in gate lives inside maybe_generate_featured_image(); putting
+        // the social image on the left of `??` short-circuited past it, so a
+        // strategy with featured images switched OFF still published one.
+        $this->seedSocialItem(array('sourceImage' => 'https://cdn.example/post.jpg'));
+        $strategy = (object)array(
+            'id' => 7, 'templateId' => 3, 'brandId' => null,
+            'config' => json_encode(array('featuredImages' => false)),
+            'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0,
+        );
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $article = end(PCM_DB::$articles);
+        $this->assertNull($article['featuredImage'], 'an opted-out strategy must not get a featured image from any source');
     }
 
     /** @param array<int,array<string,mixed>> $items */
@@ -568,6 +868,74 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
         $this->assertNull($res);
         $this->assertSame('in_progress', PCM_DB::$strategy['status'] ?? null, 'a remaining failure must not be reported as strategy status=completed');
         $this->assertSame(1, PCM_DB::$strategy['failedItems'] ?? null);
+    }
+
+    public function test_generation_that_lost_its_claim_to_a_reclaim_does_not_complete_or_publish(): void
+    {
+        // The stale-generating reclaim (per-strategy, and the global sweep in
+        // reclaim_wedged_items()) hands a long-running item to a new generator
+        // WITHOUT cancelling the original process. When that original finally
+        // finishes it must not complete an item it no longer owns — otherwise
+        // the item is double-counted and, in publish mode, a SECOND post is
+        // published to the client's live site. Mirrors the same guarantee
+        // test_advance_item_on_approval_does_not_publish_when_the_atomic_claim_loses_a_race
+        // already pins for the approval path.
+        $this->seedItems(array(array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0)));
+        PCM_DB::$site = (object)array('id' => 9, 'name' => 'My Site', 'url' => 'https://mysite.example');
+        $strategy = (object)array('id' => 7, 'templateId' => 3, 'brandId' => null, 'publishingMode' => 'publish', 'config' => json_encode(array('siteId' => 9)), 'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0);
+        PCM_DB::$forceCompleteFail = true;
+
+        $res = PCM_Strategy_Service::generate_next_item($strategy, 42);
+
+        $this->assertCount(0, PCM_Sites_Service::$calls, 'a run that lost its claim must never publish');
+        $this->assertNotSame('completed', PCM_DB::$items[1]->status ?? null, 'the losing run must not complete the item');
+        $this->assertIsArray($res, 'the caller still gets a response rather than an exception');
+    }
+
+    public function test_in_review_write_is_also_claim_guarded_when_a_reclaim_wins(): void
+    {
+        // The approval branch needs the same guard as the completed branch —
+        // otherwise a losing run parks the item in 'in_review' against the new
+        // owner's set, and recompute_counters then counts it as neither
+        // completed nor failed while the winner's own write is discarded.
+        $this->seedItems(array(array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0)));
+        $strategy = (object)array(
+            'id' => 7, 'name' => 'My Strategy', 'templateId' => 3, 'brandId' => null,
+            'config' => json_encode(array('approvalMode' => 'internal')),
+            'totalItems' => 1, 'completedItems' => 0, 'failedItems' => 0,
+        );
+        PCM_DB::$forceCompleteFail = true;
+
+        PCM_Strategy_Service::generate_next_item($strategy, 1);
+
+        $this->assertNotSame('in_review', PCM_DB::$items[1]->status ?? null, 'a run that lost its claim must not park the item in review');
+    }
+
+    public function test_consolidated_batch_that_lost_its_claim_does_not_publish(): void
+    {
+        // The consolidated path returns before the per-strategy reclaim, so it
+        // was never reclaimable until the global sweep existed — which makes
+        // its terminal writes newly concurrent, and so its publish newly
+        // duplicable. Its shared article must not be published by a run that
+        // lost the items.
+        $this->seedItems(array(
+            array('id' => 1, 'keyword' => 'kw one', 'status' => 'pending', 'position' => 0),
+            array('id' => 2, 'keyword' => 'kw two', 'status' => 'pending', 'position' => 1),
+        ));
+        PCM_DB::$site = (object)array('id' => 9, 'name' => 'My Site', 'url' => 'https://mysite.example');
+        $strategy = (object)array(
+            'id' => 7, 'name' => 'My Strategy', 'templateId' => 3, 'brandId' => null,
+            'publishingMode' => 'publish',
+            'config' => json_encode(array('structure' => 'consolidated', 'siteId' => 9)),
+            'totalItems' => 2, 'completedItems' => 0, 'failedItems' => 0,
+        );
+        PCM_DB::$forceCompleteFail = true;
+
+        PCM_Strategy_Service::generate_next_item($strategy, 42);
+
+        $this->assertCount(0, PCM_Sites_Service::$calls, 'a consolidated batch that lost its claim must never publish');
+        $this->assertNotSame('completed', PCM_DB::$items[1]->status ?? null);
+        $this->assertNotSame('completed', PCM_DB::$items[2]->status ?? null);
     }
 
     // ── Auto-publish ─────────────────────────────────────────────────────

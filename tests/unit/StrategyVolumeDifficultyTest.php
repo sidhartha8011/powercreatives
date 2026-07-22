@@ -142,6 +142,19 @@ function pcm_test_define_volume_difficulty_fakes(): void
                 }
                 return true;
             }
+            /** Faithful CAS: writes only while the item is still 'generating'. */
+            public static function complete_strategy_item_if_generating($id, $data)
+            {
+                if (!isset(self::$items[$id])
+                    || (string) (self::$items[$id]->status ?? '') !== 'generating'
+                ) {
+                    return false;
+                }
+                foreach ($data as $k => $v) {
+                    self::$items[$id]->$k = $v;
+                }
+                return true;
+            }
         }
     }
 }

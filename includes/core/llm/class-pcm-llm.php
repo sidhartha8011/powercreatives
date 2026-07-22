@@ -435,8 +435,15 @@ class PCM_LLM
         // genuinely truncated reply was cut mid-value and does NOT end in `}`;
         // a complete-but-malformed reply does. That closing brace is what
         // salvage needs to bound the final field, so it is the right gate.
-        $salvage_src = rtrim(self::extract_json($content));
-        if ((json_last_error() !== JSON_ERROR_NONE || !is_array($parsed))
+        // Freeze the parse OUTCOME and its message BEFORE extract_json() —
+        // that function probes candidate spans with json_decode(), so reading
+        // the global afterwards can report an unrelated slice's "Syntax error"
+        // instead of the real reason (e.g. "Malformed UTF-8"), and can even
+        // flip a SUCCESSFUL parse into the failure branches below.
+        $parse_failed = (json_last_error() !== JSON_ERROR_NONE || !is_array($parsed));
+        $last_error   = json_last_error_msg();
+        $salvage_src  = rtrim(self::extract_json($content));
+        if ($parse_failed
             && ($result['finish_reason'] ?? '') !== 'length'
             && $salvage_src !== ''
             && substr($salvage_src, -1) === '}'
@@ -455,18 +462,89 @@ class PCM_LLM
             }
         }
 
-        if (json_last_error() !== JSON_ERROR_NONE || !is_array($parsed)) {
-            $truncated = ($result['finish_reason'] ?? '') === 'length';
+        if ($parse_failed) {
             throw new \RuntimeException(sprintf(
                 'LLM returned invalid JSON (%s mode)%s: %s — raw: %s',
                 $use_json_object ? 'json_object' : 'prompt-only',
-                $truncated ? ' — output TRUNCATED at the token limit even after a doubled retry; the article is too long for the budget' : '',
-                json_last_error_msg(),
+                self::describe_json_failure(
+                    ($result['finish_reason'] ?? '') === 'length',
+                    $salvage_src
+                ),
+                $last_error,
                 substr($content, 0, 500)
             ));
         }
 
         return $parsed;
+    }
+
+    /**
+     * Human-readable cause for the terminal "invalid JSON" error.
+     *
+     * WHY THIS EXISTS: keying the message off `finish_reason` alone made a
+     * TRUNCATED reply and a merely malformed one read as the same opaque error
+     * in the UI — the same failure has now been reported three times with no
+     * diagnosable cause. Gemini's OpenAI-compat endpoint routinely truncates a
+     * long article WITHOUT setting finish_reason (the truncation rescue above
+     * already trusts looks_truncated() for exactly that), so the structure has
+     * to be consulted too.
+     *
+     * BUT looks_truncated() is only trustworthy when the text is ALSO
+     * structurally incomplete. It tracks quote parity, so a payload carrying an
+     * unescaped inner quote reads as "still inside a string" and reports a
+     * false positive — and that is precisely the payload class that reaches
+     * this error (salvage refused it). Claiming "TRUNCATED, the article is too
+     * long" there would send the reader after a token budget that is not the
+     * problem, which is worse than the vague message it replaced. So the shape
+     * signal counts only when the reply does not close with `}` — the same
+     * completeness test the salvage gate uses, and for the same reason.
+     *
+     * Pure/deterministic — directly unit-testable (LlmJsonRepairTest).
+     *
+     * @param bool   $by_finish   Whether the API reported finish_reason='length'.
+     * @param string $salvage_src The extracted JSON candidate (already rtrim'd).
+     * @return string Detail clause appended to the error message.
+     */
+    public static function describe_json_failure(bool $by_finish, string $salvage_src): string
+    {
+        // finish_reason is the only NON-heuristic signal available, so it is
+        // tested first. Short-circuiting on an empty span ahead of it threw the
+        // signal away and reported "nothing came back" for a reply the API had
+        // explicitly flagged as cut at the token limit — a regression against
+        // the message this function replaced.
+        if ($by_finish) {
+            return ' — output TRUNCATED at the token limit (detected via finish_reason=length);'
+                . ' the article is too long for the budget';
+        }
+
+        if ($salvage_src === '') {
+            // extract_json() returns its input unchanged when it finds no
+            // braces, so an empty span means the reply itself was empty or
+            // whitespace — NOT merely "unparseable".
+            return ' — the model returned an EMPTY reply';
+        }
+
+        // Accept `]` as well as `}`: extract_json() can hand back an
+        // array-rooted span, and treating a complete array as "incomplete"
+        // would re-open the quote-parity false positive for that root.
+        $last       = substr($salvage_src, -1);
+        $incomplete = $last !== '}' && $last !== ']';
+
+        if ($incomplete && self::looks_truncated($salvage_src)) {
+            return ' — output TRUNCATED at the token limit (detected via an unterminated JSON'
+                . ' structure); the article is too long for the budget';
+        }
+
+        // Hedged on purpose, and the hedge is load-bearing. Two truncation
+        // shapes slip past the gate above: a reply cut right after a nested
+        // object closes still ends in `}`, and one cut inside a nested array
+        // still ends in `]`. Neither can be caught by counting depth instead —
+        // an unescaped inner quote corrupts the scan's string state, so the
+        // depth count is no more trustworthy than the quote parity on exactly
+        // the payloads that reach here. So this asserts only that NO truncation
+        // signal was found, never that the reply was complete.
+        return ' — no truncation signal detected; output appears complete but unparseable'
+            . ' (repair, reprompt and schema-key salvage all failed)';
     }
 
     /**
@@ -615,21 +693,69 @@ class PCM_LLM
      * LLMs (especially Anthropic and sometimes Google) often wrap JSON in ```json ... ```
      * 
      * @param string $content Raw content from LLM.
+     * ⚠ CLOBBERS `json_last_error()`. This probes its candidate spans with
+     * json_decode(), so the global parse-error state after calling this
+     * reflects an internal probe, NOT the caller's own last decode. Callers
+     * that report or branch on json_last_error()/json_last_error_msg() must
+     * capture it BEFORE calling extract_json() (invoke_json_fallback() does).
+     *
      * @return string Extracted JSON string.
      */
     public static function extract_json(string $content): string
     {
         $content = trim($content);
-        
-        // Match content inside ```json ... ``` or just ``` ... ```
-        if (preg_match('/```(?:json)?\s*(.*?)\s*```/is', $content, $matches)) {
-            return trim($matches[1]);
+
+        // Strip a surrounding markdown fence. Two competing shapes exist and
+        // neither regex wins both, so try the narrow one first and only widen
+        // when it fails to produce JSON:
+        //   - TWO separate fenced blocks (a JSON block then a usage sample):
+        //     non-greedy is right; greedy would weld them together.
+        //   - ONE block whose article content itself contains a ``` fence:
+        //     non-greedy stops at that inner fence and yields a fragment cut
+        //     mid-string, which then defeats every downstream tier (the
+        //     salvage gate needs a closing brace); greedy is right.
+        //
+        // RETURNS the fence body directly — it must NOT fall through to the
+        // brace scan below. Falling through lets that scan carve a decodable
+        // span out of a fence body that is not JSON at all: a ```js block
+        // containing `{}` yields "{}", which decodes to an empty array, passes
+        // every `!is_array($parsed)` gate in invoke_json_fallback(), and
+        // completes the item with an EMPTY article instead of throwing. A
+        // decodable-but-wrong value returned silently is strictly worse than a
+        // loud failure — the same trap that sank two earlier attempts at the
+        // leading-bracket limit documented below.
+        if (preg_match('/```(?:json)?\s*(.*?)\s*```/is', $content, $narrow)) {
+            $body = trim($narrow[1]);
+            json_decode($body, true);
+            if (json_last_error() !== JSON_ERROR_NONE
+                && preg_match('/```(?:json)?\s*(.*)\s*```/is', $content, $wide)
+            ) {
+                $widened = trim($wide[1]);
+                json_decode($widened, true);
+                $body = json_last_error() === JSON_ERROR_NONE ? $widened : $body;
+            }
+            return $body;
         }
-        
-        // If no markdown block found, assume the whole string is JSON (or attempt to find first { or [)
+
+        // KNOWN LIMIT (deliberately NOT fixed here): leading prose containing a
+        // bracket — "Here is the article [as requested]: {…}" — starts the span
+        // at that bracket and runs to the last `]`, yielding garbage. Two
+        // attempts at candidate-ranking to fix it each introduced a WORSE
+        // failure: an inner well-formed array (`media_assets` is required by
+        // article_schema(), and is its LAST property, so its `]` can sit past
+        // the object's `}`) decoded and won, the caller got a decodable-but-
+        // wrong value, `is_array()` was true so nothing threw, salvage never
+        // ran, and the item completed with an EMPTY article — silent bad data
+        // replacing a loud, diagnosable error. Doing this safely needs a real
+        // brace-matching scan (track string state, match the first opener to
+        // its own close), not strpos/strrpos guessing; that belongs in its own
+        // change with its own review, because this function is on the path of
+        // every LLM call in the plugin. In json_object mode — where these
+        // failures are reported — the API returns a bare object with no leading
+        // prose, so the limit is not what is biting today.
         $start_obj = strpos($content, '{');
         $start_arr = strpos($content, '[');
-        
+
         $start = false;
         if ($start_obj !== false && $start_arr !== false) {
             $start = min($start_obj, $start_arr);
@@ -638,7 +764,7 @@ class PCM_LLM
         } elseif ($start_arr !== false) {
             $start = $start_arr;
         }
-        
+
         if ($start !== false) {
             // Find the matching end character
             $end_char = $content[$start] === '{' ? '}' : ']';

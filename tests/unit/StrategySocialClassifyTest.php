@@ -199,14 +199,15 @@ class StrategySocialClassifyTest extends \PHPUnit\Framework\TestCase
 
     // ── (3) post_context: the always-works URL-label fallback ────────────
 
-    public function test_post_context_always_returns_all_three_keys_with_url_label(): void
+    public function test_post_context_always_returns_all_keys_with_url_label(): void
     {
         // No oEmbed/HTTP layer here → straight to the URL-derived label.
         $ctx = PCM_Social_Source::post_context('https://www.instagram.com/p/Cxyz123AbCd/');
-        $this->assertSame(array('title', 'author', 'text'), array_keys($ctx));
+        $this->assertSame(array('title', 'author', 'text', 'image'), array_keys($ctx));
         $this->assertNotSame('', $ctx['title'], 'there is ALWAYS a usable title');
         $this->assertSame('', $ctx['author']);
         $this->assertSame('', $ctx['text']);
+        $this->assertSame('', $ctx['image'], 'no network → no og:image captured');
 
         $ctx = PCM_Social_Source::post_context('https://x.com/jack/status/20');
         $this->assertSame('X post by jack', $ctx['title']);
@@ -317,7 +318,8 @@ class StrategySocialClassifyTest extends \PHPUnit\Framework\TestCase
         ));
 
         $this->assertCount(2, $out);
-        $this->assertSame(array('permalink', 'id', 'title', 'date', 'text'), array_keys($out[0]));
+        $this->assertSame(array('permalink', 'id', 'title', 'date', 'text', 'image'), array_keys($out[0]));
+        $this->assertSame('', $out[0]['image'], 'fixture carries no image field');
         $this->assertSame('https://www.instagram.com/p/Cxyz/', $out[0]['permalink']);
         $this->assertSame('318', $out[0]['id']);
         $this->assertLessThanOrEqual(90, strlen($out[0]['title']), 'title derives from the first ~90 caption chars');

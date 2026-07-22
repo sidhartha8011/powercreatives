@@ -372,12 +372,19 @@ class PCM_Strategy_Service
             if ($title === '') {
                 $title = $url; // post_context() guarantees a title, but stay defensive
             }
-            $item_id = PCM_DB::create_rss_strategy_item($strategy_id, $user_id, $title, array(
+            $item_cfg = array(
                 'sourceLink'  => $url,
                 'sourceTitle' => $title,
                 'sourceText'  => (string)($context['text'] ?? ''),
                 'social'      => true,
-            ));
+            );
+            // The post's own preview image (og:image when fetchable) is reused as
+            // the generated article's featured image — stored when captured.
+            $source_image = trim((string)($context['image'] ?? ''));
+            if ($source_image !== '') {
+                $item_cfg['sourceImage'] = $source_image;
+            }
+            $item_id = PCM_DB::create_rss_strategy_item($strategy_id, $user_id, $title, $item_cfg);
             if ($item_id) {
                 $inserted++;
             }
@@ -794,8 +801,33 @@ class PCM_Strategy_Service
                 $content = self::inject_parent_link($content, $parent_link, $strategy);
             }
 
-            $title = $result['title'] ?? ucfirst($keywords[0] ?? '');
-            $slug  = sanitize_title($title);
+            $title      = $result['title'] ?? ucfirst($keywords[0] ?? '');
+            $meta_title = $result['metaTitle'] ?? $title;
+            $meta_desc  = $result['metaDescription'] ?? '';
+
+            // Consolidated + Source=Social: one article covers MANY posts, so
+            // this path never reads a single $item_cfg — which meant the
+            // no-emoji rule silently didn't apply here. It does now, keyed off
+            // any contributing item being social.
+            //
+            // The post-image reuse is deliberately NOT applied: a shared
+            // article covering N posts has no unambiguous "the post's image",
+            // and picking one arbitrarily is a product decision, not a fix. The
+            // AI featured image (opt-in gated) stays the behavior here.
+            $batch_is_social = false;
+            foreach ($items as $it) {
+                if (!empty(self::item_config($it)['social'])) {
+                    $batch_is_social = true;
+                    break;
+                }
+            }
+            if ($batch_is_social) {
+                $title      = self::strip_emoji($title);
+                $content    = self::strip_emoji($content);
+                $meta_title = self::strip_emoji($meta_title);
+                $meta_desc  = self::strip_emoji($meta_desc);
+            }
+            $slug = sanitize_title($title);
 
             $article_id = PCM_DB::create_article(array(
                 'userId'          => $user_id,
@@ -805,8 +837,8 @@ class PCM_Strategy_Service
                 'title'           => $title,
                 'slug'            => $slug,
                 'content'         => $content,
-                'metaTitle'       => $result['metaTitle'] ?? $title,
-                'metaDescription' => $result['metaDescription'] ?? '',
+                'metaTitle'       => $meta_title,
+                'metaDescription' => $meta_desc,
                 'schemaType'      => 'Article',
                 'status'          => 'draft',
                 'featuredImage'   => self::maybe_generate_featured_image($strategy, $title, (string)($keywords[0] ?? ''), $user_id),
@@ -827,27 +859,57 @@ class PCM_Strategy_Service
                     $user_id,
                     $approval_mode
                 );
-                foreach ($pending_ids as $id) {
-                    PCM_DB::update_strategy_item($id, array(
+                foreach ($pending_ids as $i => $id) {
+                    // Claim guard, as in the completed branch below — a batch
+                    // that lost its items to a reclaim must not overwrite the
+                    // state the new owner is producing.
+                    if (!PCM_DB::complete_strategy_item_if_generating($id, array(
                         'status'       => 'in_review',
                         'title'        => $title,
                         'slug'         => $slug,
                         'articleId'    => $article_id,
                         'setId'        => $set_id,
                         'errorMessage' => '',
-                    ));
+                    )) && $i === 0) {
+                        error_log(sprintf(
+                            '[PCM_Strategy_Service] Consolidated batch on strategy #%d lost its claim to a reclaim — approval set #%d is left unlinked.',
+                            (int)$strategy->id,
+                            (int)$set_id
+                        ));
+                        break;
+                    }
                 }
             } else {
-                foreach ($pending_ids as $id) {
-                    PCM_DB::update_strategy_item($id, array(
+                // Same claim guard as the per-item path: the stale-generating
+                // reclaim can hand these items to a new batch run without
+                // cancelling this one, and a blind write would then publish a
+                // SECOND copy of the shared article. Ownership is decided by
+                // the FIRST item — a consolidated batch owns its items as a
+                // set, so a partial write is never correct.
+                $owned = false;
+                foreach ($pending_ids as $i => $id) {
+                    $wrote = PCM_DB::complete_strategy_item_if_generating($id, array(
                         'status'       => 'completed',
                         'title'        => $title,
                         'slug'         => $slug,
                         'articleId'    => $article_id,
                         'errorMessage' => '',
                     ));
+                    if ($i === 0) {
+                        $owned = $wrote;
+                        if (!$owned) {
+                            error_log(sprintf(
+                                '[PCM_Strategy_Service] Consolidated batch on strategy #%d lost its claim to a reclaim — discarding this run (article #%d stays an unlinked draft) and NOT publishing.',
+                                (int)$strategy->id,
+                                (int)$article_id
+                            ));
+                            break;
+                        }
+                    }
                 }
-                $publish = self::maybe_auto_publish($strategy, PCM_DB::get_article($article_id, $user_id), $user_id);
+                if ($owned) {
+                    $publish = self::maybe_auto_publish($strategy, PCM_DB::get_article($article_id, $user_id), $user_id);
+                }
             }
 
             self::recompute_counters((int)$strategy->id, $user_id, (int)$strategy->totalItems);
@@ -1261,8 +1323,32 @@ class PCM_Strategy_Service
             $item_cfg = self::maybe_enrich_social_post($item, $item_cfg, $user_id);
 
             // ── 4. Build prompt with variable injection (+ optional live research) ──
+            // A template that references {{ post_content }} / {{ post_title }} /
+            // {{ post_link }} OWNS how the source post is used, so the hardcoded
+            // rider is suppressed — appending it would duplicate the instruction
+            // and can contradict the author's wording.
+            //
+            // Keyed off the template TEXT **and** the resolved VALUES: a social
+            // strategy on a variable-free template still gets the rider (exactly
+            // as before), and so does one whose referenced variables are all
+            // empty — otherwise an item with no captured caption would lose both
+            // its context and the rider's mandatory "link back to the post"
+            // instruction, leaving the model nothing to work from.
+            $template_drives_source = false;
+            foreach ($template['entries'] as $entry) {
+                if (($entry['category'] ?? '') === 'prompt'
+                    && self::template_carries_source((string)($entry['value'] ?? ''), $item_cfg)
+                ) {
+                    $template_drives_source = true;
+                    break;
+                }
+            }
+            $rss_source = $template_drives_source
+                ? ''
+                : self::rss_source_instruction($item_cfg, self::rss_angle($strategy));
+
             $research = self::maybe_research_context($strategy, array($item->keyword), $user_id);
-            $messages = self::build_prompt(array($item->keyword), $template, $brand, $research, self::in_content_media_enabled($strategy), self::media_count($strategy), self::media_type($strategy), self::media_guidance($strategy), self::rss_source_instruction($item_cfg, self::rss_angle($strategy)));
+            $messages = self::build_prompt(array($item->keyword), $template, $brand, $research, self::in_content_media_enabled($strategy), self::media_count($strategy), self::media_type($strategy), self::media_guidance($strategy), $rss_source, $item_cfg);
 
             // ── 5. Invoke LLM — user-selected model/provider (data-driven), with a
             //       fallback for strategies created before model selection existed. ──
@@ -1287,6 +1373,14 @@ class PCM_Strategy_Service
 
             // ── 6. Create article ──
             $title = $result['title'] ?? ucfirst($item->keyword);
+            // No emojis in articles written from a social post: the source post's
+            // emojis bleed into the model's output. Strip them from every ARTICLE
+            // text field — the stored sourceText/sourceTitle on the item are
+            // captured data and stay byte-identical.
+            $is_social = !empty($item_cfg['social']);
+            if ($is_social) {
+                $title = self::strip_emoji($title);
+            }
             $slug = sanitize_title($title);
 
             // A6: in-content images & charts — replace [IMAGE_N] tokens with
@@ -1294,6 +1388,17 @@ class PCM_Strategy_Service
             // the content is persisted, and before the parent-link append below.
             $result  = self::maybe_generate_in_content_media($result, $strategy, $user_id);
             $content = $result['content'] ?? '';
+            // metaTitle/metaDescription are stripped too — sites/service.php
+            // pushes them to _yoast_wpseo_title / _yoast_wpseo_metadesc on the
+            // client's site, so an unstripped one puts the post's emojis
+            // straight into the SERP snippet.
+            $meta_title = $result['metaTitle'] ?? $title;
+            $meta_desc  = $result['metaDescription'] ?? '';
+            if ($is_social) {
+                $content    = self::strip_emoji($content);
+                $meta_title = self::strip_emoji($meta_title);
+                $meta_desc  = self::strip_emoji($meta_desc);
+            }
 
             // Step 9: hierarchy-aware parent-link injection (post-process, before
             // the article is saved, so the link is baked into stored content).
@@ -1310,11 +1415,18 @@ class PCM_Strategy_Service
                 'title'           => $title,
                 'slug'            => $slug,
                 'content'         => $content,
-                'metaTitle'       => $result['metaTitle'] ?? $title,
-                'metaDescription' => $result['metaDescription'] ?? '',
+                'metaTitle'       => $meta_title,
+                'metaDescription' => $meta_desc,
                 'schemaType'      => 'Article',
                 'status'          => 'draft',
-                'featuredImage'   => self::maybe_generate_featured_image($strategy, $title, (string)$item->keyword, $user_id),
+                // The featured-image OPT-IN gates both sources. It lives inside
+                // maybe_generate_featured_image(), so putting the social image
+                // on the left of `??` short-circuited past it and published an
+                // image on strategies that had the feature switched off.
+                'featuredImage'   => self::featured_images_enabled($strategy)
+                    ? (self::social_source_image($item_cfg)
+                        ?? self::maybe_generate_featured_image($strategy, $title, (string)$item->keyword, $user_id))
+                    : null,
             ));
 
             if (!$article_id) {
@@ -1341,14 +1453,25 @@ class PCM_Strategy_Service
                 // hand-off, not a reimplementation: no approval UI lives here.
                 $set_id = self::create_approval_set_for_item($strategy, $item, $article_id, $user_id, $approval_mode);
 
-                PCM_DB::update_strategy_item((int)$item->id, array(
+                // Same compare-and-set as the completed branch below — a run
+                // that lost its claim to a reclaim must not overwrite the item
+                // state the new owner is producing. The approval set is already
+                // created at this point, so a lost claim leaves that set
+                // unlinked; logged rather than silently swallowed.
+                if (!PCM_DB::complete_strategy_item_if_generating((int)$item->id, array(
                     'status'       => 'in_review',
                     'title'        => $title,
                     'slug'         => $slug,
                     'articleId'    => $article_id,
                     'setId'        => $set_id,
                     'errorMessage' => '',
-                ));
+                ))) {
+                    error_log(sprintf(
+                        '[PCM_Strategy_Service] Item #%d was reclaimed while it was still generating — discarding this run\'s result; approval set #%d is left unlinked.',
+                        (int)$item->id,
+                        (int)$set_id
+                    ));
+                }
 
                 // ── 8. Recompute strategy counters (retry-safe). 'in_review' counts
                 //       as neither completed nor failed — matches recompute_counters'
@@ -1360,13 +1483,37 @@ class PCM_Strategy_Service
                     'article' => PCM_DB::get_article($article_id, $user_id),
                 );
             } else {
-                PCM_DB::update_strategy_item((int)$item->id, array(
+                // Compare-and-set, not a blind write: if a stale-generating
+                // reclaim handed this item to another generator while we were
+                // still working (see PCM_DB::complete_strategy_item_if_generating),
+                // we no longer own it — completing anyway would double-count the
+                // item and, below, publish a SECOND post to the client's site.
+                $owned = PCM_DB::complete_strategy_item_if_generating((int)$item->id, array(
                     'status'       => 'completed',
                     'title'        => $title,
                     'slug'         => $slug,
                     'articleId'    => $article_id,
                     'errorMessage' => '',
                 ));
+                if (!$owned) {
+                    error_log(sprintf(
+                        '[PCM_Strategy_Service] Item #%d was reclaimed while it was still generating — discarding this run\'s result (article #%d stays an unlinked draft) and NOT publishing.',
+                        (int)$item->id,
+                        (int)$article_id
+                    ));
+                    self::recompute_counters((int)$strategy->id, $user_id, (int)$strategy->totalItems);
+                    // Still re-arm: siblings may be pending, and the winner
+                    // could itself die. Without this a lost claim would leave
+                    // the rest of the batch waiting a full sweep interval.
+                    if ($item_id === null) {
+                        self::maybe_schedule_queue_continuation((int)$strategy->id, $user_id);
+                    }
+                    return array(
+                        'item'      => PCM_DB::get_strategy_items((int)$strategy->id),
+                        'article'   => PCM_DB::get_article($article_id, $user_id),
+                        'discarded' => true,
+                    );
+                }
 
                 // ── 8. Recompute strategy counters from item states (retry-safe) ──
                 self::recompute_counters((int)$strategy->id, $user_id, (int)$strategy->totalItems);
@@ -1940,15 +2087,19 @@ class PCM_Strategy_Service
                 'sourceLink'  => (string)($entry['link'] ?? ''),
                 'sourceTitle' => (string)($entry['title'] ?? ''),
             );
-            // Social (Apify) queue entries additionally carry the post text +
-            // flag — written into the item config for the social prompt rider.
-            // RSS-feed entries never have either key, so their item config
-            // stays byte-identical to before.
+            // Queue entries carry the post text — written into the item config
+            // for the social prompt rider, {{ post_content }}, and (social only)
+            // featured-image reuse. RSS entries populate `text` from the feed
+            // entry's description; only `social`/`image` remain social-only.
             if (isset($entry['text']) && (string)$entry['text'] !== '') {
                 $item_cfg['sourceText'] = (string)$entry['text'];
             }
             if (!empty($entry['social'])) {
                 $item_cfg['social'] = true;
+            }
+            $source_image = trim((string)($entry['image'] ?? ''));
+            if ($source_image !== '') {
+                $item_cfg['sourceImage'] = $source_image;
             }
             $item_id = PCM_DB::create_rss_strategy_item($strategy_id, $user_id, $keyword, $item_cfg);
             if ($item_id) {
@@ -2129,6 +2280,13 @@ class PCM_Strategy_Service
                         'id'        => (string)$item->get_id(),
                         'title'     => (string)$item->get_title(),
                         'date'      => (int)$item->get_date('U'),
+                        // The feed entry's own summary — this is what makes
+                        // {{ post_content }} real for an RSS strategy. It rides
+                        // the SAME `text` key the social branch already uses, so
+                        // ingest → pop → sourceText needs no further change
+                        // (ingest sanitizes + caps it at 1000 chars, which also
+                        // strips the HTML feeds put in a description).
+                        'text'      => (string)$item->get_description(),
                     );
                 }
             }
@@ -2181,13 +2339,17 @@ class PCM_Strategy_Service
                     'link'  => (string)($entry['link'] ?? ''),
                     'ts'    => (int)($entry['ts'] ?? 0),
                 );
-                // Social carry-through: text/social survive re-normalization
-                // ONLY when present — rss entries keep their exact shape.
+                // Carry-through: text/social/image survive re-normalization ONLY
+                // when present. `text` is now populated for rss entries too (the
+                // feed description); social/image stay social-only.
                 if (isset($entry['text']) && (string)$entry['text'] !== '') {
                     $normalized['text'] = (string)$entry['text'];
                 }
                 if (!empty($entry['social'])) {
                     $normalized['social'] = true;
+                }
+                if (isset($entry['image']) && (string)$entry['image'] !== '') {
+                    $normalized['image'] = (string)$entry['image'];
                 }
                 $queue[] = $normalized;
                 $queued_guids[$guid] = true;
@@ -2220,14 +2382,20 @@ class PCM_Strategy_Service
                 'link'  => esc_url_raw((string)($item['permalink'] ?? '')),
                 'ts'    => $ts > 0 ? $ts : $now_ts,
             );
-            // Social (Apify) items carry the post text + flag through to the
-            // pop; rss feed items have neither key, keeping their exact shape.
+            // The post text rides through to the pop for BOTH sources (social
+            // caption / rss description); the social flag and image are
+            // social-only, so a plain rss entry keeps its historical shape
+            // apart from `text`.
             $text = trim((string)($item['text'] ?? ''));
             if ($text !== '') {
                 $new_entry['text'] = mb_substr(sanitize_text_field($text), 0, 1000);
             }
             if (!empty($item['social'])) {
                 $new_entry['social'] = true;
+            }
+            $src_image = trim((string)($item['image'] ?? ''));
+            if ($src_image !== '') {
+                $new_entry['image'] = esc_url_raw($src_image);
             }
             $queue[] = $new_entry;
             $queued_guids[$guid] = true;
@@ -2517,10 +2685,25 @@ class PCM_Strategy_Service
      * @param int    $user_id  Owner ID — whose integration API key is used.
      * @return string|null Image URL, or null (opted out, or any failure).
      */
+    /**
+     * The featured-image opt-in (config.featuredImages — default OFF, absent
+     * means off). Extracted so the SOCIAL source-image path can honor the same
+     * switch: that path bypasses maybe_generate_featured_image() entirely, so
+     * the gate could no longer live only inside it.
+     *
+     * @param object $strategy Strategy DB row.
+     * @return bool
+     */
+    private static function featured_images_enabled(object $strategy): bool
+    {
+        $cfg = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
+        return is_array($cfg) && !empty($cfg['featuredImages']);
+    }
+
     private static function maybe_generate_featured_image(object $strategy, string $title, string $keyword, int $user_id): ?string
     {
         $cfg = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
-        if (!is_array($cfg) || empty($cfg['featuredImages'])) {
+        if (!self::featured_images_enabled($strategy)) {
             return null; // strategy didn't opt in
         }
 
@@ -2540,6 +2723,31 @@ class PCM_Strategy_Service
             (string)($cfg['imageProvider'] ?? ''),
             (string)($cfg['imageModel'] ?? '')
         );
+    }
+
+    /**
+     * The captured image of a social-source post (item config `sourceImage`) —
+     * reused as the generated article's featured image INSTEAD of an AI one, so a
+     * Source=Social strategy republishes the post's own image on the blog. Returns
+     * null for non-social items or when no usable image was captured, so the caller
+     * falls back to maybe_generate_featured_image() unchanged (byte-identical to
+     * the pre-social-image behavior for every non-social / image-less item).
+     *
+     * Pure/deterministic — directly unit-testable.
+     *
+     * @param array $item_cfg Decoded ITEM config (item_config()'s output).
+     * @return string|null Sanitized image URL, or null.
+     */
+    private static function social_source_image(array $item_cfg): ?string
+    {
+        if (empty($item_cfg['social'])) {
+            return null;
+        }
+        $url = trim((string)($item_cfg['sourceImage'] ?? ''));
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            return null;
+        }
+        return function_exists('esc_url_raw') ? esc_url_raw($url) : $url;
     }
 
     /**
@@ -2700,9 +2908,19 @@ class PCM_Strategy_Service
         if ($link === '') {
             return $item_cfg;
         }
-        // Caption already captured (free-platform oEmbed worked, the watcher's
-        // Apify branch filled it, or a prior enrich ran) — nothing to fetch.
-        if (trim((string)($item_cfg['sourceText'] ?? '')) !== '') {
+        // Caption already captured, or Apify has already ANSWERED for this post
+        // — nothing to fetch.
+        //
+        // The re-bill guard is `socialEnriched` (set below once Apify actually
+        // replies), NOT the presence of sourceImage. Keying it off sourceImage
+        // permanently lost the caption: create-time post_context() stores an
+        // og:image with an EMPTY sourceText whenever the page ships an image
+        // card without a description, which is routine — the item then looked
+        // "already enriched", Apify was never called, sourceTitle kept its URL
+        // placeholder, and the article got written from a bare link.
+        if (trim((string)($item_cfg['sourceText'] ?? '')) !== ''
+            || !empty($item_cfg['socialEnriched'])
+        ) {
             return $item_cfg;
         }
 
@@ -2742,11 +2960,22 @@ class PCM_Strategy_Service
             return $item_cfg; // fetch failed — unchanged behavior (bare link)
         }
 
-        $text = trim((string)($mapped[0]['text'] ?? ''));
-        if ($text === '') {
-            return $item_cfg;
+        // Apify answered for this post — mark it so a re-run never re-bills,
+        // even when the post genuinely carries no caption. This, not the
+        // presence of an image, is the idempotency key.
+        $item_cfg['socialEnriched'] = true;
+
+        $text  = trim((string)($mapped[0]['text'] ?? ''));
+        $image = trim((string)($mapped[0]['image'] ?? ''));
+        if ($text !== '') {
+            $item_cfg['sourceText'] = $text;
         }
-        $item_cfg['sourceText'] = $text;
+        // The post's own media URL is reused as the generated article's featured
+        // image — captured here for the Apify platforms whose og:image is blocked.
+        // Never overwrite an image the create-time og:image scrape already found.
+        if ($image !== '' && trim((string)($item_cfg['sourceImage'] ?? '')) === '') {
+            $item_cfg['sourceImage'] = $image;
+        }
 
         // Upgrade a URL-placeholder title (post_context stores the link as the
         // title when it can't read the post) to the caption's lead.
@@ -2759,10 +2988,154 @@ class PCM_Strategy_Service
         }
 
         // Persist so the published article's stored context shows the caption
-        // and a re-run never re-bills Apify for the same post.
+        // and a re-run never re-bills Apify for the same post. Always written
+        // once Apify has answered — the socialEnriched marker is the thing that
+        // must survive, even when the reply carried nothing usable.
         PCM_DB::update_strategy_item((int)$item->id, array('config' => wp_json_encode($item_cfg)));
 
         return $item_cfg;
+    }
+
+    /**
+     * The template variables a Writer template may reference to place the source
+     * post's own fields anywhere in its prompt — the "generation lives in the
+     * template" contract.
+     *
+     * Before this, the source post reached the model ONLY through the hardcoded
+     * English sentence in rss_source_instruction() below, so the author could
+     * not change how (or where) the post was used. These three tokens give the
+     * template that control. Both sources populate the same item-config keys —
+     * social posts via the Apify/oEmbed capture, RSS feed items via the feed
+     * entry's own description (fetch_rss_feed_items() reads it precisely so
+     * {{ post_content }} is real for an RSS strategy). A feed that ships no
+     * description still yields '', which is why suppression checks the resolved
+     * VALUE and not just the token — see template_carries_source().
+     *
+     * Lowercase, whitespace-tolerant (`{{post_title}}` == `{{ post_title }}`).
+     * A keyword-sourced item (or the consolidated batch, which has no single
+     * item) resolves every one to '' rather than leaking a raw token.
+     *
+     * Pure/deterministic — directly unit-testable.
+     *
+     * @param array $item_cfg Decoded ITEM config (item_config()'s output).
+     * @return array<string,string> Variable name => value.
+     */
+    public static function source_vars(array $item_cfg): array
+    {
+        return array(
+            'post_content' => trim((string)($item_cfg['sourceText'] ?? '')),
+            'post_title'   => trim((string)($item_cfg['sourceTitle'] ?? '')),
+            'post_link'    => trim((string)($item_cfg['sourceLink'] ?? '')),
+        );
+    }
+
+    /**
+     * Whether a template's prompt references ANY source variable. Drives the
+     * rider suppression in generate_next_item(): a template that places the post
+     * itself must not also get the hardcoded sentence appended, or the two
+     * instructions duplicate and can contradict each other.
+     *
+     * Keyed off the TEMPLATE TEXT, never off source mode — a social strategy on
+     * a variable-free template must keep its rider, or it loses the post context
+     * entirely.
+     *
+     * Pure/deterministic — directly unit-testable.
+     *
+     * @param string $text Template prompt text.
+     * @return bool
+     */
+    public static function uses_source_vars(string $text): bool
+    {
+        return self::referenced_source_vars($text) !== array();
+    }
+
+    /**
+     * WHICH source variables a template references. Suppression keys off this
+     * plus the resolved VALUES, not the mere presence of a token: a template can
+     * reference {{ post_content }} while the item has no caption at all (an RSS
+     * feed with no description, or a social post whose Apify enrichment has not
+     * landed), and dropping the rider then would leave the model with NO source
+     * item and no attribution link — strictly worse than before the feature.
+     *
+     * Pure/deterministic — directly unit-testable.
+     *
+     * @param string $text Template prompt text.
+     * @return string[] Referenced variable names, in declaration order.
+     */
+    public static function referenced_source_vars(string $text): array
+    {
+        $found = array();
+        foreach (array_keys(self::source_vars(array())) as $name) {
+            if (preg_match('/\{\{\s*' . preg_quote($name, '/') . '\s*\}\}/', $text)) {
+                $found[] = $name;
+            }
+        }
+        return $found;
+    }
+
+    /**
+     * Does this template both reference a source variable AND have a real value
+     * for at least one of the ones it references? Only then does the template
+     * genuinely carry the post, and only then is it safe to drop the built-in
+     * rider.
+     *
+     * @param string $text     Template prompt text.
+     * @param array  $item_cfg Decoded ITEM config (item_config()'s output).
+     * @return bool
+     */
+    public static function template_carries_source(string $text, array $item_cfg): bool
+    {
+        $vars = self::source_vars($item_cfg);
+        foreach (self::referenced_source_vars($text) as $name) {
+            if (($vars[$name] ?? '') !== '') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Substitute the source variables into a template prompt.
+     *
+     * UNKNOWN `{{ … }}` tokens are deliberately left untouched: a typo like
+     * `{{ post_body }}` stays visible to the author instead of being silently
+     * swallowed, and real templates legitimately contain `{{#if x}}`,
+     * `{{{ triple }}}` and JSON braces that a generic stripper would eat.
+     *
+     * ONE pass, via preg_replace_callback. Substituting each variable in its own
+     * pass re-scanned the text already substituted, so a caption that itself
+     * contained `{{ post_title }}` had that expanded too — user content being
+     * interpreted as template syntax. A single pass also removes the ordering
+     * dependency and the need to escape `$`/`\` backreferences in the value.
+     *
+     * Pure/deterministic — directly unit-testable.
+     *
+     * @param string $text     Template prompt text.
+     * @param array  $item_cfg Decoded ITEM config (item_config()'s output).
+     * @return string The prompt with the known variables resolved.
+     */
+    public static function render_source_vars(string $text, array $item_cfg): string
+    {
+        if ($text === '') {
+            return $text;
+        }
+        $vars    = self::source_vars($item_cfg);
+        $pattern = '/\{\{\s*(' . implode('|', array_map(
+            static fn(string $n): string => preg_quote($n, '/'),
+            array_keys($vars)
+        )) . ')\s*\}\}/';
+
+        $rendered = preg_replace_callback(
+            $pattern,
+            static fn(array $m): string => $vars[$m[1]] ?? '',
+            $text
+        );
+
+        // preg_replace_callback returns null only on a PCRE engine failure
+        // (e.g. an exhausted backtrack limit). Keep the un-substituted prompt
+        // rather than blanking it — a visible token beats an empty brief. Note
+        // this is the one path where a KNOWN token can still reach the model raw.
+        return $rendered === null ? $text : $rendered;
     }
 
     private static function rss_source_instruction(array $item_cfg, string $rss_angle): string
@@ -3023,6 +3396,90 @@ class PCM_Strategy_Service
         $content = (string)preg_replace('#<p>\s*\[IMAGE_\d+\]\s*</p>#i', '', $content);
         $content = (string)preg_replace('#\[IMAGE_\d+\]#i', '', $content);
         return $content;
+    }
+
+    /**
+     * Remove emoji from a string — used to keep ARTICLE text (title + body) plain
+     * when an article is written from an emoji-heavy social post whose emojis
+     * bleed into the model's output. Scoped to the pictographic/symbol Unicode
+     * blocks + the joiners/selectors that compose them, so CJK, Latin, digits and
+     * ordinary punctuation pass through untouched (no \p{Emoji} guesswork, which
+     * PCRE does not expose reliably). The stored social sourceText/sourceTitle on
+     * the item are captured data and are NEVER passed through this — only the
+     * article the LLM writes.
+     *
+     * Pure/deterministic — directly unit-testable.
+     *
+     * @param string $text UTF-8 text.
+     * @return string Text with emoji code points removed.
+     */
+    public static function strip_emoji(string $text): string
+    {
+        // WHY this looks heavier than a flat character class: the requirements
+        // are in tension. (a) WIDEN — the "early emoji" live in the low symbol
+        // blocks (arrows 2190-21FF, clocks 231A-23FA, enclosed 24C2/3297/3299,
+        // shapes 25AA-25FE, misc + dingbats 2600-27BF) plus the single points
+        // ‼(203C) ⁉(2049) ℹ(2139) 〰(3030); the old class let ⌚⌛⏰⏳▶◀ℹ‼↔Ⓜ㊙▪〰
+        // through. (b) CARVE OUT — those same 26xx/27xx blocks also carry
+        // ordinary article typography: ✓ ✗, the card suits ♠♥♦♣, music notes
+        // ♪♫, and ✂✈✉✏. A "✓ included / ✗ not included" comparison table is a
+        // common SEO device and must keep its markers. Resolution: swap those
+        // 12 for private-use sentinels (U+E000–E00B, raw UTF-8 bytes — outside
+        // every range below, so they survive the preg_replace) then restore, so
+        // the broad ranges can't reach them — even with an emoji VS-16 appended
+        // (✓️ → ✓, never erased). ‼ and ⁉ are DISTINCT code points; the prior
+        // \x{2049}-\x{204A} also swept in U+204A (⁊, the Tironian Gaelic LETTER
+        // — not an emoji), so 204A is now excluded.
+        static $keep = array('✓', '✗', '♠', '♥', '♦', '♣', '♪', '♫', '✂', '✈', '✉', '✏');
+        static $map = null;
+        static $rev = null;
+        if ($map === null) {
+            $map = array();
+            $rev = array();
+            foreach ($keep as $i => $ch) {
+                $sentinel = "\xEE\x80" . chr(0x80 + $i); // U+E000+i as 3 UTF-8 bytes (no mbstring dep)
+                $map[$ch] = $sentinel;
+                $rev[$sentinel] = $ch;
+            }
+        }
+        $protected = strtr($text, $map);
+
+        // NOT cast to string here — the null return below is the whole point.
+        $cleaned = preg_replace(
+            '/[\x{1F000}-\x{1FAFF}'  // pictographs, enclosed supplements, flags
+            . '\x{2B00}-\x{2BFF}'    // stars/arrows block (⭐ ⭕ ⬅ ⬆)
+            . '\x{2190}-\x{21FF}'    // arrow-block emoji (↔ ↕ ↖… the ‼/⁉ are separate below)
+            . '\x{231A}-\x{23FA}'    // watch/hourglass/clocks ⌚⌛⏰⏳⏩…⏺
+            . '\x{24C2}'             // Ⓜ (NOT the ①② text enclosed numerics around it)
+            . '\x{25AA}-\x{25FE}'    // geometric shapes ▪▫▶◀◻◼◽◾
+            . '\x{2600}-\x{27BF}'    // misc symbols + dingbats (carve-out applies)
+            . '\x{203C}\x{2049}'     // ‼ ⁉ (distinct; 204A ⁊ is a letter, excluded)
+            . '\x{2139}'             // ℹ
+            . '\x{3030}'             // 〰 wavy dash
+            . '\x{3297}\x{3299}'     // ㊗ ㊙ enclosed ideographs
+            . '\x{FE0F}'             // variation selector-16 (emoji presentation)
+            . '\x{200D}'             // zero-width joiner
+            . '\x{20E3}'             // combining enclosing keycap (keycap emoji)
+            . ']/u',
+            '',
+            $protected
+        );
+        // preg_replace with /u returns NULL on malformed UTF-8, and (string)null
+        // is '' — which silently saved an EMPTY article (title, body and slug all
+        // blank) with no exception and no log. Emoji removal is cosmetic; losing
+        // the article is not. Hand the text back untouched instead.
+        if ($cleaned === null) {
+            return $text;
+        }
+        $restored = strtr($cleaned, $rev);
+        // Only collapse spaces (and trim) when an emoji was ACTUALLY removed —
+        // otherwise the global [ \t]{2,} collapse destroys <pre><code> indentation
+        // in an emoji-free article (it ran unconditionally before).
+        if ($restored === $text) {
+            return $text;
+        }
+        $collapsed = preg_replace('/[ \t]{2,}/', ' ', $restored);
+        return trim($collapsed === null ? $restored : $collapsed);
     }
 
     /**
@@ -4387,17 +4844,20 @@ class PCM_Strategy_Service
         }
     }
 
-    private static function build_prompt(array $keywords, array $template, ?object $brand, string $research_context = '', bool $in_content_media = false, int $media_count = 3, string $media_type = 'both', string $media_guidance = '', string $rss_source = ''): array
+    private static function build_prompt(array $keywords, array $template, ?object $brand, string $research_context = '', bool $in_content_media = false, int $media_count = 3, string $media_type = 'both', string $media_guidance = '', string $rss_source = '', array $item_cfg = array()): array
     {
         $messages = array();
 
         // ── System prompt from template entries ──
         $system_parts = array();
 
-        // Collect prompt entries from template
+        // Collect prompt entries from template, resolving the source variables
+        // ({{ post_content }} / {{ post_title }} / {{ post_link }}) so the
+        // template author controls where the post itself lands in the prompt.
+        // A template with no variables is byte-identical to before.
         foreach ($template['entries'] as $entry) {
             if (($entry['category'] ?? '') === 'prompt') {
-                $system_parts[] = $entry['value'] ?? '';
+                $system_parts[] = self::render_source_vars((string)($entry['value'] ?? ''), $item_cfg);
             }
         }
 
@@ -4668,6 +5128,10 @@ class PCM_Strategy_Service
                 self::run_rss_scan();
             }
             self::run_scheduled_scan();
+            // Un-wedge items stranded in 'generating' by a killed generator.
+            // Runs BEFORE the event drain so a reclaimed item's re-armed
+            // continuation can be picked up by this same link.
+            self::reclaim_wedged_items();
             // Drain due PCM cron events DIRECTLY. On hosts with
             // DISABLE_WP_CRON (no system cron) or broken cron loopbacks,
             // single events — the instant first pull AND every generation
@@ -4694,6 +5158,97 @@ class PCM_Strategy_Service
         }
 
         self::spawn_keepalive();
+    }
+
+    /**
+     * Un-wedge strategy items stranded in 'generating', globally.
+     *
+     * WHY: generate_next_item() claims an item ('generating') and only ever
+     * writes 'error' from its catch block — so a generator process KILLED
+     * mid-run (host wall-clock, FPM request_terminate_timeout, OOM) leaves the
+     * row 'generating' with nothing to resolve it. That state cannot self-heal:
+     *
+     *   - process_due_pcm_events() unschedules an event BEFORE firing it, so a
+     *     kill during the fire loses the queue continuation outright;
+     *   - maybe_schedule_queue_continuation() only re-arms when an item is
+     *     PENDING, and a wedged item is 'generating';
+     *   - PCM_DB::reclaim_stale_generating() only runs from inside
+     *     generate_next_item()'s next-pending path — which needs the tick that
+     *     was just lost.
+     *
+     * Net effect before this sweep: one killed generation wedged that item
+     * permanently (the "stuck at generating" report). Long articles are the
+     * common victims — a single item can legitimately outlive the keep-alive
+     * link that started it (LLM blocking_request default 300s + truncation
+     * retry + featured image + in-content media, vs a link sized for 60s FPM
+     * caps), so this is an expected condition, not an exotic one.
+     *
+     * The sweep itself adds no new recovery logic — it reuses the existing
+     * reclaim ('generating' → 'pending') and the existing re-arm, which is all
+     * that was missing. It runs on a 90-minute cutoff rather than the
+     * per-strategy path's 10 (see the cutoff comment in the body); stealing an
+     * item from a still-live generation is made SAFE — not merely unlikely — by
+     * PCM_DB::complete_strategy_item_if_generating(), which turns the losing
+     * run's completion into a no-op so it can neither double-count the item nor
+     * publish a second post. Paused strategies are excluded by the query, and
+     * maybe_schedule_queue_continuation() re-checks pause state anyway.
+     * Failure-isolated per strategy so one bad row can't stop the rest.
+     *
+     * KNOWN LIMIT (documented, not fixed here — needs an owner call on cost):
+     * an item that can NEVER finish is retried on every sweep rather than being
+     * failed after N attempts, so it re-burns LLM/image spend roughly every 90
+     * min and can leave an orphan article row behind when a kill lands between
+     * create_article() and the item write. Each reclaim is error_log()'d so the
+     * loop is visible. Bounding it needs a per-item attempt counter — feasible
+     * without a schema change (strategy_items.config already exists), but it
+     * decides WHEN to give up on a user's article, which is a product call.
+     */
+    public static function reclaim_wedged_items(): void
+    {
+        if (!function_exists('current_time')) {
+            return;
+        }
+        // 90 minutes, NOT the per-strategy reclaim's 10. This sweep is global
+        // and unattended, and a reclaim does not cancel the process it steals
+        // the item from — so a cutoff under the pipeline's real worst case
+        // means two live runs on one item. Correctness no longer RESTS on this
+        // number (complete_strategy_item_if_generating() makes the loser's
+        // completion a no-op), but a too-short cutoff still wastes a whole
+        // generation, so it is set above the measured worst case rather than
+        // near it: ~39 min for the default providers — 300s LLM + the
+        // truncation retry's second 300s (PCM_LLM::blocking_request), up to 3
+        // grounding passes at 180s, the Apify post-enrich at 120s, then the
+        // featured image plus up to 8 in-content media at 120s each — and more
+        // on a marketplace image provider, whose per-image wait is 800s.
+        // Nothing heartbeats updatedAt while any of that runs. Recovery latency
+        // is not the point: the per-strategy 10-minute reclaim still runs on
+        // every generate tick and remains the fast path; this is only the last
+        // resort for an item no tick will ever reach.
+        $minutes = 90;
+        $cutoff  = date('Y-m-d H:i:s', (int) strtotime(current_time('mysql')) - ($minutes * 60));
+
+        foreach (PCM_DB::get_stale_generating_strategies($cutoff) as $row) {
+            $strategy_id = (int) $row->strategyId;
+            $user_id     = (int) $row->userId;
+            try {
+                $reclaimed = PCM_DB::reclaim_stale_generating($strategy_id, $minutes);
+                if ($reclaimed > 0) {
+                    error_log(sprintf(
+                        '[PCM_Strategy_Service] Reclaimed %d item(s) stuck in generating on strategy #%d (claimed >%d min ago) — usually a generator killed mid-run, but a genuinely slow one would also be reclaimed here; re-arming the queue.',
+                        $reclaimed,
+                        $strategy_id,
+                        $minutes
+                    ));
+                    self::maybe_schedule_queue_continuation($strategy_id, $user_id);
+                }
+            } catch (\Throwable $e) {
+                error_log(sprintf(
+                    '[PCM_Strategy_Service] Wedged-item reclaim failed for strategy #%d: %s',
+                    $strategy_id,
+                    $e->getMessage()
+                ));
+            }
+        }
     }
 
     /**

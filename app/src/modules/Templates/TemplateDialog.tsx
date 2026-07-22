@@ -716,6 +716,26 @@ export function TemplateDialog({
               rows={selectedCategory === "reference_ad" ? 5 : 3}
             />
 
+            {/* Source variables — only meaningful inside a Writer prompt, where
+                the strategy resolves them from the RSS/social item being written
+                about. Video and SEO templates are force-set to the "prompt"
+                category (see the module effect above) but never run through
+                render_source_vars(), so the hint must not appear there.
+                Without this the feature is invisible to the author. */}
+            {selectedCategory === "prompt" && module !== "video" && module !== "seo" && (
+              <p className="text-[0.7rem] leading-relaxed text-muted-foreground">
+                For RSS / Social strategies you can place the source post inside the prompt with{" "}
+                {["{{ post_title }}", "{{ post_content }}", "{{ post_link }}"].map((v, i) => (
+                  <span key={v}>
+                    {i > 0 && ", "}
+                    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem]">{v}</code>
+                  </span>
+                ))}
+                . Using any of them replaces the built-in “write about this post” instruction, so the
+                prompt is fully yours. They resolve to nothing for keyword strategies.
+              </p>
+            )}
+
             {/* Add / Update button */}
             <div className="flex items-center gap-2">
               <Button

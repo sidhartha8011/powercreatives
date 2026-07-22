@@ -164,6 +164,15 @@ function pcm_test_define_social_source_fakes(): void
                 self::$updateItemCalls[] = array('id' => $id, 'data' => $data);
                 return true;
             }
+            /** Completion CAS. This suite never reaches the completion path,
+             *  but it must not be permissive: an unconditional true would mask
+             *  the claim guard if fake-resolution order ever shifted (PHPUnit
+             *  runs in random order). No seeded item ⇒ nobody owns it ⇒ false. */
+            public static function complete_strategy_item_if_generating($id, $data)
+            {
+                self::$updateItemCalls[] = array('id' => $id, 'data' => $data);
+                return false;
+            }
         }
     }
 
@@ -915,5 +924,209 @@ class StrategySocialSourceTest extends \PHPUnit\Framework\TestCase
         ));
 
         $this->assertCount(0, PCM_Apify::$fetchCalls);
+    }
+
+    // ── (8) Social post image → reused as the article's featured image ─────
+
+    /**
+     * apify_map_items() now extracts the post's own media URL per platform
+     * (the field name drifts across community actors, so each reads through a
+     * defensive ??-chain). The image is what a Source=Social strategy reuses as
+     * the generated article's featured image instead of an AI one.
+     */
+    public function test_apify_map_items_extracts_image_per_platform(): void
+    {
+        $raw = array(
+            array('url' => 'https://www.instagram.com/p/A/', 'id' => '1', 'caption' => 'cap', 'imageUrl' => 'https://cdn.example/ig.jpg'),
+            array('url' => 'https://x.com/u/status/1', 'id' => '2', 'text' => 'tweet', 'extendedEntities' => array('media' => array(array('media_url_https' => 'https://pbs.example/x.jpg')))),
+            array('url' => 'https://www.facebook.com/x/posts/1', 'id' => '3', 'message' => 'msg', 'fullPicture' => 'https://fb.example/p.jpg'),
+            array('webVideoUrl' => 'https://www.tiktok.com/@u/video/1', 'id' => '4', 'desc' => 'd', 'coverUrl' => 'https://tt.example/c.jpg'),
+            // No image fields at all → '' (never a broken/placeholder value).
+            array('url' => 'https://www.instagram.com/p/B/', 'id' => '5', 'caption' => 'cap only'),
+        );
+
+        $mapped = PCM_Social_Source::apify_map_items('instagram', array($raw[0], $raw[4]));
+        $this->assertSame('https://cdn.example/ig.jpg', $mapped[0]['image']);
+        $this->assertSame('', $mapped[1]['image'], 'an item with no image fields maps to an empty image, never a placeholder');
+
+        $x = PCM_Social_Source::apify_map_items('x', array($raw[1]));
+        $this->assertSame('https://pbs.example/x.jpg', $x[0]['image']);
+
+        $fb = PCM_Social_Source::apify_map_items('facebook', array($raw[2]));
+        $this->assertSame('https://fb.example/p.jpg', $fb[0]['image']);
+
+        $tt = PCM_Social_Source::apify_map_items('tiktok', array($raw[3]));
+        $this->assertSame('https://tt.example/c.jpg', $tt[0]['image']);
+    }
+
+    /**
+     * F9/F10/F13: the round-1 switch read fields the real actors don't always
+     * emit. Probe each configured actor's ACTUAL output shape and the empty-''
+     * fallthrough (`??` does not fall through on '', so an actor emitting
+     * imageUrl: "" alongside images[] used to return '').
+     */
+    public function test_apify_map_items_reads_the_real_actor_shapes(): void
+    {
+        // IG: empty imageUrl + images[] present → first image in images[].
+        $ig_imgs = PCM_Social_Source::apify_map_items('instagram', array(array(
+            'url' => 'https://www.instagram.com/p/Im/', 'id' => 'i1', 'caption' => 'cap',
+            'imageUrl' => '',
+            'images' => array('https://cdn.example/ig-1.jpg', 'https://cdn.example/ig-2.jpg'),
+        )));
+        $this->assertSame('https://cdn.example/ig-1.jpg', $ig_imgs[0]['image']);
+
+        // IG: displayUrl only (apify~instagram-scraper's main image field).
+        $ig_disp = PCM_Social_Source::apify_map_items('instagram', array(array(
+            'url' => 'https://www.instagram.com/p/Disp/', 'id' => 'i2', 'caption' => 'cap',
+            'displayUrl' => 'https://cdn.example/ig-disp.jpg',
+        )));
+        $this->assertSame('https://cdn.example/ig-disp.jpg', $ig_disp[0]['image']);
+
+        // TikTok: clockworks~tiktok-scraper nests the cover at videoMeta.coverUrl.
+        $tt = PCM_Social_Source::apify_map_items('tiktok', array(array(
+            'webVideoUrl' => 'https://www.tiktok.com/@u/video/1', 'id' => 't1', 'desc' => 'd',
+            'videoMeta' => array('coverUrl' => 'https://cdn.example/tt-cover.jpg', 'width' => 1080),
+        )));
+        $this->assertSame('https://cdn.example/tt-cover.jpg', $tt[0]['image']);
+
+        // TikTok: a lone videoUrl (MP4) must NOT be reused as an image (F10).
+        $tt_video = PCM_Social_Source::apify_map_items('tiktok', array(array(
+            'webVideoUrl' => 'https://www.tiktok.com/@u/video/2', 'id' => 't2', 'desc' => 'd',
+            'videoUrl' => 'https://cdn.example/clip.mp4',
+        )));
+        $this->assertSame('', $tt_video[0]['image'], 'a video URL must never become a featured image');
+
+        // Facebook: apify~facebook-posts-scraper nests the photo at media[0].photo_image.uri.
+        $fb = PCM_Social_Source::apify_map_items('facebook', array(array(
+            'url' => 'https://www.facebook.com/x/posts/1', 'id' => 'f1', 'message' => 'm',
+            'media' => array(array('type' => 'photo', 'photo_image' => array('uri' => 'https://cdn.example/fb.jpg', 'width' => 720))),
+        )));
+        $this->assertSame('https://cdn.example/fb.jpg', $fb[0]['image']);
+    }
+
+    /**
+     * The watcher queue carries the image through ingest (alongside text/social)
+     * so a watched account's post image reaches the item config at pop time.
+     */
+    public function test_ingest_carries_image_on_apify_entries(): void
+    {
+        $raw = array(
+            array('permalink' => 'https://www.instagram.com/p/Cabc/', 'id' => '9', 'title' => 'IG', 'date' => 2000, 'text' => 'cap', 'image' => 'https://cdn.example/ig.jpg', 'social' => true),
+            array('permalink' => 'https://feed.example/post-1', 'id' => '', 'title' => 'Feed', 'date' => 1000),
+        );
+
+        $out = PCM_Strategy_Service::ingest_feed_items($raw, array('rssSeen' => array(), 'rssQueue' => array()));
+
+        $this->assertSame('https://cdn.example/ig.jpg', $out['rssQueue'][0]['image'] ?? null, 'the Apify entry must carry the post image');
+        $this->assertArrayNotHasKey('image', $out['rssQueue'][1], 'a plain rss entry keeps its exact shape — no image key');
+
+        // Re-normalization preserves the image carry-through.
+        $again = PCM_Strategy_Service::ingest_feed_items(array(), $out);
+        $this->assertSame($out['rssQueue'], $again['rssQueue']);
+    }
+
+    /**
+     * Generation-time enrichment captures the post image (alongside the caption)
+     * for the Apify platforms whose og:image is publicly blocked, and persists
+     * it back onto the item as sourceImage.
+     */
+    public function test_enrich_captures_source_image_from_apify(): void
+    {
+        PCM_Apify::$hasKey = true;
+        PCM_Apify::$items = array(array(
+            'shortCode' => 'Dimage',
+            'url'       => 'https://www.instagram.com/p/Dimage/',
+            'id'        => '55',
+            'caption'   => 'Caption here.',
+            'imageUrl'  => 'https://cdn.example/ig.jpg',
+            'timestamp' => '2026-07-17T17:56:51.000Z',
+        ));
+        PCM_DB::$updateItemCalls = array();
+
+        $out = $this->enrich(array(
+            'sourceLink'  => 'https://www.instagram.com/p/Dimage/',
+            'sourceTitle' => 'https://www.instagram.com/p/Dimage/',
+            'sourceText'  => '',
+            'social'      => true,
+        ));
+
+        $this->assertSame('https://cdn.example/ig.jpg', $out['sourceImage']);
+        $this->assertStringContainsString('Caption here', $out['sourceText']);
+        $this->assertCount(1, PCM_DB::$updateItemCalls);
+        $persisted = json_decode((string) PCM_DB::$updateItemCalls[0]['data']['config'], true);
+        $this->assertSame('https://cdn.example/ig.jpg', $persisted['sourceImage']);
+    }
+
+    /**
+     * An image-only post (no caption) is now enriched too — previously the empty
+     * caption short-circuited enrichment and the post image was never captured.
+     * The widened guard keys idempotency off sourceText OR sourceImage, so the
+     * image is captured once and a re-run never re-bills Apify.
+     */
+    public function test_enrich_captures_image_only_post_and_is_idempotent(): void
+    {
+        PCM_Apify::$hasKey = true;
+        PCM_Apify::$items = array(array(
+            'url'       => 'https://www.instagram.com/p/ImOnly/',
+            'id'        => '56',
+            'caption'   => '',
+            'imageUrl'  => 'https://cdn.example/only.jpg',
+        ));
+        PCM_DB::$updateItemCalls = array();
+
+        $cfg = array(
+            'sourceLink'  => 'https://www.instagram.com/p/ImOnly/',
+            'sourceTitle' => 'https://www.instagram.com/p/ImOnly/',
+            'sourceText'  => '',
+            'social'      => true,
+        );
+        $out = $this->enrich($cfg);
+
+        $this->assertSame('https://cdn.example/only.jpg', $out['sourceImage']);
+        $this->assertSame('', $out['sourceText'] ?? null, 'no caption was captured');
+        $this->assertCount(1, PCM_DB::$updateItemCalls, 'the image was persisted once');
+
+        // Second run is a no-op: Apify has ANSWERED for this post, recorded by
+        // the socialEnriched marker — that, not the presence of an image, is
+        // the idempotency key.
+        $this->assertTrue($out['socialEnriched'], 'the answered-marker is what blocks a re-bill');
+        PCM_Apify::$fetchCalls = array();
+        PCM_DB::$updateItemCalls = array();
+        $again = $this->enrich($out);
+        $this->assertCount(0, PCM_Apify::$fetchCalls, 'idempotent — never re-bills Apify');
+        $this->assertCount(0, PCM_DB::$updateItemCalls);
+    }
+
+    public function test_a_create_time_og_image_must_not_block_the_caption_fetch(): void
+    {
+        // REGRESSION (verifier F8, proven): post_context() stores an og:image
+        // with an EMPTY sourceText whenever the page ships an image card and no
+        // description — routine. Keying the enrich guard off sourceImage made
+        // that item look "already enriched": Apify was never called, the caption
+        // was never captured, sourceTitle kept its URL placeholder, and the
+        // article was written from a bare link.
+        PCM_Apify::$hasKey = true;
+        PCM_Apify::$items = array(array(
+            'url'      => 'https://www.instagram.com/p/Zed/',
+            'id'       => '77',
+            'caption'  => 'The real caption we must not lose.',
+            'imageUrl' => 'https://cdn.example/apify.jpg',
+        ));
+        PCM_Apify::$fetchCalls   = array();
+        PCM_DB::$updateItemCalls = array();
+
+        $out = $this->enrich(array(
+            'sourceLink'  => 'https://www.instagram.com/p/Zed/',
+            'sourceTitle' => 'https://www.instagram.com/p/Zed/', // URL placeholder
+            'sourceText'  => '',                                  // no description on the page
+            'sourceImage' => 'https://cdn.example/og.jpg',        // og:image DID scrape
+            'social'      => true,
+        ));
+
+        $this->assertCount(1, PCM_Apify::$fetchCalls, 'an og:image must not cancel the caption fetch');
+        $this->assertSame('The real caption we must not lose.', $out['sourceText']);
+        $this->assertNotSame('https://www.instagram.com/p/Zed/', $out['sourceTitle'], 'the URL placeholder must be upgraded');
+        // The create-time image wins — it is the post's own preview card.
+        $this->assertSame('https://cdn.example/og.jpg', $out['sourceImage']);
     }
 }

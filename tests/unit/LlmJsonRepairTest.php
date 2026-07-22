@@ -313,4 +313,277 @@ class LlmJsonRepairTest extends TestCase
         $this->assertSame(array('title', 'content', 'metaTitle', 'metaDescription'), $stringKeys);
         $this->assertSame(array('media_assets'), $nullKeys);
     }
+
+    // ── extract_json: narrowing the reply to the JSON value ──────────────
+    //
+    // These sit in FRONT of every tier above — a bad extraction hands repair
+    // and salvage a fragment they cannot possibly recover, so a defect here
+    // presents as the same opaque "LLM returned invalid JSON" the salvage was
+    // built to prevent.
+
+    public function test_extract_json_survives_a_code_fence_inside_the_article_content(): void
+    {
+        // The reply is fenced AND the generated HTML itself contains a ```
+        // fence. A non-greedy fence match ends at the INNER fence and returns
+        // a fragment cut mid-string; the extraction must run to the LAST fence.
+        $raw = "```json\n"
+            . '{"title":"T","content":"<p>Use ```code``` here</p>","metaTitle":"m","metaDescription":"d","media_assets":null}'
+            . "\n```";
+
+        $decoded = json_decode(PCM_LLM::extract_json($raw), true);
+
+        $this->assertIsArray($decoded, 'an inner fence must not truncate the extraction');
+        $this->assertSame('<p>Use ```code``` here</p>', $decoded['content']);
+    }
+
+    public function test_extract_json_documents_the_leading_prose_bracket_limit(): void
+    {
+        // KNOWN LIMIT, pinned so it is not mistaken for working: leading prose
+        // containing a bracket hijacks the span. Two attempts to fix it by
+        // ranking `{`/`[` candidates each introduced a worse failure — an inner
+        // well-formed array winning and yielding a silent EMPTY article — so
+        // the original behaviour stands until someone does a real
+        // brace-matching scan. This test asserts the CURRENT behaviour; flip it
+        // when that scan lands.
+        $raw = 'Here is the article [as requested]: '
+            . '{"title":"T","content":"<p>x</p>","metaTitle":"m","metaDescription":"d","media_assets":null}';
+
+        $extracted = PCM_LLM::extract_json($raw);
+
+        $this->assertNull(
+            json_decode($extracted, true),
+            'documents the known limit — extraction is hijacked by the prose bracket'
+        );
+        // Pin the exact span, not just "it does not decode": the span runs from
+        // the prose `[` to the LAST `]`, which here is the prose's own closing
+        // bracket — so the entire article object is discarded and the repair
+        // and salvage tiers downstream receive this instead. Asserting only
+        // non-decodability would let that detail drift unnoticed.
+        $this->assertSame('[as requested]', $extracted);
+    }
+
+    public function test_extract_json_still_returns_a_genuine_array_reply(): void
+    {
+        // Candidate ranking must not break a reply that really is a JSON array.
+        $decoded = json_decode(PCM_LLM::extract_json('[{"a":1},{"b":2}]'), true);
+
+        $this->assertIsArray($decoded);
+        $this->assertCount(2, $decoded);
+    }
+
+    public function test_extract_json_does_not_reduce_a_single_element_array_to_its_object(): void
+    {
+        // The dangerous shape: the OBJECT span of `[{"a":1}]` decodes cleanly on
+        // its own, so an object-first preference silently returns `{"a":1}` and
+        // the caller sees a map where the model sent a list. Ranking candidates
+        // by opening offset is what keeps this an array.
+        $decoded = json_decode(PCM_LLM::extract_json('[{"a":1}]'), true);
+
+        $this->assertIsArray($decoded);
+        $this->assertArrayHasKey(0, $decoded, 'a one-element array must stay a list, not become its element');
+        $this->assertSame(array('a' => 1), $decoded[0]);
+
+        $tail = json_decode(PCM_LLM::extract_json('["x",{"a":1}]'), true);
+        $this->assertSame(array('x', array('a' => 1)), $tail);
+    }
+
+    /**
+     * THE dangerous regression, end-to-end: a malformed object that contains a
+     * well-formed array. `media_assets` is REQUIRED by article_schema(), so
+     * every real article payload has one. If extraction returns that inner
+     * array, invoke_json_fallback() sees a successful parse (is_array() true,
+     * no json error), never reaches salvage, never throws — and the item
+     * completes with `content` defaulting to '' (strategy/service.php reads
+     * `$result['content'] ?? ''`). Silent empty article instead of a loud error.
+     *
+     * @dataProvider mediaAssetsShapes
+     */
+    public function test_extract_json_never_returns_the_inner_media_array_of_a_broken_object(string $media): void
+    {
+        $raw = '{"title":"T","content":"<p>A 26" screen</p>","metaTitle":"m","metaDescription":"d","media_assets":' . $media . '}';
+
+        $extracted = PCM_LLM::extract_json($raw);
+
+        $this->assertSame('{', substr($extracted, 0, 1), 'extraction must keep the object root, not the inner array');
+        $this->assertSame('}', substr(rtrim($extracted), -1));
+
+        // And the object span must still be recoverable end-to-end.
+        $salvaged = PCM_LLM::salvage_json_by_keys(
+            rtrim($extracted),
+            array('title', 'content', 'metaTitle', 'metaDescription'),
+            array('media_assets')
+        );
+        $this->assertIsArray($salvaged, 'the four string keys must still salvage');
+        $this->assertSame('T', $salvaged['title']);
+        $this->assertStringContainsString('26" screen', $salvaged['content']);
+    }
+
+    public function mediaAssetsShapes(): array
+    {
+        return array(
+            'empty array'     => array('[]'),
+            'populated array' => array('[{"placeholder":"IMAGE_1","type":"image","prompt":"a stadium","chart_config":null}]'),
+            'null'            => array('null'),
+        );
+    }
+
+    /**
+     * @dataProvider nonJsonFenceBodyProvider
+     */
+    public function test_extract_json_never_mines_a_decodable_span_out_of_a_non_json_fence(string $body): void
+    {
+        // The fence branch must RETURN its body, never fall through to the
+        // brace scan. Falling through lets the scan carve a decodable fragment
+        // out of a fence that is not JSON at all — e.g. a ```js block
+        // containing `{}` yields "{}", which decodes to an empty array, passes
+        // every `!is_array($parsed)` gate in invoke_json_fallback(), and
+        // completes the item with an EMPTY article instead of throwing.
+        // A decodable-but-wrong value returned silently is strictly worse than
+        // a loud failure.
+        $extracted = PCM_LLM::extract_json($body);
+        $decoded   = json_decode($extracted, true);
+
+        $this->assertFalse(
+            is_array($decoded) && $decoded === array(),
+            'a non-JSON fence must not yield an empty-array decode — that becomes a silent empty article'
+        );
+    }
+
+    public function nonJsonFenceBodyProvider(): array
+    {
+        return array(
+            'js sample with empty braces'  => array("```js\nconst cfg = {};\n```"),
+            'css sample with empty braces' => array("```css\n.a { }\n```"),
+            'prose with a bracket list'    => array("```json\nSteps [1,2,3] then nothing\n```"),
+        );
+    }
+
+    public function test_extract_json_handles_two_separate_fenced_blocks(): void
+    {
+        // A JSON block followed by a usage sample. Widening the fence match
+        // unconditionally would weld the two together into unparseable text —
+        // the narrow match has to win whenever it already yields valid JSON.
+        $raw = "```json\n{\"a\":1}\n```\nThen use it:\n```js\nif (x) { y(); }\n```";
+
+        $decoded = json_decode(PCM_LLM::extract_json($raw), true);
+
+        $this->assertSame(array('a' => 1), $decoded, 'a trailing second fence must not corrupt the first block');
+    }
+
+    public function test_extract_json_handles_a_plain_fenced_object_and_a_bare_object(): void
+    {
+        $fenced = json_decode(PCM_LLM::extract_json("```json\n{\"a\":1}\n```"), true);
+        $this->assertSame(array('a' => 1), $fenced);
+
+        $bare = json_decode(PCM_LLM::extract_json('{"a":1}'), true);
+        $this->assertSame(array('a' => 1), $bare);
+
+        $prosed = json_decode(PCM_LLM::extract_json('Sure! {"a":1} Hope that helps.'), true);
+        $this->assertSame(array('a' => 1), $prosed);
+    }
+
+    public function test_extract_json_keeps_a_malformed_object_intact_for_the_repair_tiers(): void
+    {
+        // When nothing decodes, extraction must still hand the OBJECT span to
+        // repair/salvage rather than an array fragment — otherwise the salvage
+        // gate ("must end with }") can never pass.
+        $raw = '{"title":"T","content":"<p>He said "hi" [IMAGE_1]</p>","metaTitle":"m","metaDescription":"d","media_assets":null}';
+
+        $extracted = PCM_LLM::extract_json($raw);
+
+        $this->assertSame('{', substr($extracted, 0, 1));
+        $this->assertSame('}', substr(rtrim($extracted), -1), 'the salvage gate depends on the closing brace surviving');
+        $salvaged = PCM_LLM::salvage_json_by_keys(
+            $extracted,
+            array('title', 'content', 'metaTitle', 'metaDescription'),
+            array('media_assets')
+        );
+        $this->assertIsArray($salvaged, 'the object span must remain salvageable end-to-end');
+        $this->assertSame('T', $salvaged['title']);
+    }
+
+    // ── describe_json_failure: the terminal error must not misdiagnose ───
+
+    public function test_failure_detail_reports_truncation_from_finish_reason(): void
+    {
+        $detail = PCM_LLM::describe_json_failure(true, '{"title":"T","content":"<p>cut');
+
+        $this->assertStringContainsString('TRUNCATED', $detail);
+        $this->assertStringContainsString('finish_reason=length', $detail);
+    }
+
+    public function test_failure_detail_reports_truncation_from_shape_when_finish_reason_is_absent(): void
+    {
+        // Gemini's OpenAI-compat endpoint truncates without setting
+        // finish_reason — the structure is the only signal left.
+        $detail = PCM_LLM::describe_json_failure(false, '{"title":"T","content":"<p>cut off mid sen');
+
+        $this->assertStringContainsString('TRUNCATED', $detail);
+        $this->assertStringContainsString('unterminated JSON structure', $detail);
+    }
+
+    public function test_failure_detail_does_not_cry_truncation_on_an_unescaped_quote(): void
+    {
+        // THE misdiagnosis guard. looks_truncated() counts quote parity, so a
+        // COMPLETE reply carrying an unescaped inner quote reads as "still in a
+        // string". That is exactly the payload class that reaches the terminal
+        // error (salvage refused it), so trusting the shape signal alone would
+        // blame the token budget for a quote-escaping bug.
+        $complete_but_broken = '{"title":"T","content":"<p>A 26" screen</p>","metaTitle":"m","metaDescription":"d","media_assets":null}';
+        $this->assertTrue(PCM_LLM::looks_truncated($complete_but_broken), 'precondition: the shape scan false-positives here');
+
+        $detail = PCM_LLM::describe_json_failure(false, $complete_but_broken);
+
+        $this->assertStringNotContainsString('TRUNCATED', $detail);
+        $this->assertStringContainsString('appears complete but unparseable', $detail);
+    }
+
+    public function test_failure_detail_names_an_empty_reply_rather_than_blaming_the_budget(): void
+    {
+        // extract_json() hands back its input unchanged when it finds no
+        // braces, so an empty span means the reply itself was empty — say that,
+        // rather than pointing the reader at a token budget.
+        $detail = PCM_LLM::describe_json_failure(false, '');
+
+        $this->assertStringContainsString('EMPTY reply', $detail);
+        $this->assertStringNotContainsString('too long for the budget', $detail);
+    }
+
+    public function test_failure_detail_needs_BOTH_incompleteness_and_the_shape_scan(): void
+    {
+        // Pins the negative half of the `$incomplete && looks_truncated()`
+        // conjunct. This span does not end in `}`/`]` (so it IS "incomplete"),
+        // but the shape scan reports complete — dropping the second operand
+        // would make this claim TRUNCATED and blame the token budget.
+        $bare_string = '"a complete bare string"';
+        $this->assertFalse(PCM_LLM::looks_truncated($bare_string), 'precondition: the shape scan sees it as complete');
+        $this->assertNotSame('}', substr($bare_string, -1), 'precondition: it does not close with a brace');
+
+        $detail = PCM_LLM::describe_json_failure(false, $bare_string);
+
+        $this->assertStringNotContainsString('TRUNCATED', $detail);
+    }
+
+    public function test_failure_detail_prefers_finish_reason_over_an_empty_span(): void
+    {
+        // finish_reason is the only NON-heuristic truncation signal. An empty
+        // extracted span must not short-circuit ahead of it: the API explicitly
+        // said the reply was cut at the token limit, and reporting "empty
+        // reply" instead would discard the one authoritative diagnosis.
+        $detail = PCM_LLM::describe_json_failure(true, '');
+
+        $this->assertStringContainsString('TRUNCATED', $detail);
+        $this->assertStringContainsString('finish_reason=length', $detail);
+        $this->assertStringNotContainsString('EMPTY reply', $detail);
+    }
+
+    public function test_failure_detail_does_not_cry_truncation_on_a_complete_array_root(): void
+    {
+        // extract_json() can return an array-rooted span; a complete-but-broken
+        // array ends in `]`, and treating that as incomplete would re-open the
+        // quote-parity false positive for the array root.
+        $detail = PCM_LLM::describe_json_failure(false, '["a 26" screen"]');
+
+        $this->assertStringNotContainsString('TRUNCATED', $detail);
+    }
 }

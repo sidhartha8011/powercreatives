@@ -1111,6 +1111,42 @@ class PCM_DB
     }
 
     /**
+     * Distinct (strategyId, userId) pairs holding at least one item WEDGED in
+     * 'generating' — claimed before $cutoff and never resolved.
+     *
+     * A generator process killed mid-run (host wall-clock / FPM
+     * request_terminate_timeout / OOM) never reaches generate_next_item()'s
+     * catch, so its item stays 'generating' forever. It can't self-heal:
+     * reclaim_stale_generating() only runs from a generate tick, a tick is only
+     * armed when an item is PENDING, and a wedged item is not pending. This
+     * global lookup is what breaks that deadlock — consumed by
+     * PCM_Strategy_Service::reclaim_wedged_items() from the keep-alive chain.
+     *
+     * Same shape and status filter as get_due_scheduled_strategies() below:
+     * INNER JOIN so an orphaned item is dropped, and paused strategies are
+     * excluded (D2 — a pause must not resurrect work).
+     *
+     * @param string $cutoff MySQL DATETIME string ('Y-m-d H:i:s'); items whose
+     *                       updatedAt is older than this count as wedged.
+     * @return object[] Rows with ->strategyId and ->userId.
+     */
+    public static function get_stale_generating_strategies(string $cutoff): array
+    {
+        global $wpdb;
+        $items_table = self::t('strategy_items');
+        $strategies_table = self::t('strategies');
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT DISTINCT si.strategyId, si.userId FROM {$items_table} si
+                 INNER JOIN {$strategies_table} s ON s.id = si.strategyId
+                 WHERE si.status = 'generating' AND si.updatedAt < %s
+                   AND s.status != 'paused'",
+                $cutoff
+            )
+        );
+    }
+
+    /**
      * Distinct (strategyId, userId) pairs with at least one pending item whose
      * scheduledDate is due. Used by the daily scheduled-strategy cron scan
      * (PCM_Strategy_Service::run_scheduled_scan()) — a global, cross-user scan,
@@ -1314,6 +1350,42 @@ class PCM_DB
             self::t('strategy_items'),
             array('status' => 'generating', 'updatedAt' => current_time('mysql')),
             array('id' => $id, 'status' => 'pending')
+        );
+        return $rows === 1;
+    }
+
+    /**
+     * Finish a strategy item ONLY if it is still 'generating' — the completion
+     * half of the claim/complete pair (claim_strategy_item() is the other).
+     *
+     * WHY: a generation can legitimately outlive the request that started it,
+     * and the stale-generating reclaim (per-strategy, and the global sweep in
+     * PCM_Strategy_Service::reclaim_wedged_items()) flips such an item back to
+     * 'pending' so it can be retried. If the original process is still alive it
+     * will later try to finish the SAME item — and an unconditional write would
+     * then complete an item another generator already owns, producing a second
+     * article and, in publish mode, a second published post on the client's
+     * site. Gating the write on status='generating' makes the loser's
+     * completion a no-op instead.
+     *
+     * Not a full ownership token (that would need a schema change): a reclaim
+     * that has already been re-claimed by a NEW generator is 'generating' again
+     * and would still match. It closes the window this plugin actually creates
+     * — reclaimed-and-not-yet-re-picked — which is the common case, since the
+     * reclaim only re-arms a queue tick rather than generating inline.
+     *
+     * @param int   $id   Item ID.
+     * @param array $data Column-value pairs (status, title, articleId, …).
+     * @return bool True when THIS caller still owned the item and wrote it.
+     */
+    public static function complete_strategy_item_if_generating(int $id, array $data): bool
+    {
+        global $wpdb;
+        $data['updatedAt'] = current_time('mysql');
+        $rows = $wpdb->update(
+            self::t('strategy_items'),
+            $data,
+            array('id' => $id, 'status' => 'generating')
         );
         return $rows === 1;
     }

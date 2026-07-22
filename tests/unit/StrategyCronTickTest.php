@@ -33,6 +33,15 @@ function pcm_test_define_crontick_fakes(): void
             {
                 return self::$dueScheduledStrategies;
             }
+            // The keep-alive work block also sweeps wedged 'generating' items.
+            // Declared here so a test that DOES reach that block gets an empty
+            // sweep instead of a fatal — run_keepalive_chain() swallows
+            // Throwables, so a missing method would silently skip the event
+            // drain and quietly invalidate the assertions that follow it.
+            public static function get_stale_generating_strategies($cutoff)
+            {
+                return array();
+            }
         }
     }
     if (!function_exists('get_transient')) {

@@ -196,18 +196,21 @@ class PCM_Social_Source
     }
 
     /**
-     * Best-effort context for a single post link: {title, author, text}.
-     * Order: core oEmbed → og:/twitter: meta scrape → URL-derived label.
-     * NEVER throws; every key is always present (empty string when unknown).
+     * Best-effort context for a single post link: {title, author, text, image}.
+     * Order: core oEmbed → og:/twitter: meta scrape → URL-derived label. The
+     * image (og:image) is the post's own preview image, reused as the blog
+     * article's featured image for Source=Social strategies. NEVER throws; every
+     * key is always present (empty string when unknown).
      *
      * @param string $url Post URL.
-     * @return array{title: string, author: string, text: string}
+     * @return array{title: string, author: string, text: string, image: string}
      */
     public static function post_context(string $url, bool $network = true): array
     {
         $title  = '';
         $author = '';
         $text   = '';
+        $image  = '';
 
         // ── 1) WordPress core oEmbed (YouTube/TikTok/Bluesky/Reddit/X have providers). ──
         // $network=false skips both network tiers (oEmbed + meta scrape) — the
@@ -229,7 +232,7 @@ class PCM_Social_Source
         }
 
         // ── 2) og:/twitter: meta scrape of the page head. ──
-        if ($network && ($title === '' || $text === '')) {
+        if ($network && ($title === '' || $text === '' || $image === '')) {
             try {
                 $html = self::fetch_body($url);
                 if ($html !== '') {
@@ -242,6 +245,12 @@ class PCM_Social_Source
                     $text = self::extract_meta($html, 'og:description');
                     if ($text === '') {
                         $text = self::extract_meta($html, 'twitter:description');
+                    }
+                    // og:image is the post's own preview image — reused as the blog
+                    // article's featured image when present (zero extra network: the
+                    // page head was already fetched for the title/description above).
+                    if ($image === '') {
+                        $image = self::extract_meta($html, 'og:image');
                     }
                 }
             } catch (\Throwable $e) {
@@ -269,6 +278,7 @@ class PCM_Social_Source
             'title'  => self::clean($title, 200),
             'author' => self::clean($author, 200),
             'text'   => self::clean($text, 1000),
+            'image'  => self::sanitize_url($image),
         );
     }
 
@@ -368,14 +378,15 @@ class PCM_Social_Source
 
     /**
      * Map raw Apify dataset items into the RSS watcher's ingest shape
-     * {permalink, id, title, date, text} (fetch_rss_feed_items()'s shape plus
-     * `text`). PURE + defensive: community actor fields drift, so every field
-     * reads through a ??-fallback chain; entries with neither a resolvable
-     * permalink nor an id are skipped (nothing dedupeable).
+     * {permalink, id, title, date, text, image} (fetch_rss_feed_items()'s shape
+     * plus `text` + `image`). PURE + defensive: community actor fields drift, so
+     * every field reads through a ??-fallback chain; entries with neither a
+     * resolvable permalink nor an id are skipped (nothing dedupeable). `image`
+     * is the post's own media URL, reused as the blog article's featured image.
      *
      * @param string $platform instagram|tiktok|x|facebook.
      * @param array  $raw      Decoded Apify dataset items.
-     * @return array<int, array{permalink: string, id: string, title: string, date: int, text: string}>
+     * @return array<int, array{permalink: string, id: string, title: string, date: int, text: string, image: string}>
      */
     public static function apify_map_items(string $platform, array $raw): array
     {
@@ -390,6 +401,7 @@ class PCM_Social_Source
             $title     = '';
             $date_raw  = null;
             $text      = '';
+            $image     = '';
 
             switch ($platform) {
                 case 'instagram':
@@ -399,6 +411,14 @@ class PCM_Social_Source
                     $text      = (string)($item['caption'] ?? '');
                     $title     = $text !== '' ? self::first_chars($text, 90) : 'Instagram post';
                     $date_raw  = $item['timestamp'] ?? null;
+                    // apify~instagram-scraper: imageUrl can be '' even when the
+                    // post carries images[] / a displayUrl — ?? does NOT fall
+                    // through on '', so read through first_non_empty() instead.
+                    $image     = self::first_non_empty(
+                        $item['imageUrl'] ?? '',
+                        $item['displayUrl'] ?? '',
+                        self::first_url_in($item['images'] ?? null)
+                    );
                     break;
 
                 case 'tiktok':
@@ -407,6 +427,17 @@ class PCM_Social_Source
                     $text      = (string)($item['text'] ?? $item['desc'] ?? '');
                     $title     = $text !== '' ? self::first_chars($text, 90) : 'TikTok post';
                     $date_raw  = $item['createTimeISO'] ?? $item['createTime'] ?? null;
+                    // clockworks~tiktok-scraper: the cover lives at
+                    // videoMeta.coverUrl (nested). videoUrl is an MP4 — NEVER
+                    // reuse it as a featured image (ext_from_mime('video/mp4')
+                    // returns 'jpg', so it would sideload as a fake .jpg), so it
+                    // is deliberately absent from this chain.
+                    $video_meta = is_array($item['videoMeta'] ?? null) ? $item['videoMeta'] : null;
+                    $image      = self::first_non_empty(
+                        $item['coverUrl'] ?? '',
+                        $item['coverImageUrl'] ?? '',
+                        is_array($video_meta) ? (string)($video_meta['coverUrl'] ?? '') : ''
+                    );
                     break;
 
                 case 'x':
@@ -415,6 +446,11 @@ class PCM_Social_Source
                     $text      = (string)($item['text'] ?? $item['fullText'] ?? '');
                     $title     = $text !== '' ? self::first_chars($text, 90) : 'X post';
                     $date_raw  = $item['createdAt'] ?? null;
+                    // Photo tweets carry their image in entities/extendedEntities.
+                    $x_media = $item['media'] ?? $item['extendedEntities']['media'] ?? $item['entities']['media'] ?? null;
+                    $image   = is_array($x_media) && isset($x_media[0])
+                        ? (string)($x_media[0]['media_url_https'] ?? $x_media[0]['media_url'] ?? $x_media[0]['url'] ?? '')
+                        : '';
                     break;
 
                 case 'facebook':
@@ -423,6 +459,25 @@ class PCM_Social_Source
                     $text      = (string)($item['text'] ?? $item['message'] ?? '');
                     $title     = $text !== '' ? self::first_chars($text, 90) : 'Facebook post';
                     $date_raw  = $item['time'] ?? $item['timestamp'] ?? null;
+                    // apify~facebook-posts-scraper: the photo lives at
+                    // media[0].photo_image.uri (nested); imageUrl/fullPicture
+                    // cover only some post shapes.
+                    $media0    = is_array($item['media'] ?? null) && isset($item['media'][0]) && is_array($item['media'][0])
+                        ? $item['media'][0] : null;
+                    $photo_uri = '';
+                    if (is_array($media0)) {
+                        if (is_array($media0['photo_image'] ?? null) && isset($media0['photo_image']['uri'])) {
+                            $photo_uri = (string)$media0['photo_image']['uri'];
+                        } elseif (isset($media0['photo_image']) && is_string($media0['photo_image'])) {
+                            $photo_uri = (string)$media0['photo_image'];
+                        }
+                    }
+                    $image     = self::first_non_empty(
+                        $item['imageUrl'] ?? '',
+                        $item['fullPicture'] ?? '',
+                        $photo_uri,
+                        self::first_url_in($item['images'] ?? null)
+                    );
                     break;
 
                 default:
@@ -439,6 +494,7 @@ class PCM_Social_Source
                 'title'     => self::clean($title, 200),
                 'date'      => self::to_timestamp($date_raw),
                 'text'      => self::clean($text, 1000),
+                'image'     => self::sanitize_url($image),
             );
         }
         return $out;
@@ -568,6 +624,71 @@ class PCM_Social_Source
             return trim((string)mb_substr($value, 0, $max));
         }
         return trim(substr($value, 0, $max));
+    }
+
+    /**
+     * Validate + sanitize a captured image URL. Rejects empty / non-http(s)
+     * strings (and data: URIs) so a malformed value never becomes a featured
+     * image; otherwise esc_url_raw when available (raw passthrough in the unit
+     * harness, which lacks WP).
+     */
+    private static function sanitize_url(string $url): string
+    {
+        $url = trim($url);
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            return '';
+        }
+        return function_exists('esc_url_raw') ? esc_url_raw($url) : $url;
+    }
+
+    /**
+     * First usable URL inside a media collection that Apify actors return in
+     * varying shapes — a list of URL strings, or a list of objects with a url/
+     * imageUrl/media_url_https/src key. Returns '' when nothing usable is found.
+     *
+     * @param mixed $value The actor's media field (array|string|null).
+     * @return string The first URL found, or ''.
+     */
+    private static function first_url_in($value): string
+    {
+        if (is_string($value)) {
+            return $value;
+        }
+        if (!is_array($value)) {
+            return '';
+        }
+        foreach ($value as $v) {
+            if (is_string($v) && $v !== '') {
+                return $v;
+            }
+            if (is_array($v)) {
+                foreach (array('url', 'imageUrl', 'media_url_https', 'src') as $k) {
+                    if (isset($v[$k]) && is_string($v[$k]) && $v[$k] !== '') {
+                        return (string)$v[$k];
+                    }
+                }
+            }
+        }
+        return '';
+    }
+
+    /**
+     * First argument that is a non-empty string ('' falls through, unlike ??,
+     * which hands an empty-but-set value straight back). Community Apify actors
+     * routinely emit imageUrl: "" alongside a populated images[]/displayUrl, so
+     * every platform's image chain reads through this.
+     *
+     * @param mixed ...$vals Candidate values (URL strings, or '' to skip).
+     * @return string The first non-empty string, or ''.
+     */
+    private static function first_non_empty(...$vals): string
+    {
+        foreach ($vals as $v) {
+            if (is_string($v) && $v !== '') {
+                return $v;
+            }
+        }
+        return '';
     }
 
     /** Loose date → unix timestamp int (numeric passthrough, strtotime for strings, 0 when unparseable). */

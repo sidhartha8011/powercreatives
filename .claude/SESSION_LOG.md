@@ -8263,3 +8263,236 @@ LEFT FOR THE SEO OWNER (their lane, not merge-caused — reproduced on their bra
 worktree): SeoIntegrationTest::test_gbp_provider_factory_defaults_to_n8n asserts
 PCM_SEO_GBP_N8N_Provider which their gbp.php no longer defines; brand_business_units missing from
 the uninstall drop list; tests/standalone/page_versioning_test.php not wired into run.php.
+
+## 2026-07-21 — RSS items wedged in "generating": global reclaim sweep + completion claim guard [/task]
+Owner: "generations are still failing in some of the RSS; social generation not working —
+detection is working but generation of article is having problem." Confirmed the two symptom
+shapes with the owner before touching code: RSS = items STUCK in 'generating'; social = items
+go to 'error'. They are two different bugs. Only the RSS one is fixed here — the social one is
+BLOCKED on the stored errorMessage text (see the handoff at the bottom).
+ROOT CAUSE (proven by reading, file:line in plan.md): a generation killed mid-run never reaches
+generate_next_item()'s catch, so its item stays 'generating' — and that state could not
+self-heal. reclaim_stale_generating() had exactly ONE production caller (service.php:1193, the
+next-pending path); maybe_schedule_queue_continuation() re-arms only when an item is PENDING;
+and process_due_pcm_events() unschedules an event BEFORE firing it, so a kill during the fire
+loses the continuation outright. Deadlock: reclaim needs a tick, a tick needs a pending item,
+the wedged item isn't pending. Long articles are the expected victims — the keep-alive link is
+deliberately sized for 60s FPM caps while one item can legitimately run ~39 min (300s LLM + the
+truncation retry's second 300s, grounding passes, Apify enrich, featured image + up to 8
+in-content media at 120s each; more on a marketplace image provider at 800s/image).
+FIX (PHP only, no schema/version/changelog bump):
+1. PCM_DB::get_stale_generating_strategies($cutoff) — global (strategyId,userId) lookup,
+   shape/status-filter mirrored verbatim from get_due_scheduled_strategies().
+2. PCM_Strategy_Service::reclaim_wedged_items() — reuses the EXISTING reclaim + re-arm; called
+   from run_keepalive_chain()'s work-first block BEFORE process_due_pcm_events() so a re-armed
+   continuation fires in the same link. 90-min cutoff (not the per-strategy 10) so a slow-but-
+   alive generation isn't thrown away. Per-strategy try/catch; every reclaim error_log()'d.
+3. PCM_DB::complete_strategy_item_if_generating() — the reclaim does NOT cancel the run it
+   steals from, and claim_strategy_item() only guards the PICK, so the completion writes were
+   unconditional: a reclaimed-then-completed item was double-counted and, in publish mode,
+   published a SECOND post to the client's live site. All THREE terminal writes now compare-and-
+   set on status='generating' (per-item completed + in_review, and the consolidated batch), and
+   maybe_auto_publish() is skipped when the CAS loses. Same guarantee advance_item_on_approval()
+   already enforced for the approval path — house pattern, not a new invention.
+VERIFICATION: phpunit 475 (1 error + 3 failures = the unchanged pre-existing baseline, none in
+strategy code; was 465 before the 10 new tests), standalone harness 88/88, php -l clean on all
+8 touched files. All four guards mutation-tested — reverting each CAS to a blind write, and
+deleting the sweep's call site, each makes a specific test fail (the call site is pinned by a
+source-invariant test in PlatformRoleInvariantTest style, since the chain's sleep loop can't run
+in the harness). NOT verified live: this Mac has no working local WP (its sqlite DB is stale
+since June; the owner runs powercreatives.local on the Windows box), so there is no runtime repro
+of the wedge — the root cause is code-proven, not reproduced.
+spec-verifier: 3 rounds. R1 caught a P1 I introduced (10-min cutoff below the pipeline's worst
+case ⇒ could reclaim a LIVE generation). R2 rejected the raised-cutoff-only fix as a timing guess
+and demanded the structural CAS. R3 caught that the consolidated path — which returns before the
+per-strategy reclaim and so was NEVER reclaimable until this sweep existed — still had blind
+terminal writes, and that the in_review CAS was mutation-silent. All closed.
+DOCUMENTED, NOT FIXED (needs an owner call on cost): an item that can never finish is now retried
+every ~90 min instead of wedging once — re-burning one article's LLM + up to 9 image generations
+per attempt, and able to orphan an article row when the kill lands between create_article() and
+the item write. An attempt counter needs no schema change (strategy_items.config exists) but
+decides WHEN to give up on a user's article. Also open (P3, from the verifier): the failure write
+at the catch is still unguarded, so a loser that throws can stomp the winner's claim.
+LEFT FOR THE NEXT SESSION — SOCIAL: need the errorMessage text off a red social item. Ruled out
+already: load_template (templateId is required by controller.php:232 + the dialog's disabled
+Create), grounding (run_grounding_call swallows all Throwables), Apify (returns [] on every
+failure, never throws), and the ingest seam (apify_map_items emits `permalink`, ingest_feed_items
+normalizes it to `link` correctly). Leading hypothesis: the AI Model dropdown left empty ⇒
+resolve_model() falls back to gemini-2.5-flash with NO provider ⇒ "No active API key" on every
+item if the owner only has an OpenAI key (the Jul 19 diagnostics show gpt-4o-mini in use).
+
+## 2026-07-21/22 — "LLM returned invalid JSON (json_object mode)" on a Social strategy [/task]
+Owner screenshot (strategy "fifa fotbolls-vm 2026", Source=Social, instagram.com/hailthegame,
+template "SEO Pillar Article"): 4/10 completed, 3 FAILED, all three the identical error
+`LLM returned invalid JSON (json_object m…`. This DISPROVES last session's leading hypothesis
+(empty-model → gemini fallback → "No active API key"): the LLM is reached and replies; the reply
+just doesn't parse. Nondeterministic, not content-determined — rows 2 and 7 came from near-
+identical captions, one failed one completed. (Row 8 "Generating…" is the wedge from the prior
+entry; the sweep skips paused strategies by design, so it self-heals on Resume.)
+METHOD: built a scratch harness driving the REAL public statics extract_json/repair_json/
+salvage_json_by_keys with the real article_schema() key partition, over ~13 payload shapes an LLM
+plausibly emits about an emoji-heavy post. Finding: the chain ALREADY handles emoji, unescaped
+quotes (title AND content), control chars, trailing commas, and media_assets ordering — so the
+obvious suspects are out. The surviving holes were two extract_json defects + a truncation the
+terminal error under-reported.
+SHIPPED (includes/core/llm/class-pcm-llm.php, no schema/version bump):
+1. extract_json inner-fence: the fence regex was non-greedy, so a ``` fence INSIDE the article
+   content ended the match early and truncated the JSON. Now tries the narrow body first and
+   widens to the last fence only when the narrow body fails to decode (an unconditional greedy
+   match would weld two separate fenced blocks — a regression a review round caught). Verified:
+   inner-fence payload now recovers.
+2. describe_json_failure(): extracted the terminal error's cause line into a pure, testable
+   static. Reports truncation from looks_truncated() BESIDE finish_reason (Gemini's compat
+   endpoint truncates without setting finish_reason) — but ONLY when the reply is also
+   structurally incomplete (does not end in }/]), because looks_truncated() counts quote parity
+   and a COMPLETE reply with an unescaped quote false-positives as truncated. Without that gate
+   the "self-diagnosing" error would confidently misdiagnose a quote bug as a token-budget
+   problem. Empty reply gets its own wording. Also capture json_last_error_msg() BEFORE
+   extract_json() (its probing overwrites the global) + a ⚠ docblock warning that it clobbers
+   json_last_error().
+NOT SHIPPED — extract_json leading-prose `[` (attempted twice, both REVERTED): "Here is the
+article [as requested]: {…}" starts the span at the prose bracket. Fix attempt A (object-first)
+reduced [{"a":1}] to {"a":1}; attempt B (offset-rank + nested-candidate rule) still lost to an
+inner well-formed array that OVERHANGS the object span — which is the NORMAL shape, since
+media_assets is article_schema()'s LAST property, so a truncated reply's ] sits past its }. Both
+made a malformed object decode to a decodable-but-WRONG inner array → is_array() true → nothing
+throws → salvage skipped → item completes with content='' → SILENT EMPTY ARTICLE, strictly worse
+than the loud error. Reverted to the original; the limit is documented in code + pinned by a test
+asserting current behaviour. Doing it right needs a real brace-matching scan (its own change), and
+it is not what's biting today: json_object mode returns a bare object with no leading prose.
+VERIFICATION: phpunit 490 (1 error + 3 failures = unchanged pre-existing baseline, none in LLM
+code; was 475 before the new tests), LlmJsonRepairTest 39/39, standalone 88/88, php -l clean. The
+two shipped fixes are mutation-tested (reverting each fails a specific test). spec-verifier: 3
+rounds — R1 found 6 issues (2 extract_json regressions I'd introduced, a misdiagnosis, a clobbered
+error msg); R2 found the offset-rank still returned inner arrays (P0 silent-empty-article); R3
+found the nested-rule STILL missed the overhang case (P0 again). After the 3rd P0 in the same
+hot path (every LLM call, every module), I stopped iterating and reverted the risky part per the
+task's max-3-round rule.
+STILL OPEN / HONEST LIMITS: (a) NOT confirmed these three rows are one of the fixed shapes — if
+they were plain truncation, the fix makes the NEXT error say so explicitly rather than resolving
+it. The real next step is the full stored errorMessage text (hover tooltip) or a diag-*.jsonl RAW
+line from the Windows box, which pins the exact shape. (b) leading-prose bracket limit remains
+(low real-world risk in json_object mode). (c) $last_error reflects repair_json's residual decode,
+not always the raw parse error (comment notes this).
+
+## 2026-07-22 — Adversarial re-verify of the JSON-recovery fix: caught a P1 I had introduced
+Owner asked whether the previous entry's work was complete. It was NOT: the spec-verifier round had
+returned CHANGES REQUIRED, fixes were applied (one of them a full REVERT), and no re-verification
+ever ran. Ran a 28-agent workflow — 5 independent reviewers (fence handling, describe_json_failure
+misdiagnosis risk, revert coherence/dead code, $last_error correctness on every path to the throw,
+mutation-sensitivity of all 13 tests), each finding then handed to an adversarial skeptic told to
+refute it by RUNNING code. 22 candidates → 7 survived → 4 real defects.
+P1-a (the serious one, my own regression): the fence branch had been changed to fall THROUGH to the
+brace scan instead of returning its body. That lets the scan mine a decodable span out of a fence
+body that is not JSON — reviewer A/B'd against HEAD in one process: "```js\nconst cfg = {};\n```"
+gave HEAD a loud throw and the working tree "{}", which decodes to array(), passes every
+`!is_array($parsed)` gate, and completes the item with an EMPTY article. Exactly the
+decodable-but-wrong-value trap that had already sunk two attempts at the leading-bracket limit — I
+reintroduced it three lines away from the comment warning about it. Fixed: `return $body;`.
+P1-b: $last_error captured the message before extract_json() but the two CONDITIONS at :444/:463
+still read the clobbered global, so a SUCCESSFUL parse could be flipped into the failure branches
+("...unparseable...: No error") or into salvage, returning a degraded value. Fixed by freezing
+$parse_failed alongside $last_error and using it in both.
+P2: describe_json_failure()'s empty-span guard short-circuited ahead of $by_finish, discarding the
+only non-heuristic truncation signal — a regression vs HEAD. finish_reason now tested first.
+P3: pinned the exact extract_json span for the known-limit test (kills a strrpos→strpos mutant) and
+the negative half of the `$incomplete && looks_truncated()` conjunct. The span assertion revealed
+the known limit is WORSE than documented: with no array later in the payload the last `]` is the
+prose's own, so the entire article object is discarded and only "[as requested]" survives.
+Also corrected plan.md, whose item 1 had specified the faulty fall-through — the spec was wrong, not
+just the code.
+VERIFIED: phpunit 494 (1 error + 3 failures = unchanged pre-existing baseline, none in LLM/strategy
+code), standalone 88/88, php -l clean. P1-a mutation-tested (reverting the early return fails 2 of
+the 3 new data-provider cases). LlmJsonRepairTest 44/44.
+STILL NOT CONFIRMED as the owner's root cause — unchanged from the previous entry. The three failing
+FIFA rows need the full stored errorMessage (hover tooltip) or a diag-*.jsonl RAW line from the
+Windows box. describe_json_failure() is what makes the NEXT occurrence name its own cause.
+
+## 2026-07-22 — Cadence UI + social post-image reuse + no-emoji articles (/task-glm, 2 GLM rounds + hand finish)
+Owner: (1) clearer schedule/cadence in the New Strategy popup, (2) Source=Social strategies reuse the
+post's own image as the blog article's featured image, (3) no emojis in articles written from a social
+post. Dispatched to GLM via glm-worker.sh (billed to Z.AI); Claude briefed, verified and finished.
+ROUND 1 (EXIT=0). GLM delivered all three: CreateStrategyDialog's Schedule accordion rewritten to
+"Schedule & cadence" with a live plain-English summary; `sourceImage` threaded through the existing
+text/social pipeline (post_context og:image → apify_map_items → split → enrich → ingest → pop →
+social_source_image → featuredImage); new strip_emoji() applied to the article for social items only.
+Independent verification (NOT taken on trust): a per-file diff-vs-baseline comparison proved every file
+of the previous task byte-identical — GLM reverted nothing; phpunit/standalone/tsc/build re-run by hand.
+NB the first "build failure" was MY wrong invocation — the project needs `--config vite.config.wp.ts`;
+plain `vite build` uses the wrong config. app/dist/ is gitignored.
+TWO P1s FIXED BY HAND: (a) strip_emoji wiped the whole article on malformed UTF-8 — preg_replace with /u
+returns NULL and the (string) cast made it '' , saving an empty title+body+slug silently. My first fix
+failed because the cast sat BEFORE the null check; my own test caught it. (b) the Apify idempotency guard
+was keyed off sourceImage, so a create-time og:image (routine when a page has an image card and no
+description) permanently cancelled the caption fetch and articles were written from a bare link —
+re-keyed onto a `socialEnriched` marker. Also widened the emoji class (⭐ 🆕 🆚 🈚 were surviving).
+spec-verifier (fresh context, strongest model, mandatory since the author was T3): 21 findings, 2 P1
+(both proven with runnable evidence, both the ones above) + 16 P2.
+ROUND 2 (EXIT=1 — Z.AI 429, "Usage limit reached for 5 hour", quota reset 09:07). Died mid-run but left
+a COHERENT tree (lint clean, affected suites 72/72, full suite at baseline) — verified before trusting it.
+Landed before dying: emoji ranges widened WITH a typography carve-out (⌚⏰▶️‼️ strip; ✓ ✗ ♠ ♪ survive;
+U+204A ⁊ correctly excluded as a Gaelic letter), <pre><code> indentation preserved, TikTok MP4-as-image
+fallback removed, Apify field reads reworked (nested videoMeta.coverUrl), dialog reworked again (+115/-74).
+FINISHED BY HAND (owner said "you finish"):
+- F17: metaTitle/metaDescription now stripped too — sites/service.php pushes them to _yoast_wpseo_title /
+  _yoast_wpseo_metadesc, so emoji were reaching the SERP snippet. REQ 3 was NOT met without this.
+- F11: new featured_images_enabled() helper; the opt-in gate lived INSIDE maybe_generate_featured_image(),
+  so putting the social image left of `??` short-circuited past it and published an image on strategies
+  with the feature switched OFF.
+- F19: consolidated batches now strip emoji too (keyed off any contributing item being social). The
+  post-image reuse is deliberately NOT applied there — one shared article covers N posts, so "the post's
+  image" is ambiguous; that is a product decision, not a fix.
+- F21 (the biggest gap): the verifier proved all three requirements could be DELETED with the suite
+  staying green — every test covered the pure helpers, none the call sites. Added 5 wiring tests driving
+  the real generate_next_item() (emoji stripped from all four persisted fields; NOT stripped for
+  non-social; image reused; opt-out blocks it; consolidated strips). MUTATION-VERIFIED: removing the
+  strip_emoji call sites and dropping the social-image reuse each now go RED.
+VERIFIED: phpunit 524 (1 error + 3 failures = unchanged pre-existing baseline, none in scope; was 495
+before this task), standalone 88/88, tsc 59 = baseline with 0 in CreateStrategyDialog.tsx, php -l clean.
+NOT DONE / OPEN: GLM's own round-2 mutation re-check never came back (run died) — the dialog rework
+(F1-F7: summary said "publish" while the default is Draft, "one per slot" wrong for Consolidated, the
+RecurrenceEditor's own "Ends" invisible to the summary) landed but is UNVERIFIED by anyone; it needs a
+read or a live browser check before shipping. Pre-existing (not introduced here): push_featured_image()
+uses wp_remote_get, not wp_safe_remote_get — the sink was already reachable via writer/controller.php's
+user-settable featuredImage, but a scraped third-party og:image now feeds it, so an SSRF/exfil review of
+sites/service.php is worth scheduling.
+
+## 2026-07-22 — {{ post_* }} template variables: generation moves into the template [/task]
+Owner: "the generation of the post should be in templates and the content of the posts (social media
+post) should be in a expression or a variable ex. {{ post_content }}. RSS reposting with variables:
+{{ post_content }}, {{ post_title }}, {{ post_link }}."
+BEFORE: build_prompt() used the template's prompt entries VERBATIM — no variable substitution of any
+kind existed (grep: no {{ }} convention anywhere in includes/ or app/src). The source post reached the
+model ONLY via the hardcoded English sentence in rss_source_instruction(), so the author could not
+change how or where it was used. Previous plan archived → docs/plan-archive-2026-07-22-llm-json-recovery.md.
+BUILT: three pure statics — source_vars() (the map), referenced_source_vars()/template_carries_source()
+(the suppression predicate) and render_source_vars() (ONE-pass preg_replace_callback). build_prompt()
+resolves the variables in each prompt entry; generate_next_item() suppresses the built-in rider when the
+template genuinely carries the post. Unknown {{ … }} tokens are deliberately left untouched — real
+templates legitimately contain {{#if x}}, {{{ triple }}} and JSON braces, and the verifier confirmed a
+generic stripper would break the byte-identity guarantee. TemplateDialog surfaces the three variables
+(gated to Writer prompts; video/seo are force-set to category 'prompt' but never render through
+render_source_vars(), so the hint must not show there).
+spec-verifier round 1 — CHANGES REQUIRED, and it caught a P1 that would have shipped the OPPOSITE of the
+request: fetch_rss_feed_items() captured only permalink/id/title/date, so sourceText was social-ONLY and
+{{ post_content }} could never resolve on an RSS strategy — while my token-keyed suppression then dropped
+the rider too, leaving the model with no source item and no attribution link. Verified the claim myself
+against service.php:2273 before fixing. FIXES: (a) the feed reader now reads get_description(), riding the
+same `text` key the social branch already uses so ingest → pop → sourceText needed no other change;
+(b) suppression re-keyed onto the resolved VALUES (template_carries_source), so an empty referenced
+variable keeps the rider; (c) substitution collapsed to ONE pass — per-variable passes re-scanned already
+substituted text, so a caption containing "{{ post_title }}" had that expanded (user content read as
+template syntax), and a single pass also removes the need to escape $/\ backreferences; (d) three
+docblocks + plan.md corrected (they claimed RSS and social populate the same keys — the assumption that
+caused the P1); (e) the dialog hint gated off video/seo.
+VERIFIED: phpunit 547 (1 error + 3 failures = unchanged pre-existing baseline, none in scope; was 524
+before this task), standalone 88/88, tsc 59 = baseline with 0 in TemplateDialog.tsx, build ✓, php -l clean.
+MUTATION-TESTED — all 8 mutants killed, including the 3 the verifier found surviving: trim() removed,
+null-guard removed, category filter → true, build_prompt's prompt-only loop → all entries, suppression
+keyed on token only (the P1 regression), RSS description capture removed, whitespace tolerance, and the
+$/\ escaping case. Verifier also independently confirmed BYTE-IDENTICAL prompts vs git HEAD for
+variable-free templates across 9 template shapes (md5 match) — the back-compat contract holds.
+NOT DONE: the dialog hint was type-checked and built but NOT visually verified — this Mac's local WP has
+a June-stale DB and the owner runs the real site on the Windows box. Verifier P3 advisory left open: a
+client-side lint flagging {{ post_something }} typos that are not one of the three names (they currently
+reach the LLM raw, which is benign but invisible to the author); and the names are case-sensitive.
