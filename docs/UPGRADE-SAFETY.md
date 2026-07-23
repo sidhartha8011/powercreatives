@@ -35,6 +35,27 @@ All user data is preserved — nothing is lost during an upgrade.
 - **Uninstall** (delete plugin): Runs `uninstall.php` which drops all `wp_pcm_*` tables
   and removes plugin options. This is intentional and irreversible.
 
+## Prompt-Variable Behaviour Change (no migration)
+
+Five template variables now exist: `{{ keyword }}`, `{{ brand_context }}`,
+`{{ research }}`, `{{ output_format }}`, and `{{ media_instructions }}`. Each maps
+to a prompt fragment that `build_prompt()` used to inject automatically (the
+keyword/output-format user message, the brand block, the research block, the
+in-content-media block). A fragment is now auto-injected **only when the template
+does not reference its variable**; placing one hands the author control of where it
+lands and suppresses the hidden duplicate — so nothing is appended invisibly.
+
+**Who is affected.** A user template that *already* contained one of these five
+token names — for example, an author who had typed `{{ keyword }}` as a literal
+before this version — will, after upgrade, **stop receiving the matching
+auto-appended fragment**, because the template is now considered to "reference"
+that variable. The fragment instead renders at the token's position. Templates
+that contain no `{{ }}` variables at all produce a byte-identical prompt to the one
+they produced before the variables existed. No data is changed on upgrade and
+no migration runs; the only effect is in how the prompt is assembled at generation
+time. If you have a custom template that contained one of these tokens and you
+want the old auto-appended behaviour back, remove the token from the template.
+
 ## Testing an Upgrade
 
 1. Back up your database (always recommended)
@@ -43,3 +64,16 @@ All user data is preserved — nothing is lost during an upgrade.
 4. WordPress will ask to replace the existing plugin — confirm
 5. Activate the plugin
 6. Check: all brands, templates, integrations, and models are intact
+
+**Two further constraints worth knowing.**
+
+1. Only entries whose category is `prompt` are scanned. A token placed in a
+   *guidance*, *title* or other non-prompt entry does NOT suppress the automatic
+   injection — the fragment will then appear twice (once where you typed it, once
+   appended). Keep the tokens in the Generation Prompt entry.
+2. The reseeded **SEO Pillar Article** template does NOT reach existing installs.
+   `PCM_Template_Seeds::seed()` inserts only when no template with the same
+   name+module exists, so an install that already has that template keeps its old
+   text — and therefore keeps the hidden auto-injection. To adopt the new
+   five-variable prompt on an existing site, edit that template by hand (or delete
+   it so the seeder recreates it).

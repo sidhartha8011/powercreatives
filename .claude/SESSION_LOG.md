@@ -1,5 +1,20 @@
 # Session Log
 
+## 2026-07-22 — Strategies module: schedule precision, posting parity, post-image reuse [/task]
+- **Ask:** "Strategies module fully done — proper/easy schedule/cadence, posting works on sites, posts can re-use the image in the social media post for the blog."
+- **Diagnosis (three gaps, evidence-grounded):**
+  1. **Schedule precision** — the cadence UI (`RecurrenceEditor.tsx`) + recurrence engine + per-item dates all worked, BUT `maybe_auto_publish()` (the automatic publish path, `service.php:2589`) called `publish_to_site()` with NO options. So a scheduled item, once its daily-cron due date arrived, published IMMEDIATELY instead of at its set time-of-day, and with no tags. Only the MANUAL publish button (`publish_item()`) forwarded `schedule_date` + `tags`.
+  2. **Posting parity** — same root cause as #1; the auto path was asymmetric with the manual path.
+  3. **Post-image reuse DORMANT** — the backend feature was fully built (`config.featuredImages` sanitized at `controller.php:584`, `social_source_image()` reads `item.config.sourceImage`, wired into article creation at `service.php:1426`), BUT there was NO frontend toggle for `featuredImages` ANYWHERE (`grep` → 0 hits). The feature defaults OFF with no way to turn it on — so no strategy ever reused the source post's image.
+- **Fix (3 edits, 2 files):**
+  1. `maybe_auto_publish()`: added optional `?object $item = null` 4th param. When present, forwards `tags=[keyword]` + (for schedule mode with a future `scheduledDate`) `schedule_date` — byte-for-byte parity with the manual path. The two call sites lacking a single item (consolidated batch L911, approval completion L3717) pass nothing → legacy no-options behavior, unchanged.
+  2. Updated the per-item call site (L1540) to pass `$item` (guaranteed non-null — the `$item_id` branch throws at L1249, the pending-selection branch returns at L1289, both before reaching L1540).
+  3. Frontend (`index.tsx`): added `handleFeaturedImagesChange` (partial config merge, same pattern as `handleSiteChange`) + a "Reuse image" checkbox on the strategy row, gated `(isSocial || isRss)`, reading `config.featuredImages`. Backend already sanitizes it; default stays OFF.
+- **Deliberately NOT changed:** RSS-sourced items are excluded from image reuse by the `social` flag gate in `social_source_image()` (L2743) — correct by design (an RSS article's image isn't "the social media post's image"). `featured_images_enabled()` default OFF left as-is (opt-in is safer). The two no-item call sites left at 3 args.
+- **Verified:** `php -l` clean; PHPUnit strategy tests 142/142 (324 assertions) — full suite 589 tests, 1 error + 3 failures (ALL pre-existing in `SeoIntegrationTest`, unchanged from baseline); `tsc --noEmit` 59 → 59 (zero new errors, baseline-matched via stash/recount). `spec-verifier` APPROVED — zero P0/P2/P3, all checks confidence 1.0 (signature, body logic, parity with manual path, call-site `$item` scope, backward-compat of empty options, frontend gating/security).
+- **Specialists:** inline (single PHP module + single TSX file, mechanical once signatures decided); Explore subagent for the read-heavy investigation; spec-verifier at the done gate.
+- **Not committed.**
+
 ## 2026-07-07 — "editing it gives an api error" → opaque 500s from unguarded REST callbacks [/task]
 - **Ask:** editing a heading (SEO table) shows "an api error".
 - **Investigation:** reproduced the whole edit chain against real local WP (PHP 8.5) — all green:
@@ -8496,3 +8511,234 @@ NOT DONE: the dialog hint was type-checked and built but NOT visually verified �
 a June-stale DB and the owner runs the real site on the Windows box. Verifier P3 advisory left open: a
 client-side lint flagging {{ post_something }} typos that are not one of the three names (they currently
 reach the LLM raw, which is benign but invisible to the author); and the names are case-sensitive.
+
+## 2026-07-22 — "EMPTY reply" root cause: the model's refusal was being thrown away [/task-glm-support]
+Owner: "why do we still have the errors, why has generation run 2hrs, check the Apify API for the
+account/post causing it." The row-9 TOOLTIP finally gave the full message —
+`LLM returned invalid JSON (json_object mode) — the model returned an EMPTY reply: Syntax error — raw:`
+with NOTHING after `raw:`. That is the wording added last session, so the diagnostic worked: this was
+never a JSON-parsing problem. The model returns a literally EMPTY completion.
+ROOT CAUSE (proven, not inferred): parse_response() read OpenAI content with `isset()`, which is FALSE
+for `content: null`. OpenAI returns `content: null` TOGETHER WITH a `message.refusal` string when it
+declines — and `grep -rn "refusal" includes/` returned NO match anywhere. The API told us exactly why
+and nothing read it.
+NOT APIFY. Apify only supplies the caption, already stored on the item; the failure is on the response
+side, after the prompt is built. Rows 7/8 from near-identical captions both COMPLETED while 9 failed.
+Owner pasted an Apify token in plaintext chat — told them to ROTATE it; I did not use, store or log it.
+2-HOUR ITEM: reclaim_wedged_items() (90-min sweep) has exactly ONE caller, run_keepalive_chain(). If
+that chain is not alive on the install, nothing sweeps. Immediate unblock with no code: click Generate
+— the next-pending path runs reclaim_stale_generating() at a 10-min cutoff. Diagnose with
+GET /strategies/cron-info (alive + beat).
+BUILT: parse_response() reads content via array_key_exists + is_string (a null no longer misroutes to
+the Anthropic branch) and captures message.refusal; Anthropic stop_reason='refusal' mapped too; new
+`refusal` key on the result; describe_json_failure() gained $refusal (top priority) + $finish_reason.
+ROUTING: planned 3 glm / 1 driver. EXECUTED 1 glm (brief-step1: parse_response + error surfacing +
+6 tests, EXIT=0, allowlist respected) then REROUTED steps 2-3 to driver — the verifier's findings were
+multi-point coherence in the most critical shared file, not mechanical.
+spec-verifier (built a live HTTP harness): CHANGES REQUIRED, 10 findings. The important ones, all fixed:
+- F1/F2 (P2): the refusal was DESTROYED by the retries it triggered. $result is reassigned by the
+  truncation retry and the reprompt, so only the LAST call's refusal survived; a tier-1 refusal was
+  lost entirely. Measured 4 API calls per refused item. Fixed with throw_if_refused() early exits at
+  BOTH the json_schema tier and the fallback's first invoke.
+- F3 (P2): the refusal text is MODEL-authored and can contain "response_format … not supported",
+  which tripped is_response_format_unsupported() and demoted the tier — 7 calls for one refusal.
+  Fixed with a REFUSAL_PREFIX sentinel + is_refusal_error() checked BEFORE the classifier at both
+  tier boundaries.
+- F4 (P3): substr() split a multibyte refusal → invalid UTF-8 in errorMessage, which wp_json_encode()
+  drops entirely. New guarded clip() using mb_substr.
+- F5 (P2): the fix only covers the refusal-FIELD variant; a content_filter or plain empty reply is
+  byte-identical. EMPTY branch now names the raw finish_reason. NB my first attempt at this was DEAD
+  CODE ($by_finish is always false in that branch since it returns above) — caught and rewired to a
+  new $finish_reason param.
+- F6/F7/F9: precedence untested; the source-invariant anchor matched the function DEFINITION (whose
+  parameter list contains "refusal") so it stayed green with the argument gone, and false-failed on a
+  benign reorder. Anchored on `self::` and added a count assertion on the two early-exit call sites.
+VERIFIED: phpunit 561 (1 error + 3 failures = unchanged pre-existing baseline; was 547 before this
+task), standalone 88/88, php -l clean. Full mutation battery — all 7 killed: refusal demoted below
+finish_reason, refusal arg dropped at the call site, mb_substr→substr, both early exits removed
+individually, isset revert, refusal read re-nested inside the content guard.
+OPEN / NOT DONE: no observability beyond the new error_log; stream_request() returns a result shape
+with neither `refusal` nor `finish_reason` (harmless today only because of `?? ''`); parse_response()
+and invoke()'s @return docblocks still omit `refusal` (F8). And the diagnosis is still INFERRED from
+code — no captured failing payload from the owner's box — so if these rows were a content_filter
+rather than a refusal, the new finish_reason clause is what will say so next time.
+
+## 2026-07-22 (cont.) — refusal fix, verifier round 2: fail-fast completed, my own docblock regression
+Round-2 spec-verifier rebuilt its live HTTP harness and returned CHANGES REQUIRED with 12 findings.
+Confirmed fixed from round 1: fail-fast (4 API calls → 1), classifier immunity on the first call,
+mb-safe clip, the finish_reason rewire (my first attempt there was dead code), refusal precedence,
+the anchor false-positive, the null-refusal leak. Round-2 fixes:
+- R1/R2 (P2): the early exit guarded only the FIRST invoke(). A refusal arriving on the truncation
+  retry or the reprompt was still lost AND still steered the tier classifier — the terminal message
+  uses different wording than REFUSAL_PREFIX, so is_refusal_error() returned false and the model's
+  own words were handed to is_response_format_unsupported() (harness: tier demoted to prompt-only,
+  4 calls). Now ALL FOUR invoke() sites are guarded; the test asserts
+  count(throw_if_refused) === count(self::invoke) so a future 5th call site cannot go unguarded.
+- R3 (P2, MY REGRESSION): I inserted the new members BETWEEN describe_json_failure's docblock and its
+  function, orphaning it — ReflectionMethod::getDocComment() returned false. Ironic given F8 was a
+  docblock finding. Moving the block programmatically then broke the file (brace counter tripped on
+  braces inside strings); repaired and re-verified all four docblocks attach.
+- R4/R5 (P2): is_refusal_error() in BOTH tier catch blocks was unpinned — removing either kept the
+  suite green while the tier demoted. Added a count assertion + a regex asserting the refusal check
+  short-circuits BEFORE the classifier.
+- R11 (P3→deliberate): throw_if_refused() could abort a request that previously SUCCEEDED when a
+  proxy returns a refusal ALONGSIDE usable content. Now terminal only when there is no usable
+  content; an advisory refusal is logged and the content used.
+- R6/R7/R8/R10: prefix anchored at offset 0 (pinned with an upstream-error case that merely QUOTES
+  the sentinel), trim + is_string gates pinned, stale `refusal_exception()` comment corrected.
+- F8: invoke()/parse_response()/blocking_request() docblocks list the new keys; stream_request()'s
+  now DOCUMENTS that it returns a narrower shape with neither key (verifier confirmed doc-only is
+  sufficient — writer/service.php:106 deliberately never passes on_chunk).
+VERIFIED: phpunit 564 (1 error + 3 failures = unchanged pre-existing baseline; was 547 at task start),
+standalone 88/88, php -l clean, LlmJsonRepairTest 61/61. All SIX round-2 surviving mutants now killed
+(both tier catches, prefix ===0, trim, is_string gate, retry guard).
+OPEN: R9 (the count assertion pins how many guards exist, not where); R12 (streaming bypasses the
+mechanism entirely — documented, unreachable today, nothing stops a future caller passing on_chunk).
+Root cause remains INFERRED — still no captured failing payload from the owner's box; the new
+finish_reason clause is what will distinguish a content_filter from a refusal next time.
+
+## 2026-07-22 — SEO Pillar: no hidden prompt — build_prompt() fragments become template variables [/task-glm]
+Owner: "for the prompt of the seo pillars there should not be any hidden prompt passed to it, all should
+be in the variable in the template, with their template also in the template module."
+BEFORE: build_prompt() injected SEVEN fragments the template author never saw — the default system line,
+BRAND CONTEXT, CURRENT SEARCH LANDSCAPE, the keyword sentence, "Return a JSON object…", the in-content
+media block, and the RSS rider. Only the template's own prompt entries were visible.
+BUILT (GLM, EXIT=0): five new variables — {{ keyword }}, {{ brand_context }}, {{ research }},
+{{ output_format }}, {{ media_instructions }} — reusing the {{ post_* }} machinery (render_template_vars /
+referenced_vars generalized; render_source_vars delegates). A fragment is auto-appended ONLY when its
+variable is not referenced. Seeded SEO Pillar template updated to place them.
+GLM RESPECTED the critical DO-NOT-TOUCH: class-pcm-llm.php's $json_instruction is an OpenAI json_object
+PROTOCOL requirement, not a hidden prompt — per-file diff-vs-baseline confirms the file is untouched.
+MY INDEPENDENT VERIFICATION: A/B'd the live build_prompt() against `git show HEAD:` in one process —
+8 configs byte-identical (verifier later did 161,280 and also found 0 diffs).
+I FIXED BY HAND, 4 defects:
+- EMPTY USER TURN (found by me): placing all three user-side vars — the exact end state this feature
+  invites — left the user message empty. Anthropic lifts `system` to a top-level field and rejects the
+  empty content block in messages[], failing the request. Fallback to the bare keyword; mutation-tested.
+- F1 (verifier, P2): the seed's {{ keyword }} SUPPRESSED the consolidated-batch instruction entirely —
+  "write a SINGLE article covering ALL keywords" vanished, leaving "write a pillar about a comma list".
+  {{ keyword }} now carries the consolidated framing.
+- F2 (verifier, P2): the seed rendered malformed — research/media ran straight into the next heading
+  with no blank line, and empty tokens stacked six newlines. Fragment VALUES are now trimmed (the
+  appended copies keep their exact form, preserving byte identity) + an empty-token blank-line collapse
+  that fires ONLY when something emptied.
+- F7 (verifier, P3): suppression matched the CONCATENATION of prompt entries, so a token split across
+  two entries ('… {{' + 'brand_context }} …') suppressed the append AND rendered in neither — the
+  fragment vanished. Now matched per entry and unioned.
+- F3/F4/F5/F6: the verifier proved four documented contracts had NO test (mutants survived): multi-entry
+  suppression, non-prompt entries must not suppress, render/suppress regex lockstep on whitespace, and
+  the zero-entry default system line. All covered now.
+VERIFIED: phpunit 585 (1 error + 3 failures = unchanged pre-existing baseline; 564 at task start),
+standalone 88/88, php -l clean, tsc 59 = baseline with 0 in scope. Byte identity re-confirmed after
+every fix. StrategySourceVarsTest 37/37.
+ROUNDS: 1 GLM dispatch + 1 verifier round; all P2s fixed by hand (each was a few lines, cheaper than a
+re-dispatch).
+IMPORTANT FOR THE OWNER: the seeder is IDEMPOTENT (inserts only when name+module is absent), so the new
+SEO Pillar prompt does NOT reach an existing install — the owner must edit their existing template by
+hand (or delete it to be reseeded). Their screenshot shows the OLD prompt already present.
+OPEN (verifier P3, not fixed): F8 — a pre-existing user template that already contains one of the five
+new tokens silently loses its auto-append on upgrade, with no migration or UPGRADE-SAFETY note; F9 — the
+empty-turn fallback emits $output_format when keywords are also empty, mildly contradicting its own
+comment; F10 — a docblock claims {{{ triple }}} is never eaten, but that holds only for UNKNOWN names
+and the known set just grew from 3 to 8; F11 — the default system line is still hardcoded (a template
+with zero prompt entries has nowhere to place a token).
+
+## 2026-07-22 — Seed completed (all 5 vars) + the four P3s [/task-glm, round 2]
+Owner: "fix this seeded one the template should have the things as i told / fix the four p3."
+PART 1: the seeded SEO Pillar template placed only FOUR of five variables — {{ output_format }} was
+missing, so "Return a JSON object with the following fields…" was STILL injected invisibly into the
+user turn. GLM added it (grep now reports 1 for all five). This was originally omitted on purpose
+because placing all three user-side vars emptied the user message; my earlier keyword fallback made
+it safe.
+PART 2 (the four P3s): UPGRADE-SAFETY entry added; the empty-turn nudge no longer emits $output_format;
+render_template_vars' docblock reworded (the no-eat guarantee holds only for UNKNOWN names —
+{{{ keyword }}} IS eaten now the known set is 8); the hardcoded default system line documented as a
+deliberate exception.
+GLM: EXIT=0, allowlist respected (3 files), class-pcm-llm.php untouched, NO tests added.
+MY VERIFICATION: per-file diff vs baseline; byte-identity A/B vs `git show HEAD:` (8 configs) re-run
+after every change; rendered the REAL seed through the REAL build_prompt across brand/research/media
+on-off and single/consolidated — JSON contract sys=1 usr=0, no 3+ newline runs, no orphaned headings.
+spec-verifier round 2 found a P2 IN MY OWN FIX + 6 P3s. Fixed:
+- P2: the empty-turn nudge used $keyword_text, which for a consolidated batch carries the WHOLE
+  "cover ALL of them in ONE cohesive article" framing — so that instruction printed in BOTH turns.
+  The exact {{ output_format }} duplicate-fragment bug relocated onto `keyword`. Nudge is now a bare
+  implode(', ', $keywords); its comment rewritten (it had claimed the opposite).
+- P3: the blank-line collapse I added last round also applied to {{ post_* }}, which shipped BEFORE
+  the collapse existed — so those prompts were silently reformatted and NOT byte-identical
+  ("A\n\n{{post_title}}\n\nB" with an empty title gave A\n\nB where HEAD gave A\n\n\n\nB). Collapse is
+  now scoped to the five fragment vars via a $collapsible list. My first attempt at this fataled —
+  the closure did not capture $collapsible — caught immediately by my own probe.
+- P3: UPGRADE-SAFETY's "byte-identical" sentence was FALSE for post_* templates — corrected to "no
+  {{ }} variables at all", and extended with the two omissions the verifier named: only `prompt`-
+  category entries suppress (a token in a guidance entry yields the fragment TWICE), and the reseeded
+  template never reaches an existing install.
+- P3: render_source_vars' docblock now records that it passes no collapsible names.
+- P3: the seed test's fixed 2000-char window overran the 1,144-char value into the NEXT template
+  (Russell Brunson copy seed), so a token added to a neighbour would have passed it — now bounded to
+  the seed's own 'value' string.
+- P3: added the two missing tests — consolidated + all-vars-placed, and the post_* collapse exclusion.
+VERIFIED: phpunit 589 (1 error + 3 failures = unchanged pre-existing baseline; 585 at round start),
+standalone 88/88, php -l clean, StrategySourceVarsTest 41/41. Byte identity re-confirmed. Both fixes
+mutation-tested (nudge→$keyword_text RED; collapse→unscoped RED).
+ROUNDS: 1 GLM dispatch + 2 verifier rounds; every fix by hand (each a few lines).
+STILL OPEN (verifier P3, low): the seed's OUTPUT FORMAT section mixes one non-bulleted sentence into a
+bullet list, and "for the target keyword:" reads singular in consolidated mode. Cosmetic.
+REMINDER: the seeder is idempotent — the owner's existing "SEO Pillar Article" will NOT pick this up.
+
+## 2026-07-22 — Strategy gen: stop stuck "generating" + cap forever-retries [/task]
+Owner: "the generation fails a lot of times for some errors in the strategy; also
+sometimes the generations keep on going without getting completed." T3 (GLM-5.2).
+Two distinct failure classes, both in the strategy pipeline. Previous plan archived →
+docs/plan-archive-2026-07-22-schedule-publish-image-reuse.md.
+ROOT CAUSES (proven via an Explore subagent's full trace, not inferred):
+- W1: an item claimed `generating` whose worker is KILLED (PHP max_execution_time /
+  FPM request_terminate_timeout / OOM) never reaches the \Throwable catch → stays
+  `generating` until the 90-min global sweep. No shutdown handler existed.
+- W2: reclaim_wedged_items() had ONE caller — the traffic-driven keepalive chain. No
+  independent cron → on DISABLE_WP_CRON + no traffic, a killed item wedged PERMANENTLY.
+- W3: no retry cap. reclaim_stale_generating() blindly flipped generating→pending with
+  no attempt counter → a deterministically-failing item looped every 90 min forever,
+  burning LLM spend. Documented as a known limit; strategy_items.config (JSON) made a
+  counter feasible without a schema change.
+BUILT (3 fixes, PHP only, no schema change, no new deps):
+- W2 (includes/modules/strategy/service.php ~5592): registered pcm_strategy_wedge_reclaim
+  recurring event on a dedicated pcm_wedge_interval (15 min via cron_schedules filter),
+  action-callbacked to the existing public static reclaim_wedged_items(). Recovery no
+  longer depends on the keepalive chain being alive. Mirrors the RSS-scan lazy-arm precedent.
+- W1 (service.php generate_next_item ~1309): register_shutdown_function after claim/before
+  try. Closure captures item id by value; $wedge_clean flag (by-ref) set on BOTH clean
+  exits (success return + first line of catch, BEFORE the re-throw). Fires only on a
+  terminating fatal (E_ERROR/E_PARSE/E_CORE/E_COMPILE via error_get_last); writes through
+  complete_strategy_item_if_generating() (status='generating' CAS) so a reclaim that already
+  moved the item to pending is never clobbered. Consolidated-batch early return is BEFORE
+  the registration, so the net never applies to that path.
+- W3 (service.php reclaim_wedged_items ~5427 rewrite + reclaim_items_capped ~5478 +
+  wedge_max_attempts ~5541): per-item iteration (was bulk). Reads config.attempts; >= MAX
+  (default 3, option pcm_strategy_max_attempts, clamped >=1) → status='error' + "generation
+  failed after N attempts"; under cap → pending + attempts+1. Manual targeted-retry
+  (generate_next_item ~1299) resets attempts to 0 via array_merge (preserves existing config).
+  New PCM_DB::get_stale_generating_items($cutoff) returns item rows (id/strategyId/userId/config).
+DECISION (reverted mid-task): the fast-path 10-min reclaim (generate_next_item next-pending
+branch) was INITIALLY converted to the capped per-item reclaim, but that broke 8 test files
+that each declare their own fake PCM_DB (class_exists guard → first-loaded wins; only 2 of 8
+had reclaim_stale_generating). Reverted the fast path to the original bulk
+PCM_DB::reclaim_stale_generating() — the cap is enforced by the 90-min global sweep only.
+Justification: a caught failure is already marked 'error' by the time a second tick could
+reclaim; the only uncapped loop is a hard-host-timeout kill every time, which the 90-min
+sweep catches once no tick fires for 90 min. Keeps the diff minimal and 8 test files untouched.
+spec-verifier (1 round): APPROVED with 1 P2 fixed. The rearm loop originally only recomputed
+counters for reclaimed-to-pending items — a strategy whose SOLE stale item was capped-to-failed
+left failedItems/status stale. Fixed: reclaim_items_capped now returns {reclaimed, failed};
+reclaim_wedged_items recomputes counters for EVERY touched strategy but re-arms the queue only
+for reclaimed-to-pending ones. Pinned with an assertion (failedItems key present after a cap-fail).
+VERIFIED: phpunit 593 (1 error + 3 failures = unchanged pre-existing baseline; 589 at task
+start), all in unrelated modules (SeoIntegrationTest GBP/prompts, TextMatcher entities,
+PlatformRoleInvariant deliveries). php -l clean on all 3 touched .php files. tsc unchanged
+(3 pre-existing Writer/Home errors, none in scope). 11 new/updated tests across
+StrategyWedgedItemReclaimTest (10/10) + StrategyAutoPublishTest (shutdown-net source-invariant).
+NOT DONE / OPEN: the shutdown net is source-invariant-tested only (PHPUnit can't fire a real
+fatal mid-test) — its runtime behavior is INFERRED from the source structure, not exercised.
+The fast-path reclaim is uncapped by design (see DECISION above) — if a host has a hard
+sub-10-min timeout on every generation for a specific item, it could still bounce longer than
+expected before the 90-min sweep caps it. No live payload captured from the owner's box, so
+the diagnosis is code-traced, not runtime-confirmed. Not committed (owner didn't ask).

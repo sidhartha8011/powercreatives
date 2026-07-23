@@ -1251,7 +1251,12 @@ class PCM_Strategy_Service
         } else {
             // A generator process killed mid-run (gateway/PHP timeout) strands its
             // item in 'generating' forever — reclaim stale ones first so the
-            // strategy can't wedge at "In Progress" with a phantom worker.
+            // strategy can't wedge at "In Progress" with a phantom worker. The W3
+            // per-item attempt cap is enforced by the global 90-min sweep
+            // (reclaim_wedged_items); this 10-min fast path does a plain bulk
+            // reclaim (the common case is a transiently-lost tick, not a
+            // permanently-failing item, and a caught failure is already marked
+            // 'error' by the time a second tick could reclaim it).
             PCM_DB::reclaim_stale_generating((int)$strategy->id);
 
             // Step 9: 'parent_and_children' must generate the designated parent
@@ -1292,10 +1297,52 @@ class PCM_Strategy_Service
 
         // Targeted retry: mark as generating unconditionally (any-status
         // regeneration is by design). The next-pending flow above already set
-        // it atomically via claim_strategy_item().
+        // it atomically via claim_strategy_item(). A manual Retry also resets
+        // the reclaim attempt counter (W3) so an owner re-trying a permanently-
+        // failed item gets a fresh attempt budget.
         if ($item_id) {
-            PCM_DB::update_strategy_item((int)$item->id, array('status' => 'generating'));
+            $retry_cfg = array_merge(self::item_config($item), array('attempts' => 0));
+            PCM_DB::update_strategy_item((int)$item->id, array(
+                'status' => 'generating',
+                'config' => wp_json_encode($retry_cfg),
+            ));
         }
+
+        // Shutdown safety net (W1): a generator process KILLED mid-run — PHP
+        // max_execution_time, FPM request_terminate_timeout, OOM, or a fatal —
+        // never reaches the \Throwable catch below, so its item would stay
+        // 'generating' until the 90-min global sweep. This shutdown handler
+        // flips a still-'generating' item to 'error' on a terminating fatal,
+        // bounded by $wedge_clean so a normal completion (return OR the catch,
+        // which are both reached without a fatal) does NOT fire it. Gated on
+        // status='generating' via complete_strategy_item_if_generating() so a
+        // reclaim that already moved the item to 'pending' is never clobbered.
+        $wedge_item_id = (int) $item->id;
+        $wedge_clean   = false;
+        register_shutdown_function(static function () use ($wedge_item_id, &$wedge_clean): void {
+            if ($wedge_clean || !class_exists('PCM_DB')) {
+                return;
+            }
+            $err = error_get_last();
+            // Only act on a terminating fatal/OOM/parse — a clean exit (the
+            // catch handled a Throwable, or the function returned normally)
+            // has $wedge_clean === true and returns above.
+            $fatal = $err && in_array($err['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR), true);
+            if (!$fatal) {
+                return;
+            }
+            PCM_DB::complete_strategy_item_if_generating($wedge_item_id, array(
+                'status'       => 'error',
+                'errorMessage' => 'generation interrupted (fatal/timeout)',
+            ));
+            if (function_exists('error_log')) {
+                error_log(sprintf(
+                    '[PCM_Strategy_Service] Shutdown net marked item #%d error (fatal/timeout): %s',
+                    $wedge_item_id,
+                    $err['message'] ?? '(unknown)'
+                ));
+            }
+        });
 
         try {
             // Task F1: per-item overrides (templateId/publishingMode/approvalMode).
@@ -1537,7 +1584,7 @@ class PCM_Strategy_Service
                     $publish_strategy = clone $strategy;
                     $publish_strategy->publishingMode = (string)$item_cfg['publishingMode'];
                 }
-                $publish = self::maybe_auto_publish($publish_strategy, PCM_DB::get_article($article_id, $user_id), $user_id);
+                $publish = self::maybe_auto_publish($publish_strategy, PCM_DB::get_article($article_id, $user_id), $user_id, $item);
 
                 $response = array(
                     'item'    => PCM_DB::get_strategy_items((int)$strategy->id),
@@ -1557,9 +1604,13 @@ class PCM_Strategy_Service
             if ($item_id === null) {
                 self::maybe_schedule_queue_continuation((int)$strategy->id, $user_id);
             }
+            $wedge_clean = true;
             return $response;
 
         } catch (\Throwable $e) {
+            // The catch handled the failure cleanly — don't let the shutdown net
+            // double-mark an item this block already wrote 'error' to.
+            $wedge_clean = true;
             // Mark item as failed — don't crash the entire strategy
             PCM_DB::update_strategy_item((int)$item->id, array(
                 'status'       => 'error',
@@ -2577,11 +2628,16 @@ class PCM_Strategy_Service
      *   that would escape into generate_next_item()'s outer catch and wrongly flip a
      *   successfully-generated item to 'error' (that catch exists for GENERATION
      *   failures, not publish ones — see the isolation guarantee this method exists for).
-     * @param int    $user_id  Owner ID.
+     * @param int          $user_id Owner ID.
+     * @param object|null  $item    The strategy item being published (optional). When
+     *   present, its `scheduledDate` (if future) is forwarded as `schedule_date` and
+     *   its `keyword` as a tag — parity with the manual publish_item() path. Callers
+     *   that lack a single item (consolidated batch, approval completion) omit it and
+     *   get the legacy no-options behavior, byte-identical.
      * @return array{success:bool,message:string}|null Null when publish doesn't apply
      *   (draft mode, or no site configured) — distinct from a failed attempt.
      */
-    private static function maybe_auto_publish(object $strategy, ?object $article, int $user_id): ?array
+    private static function maybe_auto_publish(object $strategy, ?object $article, int $user_id, ?object $item = null): ?array
     {
         if (!in_array((string)($strategy->publishingMode ?? ''), array('publish', 'schedule'), true)) {
             return null;
@@ -2619,7 +2675,22 @@ class PCM_Strategy_Service
             if (!class_exists('PCM_Sites_Service')) {
                 require_once dirname(__DIR__) . '/sites/service.php';
             }
-            PCM_Sites_Service::publish_to_site($site, $article, $user_id);
+            // Forward the item's scheduledDate + keyword when available — parity with
+            // the manual publish_item() path (service.php ~4375-4385). A future
+            // scheduledDate becomes a native WP 'future' post instead of publishing
+            // immediately; the keyword becomes a tag. Callers with no $item (consolidated
+            // batch, approval completion) pass nothing and get the legacy no-options call.
+            $publish_options = array();
+            if ($item) {
+                $publish_options['tags'] = array((string)$item->keyword);
+                if ((string)($strategy->publishingMode ?? '') === 'schedule' && !empty($item->scheduledDate)) {
+                    $due_ts = strtotime((string)$item->scheduledDate);
+                    if ($due_ts !== false && $due_ts > strtotime(current_time('mysql'))) {
+                        $publish_options['schedule_date'] = (string)$item->scheduledDate;
+                    }
+                }
+            }
+            PCM_Sites_Service::publish_to_site($site, $article, $user_id, $publish_options);
             return array('success' => true, 'message' => 'Published to ' . (string)($site->name ?: $site->url) . '.');
         } catch (\Throwable $e) {
             return array('success' => false, 'message' => 'Publish failed: ' . $e->getMessage());
@@ -3064,13 +3135,7 @@ class PCM_Strategy_Service
      */
     public static function referenced_source_vars(string $text): array
     {
-        $found = array();
-        foreach (array_keys(self::source_vars(array())) as $name) {
-            if (preg_match('/\{\{\s*' . preg_quote($name, '/') . '\s*\}\}/', $text)) {
-                $found[] = $name;
-            }
-        }
-        return $found;
+        return self::referenced_vars($text, array_keys(self::source_vars(array())));
     }
 
     /**
@@ -3108,6 +3173,11 @@ class PCM_Strategy_Service
      * interpreted as template syntax. A single pass also removes the ordering
      * dependency and the need to escape `$`/`\` backreferences in the value.
      *
+     * Delegates to render_template_vars() with ONLY the post_* map and NO
+     * collapsible names, so the blank-line collapse that the prompt fragments
+     * get never applies here: these tokens shipped before that behaviour
+     * existed and must keep producing byte-identical output.
+     *
      * Pure/deterministic — directly unit-testable.
      *
      * @param string $text     Template prompt text.
@@ -3116,26 +3186,100 @@ class PCM_Strategy_Service
      */
     public static function render_source_vars(string $text, array $item_cfg): string
     {
-        if ($text === '') {
+        return self::render_template_vars($text, self::source_vars($item_cfg));
+    }
+
+    /**
+     * Core of the template-variable substitution: resolve an arbitrary
+     * {{ name }} map into the text in ONE pass. render_source_vars() delegates
+     * here with the post_* map; build_prompt() delegates with the full map
+     * (post_* + the prompt-building fragments), so a single scan resolves every
+     * variable a template may carry.
+     *
+     * Same guarantees as render_source_vars(): ONLY names in $vars resolve;
+     * every other {{ token }} (a typo, {{#if}}, JSON braces) is left untouched
+     * so a typo stays visible. Scope the no-eat guarantee to UNKNOWN names: the
+     * map is small but includes short, collision-prone keys like `keyword` and
+     * `research`, so a triple-braced KNOWN name (`{{{ keyword }}}`) DOES have
+     * its inner token resolved — the surrounding brace is left behind — while a
+     * triple-braced UNKNOWN name (`{{{ post_body }}}` when post_body is not
+     * mapped) survives whole. ONE pass means a value that itself contains
+     * {{ x }} — a brand name, a research summary, a caption — is never
+     * re-expanded as template syntax.
+     *
+     * Pure/deterministic — directly unit-testable via its public wrappers.
+     *
+     * @param string                    $text Template prompt text.
+     * @param array<string,string|null> $vars Variable name => value.
+     * @return string The prompt with the known variables resolved.
+     */
+    private static function render_template_vars(string $text, array $vars, array $collapsible = array()): string
+    {
+        if ($text === '' || $vars === array()) {
             return $text;
         }
-        $vars    = self::source_vars($item_cfg);
         $pattern = '/\{\{\s*(' . implode('|', array_map(
             static fn(string $n): string => preg_quote($n, '/'),
             array_keys($vars)
         )) . ')\s*\}\}/';
 
+        $emptied  = false;
         $rendered = preg_replace_callback(
             $pattern,
-            static fn(array $m): string => $vars[$m[1]] ?? '',
+            static function (array $m) use ($vars, $collapsible, &$emptied): string {
+                $value = (string)($vars[$m[1]] ?? '');
+                if ($value === '' && in_array($m[1], $collapsible, true)) {
+                    $emptied = true;
+                }
+                return $value;
+            },
             $text
         );
 
+        // A token that resolved to nothing (no brand, research off, media off)
+        // leaves the blank lines the author put AROUND it, stacking up to six
+        // newlines before the next heading. Collapse only then, and only for
+        // the fragment variables ($collapsible): the {{ post_* }} tokens
+        // shipped BEFORE this collapse existed, so applying it to them would
+        // silently reformat prompts that are supposed to be byte-identical to
+        // what they produced then. A template whose variables all resolved —
+        // and any template with no variables, which never reaches here — keeps
+        // its spacing byte for byte.
+        if ($emptied && $rendered !== null) {
+            $collapsed = preg_replace("/\n{3,}/", "\n\n", $rendered);
+            if ($collapsed !== null) {
+                $rendered = $collapsed;
+            }
+        }
+
         // preg_replace_callback returns null only on a PCRE engine failure
         // (e.g. an exhausted backtrack limit). Keep the un-substituted prompt
-        // rather than blanking it — a visible token beats an empty brief. Note
-        // this is the one path where a KNOWN token can still reach the model raw.
+        // rather than blanking it — a visible token beats an empty brief. This
+        // is the one path where a KNOWN token can still reach the model raw.
         return $rendered === null ? $text : $rendered;
+    }
+
+    /**
+     * Core of referenced_source_vars(): WHICH names from a variable map the
+     * text references. build_prompt() uses this to decide, per fragment,
+     * whether the template placed it (→ suppress the auto-append) or left it
+     * to the built-in injection.
+     *
+     * Pure/deterministic.
+     *
+     * @param string   $text      Template prompt text.
+     * @param string[] $var_names Candidate variable names.
+     * @return string[] Referenced names, in the order given.
+     */
+    private static function referenced_vars(string $text, array $var_names): array
+    {
+        $found = array();
+        foreach ($var_names as $name) {
+            if (preg_match('/\{\{\s*' . preg_quote($name, '/') . '\s*\}\}/', $text)) {
+                $found[] = $name;
+            }
+        }
+        return $found;
     }
 
     private static function rss_source_instruction(array $item_cfg, string $rss_angle): string
@@ -4848,75 +4992,58 @@ class PCM_Strategy_Service
     {
         $messages = array();
 
-        // ── System prompt from template entries ──
-        $system_parts = array();
+        // ── Build the variable values from this call's arguments. Each is also
+        //     auto-appended UNLESS the template references its variable, so an
+        //     author who places {{ brand_context }} / {{ research }} /
+        //     {{ media_instructions }} / {{ keyword }} / {{ output_format }}
+        //     owns that piece of the prompt instead of receiving a hidden,
+        //     duplicate injection. A template that references NONE of them is
+        //     byte-identical to the prompt this method built before the
+        //     variables existed (the load-bearing back-compat contract). ──
+        // For the consolidated batch this MUST carry the "one article covering
+        // all of them" framing, not a bare comma list: a template that places
+        // {{ keyword }} suppresses the auto-appended sentence, and without the
+        // framing the model is told to write a single pillar for a comma list.
+        $keyword_text = count($keywords) > 1
+            ? '"' . implode('", "', $keywords) . '" — cover ALL of them together,'
+              . ' as distinct sections or subtopics within ONE cohesive article'
+            : (string)($keywords[0] ?? '');
 
-        // Collect prompt entries from template, resolving the source variables
-        // ({{ post_content }} / {{ post_title }} / {{ post_link }}) so the
-        // template author controls where the post itself lands in the prompt.
-        // A template with no variables is byte-identical to before.
-        foreach ($template['entries'] as $entry) {
-            if (($entry['category'] ?? '') === 'prompt') {
-                $system_parts[] = self::render_source_vars((string)($entry['value'] ?? ''), $item_cfg);
-            }
-        }
-
-        // If no prompt entries exist, use a sensible default
-        if (empty($system_parts)) {
-            $system_parts[] = 'You are an expert SEO content writer. Write a comprehensive, well-structured article optimized for search engines.';
-        }
-
-        // ── Inject brand context ──
+        $brand_block = '';
         if ($brand) {
-            $brand_context = "BRAND CONTEXT:\n";
+            $brand_block = "BRAND CONTEXT:\n";
             if (!empty($brand->name)) {
-                $brand_context .= "- Company: {$brand->name}\n";
+                $brand_block .= "- Company: {$brand->name}\n";
             }
             if (!empty($brand->niche)) {
-                $brand_context .= "- Industry: {$brand->niche}\n";
+                $brand_block .= "- Industry: {$brand->niche}\n";
             }
             if (!empty($brand->tonOfVoice)) {
-                $brand_context .= "- Tone of Voice: {$brand->tonOfVoice}\n";
+                $brand_block .= "- Tone of Voice: {$brand->tonOfVoice}\n";
             }
             if (!empty($brand->targetAudience)) {
-                $brand_context .= "- Target Audience: {$brand->targetAudience}\n";
+                $brand_block .= "- Target Audience: {$brand->targetAudience}\n";
             }
             if (!empty($brand->uniqueSellingPoints)) {
-                $brand_context .= "- Unique Selling Points: {$brand->uniqueSellingPoints}\n";
+                $brand_block .= "- Unique Selling Points: {$brand->uniqueSellingPoints}\n";
             }
             if (!empty($brand->language)) {
-                $brand_context .= "- Content Language: {$brand->language}\n";
+                $brand_block .= "- Content Language: {$brand->language}\n";
             }
-            $system_parts[] = $brand_context;
         }
 
-        // ── Inject live-research landscape (B1/B2), when the strategy opted in
-        //     and research succeeded. Empty string (opted out, or a failed/
-        //     degraded research call) leaves the prompt un-enriched — research
-        //     must never change generation's shape, only augment it. ──
-        if ($research_context !== '') {
-            $system_parts[] = "CURRENT SEARCH LANDSCAPE (from live research — use to inform coverage, do not cite):\n" . $research_context;
-        }
+        // Empty when research is off or failed — research must never change
+        // generation's shape, only augment it.
+        $research_block = $research_context !== ''
+            ? "CURRENT SEARCH LANDSCAPE (from live research — use to inform coverage, do not cite):\n" . $research_context
+            : '';
 
-        $messages[] = array(
-            'role'    => 'system',
-            'content' => implode("\n\n", $system_parts),
-        );
+        $output_format = 'Return a JSON object with the following fields: title, content (HTML), metaTitle, metaDescription.';
 
-        // ── User message: keyword(s) as the generation target. A single-element
-        //     array is the normal per-item case; Step 8's consolidated mode passes
-        //     every keyword in the strategy so ONE article covers all of them. ──
-        $user_content = count($keywords) > 1
-            ? "Write a SINGLE comprehensive article that covers ALL of the following keywords together, "
-              . "as distinct sections or subtopics within one cohesive piece: \"" . implode('", "', $keywords) . "\"\n\n"
-              . "Return a JSON object with the following fields: title, content (HTML), metaTitle, metaDescription."
-            : "Write a comprehensive article targeting the keyword: \"" . ($keywords[0] ?? '') . "\"\n\n"
-              . "Return a JSON object with the following fields: title, content (HTML), metaTitle, metaDescription.";
-
-        // A6: in-content images & charts. When enabled, ask the model to drop
-        // [IMAGE_N] placeholder tokens into the HTML body and return a matching
-        // media_assets entry for each — the post-process step
-        // (maybe_generate_in_content_media()) turns those into <figure> blocks.
+        // A6: in-content images & charts. Empty when the feature is off. Built
+        // here (not inline on the user message) so {{ media_instructions }} can
+        // surface the same block wherever the author places it.
+        $media_block = '';
         if ($in_content_media) {
             // mediaCount (1–8) drives how many placeholders we advertise; mediaType
             // restricts which asset type(s) the model may return.
@@ -4937,8 +5064,7 @@ class PCM_Strategy_Service
                 $type_rule  = "Each media_assets entry's type must be either \"image\" or \"chart\". ";
             }
 
-            $user_content .= "\n\n"
-                . "IN-CONTENT MEDIA: You may add up to " . $count . " supporting visuals. Insert placeholder tokens "
+            $media_block = "IN-CONTENT MEDIA: You may add up to " . $count . " supporting visuals. Insert placeholder tokens "
                 . implode(', ', $tokens) . " — each on its OWN line, wrapped in its own <p></p>, at "
                 . "natural points in the HTML body. For EVERY placeholder you insert, add one matching entry "
                 . "to a \"media_assets\" array, where each entry is {placeholder: \"IMAGE_1\", type: " . $type_field . ", "
@@ -4952,34 +5078,126 @@ class PCM_Strategy_Service
             // Chart-quality contract, research-grounded (the owner's core ask):
             // when live research findings are present, base chart data on them.
             if ($research_context !== '') {
-                $user_content .= " Base chart data on the RESEARCH FINDINGS above (real statistics, real "
+                $media_block .= " Base chart data on the RESEARCH FINDINGS above (real statistics, real "
                     . "comparisons); cite the source in the chart caption (`prompt` field).";
             }
 
             // Owner-supplied creative direction (config.mediaGuidance): what
             // the images should depict / what data the charts should show.
             if ($media_guidance !== '') {
-                $user_content .= " CREATIVE DIRECTION for the visuals: \"" . $media_guidance . "\" — follow it "
+                $media_block .= " CREATIVE DIRECTION for the visuals: \"" . $media_guidance . "\" — follow it "
                     . "for image subjects/style and for what data the charts present.";
             }
 
-            $user_content .= " Only insert a placeholder if you also return its media_assets entry, and never "
+            $media_block .= " Only insert a placeholder if you also return its media_assets entry, and never "
                 . "exceed " . $count . ".";
         }
 
-        // RSS-source rider (Source=RSS strategies): the per-item path passes
-        // rss_source_instruction()'s output here when the item was created by
-        // the RSS watcher — rides exactly like the media-guidance extra above,
-        // an optional instruction appended to the user message. '' (every
-        // non-RSS path, including the consolidated batch) leaves the prompt
-        // byte-identical to before.
+        // Full variable map: the source post (post_*) plus the prompt-building
+        // fragments. ONE pass via render_template_vars(), so a fragment value
+        // that itself contains {{ x }} is never re-expanded.
+        // Fragment VALUES are trimmed: the author controls the blank lines
+        // around a token, and brand_block's trailing newline would otherwise
+        // run the next heading straight into the block. The AUTO-APPENDED
+        // copies below deliberately keep their original untrimmed form, which
+        // is what preserves byte identity for variable-free templates.
+        $vars = self::source_vars($item_cfg) + array(
+            'keyword'            => $keyword_text,
+            'brand_context'      => trim($brand_block),
+            'research'           => trim($research_block),
+            'output_format'      => $output_format,
+            'media_instructions' => trim($media_block),
+        );
+
+        // ── System prompt from the template's prompt entries. Concatenate every
+        //     prompt entry so a variable referenced in ANY of them suppresses
+        //     the matching auto-append (the template is the unit, not one
+        //     entry); only 'prompt' entries ever become the system message. ──
+        // Suppression is decided PER ENTRY and unioned — concatenating the
+        // entries first meant a token split across two of them ('… {{' + 
+        // 'brand_context }} …') matched the join, suppressed the append, and
+        // rendered in neither entry: the fragment vanished entirely.
+        $system_parts   = array();
+        $referenced     = array();
+        $var_names      = array_keys($vars);
+        // Only these five may trigger the blank-line collapse — see render_template_vars().
+        $fragment_vars  = array('keyword', 'brand_context', 'research', 'output_format', 'media_instructions');
+        foreach ($template['entries'] as $entry) {
+            if (($entry['category'] ?? '') === 'prompt') {
+                $value          = (string)($entry['value'] ?? '');
+                $referenced     = array_merge($referenced, self::referenced_vars($value, $var_names));
+                $system_parts[] = self::render_template_vars($value, $vars, $fragment_vars);
+            }
+        }
+        $referenced = array_unique($referenced);
+
+        // Deliberate exception to the "author places every fragment" contract:
+        // a template with zero prompt entries has no text to place a token in,
+        // so this hardcoded line carries no variable — there is nowhere an
+        // author could take over, and no fragment to surface or suppress.
+        if (empty($system_parts)) {
+            $system_parts[] = 'You are an expert SEO content writer. Write a comprehensive, well-structured article optimized for search engines.';
+        }
+
+        // Append the context fragments the template did NOT place itself.
+        if ($brand_block !== '' && !in_array('brand_context', $referenced, true)) {
+            $system_parts[] = $brand_block;
+        }
+        if ($research_block !== '' && !in_array('research', $referenced, true)) {
+            $system_parts[] = $research_block;
+        }
+
+        $messages[] = array(
+            'role'    => 'system',
+            'content' => implode("\n\n", $system_parts),
+        );
+
+        // ── User message. keyword / output_format / media_instructions each
+        //     suppress their auto-append when referenced, so the author controls
+        //     where they land. The RSS/social rider keeps its own
+        //     template_carries_source() suppression at the call site (it is not
+        //     a variable). A variable-free template leaves every segment in
+        //     place, so the user turn stays non-empty — required, because the
+        //     Anthropic adapter lifts `system` to a top-level field and rejects
+        //     an empty messages[] ──
+        $user_segments = array();
+        if (!in_array('keyword', $referenced, true)) {
+            // A single-element array is the normal per-item case; the
+            // consolidated batch passes every keyword so ONE article covers all.
+            $user_segments[] = count($keywords) > 1
+                ? "Write a SINGLE comprehensive article that covers ALL of the following keywords together, "
+                  . "as distinct sections or subtopics within one cohesive piece: \"" . implode('", "', $keywords) . "\""
+                : "Write a comprehensive article targeting the keyword: \"" . ($keywords[0] ?? '') . "\"";
+        }
+        if (!in_array('output_format', $referenced, true)) {
+            $user_segments[] = $output_format;
+        }
+        if ($media_block !== '' && !in_array('media_instructions', $referenced, true)) {
+            $user_segments[] = $media_block;
+        }
         if ($rss_source !== '') {
-            $user_content .= "\n\n" . $rss_source;
+            $user_segments[] = $rss_source;
+        }
+
+        // Every user-side fragment was placed in the template, so there is
+        // nothing left to append and an EMPTY user turn would follow — which
+        // Anthropic rejects outright (it lifts `system` to a top-level field and
+        // the empty content block in messages[] fails the request).
+        //
+        // The nudge is the BARE generation target, never $keyword_text: for a
+        // consolidated batch that variable carries the whole "cover ALL of them
+        // in ONE article" framing, so reusing it here printed that instruction
+        // in BOTH turns — the same duplicate-fragment bug this feature exists to
+        // remove, just relocated onto `keyword`.
+        if ($user_segments === array()) {
+            $user_segments[] = $keywords !== array()
+                ? implode(', ', $keywords)
+                : 'Write the article now.';
         }
 
         $messages[] = array(
             'role'    => 'user',
-            'content' => $user_content,
+            'content' => implode("\n\n", $user_segments),
         );
 
         return $messages;
@@ -5194,14 +5412,17 @@ class PCM_Strategy_Service
      * maybe_schedule_queue_continuation() re-checks pause state anyway.
      * Failure-isolated per strategy so one bad row can't stop the rest.
      *
-     * KNOWN LIMIT (documented, not fixed here — needs an owner call on cost):
-     * an item that can NEVER finish is retried on every sweep rather than being
-     * failed after N attempts, so it re-burns LLM/image spend roughly every 90
-     * min and can leave an orphan article row behind when a kill lands between
-     * create_article() and the item write. Each reclaim is error_log()'d so the
-     * loop is visible. Bounding it needs a per-item attempt counter — feasible
-     * without a schema change (strategy_items.config already exists), but it
-     * decides WHEN to give up on a user's article, which is a product call.
+     * KNOWN LIMIT (RESOLVED): an item that can NEVER finish was previously
+     * retried on every sweep rather than being failed after N attempts, re-
+     * burning LLM/image spend every 90 min forever. The sweep now caps reclaim
+     * retries per item via the attempts counter in strategy_items.config
+     * (inline increment / wedge_max_attempts()): once an item has been
+     * reclaimed MAX times it is marked 'error' instead of being requeued, so a
+     * deterministically-failing item stops spending and clears its red row. A
+     * manual Retry from the UI resets the counter (generate_next_item()'s
+     * targeted-retry path). An orphan article row can still be left behind when
+     * a kill lands between create_article() and the item write; each reclaim is
+     * error_log()'d so the loop is visible.
      */
     public static function reclaim_wedged_items(): void
     {
@@ -5226,29 +5447,108 @@ class PCM_Strategy_Service
         // resort for an item no tick will ever reach.
         $minutes = 90;
         $cutoff  = date('Y-m-d H:i:s', (int) strtotime(current_time('mysql')) - ($minutes * 60));
+        $items   = PCM_DB::get_stale_generating_items($cutoff);
+        $result  = self::reclaim_items_capped($items, $minutes);
+        // Recompute counters for EVERY strategy that had an item touched — both
+        // reclaimed-to-pending AND capped-to-failed — so a permanently-failed
+        // item is reflected in failedItems/status immediately (a strategy whose
+        // remaining items are all done must not falsely read 'completed' while a
+        // failed item sits uncounted). Only reclaimed-to-pending strategies get
+        // a queue continuation; a failed item must not re-arm.
+        $touched = array();
+        foreach ($result['reclaimed'] as $r) {
+            $touched[(int) $r['strategyId']] = (int) $r['userId'];
+        }
+        foreach ($result['failed'] as $r) {
+            $touched[(int) $r['strategyId']] = (int) $r['userId'];
+        }
+        foreach ($touched as $strategy_id => $user_id) {
+            $strategy = PCM_DB::get_strategy($strategy_id, $user_id);
+            $total = $strategy ? (int) ($strategy->totalItems ?? 0) : 0;
+            self::recompute_counters($strategy_id, $user_id, $total);
+        }
+        // Re-arm the queue ONLY for strategies that had an item reclaimed to pending.
+        foreach ($result['reclaimed'] as $r) {
+            self::maybe_schedule_queue_continuation((int) $r['strategyId'], (int) $r['userId']);
+        }
+    }
 
-        foreach (PCM_DB::get_stale_generating_strategies($cutoff) as $row) {
+    /**
+     * Shared W3 reclaim engine: for each stale 'generating' item, read its
+     * config.attempts and either fail it permanently (>= MAX) or flip it to
+     * 'pending' and increment the counter. Failure-isolated per item. Returns
+     * both buckets so the caller can recompute counters for every touched
+     * strategy but re-arm the queue only for reclaimed-to-pending ones.
+     *
+     * @param object[] $items   Stale item rows (id, strategyId, userId, config).
+     * @param int      $minutes Cutoff used (for log clarity only).
+     * @return array{reclaimed:array<int,array{strategyId:int,userId:int}>, failed:array<int,array{strategyId:int,userId:int}>}
+     */
+    private static function reclaim_items_capped(array $items, int $minutes): array
+    {
+        $max       = self::wedge_max_attempts();
+        $reclaimed = array();
+        $failed    = array();
+        foreach ($items as $row) {
+            $item_id     = (int) $row->id;
             $strategy_id = (int) $row->strategyId;
             $user_id     = (int) $row->userId;
             try {
-                $reclaimed = PCM_DB::reclaim_stale_generating($strategy_id, $minutes);
-                if ($reclaimed > 0) {
+                $cfg      = empty($row->config) ? array() : (json_decode((string)$row->config, true) ?: array());
+                $attempts = (int) ($cfg['attempts'] ?? 0);
+                if ($attempts >= $max) {
+                    // Give up: mark the item failed so it stops re-burning spend.
+                    PCM_DB::update_strategy_item($item_id, array(
+                        'status'       => 'error',
+                        'errorMessage' => sprintf('generation failed after %d attempts', $max),
+                    ));
+                    $failed[] = array('strategyId' => $strategy_id, 'userId' => $user_id);
                     error_log(sprintf(
-                        '[PCM_Strategy_Service] Reclaimed %d item(s) stuck in generating on strategy #%d (claimed >%d min ago) — usually a generator killed mid-run, but a genuinely slow one would also be reclaimed here; re-arming the queue.',
-                        $reclaimed,
+                        '[PCM_Strategy_Service] Item #%d on strategy #%d failed permanently after %d reclaim attempts — marked error.',
+                        $item_id,
                         $strategy_id,
+                        $max
+                    ));
+                } else {
+                    // Reclaim: flip to 'pending' and bump the counter so the
+                    // next reclaim sees one more attempt.
+                    PCM_DB::update_strategy_item($item_id, array(
+                        'status' => 'pending',
+                        'config' => wp_json_encode(array_merge($cfg, array('attempts' => $attempts + 1))),
+                    ));
+                    error_log(sprintf(
+                        '[PCM_Strategy_Service] Reclaimed item #%d stuck in generating on strategy #%d (attempt %d/%d, claimed >%d min ago) — usually a generator killed mid-run; re-arming the queue.',
+                        $item_id,
+                        $strategy_id,
+                        $attempts + 1,
+                        $max,
                         $minutes
                     ));
-                    self::maybe_schedule_queue_continuation($strategy_id, $user_id);
+                    $reclaimed[] = array('strategyId' => $strategy_id, 'userId' => $user_id);
                 }
             } catch (\Throwable $e) {
                 error_log(sprintf(
-                    '[PCM_Strategy_Service] Wedged-item reclaim failed for strategy #%d: %s',
+                    '[PCM_Strategy_Service] Wedged-item reclaim failed for item #%d (strategy #%d): %s',
+                    $item_id,
                     $strategy_id,
                     $e->getMessage()
                 ));
             }
         }
+        return array('reclaimed' => $reclaimed, 'failed' => $failed);
+    }
+
+    /**
+     * The per-item reclaim retry cap (default 3). Option-tunable via
+     * 'pcm_strategy_max_attempts' so an owner can raise it for a flaky provider
+     * or lower it to fail faster. A manual UI Retry always resets the counter.
+     *
+     * @return int Maximum reclaim attempts before an item is failed.
+     */
+    public static function wedge_max_attempts(): int
+    {
+        $val = function_exists('get_option') ? (int) get_option('pcm_strategy_max_attempts', 3) : 3;
+        return max(1, $val);
     }
 
     /**
@@ -5414,10 +5714,37 @@ if (function_exists('add_action')) {
     // generates from the feed's newest EXISTING item instead of waiting for
     // the hourly watcher). One-off event armed by create_from_keywords().
     add_action('pcm_strategy_rss_first_scan', array('PCM_Strategy_Service', 'run_rss_first_scan'), 10, 2);
+    // Wedge reclaim: un-strand items whose generator process was KILLED mid-run
+    // (PHP max_execution_time / FPM request_terminate_timeout / OOM never reach
+    // generate_next_item()'s catch, so the row stays 'generating'). reclaim_wedged_items()
+    // is also called from the keep-alive chain, but that chain is traffic-driven — on a
+    // DISABLE_WP_CRON host with no loopback, or simply a quiet site, a killed item would
+    // wedge permanently. This recurring cron is the traffic-independent fallback, the same
+    // role the daily pcm_strategy_scheduled_scan plays for due items. Reuses the existing
+    // idempotent sweep; the hook is wired at file load like the others above.
+    add_action('pcm_strategy_wedge_reclaim', array('PCM_Strategy_Service', 'reclaim_wedged_items'));
+    // Dedicated 15-min cron interval for the wedge-reclaim fallback. Registered
+    // via the cron_schedules filter (same pattern as pcm_sites_health_interval
+    // in power-creatives.php), so wp_schedule_event(...,'pcm_wedge_interval',...)
+    // above resolves. 15 min is comfortably under the sweep's 90-min cutoff.
+    add_filter('cron_schedules', static function (array $schedules): array {
+        $schedules['pcm_wedge_interval'] = array(
+            'interval' => 15 * MINUTE_IN_SECONDS,
+            'display'  => __('Power Creatives wedge reclaim', 'power-creatives'),
+        );
+        return $schedules;
+    });
     add_action('init', static function (): void {
         if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event')
             && !wp_next_scheduled('pcm_strategy_rss_scan')) {
             wp_schedule_event(time(), 'hourly', 'pcm_strategy_rss_scan');
+        }
+        // Arm the wedge-reclaim cron with a dedicated 15-min interval (well under the
+        // sweep's 90-min cutoff, so a killed item is recovered promptly regardless of
+        // site traffic). The interval is registered below in the same init handler.
+        if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event')
+            && !wp_next_scheduled('pcm_strategy_wedge_reclaim')) {
+            wp_schedule_event(time(), 'pcm_wedge_interval', 'pcm_strategy_wedge_reclaim');
         }
         // The keep-alive loopback authenticates with this secret (spawn_keepalive
         // sends it; keepalive_link's hash_equals checks it), so it must exist

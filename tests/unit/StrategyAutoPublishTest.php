@@ -424,6 +424,25 @@ function pcm_test_define_strategy_fakes(): void
                 }
                 return $count;
             }
+            /** W3 per-item stale-generating lookups for the capped reclaim. */
+            public static function get_stale_generating_items($cutoff)
+            {
+                $out = array();
+                foreach (self::$items as $it) {
+                    if ($it->status === 'generating'
+                        && !empty($it->updatedAt)
+                        && strtotime($it->updatedAt) < strtotime($cutoff)
+                    ) {
+                        $row = new \stdClass();
+                        $row->id = $it->id;
+                        $row->strategyId = $it->strategyId;
+                        $row->userId = $it->userId ?? 0;
+                        $row->config = $it->config ?? null;
+                        $out[] = $row;
+                    }
+                }
+                return $out;
+            }
         }
     }
 
@@ -1962,6 +1981,48 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
         $this->assertNull($result, 'nothing to pick -- the fresh generating item is left alone');
         $this->assertSame('generating', PCM_DB::$items[1]->status);
         $this->assertSame(0, PCM_LLM::$callCount);
+    }
+
+    /**
+     * W1: a generator process KILLED mid-run (PHP max_execution_time / FPM
+     * request_terminate_timeout / OOM) never reaches the \Throwable catch, so
+     * its item would stay 'generating' forever. generate_next_item() must
+     * register a shutdown function that flips a still-'generating' item to
+     * 'error' on a terminating fatal, gated on status='generating' so a reclaim
+     * that already moved the item to 'pending' is not clobbered. Source-invariant
+     * check (the shutdown handler cannot be fired inside PHPUnit).
+     */
+    public function test_shutdown_safety_net_is_registered_after_claim_and_guards_normal_exit(): void
+    {
+        $src = file_get_contents(dirname(__DIR__, 2) . '/includes/modules/strategy/service.php');
+        $this->assertIsString($src);
+
+        // The shutdown function is registered right after the item is marked generating.
+        $start = strpos($src, 'public static function generate_next_item(object $strategy');
+        $this->assertNotFalse($start, 'generate_next_item() not found');
+        $try_pos = strpos($src, 'try {', $start);
+        $this->assertNotFalse($try_pos, 'the try block was not found');
+        $segment = substr($src, $start, $try_pos - $start);
+
+        $this->assertNotFalse(
+            strpos($segment, 'register_shutdown_function'),
+            'a shutdown function must be registered between the claim and the try'
+        );
+        $this->assertNotFalse(
+            strpos($segment, 'complete_strategy_item_if_generating'),
+            'the shutdown net must write through complete_strategy_item_if_generating() so a reclaimed item is not clobbered'
+        );
+        $this->assertNotFalse(
+            strpos($segment, '$wedge_clean'),
+            'a $wedge_clean flag must gate the shutdown net so a normal completion does not fire it'
+        );
+
+        // Both clean exit paths (success return + catch) must set the flag.
+        $catch_pos = strpos($src, 'catch (\\Throwable $e)', $try_pos);
+        $this->assertNotFalse($catch_pos, 'the catch block was not found');
+        $catch_seg = substr($src, $catch_pos, 400);
+        $this->assertNotFalse(strpos($catch_seg, '$wedge_clean = true'), 'the catch must set $wedge_clean so the net does not double-mark');
+        $this->assertNotFalse(strpos($segment, 'generation interrupted (fatal/timeout)'), 'the net must write a descriptive errorMessage');
     }
 
     // ── Manual per-item publish + interlink trigger (worker plan, Step 4) ──

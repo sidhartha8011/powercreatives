@@ -1,100 +1,96 @@
-# Plan — template-driven post generation with `{{ post_* }}` variables
+# Plan — Strategy generation: reduce failures + stop stuck "generating" items
 
-Task (2026-07-22): "the generation of the post should be in templates and the
-content of the posts (social media post) should be in an expression or a
-variable ex. `{{ post_content }}`. RSS reposting with variables (expressions):
-`{{ post_content }}`, `{{ post_title }}`, `{{ post_link }}`."
+Task (2026-07-22): "the generation fails a lot of times for some errors in the
+strategy; also sometimes the generations keep on going without getting completed."
 
-Previous plan (LLM JSON recovery) archived at
-`docs/plan-archive-2026-07-22-llm-json-recovery.md`.
+Tier: T3 (GLM-5.2 via api.anthropic.com endpoint). Three interdependent PHP
+fixes in the strategy generation pipeline. Previous plan archived to
+`docs/plan-archive-2026-07-22-schedule-publish-image-reuse.md` (shipped in a56d857).
 
-## What exists today (read, file:line)
+## Problem reflection (from code reading + session log)
 
-- `build_prompt()` (`service.php:4672`) takes the template's `category === 'prompt'`
-  entries and uses them **verbatim** as the system prompt (`:4680-4684`). There is
-  **no variable substitution of any kind** — the docblock says "injecting
-  keyword(s)", but the keyword only ever reaches the *user* message (`:4731-4736`),
-  never the template text.
-- The source post reaches the model only through a **hardcoded English rider**,
-  `rss_source_instruction()` (`service.php:2768`), which builds
-  `"Write an article about this social media post: '<title>' (<link>). The post
-  says: \"<text>\"."` and is passed in as `$rss_source` from the per-item call
-  site (`:1327`). The consolidated call site (`:768`) passes no rider at all.
-- Values available on the item config (`item_config()`): `sourceText`,
-  `sourceTitle`, `sourceLink`.
-  **CORRECTED IN REVIEW:** `sourceText` was populated for social posts ONLY —
-  `fetch_rss_feed_items()` (`:2273`) captured just permalink/id/title/date, so
-  `{{ post_content }}` could never resolve on an RSS strategy, which is the
-  owner's headline case. Fixed by also reading the feed entry's
-  `get_description()`; it rides the same `text` key the social branch already
-  uses, so ingest → pop → `sourceText` needed no further change.
-- `grep` for `{{` across `includes/` and `app/src`: **no existing `{{ }}`
-  convention**. `PCM_Prompt_Placeholders` is a different system (the prompts
-  module / SEO editor sections) and is not involved here.
+**Two symptoms:**
+1. "generation fails a lot" — LLM refusals/empty replies and exceptions surface
+   as `status='error'`. Recent sessions already fixed refusal surfacing +
+   JSON salvage. Remaining failure-magnifier: an item that *deterministically*
+   fails (model always refuses/empties on that keyword) is retried **forever**
+   every 90 min, each retry burning LLM spend, and from the owner's view it is
+   a pile of red rows that never clears + money spent.
+2. "generations keep on going without getting completed" — an item claimed
+   (`status='generating'`) whose worker process is **killed** (PHP
+   `max_execution_time` / FPM `request_terminate_timeout` / OOM / nginx
+   `fastcgi_read_timeout`) **never reaches the catch block**, so it stays
+   `generating` until the 90-min global sweep. That sweep runs **only** from
+   `run_keepalive_chain()` — there is **no independent cron**. If the keepalive
+   chain is dead (`DISABLE_WP_CRON` + no traffic, blocked loopback), the item
+   is wedged **permanently**.
 
-So today the user cannot influence how the post is used — the phrasing is
-frozen in PHP. That is exactly what this task removes.
+## Root causes (proven, file:line)
 
-## Design
+- **W1** — No `register_shutdown_function` to flip `generating`→`error` when
+  the process is killed mid-generation. The `\Throwable` catch at
+  service.php:1562 is the only resolution path; a fatal/OOM/timeout that
+  terminates the worker is not a catchable exception and never reaches it.
+  Recovery depends entirely on a traffic-driven keepalive chain. (grep:
+  `register_shutdown_function` → 0 hits in strategy/.)
+- **W2** — `reclaim_wedged_items()` (service.php:5373) has exactly ONE caller:
+  `run_keepalive_chain()` (service.php:5301). No `wp_schedule_event` references
+  it. (grep: power-creatives.php:163/170/188 schedule only approvals /
+  strategy-scan / sites-health; service.php:5587 schedules the RSS scan.)
+- **W3** — No max-retry cap. `reclaim_stale_generating()`
+  (class-pcm-db.php:1405) blindly flips `generating`→`pending` with no attempt
+  counter; a deterministically-failing item loops every 90 min forever.
+  Documented as a known limit at service.php:5364-5371. `strategy_items.config`
+  (JSON) already exists → an attempt counter is feasible **without a schema
+  change**.
 
-Three lowercase variables, whitespace-tolerant (`{{post_title}}` ==
-`{{ post_title }}`), resolved from the item config:
+## Candidate approaches (ranked)
 
-| variable | source | empty when |
-|---|---|---|
-| `{{ post_content }}` | `sourceText` | keyword item, or no caption captured |
-| `{{ post_title }}` | `sourceTitle` | keyword item |
-| `{{ post_link }}` | `sourceLink` | keyword item |
+- **A — independent cron + retry cap + shutdown safety net** (CHOSEN).
+  Cheapest, hits all three root causes with no schema change (attempt count in
+  `config` JSON) and no new dependency. Reuses the existing `reclaim_*` +
+  `complete_strategy_item_if_generating` plumbing.
+- B — ownership-token per claim (needs schema change, adds a column) — heavier,
+  rejected for "minimal diff".
+- C — true async job queue (ActionScheduler / custom) — architectural change,
+  rejected.
 
-1. **`source_vars(array $item_cfg): array`** — pure; the var→value map.
-2. **`render_source_vars(string $text, array $item_cfg): string`** — pure;
-   substitutes the three known tokens. **Unknown `{{ … }}` tokens are left
-   untouched** — a typo (`{{ post_body }}`) stays visible to the author rather
-   than being silently swallowed, and we never eat a legitimate brace pair.
-3. **`uses_source_vars(string $text): bool`** — pure; does this template
-   reference any of them?
-4. **`build_prompt()`** applies (2) to each template prompt entry. Nothing else
-   in the prompt is touched, so a template with no variables produces a
-   **byte-identical** prompt to today.
-5. **The rider becomes conditional** (`generate_next_item()`): when the template
-   genuinely carries the post, pass `$rss_source = ''` — the template is now in
-   control, and appending the hardcoded sentence would duplicate/contradict it.
-   When it does not, the existing rider fires exactly as now. This is the
-   "generation should be in templates" half of the request, and it is what keeps
-   every existing strategy working unchanged.
-   **CORRECTED IN REVIEW:** suppression must key off the referenced variables'
-   resolved VALUES (`template_carries_source()`), not merely the presence of a
-   token. Keying off the token alone meant a template referencing only
-   `{{ post_content }}` on an item with no caption lost BOTH its context and the
-   rider's mandatory "link back to the original post" instruction — strictly
-   worse than before the feature existed.
-6. **Frontend**: surface the three variables in the Templates dialog so the
-   feature is discoverable rather than hidden.
+## DO NOT TOUCH
+- The 90-min global / 10-min per-strategy cutoffs (deliberate; documented at
+  service.php:5378-5393).
+- The `\Throwable` catch as the primary error path (it carries the real
+  exception message; the shutdown net is a fallback for uncatchable kills only).
+- Refusal/empty-reply surfacing + `stream_request` shape (already fixed /
+  documented last session).
+- The synchronous generate endpoint itself (async-ifying is architectural —
+  rejected).
+- `pcm_sites_health_interval` schedule definition (reuse it; don't redefine).
+- `social_source_image()` / template variables / seeded templates (out of scope).
 
-Deliberately NOT doing: a general expression language, conditionals/loops, or
-new variables beyond the three named (`{{ keyword }}` etc. can follow if asked
-— the map in (1) makes it a one-line addition). No schema change, no new
-dependency, no version/changelog bump.
+## Steps (least-to-most, sequential)
 
-## Risks to check in review
+| # | Step | route | files | verify | status |
+|---|------|-------|-------|--------|--------|
+| 1 | **Independent cron for wedge reclaim (W2).** Register a recurring `pcm_strategy_wedge_reclaim` event (every 15 min) alongside the existing 3 events in `power-creatives.php` (`wp_schedule_event`, guarded by `wp_next_scheduled`, same shape as the approvals/strategy-scan blocks). Reuse the existing `pcm_sites_health_interval` if it is a close-enough cadence, else register a dedicated `pcm_wedge_interval` (~15 min) via the `cron_schedules` filter — pick whichever already exists to minimize diff. Register the callback `add_action('pcm_strategy_wedge_reclaim', ['PCM_Strategy_Service','reclaim_wedged_items'])` next to the existing strategy action registrations (service.php:5567-5571). `reclaim_wedged_items()` is already `public static` and idempotent. | driver | `power-creatives.php`, `includes/modules/strategy/service.php` | `php -l` both; grep confirms `wp_schedule_event(...'pcm_strategy_wedge_reclaim')` + `add_action('pcm_strategy_wedge_reclaim'...` | todo |
+| 2 | **Shutdown safety net (W1).** In `generate_next_item()`, right AFTER an item is marked `generating` (both the claim path service.php:1277 and the targeted-retry path 1297) and BEFORE the `try`, `register_shutdown_function` a closure capturing `$item->id` by value. The closure: if `error_get_last()` is non-null (a fatal/error/OOM is terminating the process), mark the item `status='error'`, `errorMessage='generation interrupted (fatal/timeout)'`, gated through a `status='generating'` compare (use `PCM_DB::complete_strategy_item_if_generating` shape) so a reclaim that already moved it to `pending` is not clobbered. Use `unregister_shutdown_function` pattern: set a flag at the end of the normal `try`/`catch` so a clean exit does NOT fire the net. This covers `E_ERROR`/OOM/`max_execution_time` that never reach `\Throwable`. | driver | `includes/modules/strategy/service.php` (~1277-1300) | `php -l`; new unit test: after claim a shutdown fn is registered; on a simulated fatal it flips a `generating` item to `error` and does NOT touch a `pending` one. Mutation: registration removed → RED. | todo |
+| 3 | **Retry cap via `config.attempts` (W3).** Add `PCM_Strategy_Service::record_item_attempt(int $item_id, int $user_id): int` — reads item `config` JSON, increments `attempts`, writes back, returns the new count. In `reclaim_wedged_items()`, the reclaim path (`PCM_DB::reclaim_stale_generating`) is per-strategy; wrap it so each reclaimed item is bumped: if `attempts >= MAX` (default **3**, option-tunable via `pcm_strategy_max_attempts`), set `status='error'` + `errorMessage='generation failed after N attempts'` for that item instead of flipping to `pending`, and do NOT re-arm for it. Otherwise increment + reclaim as today. A manual UI Retry resets `attempts` to 0 (owner explicitly asked). MAX check happens at reclaim time so the existing `\Throwable` catch (which already writes `error`) is untouched and doesn't double-count. | driver | `includes/modules/strategy/service.php` (~5373-5419), maybe `includes/core/db/class-pcm-db.php` (helper to list stale item ids) | `php -l`; new unit test: an item reclaimed `MAX+1` times lands in `error`, not `pending`; attempts counter persists across reclaims. Mutation: cap off → item stays `pending`. Existing `StrategySourceVarsTest` green. | todo |
+| 4 | **Tests.** New `tests/unit/StrategyWedgeReclaimTest.php` (Brain Monkey + wp_mock harness, mirror existing strategy tests): (a) cron action + event registered; (b) shutdown net flips generating→error on fatal, no-op on clean exit + no-op on already-pending; (c) retry cap fails item after MAX, resets on manual retry. | driver | `tests/unit/StrategyWedgeReclaimTest.php` | `composer test`; new tests pass; pre-existing baseline (1 error + 3 failures) unchanged. | todo |
+| 5 | **Verify + log.** `composer test`, `php -l` on touched files, `cd app && npm run check` (no TS changes → baseline unchanged). Dispatch `spec-verifier` with plan excerpt + diff; address P0/P1 (max 3 rounds). Append `.claude/SESSION_LOG.md`. Do NOT commit. | driver | `.claude/SESSION_LOG.md` | all green + verifier APPROVED. | todo |
 
-- A leftover raw token must never reach the LLM for the three KNOWN vars —
-  they substitute to `''` when absent (keyword strategies, consolidated batches).
-- The consolidated path (`:768`) has no single item config; variables must
-  resolve to empty there, not fatal.
-- Suppressing the rider must be keyed off the **template actually using a
-  variable**, not off source mode — otherwise a social strategy on a
-  variable-free template loses its context entirely.
+## Verification (acceptance block)
+```bash
+cd "/Users/sidharthaparasramka/Desktop/Claude code/Landing page -demo/powerplatform/powerplatform"
+php -l power-creatives.php
+php -l includes/modules/strategy/service.php
+composer test
+cd app && node node_modules/typescript/bin/tsc --noEmit   # baseline, no TS changes
+```
+- `php -l` clean on every touched file.
+- `composer test`: new tests green; pre-existing baseline (1 err + 3 fail) unchanged.
+- grep evidence: a `pcm_strategy_wedge_reclaim` scheduled event + action callback exist; a `register_shutdown_function` fires after claim; an `attempts` counter gates reclaim.
 
-## Verification
-- `php vendor/bin/phpunit` — baseline **524 tests / 1 error + 3 failures**, all
-  pre-existing, none in scope.
-- New unit tests: substitution (each var, whitespace tolerance, repeated var,
-  unknown token untouched, empty when absent), `uses_source_vars`, and a
-  **wiring test** through the real `build_prompt()` proving the template text is
-  substituted and the rider is suppressed — mutation-checked, since the last
-  task proved helper-only tests let a requirement be deleted silently.
-- `php tests/standalone/run.php` → 88/88.
-- Frontend: `cd app && node node_modules/typescript/bin/tsc --noEmit` (baseline
-  59, none in scope) and `node node_modules/vite/bin/vite.js build --config
-  vite.config.wp.ts` (plain `vite build` uses the WRONG config and fails).
+## Out of scope (explicit)
+- Cutoff tuning (90-min/10-min are deliberate).
+- Async/queue rewrite of the generate endpoint.
+- Refusal surfacing + `stream_request` (done last session).
+- Seeded-template migration (idempotent seeder; owner's existing templates not auto-updated).

@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { SourceVarsHint } from "./SourceVarsHint";
 import { TableRow, TableCell } from "@/components/ui/table";
 import {
   Tooltip,
@@ -451,6 +452,10 @@ export function TemplateRow({
                 if (e.key === "Escape") handleCancelValue();
               }}
             />
+            {/* Same hint the Add/Edit dialog shows — editing the prompt inline
+                here is the faster path, and without this the {{ post_* }}
+                variables are invisible to anyone who never opens the dialog. */}
+            <SourceVarsHint module={template.module} category={subtype} />
             <div className="flex items-center gap-1">
               <Button
                 variant="default"

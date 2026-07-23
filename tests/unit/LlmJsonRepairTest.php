@@ -502,6 +502,299 @@ class LlmJsonRepairTest extends TestCase
         $this->assertSame('T', $salvaged['title']);
     }
 
+    // ── parse_response: an OpenAI null-content refusal must not read as a
+    //    silent empty success; the Anthropic shapes must keep working. ──
+
+    public function test_parse_response_captures_an_openai_refusal_with_null_content(): void
+    {
+        // The real production shape: the model declined, so OpenAI sends
+        // content=null AND a message.refusal string. isset() is false on null,
+        // so the old code dropped both and the caller got an unexplained empty
+        // reply. array_key_exists() now sees the null key and captures refusal.
+        $data = array(
+            'choices' => array(
+                array(
+                    'message' => array(
+                        'content' => null,
+                        'refusal' => "I'm sorry, I can't help with that.",
+                    ),
+                    'finish_reason' => 'stop',
+                ),
+            ),
+            'model' => 'gpt-test',
+        );
+
+        $m = new \ReflectionMethod(PCM_LLM::class, 'parse_response');
+        $out = $m->invoke(null, $data);
+
+        $this->assertSame('', $out['content'], 'null content must not be promoted to a string');
+        $this->assertStringContainsString("I'm sorry, I can't help with that.", $out['refusal']);
+    }
+
+    public function test_parse_response_does_not_misroute_a_null_openai_content_to_the_anthropic_branch(): void
+    {
+        // This is the ONLY payload where array_key_exists differs from isset:
+        // with isset(), a null OpenAI content falls through to the elseif and
+        // picks up an Anthropic-shaped body, silently attributing one provider's
+        // text to the other's reply. Pinning it keeps that comment honest.
+        $m = new \ReflectionMethod(PCM_LLM::class, 'parse_response');
+        $out = $m->invoke(null, array(
+            'choices' => array(array('message' => array('content' => null))),
+            'content' => array(array('text' => 'ANTHROPIC TEXT')),
+        ));
+
+        $this->assertSame('', $out['content'], 'a null OpenAI content must not borrow the Anthropic body');
+    }
+
+    public function test_a_refusal_wins_over_the_truncation_branch(): void
+    {
+        // The docblock promises the refusal takes priority over every other
+        // branch; without this the mutant that demotes it below finish_reason
+        // survives, and a refused+truncated reply would be reported as a token
+        // budget problem.
+        $out = PCM_LLM::describe_json_failure(true, '', 'I cannot help with that.');
+
+        $this->assertStringContainsString('REFUSED', $out);
+        $this->assertStringContainsString('I cannot help with that.', $out);
+        $this->assertStringNotContainsString('TRUNCATED', $out);
+    }
+
+    public function test_an_empty_reply_names_its_finish_reason(): void
+    {
+        // A refusal is only ONE way to get an empty reply — a content filter
+        // produces a byte-identical message with no refusal field. Naming the
+        // finish_reason is what tells those apart.
+        $out = PCM_LLM::describe_json_failure(false, '', '', 'content_filter');
+
+        $this->assertStringContainsString('EMPTY reply', $out);
+        $this->assertStringContainsString('content_filter', $out);
+    }
+
+    public function test_a_refusal_is_clipped_without_splitting_a_multibyte_character(): void
+    {
+        // The clipped text is persisted as strategy_items.errorMessage and
+        // returned over REST — an invalid-UTF-8 tail makes wp_json_encode()
+        // drop the whole string, losing the message being clipped.
+        $refusal = str_repeat('a', 298) . '’m sorry, I can’t help with that request at all.';
+        $out = PCM_LLM::describe_json_failure(false, '', $refusal);
+
+        $this->assertTrue(mb_check_encoding($out, 'UTF-8'), 'the clipped refusal must stay valid UTF-8');
+        $this->assertNotFalse(json_encode($out), 'an invalid-UTF-8 message is dropped by json_encode');
+    }
+
+    public function test_a_refusal_is_not_misread_as_an_unsupported_response_format(): void
+    {
+        // The refusal text is MODEL-authored and can itself contain
+        // "response_format … not supported". Feeding that to the tier
+        // classifier demoted json_schema → json_object → prompt-only, re-asking
+        // a question already answered (measured: 7 API calls for one refusal).
+        $classifier = new \ReflectionMethod(PCM_LLM::class, 'is_response_format_unsupported');
+        $isRefusal  = new \ReflectionMethod(PCM_LLM::class, 'is_refusal_error');
+
+        $msg = 'LLM refused to generate this content: I can\'t do that: structured output '
+             . 'of that kind is not supported under my guidelines.';
+
+        $this->assertTrue($isRefusal->invoke(null, $msg), 'must be recognised as a refusal');
+        $this->assertTrue(
+            $classifier->invoke(null, $msg),
+            'precondition: the model text DOES trip the classifier — which is why the refusal check must run first'
+        );
+    }
+
+    public function test_throw_if_refused_raises_on_a_refusal_and_is_silent_otherwise(): void
+    {
+        $m = new \ReflectionMethod(PCM_LLM::class, 'throw_if_refused');
+
+        // Silent for a normal reply.
+        $m->invoke(null, array('content' => '{"a":1}', 'refusal' => ''));
+        $this->assertTrue(true, 'no exception for a normal reply');
+
+        // The refusal path deliberately error_log()s; under the CLI SAPI that
+        // goes to STDERR, which PHPUnit reports as a test error. Route it to a
+        // temp file so the LOGGING stays exercised without failing the run.
+        $log = tempnam(sys_get_temp_dir(), 'pcmlog');
+        $old = ini_get('error_log');
+        ini_set('error_log', $log);
+        try {
+            $thrown = null;
+            try {
+                $m->invoke(null, array('content' => '', 'refusal' => 'I will not do that.'));
+            } catch (\RuntimeException $e) {
+                $thrown = $e;
+            }
+            $this->assertNotNull($thrown, 'a refusal must throw');
+            $this->assertStringContainsString('refused to generate this content', $thrown->getMessage());
+            $this->assertStringContainsString('I will not do that.', (string) file_get_contents($log));
+        } finally {
+            ini_set('error_log', (string) $old);
+            @unlink($log);
+        }
+    }
+
+    public function test_a_refusal_alongside_usable_content_is_advisory_not_terminal(): void
+    {
+        // Deliberate: OpenAI pairs `refusal` with content:null, but a compat
+        // proxy (and Anthropic's mid-generation stop_reason=refusal) can decline
+        // ALONGSIDE a usable body. Aborting there would discard an article we
+        // already have and previously used happily.
+        $m = new \ReflectionMethod(PCM_LLM::class, 'throw_if_refused');
+        $log = tempnam(sys_get_temp_dir(), 'pcmlog');
+        $old = ini_get('error_log');
+        ini_set('error_log', $log);
+        try {
+            $m->invoke(null, array('content' => '{"title":"T"}', 'refusal' => 'Note: partially declined.'));
+            $this->assertTrue(true, 'usable content must survive an advisory refusal');
+            $this->assertStringContainsString('ALONGSIDE usable content', (string) file_get_contents($log));
+        } finally {
+            ini_set('error_log', (string) $old);
+            @unlink($log);
+        }
+    }
+
+    public function test_a_whitespace_only_or_non_string_refusal_is_ignored(): void
+    {
+        // trim() and the is_string() gate: neither a padded empty string nor a
+        // non-string (array/bool/int from a sloppy proxy) may abort a good reply.
+        $m = new \ReflectionMethod(PCM_LLM::class, 'throw_if_refused');
+        $m->invoke(null, array('content' => '', 'refusal' => "   \n\t "));
+        $this->assertTrue(true, 'a whitespace-only refusal is not a refusal');
+
+        $parse = new \ReflectionMethod(PCM_LLM::class, 'parse_response');
+        foreach (array(array('a'), true, 42, null) as $junk) {
+            $out = $parse->invoke(null, array(
+                'choices' => array(array('message' => array('content' => '{"a":1}', 'refusal' => $junk))),
+            ));
+            $this->assertSame('', $out['refusal'], 'a non-string refusal must normalise to empty');
+            $this->assertSame('{"a":1}', $out['content']);
+        }
+    }
+
+    public function test_is_refusal_error_matches_only_at_the_START_of_the_message(): void
+    {
+        // A prefix match, not a substring match: an upstream API error whose
+        // BODY happens to quote our sentinel (e.g. an echoed request) must not
+        // be mistaken for our own refusal and short-circuit the tier fallback.
+        $m = new \ReflectionMethod(PCM_LLM::class, 'is_refusal_error');
+
+        $this->assertTrue($m->invoke(null, 'LLM refused to generate this content: nope.'));
+        $this->assertFalse(
+            $m->invoke(null, 'LLM API error 400: LLM refused to generate this content: nope.'),
+            'the sentinel must be anchored at offset 0, not found anywhere'
+        );
+    }
+
+    public function test_the_terminal_error_call_site_passes_the_refusal_through(): void
+    {
+        // describe_json_failure() is tested directly above, but that proves
+        // nothing about the CALL SITE: deleting the argument in
+        // invoke_json_fallback() left every other test green. The method is
+        // private and needs a live HTTP round-trip, so pin the wiring at the
+        // source level (house pattern — see PlatformRoleInvariantTest).
+        $src = file_get_contents(dirname(__DIR__, 2) . '/includes/core/llm/class-pcm-llm.php');
+        $this->assertIsString($src);
+
+        // Anchor on `self::` so this matches the CALL and not the function
+        // DEFINITION (whose parameter list also contains the word "refusal" —
+        // that false positive kept this green while the argument was gone).
+        // Bounding by `self::` also drops the earlier version's dependency on
+        // one function physically preceding another, which false-failed on a
+        // benign reorder.
+        $this->assertMatchesRegularExpression(
+            '/self::describe_json_failure\(\s*[^;]*?refusal[^;]*?\)/s',
+            $src,
+            'the terminal throw must pass the parsed refusal INTO describe_json_failure()'
+        );
+
+        // The early exits are what actually saves the refusal from being
+        // overwritten. EVERY invoke() must be guarded: json_schema tier, the
+        // fallback's first call, the doubled-budget truncation retry and the
+        // reprompt — guarding only the first left a refusal arriving on a retry
+        // both unreported AND able to steer the tier classifier. These sites
+        // need a live HTTP round-trip, so pin them at the source level.
+        $this->assertSame(
+            substr_count($src, '= self::invoke('),
+            substr_count($src, 'self::throw_if_refused('),
+            'every self::invoke() call site must be followed by a refusal guard'
+        );
+
+        // Both tier-boundary catch blocks must consult is_refusal_error BEFORE
+        // is_response_format_unsupported — the refusal text is model-authored
+        // and can contain "response_format … not supported", which would demote
+        // the tier and re-ask a question already answered.
+        $this->assertSame(
+            2,
+            substr_count($src, 'self::is_refusal_error('),
+            'both catch blocks in invoke_json() must check for a refusal first'
+        );
+        $this->assertMatchesRegularExpression(
+            '/self::is_refusal_error\(\$e->getMessage\(\)\)\s*\|\|\s*!self::is_response_format_unsupported/s',
+            $src,
+            'the refusal check must short-circuit BEFORE the format classifier'
+        );
+    }
+
+    public function test_parse_response_captures_a_refusal_that_arrives_without_a_content_key(): void
+    {
+        // The refusal must be read independently of the content key. Nesting it
+        // inside the content guard dropped the one field that explains an empty
+        // reply whenever the payload carried `refusal` alone.
+        $m = new \ReflectionMethod(PCM_LLM::class, 'parse_response');
+        $out = $m->invoke(null, array(
+            'choices' => array(array('message' => array('refusal' => 'I cannot help with that.'))),
+        ));
+
+        $this->assertSame('', $out['content']);
+        $this->assertSame('I cannot help with that.', $out['refusal']);
+    }
+
+    public function test_parse_response_keeps_normal_openai_string_content(): void
+    {
+        $data = array(
+            'choices' => array(
+                array(
+                    'message'      => array('content' => '{"title":"T"}'),
+                    'finish_reason' => 'stop',
+                ),
+            ),
+        );
+
+        $m = new \ReflectionMethod(PCM_LLM::class, 'parse_response');
+        $out = $m->invoke(null, $data);
+
+        $this->assertSame('{"title":"T"}', $out['content']);
+        $this->assertSame('', $out['refusal']);
+    }
+
+    public function test_parse_response_keeps_the_anthropic_content_shape_working(): void
+    {
+        $data = array(
+            'content'     => array(array('text' => '{"title":"T"}')),
+            'stop_reason' => 'end_turn',
+        );
+
+        $m = new \ReflectionMethod(PCM_LLM::class, 'parse_response');
+        $out = $m->invoke(null, $data);
+
+        $this->assertSame('{"title":"T"}', $out['content']);
+        $this->assertSame('', $out['refusal']);
+    }
+
+    public function test_parse_response_maps_anthropic_stop_reason_refusal(): void
+    {
+        // Anthropic carries no message.refusal body; it marks the decline via
+        // stop_reason='refusal'. parse_response must surface that as a refusal
+        // rather than an empty reply with no cause.
+        $data = array(
+            'content'     => array(),
+            'stop_reason' => 'refusal',
+        );
+
+        $m = new \ReflectionMethod(PCM_LLM::class, 'parse_response');
+        $out = $m->invoke(null, $data);
+
+        $this->assertNotSame('', $out['refusal']);
+    }
+
     // ── describe_json_failure: the terminal error must not misdiagnose ───
 
     public function test_failure_detail_reports_truncation_from_finish_reason(): void
@@ -585,5 +878,26 @@ class LlmJsonRepairTest extends TestCase
         $detail = PCM_LLM::describe_json_failure(false, '["a 26" screen"]');
 
         $this->assertStringNotContainsString('TRUNCATED', $detail);
+    }
+
+    public function test_failure_detail_surfaces_the_refusal_reason(): void
+    {
+        // The refusal is the API's explicit cause for the empty reply, so it
+        // takes priority over every other branch — the operator must see the
+        // reason, not an opaque "EMPTY reply".
+        $detail = PCM_LLM::describe_json_failure(false, '', 'I cannot reproduce that.');
+
+        $this->assertStringContainsString('REFUSED', $detail);
+        $this->assertStringContainsString('I cannot reproduce that.', $detail);
+        $this->assertStringNotContainsString('EMPTY reply', $detail);
+    }
+
+    public function test_failure_detail_is_unchanged_when_there_is_no_refusal(): void
+    {
+        // Back-compat: the optional refusal param defaults to '', and an empty
+        // reply with no refusal must read exactly as it did before the param.
+        $detail = PCM_LLM::describe_json_failure(false, '');
+
+        $this->assertStringContainsString('EMPTY reply', $detail);
     }
 }

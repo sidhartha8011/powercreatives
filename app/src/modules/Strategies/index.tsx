@@ -432,6 +432,14 @@ export function StrategiesModule() {
     updateStrategyMutation.mutate({ id: strategyId, config: { approvalMode: mode } });
   }, [updateStrategyMutation]);
 
+  // Toggle whether generated articles reuse the source post's image as the
+  // featured image (social/RSS sourced strategies). Partial config merge —
+  // backend sanitizes featuredImages at controller.php:584. Defaults OFF so
+  // existing strategies are unaffected until the user opts in.
+  const handleFeaturedImagesChange = useCallback((strategyId: number, enabled: boolean) => {
+    updateStrategyMutation.mutate({ id: strategyId, config: { featuredImages: enabled } });
+  }, [updateStrategyMutation]);
+
   // Inline template (prompt) change — top-level whitelisted field.
   const handleTemplateChange = useCallback((strategyId: number, templateId: string) => {
     updateStrategyMutation.mutate({ id: strategyId, templateId: parseInt(templateId, 10) });
@@ -972,6 +980,26 @@ export function StrategiesModule() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Reuse source image as featured image — only relevant for
+                    social/RSS sourced strategies (they carry a sourceImage).
+                    Partial config merge; defaults OFF so existing strategies
+                    are unaffected until the user opts in. */}
+                {(isSocial || isRss) && (
+                  <label
+                    className="shrink-0 flex items-center gap-1.5 cursor-pointer text-xs"
+                    style={{ color: colors.textSecondary }}
+                    onClick={(e) => e.stopPropagation()}
+                    title="When enabled, the source post's image is reused as the blog article's featured image."
+                  >
+                    <Checkbox
+                      checked={!!config.featuredImages}
+                      onCheckedChange={(checked) => handleFeaturedImagesChange(strategy.id, checked === true)}
+                      aria-label={`Reuse source image as featured image for ${strategy.name}`}
+                    />
+                    Reuse image
+                  </label>
+                )}
 
                 {/* Template (prompt) — inline-editable; drives generation for
                     items generated AFTER the change. */}

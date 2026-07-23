@@ -1147,6 +1147,32 @@ class PCM_DB
     }
 
     /**
+     * The actual stale 'generating' ITEM rows (id, strategyId, userId, config)
+     * — a per-item companion to get_stale_generating_strategies(), so the wedge
+     * sweep can read each item's config.attempts and cap reclaim retries instead
+     * of looping a deterministically-failing item forever (W3). Same join and
+     * paused-strategy exclusion as the strategies variant above.
+     *
+     * @param string $cutoff MySQL DATETIME string ('Y-m-d H:i:s').
+     * @return object[] Rows with ->id, ->strategyId, ->userId, ->config.
+     */
+    public static function get_stale_generating_items(string $cutoff): array
+    {
+        global $wpdb;
+        $items_table = self::t('strategy_items');
+        $strategies_table = self::t('strategies');
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT si.id, si.strategyId, si.userId, si.config FROM {$items_table} si
+                 INNER JOIN {$strategies_table} s ON s.id = si.strategyId
+                 WHERE si.status = 'generating' AND si.updatedAt < %s
+                   AND s.status != 'paused'",
+                $cutoff
+            )
+        );
+    }
+
+    /**
      * Distinct (strategyId, userId) pairs with at least one pending item whose
      * scheduledDate is due. Used by the daily scheduled-strategy cron scan
      * (PCM_Strategy_Service::run_scheduled_scan()) — a global, cross-user scan,

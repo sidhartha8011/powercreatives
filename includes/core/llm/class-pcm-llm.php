@@ -71,7 +71,10 @@ class PCM_LLM
      *     @type int      $user_id         WP user ID for API key lookup. Default current_user.
      * }
      *
-     * @return array Parsed response: { content: string, usage: array, model: string, raw: array }
+     * @return array Parsed response: { content: string, usage: array, model: string,
+     *   finish_reason: string, refusal: string, raw: array }. `refusal` is the
+     *   model's own reason for declining (empty when it did not) — see
+     *   parse_response(); a NON-empty refusal is terminal, not retryable.
      * @throws \RuntimeException On API key missing, HTTP error, or parse failure.
      */
     public static function invoke(array $messages, array $options = array()): array
@@ -247,13 +250,24 @@ class PCM_LLM
             $schema_opts = $options;
             $schema_opts['response_format'] = array('type' => 'json_schema', 'json_schema' => $schema);
             try {
-                $parsed = self::parse_json_result(self::invoke($messages, $schema_opts));
+                $schema_result = self::invoke($messages, $schema_opts);
+                // A refusal here is terminal — see throw_if_refused(). Checked
+                // BEFORE parse_json_result(), which reads only `content` and so
+                // would drop the reason and fall through to tier 2.
+                self::throw_if_refused($schema_result);
+                $parsed = self::parse_json_result($schema_result);
                 if ($parsed !== null) {
                     return $parsed;
                 }
                 error_log(sprintf('[PCM_LLM] json_schema parse failed (model=%s); trying json_object.', $model));
             } catch (\RuntimeException $e) {
-                if (!self::is_response_format_unsupported($e->getMessage())) {
+                // A refusal must never be re-read by the format classifier: the
+                // model's own words can contain "response_format … not
+                // supported" and would then demote the tier and re-ask a
+                // question already answered.
+                if (self::is_refusal_error($e->getMessage())
+                    || !self::is_response_format_unsupported($e->getMessage())
+                ) {
                     throw $e; // genuine error (bad key, rate limit, context length) — propagate
                 }
                 self::remember_json_schema_unsupported($model);
@@ -265,7 +279,9 @@ class PCM_LLM
         try {
             return self::invoke_json_fallback($messages, $schema, $options, true);
         } catch (\RuntimeException $e) {
-            if (!self::is_response_format_unsupported($e->getMessage())) {
+            if (self::is_refusal_error($e->getMessage())
+                || !self::is_response_format_unsupported($e->getMessage())
+            ) {
                 throw $e; // json_object parse failure (rare — truncation) is fatal, not a retry
             }
             error_log(sprintf('[PCM_LLM] model=%s rejected json_object; falling back to prompt-only. (%s)', $model, substr($e->getMessage(), 0, 160)));
@@ -334,6 +350,9 @@ class PCM_LLM
         }
 
         $result = self::invoke($msgs, $options);
+        // Fail fast on a decline, before the truncation retry and the reprompt
+        // both re-ask (and both overwrite $result, losing the reason).
+        self::throw_if_refused($result);
         $content = $result['content'] ?? '';
         $parsed = json_decode(self::extract_json($content), true);
 
@@ -360,6 +379,10 @@ class PCM_LLM
                 $bumped['max_tokens']
             ));
             $result = self::invoke($msgs, $bumped);
+            // The retry can itself come back a refusal — guard it too, or the
+            // reason is overwritten by whatever the reprompt returns and the
+            // model's own words reach the tier classifier downstream.
+            self::throw_if_refused($result);
             $content = $result['content'] ?? '';
             $parsed = json_decode(self::extract_json($content), true);
         }
@@ -409,6 +432,7 @@ class PCM_LLM
                     . $schema_hint . ' No markdown, no code fences, no commentary.',
             );
             $result  = self::invoke($msgs2, $opts2);
+            self::throw_if_refused($result);
             $content = $result['content'] ?? '';
             $parsed  = json_decode(self::extract_json($content), true);
             if (json_last_error() !== JSON_ERROR_NONE || !is_array($parsed)) {
@@ -468,7 +492,9 @@ class PCM_LLM
                 $use_json_object ? 'json_object' : 'prompt-only',
                 self::describe_json_failure(
                     ($result['finish_reason'] ?? '') === 'length',
-                    $salvage_src
+                    $salvage_src,
+                    (string) ($result['refusal'] ?? ''),
+                    (string) ($result['finish_reason'] ?? '')
                 ),
                 $last_error,
                 substr($content, 0, 500)
@@ -503,15 +529,32 @@ class PCM_LLM
      *
      * @param bool   $by_finish   Whether the API reported finish_reason='length'.
      * @param string $salvage_src The extracted JSON candidate (already rtrim'd).
+     * @param string $refusal     The model's refusal text when it declined to
+     *                            generate. Takes priority over every other
+     *                            branch: the API's own reason for the empty
+     *                            reply beats token-budget / shape heuristics.
+     * @param string $finish_reason Raw finish_reason, named in the EMPTY-reply
+     *                            clause so a content_filter / provider quirk is
+     *                            distinguishable from a plain empty completion.
      * @return string Detail clause appended to the error message.
      */
-    public static function describe_json_failure(bool $by_finish, string $salvage_src): string
+    public static function describe_json_failure(bool $by_finish, string $salvage_src, string $refusal = '', string $finish_reason = ''): string
     {
-        // finish_reason is the only NON-heuristic signal available, so it is
-        // tested first. Short-circuiting on an empty span ahead of it threw the
-        // signal away and reported "nothing came back" for a reply the API had
-        // explicitly flagged as cut at the token limit — a regression against
-        // the message this function replaced.
+        // A refusal is the API's explicit reason the reply is empty — it is
+        // not a token-budget or malformed-output problem, so the branches
+        // below must not re-label it as TRUNCATED or EMPTY. Tested before them
+        // so the operator sees the real cause instead of an opaque message.
+        if ($refusal !== '') {
+            return ' — the model REFUSED to generate this content: '
+                . self::clip($refusal, 300);
+        }
+
+        // finish_reason is the only NON-heuristic signal among the remaining
+        // branches, so it is tested before the shape heuristics below.
+        // Short-circuiting on an empty span ahead of it threw the signal away
+        // and reported "nothing came back" for a reply the API had explicitly
+        // flagged as cut at the token limit — a regression against the message
+        // this function replaced.
         if ($by_finish) {
             return ' — output TRUNCATED at the token limit (detected via finish_reason=length);'
                 . ' the article is too long for the budget';
@@ -521,10 +564,21 @@ class PCM_LLM
             // extract_json() returns its input unchanged when it finds no
             // braces, so an empty span means the reply itself was empty or
             // whitespace — NOT merely "unparseable".
-            return ' — the model returned an EMPTY reply';
+            //
+            // The raw finish_reason is appended because a refusal is only ONE
+            // way to get an empty reply: a content filter
+            // (finish_reason=content_filter) or a provider quirk produces a
+            // byte-identical message with no refusal field, and without this
+            // the operator cannot tell them apart — exactly the dead end this
+            // whole change removes. NB $by_finish is always false here (it
+            // returns above), so the boolean is useless for this — the string is
+            // what carries the signal.
+            return ' — the model returned an EMPTY reply'
+                . ($finish_reason !== '' ? ' (finish_reason=' . self::clip($finish_reason, 40) . ')' : '');
         }
 
         // Accept `]` as well as `}`: extract_json() can hand back an
+
         // array-rooted span, and treating a complete array as "incomplete"
         // would re-open the quote-parity false positive for that root.
         $last       = substr($salvage_src, -1);
@@ -545,6 +599,82 @@ class PCM_LLM
         // signal was found, never that the reply was complete.
         return ' — no truncation signal detected; output appears complete but unparseable'
             . ' (repair, reprompt and schema-key salvage all failed)';
+    }
+
+    /** Marks a refusal so the tier classifier can recognise it — see is_refusal_error(). */
+    private const REFUSAL_PREFIX = 'LLM refused to generate this content: ';
+
+    /**
+     * Throw immediately when the model declined.
+     *
+     * WHY FAIL FAST: a refusal is about CONTENT, so every downstream escalation
+     * refuses again — measured at 4 API calls (json_schema → json_object →
+     * doubled-budget truncation retry → 16k reprompt), up to 7 when the refusal
+     * text happens to trip the format classifier. Worse, each retry REPLACES
+     * `$result`, so the one field explaining the failure was overwritten by a
+     * later empty reply and the operator got the same unexplained "EMPTY reply"
+     * this whole change exists to end. The truncation retry fires on a refusal
+     * because looks_truncated('') is true, so it cannot be avoided downstream.
+     *
+     * @param array $result invoke()'s return value.
+     * @throws \RuntimeException When the reply carries a refusal.
+     */
+    private static function throw_if_refused(array $result): void
+    {
+        $refusal = trim((string) ($result['refusal'] ?? ''));
+        if ($refusal === '') {
+            return;
+        }
+        // A refusal is terminal ONLY when there is nothing usable to keep.
+        // OpenAI pairs `refusal` with content:null, but a compat proxy (and
+        // Anthropic's mid-generation stop_reason=refusal) can return a partial
+        // decline ALONGSIDE a usable body — aborting that would throw away an
+        // article we already have and were previously happy to use. Deliberate:
+        // if the content parses downstream, the decline is advisory.
+        if (trim((string) ($result['content'] ?? '')) !== '') {
+            error_log(sprintf(
+                '[PCM_LLM] Model returned a refusal ALONGSIDE usable content (model=%s) — using the content: %s',
+                (string) ($result['model'] ?? ''),
+                self::clip($refusal, 200)
+            ));
+            return;
+        }
+        error_log(sprintf(
+            '[PCM_LLM] Model refused (model=%s): %s',
+            (string) ($result['model'] ?? ''),
+            self::clip($refusal, 300)
+        ));
+        throw new \RuntimeException(self::REFUSAL_PREFIX . self::clip($refusal, 300));
+    }
+
+    /**
+     * Whether an exception message is one of ours from throw_if_refused().
+     * Checked BEFORE is_response_format_unsupported() at every tier boundary:
+     * the refusal text is model-authored and can itself contain phrases like
+     * "response_format is not supported", which would otherwise demote the tier
+     * and re-ask a question the model has already answered.
+     *
+     * @param string $message Exception message.
+     * @return bool
+     */
+    private static function is_refusal_error(string $message): bool
+    {
+        return strpos($message, self::REFUSAL_PREFIX) === 0;
+    }
+
+    /**
+     * Multibyte-safe clip. substr() can split a UTF-8 sequence, and the result
+     * is persisted as strategy_items.errorMessage and returned over REST, where
+     * wp_json_encode() drops an invalid-UTF-8 string entirely — losing the very
+     * message being clipped.
+     *
+     * @param string $text Text to clip.
+     * @param int    $max  Maximum characters.
+     * @return string
+     */
+    private static function clip(string $text, int $max): string
+    {
+        return function_exists('mb_substr') ? mb_substr($text, 0, $max) : substr($text, 0, $max);
     }
 
     /**
@@ -1325,7 +1455,8 @@ class PCM_LLM
      * @param array  $payload Request body.
      * @param array  $headers HTTP headers.
      *
-     * @return array { content, usage, model, raw }
+     * @return array { content, usage, model, finish_reason, refusal, raw } — the
+     *   full parse_response() shape.
      */
     private static function blocking_request(string $url, array $payload, array $headers, int $timeout = 300): array
     {
@@ -1396,7 +1527,11 @@ class PCM_LLM
      * @param array    $headers   HTTP headers.
      * @param callable $on_chunk  Callback: fn(string $token).
      *
-     * @return array { content, usage, model, raw }
+     * @return array { content, usage, model, raw } — NOTE this is a NARROWER
+     *   shape than blocking_request(): a streamed reply carries neither
+     *   `finish_reason` nor `refusal`, so a refusal over streaming is currently
+     *   invisible. Safe today only because the article path never streams;
+     *   callers must not assume those keys exist.
      */
     private static function stream_request(string $url, array $payload, array $headers, callable $on_chunk): array
     {
@@ -1813,19 +1948,46 @@ class PCM_LLM
      *
      * @param array $data Raw API response.
      *
-     * @return array { content: string, usage: array|null, model: string, raw: array }
+     * @return array { content: string, usage: array|null, model: string,
+     *   finish_reason: string, refusal: string, raw: array }
      */
     private static function parse_response(array $data): array
     {
         $content = '';
+        $refusal = '';
 
-        // OpenAI format: choices[0].message.content
-        if (isset($data['choices'][0]['message']['content'])) {
-            $content = $data['choices'][0]['message']['content'];
+        // OpenAI sends message.content as an explicit `null` alongside a
+        // message.refusal string when the model declines. isset() is false on
+        // null, so the old check dropped the decline AND (via the elseif below)
+        // misrouted a null-content OpenAI reply toward the Anthropic branch.
+        // array_key_exists() sees the null key; the is_string() gate then
+        // refuses to promote that null into a silent empty "success".
+        $message = $data['choices'][0]['message'] ?? null;
+        // The refusal is read INDEPENDENTLY of the content key: OpenAI pairs it
+        // with content:null today, but nesting the read inside that guard means
+        // a reply carrying only `refusal` would silently drop the one field
+        // that explains the empty result — the exact failure this whole change
+        // exists to end.
+        if (is_array($message) && is_string($message['refusal'] ?? null)) {
+            $refusal = $message['refusal'];
         }
-        // Anthropic format: content[0].text
+        if (is_array($message) && array_key_exists('content', $message)) {
+            if (is_string($message['content'])) {
+                $content = $message['content'];
+            }
+        }
+        // Anthropic format: content[0].text. Reached only when the OpenAI
+        // content key is absent — a real OpenAI string reply stays in the
+        // branch above and never falls through to here.
         elseif (isset($data['content'][0]['text'])) {
             $content = $data['content'][0]['text'];
+        }
+
+        // Anthropic surfaces a decline as stop_reason='refusal' with no body in
+        // the content array, so map it onto the same refusal signal rather than
+        // leave the operator with an unexplained empty reply.
+        if ($refusal === '' && ($data['stop_reason'] ?? '') === 'refusal') {
+            $refusal = 'The model declined to generate this content (stop_reason=refusal).';
         }
 
         // Normalized truncation signal: OpenAI/compat 'length', Anthropic
@@ -1841,6 +2003,7 @@ class PCM_LLM
             'usage' => $data['usage'] ?? null,
             'model' => $data['model'] ?? '',
             'finish_reason' => (string) $finish,
+            'refusal' => $refusal,
             'raw' => $data,
         );
     }

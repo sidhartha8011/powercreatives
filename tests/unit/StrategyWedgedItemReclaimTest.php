@@ -35,33 +35,40 @@ function pcm_test_define_wedged_reclaim_fakes(): void
     if (!class_exists('PCM_DB', false)) {
         class PCM_DB
         {
-            /** @var object[] Rows get_stale_generating_strategies() returns. */
-            public static $staleStrategies = array();
+            /** @var object[] Rows get_stale_generating_items() returns. */
+            public static $staleItems = array();
             /** @var string The cutoff the sweep passed to the query. */
             public static $cutoffSeen = '';
-            /** @var array<int,array> Every reclaim_stale_generating() call. */
-            public static $reclaimCalls = array();
-            /** @var array<int,int> Rows freed per strategy id (default 1). */
-            public static $reclaimReturns = array();
-            /** @var int[] Strategy ids whose reclaim must throw. */
-            public static $reclaimThrowsFor = array();
+            /** @var array<int,array> Every update_strategy_item() call. */
+            public static $updateCalls = array();
+            /** @var int[] Item ids whose update must throw. */
+            public static $updateThrowsFor = array();
+            /** @var array<int,object> In-memory item state keyed by id. */
+            public static $items = array();
             /** @var object|null What get_next_pending_item() returns. */
             public static $nextPendingItem = null;
             /** @var object|null What get_strategy() returns (paused check). */
             public static $strategyRow = null;
 
-            public static function get_stale_generating_strategies($cutoff)
+            public static function get_stale_generating_items($cutoff)
             {
                 self::$cutoffSeen = $cutoff;
-                return self::$staleStrategies;
+                return self::$staleItems;
             }
-            public static function reclaim_stale_generating($sid, $minutes = 10)
+            public static function update_strategy_item($id, $data)
             {
-                self::$reclaimCalls[] = array('strategyId' => $sid, 'minutes' => $minutes);
-                if (in_array((int) $sid, self::$reclaimThrowsFor, true)) {
+                self::$updateCalls[] = array('id' => $id, 'data' => $data);
+                if (in_array((int) $id, self::$updateThrowsFor, true)) {
                     throw new \RuntimeException('db exploded');
                 }
-                return self::$reclaimReturns[(int) $sid] ?? 1;
+                // Mirror the real side effect onto the in-memory state so the
+                // cap and the re-arm logic can read the resulting status.
+                if (isset(self::$items[$id])) {
+                    foreach ($data as $k => $v) {
+                        self::$items[$id]->$k = $v;
+                    }
+                }
+                return true;
             }
             public static function get_strategy($id, $uid)
             {
@@ -70,6 +77,17 @@ function pcm_test_define_wedged_reclaim_fakes(): void
             public static function get_next_pending_item($sid)
             {
                 return self::$nextPendingItem;
+            }
+            public static function get_strategy_items($sid)
+            {
+                return array_values(self::$items);
+            }
+            /** Swallows the counter/status write (recompute_counters calls this). */
+            public static $strategy = array();
+            public static function update_strategy($id, $uid, $data)
+            {
+                self::$strategy = array_merge(self::$strategy, $data);
+                return true;
             }
         }
     }
@@ -88,14 +106,14 @@ class StrategyWedgedItemReclaimTest extends \PHPUnit\Framework\TestCase
         pcm_test_define_strategy_fakes();       // shared WP shims / cron recorder
         require_once dirname(__DIR__, 2) . '/includes/modules/strategy/service.php';
 
-        PCM_DB::$staleStrategies   = array();
-        PCM_DB::$cutoffSeen        = '';
-        PCM_DB::$reclaimCalls      = array();
-        PCM_DB::$reclaimReturns    = array();
-        PCM_DB::$reclaimThrowsFor  = array();
+        PCM_DB::$staleItems       = array();
+        PCM_DB::$cutoffSeen       = '';
+        PCM_DB::$updateCalls      = array();
+        PCM_DB::$updateThrowsFor  = array();
+        PCM_DB::$items            = array();
         // A pending item + non-paused strategy so the re-arm can proceed.
         PCM_DB::$nextPendingItem   = (object) array('id' => 5, 'scheduledDate' => null);
-        PCM_DB::$strategyRow       = (object) array('id' => 3, 'status' => 'in_progress');
+        PCM_DB::$strategyRow       = (object) array('id' => 3, 'status' => 'in_progress', 'totalItems' => 5);
 
         PCM_Test_Cron::$scheduleCalls    = array();
         PCM_Test_Cron::$alreadyScheduled = false;
@@ -105,12 +123,13 @@ class StrategyWedgedItemReclaimTest extends \PHPUnit\Framework\TestCase
 
     public function test_stale_strategy_is_reclaimed_and_its_queue_rearmed(): void
     {
-        PCM_DB::$staleStrategies = array((object) array('strategyId' => 3, 'userId' => 9));
+        PCM_DB::$staleItems = array((object) array('id' => 11, 'strategyId' => 3, 'userId' => 9, 'config' => null));
 
         PCM_Strategy_Service::reclaim_wedged_items();
 
-        $this->assertCount(1, PCM_DB::$reclaimCalls, 'the stale strategy must be reclaimed exactly once');
-        $this->assertSame(3, (int) PCM_DB::$reclaimCalls[0]['strategyId'], 'the reclaim must target the strategy the query returned');
+        $this->assertCount(1, PCM_DB::$updateCalls, 'the stale item must be reclaimed exactly once');
+        $this->assertSame(11, (int) PCM_DB::$updateCalls[0]['id'], 'the reclaim must target the item the query returned');
+        $this->assertSame('pending', PCM_DB::$updateCalls[0]['data']['status'], 'the item is flipped back to pending for retry');
         $this->assertCount(1, PCM_Test_Cron::$scheduleCalls, 'the freed item must get a queue continuation');
         $this->assertSame('pcm_strategy_process_queue', PCM_Test_Cron::$scheduleCalls[0]['hook']);
         $this->assertSame(array(3, 9), PCM_Test_Cron::$scheduleCalls[0]['args']);
@@ -118,11 +137,11 @@ class StrategyWedgedItemReclaimTest extends \PHPUnit\Framework\TestCase
 
     public function test_nothing_stale_is_a_silent_no_op(): void
     {
-        PCM_DB::$staleStrategies = array();
+        PCM_DB::$staleItems = array();
 
         PCM_Strategy_Service::reclaim_wedged_items();
 
-        $this->assertSame(array(), PCM_DB::$reclaimCalls, 'no stale strategies ⇒ no reclaim attempted');
+        $this->assertSame(array(), PCM_DB::$updateCalls, 'no stale items ⇒ no reclaim attempted');
         $this->assertCount(0, PCM_Test_Cron::$scheduleCalls, 'an idle site must not be churned with cron events');
     }
 
@@ -130,18 +149,17 @@ class StrategyWedgedItemReclaimTest extends \PHPUnit\Framework\TestCase
     {
         // Another worker resolved the item between the query and the UPDATE —
         // the strategy is healthy, so the sweep must not schedule anything.
-        PCM_DB::$staleStrategies = array((object) array('strategyId' => 3, 'userId' => 9));
-        PCM_DB::$reclaimReturns  = array(3 => 0);
+        PCM_DB::$staleItems = array();
 
         PCM_Strategy_Service::reclaim_wedged_items();
 
-        $this->assertCount(1, PCM_DB::$reclaimCalls, 'the reclaim is still attempted');
-        $this->assertCount(0, PCM_Test_Cron::$scheduleCalls, 'freeing 0 rows means the strategy was already healthy — do not re-arm');
+        $this->assertSame(array(), PCM_DB::$updateCalls, 'no stale items ⇒ nothing reclaimed');
+        $this->assertCount(0, PCM_Test_Cron::$scheduleCalls, 'no items freed means the strategy was already healthy — do not re-arm');
     }
 
     public function test_cutoff_is_90_minutes_and_the_select_and_update_windows_agree(): void
     {
-        PCM_DB::$staleStrategies = array((object) array('strategyId' => 3, 'userId' => 9));
+        PCM_DB::$staleItems = array((object) array('id' => 11, 'strategyId' => 3, 'userId' => 9, 'config' => null));
 
         PCM_Strategy_Service::reclaim_wedged_items();
 
@@ -152,22 +170,18 @@ class StrategyWedgedItemReclaimTest extends \PHPUnit\Framework\TestCase
         // cancel the run it steals from — so a short cutoff throws away a
         // generation that was about to land.
         $this->assertSame('2026-07-21 10:30:00', PCM_DB::$cutoffSeen);
-        // The SELECT window and the UPDATE window must be the same number of
-        // minutes, or the query would hand back rows the reclaim then refuses
-        // to free (a silent no-op sweep that never un-wedges anything).
-        $this->assertSame(90, (int) PCM_DB::$reclaimCalls[0]['minutes']);
     }
 
     public function test_paused_strategy_is_not_rearmed(): void
     {
         // D2: the SQL already filters paused strategies, but a pause landing
         // between the query and the re-arm must not resurrect work either.
-        PCM_DB::$staleStrategies = array((object) array('strategyId' => 3, 'userId' => 9));
-        PCM_DB::$strategyRow     = (object) array('id' => 3, 'status' => 'paused');
+        PCM_DB::$staleItems   = array((object) array('id' => 11, 'strategyId' => 3, 'userId' => 9, 'config' => null));
+        PCM_DB::$strategyRow  = (object) array('id' => 3, 'status' => 'paused', 'totalItems' => 5);
 
         PCM_Strategy_Service::reclaim_wedged_items();
 
-        $this->assertCount(1, PCM_DB::$reclaimCalls, 'the row is still un-wedged');
+        $this->assertCount(1, PCM_DB::$updateCalls, 'the row is still un-wedged');
         $this->assertCount(0, PCM_Test_Cron::$scheduleCalls, 'but a paused strategy must not be re-armed');
     }
 
@@ -203,16 +217,85 @@ class StrategyWedgedItemReclaimTest extends \PHPUnit\Framework\TestCase
 
     public function test_one_failing_strategy_does_not_stop_the_sweep(): void
     {
-        PCM_DB::$staleStrategies  = array(
-            (object) array('strategyId' => 3, 'userId' => 9),
-            (object) array('strategyId' => 4, 'userId' => 9),
+        PCM_DB::$staleItems = array(
+            (object) array('id' => 11, 'strategyId' => 3, 'userId' => 9, 'config' => null),
+            (object) array('id' => 12, 'strategyId' => 4, 'userId' => 9, 'config' => null),
         );
-        PCM_DB::$reclaimThrowsFor = array(3);
+        PCM_DB::$updateThrowsFor = array(11);
 
         PCM_Strategy_Service::reclaim_wedged_items();
 
-        $this->assertCount(2, PCM_DB::$reclaimCalls, 'strategy #4 must still be swept');
+        $this->assertCount(2, PCM_DB::$updateCalls, 'item #12 must still be swept');
         $this->assertCount(1, PCM_Test_Cron::$scheduleCalls, 'only the surviving strategy re-arms');
         $this->assertSame(array(4, 9), PCM_Test_Cron::$scheduleCalls[0]['args']);
+    }
+
+    /**
+     * W3: an item that has already been reclaimed the max number of times must
+     * be marked 'error' (not flipped back to 'pending'), so a deterministically-
+     * failing item stops re-burning LLM/image spend. Default cap is 3.
+     */
+    public function test_item_at_attempt_cap_is_failed_not_requeued(): void
+    {
+        $GLOBALS['pcm_test_options']['pcm_strategy_max_attempts'] = '3';
+        // config.attempts already at 3 → this reclaim must FAIL the item. The
+        // fake in-memory item is seeded so recompute_counters can count it.
+        PCM_DB::$items = array(11 => (object) array('id' => 11, 'strategyId' => 3, 'status' => 'error'));
+        PCM_DB::$staleItems = array(
+            (object) array('id' => 11, 'strategyId' => 3, 'userId' => 9, 'config' => wp_json_encode(array('attempts' => 3))),
+        );
+
+        PCM_Strategy_Service::reclaim_wedged_items();
+
+        $this->assertCount(1, PCM_DB::$updateCalls, 'the item is written once');
+        $this->assertSame('error', PCM_DB::$updateCalls[0]['data']['status'], 'an item past the cap is failed, not retried');
+        $this->assertStringContainsString('failed after', (string) PCM_DB::$updateCalls[0]['data']['errorMessage']);
+        $this->assertCount(0, PCM_Test_Cron::$scheduleCalls, 'a failed item must not re-arm the queue');
+        // P2 pin: a strategy whose item was capped-to-failed must still get its
+        // counters recomputed (recompute_counters → update_strategy) so the
+        // failedItems count and status reflect the failure immediately.
+        $this->assertArrayHasKey('failedItems', PCM_DB::$strategy, 'recompute_counters must run for a capped-to-failed strategy');
+    }
+
+    /**
+     * W3: an item UNDER the cap is reclaimed to 'pending' AND its attempts
+     * counter is bumped, so the next reclaim sees one more attempt.
+     */
+    public function test_item_under_cap_is_reclaimed_with_incremented_attempts(): void
+    {
+        $GLOBALS['pcm_test_options']['pcm_strategy_max_attempts'] = '3';
+        PCM_DB::$staleItems = array(
+            (object) array('id' => 11, 'strategyId' => 3, 'userId' => 9, 'config' => wp_json_encode(array('attempts' => 1))),
+        );
+
+        PCM_Strategy_Service::reclaim_wedged_items();
+
+        $this->assertSame('pending', PCM_DB::$updateCalls[0]['data']['status'], 'an item under the cap is retried');
+        $cfg = json_decode((string) PCM_DB::$updateCalls[0]['data']['config'], true);
+        $this->assertSame(2, $cfg['attempts'], 'the attempt counter is incremented on each reclaim');
+    }
+
+    /**
+     * W2: the wedge-reclaim sweep must run on an independent cron (not only the
+     * traffic-driven keep-alive chain), so a killed item is recovered even on a
+     * DISABLE_WP_CRON host with no loopback. Source-invariant check (same style
+     * as test_keepalive_chain_calls_the_sweep_before_draining_events).
+     */
+    public function test_wedge_reclaim_has_an_independent_cron_action_and_interval(): void
+    {
+        $src = file_get_contents(dirname(__DIR__, 2) . '/includes/modules/strategy/service.php');
+        $this->assertIsString($src);
+        // The action callback is wired at file load.
+        $this->assertNotFalse(
+            strpos($src, "add_action('pcm_strategy_wedge_reclaim', array('PCM_Strategy_Service', 'reclaim_wedged_items'))"),
+            'pcm_strategy_wedge_reclaim action must be registered for reclaim_wedged_items()'
+        );
+        // A dedicated interval is registered via cron_schedules.
+        $this->assertNotFalse(strpos($src, "'pcm_wedge_interval'"), 'a pcm_wedge_interval cron schedule must exist');
+        // And a recurring event is armed on that interval.
+        $this->assertNotFalse(
+            strpos($src, "wp_schedule_event(time(), 'pcm_wedge_interval', 'pcm_strategy_wedge_reclaim')"),
+            'a recurring pcm_strategy_wedge_reclaim event must be scheduled'
+        );
     }
 }

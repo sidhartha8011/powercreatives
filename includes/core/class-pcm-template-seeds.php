@@ -308,7 +308,11 @@ Return ONLY the structured prompt, nothing else.',
                             'key' => 'seo_pillar_prompt',
                             'category' => 'prompt',
                             'label' => 'Generation Prompt',
-                            'value' => 'You are an expert SEO content writer. Create a comprehensive, pillar-style article for the provided keyword.
+                            'value' => 'You are an expert SEO content writer. Create a comprehensive, pillar-style article for the target keyword: {{ keyword }}.
+
+{{ brand_context }}
+
+{{ research }}
 
 STRUCTURE REQUIREMENTS:
 - Use an engaging H1 title.
@@ -323,7 +327,10 @@ CONTENT RULES:
 - Ensure paragraphs are short (2-3 sentences) for screen readability.
 - Use bullet points or numbered lists where appropriate to make data scannable.
 
+{{ media_instructions }}
+
 OUTPUT FORMAT:
+{{ output_format }}
 - Output clean, semantic HTML. Only use tags like <h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong>, <em>.
 - Do not wrap the output in ```html blocks or include a <body> / <html> tag.',
                         ),
