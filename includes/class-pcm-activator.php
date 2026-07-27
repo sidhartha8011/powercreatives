@@ -121,6 +121,14 @@ class PCM_Activator
     {
         $installed_version = get_option('pcm_db_version', '0.0.0');
 
+        // Default TEMPLATES ship independently of the schema: adding one is not
+        // a DB change, so PCM_DB_VERSION is (correctly) not bumped for it — and
+        // the version-gated seeding below therefore never delivered a new
+        // default template to an existing install. This signature check does,
+        // on the first page load after the seeds file changes. Cheap (one stat
+        // + one autoloaded option) and idempotent; see maybe_seed().
+        PCM_Template_Seeds::maybe_seed();
+
         if (version_compare($installed_version, PCM_DB_VERSION, '<')) {
             PCM_Schema::create_tables();
             PCM_Template_Seeds::seed();

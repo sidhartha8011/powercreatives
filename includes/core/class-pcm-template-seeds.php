@@ -35,6 +35,43 @@ class PCM_Template_Seeds
     }
 
     /**
+     * Run seed() when the seed DEFINITIONS have changed since the last run.
+     *
+     * WHY THIS EXISTS: seeding used to happen ONLY inside maybe_upgrade()'s
+     * `pcm_db_version < PCM_DB_VERSION` gate. But adding a template is not a
+     * schema change, so PCM_DB_VERSION correctly does NOT get bumped for one —
+     * which meant a new default template could never reach an already-installed
+     * site. The plugin updated, the file shipped, and the template simply never
+     * appeared (reported live: the new reposting templates were missing after a
+     * plugin update). The only delivery path was the manual "Reseed defaults"
+     * button, which nobody should have to know about.
+     *
+     * The signature is the seeds file's mtime+size — one stat(), no parsing of
+     * the (large) definition array on every request. Any deploy that changes
+     * this file changes the signature, so the new templates land on the next
+     * page load, exactly once. seed() itself is idempotent (insert_if_missing
+     * skips by name+module), so a spurious re-run is harmless.
+     *
+     * @return void
+     */
+    public static function maybe_seed(): void
+    {
+        if (!function_exists('get_option') || !function_exists('update_option')) {
+            return;
+        }
+        $stat = @stat(__FILE__);
+        if ($stat === false) {
+            return; // cannot fingerprint the file — leave the existing behaviour alone
+        }
+        $signature = md5((string) $stat['mtime'] . '|' . (string) $stat['size']);
+        if ((string) get_option('pcm_template_seeds_sig', '') === $signature) {
+            return; // definitions unchanged since the last seed
+        }
+        self::seed();
+        update_option('pcm_template_seeds_sig', $signature, false);
+    }
+
+    /**
      * Insert a template only if no template with the same name+module already exists.
      *
      * @param array $template Template data.
@@ -332,6 +369,102 @@ CONTENT RULES:
 OUTPUT FORMAT:
 {{ output_format }}
 - Output clean, semantic HTML. Only use tags like <h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong>, <em>.
+- Do not wrap the output in ```html blocks or include a <body> / <html> tag.',
+                        ),
+                    ),
+                ),
+            ),
+
+            // ─────────────────────────────────────────────
+            // WRITER: Social Media Reposting — the ENTIRE reposting prompt lives
+            // here (no hidden hardcoded rider). References the source variables
+            // {{ post_title }} / {{ post_link }} / {{ post_content }}, which makes
+            // generate_next_item() suppress the legacy code rider, plus every
+            // standard fragment so nothing is auto-appended — the author sees and
+            // edits the whole prompt.
+            // ─────────────────────────────────────────────
+            array(
+                'name' => 'Social Media Reposting',
+                'module' => 'writer',
+                'description' => 'Turns a watched social post into an original article that links back to it. Uses the {{ post_title }} / {{ post_link }} / {{ post_content }} variables — edit the whole prompt here.',
+                'isDefault' => 0,
+                'formData' => array(
+                    'type' => 'generation',
+                    'entries' => array(
+                        array(
+                            'key' => 'social_repost_prompt',
+                            'category' => 'prompt',
+                            'label' => 'Generation Prompt',
+                            'value' => 'You are an expert content writer. Write an original, engaging article ABOUT the social media post below. Expand on its topic and add genuine value for the reader — do not merely quote or summarize it.
+
+SOURCE POST
+- Title: {{ post_title }}
+- Link: {{ post_link }}
+- What the post says: {{ post_content }}
+
+Primary subject / keyword: {{ keyword }}
+
+{{ brand_context }}
+
+{{ research }}
+
+REQUIREMENTS
+- Write a standalone article on the subject of the post.
+- INCLUDE a visible hyperlink to the original post ({{ post_link }}) somewhere in the article HTML.
+- Stay faithful to the angle and topic of the source post.
+- Keep paragraphs short and scannable; use H2/H3 subheadings and lists where useful.
+
+{{ media_instructions }}
+
+OUTPUT FORMAT:
+{{ output_format }}
+- Output clean, semantic HTML. Only use tags like <h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong>, <em>, <a>.
+- Do not wrap the output in ```html blocks or include a <body> / <html> tag.',
+                        ),
+                    ),
+                ),
+            ),
+
+            // ─────────────────────────────────────────────
+            // WRITER: RSS Reposting — the ENTIRE RSS response prompt lives here
+            // (no hidden hardcoded rider). Same variable + fragment coverage as
+            // the social template above.
+            // ─────────────────────────────────────────────
+            array(
+                'name' => 'RSS Reposting',
+                'module' => 'writer',
+                'description' => 'Turns a new RSS feed item into a better, more complete take on the topic. Uses the {{ post_title }} / {{ post_link }} / {{ post_content }} variables — edit the whole prompt here.',
+                'isDefault' => 0,
+                'formData' => array(
+                    'type' => 'generation',
+                    'entries' => array(
+                        array(
+                            'key' => 'rss_repost_prompt',
+                            'category' => 'prompt',
+                            'label' => 'Generation Prompt',
+                            'value' => 'You are an expert content writer. This article responds to a new industry item. Write a better, more complete, and more useful take on that topic than the source.
+
+SOURCE ITEM
+- Title: {{ post_title }}
+- Link: {{ post_link }}
+- Summary: {{ post_content }}
+
+Primary subject / keyword: {{ keyword }}
+
+{{ brand_context }}
+
+{{ research }}
+
+REQUIREMENTS
+- Do not copy the source; outdo it. Add depth, context, examples, and actionable insight.
+- Reference the original where relevant and link to it ({{ post_link }}).
+- Keep paragraphs short and scannable; use H2/H3 subheadings and lists where useful.
+
+{{ media_instructions }}
+
+OUTPUT FORMAT:
+{{ output_format }}
+- Output clean, semantic HTML. Only use tags like <h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong>, <em>, <a>.
 - Do not wrap the output in ```html blocks or include a <body> / <html> tag.',
                         ),
                     ),
