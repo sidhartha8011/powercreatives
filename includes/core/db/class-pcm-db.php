@@ -1111,6 +1111,26 @@ class PCM_DB
     }
 
     /**
+     * Count a strategy's items that already occupy a schedule slot (non-null
+     * scheduledDate). The watcher uses this as the tail anchor when assigning
+     * recurrence dates to newly-created items (drip-publish), so each new item
+     * gets the next open slot computed deterministically from the start date.
+     *
+     * @param int $strategy_id Strategy ID.
+     * @return int Count of items with a scheduledDate.
+     */
+    public static function count_scheduled_strategy_items(int $strategy_id): int
+    {
+        global $wpdb;
+        $table = self::t('strategy_items');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table} WHERE strategyId = %d AND scheduledDate IS NOT NULL",
+            $strategy_id
+        ));
+    }
+
+    /**
      * Distinct (strategyId, userId) pairs holding at least one item WEDGED in
      * 'generating' — claimed before $cutoff and never resolved.
      *

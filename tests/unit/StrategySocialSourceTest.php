@@ -144,6 +144,12 @@ function pcm_test_define_social_source_fakes(): void
             {
                 return self::$itemCount;
             }
+            /** @var int Items already occupying a schedule slot (drip anchor). */
+            public static $scheduledItemCount = 0;
+            public static function count_scheduled_strategy_items($sid)
+            {
+                return self::$scheduledItemCount;
+            }
             public static function create_rss_strategy_item($strategy_id, $user_id, $keyword, $item_config = array())
             {
                 self::$rssItemCalls[] = array(
@@ -566,6 +572,98 @@ class StrategySocialSourceTest extends \PHPUnit\Framework\TestCase
         $this->assertContains(md5('https://www.instagram.com/p/Cabc123/'), $written['rssSeen'] ?? array(), 'the guid is marked seen — never re-ingested');
         // And the background queue got its kick for the new pending item.
         $this->assertContains('pcm_strategy_process_queue', $this->scheduledHooks());
+    }
+
+    /**
+     * Drip-publish: a Social strategy set to publishingMode='schedule' with a
+     * scheduleConfig HOLDS each watcher-created article — it gets a future
+     * scheduledDate from the recurrence and is NOT generated immediately (the
+     * daily scheduled scan releases it on its slot). The recurrence replaces the
+     * perWeek backpressure as the cadence.
+     */
+    public function test_scheduled_social_watcher_drips_items_on_the_recurrence(): void
+    {
+        PCM_Test_Cron::$now = '2026-07-16 12:00:00';
+        PCM_DB::$scheduledItemCount = 0; // fresh strategy → first slots
+        PCM_DB::$strategyRow = (object)array(
+            'id' => 7, 'userId' => 42, 'status' => 'pending',
+            'publishingMode' => 'schedule',
+            'config' => json_encode(array(
+                'sourceMode'     => 'social',
+                'socialLinks'    => array('https://www.instagram.com/nasa'),
+                'socialAccounts' => array(array('url' => 'https://www.instagram.com/nasa', 'platform' => 'instagram')),
+                'rssCadence'     => array('perWeek' => 1), // would allow only 1/week if backpressure applied
+                'scheduleConfig' => array('frequency' => 'daily', 'startDate' => '2026-07-16 09:00:00'),
+            )),
+        );
+        // TWO fresh posts this pass — with perWeek=1 the old backpressure would
+        // create only 1; drip mode bypasses that and schedules BOTH.
+        PCM_Apify::$items = array(
+            array('shortCode' => 'Caaa', 'url' => 'https://www.instagram.com/p/Caaa/', 'id' => '1', 'caption' => 'First post',  'timestamp' => '2026-07-16T08:00:00.000Z'),
+            array('shortCode' => 'Cbbb', 'url' => 'https://www.instagram.com/p/Cbbb/', 'id' => '2', 'caption' => 'Second post', 'timestamp' => '2026-07-16T07:00:00.000Z'),
+        );
+
+        PCM_Strategy_Service::run_rss_first_scan(7, 42);
+
+        // Both posts became items (backpressure bypassed — schedule paces).
+        $this->assertCount(2, PCM_DB::$rssItemCalls, 'drip mode schedules the whole queue, not perWeek');
+
+        // Each new item was stamped a scheduledDate (future release slot).
+        $scheduled = array_values(array_filter(
+            PCM_DB::$updateItemCalls,
+            static fn($c) => isset($c['data']['scheduledDate'])
+        ));
+        $this->assertCount(2, $scheduled, 'every dripped item gets a scheduledDate');
+        foreach ($scheduled as $c) {
+            $this->assertNotEmpty($c['data']['scheduledDate']);
+            $this->assertGreaterThan(
+                strtotime('2026-07-15 00:00:00'),
+                strtotime((string) $c['data']['scheduledDate']),
+                'the slot is a real recurrence date'
+            );
+        }
+
+        // Immediate generation is NOT kicked — the scheduled scan releases them.
+        $this->assertNotContains('pcm_strategy_process_queue', $this->scheduledHooks(), 'scheduled items must NOT generate immediately');
+    }
+
+    /**
+     * Anti-drift: with a BLANK startDate (the UI default "leave blank to start
+     * today") and items already scheduled, the watcher must anchor the
+     * recurrence on the strategy's fixed createdAt — NOT on current_time() each
+     * scan. Otherwise slice[already] = now + already*interval would push every
+     * new item further into the future and the drip would stall.
+     */
+    public function test_blank_start_anchors_on_createdAt_not_now_so_the_drip_does_not_drift(): void
+    {
+        PCM_Test_Cron::$now = '2026-07-16 12:00:00';   // "now" is far from createdAt
+        PCM_DB::$scheduledItemCount = 3;               // already 3 items scheduled
+        PCM_DB::$strategyRow = (object)array(
+            'id' => 7, 'userId' => 42, 'status' => 'pending',
+            'publishingMode' => 'schedule',
+            'createdAt' => '2026-07-01 09:00:00',       // the fixed anchor
+            'config' => json_encode(array(
+                'sourceMode'     => 'social',
+                'socialAccounts' => array(array('url' => 'https://www.instagram.com/nasa', 'platform' => 'instagram')),
+                'scheduleConfig' => array('frequency' => 'daily'), // NO startDate → blank
+            )),
+        );
+        PCM_Apify::$items = array(
+            array('shortCode' => 'Cnext', 'url' => 'https://www.instagram.com/p/Cnext/', 'id' => '9', 'caption' => 'Next post', 'timestamp' => '2026-07-16T08:00:00.000Z'),
+        );
+
+        PCM_Strategy_Service::run_rss_first_scan(7, 42);
+
+        $scheduled = array_values(array_filter(
+            PCM_DB::$updateItemCalls,
+            static fn($c) => isset($c['data']['scheduledDate'])
+        ));
+        $this->assertCount(1, $scheduled);
+        $slot = strtotime((string) $scheduled[0]['data']['scheduledDate']);
+        // 4th daily slot (index 3) from createdAt 2026-07-01 → 2026-07-04, NOT
+        // near "now" (2026-07-16). A drifting impl would land ~2026-07-19.
+        $this->assertSame(strtotime('2026-07-04 09:00:00'), $slot, 'slot must be createdAt + 3 days (fixed anchor)');
+        $this->assertLessThan(strtotime('2026-07-10 00:00:00'), $slot, 'must NOT re-anchor at now');
     }
 
     public function test_watcher_social_branch_respects_the_four_hour_gate(): void

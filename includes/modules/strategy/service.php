@@ -2110,14 +2110,32 @@ class PCM_Strategy_Service
             }
         }
 
-        // ── Backpressure: perWeek cadence minus items created in the last 7
-        //    days; a 'limit' duration additionally caps this pass so the
-        //    watcher can never insert PAST maxArticles. ──
-        $week_ago = date('Y-m-d H:i:s', (int)strtotime(current_time('mysql')) - 7 * 86400);
-        $slots = self::rss_free_slots(PCM_DB::count_strategy_items($strategy_id, $week_ago), $config);
+        // ── Drip-publish detection: a Source=RSS/Social strategy set to publish
+        //    "On a schedule" holds each generated article and releases it on the
+        //    recurrence. The recurrence — NOT perWeek — is the cadence, so we pop
+        //    the whole queue and stamp each new item a future scheduledDate; the
+        //    daily scheduled scan then generates+publishes it on its slot. ──
+        $schedule_cfg = (($strategy->publishingMode ?? '') === 'schedule'
+            && is_array($config['scheduleConfig'] ?? null))
+            ? $config['scheduleConfig'] : null;
+
         $duration = is_array($config['duration'] ?? null) ? $config['duration'] : array();
-        if ((string)($duration['mode'] ?? '') === 'limit' && (int)($duration['maxArticles'] ?? 0) > 0) {
-            $slots = min($slots, max(0, (int)$duration['maxArticles'] - $item_count));
+        if ($schedule_cfg !== null) {
+            // Schedule paces publishing → bypass the perWeek backpressure; still
+            // honor a 'limit' duration so we never schedule past maxArticles.
+            $slots = is_array($config['rssQueue'] ?? null) ? count($config['rssQueue']) : 0;
+            if ((string)($duration['mode'] ?? '') === 'limit' && (int)($duration['maxArticles'] ?? 0) > 0) {
+                $slots = min($slots, max(0, (int)$duration['maxArticles'] - $item_count));
+            }
+        } else {
+            // ── Backpressure: perWeek cadence minus items created in the last 7
+            //    days; a 'limit' duration additionally caps this pass so the
+            //    watcher can never insert PAST maxArticles. ──
+            $week_ago = date('Y-m-d H:i:s', (int)strtotime(current_time('mysql')) - 7 * 86400);
+            $slots = self::rss_free_slots(PCM_DB::count_strategy_items($strategy_id, $week_ago), $config);
+            if ((string)($duration['mode'] ?? '') === 'limit' && (int)($duration['maxArticles'] ?? 0) > 0) {
+                $slots = min($slots, max(0, (int)$duration['maxArticles'] - $item_count));
+            }
         }
 
         // ── Pop freshest-first into pending strategy items. keyword = the feed
@@ -2126,6 +2144,28 @@ class PCM_Strategy_Service
         $pop      = self::rss_pop_due_items($config, $slots);
         $config   = $pop['config'];
         $inserted = 0;
+
+        // Drip-publish: precompute the recurrence slots for the items about to be
+        // created. Dates are computed from the ORIGINAL start over (alreadyScheduled
+        // + newBatch) so each new item deterministically lands in the NEXT open slot;
+        // a slot past an `ends` cap comes back null → that item keeps a null
+        // scheduledDate and stays pending (never published), which stops the drip.
+        $sched_dates = array();
+        $sched_i     = 0;
+        if ($schedule_cfg !== null && $pop['popped'] !== array()) {
+            $already = PCM_DB::count_scheduled_strategy_items($strategy_id);
+            // The anchor MUST be a FIXED point, not now: the tail is sliced at
+            // [already..] and `already` grows every scan, so re-anchoring at
+            // current_time() each pass would push every new item `already`
+            // intervals into the future and the drip would drift/stall. An empty
+            // startDate falls back to the strategy's createdAt (stable), NOT now.
+            $start_date = !empty($schedule_cfg['startDate'])
+                ? (string)$schedule_cfg['startDate']
+                : (string)($strategy->createdAt ?? current_time('mysql'));
+            $all_dates   = self::calculate_recurrence_dates($already + count($pop['popped']), $schedule_cfg, $start_date);
+            $sched_dates = array_slice($all_dates, $already); // the tail = this batch's slots
+        }
+
         foreach ($pop['popped'] as $entry) {
             $keyword = trim((string)($entry['title'] ?? ''));
             if ($keyword === '') {
@@ -2155,6 +2195,16 @@ class PCM_Strategy_Service
             $item_id = PCM_DB::create_rss_strategy_item($strategy_id, $user_id, $keyword, $item_cfg);
             if ($item_id) {
                 $inserted++;
+                // Drip-publish: stamp this item's release slot. A null slot (past
+                // the recurrence's `ends` cap) leaves scheduledDate null → the item
+                // stays pending and is never published, exactly like the create-path.
+                if ($schedule_cfg !== null) {
+                    $slot = $sched_dates[$sched_i] ?? null;
+                    if ($slot !== null) {
+                        PCM_DB::update_strategy_item((int)$item_id, array('scheduledDate' => $slot));
+                    }
+                    $sched_i++;
+                }
             }
         }
 
@@ -2176,8 +2226,11 @@ class PCM_Strategy_Service
         }
 
         // ── Kick the EXISTING background queue exactly once — it dedupes
-        //    itself and generates the new pending items one tick at a time. ──
-        if ($inserted > 0) {
+        //    itself and generates the new pending items one tick at a time.
+        //    SKIPPED for drip-publish (schedule mode): those items carry a future
+        //    scheduledDate and are generated+published by the daily scheduled scan
+        //    on their due date, not immediately (mirrors create_from_keywords). ──
+        if ($inserted > 0 && $schedule_cfg === null) {
             self::maybe_schedule_queue_continuation($strategy_id, $user_id);
         }
 
@@ -5667,6 +5720,51 @@ class PCM_Strategy_Service
      * uses to spawn its own cron (works on FPM; a dev `php -S` server cannot
      * service non-blocking loopbacks, but the work runs anyway, see below).
      */
+    /**
+     * Run one pass of the keep-alive chain's DUE WORK in the current process,
+     * with no sleep and no respawn — the fallback for hosts where the loopback
+     * self-request never lands (blocked/faked by the host, a security plugin, a
+     * firewall, or a single-threaded dev server), which otherwise leaves
+     * background scanning silently dead forever.
+     *
+     * Armed on `shutdown` by the init self-heal ONLY when the heartbeat has been
+     * missing >15 min (i.e. repeated spawns demonstrably are not landing), and
+     * throttled to once per 5 minutes. Running on shutdown means the HTTP
+     * response has already been sent, so the visitor never waits for it.
+     *
+     * Deliberately the SAME calls as run_keepalive_chain()'s work-first block —
+     * one behaviour, one place. It does NOT write pcm_keepalive_beat: the beat
+     * means "a real chain link is alive", and faking it here would suppress the
+     * spawn attempts that let a host recover the moment loopbacks work again.
+     */
+    public static function run_due_work_inline(): void
+    {
+        if (!function_exists('get_option') || (string) get_option('pcm_keepalive_enabled', '') === '0') {
+            return; // same hidden emergency brake as the chain
+        }
+        if (function_exists('ignore_user_abort')) {
+            ignore_user_abort(true);
+        }
+        // Response is already flushed on FPM; make sure of it where supported so
+        // this never holds the connection open.
+        if (function_exists('fastcgi_finish_request')) {
+            @fastcgi_finish_request();
+        }
+        @set_time_limit(180);
+
+        try {
+            $now = function_exists('current_time') ? (int) current_time('timestamp') : time();
+            if (self::keepalive_rss_due((string) get_option('pcm_rss_last_scan', ''), $now)) {
+                self::run_rss_scan();
+            }
+            self::run_scheduled_scan();
+            self::reclaim_wedged_items();
+            self::process_due_pcm_events();
+        } catch (\Throwable $e) {
+            error_log('[PCM_Strategy_Service] inline due-work fallback failed: ' . $e->getMessage());
+        }
+    }
+
     public static function spawn_keepalive(): void
     {
         if (!function_exists('get_option') || (string) get_option('pcm_keepalive_enabled', '') === '0') {
@@ -5767,6 +5865,31 @@ if (function_exists('add_action')) {
             && !get_transient('pcm_keepalive_respawn_lock')) {
             set_transient('pcm_keepalive_respawn_lock', 1, 90);
             PCM_Strategy_Service::spawn_keepalive();
+        }
+
+        // ── LOOPBACK-DEAD FALLBACK (the "auto-scan just doesn't run" fix) ──
+        // spawn_keepalive() is fire-and-forget: it never reads the response, so
+        // a host that BLOCKS or fakes loopback self-requests (managed WP, a
+        // security plugin, a firewall, or a single-threaded local server) makes
+        // every spawn look successful while the chain never executes. Combined
+        // with DISABLE_WP_CRON that left background scanning silently dead
+        // forever — the heartbeat simply never appears.
+        //
+        // So: when the heartbeat has been missing far longer than a working
+        // chain could ever go quiet, stop trusting the loopback and run the due
+        // work IN THIS PROCESS. Hooked to `shutdown` so it runs AFTER the
+        // response is sent — the visitor's page is never slowed. Throttled by
+        // its own transient, so a busy site runs it at most once per window.
+        // Where loopbacks DO work this branch never fires (the beat stays
+        // fresh); where they don't, scanning degrades to per-visit progress
+        // instead of not happening at all.
+        if (function_exists('get_option') && function_exists('get_transient')
+            && function_exists('add_action')
+            && (string) get_option('pcm_keepalive_enabled', '') !== '0'
+            && (time() - (int) get_option('pcm_keepalive_beat', 0)) > 900 // 15 min ⇒ spawns are not landing
+            && !get_transient('pcm_keepalive_inline_lock')) {
+            set_transient('pcm_keepalive_inline_lock', 1, 300); // at most once per 5 min
+            add_action('shutdown', array('PCM_Strategy_Service', 'run_due_work_inline'), 99);
         }
     });
 }

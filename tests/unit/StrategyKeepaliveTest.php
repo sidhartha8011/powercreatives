@@ -138,4 +138,62 @@ class StrategyKeepaliveTest extends \PHPUnit\Framework\TestCase
         $this->assertFalse($res->data['alive']);
         $this->assertCount(0, $GLOBALS['pcm_test_remote_posts']);
     }
+
+    // ── Loopback-dead fallback ────────────────────────────────────────────
+    // spawn_keepalive() is fire-and-forget, so a host that BLOCKS or fakes
+    // loopback self-requests makes every spawn look fine while the chain never
+    // runs — background scanning then never happens at all (the reported
+    // "auto-scan not working"). These pin the arming gate: it must stay OFF
+    // while the chain is healthy and only engage once the heartbeat proves the
+    // spawns are not landing.
+
+    /** The exact condition the init self-heal evaluates for the inline fallback. */
+    private function inlineFallbackArms(int $beatAgeSeconds, bool $lockHeld = false): bool
+    {
+        update_option('pcm_keepalive_enabled', ''); // brake off
+        update_option('pcm_keepalive_beat', time() - $beatAgeSeconds);
+        if ($lockHeld) {
+            set_transient('pcm_keepalive_inline_lock', 1, 300);
+        } else {
+            delete_transient('pcm_keepalive_inline_lock');
+        }
+        return (string) get_option('pcm_keepalive_enabled', '') !== '0'
+            && (time() - (int) get_option('pcm_keepalive_beat', 0)) > 900
+            && !get_transient('pcm_keepalive_inline_lock');
+    }
+
+    public function test_inline_fallback_stays_off_while_the_chain_is_healthy(): void
+    {
+        $this->assertFalse($this->inlineFallbackArms(0), 'fresh heartbeat → chain alive, no inline work');
+        $this->assertFalse($this->inlineFallbackArms(300), 'a 5-min quiet gap is normal between links');
+        $this->assertFalse($this->inlineFallbackArms(899), 'just under the threshold stays off');
+    }
+
+    public function test_inline_fallback_engages_once_spawns_are_clearly_not_landing(): void
+    {
+        $this->assertTrue($this->inlineFallbackArms(901), 'heartbeat gone >15 min → loopback is dead, run inline');
+        $this->assertTrue($this->inlineFallbackArms(7 * 86400), 'a week with no beat certainly qualifies');
+    }
+
+    public function test_inline_fallback_is_throttled_and_respects_the_brake(): void
+    {
+        $this->assertFalse($this->inlineFallbackArms(1200, true), 'throttle lock suppresses repeat runs');
+
+        update_option('pcm_keepalive_enabled', '0'); // hidden emergency brake
+        update_option('pcm_keepalive_beat', time() - 1200);
+        delete_transient('pcm_keepalive_inline_lock');
+        $this->assertFalse(
+            (string) get_option('pcm_keepalive_enabled', '') !== '0'
+                && (time() - (int) get_option('pcm_keepalive_beat', 0)) > 900,
+            'the brake disables the inline fallback too'
+        );
+    }
+
+    public function test_inline_runner_is_a_noop_under_the_brake(): void
+    {
+        // Brake on (setUp default) → returns immediately, touching nothing.
+        update_option('pcm_keepalive_enabled', '0');
+        PCM_Strategy_Service::run_due_work_inline();
+        $this->assertCount(0, $GLOBALS['pcm_test_remote_posts'], 'braked inline run must not spawn or scan');
+    }
 }

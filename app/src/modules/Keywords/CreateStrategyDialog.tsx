@@ -282,6 +282,10 @@ export function CreateStrategyDialog({
   const [socialLinks, setSocialLinks] = useState<string[]>(['']);
   const [rssAngle, setRssAngle] = useState('');
   const [rssPerWeek, setRssPerWeek] = useState(3);
+  // RSS/Social publish cadence: false = publish as posts arrive (capped by
+  // rssPerWeek); true = drip-publish each generated article on the recurrence
+  // below (the recurrence replaces posts-per-week).
+  const [socialScheduled, setSocialScheduled] = useState(false);
   const [trigger, setTrigger] = useState('manual');
   const [publishing, setPublishing] = useState('draft');
   const [durationMode, setDurationMode] = useState('ongoing');
@@ -324,6 +328,7 @@ export function CreateStrategyDialog({
       setSocialLinks(['']);
       setRssAngle('');
       setRssPerWeek(3);
+      setSocialScheduled(false);
       setTrigger('manual');
       setPublishing('draft');
       setDurationMode('ongoing');
@@ -358,6 +363,34 @@ export function CreateStrategyDialog({
       setSiteId((cur) => cur || String(list[0].id));
     }
   }, [open, sites]);
+
+  // RSS/Social reposting has its own seeded template ("RSS Reposting" /
+  // "Social Media Reposting") that carries the {{ post_* }} variables — the
+  // full prompt is IN the template, no hidden code rider. Auto-select it when
+  // the source is a feed so the visible reposting prompt is the default. Only
+  // fills an empty selection or swaps between the two reposting templates, so a
+  // deliberate manual pick is never clobbered.
+  React.useEffect(() => {
+    if (!open) return;
+    const list = (templates as any[]) ?? [];
+    if (list.length === 0) return;
+    const repostIds = new Set(
+      list.filter((t) => t.name === 'Social Media Reposting' || t.name === 'RSS Reposting').map((t) => String(t.id)),
+    );
+    const wanted =
+      sourceMode === 'social' ? 'Social Media Reposting'
+      : sourceMode === 'rss' ? 'RSS Reposting'
+      : null;
+    if (!wanted) {
+      // Back to Keywords: a reposting template renders empty {{ post_* }} tokens,
+      // so drop it (only if it was one of the auto-selected reposting ones).
+      setTemplateId((cur) => (repostIds.has(cur) ? '' : cur));
+      return;
+    }
+    const match = list.find((t) => t.name === wanted);
+    if (!match) return;
+    setTemplateId((cur) => (cur === '' || repostIds.has(cur) ? String(match.id) : cur));
+  }, [open, sourceMode, templates]);
 
   // Consolidated = one article for all keywords, so it can't have separate
   // parent + children articles — its single article can only be the pillar
@@ -402,12 +435,16 @@ export function CreateStrategyDialog({
         : hierarchyMode;
 
     // ── Filip's sections → FROZEN CONFIG CONTRACT ──
-    // RSS/social lock the trigger to 'new_source_item'; keywords use manual/scheduled.
-    const effectiveTrigger =
-      sourceMode === 'rss' || sourceMode === 'social' ? 'new_source_item' : trigger;
-    // publishingMode = trigger==='scheduled' ? 'schedule' : (publishing==='auto' ? 'publish' : 'draft')
+    // RSS/social lock the GENERATION trigger to 'new_source_item' (the watcher
+    // pulls on new source items); keywords use manual/scheduled.
+    const isSourceFeed = sourceMode === 'rss' || sourceMode === 'social';
+    const effectiveTrigger = isSourceFeed ? 'new_source_item' : trigger;
+    // publishingMode 'schedule' when the user picked a recurrence:
+    //   keywords → trigger==='scheduled'; rss/social → socialScheduled (drip).
+    // Otherwise draft/publish per the Publishing section.
+    const wantsSchedule = isSourceFeed ? socialScheduled : effectiveTrigger === 'scheduled';
     const publishingMode =
-      effectiveTrigger === 'scheduled' ? 'schedule' : publishing === 'auto' ? 'publish' : 'draft';
+      wantsSchedule ? 'schedule' : publishing === 'auto' ? 'publish' : 'draft';
 
     const researchPasses = [
       researchLandscape ? 'landscape' : null,
@@ -777,31 +814,69 @@ export function CreateStrategyDialog({
               ) : (
                 <>
                   <div className="space-y-1.5">
-                    <Label
-                      htmlFor="rss-per-week"
-                      className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground"
-                    >
-                      Posting cadence
+                    <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                      When to publish
                     </Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="rss-per-week"
-                        type="number"
-                        min={1}
-                        max={21}
-                        value={rssPerWeek}
-                        onChange={(e) => setRssPerWeek(Math.min(21, Math.max(1, parseInt(e.target.value, 10) || 1)))}
-                        className="w-20 h-8 text-xs bg-background"
-                      />
-                      <span className="text-xs text-muted-foreground">posts per week</span>
-                    </div>
+                    <Segmented
+                      value={socialScheduled ? 'scheduled' : 'immediate'}
+                      onChange={(v) => setSocialScheduled(v === 'scheduled')}
+                      options={[
+                        { value: 'immediate', label: 'As posts arrive' },
+                        { value: 'scheduled', label: 'On a schedule' },
+                      ]}
+                    />
                   </div>
 
-                  <div className="rounded-md border border-border bg-muted/20 p-2.5 text-xs text-foreground text-pretty">
-                    New {sourceMode === 'social' ? 'posts' : 'feed items'} publish up to{' '}
-                    <span className="font-medium">{rssPerWeek}</span> per week. Anything extra queues for the
-                    next free slot — your site is never flooded.
-                  </div>
+                  {!socialScheduled ? (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="rss-per-week">Posting cadence</Label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            id="rss-per-week"
+                            type="number"
+                            min={1}
+                            max={21}
+                            value={rssPerWeek}
+                            onChange={(e) => setRssPerWeek(Math.min(21, Math.max(1, parseInt(e.target.value, 10) || 1)))}
+                            className="w-20 h-8 text-xs bg-background"
+                          />
+                          <span className="text-xs text-muted-foreground">posts per week</span>
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-border bg-muted/20 p-2.5 text-xs text-foreground text-pretty">
+                        New {sourceMode === 'social' ? 'posts' : 'feed items'} publish up to{' '}
+                        <span className="font-medium">{rssPerWeek}</span> per week. Anything extra queues for the
+                        next free slot — your site is never flooded.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <Label>Frequency</Label>
+                          <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Start date</Label>
+                          <Input
+                            type="date"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                            className="w-full bg-background"
+                          />
+                          <p className="text-[0.7rem] text-muted-foreground">Leave blank to start today.</p>
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-border bg-muted/20 p-2.5 text-xs text-foreground text-pretty">
+                        New {sourceMode === 'social' ? 'posts' : 'feed items'} are pulled automatically, then each
+                        article publishes{' '}
+                        <span className="font-medium">{describeRecurrence(recurrence)}</span>, starting{' '}
+                        <span className="font-medium">{formatStartLabel(startDate)}</span>
+                        {describeDurationSuffix(durationMode, durationEndDate, durationMaxArticles)} — one per slot.
+                      </div>
+                    </>
+                  )}
                 </>
               )}
             </div>

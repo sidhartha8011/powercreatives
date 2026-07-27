@@ -54,6 +54,11 @@ function pcm_test_define_crontick_fakes(): void
             $GLOBALS['pcm_test_transients'][$key] = $value;
             return true;
         }
+        function delete_transient($key)
+        {
+            unset($GLOBALS['pcm_test_transients'][$key]);
+            return true;
+        }
     }
     if (!function_exists('rest_url')) {
         function rest_url($path = '')
