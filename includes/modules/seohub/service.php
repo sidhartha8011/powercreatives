@@ -399,10 +399,63 @@ class PCM_SEOHub_Service
         return preg_match('/^\s*\*\s*Version:\s*([0-9][0-9.]*)/m', $php, $m) ? $m[1] : '0';
     }
 
+    /**
+     * The EFFECTIVE connector version the self-update system advertises AND bakes
+     * into the connector's plugin header: the header base (e.g. 3.0.8) plus a
+     * monotonic BUILD counter that increments on ANY change to the connector
+     * source.
+     *
+     * WHY: WordPress only self-updates a plugin when the update manifest offers a
+     * version STRICTLY GREATER than the installed one. The manifest version was
+     * the hand-maintained `Version:` header — so editing the connector without
+     * remembering to bump that header left every connected site stuck ("up to
+     * date") and the change could only be shipped by a manual per-site re-upload.
+     * The build suffix makes a real code change bump the version automatically,
+     * so self-update fires on its own.
+     */
+    public static function connector_effective_version(): string
+    {
+        return self::connector_template_version() . '.' . self::connector_build_number();
+    }
+
+    /**
+     * Build number, bumped whenever the RAW connector template changes. Hashed
+     * with placeholders intact, so it is invariant across per-site/per-hub
+     * baking (hub URL, client id) — only a genuine source change moves it.
+     * Stored on the hub in `pcm_seohub_conn_build` (autoload off).
+     *
+     * DURABILITY: the served version must never REGRESS, or connected sites on a
+     * higher build would be offered a lower one and self-update would stall
+     * again (the exact bug this fixes). A plain counter regresses if the option
+     * is ever lost (hub uninstall/reinstall, DB restore from an older backup).
+     * So each new build is floored to a monotonic, option-INDEPENDENT clock —
+     * whole days since a fixed epoch — which only ever moves forward. Even after
+     * total option loss the next build lands at today's floor, at or above every
+     * previously served build (a real regression would require sustaining >1
+     * connector source change PER DAY since the epoch — never true in practice).
+     * The floor also dominates the change-count, so the number reads as a build
+     * stamp, not a literal edit tally.
+     */
+    private static function connector_build_number(): int
+    {
+        $sig   = md5(self::connector_php_simple_raw());
+        $state = get_option('pcm_seohub_conn_build', array());
+        if (is_array($state) && ($state['sig'] ?? '') === $sig && isset($state['build'])) {
+            return (int) $state['build']; // unchanged source → stable, no re-offer
+        }
+        $prev  = is_array($state) ? (int) ($state['build'] ?? 0) : 0;
+        // 1767225600 = 2026-01-01 00:00 UTC. Whole days since then: monotonic,
+        // stable within a day, and independent of the (loseable) counter option.
+        $floor = (int) floor((time() - 1767225600) / 86400);
+        $build = max($prev + 1, $floor);
+        update_option('pcm_seohub_conn_build', array('sig' => $sig, 'build' => $build), false);
+        return $build;
+    }
+
     public static function connector_artifact(): array
     {
         $php = self::connector_php_simple(); // fully baked (hub URL + version)
-        $ver = self::connector_template_version($php);
+        $ver = self::connector_effective_version();
         $sig = md5($php);
         $cache = get_option('pcm_seohub_conn_pkg', array());
         if (is_array($cache) && ($cache['sig'] ?? '') === $sig && !empty($cache['zip_b64'])) {
@@ -442,8 +495,14 @@ class PCM_SEOHub_Service
         $manifest = rest_url('pcm/v1/seohub/connector-manifest');
         $scheme   = (string) (wp_parse_url($manifest, PHP_URL_SCHEME) ?: 'https');
         $host     = (string) (wp_parse_url($manifest, PHP_URL_HOST) ?: wp_parse_url(home_url('/'), PHP_URL_HOST));
-        $version  = self::connector_template_version($php);
-        return strtr($php, array(
+        $version  = self::connector_effective_version();
+        // Rewrite the plugin HEADER version to the effective (build-suffixed)
+        // version. WordPress reads the INSTALLED version from this header, so it
+        // MUST match the manifest version — otherwise the header stays at the
+        // base (3.0.8) while the manifest offers 3.0.8.N and every poll re-offers
+        // the update (an install loop). One replacement, the header line only.
+        $php = preg_replace('/^(\s*\*\s*Version:\s*)[0-9][0-9.]*/m', '${1}' . $version, $php, 1);
+        return strtr((string) $php, array(
             '__PCM_CONN_MANIFEST_URL__'  => $manifest,
             '__PCM_CONN_UPDATE_URI__'    => $scheme . '://' . $host . '/pcm-connector',
             '__PCM_CONN_UPDATE_HOST__'   => $host,

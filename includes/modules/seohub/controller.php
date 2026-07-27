@@ -141,7 +141,7 @@ class PCM_REST_SEOHub extends PCM_REST_Base
         }
         nocache_headers();
         header('Content-Type: application/zip');
-        header('Content-Disposition: attachment; filename="pcm-connector-' . $tenant->clientId . '-' . PCM_SEOHub_Service::connector_template_version() . '.zip"');
+        header('Content-Disposition: attachment; filename="pcm-connector-' . $tenant->clientId . '-' . PCM_SEOHub_Service::connector_effective_version() . '.zip"');
         header('Content-Length: ' . filesize($path));
         readfile($path);
         @unlink($path); // don't leave the secret-bearing ZIP on disk
@@ -161,7 +161,7 @@ class PCM_REST_SEOHub extends PCM_REST_Base
         }
         nocache_headers();
         header('Content-Type: application/zip');
-        header('Content-Disposition: attachment; filename="pcm-connector-' . PCM_SEOHub_Service::connector_template_version() . '.zip"');
+        header('Content-Disposition: attachment; filename="pcm-connector-' . PCM_SEOHub_Service::connector_effective_version() . '.zip"');
         header('Content-Length: ' . filesize($path));
         readfile($path);
         @unlink($path);
