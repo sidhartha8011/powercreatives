@@ -565,7 +565,35 @@ class PCM_Sites_Service
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
         if ($status < 200 || $status >= 300) {
-            $message = $body['message'] ?? "HTTP {$status}";
+            $code    = is_array($body) ? (string) ($body['code'] ?? '') : '';
+            $message = is_array($body) ? (string) ($body['message'] ?? '') : '';
+            if ($message === '') {
+                $message = "HTTP {$status}";
+            }
+
+            // The connected Application-Password user's ROLE lacks the capability
+            // to create or publish this post. WordPress signals it with one of
+            // three REST codes (verified against wp-includes REST posts
+            // controller): `rest_cannot_create` (no `create_posts`/`edit_posts`
+            // — e.g. a Subscriber; message "…create posts as this user"),
+            // `rest_cannot_publish` (can draft but not publish — e.g. a
+            // Contributor; message "…publish posts in this post type"), and
+            // `rest_cannot_edit_others` (author-mismatch — unreachable here since
+            // we never send an `author`, kept defensively). The reported Swedish
+            // "…skapa inlägg som om du vore denna användare" is rest_cannot_create.
+            // Key on the UNtranslated `code` (the message is localized) and
+            // surface an actionable remedy instead of the raw WordPress text.
+            if (in_array($code, array('rest_cannot_create', 'rest_cannot_publish', 'rest_cannot_edit_others'), true)) {
+                throw new \RuntimeException(sprintf(
+                    /* translators: %s = the Application Password username on the connected site. */
+                    __(
+                        'The connected site won\'t let the user "%s" create or publish posts — that user\'s role lacks the required permission. Reconnect the site (Sites → this site → credentials) with an Application Password from an Editor or Administrator account.',
+                        'power-creatives'
+                    ),
+                    (string) $site->username
+                ));
+            }
+
             throw new \RuntimeException("WordPress API error: {$message}");
         }
 

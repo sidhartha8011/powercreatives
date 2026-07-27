@@ -130,6 +130,8 @@ function pcm_test_define_sites_fakes(): void
             public static $postStatus;
             public static $postId;
             public static $postLink;
+            /** @var string|null When set, the /wp/v2/posts POST returns this body verbatim (error-path tests). */
+            public static $postBody;
             /** @var array<int,array{id:int,name:string}> rows a term search GET returns */
             public static $termSearchRows;
             /** @var int id a term-create POST returns (0 => the create "fails") */
@@ -145,6 +147,7 @@ function pcm_test_define_sites_fakes(): void
                 self::$postStatus       = 201;
                 self::$postId           = 777;
                 self::$postLink         = 'https://site.example/hello-world';
+                self::$postBody         = null;
                 self::$termSearchRows   = array();
                 self::$termCreateId     = 0;
             }
@@ -175,7 +178,7 @@ function pcm_test_define_sites_fakes(): void
                 if ($method === 'POST' && $route === '/wp/v2/posts') {
                     return array(
                         'status'  => self::$postStatus,
-                        'body'    => json_encode(array('id' => self::$postId, 'link' => self::$postLink)),
+                        'body'    => self::$postBody ?? json_encode(array('id' => self::$postId, 'link' => self::$postLink)),
                         'headers' => array(),
                     );
                 }
@@ -294,6 +297,61 @@ class SitesPublishEnrichmentTest extends \PHPUnit\Framework\TestCase
             $this->assertStringNotContainsString('/wp/v2/media', $label, 'media endpoints must not be touched without a featured image');
             $this->assertNotSame('GET image', $label, 'no source image should be fetched');
         }
+    }
+
+    // ── Error translation: role-permission codes → actionable message ───────
+
+    /**
+     * The EXACT reported bug: the connected site's Application-Password user
+     * lacks the `create_posts` capability (e.g. a Subscriber). WP core pairs
+     * code `rest_cannot_create` with the localized string "…create posts as
+     * this user" (the reported Swedish text). Verified against wp-includes REST
+     * posts controller. The thrown error must name the user + the fix, not echo
+     * the opaque WordPress text.
+     */
+    public function test_rest_cannot_create_becomes_an_actionable_error(): void
+    {
+        PCM_Test_Http::$postStatus = 401;
+        PCM_Test_Http::$postBody   = json_encode(array(
+            'code'    => 'rest_cannot_create',
+            'message' => 'Du har inte behörighet att skapa inlägg som om du vore denna användare.',
+            'data'    => array('status' => 401),
+        ));
+
+        try {
+            PCM_Sites_Service::publish_to_site($this->site, $this->article(), 5);
+            $this->fail('publish_to_site must throw on a 401 rest_cannot_create');
+        } catch (\RuntimeException $e) {
+            $msg = $e->getMessage();
+            $this->assertStringContainsString('admin', $msg, 'the message names the remote username');
+            $this->assertStringContainsString('Editor or Administrator', $msg, 'the message states the remedy');
+            $this->assertStringNotContainsString('WordPress API error', $msg, 'the opaque raw-text branch must not be used');
+            // The failed publish must NOT flip the article to "published".
+            $this->assertCount(0, PCM_DB::$updateArticleCalls, 'a rejected publish records no published state');
+        }
+    }
+
+    /** A Contributor (can draft, not publish): rest_cannot_publish, a DIFFERENT
+     *  WP message — still a role failure, still translated to the remedy. */
+    public function test_rest_cannot_publish_also_translated(): void
+    {
+        PCM_Test_Http::$postStatus = 403;
+        PCM_Test_Http::$postBody   = json_encode(array(
+            'code'    => 'rest_cannot_publish',
+            'message' => 'Sorry, you are not allowed to publish posts in this post type.',
+        ));
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/Editor or Administrator/');
+        PCM_Sites_Service::publish_to_site($this->site, $this->article(), 5);
+    }
+
+    public function test_other_api_errors_keep_the_raw_message(): void
+    {
+        PCM_Test_Http::$postStatus = 500;
+        PCM_Test_Http::$postBody   = json_encode(array('code' => 'internal_error', 'message' => 'Boom'));
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('WordPress API error: Boom');
+        PCM_Sites_Service::publish_to_site($this->site, $this->article(), 5);
     }
 
     // ── A4-wire: existing ld+json is not double-embedded ────────────────────
