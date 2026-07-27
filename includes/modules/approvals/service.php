@@ -1190,12 +1190,22 @@ class PCM_Approvals_Service
         ) {
             PCM_Automation_Engine::fire_trigger(
                 'approvals.set_fully_approved',
-                array(
-                    'setId'   => (int) $set->id,
-                    'name'    => (string) $set->name,
-                    'token'   => (string) $set->token,
-                    'link'    => self::build_share_url((string) $set->token),
-                    'brandId' => !empty($set->brandId) ? (int) $set->brandId : null,
+                array_merge(
+                    // BUGFIX: this trigger used to pass ONLY the five legacy keys, so every
+                    // rich token its contextKeys advertise ({{setID}}/{{setName}}/{{setLink}}/
+                    // {{brandName}}/{{deliveryName}}/{{projectName}}/{{dashboardUrl}}…) resolved
+                    // EMPTY in webhooks and emails. Merged the same enrich_context() its three
+                    // sibling approvals triggers already use, so what the UI offers is what the
+                    // payload carries.
+                    self::enrich_context($set),
+                    array(
+                        // Legacy keys — kept so existing rules keep resolving.
+                        'setId'   => (int) $set->id,
+                        'name'    => (string) $set->name,
+                        'token'   => (string) $set->token,
+                        'link'    => self::build_share_url((string) $set->token),
+                        'brandId' => !empty($set->brandId) ? (int) $set->brandId : null,
+                    )
                 ),
                 (int) $set->userId
             );

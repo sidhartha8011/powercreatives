@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/select';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { Popover, PopoverTrigger } from '@/components/ui/popover';
-import { cn } from '@/lib/utils';
+import { cn, copyToClipboard } from '@/lib/utils';
 import {
   Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem,
 } from '@/components/ui/command';
@@ -73,7 +73,10 @@ function ItemCombobox({
         sideOffset={4}
         collisionPadding={8}
         className={cn(
-          'z-50 flex max-h-80 w-[--radix-popover-trigger-width] flex-col overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md outline-hidden',
+          // Width: at LEAST the trigger, but allowed to grow to the viewport so a
+          // long trigger description isn't clipped into a horizontal scrollbar
+          // (the popover used to be pinned to the trigger width exactly).
+          'z-50 flex max-h-80 min-w-[--radix-popover-trigger-width] max-w-[min(34rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md outline-hidden',
           'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
         )}
       >
@@ -102,13 +105,15 @@ function ItemCombobox({
                       onSelect={() => { if (!disabled) { onChange(it.id); setOpen(false); } }}
                       className={disabled ? 'opacity-50' : ''}
                     >
-                      <Check className={`mr-2 h-4 w-4 ${value === it.id ? 'opacity-100' : 'opacity-0'}`} />
-                      <div className="min-w-0">
-                        <div className="truncate">
+                      <Check className={`mr-2 h-4 w-4 shrink-0 ${value === it.id ? 'opacity-100' : 'opacity-0'}`} />
+                      {/* Wrap instead of truncate: the description explains WHEN the
+                          trigger fires — clipping it hid the one thing the user needs. */}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-pretty">
                           {it.label}{disabled ? <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground">· coming soon</span> : null}
                         </div>
                         {it.description && (
-                          <div className="truncate text-xs text-muted-foreground">{it.description}</div>
+                          <div className="text-pretty text-xs text-muted-foreground">{it.description}</div>
                         )}
                       </div>
                     </CommandItem>
@@ -160,6 +165,21 @@ export function AutomationsModule() {
 
   const selectedTrigger = useMemo(() => triggers.find((t) => t.id === triggerId), [triggers, triggerId]);
   const selectedAction = useMemo(() => actions.find((a) => a.id === actionId), [actions, actionId]);
+
+  // Click-to-copy for the available-variable chips. copyToClipboard() falls back
+  // to execCommand, which matters here: the SPA runs inside wp-admin and the
+  // async Clipboard API is unavailable on plain-HTTP installs.
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const copyToken = useCallback(async (token: string) => {
+    const ok = await copyToClipboard(token);
+    if (!ok) {
+      toast.error('Could not copy to clipboard');
+      return;
+    }
+    setCopiedToken(token);
+    toast.success(`Copied ${token}`);
+    setTimeout(() => setCopiedToken((cur) => (cur === token ? null : cur)), 1500);
+  }, []);
 
   // Suggested starter rows for an action: its inputSchema keys, blank values.
   const seedRows = (action?: ActionDef): { key: string; value: string }[] =>
@@ -354,7 +374,7 @@ export function AutomationsModule() {
 
         <Button className="gap-2" onClick={openCreate}><Plus className="w-4 h-4" />New automation</Button>
         <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
-          <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingId != null ? 'Edit automation' : 'New automation'}</DialogTitle>
               <DialogDescription>Choose a trigger, narrow it with conditions, and pick an action.</DialogDescription>
@@ -494,9 +514,32 @@ export function AutomationsModule() {
                     Add property
                   </Button>
                   {(selectedTrigger?.contextKeys?.length ?? 0) > 0 && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Available: {(selectedTrigger?.contextKeys ?? []).map((k) => `{{${k}}}`).join(', ')}
-                    </p>
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] text-muted-foreground">
+                        Available variables — click one to copy:
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {(selectedTrigger?.contextKeys ?? []).map((k) => {
+                          const token = `{{${k}}}`;
+                          return (
+                            <button
+                              key={k}
+                              type="button"
+                              onClick={() => copyToken(token)}
+                              title={`Copy ${token}`}
+                              className={cn(
+                                'rounded border px-1.5 py-0.5 font-mono text-[11px] transition-colors',
+                                copiedToken === token
+                                  ? 'border-emerald-500 bg-emerald-500/10 text-emerald-600'
+                                  : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground',
+                              )}
+                            >
+                              {copiedToken === token ? 'Copied!' : token}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
