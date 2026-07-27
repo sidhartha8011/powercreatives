@@ -15,6 +15,59 @@ modules auto-discovered from `includes/modules/*/config.php`; shared infra in
 `includes/core/`; frontend in `app/`. Includes a cross-module **Automations**
 engine (trigger → condition → action) with WP-cron-driven daily reminders.
 
+## HARD RULES — UI (owner mandate, permanent; apply to every change, no exceptions)
+
+These two are not style preferences. They are the standing definition of "done"
+for anything that renders. A change that violates either is not mergeable, even
+if it works.
+
+### RULE 1 — Every element's DESIGN comes from shared components / design tokens
+- Build UI from the shared layer, never from ad-hoc markup:
+  - **Primitives**: `@/components/ui/*` (60 of them — `button`, `input`, `select`,
+    `dialog`, `accordion`, `table`, `badge`, `popover`, `tabs`, …).
+  - **Project components**: `@/components/shared/*` (`AccordionSection`,
+    `SectionCard`, `SectionLabel`, `ModuleHeader`, `EmptyState`, `BulkActionBar`,
+    `PanelHeader`, `KeywordPicker`, `Kanban`, …) — import via the barrel
+    `@/components/shared`.
+  - **Tokens**: `colors`, `typography`, `spacing`, `shadows`, `statusColors` from
+    `@/components/shared/design-tokens.ts`. Colors/sizes/shadows come from there
+    or from Tailwind semantic classes (`bg-background`, `text-muted-foreground`,
+    `border-border`) — never a raw hex/rgb literal in a component.
+- **No transparent backgrounds.** Surfaces are explicit (`bg-background`,
+  `bg-card`, `bg-muted`, or a token). A control must never inherit whatever is
+  behind it.
+- **No WordPress style leakage.** The SPA renders inside wp-admin; wp global CSS
+  must never show through. Anything that can inherit wp-admin styling (inputs,
+  buttons, selects, tables) uses our components, which set their own surface,
+  border, radius and font.
+- **No inline hardcoded shortcuts** — no one-off `style={{ … }}` for colors/
+  spacing/sizing, no copy-pasted class soup that duplicates an existing
+  component, no local re-implementation of something that already exists.
+- **If the shared layer lacks the thing you need, CREATE IT THERE** (in
+  `@/components/ui` for a primitive, `@/components/shared` for a project
+  component, export it from the barrel) and use it from that one place. Never
+  solve it locally "just this once" — that is how conflicts and duplicate code
+  start.
+
+### RULE 2 — Every element's FUNCTIONALITY reuses the shared component's logic
+- Dropdowns, comboboxes, buttons, accordions, dialogs, tables, pickers, toggles
+  etc. must reuse the existing shared component **including its behavior** —
+  open/close state, keyboard and focus handling, search/filter, empty and
+  loading states, controlled-value contract, a11y roles.
+- Do **not** hand-roll a second implementation of behavior a shared component
+  already provides, and do not fork one by copy-paste to tweak it.
+- Need different behavior? **Extend the shared component** (a prop/variant) so
+  every caller benefits and the behavior stays in one place — then use it.
+- Reference implementations to copy the pattern from, not the code:
+  `AccordionSection` (collapsible sections), the `ItemCombobox` pattern in
+  Automations (searchable grouped dropdown), `DataTable` / `column-head.tsx` +
+  `useColumnLayout` + `useColumnFilters` (tables — never hand-roll `<table>`).
+
+**Self-check before finishing any UI work:** every control traces to
+`@/components/ui` or `@/components/shared`; zero raw hex and zero inline style
+for color/spacing/size; zero transparent surfaces; nothing duplicates existing
+shared behavior; anything genuinely new was added to the shared layer.
+
 ## Non-negotiables for this plugin
 - **Every REST handler**: nonce check + capability check + sanitize input + escape
   output. `PCM_REST_Base` enforces nonce (`X-WP-Nonce`) + capability (default

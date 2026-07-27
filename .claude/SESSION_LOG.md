@@ -8742,3 +8742,179 @@ The fast-path reclaim is uncapped by design (see DECISION above) — if a host h
 sub-10-min timeout on every generation for a specific item, it could still bounce longer than
 expected before the 90-min sweep caps it. No live payload captured from the owner's box, so
 the diagnosis is code-traced, not runtime-confirmed. Not committed (owner didn't ask).
+
+## 2026-07-24 — Publish error "…skapa inlägg som om du vore denna användare" made actionable
+Report: publishing an article to a connected site failed with the Swedish WP string
+"WordPress API error: Du har inte behörighet att skapa inlägg som om du vore denna användare."
+Root cause (verified against real WP core in ~/Desktop/wordpress-local): publish_to_site() POSTs
+/wp/v2/posts with status=publish and NO `author` (apply_remote_terms adds only tags/categories),
+so this is NOT an author-mismatch. That exact string is WP's `rest_cannot_create` (the connected
+Application-Password user lacks create_posts — a Subscriber/role without edit_posts). WP reuses the
+same string for rest_cannot_edit_others (unreachable here); `rest_cannot_publish` emits a DIFFERENT
+string ("publish posts in this post type"). REMEDY (user): reconnect the site with an Application
+Password from an Editor/Administrator account.
+Fix (sites/service.php publish_to_site error branch): read the UNtranslated $body['code'] and, for
+rest_cannot_create / rest_cannot_publish / rest_cannot_edit_others, throw an actionable message
+naming the username + the Editor/Admin remedy; all other errors keep "WordPress API error: {msg}".
+No premature 'published' flip (throw precedes update_article). 3 new tests (SitesPublishEnrichment)
+with WP-accurate code+message pairings; suite 596/4-known; php -l clean.
+spec-verifier: round 1 caught a P1 — my first cut keyed on rest_cannot_publish (wrong code, wrong
+message) and would have MISSED the real rest_cannot_create; fixed + re-verified round 2 APPROVED
+(grounded in wp-includes REST posts controller).
+DEFERRED (SEO owner's lane, different surface): seo/service.php remote_create_content/duplicate
+(~1246) surface the same opaque remote message verbatim via WP_Error — a Subscriber connection hits
+rest_cannot_create there too. Not fixed here; flagged for follow-up.
+
+## 2026-07-24 — Connector self-update fixed (auto-version so it stops needing manual re-uploads)
+Report: "update connector feature is not working, I have to manually upload it a lot of times."
+Root cause (grounded): the connector self-update (WP update_plugins_{host} filter, connector template)
+only fires when version_compare(manifest.version, installed.version, '<=') is FALSE — manifest.version
+was the hand-maintained connector `Version:` header (static 3.0.8 since 2026-07-17). Any connector
+code change WITHOUT a header bump → sites report "up to date" → change only ships via manual per-site
+re-upload.
+Fix (seohub/service.php): connector_effective_version() = header base + connector_build_number(), a
+build stamp derived from md5 of the RAW connector template. connector_php_simple() now bakes that
+effective version into BOTH the plugin header (preg_replace, 1 line) AND __PCM_CONN_VERSION__, and
+connector_artifact() serves it as the manifest version — so any source change auto-advances the
+version and self-update fires, while the baked header always == the manifest (anti-loop: no perpetual
+re-install). Existing 3.0.8 sites get 3.0.8.204 once. controller.php download filenames use the
+effective version too.
+DURABILITY (spec-verifier P2): a plain counter regresses to 1 on hub option loss (uninstall/DB
+restore) → re-stalls. build now floors to a monotonic day-clock (days since 2026-01-01), so after
+option loss it lands at today's floor (~204), never 1; a real regression would need >1 source change
+PER DAY sustained (documented, unreachable in practice).
+Verify: new standalone tests/standalone/connector_selfupdate_test.php 11/11 (anti-loop invariant,
+monotonic bump, option-loss floor). NOTE: first wrote this as a PHPUnit test — its file-scope WP
+stubs polluted shared state and broke an unrelated SEO test; moved to the standalone harness (clean
+process). Full phpunit 596/4-known (zero regression from the code change), run.php 88/88, php -l clean.
+spec-verifier round 1: APPROVED core (anti-loop holds, in-scope: seohub is NOT a frozen lane); P2
+addressed as above. Deferred P3: public manifest/package endpoints trigger one idempotent option
+write per source change (accepted).
+
+## 2026-07-24 — RSS/Social "On a schedule" drip-publish (parity with Keywords)
+User-confirmed behavior: RSS/Social get the same schedule UI as Keywords; new feed items/posts are
+still pulled automatically, but each generated article is HELD and released on the recurrence (the
+recurrence replaces "posts per week").
+- Frontend CreateStrategyDialog.tsx: new `socialScheduled` state; RSS/Social "Schedule & cadence"
+  branch shows a "When to publish" segmented [As posts arrive | On a schedule]; scheduled →
+  RecurrenceEditor + Start date + drip summary (posts-per-week hidden). Submit: publishingMode for
+  rss/social = socialScheduled ? 'schedule' : (publishing==='auto'?'publish':'draft'); scheduleConfig
+  already emitted; trigger stays 'new_source_item'.
+- Backend: PCM_DB::count_scheduled_strategy_items() (drip tail anchor). scan_rss_strategy: when
+  publishingMode==='schedule' + config.scheduleConfig — pop full rssQueue (bypass perWeek; keep
+  'limit' cap), stamp each new item scheduledDate from calculate_recurrence_dates(already+batch, cfg,
+  start) tail (null past `ends` → stays pending), and SKIP immediate generation (daily
+  run_scheduled_scan releases due items via the existing due-date gate). Non-scheduled + keyword
+  paths byte-identical. No schema change (reuses strategy_items.scheduledDate).
+- spec-verifier round 1 caught a real P1: blank startDate (UI default) re-anchored at now() every
+  scan while `already` grows → drip drifts/stalls. FIXED: blank startDate falls back to the
+  strategy's FIXED createdAt, never now(). Round 2 APPROVED (traced 4 scans stable). Accepted P3s
+  (documented, not fixed): catch-up burst for strategies created long before first items (bounded;
+  a naive max(createdAt,now) clamp would reintroduce the drift); O(already) date-array build
+  (negligible at real scale).
+Verify: 3 new unit tests (drip schedules whole queue + no immediate gen; blank-start anchors on
+createdAt not now; immediate mode unchanged). Suite 598/4-known; standalone 88/88; tsc 59; build ✓;
+live browser confirmed Social → On a schedule → RecurrenceEditor + Start date, posts-per-week hidden.
+
+## 2026-07-24 — Reposting prompts moved into editable templates ({{ post_* }} variables)
+Request: move the hidden hardcoded RSS/Social reposting prompt into editable templates using
+{{ post_content }} / {{ post_title }} / {{ post_link }}; no hidden prompt.
+- class-pcm-template-seeds.php: two new writer templates "Social Media Reposting" + "RSS Reposting".
+  Each prompt references the source vars ({{ post_title }}/{{ post_link }}/{{ post_content }}) so
+  generate_next_item()'s template_carries_source() SUPPRESSES the hardcoded rider, AND references
+  all five standard fragments ({{ keyword }}/{{ brand_context }}/{{ research }}/{{ media_instructions }}/
+  {{ output_format }}) so build_prompt() auto-appends nothing — the whole prompt is visible/editable.
+- CreateStrategyDialog.tsx: effect auto-selects the matching reposting template for sourceMode
+  rss/social (fills empty or swaps between the two; preserves a manual pick; and on switch BACK to
+  keywords, clears a reposting template so keyword strategies don't render empty {{ post_* }}).
+- Fallback: rss_source_instruction() KEPT as a safety net (owner decision) — fires only for a
+  source strategy on a NON-reposting template; the auto-selected reposting templates mean the
+  normal path never hits it.
+Verify: standalone reposting_templates_test.php 22/22 (both seeds carry all vars + suppress rider);
+full phpunit 598/4-known; run.php 88/88; tsc 59; build ✓; live browser — seeding created both
+templates, dialog auto-selects Social→"Social Media Reposting", RSS→"RSS Reposting".
+Delivery: seeds run on activation; existing installs get them via Templates → Reseed defaults (no
+DB-version bump). spec-verifier APPROVED the 3 changes; P2 (residual fallback rider) resolved by
+owner = keep as safety net; P3 keyword-switch-back fixed.
+
+## 2026-07-25 — Automations bugfix round (layout, copy-to-clipboard, setComment, variable audit)
+Four reported issues; all four investigated, one turned out to be a REAL data bug.
+1. Cramped dialog/dropdown: the trigger combobox was pinned to `w-[--radix-popover-trigger-width]`
+   with `truncate`d descriptions → clipped text + horizontal scrollbar. Now min-w = trigger width,
+   max-w = min(34rem, viewport-2rem), descriptions wrap (text-pretty); dialog sm:max-w-lg → 2xl.
+2. Click-to-copy didn't work because the variables were rendered as PLAIN TEXT (`.join(', ')`) —
+   nothing was clickable. Now each is a button chip → copyToClipboard() (execCommand fallback
+   matters: wp-admin on plain HTTP has no async Clipboard API) + "Copied!" state + toast.
+3. setComment: it IS declared on approvals.comment_added (and enrich_context always emits it,
+   empty for non-comment triggers). It was missing from the user's screenshot because that was the
+   LANE-CHANGE trigger, which legitimately has no comment. No code change needed; verified live
+   ({{setComment}}='Looks great, ship it!' on the comment trigger).
+4. REAL BUG FOUND + FIXED: approvals.set_fully_approved called fire_trigger with ONLY the 5 legacy
+   keys — it never merged enrich_context(). So 15 advertised variables ({{setID}} {{setName}}
+   {{setStatus}} {{setLink}} {{setInternalLink}} {{brandName}} {{brandExtID}} {{deliveryName}}
+   {{deliveryExtID}} {{projectName}} {{projectExtID}} {{deliveryId}} {{projectId}}
+   {{projectAssignee}} {{dashboardUrl}}) arrived EMPTY in customer webhooks. Now merges
+   enrich_context() like its three sibling triggers.
+LIVE WEBHOOK TEST (the owner's ask): built a real brand→delivery→project→approval-set chain, one
+webhook rule per trigger mapping EVERY advertised variable (88 total), captured the actual outbound
+JSON via pre_http_request. Result: 4/4 payloads, ALL 88 declared variables resolve to real values
+(setID=53, brandName='Acme Brand', deliveryName='April Delivery', projectName='Spring Campaign',
+setComment='Looks great, ship it!', projectAssignee='Sara Designer' after assigning one, …).
+Used a LOCAL capture endpoint rather than a public webhook site so no client data left the machine.
+Regression guard: tests/unit/AutomationContextKeysTest.php pins declared contextKeys against what
+each fire_trigger site actually supplies. MUTATION-TESTED — reintroducing the bug fails the test
+with the exact 15-variable list; restoring passes.
+Verify: phpunit 603/4-known (5 new), run.php 88/88, tsc 59, build ✓, live browser (full-width
+dropdown descriptions, 21 clickable chips, "Copied {{setName}}" toast + clipboard value asserted).
+All test data + capture server removed.
+
+## 2026-07-25 — "Auto-scan not working": loopback-dead fallback (the missing failure path)
+Root cause (proven live, not inferred): background scanning could ONLY ever start via
+spawn_keepalive()'s loopback self-request (POST /strategies/keepalive → run_keepalive_chain).
+That call is deliberately fire-and-forget (`blocking=false`, response never read), so on any host
+that BLOCKS or FAKES loopback self-requests the spawn *looks* successful while the chain never
+executes: pcm_keepalive_beat never appears, run_rss_scan/run_scheduled_scan/process_due_pcm_events
+never run, strategies sit at 0/0 forever — silently. Combined with DISABLE_WP_CRON there was NO
+remaining execution path. Fingerprint observed on the local box: beat="never" while owner was set,
+pcm_rss_last_scan 6 days stale, and wp-content/mu-plugins/prevent-loopback-deadlock.php
+short-circuiting every loopback with a fake 200 — i.e. exactly the managed-host/security-plugin
+/firewall shape.
+Fix (service.php, minimal): the init self-heal keeps spawning as before (works where loopbacks
+work), and ADDS a fallback — when pcm_keepalive_beat has been missing >15 min (proof the spawns are
+not landing) it hooks PCM_Strategy_Service::run_due_work_inline() to `shutdown`, throttled to once
+per 5 min via pcm_keepalive_inline_lock. run_due_work_inline() runs the SAME work-first block as the
+chain (rss-due scan, scheduled scan, wedge reclaim, process_due_pcm_events) with no sleep/respawn,
+after the response is flushed (fastcgi_finish_request + ignore_user_abort), brake-guarded and
+try/catch'd. It deliberately does NOT write the beat — the beat means "a real chain link is alive",
+so faking it would suppress the spawns that let a host recover the moment loopbacks work again.
+Verified live on the broken-state box: pcm_rss_last_scan advanced 7-days-stale → now; a strategy
+stuck at 0/0 pulled 10 items with NO loopback and NO wp-cron. Gate matrix confirmed: fresh beat
+=off, 5-min quiet =off, 899s =off, 901s =on, week-old =on, throttle lock =off, brake =off.
+Tests: 4 new in StrategyKeepaliveTest (gate stays off while healthy / engages when spawns aren't
+landing / throttle+brake / braked inline runner is a no-op); delete_transient() added to the shared
+cron-tick fakes. Suite 607/4-known, standalone 88/88, php -l clean. Local box state restored.
+
+## 2026-07-25 — "template still not update": new default templates never reached existing installs
+Report: after deploying, the two new reposting templates were absent on prod (Writer tab showed
+only "SEO Pillar Article").
+Root cause (proven, not inferred): PCM_Template_Seeds::seed() ran ONLY inside
+PCM_Activator::maybe_upgrade()'s `version_compare(pcm_db_version < PCM_DB_VERSION)` gate (plus the
+activation hook, which a file-replacing plugin update does not fire). Adding a template is NOT a
+schema change, so PCM_DB_VERSION is correctly never bumped for one — therefore a newly shipped
+default template could NEVER reach an already-installed site. Only the manual Templates → "Reseed
+defaults" button could deliver it. Reproduced exactly: with pcm_db_version already == PCM_DB_VERSION
+(1.45.0, prod's state) the gate evaluates false and seeds are skipped.
+NOT the cause (checked first): templates/controller.php list_items() already includes system rows
+(`WHERE (userId = %d OR userId = 0)`), so seeded userId=0 templates are visible — the list was fine.
+Fix (minimal, 2 files): new PCM_Template_Seeds::maybe_seed() re-seeds whenever the seeds FILE
+changes — signature = md5(mtime|size) of class-pcm-template-seeds.php stored in option
+pcm_template_seeds_sig — called from maybe_upgrade() OUTSIDE the version gate. Per-request cost is
+one stat() + one autoloaded option read; seed() itself stays idempotent (insert_if_missing skips by
+name+module). Any future default template now lands on the first page load after deploy, with no
+version bump and no button.
+Verified live on a reproduction of prod's state: BEFORE 1 writer template + gate skipped → AFTER
+maybe_upgrade() 3 templates (RSS Reposting id=106, Social Media Reposting id=105, both userId=0);
+3 further page loads → still 3, signature unchanged, RSS Reposting rows = 1 (no re-seed, no dupes).
+Tests: tests/standalone/template_seed_delivery_test.php 8/8 (incl. "seeds land even when
+pcm_db_version is already current" — the exact bug). Suite 607/4-known, run.php 88/88,
+reposting_templates 22/22, php -l clean. Zip rebuilt with the fix verified inside.

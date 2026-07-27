@@ -657,6 +657,14 @@ All per-user provider API keys live in **`wp_pcm_integrations`** (`apiKey` text)
 - **State**: Jotai (Writer only, `modules/Writer/store.ts`); TanStack Query (`main.tsx`, staleTime 30s) + TanStack Table everywhere. The "tRPC" client (`lib/trpc.ts`) is a `fetch`-based **proxy adapter** over REST — `trpc.<router>.<proc>.useQuery/.useMutation()` → `X-WP-Nonce`-authed REST calls. Route catalog: `lib/trpc-routes.ts`. `window.pcmConfig` (restUrl/nonce/user) injected by `class-pcm-admin.php`.
 - **Mounting**: admin SPA at `toplevel_page_power-creatives` — `class-pcm-admin.php:78` enqueues `app/dist/index.css` + `index-writer.js` (version=`time()` cache-bust), `wp_localize_script('pcm-app','pcmConfig',…)` renders `<div id="pcm-root">`. Shortcode `[power_creatives]` (`class-pcm-shortcode.php:34`) — fullscreen (`.pcm-fs-wrap`) or inline (`.pcm-inline-wrap`) modes + password gate. `App.tsx` short-circuits to `<ClientReviewPage token>` when `?pcm_public_token=` is present.
 - **Modules** (`app/src/modules/`, 20 dirs → backend module): Ads, Approvals (client-review portal), Assets, Automations (rule builder), Brands (flat inline table), Copy (batch gen), Deliveries (logs/lead), Image, Integrations (keys + GSC + Brevo + PRT), Keywords, Logs (→automations/logs), Projects (→assets/projects), SEO (spreadsheet, local + remote), Settings (+prompts), Sites (connector mgmt, GSC, publish), Strategies (schedule, scan), Templates (flat table), Users, Video, Writer (Jotai+TipTap rich editor).
+- ⛔ **UI HARD RULES (owner mandate — read CLAUDE.md § "HARD RULES — UI" before any UI change).**
+  (1) Design comes from the shared layer only: `@/components/ui/*` primitives,
+  `@/components/shared/*` components, and the `colors`/`typography`/`spacing`/`shadows`/
+  `statusColors` tokens in `@/components/shared/design-tokens.ts`. No transparent backgrounds,
+  no wp-admin style leakage, no raw hex, no inline `style={{}}` for color/spacing/size, no
+  local re-implementation — if it doesn't exist, ADD it to the shared layer and reuse it.
+  (2) Functionality reuses the shared component's built-in behavior (state, keyboard, a11y,
+  search, empty/loading); extend the shared component rather than forking or hand-rolling.
 - **Reusable table kit** — DON'T hand-roll `<table>`: (1) `@/components/ui/data-table.tsx` (config-driven, simple) — ref `modules/Sites`; (2) rich spreadsheet → `@/components/ui/column-head.tsx` + `@/hooks/useColumnLayout.ts` (unique storageKey) + `@/hooks/useColumnFilters.ts` — ref `modules/SEO`.
 
 ## SEO suite detail
