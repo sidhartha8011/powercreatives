@@ -120,7 +120,7 @@ export function SendToWriterDialog({
             <div className="space-y-2">
               <Label>Content Structure</Label>
               <Select value={structure} onValueChange={(v) => setStructure(v as 'individual' | 'consolidated')}>
-                <SelectTrigger className="w-full bg-background">
+                <SelectTrigger className="w-full bg-card">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

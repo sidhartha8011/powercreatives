@@ -583,11 +583,32 @@ class PCM_Sites_Service
             // "…skapa inlägg som om du vore denna användare" is rest_cannot_create.
             // Key on the UNtranslated `code` (the message is localized) and
             // surface an actionable remedy instead of the raw WordPress text.
-            if (in_array($code, array('rest_cannot_create', 'rest_cannot_publish', 'rest_cannot_edit_others'), true)) {
+            if (in_array($code, array('rest_cannot_create', 'rest_cannot_publish', 'rest_cannot_edit_others'), true)
+                || $status === 403
+            ) {
+                // 403 is included on purpose: the code above only fires for WP's own
+                // three codes, but a security plugin (or a hardened REST setup) can
+                // return 403 with its own code, and the message is LOCALIZED — the
+                // reported failure arrived in Swedish and fell through to the raw text
+                // below. A 403 on this request means "not permitted" whatever emitted it.
                 throw new \RuntimeException(sprintf(
                     /* translators: %s = the Application Password username on the connected site. */
                     __(
-                        'The connected site won\'t let the user "%s" create or publish posts — that user\'s role lacks the required permission. Reconnect the site (Sites → this site → credentials) with an Application Password from an Editor or Administrator account.',
+                        'The connected site won\'t let the user "%s" create or publish posts — that user\'s role lacks the required permission (this is a WordPress user-role issue, not a connector one). Reconnect the site (Sites → this site → credentials) with an Application Password from an Editor or Administrator account.',
+                        'power-creatives'
+                    ),
+                    (string) $site->username
+                ));
+            }
+
+            // 401 = the credentials themselves were rejected (Application Password
+            // revoked, regenerated, or the username changed) — a different remedy
+            // from a role problem, so say so rather than lumping them together.
+            if ($status === 401) {
+                throw new \RuntimeException(sprintf(
+                    /* translators: %s = the Application Password username on the connected site. */
+                    __(
+                        'The connected site rejected the credentials for "%s" — the Application Password is wrong, revoked or regenerated. Create a new one on the site (Users → Profile → Application Passwords) and reconnect it under Sites.',
                         'power-creatives'
                     ),
                     (string) $site->username

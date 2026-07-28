@@ -67,6 +67,13 @@ export function SourceVarsHint({ module, category, className }: SourceVarsHintPr
         . Place one to control where it appears; any piece you don’t place is still added automatically, so
         a prompt that references none of them is unchanged.
       </p>
+      <p>
+        Writing for a non-English brand? {code("{{ brand_language }}")} resolves to the brand’s content
+        language (Brands → Language), so you can write e.g. “Write the title and meta description in{" "}
+        {code("{{ brand_language }}")}”. The title and meta are already generated in that language
+        automatically when the brand sets one — this variable just lets you word the instruction yourself.
+        It resolves to nothing when no language is set.
+      </p>
     </div>
   );
 }

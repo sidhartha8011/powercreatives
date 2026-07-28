@@ -409,9 +409,13 @@ class PCM_Keywords_Service
      * @param array  $keywords List of keyword strings to enrich.
      * @param string $api_key  Ahrefs API bearer token.
      * @param string $country  Two-letter country code (default 'us').
-     * @return array Enriched keyword data keyed by keyword string.
+     * @return array|WP_Error Enriched data keyed by keyword, or the FAILURE.
+     *                        A dead/expired key, an HTTP 401/429, a network
+     *                        timeout or a missing MCP tool must never read as
+     *                        "Ahrefs has no data for these keywords" — the same
+     *                        rule google_suggest() above already follows.
      */
-    public static function ahrefs_enrich(array $keywords, string $api_key, string $country): array
+    public static function ahrefs_enrich(array $keywords, string $api_key, string $country): array|WP_Error
     {
         if (empty($keywords) || empty($api_key)) {
             return [];
@@ -460,7 +464,11 @@ class PCM_Keywords_Service
 
             if (!$volume_tool) {
                 self::log('Ahrefs MCP: keywords-explorer-overview tool not found. Available: ' . implode(', ', array_column($tools, 'name')));
-                return [];
+                return new WP_Error(
+                    'pcm_kw_ahrefs_no_tool',
+                    __('Ahrefs did not expose its Keywords Explorer tool — the API key may lack the required plan.', 'power-creatives'),
+                    ['status' => 502]
+                );
             }
 
             self::log("Ahrefs MCP: Using tool '{$volume_tool}'");
@@ -530,7 +538,15 @@ class PCM_Keywords_Service
 
         } catch (\Exception $e) {
             self::log('Ahrefs MCP: Error — ' . $e->getMessage());
-            return [];
+            return new WP_Error(
+                'pcm_kw_ahrefs_failed',
+                sprintf(
+                    /* translators: %s: underlying transport/protocol error message */
+                    __('Ahrefs could not be reached: %s', 'power-creatives'),
+                    $e->getMessage()
+                ),
+                ['status' => 502]
+            );
         }
     }
 

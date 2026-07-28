@@ -257,6 +257,19 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `strategies/${input.id}/duplicate` }),
     },
+    "strategy.duplicateItem": {
+        endpoint: "strategies",
+        method: "POST",
+        transform: (input: any) => ({ url: `strategies/${input.id}/items/${input.itemId}/duplicate` }),
+    },
+    "strategy.setItemPostStatus": {
+        endpoint: "strategies",
+        method: "POST",
+        transform: (input: any) => ({
+            url: `strategies/${input.id}/items/${input.itemId}/post-status`,
+            body: { status: input.status },
+        }),
+    },
     "strategy.publishItem": {
         endpoint: "strategies",
         method: "POST",

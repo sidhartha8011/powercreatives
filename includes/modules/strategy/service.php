@@ -170,9 +170,9 @@ class PCM_Strategy_Service
             $schedule_cfg = (is_array($options['config'] ?? null) && is_array($options['config']['scheduleConfig'] ?? null))
                 ? $options['config']['scheduleConfig']
                 : array();
-            // The create dialog has no date-picker yet (frontend gap — always sends
-            // startDate:''), so this default-to-now path is the one every scheduled
-            // strategy currently takes; still correct once a picker ships.
+            // The create dialog DOES ship a start-date picker (CreateStrategyDialog
+            // sends scheduleConfig.startDate; the controller whitelists it), so this
+            // default-to-now branch is now only the fallback for an empty picker.
             $start_date = !empty($schedule_cfg['startDate']) ? (string)$schedule_cfg['startDate'] : current_time('mysql');
 
             $items = PCM_DB::get_strategy_items($strategy_id); // position ASC — matches keyword order
@@ -518,6 +518,11 @@ class PCM_Strategy_Service
      *     the first selected day of the NEXT block if none remain that week; after
      *     the last selected day in a block, advance `interval` weeks to the block
      *     holding the FIRST selected day.
+     *   - `byMonthDay` day-of-month 1–31; honored ONLY when unit='month'. A day past
+     *     the month's length is CLAMPED to that month's last day, so 31 means "last
+     *     day" for 28/29/30-day months. Absent → the start date's own day-of-month.
+     *     Monthly slots are computed from the start anchor (never chained), so they
+     *     cannot drift the way strtotime('+1 month') does from a 29th–31st start.
      *   - `ends` {type:'never'} (default) | {type:'on','date'=>'Y-m-d'} |
      *     {type:'after','count'=>N}. Slots past the cap are NULL entries (the
      *     caller leaves scheduledDate NULL → the item stays pending, never
@@ -542,7 +547,8 @@ class PCM_Strategy_Service
         // LEGACY: a bare frequency with none of the custom-recurrence keys → the
         // exact original calculate_schedule_dates() switch (byte-identical).
         $has_custom = isset($schedule_cfg['interval']) || isset($schedule_cfg['unit'])
-            || isset($schedule_cfg['byDays']) || isset($schedule_cfg['ends']);
+            || isset($schedule_cfg['byDays']) || isset($schedule_cfg['byMonthDay'])
+            || isset($schedule_cfg['ends']);
         if (!$has_custom && isset($schedule_cfg['frequency'])) {
             return self::legacy_schedule_dates($count, (string)$schedule_cfg['frequency'], $start_date);
         }
@@ -569,6 +575,16 @@ class PCM_Strategy_Service
             }
             $by_days = array_values($by_days);
             sort($by_days);
+        }
+        // byMonthDay is only meaningful MONTHLY — the day-of-month to post on (1–31).
+        // 31 (or any day past a month's length) is clamped to that month's LAST day.
+        // 0/absent → keep the start date's own day-of-month.
+        $by_month_day = 0;
+        if ($unit === 'month' && isset($schedule_cfg['byMonthDay'])) {
+            $d = (int)$schedule_cfg['byMonthDay'];
+            if ($d >= 1 && $d <= 31) {
+                $by_month_day = $d;
+            }
         }
 
         $start_ts = strtotime($start_date) ?: time();
@@ -609,13 +625,33 @@ class PCM_Strategy_Service
                     $block_monday = strtotime('+' . ($interval * 7) . ' days', $block_monday);
                 }
             }
+        } elseif ($unit === 'month') {
+            // Calendar-month scheduling on a fixed day-of-month. Each slot is computed
+            // from the START anchor, never chained — because strtotime('+1 month')
+            // OVERFLOWS: from Jan 31 it yields Mar 3, and a chain then drifts forever.
+            // The target day is clamped to the month's real length, so day 31 lands on
+            // the LAST day of shorter months (28/29/30) — the documented rule — and
+            // Feb/Apr/Jun/Sep/Nov can never spill into the following month.
+            $anchor_day = $by_month_day > 0 ? $by_month_day : (int)date('j', $start_ts);
+            $year   = (int)date('Y', $start_ts);
+            $month  = (int)date('n', $start_ts);
+            // If the chosen day has already passed in the start month, begin at the
+            // next period instead of emitting a slot in the past.
+            $dim_start = (int)date('t', $start_ts);
+            $offset    = (min($anchor_day, $dim_start) < (int)date('j', $start_ts)) ? $interval : 0;
+            for ($i = 0; $i < $count; $i++) {
+                $m = $month + $offset + ($i * $interval);
+                $y = $year + intdiv($m - 1, 12);
+                $m = (($m - 1) % 12) + 1;
+                $dim = (int)date('t', mktime(0, 0, 0, $m, 1, $y)); // days in THAT month
+                $raw[] = sprintf('%04d-%02d-%02d ', $y, $m, min($anchor_day, $dim)) . $time_str;
+            }
         } else {
-            // Fixed-interval scheduling by unit. Advancing from the previous slot's
-            // timestamp preserves the day-of-month/time for the month unit (and
-            // mirrors the legacy switch's own chained-strtotime shape).
+            // Fixed-interval scheduling by day/week. Advancing from the previous slot's
+            // timestamp mirrors the legacy switch's own chained-strtotime shape.
             $step = $unit === 'day'
                 ? '+' . $interval . ' day'
-                : ($unit === 'month' ? '+' . $interval . ' month' : '+' . ($interval * 7) . ' days');
+                : '+' . ($interval * 7) . ' days';
             $ts = $start_ts;
             for ($i = 0; $i < $count; $i++) {
                 $raw[] = date('Y-m-d H:i:s', $ts);
@@ -744,7 +780,13 @@ class PCM_Strategy_Service
         $keywords    = array();
         foreach ($items as $it) {
             $keywords[] = (string)$it->keyword;
-            if ($it->status === 'pending' || $it->status === 'error') {
+            // 'pending' only — matches generate_next_item()'s get_next_pending_item()
+            // (status='pending'). Selecting 'error' here re-runs a permanently-failing
+            // consolidated batch on every Generate click forever: the catch below sets
+            // failed items back to 'error', which this branch would immediately re-pick.
+            // An explicit Retry (generate_next_item with $item_id) still targets any
+            // status, so a failed consolidated item remains retryable on demand.
+            if ($it->status === 'pending') {
                 $pending_ids[] = (int)$it->id;
             }
         }
@@ -834,6 +876,9 @@ class PCM_Strategy_Service
                 'strategyId'      => (int)$strategy->id,
                 'strategyItemId'  => $pending_ids[0], // the batch's own "primary" item, for traceability only
                 'brandId'         => !empty($strategy->brandId) ? (int)$strategy->brandId : null,
+                // Record the Target Site up front so a DRAFT is publishable from the
+                // Writer; previously siteId was only written at publish time.
+                'siteId'          => self::strategy_site_id($strategy),
                 'title'           => $title,
                 'slug'            => $slug,
                 'content'         => $content,
@@ -889,7 +934,7 @@ class PCM_Strategy_Service
                 $owned = false;
                 foreach ($pending_ids as $i => $id) {
                     $wrote = PCM_DB::complete_strategy_item_if_generating($id, array(
-                        'status'       => 'completed',
+                        'status'       => 'written',
                         'title'        => $title,
                         'slug'         => $slug,
                         'articleId'    => $article_id,
@@ -909,6 +954,13 @@ class PCM_Strategy_Service
                 }
                 if ($owned) {
                     $publish = self::maybe_auto_publish($strategy, PCM_DB::get_article($article_id, $user_id), $user_id);
+                    // Promote the whole batch 'written' → 'completed' only on a successful
+                    // publish (the consolidated batch shares one article; all-or-nothing).
+                    if ($publish !== null && !empty($publish['success'])) {
+                        foreach ($pending_ids as $id) {
+                            PCM_DB::update_strategy_item($id, array('status' => 'completed'));
+                        }
+                    }
                 }
             }
 
@@ -1459,6 +1511,8 @@ class PCM_Strategy_Service
                 'strategyId'      => (int)$strategy->id,
                 'strategyItemId'  => (int)$item->id,
                 'brandId'         => !empty($strategy->brandId) ? (int)$strategy->brandId : null,
+                // See the consolidated path above — the draft must carry its Target Site.
+                'siteId'          => self::strategy_site_id($strategy),
                 'title'           => $title,
                 'slug'            => $slug,
                 'content'         => $content,
@@ -1535,8 +1589,13 @@ class PCM_Strategy_Service
                 // still working (see PCM_DB::complete_strategy_item_if_generating),
                 // we no longer own it — completing anyway would double-count the
                 // item and, below, publish a SECOND post to the client's site.
+                // Status semantics (2026-07-28): "completed" now means PUBLISHED, not
+                // merely generated. A generated-but-unpublished item lands in 'written'
+                // (blue) first; the auto-publish call below promotes it to 'completed'
+                // (green) only when publish actually succeeds. Draft/no-site strategies
+                // thus leave items 'written' forever — honest about "not yet published".
                 $owned = PCM_DB::complete_strategy_item_if_generating((int)$item->id, array(
-                    'status'       => 'completed',
+                    'status'       => 'written',
                     'title'        => $title,
                     'slug'         => $slug,
                     'articleId'    => $article_id,
@@ -1585,6 +1644,15 @@ class PCM_Strategy_Service
                     $publish_strategy->publishingMode = (string)$item_cfg['publishingMode'];
                 }
                 $publish = self::maybe_auto_publish($publish_strategy, PCM_DB::get_article($article_id, $user_id), $user_id, $item);
+
+                // Promote 'written' → 'completed' ONLY when publish actually succeeded
+                // (null = publish not applicable e.g. draft/no-site; success=false = tried
+                // and failed). Both non-success cases leave the item 'written' so the UI
+                // honestly shows "generated, not yet published" instead of a green check.
+                if ($publish !== null && !empty($publish['success'])) {
+                    PCM_DB::update_strategy_item((int)$item->id, array('status' => 'completed'));
+                    self::recompute_counters((int)$strategy->id, $user_id, (int)$strategy->totalItems);
+                }
 
                 $response = array(
                     'item'    => PCM_DB::get_strategy_items((int)$strategy->id),
@@ -1803,10 +1871,20 @@ class PCM_Strategy_Service
                     require_once __DIR__ . '/class-pcm-topic-suggester.php';
                 }
                 $count  = min(10, max(1, (int) ($rule['count'] ?? 5)));
+                // Suggest topics in the site's BRAND language, not English. Best-effort:
+                // an unlinked site (or a brand with no language) yields '' → unchanged.
+                $sched_language = '';
+                if (!empty($site->brandId)) {
+                    $sched_brand = PCM_DB::get_brand_by_id((int) $site->brandId, $user_id);
+                    if ($sched_brand) {
+                        $sched_language = trim((string) ($sched_brand->language ?? ''));
+                    }
+                }
                 $topics = PCM_Topic_Suggester::suggest($user_id, array(
                     'niche'    => (string) ($rule['niche'] ?? ''),
                     'siteName' => (string) ($site->name ?? ''),
                     'siteUrl'  => (string) ($site->url ?? ''),
+                    'language' => $sched_language,
                 ), $count);
                 $keywords = array_values(array_filter(array_map(
                     static fn($t) => trim((string) ($t['keyword'] ?? '')),
@@ -1958,7 +2036,7 @@ class PCM_Strategy_Service
         $table = PCM_Schema::table('strategies');
         $rows  = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT * FROM {$table} WHERE config LIKE %s AND status != 'paused'",
+                "SELECT * FROM {$table} WHERE config LIKE %s AND status NOT IN ('paused','completed')",
                 '%' . $wpdb->esc_like('"sourceMode":"social"') . '%'
             )
         );
@@ -2128,11 +2206,13 @@ class PCM_Strategy_Service
                 $slots = min($slots, max(0, (int)$duration['maxArticles'] - $item_count));
             }
         } else {
-            // ── Backpressure: perWeek cadence minus items created in the last 7
-            //    days; a 'limit' duration additionally caps this pass so the
-            //    watcher can never insert PAST maxArticles. ──
-            $week_ago = date('Y-m-d H:i:s', (int)strtotime(current_time('mysql')) - 7 * 86400);
-            $slots = self::rss_free_slots(PCM_DB::count_strategy_items($strategy_id, $week_ago), $config);
+            // ── Backpressure: the cadence cap minus items created in the trailing
+            //    window, whose length now follows the cadence UNIT (day/week/month)
+            //    instead of always being 7 days; a 'limit' duration additionally caps
+            //    this pass so the watcher can never insert PAST maxArticles. ──
+            $window_days = self::rss_cadence_window_days($config);
+            $window_ago  = date('Y-m-d H:i:s', (int)strtotime(current_time('mysql')) - $window_days * 86400);
+            $slots = self::rss_free_slots(PCM_DB::count_strategy_items($strategy_id, $window_ago), $config);
             if ((string)($duration['mode'] ?? '') === 'limit' && (int)($duration['maxArticles'] ?? 0) > 0) {
                 $slots = min($slots, max(0, (int)$duration['maxArticles'] - $item_count));
             }
@@ -2545,6 +2625,26 @@ class PCM_Strategy_Service
     }
 
     /**
+     * How many DAYS the cadence cap is measured over — the trailing window the
+     * "already created" count is taken from. Driven by `config.rssCadence.unit`
+     * ('day'|'week'|'month'); anything missing or unrecognized falls back to 7,
+     * which is the behaviour every config had before the unit existed.
+     *
+     * @param array $config Decoded strategy config.
+     * @return int Window length in days (1 | 7 | 30).
+     */
+    public static function rss_cadence_window_days(array $config): int
+    {
+        $cadence = $config['rssCadence'] ?? null;
+        $unit    = is_array($cadence) ? (string)($cadence['unit'] ?? 'week') : 'week';
+        switch ($unit) {
+            case 'day':   return 1;
+            case 'month': return 30;
+            default:      return 7;
+        }
+    }
+
+    /**
      * Pure pop seam: take up to $slots entries off the FRONT of the queue
      * (freshest-first — the whole queue is re-sorted ts DESC defensively, so a
      * hand-edited/legacy config still pops newest work first) and return both
@@ -2651,6 +2751,30 @@ class PCM_Strategy_Service
             if (is_array($cfg)) {
                 if (!empty($cfg['model']))    { $model    = (string)$cfg['model']; }
                 if (!empty($cfg['provider'])) { $provider = (string)$cfg['provider']; }
+            }
+        }
+        return array($model, $provider);
+    }
+
+    /**
+     * Resolve the RESEARCH model + provider for a strategy. Research (the grounded /
+     * deep passes) is a separate job from article writing, so it gets its own model:
+     * `config.researchModel` / `config.researchProvider`. Falls back to the historical
+     * hardcoded default (`gemini-2.5-flash`, no explicit provider) so strategies saved
+     * before research-model selection existed behave EXACTLY as before.
+     *
+     * @param object $strategy Strategy DB row.
+     * @return array{0:string,1:string} [model, provider] — provider '' if unset.
+     */
+    private static function resolve_research_model(object $strategy): array
+    {
+        $model    = 'gemini-2.5-flash';
+        $provider = '';
+        if (!empty($strategy->config)) {
+            $cfg = json_decode((string)$strategy->config, true);
+            if (is_array($cfg)) {
+                if (!empty($cfg['researchModel']))    { $model    = (string)$cfg['researchModel']; }
+                if (!empty($cfg['researchProvider'])) { $provider = (string)$cfg['researchProvider']; }
             }
         }
         return array($model, $provider);
@@ -2824,6 +2948,95 @@ class PCM_Strategy_Service
         return is_array($cfg) && !empty($cfg['featuredImages']);
     }
 
+    /**
+     * The featured-image prompt. Uses the strategy's selected IMAGE TEMPLATE
+     * (`config.imageTemplateId`, module 'image') when one is set, so the wording —
+     * and therefore the style and language — is owned by the template author rather
+     * than hardcoded here. Its prompt entries are concatenated and rendered with
+     * {{ title }} / {{ keyword }} / {{ brand_language }}.
+     *
+     * Falls back to the ORIGINAL built-in sentence, byte-identical, when no template
+     * is set, the id is stale/not readable, or the rendered text comes out empty —
+     * an image prompt must never end up blank just because a template was deleted.
+     *
+     * @param object $strategy Strategy row.
+     * @param string $title    Article title.
+     * @param string $keyword  Target keyword.
+     * @param int    $user_id  Owner (scopes the template read).
+     * @return string Non-empty prompt.
+     */
+    /**
+     * The strategy's Target Site id, or null when none is configured.
+     *
+     * Stamped onto every article the strategy generates so the article itself records
+     * where it is meant to go. Without it a strategy-generated DRAFT reached the Writer
+     * with `articles.siteId` NULL, so the Writer's Publish button stayed disabled
+     * ("Select a Target Site in Settings") even though the strategy plainly had one —
+     * the site was only ever written at publish time, which is too late to publish FROM.
+     *
+     * @param object $strategy Strategy row.
+     * @return int|null Site id, or null when unset.
+     */
+    private static function strategy_site_id(object $strategy): ?int
+    {
+        if (empty($strategy->config)) {
+            return null;
+        }
+        $cfg = json_decode((string)$strategy->config, true);
+        $id  = is_array($cfg) && !empty($cfg['siteId']) ? (int)$cfg['siteId'] : 0;
+        return $id > 0 ? $id : null;
+    }
+
+    private static function build_image_prompt(object $strategy, string $title, string $keyword, int $user_id): string
+    {
+        $default = sprintf(
+            'Professional blog featured image for an article titled "%s" about %s — clean, modern, editorial photography, no text overlays.',
+            $title,
+            $keyword
+        );
+
+        $cfg = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
+        $template_id = is_array($cfg) ? (int)($cfg['imageTemplateId'] ?? 0) : 0;
+        if ($template_id <= 0) {
+            return $default;
+        }
+
+        try {
+            $template = self::load_template($template_id, $user_id);
+        } catch (\Throwable $e) {
+            // Deleted or foreign template — never break image generation over it.
+            error_log('[PCM_Strategy_Service] Image template #' . $template_id . ' unavailable: ' . $e->getMessage());
+            return $default;
+        }
+
+        $brand_language = '';
+        if (!empty($strategy->brandId)) {
+            $brand = PCM_DB::get_brand_by_id((int)$strategy->brandId, $user_id);
+            if ($brand) {
+                $brand_language = trim((string)($brand->language ?? ''));
+            }
+        }
+        $vars = array(
+            'title'          => $title,
+            'keyword'        => $keyword,
+            'brand_language' => $brand_language,
+        );
+
+        $parts = array();
+        foreach ((array)($template['entries'] ?? array()) as $entry) {
+            if (($entry['category'] ?? '') !== 'prompt') {
+                continue;
+            }
+            $rendered = trim(self::render_template_vars((string)($entry['value'] ?? ''), $vars));
+            if ($rendered !== '') {
+                $parts[] = $rendered;
+            }
+        }
+
+        $prompt = trim(implode("\n\n", $parts));
+        return $prompt !== '' ? $prompt : $default;
+    }
+
     private static function maybe_generate_featured_image(object $strategy, string $title, string $keyword, int $user_id): ?string
     {
         $cfg = !empty($strategy->config) ? json_decode((string)$strategy->config, true) : null;
@@ -2831,11 +3044,7 @@ class PCM_Strategy_Service
             return null; // strategy didn't opt in
         }
 
-        $prompt = sprintf(
-            'Professional blog featured image for an article titled "%s" about %s — clean, modern, editorial photography, no text overlays.',
-            $title,
-            $keyword
-        );
+        $prompt = self::build_image_prompt($strategy, $title, $keyword, $user_id);
 
         if (!class_exists('PCM_Strategy_Image')) {
             require_once __DIR__ . '/class-pcm-strategy-image.php';
@@ -3538,13 +3747,23 @@ class PCM_Strategy_Service
                 $src = (string)$generated;
             }
 
-            // alt/caption: a short, sanitized slice of the asset's prompt.
-            $caption = sanitize_text_field(substr($desc, 0, 120));
-            $figure  = sprintf(
-                '<figure class="pcm-in-content-media"><img src="%s" alt="%s" /><figcaption>%s</figcaption></figure>',
+            // ALT TEXT ONLY — never a visible caption. `$desc` is the IMAGE GENERATION
+            // PROMPT ("A cinematic, high-resolution image showing…"), an instruction to
+            // the image model, not reader-facing copy. It was previously also emitted as
+            // a <figcaption>, so every RSS/strategy article rendered its own prompt as
+            // visible text under the image (truncated mid-word at 120 chars). It stays
+            // in `alt`, where it genuinely helps accessibility and SEO, and is trimmed on
+            // a word boundary so screen readers don't hear a severed word.
+            $alt = sanitize_text_field($desc);
+            if (mb_strlen($alt) > 120) {
+                $cut  = mb_substr($alt, 0, 120);
+                $stop = mb_strrpos($cut, ' ');
+                $alt  = rtrim($stop !== false && $stop > 60 ? mb_substr($cut, 0, $stop) : $cut, " ,.;:-");
+            }
+            $figure = sprintf(
+                '<figure class="pcm-in-content-media"><img src="%s" alt="%s" /></figure>',
                 esc_url($src),
-                esc_attr($caption),
-                esc_html($caption)
+                esc_attr($alt)
             );
             $content = self::replace_media_token($content, $token, $figure);
         }
@@ -3820,6 +4039,15 @@ class PCM_Strategy_Service
         $article = !empty($item->articleId) ? PCM_DB::get_article((int)$item->articleId, $user_id) : null;
         $publish = self::maybe_auto_publish($strategy, $article, $user_id);
 
+        // Approval no longer means "done" — it means "ready to publish". The item
+        // advanced from in_review to 'written' above; promote to 'completed' only on
+        // an actual successful publish (mirrors the generation paths). An approval-mode
+        // strategy with no site configured leaves the item 'written' (correct: approved
+        // but not published), instead of a misleading green check.
+        if ($publish !== null && !empty($publish['success'])) {
+            PCM_DB::update_strategy_item((int)$item->id, array('status' => 'completed'));
+        }
+
         self::recompute_counters((int)$strategy->id, $user_id, (int)$strategy->totalItems);
 
         return array('item' => $item, 'publish' => $publish);
@@ -3838,13 +4066,20 @@ class PCM_Strategy_Service
     {
         $completed = 0;
         $failed    = 0;
+        $written   = 0;
         foreach (PCM_DB::get_strategy_items($strategy_id) as $it) {
             if ($it->status === 'completed')  { $completed++; }
             elseif ($it->status === 'error')  { $failed++; }
+            elseif ($it->status === 'written') { $written++; }
         }
+        // 'completed' now means PUBLISHED; 'written' (generated, not published) does NOT
+        // count toward completion, but DOES count toward in_progress so a strategy of all-
+        // written items shows "In Progress" (blue) instead of getting stuck at "Pending"
+        // or falsely flipping green. Only when every item is genuinely published does the
+        // strategy reach 'completed'.
         $status = ($total > 0 && $completed >= $total)
             ? 'completed'
-            : (($completed + $failed) > 0 ? 'in_progress' : 'pending');
+            : (($completed + $failed + $written) > 0 ? 'in_progress' : 'pending');
 
         // Step 10: this is the single choke point every completion path already
         // runs through (the per-item flow, the consolidated batch, and Step 7's
@@ -4443,6 +4678,155 @@ class PCM_Strategy_Service
      * @throws \RuntimeException If the item isn't in this strategy, isn't
      *   completed, has no article, or no Target Site is configured.
      */
+    /**
+     * Change the LIVE status of an item's already-published post on the connected site:
+     * 'draft' (unpublish, keeps the post), 'publish' (re-publish a drafted one), or
+     * 'trash' (delete — recoverable from the site's Trash, never a permanent delete).
+     *
+     * Only valid once the item actually HAS a post on a site — publishedPostId + siteId
+     * on the linked article. The local article row is kept in step so the Strategies UI
+     * and Writer agree without a refetch.
+     *
+     * @param object $strategy Strategy row (ownership already verified by the controller).
+     * @param int    $item_id  Strategy item id — must belong to $strategy.
+     * @param int    $user_id  Owner id (scopes every DB read).
+     * @param string $status   'draft' | 'publish' | 'trash'.
+     * @return array{status:string,postId:int,trashed:bool}
+     * @throws \RuntimeException On any invalid state or remote failure.
+     */
+    /**
+     * Duplicate one strategy item back into the same strategy.
+     *
+     * The copy is a FRESH pending item: same keyword / title / per-item config, but
+     * NO articleId, setId, scheduledDate or error — duplicating is "queue this topic
+     * again", not "clone the finished article" (which would double-publish the same
+     * content). It lands directly after the original so the order reads sensibly.
+     *
+     * @param object $strategy Strategy row (ownership verified by the controller).
+     * @param int    $item_id  Item to copy — must belong to $strategy.
+     * @param int    $user_id  Owner id.
+     * @return array{id:int,keyword:string}
+     * @throws \RuntimeException When the item isn't in this strategy or the insert fails.
+     */
+    public static function duplicate_item(object $strategy, int $item_id, int $user_id): array
+    {
+        $source = null;
+        foreach (PCM_DB::get_strategy_items((int)$strategy->id) as $candidate) {
+            if ((int)$candidate->id === $item_id) {
+                $source = $candidate;
+                break;
+            }
+        }
+        if (!$source) {
+            throw new \RuntimeException('Item not found in this strategy.');
+        }
+
+        global $wpdb;
+        $table = PCM_Schema::table('strategy_items');
+        $row = array(
+            'strategyId' => (int)$strategy->id,
+            'userId'     => $user_id,
+            'keyword'    => (string)$source->keyword,
+            'title'      => isset($source->title) ? (string)$source->title : null,
+            'status'     => 'pending',
+            // Sit right after the original; later items keep their own positions, so
+            // ties are broken by id — good enough for a display ordering.
+            'position'   => (int)$source->position + 1,
+        );
+        if (!empty($source->config)) {
+            $row['config'] = (string)$source->config;
+        }
+        if (isset($source->volume) && $source->volume !== null) {
+            $row['volume'] = (int)$source->volume;
+        }
+        if (isset($source->difficulty) && $source->difficulty !== null) {
+            $row['difficulty'] = (int)$source->difficulty;
+        }
+
+        if ($wpdb->insert($table, $row) === false) {
+            throw new \RuntimeException('Could not duplicate the item.');
+        }
+        return array('id' => (int)$wpdb->insert_id, 'keyword' => (string)$source->keyword);
+    }
+
+    public static function set_item_post_status(object $strategy, int $item_id, int $user_id, string $status): array
+    {
+        if (!in_array($status, array('draft', 'publish', 'trash'), true)) {
+            throw new \RuntimeException('Unsupported post status.');
+        }
+
+        $item = null;
+        foreach (PCM_DB::get_strategy_items((int)$strategy->id) as $candidate) {
+            if ((int)$candidate->id === $item_id) {
+                $item = $candidate;
+                break;
+            }
+        }
+        if (!$item) {
+            throw new \RuntimeException('Item not found in this strategy.');
+        }
+        if (empty($item->articleId)) {
+            throw new \RuntimeException('This item has no generated article yet.');
+        }
+
+        $article = PCM_DB::get_article((int)$item->articleId, $user_id);
+        if (!$article) {
+            throw new \RuntimeException('The generated article could not be loaded.');
+        }
+        $post_id = (int)($article->publishedPostId ?? 0);
+        $site_id = (int)($article->siteId ?? 0);
+        // The control is only offered once the post is live — mirror that server-side
+        // so a stale UI can never act on an unpublished item.
+        if ($post_id <= 0 || $site_id <= 0) {
+            throw new \RuntimeException('This article is not published to a site yet.');
+        }
+        $site = PCM_DB::get_site($site_id, $user_id);
+        if (!$site) {
+            throw new \RuntimeException('The site this article was published to is no longer connected.');
+        }
+
+        if (!class_exists('PCM_Sites_Service')) {
+            require_once dirname(__DIR__) . '/sites/service.php';
+        }
+        $route = '/wp/v2/posts/' . $post_id;
+        if ($status === 'trash') {
+            // force=false → Trash, not a permanent delete: a mistaken click on a client
+            // site stays recoverable from the site's own Trash.
+            $res = PCM_Sites_Service::remote_rest($site, 'DELETE', $route, array('force' => 'false'));
+        } else {
+            $res = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array('status' => $status));
+        }
+        if (is_wp_error($res)) {
+            throw new \RuntimeException('Could not reach the site: ' . $res->get_error_message());
+        }
+        if ((int)($res['status'] ?? 0) >= 300) {
+            $msg = (is_array($res['body'] ?? null) && !empty($res['body']['message']))
+                ? (string)$res['body']['message']
+                : ('HTTP ' . (int)($res['status'] ?? 0));
+            throw new \RuntimeException('The site rejected the change: ' . $msg);
+        }
+
+        // Keep the local row coherent. Trashing clears the publish pointers so the item
+        // falls back to its "not on the site" affordances (and can be published again).
+        if ($status === 'trash') {
+            PCM_DB::update_article((int)$article->id, $user_id, array(
+                'status'           => 'draft',
+                'publishedPostId'  => null,
+                'publishedUrl'     => null,
+            ));
+        } else {
+            PCM_DB::update_article((int)$article->id, $user_id, array(
+                'status' => $status === 'publish' ? 'published' : 'draft',
+            ));
+        }
+
+        return array(
+            'status'  => $status,
+            'postId'  => $post_id,
+            'trashed' => $status === 'trash',
+        );
+    }
+
     public static function publish_item(object $strategy, int $item_id, int $user_id): array
     {
         $item = null;
@@ -4455,8 +4839,8 @@ class PCM_Strategy_Service
         if (!$item) {
             throw new \RuntimeException('Item not found in this strategy.');
         }
-        if ((string)$item->status !== 'completed' || empty($item->articleId)) {
-            throw new \RuntimeException('Only a completed item with a generated article can be published.');
+        if (!in_array((string)$item->status, array('written', 'completed'), true) || empty($item->articleId)) {
+            throw new \RuntimeException('Only a written (generated, not yet published) item with an article can be published.');
         }
 
         $site_id = 0;
@@ -4509,6 +4893,14 @@ class PCM_Strategy_Service
         }
 
         $result = PCM_Sites_Service::publish_to_site($site, $article, $user_id, $publish_options);
+
+        // A successful manual publish is the canonical 'written' → 'completed'
+        // transition (publish = the thing that earns the green check). Idempotent for
+        // an item that was somehow already 'completed'.
+        if ((string)$item->status !== 'completed') {
+            PCM_DB::update_strategy_item((int)$item->id, array('status' => 'completed'));
+            self::recompute_counters((int)$strategy->id, $user_id, (int)$strategy->totalItems);
+        }
 
         return array(
             'success' => true,
@@ -4802,8 +5194,8 @@ class PCM_Strategy_Service
         if (!$item) {
             throw new \RuntimeException('Item not found in this strategy.');
         }
-        if (!in_array($item->status, array('completed', 'error'), true)) {
-            throw new \RuntimeException("Only a 'completed' or 'error' item can be reset.");
+        if (!in_array($item->status, array('completed', 'written', 'error'), true)) {
+            throw new \RuntimeException("Only a 'completed', 'written', or 'error' item can be reset.");
         }
 
         PCM_DB::update_strategy_item($item_id, array(
@@ -4907,6 +5299,8 @@ class PCM_Strategy_Service
         }
 
         $query = implode('", "', $keywords);
+        // Research runs on its OWN configured model (falls back to the historical default).
+        list($research_model, $research_provider) = self::resolve_research_model($strategy);
 
         // Each pass -> its VERBATIM prompt (byte-identical to the original
         // grounded_research_context / deep_research_context prompt strings) and
@@ -4926,7 +5320,7 @@ class PCM_Strategy_Service
         // content, 4000-char cap, no label. Multiple passes reproduce deep mode:
         // labeled sections joined by a blank line, 6000-char cap.
         if (count($passes) === 1) {
-            $content = self::run_grounding_call($prompts[$passes[0]], $user_id);
+            $content = self::run_grounding_call($prompts[$passes[0]], $user_id, $research_model, $research_provider);
             if ($content === '') {
                 return '';
             }
@@ -4935,7 +5329,7 @@ class PCM_Strategy_Service
 
         $sections = array();
         foreach ($passes as $pass) {
-            $content = self::run_grounding_call($prompts[$pass], $user_id);
+            $content = self::run_grounding_call($prompts[$pass], $user_id, $research_model, $research_provider);
             if ($content !== '') {
                 $sections[] = $labels[$pass] . ":\n" . $content;
             }
@@ -5023,17 +5417,23 @@ class PCM_Strategy_Service
      * @param int    $user_id Strategy owner (PCM user id).
      * @return string Trimmed content, or '' on failure.
      */
-    private static function run_grounding_call(string $prompt, int $user_id): string
+    private static function run_grounding_call(string $prompt, int $user_id, string $model = 'gemini-2.5-flash', string $provider = ''): string
     {
         try {
+            $options = array(
+                'model'      => ($model !== '' ? $model : 'gemini-2.5-flash'),
+                'max_tokens' => 2048,
+                'user_id'    => $user_id,
+            );
+            // Only send an explicit provider when one is configured — omitting it
+            // preserves the pre-existing resolution path byte-for-byte.
+            if ($provider !== '') {
+                $options['provider'] = $provider;
+            }
             $result = PCM_LLM::invoke_with_grounding(array(array(
                 'role'    => 'user',
                 'content' => $prompt,
-            )), array(
-                'model'      => 'gemini-2.5-flash',
-                'max_tokens' => 2048,
-                'user_id'    => $user_id,
-            ));
+            )), $options);
             return trim((string)($result['content'] ?? ''));
         } catch (\Throwable $e) {
             error_log('[PCM_Strategy_Service] Research enrichment failed: ' . $e->getMessage());
@@ -5091,7 +5491,19 @@ class PCM_Strategy_Service
             ? "CURRENT SEARCH LANDSCAPE (from live research — use to inform coverage, do not cite):\n" . $research_context
             : '';
 
+        // The brand's declared content language, exposed to templates as
+        // {{ brand_language }} and used to language-lock the JSON fields below.
+        $brand_language = $brand ? trim((string)($brand->language ?? '')) : '';
+
         $output_format = 'Return a JSON object with the following fields: title, content (HTML), metaTitle, metaDescription.';
+        // WHY: the brand block already declares "Content Language", which the model
+        // applied to the article BODY — but nothing told it what language the JSON
+        // fields should use, so title/metaTitle/metaDescription came back in ENGLISH
+        // even for a Swedish brand. Name them explicitly. Guarded on a non-empty
+        // language so brands without one keep the byte-identical original string.
+        if ($brand_language !== '') {
+            $output_format .= ' Write every field — including title, metaTitle and metaDescription — in ' . $brand_language . '.';
+        }
 
         // A6: in-content images & charts. Empty when the feature is off. Built
         // here (not inline on the user message) so {{ media_instructions }} can
@@ -5160,6 +5572,11 @@ class PCM_Strategy_Service
             'research'           => trim($research_block),
             'output_format'      => $output_format,
             'media_instructions' => trim($media_block),
+            // Plain value var (NOT a fragment): substituted wherever a template
+            // writes {{ brand_language }}, never auto-appended and never triggers
+            // the blank-line collapse. Empty string when the brand sets no language,
+            // so a template referencing it degrades to nothing rather than breaking.
+            'brand_language'     => $brand_language,
         );
 
         // ── System prompt from the template's prompt entries. Concatenate every

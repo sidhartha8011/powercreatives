@@ -46,15 +46,22 @@ const PUBLISHING_MODE_LABELS: Record<string, string> = {
 
 // ── Status pill — a compact local mirror of the Strategies list badge
 // (that one isn't exported), so this view has no cross-module coupling. ──
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, published }: { status: string; published?: boolean }) {
   const config: Record<string, { icon: React.ReactNode; label: string; color: string; bg: string }> = {
     pending:     { icon: <Clock className="w-3 h-3" />, label: 'Pending', color: statusColors.draft.text, bg: statusColors.draft.bg },
     in_progress: { icon: <Loader2 className="w-3 h-3 animate-spin" />, label: 'In Progress', color: colors.primary, bg: colors.primaryLight },
     generating:  { icon: <Loader2 className="w-3 h-3 animate-spin" />, label: 'Generating…', color: colors.accent, bg: colors.accentLight },
     completed:   { icon: <CheckCircle2 className="w-3 h-3" />, label: 'Completed', color: statusColors.ready.text, bg: statusColors.ready.bg },
+    publishedOk: { icon: <CheckCircle2 className="w-3 h-3" />, label: 'Published', color: statusColors.ready.text, bg: statusColors.ready.bg },
+    written:     { icon: <FileText className="w-3 h-3" />, label: 'Written', color: statusColors.published.text, bg: statusColors.published.bg },
     error:       { icon: <AlertCircle className="w-3 h-3" />, label: 'Error', color: colors.danger, bg: colors.dangerLight },
   };
-  const c = config[status] ?? config.pending;
+  // Mirrors the Strategies list badge: done-but-not-live reads "Written" (blue),
+  // only a live post reads "Published" (green). `statusColors.ready` is GREEN and
+  // `statusColors.published` is BLUE despite the names.
+  const isDone = status === 'completed' || status === 'complete';
+  const key = isDone && published !== undefined ? (published ? 'publishedOk' : 'written') : status;
+  const c = config[key] ?? config.pending;
   return (
     <span
       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
@@ -120,12 +127,12 @@ export function ScheduleView() {
       <div className="flex items-center gap-2 mb-3 shrink-0">
         <Input
           placeholder="Search keyword, title, or strategy…"
-          className="h-8 w-64 text-xs bg-background"
+          className="h-8 w-64 text-xs bg-card"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="h-8 w-36 text-xs bg-background">
+          <SelectTrigger className="h-8 w-36 text-xs bg-card">
             <SelectValue placeholder="All statuses" />
           </SelectTrigger>
           <SelectContent>
@@ -190,14 +197,16 @@ export function ScheduleView() {
                     {formatDue(row.scheduledDate)}
                   </td>
 
-                  {/* Keyword / Title */}
+                  {/* TARGET KEYWORD leads, article title beneath — same ordering as the
+                      Strategies list, so one item reads identically in both views. The
+                      sub-line is skipped when it would just repeat the line above. */}
                   <td className="px-4 py-3">
                     <div style={{ fontSize: typography.sm, color: colors.text }} className="truncate max-w-[320px]">
-                      {row.title || row.keyword}
+                      {(row.keyword ?? '').trim() !== '' ? row.keyword : row.title}
                     </div>
                     {row.title && row.title !== row.keyword && (
                       <div style={{ fontSize: typography.xs, color: colors.textMuted }} className="truncate max-w-[320px]">
-                        {row.keyword}
+                        {row.title}
                       </div>
                     )}
                   </td>
@@ -209,7 +218,7 @@ export function ScheduleView() {
 
                   {/* Status */}
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <StatusBadge status={row.status} />
+                    <StatusBadge status={row.status} published={!!row.articlePublishedUrl} />
                   </td>
 
                   {/* Publishing mode */}
@@ -239,7 +248,7 @@ export function ScheduleView() {
                           onClick={() => window.open(row.articlePublishedUrl!, '_blank', 'noopener,noreferrer')}
                         >
                           <ExternalLink className="w-3.5 h-3.5" />
-                          View on site
+                          See live
                         </Button>
                       ) : null}
                     </div>

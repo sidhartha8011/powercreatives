@@ -386,7 +386,10 @@ function pcm_test_define_strategy_fakes(): void
                 if (!isset(self::$items[$id]) || self::$items[$id]->status !== 'in_review') {
                     return false;
                 }
-                self::$items[$id]->status = 'completed';
+                // Mirrors the real PCM_DB method (2026-07-28): approval advances the
+                // item to 'written', not 'completed' — 'completed' now requires an
+                // actual publish, applied by advance_item_on_approval() after this.
+                self::$items[$id]->status = 'written';
                 return true;
             }
             /** When > 0, the next N claim_strategy_item() calls lose the race:
@@ -807,9 +810,11 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
 
         $this->assertSame('gemini-2.5-flash', PCM_LLM::$lastOptions['model'] ?? null);
         $this->assertArrayNotHasKey('provider', PCM_LLM::$lastOptions);
-        $this->assertSame('completed', PCM_DB::$items[1]->status);
-        $this->assertSame(1, PCM_DB::$strategy['completedItems'] ?? null);
-        $this->assertSame('completed', PCM_DB::$strategy['status'] ?? null);
+        // 2026-07-28: a generated-but-unpublished item (no publishingMode/siteId →
+        // maybe_auto_publish returns null) is now 'written', not 'completed'.
+        $this->assertSame('written', PCM_DB::$items[1]->status);
+        $this->assertSame(0, PCM_DB::$strategy['completedItems'] ?? null);
+        $this->assertSame('in_progress', PCM_DB::$strategy['status'] ?? null);
     }
 
     public function test_model_and_provider_are_read_from_strategy_config(): void
@@ -835,10 +840,11 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
 
         PCM_Strategy_Service::generate_next_item($strategy, 1, 1);
 
-        $this->assertSame('completed', PCM_DB::$items[1]->status);
+        // 2026-07-28: regenerated item is 'written' (no publish configured).
+        $this->assertSame('written', PCM_DB::$items[1]->status);
         $this->assertSame('', PCM_DB::$items[1]->errorMessage);
         $this->assertSame('pending', PCM_DB::$items[2]->status, 'the next-pending item must stay untouched by a targeted retry');
-        $this->assertSame(1, PCM_DB::$strategy['completedItems'] ?? null);
+        $this->assertSame(0, PCM_DB::$strategy['completedItems'] ?? null);
         $this->assertSame(0, PCM_DB::$strategy['failedItems'] ?? null, 'retrying clears the prior failure from the recomputed counters');
     }
 
@@ -1002,11 +1008,13 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
         $res = PCM_Strategy_Service::generate_next_item($strategy, 1);
 
         $this->assertNotNull($res, 'a publish failure must not propagate as a thrown exception — the draft already saved');
-        $this->assertSame('completed', PCM_DB::$items[1]->status, 'item must NOT flip to error on a publish failure');
+        // 2026-07-28: a publish FAILURE no longer flips the item to 'completed'.
+        // 'completed' now means PUBLISHED; a failed publish leaves the item 'written'.
+        $this->assertSame('written', PCM_DB::$items[1]->status, 'item must NOT flip to error on a publish failure, but also must NOT be completed until actually published');
         $this->assertSame('', PCM_DB::$items[1]->errorMessage, 'errorMessage is reserved for GENERATION failures, not publish failures');
         $this->assertFalse($res['publish']['success'] ?? null);
         $this->assertStringContainsString('remote publish boom', $res['publish']['message'] ?? '');
-        $this->assertSame(1, PCM_DB::$strategy['completedItems'] ?? null, 'generation succeeded regardless of the publish outcome');
+        $this->assertSame(0, PCM_DB::$strategy['completedItems'] ?? null, 'a failed publish does not count toward completion; the item is written, not completed');
     }
 
     public function test_draft_mode_never_calls_publish_to_site_even_with_a_site_configured(): void
@@ -1042,7 +1050,8 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
 
         $this->assertCount(0, PCM_Sites_Service::$calls);
         $this->assertFalse($res['publish']['success'] ?? null);
-        $this->assertSame('completed', PCM_DB::$items[1]->status);
+        // 2026-07-28: site-disconnected → publish failed → item stays 'written'.
+        $this->assertSame('written', PCM_DB::$items[1]->status);
     }
 
     public function test_null_article_reports_failure_instead_of_crashing_the_outer_catch(): void
@@ -1062,7 +1071,8 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
         $this->assertCount(0, PCM_Sites_Service::$calls, 'publish_to_site must never be called with a null article');
         $this->assertFalse($res['publish']['success'] ?? null);
         $this->assertSame('Article not found for publish.', $res['publish']['message'] ?? null);
-        $this->assertSame('completed', PCM_DB::$items[1]->status, 'the null-article guard must not flip the item to error');
+        // 2026-07-28: null-article → publish failed → item stays 'written' (not error, not completed).
+        $this->assertSame('written', PCM_DB::$items[1]->status, 'the null-article guard must not flip the item to error');
         $this->assertSame('', PCM_DB::$items[1]->errorMessage);
     }
 
@@ -1208,7 +1218,8 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
 
         PCM_Strategy_Service::run_queue_tick(7, 1);
 
-        $this->assertSame('completed', PCM_DB::$items[1]->status, 'the tick must have generated item 1');
+        // 2026-07-28: generated, no publish configured → 'written'.
+        $this->assertSame('written', PCM_DB::$items[1]->status, 'the tick must have generated item 1');
         $this->assertSame('pending', PCM_DB::$items[2]->status, 'item 2 untouched by this single tick');
         $this->assertCount(1, PCM_Test_Cron::$scheduleCalls, 'item 2 still pending — the tick re-arms itself');
     }
@@ -1414,7 +1425,8 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
 
         PCM_Strategy_Service::generate_next_item($strategy, 1);
 
-        $this->assertSame('completed', PCM_DB::$items[1]->status);
+        // 2026-07-28: generated, no publish → 'written'.
+        $this->assertSame('written', PCM_DB::$items[1]->status);
         $this->assertCount(0, PCM_Test_Cron::$scheduleCalls, 'item 2 is not due yet -- run_scheduled_scan(), not this chain, picks it up later');
     }
 
@@ -1492,7 +1504,8 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
 
         PCM_Strategy_Service::generate_next_item($strategy, 1);
 
-        $this->assertSame('completed', PCM_DB::$items[1]->status);
+        // 2026-07-28: approvalMode none, no publish → 'written'.
+        $this->assertSame('written', PCM_DB::$items[1]->status);
         $this->assertCount(0, PCM_Approvals_Service::$createSetCalls, 'approvalMode defaults to none -- no Approvals involvement at all');
     }
 
@@ -1582,9 +1595,10 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
         $this->assertStringContainsString('cheap accounting tools', PCM_LLM::$lastUserMessage);
         $this->assertStringContainsString('invoice generators', PCM_LLM::$lastUserMessage);
 
-        $this->assertSame('completed', PCM_DB::$items[1]->status);
-        $this->assertSame('completed', PCM_DB::$items[2]->status);
-        $this->assertSame('completed', PCM_DB::$items[3]->status);
+        // 2026-07-28: consolidated batch generated, no site/publish → all items 'written'.
+        $this->assertSame('written', PCM_DB::$items[1]->status);
+        $this->assertSame('written', PCM_DB::$items[2]->status);
+        $this->assertSame('written', PCM_DB::$items[3]->status);
         $this->assertSame(PCM_DB::$items[1]->articleId, PCM_DB::$items[2]->articleId);
         $this->assertSame(PCM_DB::$items[1]->articleId, PCM_DB::$items[3]->articleId);
     }
@@ -1667,7 +1681,8 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
 
         PCM_Strategy_Service::generate_next_item($strategy, 1);
 
-        $this->assertSame('completed', PCM_DB::$items[2]->status, 'the designated parent must generate first');
+        // 2026-07-28: generated, no publish → 'written'.
+        $this->assertSame('written', PCM_DB::$items[2]->status, 'the designated parent must generate first');
         $this->assertSame('pending', PCM_DB::$items[1]->status, 'the child must still be waiting');
     }
 
@@ -1706,7 +1721,9 @@ class StrategyAutoPublishTest extends \PHPUnit\Framework\TestCase
 
         PCM_Strategy_Service::generate_next_item($strategy, 1);
 
-        $this->assertSame('completed', PCM_DB::$items[2]->status);
+        // 2026-07-28: generated, no publishingMode set → maybe_auto_publish returns
+        // null → item stays 'written' (the parent-link assertion below is unaffected).
+        $this->assertSame('written', PCM_DB::$items[2]->status);
         $child_article = PCM_DB::$articles[PCM_DB::$items[2]->articleId];
         $this->assertStringContainsString('https://example.com/parent-slug', $child_article['content']);
     }

@@ -18,6 +18,7 @@
  *   PATCH  /strategies/(?P<id>\d+)/items/(?P<itemId>\d+) Manually change one item's status / due date
  *   DELETE /strategies/(?P<id>\d+)/items/(?P<itemId>\d+) Delete one item (article stays in Writer)
  *   POST   /strategies/(?P<id>\d+)/items/(?P<itemId>\d+)/publish Publish one completed item to the target site
+ *   POST   /strategies/(?P<id>\d+)/items/(?P<itemId>\d+)/post-status Set the LIVE post's status (draft|publish|trash)
  *   POST   /strategies/(?P<id>\d+)/interlinks Run interlink injection now
  *   POST   /strategies/(?P<id>\d+)/sync-status Pull published items' status from WordPress
  *
@@ -53,6 +54,8 @@ class PCM_REST_Strategy extends PCM_REST_Base
             array('PATCH',  '/strategies/(?P<id>\d+)/items/(?P<itemId>\d+)', 'update_item_status'),
             array('DELETE', '/strategies/(?P<id>\d+)/items/(?P<itemId>\d+)', 'delete_item'),
             array('POST',   '/strategies/(?P<id>\d+)/items/(?P<itemId>\d+)/publish', 'publish_item'),
+            array('POST',   '/strategies/(?P<id>\d+)/items/(?P<itemId>\d+)/post-status', 'set_item_post_status'),
+            array('POST',   '/strategies/(?P<id>\d+)/items/(?P<itemId>\d+)/duplicate', 'duplicate_item'),
             array('POST',   '/strategies/(?P<id>\d+)/interlinks', 'run_interlinks'),
             array('POST',   '/strategies/(?P<id>\d+)/sync-status', 'sync_status'),
             // Manual "Scan now" — force an immediate watcher pass for one
@@ -180,6 +183,13 @@ class PCM_REST_Strategy extends PCM_REST_Base
                     'scheduledDate'       => $scheduled,
                     'articlePublishedUrl' => $published,
                     'articleId'           => !empty($item->articleId) ? (int)$item->articleId : null,
+                    // Non-null ONLY when the article really has a post on a site — this is
+                    // what enables the row's live post-status control.
+                    'articlePublishedPostId' => !empty($item->articlePublishedPostId) ? (int)$item->articlePublishedPostId : null,
+                    'articleStatus'          => isset($item->articleStatus) ? (string)$item->articleStatus : null,
+                    // WHEN it actually went live. The row's date tag prefers this over
+                    // scheduledDate, which only ever exists for schedule-mode strategies.
+                    'articlePublishedAt'     => !empty($item->articlePublishedAt) ? (string)$item->articlePublishedAt : null,
                     'publishingMode'      => (string)$strategy->publishingMode,
                 );
             }
@@ -552,6 +562,14 @@ class PCM_REST_Strategy extends PCM_REST_Base
                         $schedule['byDays'] = $by_days;
                     }
                 }
+                // Monthly day-of-month (1–31). 31 = last day for shorter months — the
+                // clamp lives in PCM_Strategy_Service::calculate_recurrence_dates().
+                if (isset($schedule_config['byMonthDay'])) {
+                    $by_month_day = absint($schedule_config['byMonthDay']);
+                    if ($by_month_day >= 1 && $by_month_day <= 31) {
+                        $schedule['byMonthDay'] = $by_month_day;
+                    }
+                }
                 if (is_array($schedule_config['ends'] ?? null)) {
                     $ends_type = $schedule_config['ends']['type'] ?? '';
                     if (in_array($ends_type, array('never', 'on', 'after'), true)) {
@@ -627,6 +645,21 @@ class PCM_REST_Strategy extends PCM_REST_Base
         if (array_key_exists('imageModel', $fields)) {
             $config['imageModel'] = sanitize_text_field($fields['imageModel'] ?? '');
         }
+        // Image PROMPT template (module 'image'). 0/absent → the built-in default
+        // prompt, so existing strategies are unaffected.
+        if (array_key_exists('imageTemplateId', $fields)) {
+            $config['imageTemplateId'] = absint($fields['imageTemplateId'] ?? 0);
+        }
+        // Research (grounded/deep passes) runs its OWN model, independent of the
+        // text-generation model above — a cheap grounded model can feed an expensive
+        // writer, or vice versa. Empty → the historical default (see
+        // PCM_Strategy_Service::resolve_research_model()).
+        if (array_key_exists('researchProvider', $fields)) {
+            $config['researchProvider'] = sanitize_text_field($fields['researchProvider'] ?? '');
+        }
+        if (array_key_exists('researchModel', $fields)) {
+            $config['researchModel'] = sanitize_text_field($fields['researchModel'] ?? '');
+        }
 
         // ── Filip's strategy-sections model (Source / Trigger / Volume &
         //    cadence / Publishing / Duration / Research). Every key below is
@@ -694,11 +727,20 @@ class PCM_REST_Strategy extends PCM_REST_Base
         if (array_key_exists('rssAngle', $fields)) {
             $config['rssAngle'] = mb_substr(sanitize_text_field((string)$fields['rssAngle']), 0, 200);
         }
-        // Backpressure cap: how many articles per week the RSS watcher may create. Clamp 1–21.
+        // Backpressure cap: how many articles PER PERIOD the RSS/social watcher may
+        // create. `perWeek` keeps its historical key name but is now just the COUNT;
+        // `unit` ('day'|'week'|'month') picks the period it is measured over and
+        // defaults to 'week', so configs saved before the unit existed behave exactly
+        // as before. Count clamped 1–21.
         if (array_key_exists('rssCadence', $fields)) {
             if (is_array($fields['rssCadence'] ?? null) && isset($fields['rssCadence']['perWeek'])) {
+                $unit = (string) ($fields['rssCadence']['unit'] ?? 'week');
+                if (!in_array($unit, array('day', 'week', 'month'), true)) {
+                    $unit = 'week';
+                }
                 $config['rssCadence'] = array(
                     'perWeek' => min(21, max(1, absint($fields['rssCadence']['perWeek']))),
+                    'unit'    => $unit,
                 );
             }
         }
@@ -1008,6 +1050,61 @@ class PCM_REST_Strategy extends PCM_REST_Base
      * the retro-publish path for draft-mode articles (or ones generated before
      * a site was set).
      */
+    /**
+     * POST /strategies/{id}/items/{itemId}/post-status {status} — change the LIVE
+     * post's status on the connected site: 'draft' (unpublish), 'publish', or 'trash'
+     * (delete, recoverable from the site's Trash). Only valid once the item's article
+     * actually has a post on a site; the service re-checks that server-side.
+     */
+    /**
+     * POST /strategies/{id}/items/{itemId}/duplicate — copy one item back into the
+     * same strategy as a FRESH pending item (same keyword/title/overrides, no
+     * article, no schedule slot), so it regenerates instead of cloning the output.
+     */
+    public function duplicate_item(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user    = $this->get_current_pcm_user();
+        $strategy_id = (int)$request->get_param('id');
+        $item_id     = (int)$request->get_param('itemId');
+
+        $strategy = PCM_DB::get_strategy($strategy_id, (int)$pcm_user->id);
+        if (!$strategy) {
+            return $this->not_found('Strategy');
+        }
+        try {
+            require_once __DIR__ . '/service.php';
+            return $this->success(PCM_Strategy_Service::duplicate_item($strategy, $item_id, (int)$pcm_user->id));
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 400);
+        }
+    }
+
+    public function set_item_post_status(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user    = $this->get_current_pcm_user();
+        $strategy_id = (int)$request->get_param('id');
+        $item_id     = (int)$request->get_param('itemId');
+
+        $strategy = PCM_DB::get_strategy($strategy_id, (int)$pcm_user->id);
+        if (!$strategy) {
+            return $this->not_found('Strategy');
+        }
+
+        $params = $request->get_json_params();
+        $status = is_array($params) ? sanitize_text_field((string)($params['status'] ?? '')) : '';
+        if (!in_array($status, array('draft', 'publish', 'trash'), true)) {
+            return $this->error('Status must be draft, publish or trash.', 400);
+        }
+
+        try {
+            require_once __DIR__ . '/service.php';
+            $result = PCM_Strategy_Service::set_item_post_status($strategy, $item_id, (int)$pcm_user->id, $status);
+            return $this->success($result);
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 400);
+        }
+    }
+
     public function publish_item(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $pcm_user = $this->get_current_pcm_user();

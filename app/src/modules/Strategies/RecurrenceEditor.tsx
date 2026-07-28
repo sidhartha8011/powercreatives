@@ -28,6 +28,9 @@ export interface ScheduleRecurrence {
   interval: number; // 1–12
   unit: 'day' | 'week' | 'month';
   byDays: number[]; // ISO 1(Mon)–7(Sun); only meaningful when unit==='week'
+  /** Day-of-month 1–31; only meaningful when unit==='month'. 31 (or any day past a
+   *  month's length) posts on that month's LAST day. 0 = use the start date's day. */
+  byMonthDay: number;
   ends: { type: 'never' } | { type: 'on'; date: string } | { type: 'after'; count: number };
   /** Derived legacy label kept for back-compat readers. */
   frequency: string;
@@ -61,6 +64,12 @@ function normalizeByDays(days: unknown): number[] {
   return Array.from(seen).sort((a, b) => a - b);
 }
 
+/** Day-of-month 1–31, else 0 ("use the start date's day"). */
+function normalizeByMonthDay(d: unknown): number {
+  const n = Math.floor(Number(d));
+  return Number.isFinite(n) && n >= 1 && n <= 31 ? n : 0;
+}
+
 function normalizeEnds(ends: unknown): ScheduleRecurrence['ends'] {
   if (ends && typeof ends === 'object') {
     const e = ends as Record<string, unknown>;
@@ -84,6 +93,7 @@ const DEFAULT_RECURRENCE: ScheduleRecurrence = {
   interval: 1,
   unit: 'week',
   byDays: [],
+  byMonthDay: 0,
   ends: { type: 'never' },
   frequency: 'weekly',
 };
@@ -99,16 +109,20 @@ export function recurrenceFromConfig(cfg: any): ScheduleRecurrence {
   if (!cfg || typeof cfg !== 'object') return { ...DEFAULT_RECURRENCE };
 
   // New-key config: any of the structured keys present.
-  if (cfg.interval != null || cfg.unit != null || cfg.byDays != null || cfg.ends != null) {
+  if (
+    cfg.interval != null || cfg.unit != null || cfg.byDays != null ||
+    cfg.byMonthDay != null || cfg.ends != null
+  ) {
     const interval = clampInterval(cfg.interval ?? 1);
     const unit = normalizeUnit(cfg.unit);
     const byDays = normalizeByDays(cfg.byDays);
+    const byMonthDay = normalizeByMonthDay(cfg.byMonthDay);
     const ends = normalizeEnds(cfg.ends);
     const frequency =
       typeof cfg.frequency === 'string' && cfg.frequency
         ? cfg.frequency
         : deriveFrequency(interval, unit);
-    return { interval, unit, byDays, ends, frequency };
+    return { interval, unit, byDays, byMonthDay, ends, frequency };
   }
 
   // Legacy config: `{ frequency, startDate }`.
@@ -146,6 +160,9 @@ export function recurrenceToConfig(r: ScheduleRecurrence): Record<string, any> {
     interval: r.interval,
     unit: r.unit,
     byDays: r.byDays,
+    // Only meaningful monthly; omitted when unset so the server keeps using the
+    // start date's own day-of-month (and legacy configs round-trip unchanged).
+    ...(r.unit === 'month' && r.byMonthDay > 0 ? { byMonthDay: r.byMonthDay } : {}),
     ends: r.ends,
     frequency,
   };
@@ -161,6 +178,9 @@ const DAY_CHIPS: { iso: number; label: string }[] = [
   { iso: 6, label: 'S' },
   { iso: 7, label: 'S' },
 ];
+
+// ─── Month days (1–31; 31 = last day of shorter months) ───
+const MONTH_DAYS: number[] = Array.from({ length: 31 }, (_, i) => i + 1);
 
 // ─── Component ────────────────────────────────────────────
 interface RecurrenceEditorProps {
@@ -221,7 +241,7 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps): Re
           value={value.unit}
           onValueChange={(u) => emit({ unit: u as ScheduleRecurrence['unit'] })}
         >
-          <SelectTrigger className="h-8 w-28 text-xs bg-background">
+          <SelectTrigger className="h-8 w-28 text-xs bg-card">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -262,6 +282,33 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps): Re
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* Repeat on (monthly only) — day-of-month 1–31 ---------------- */}
+      {value.unit === 'month' && (
+        <div className="flex flex-col gap-1.5">
+          <Select
+            value={String(value.byMonthDay || '')}
+            onValueChange={(d) => emit({ byMonthDay: normalizeByMonthDay(d) })}
+          >
+            <SelectTrigger className="h-8 w-44 text-xs bg-card">
+              <SelectValue placeholder="Monthly on start day" />
+            </SelectTrigger>
+            <SelectContent className="max-h-64">
+              {MONTH_DAYS.map((d) => (
+                <SelectItem key={d} value={String(d)}>
+                  {`Monthly on day ${d}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {value.byMonthDay >= 29 && (
+            <span style={{ fontSize: typography.xs, color: colors.textSecondary }}>
+              Months shorter than day {value.byMonthDay} post on their last day
+              {value.byMonthDay === 31 ? ' (e.g. 28 or 29 in February)' : ''}.
+            </span>
+          )}
         </div>
       )}
 

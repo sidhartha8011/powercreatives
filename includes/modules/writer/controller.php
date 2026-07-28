@@ -74,6 +74,7 @@ class PCM_REST_Writer extends PCM_REST_Base
         $status = $request->get_param('status');
 
         // Validate status if provided
+        // (see fill_strategy_site_ids() below for the Target-Site backfill)
         $valid_statuses = array('draft', 'review', 'ready', 'published');
         if ($status && !in_array($status, $valid_statuses, true)) {
             return $this->error('Invalid status filter. Must be one of: ' . implode(', ', $valid_statuses));
@@ -84,7 +85,65 @@ class PCM_REST_Writer extends PCM_REST_Base
             $status ? sanitize_text_field($status) : null
         );
 
-        return $this->success($articles);
+        return $this->success(self::fill_strategy_site_ids($articles, (int) $pcm_user->id));
+    }
+
+    /**
+     * Fill in `siteId` for strategy-generated articles that don't carry one.
+     *
+     * Strategy generation now stamps the Target Site onto every article it creates, but
+     * articles generated BEFORE that have `siteId` NULL — and the Writer's Publish
+     * button reads exactly this field, so those drafts sat un-publishable even though
+     * their strategy plainly had a site. Resolves from the owning strategy's
+     * `config.siteId`.
+     *
+     * One extra query for the whole page (strategies fetched by id IN (...)), not one
+     * per article. Purely additive: rows that already have a siteId are untouched, and
+     * a strategy without a configured site leaves the field as it was.
+     *
+     * @param array $articles Article rows.
+     * @param int   $user_id  Owner id (scopes the strategy lookup).
+     * @return array The same rows, with siteId filled where it could be resolved.
+     */
+    private static function fill_strategy_site_ids(array $articles, int $user_id): array
+    {
+        $needed = array();
+        foreach ($articles as $a) {
+            if (empty($a->siteId) && !empty($a->strategyId)) {
+                $needed[(int) $a->strategyId] = true;
+            }
+        }
+        if (empty($needed)) {
+            return $articles;
+        }
+
+        global $wpdb;
+        $table = PCM_Schema::table('strategies');
+        $ids   = array_map('intval', array_keys($needed));
+        $ph    = implode(',', array_fill(0, count($ids), '%d'));
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, config FROM {$table} WHERE userId = %d AND id IN ($ph)",
+            array_merge(array($user_id), $ids)
+        ));
+
+        $site_by_strategy = array();
+        foreach ((array) $rows as $row) {
+            $cfg = json_decode((string) $row->config, true);
+            if (is_array($cfg) && !empty($cfg['siteId'])) {
+                $site_by_strategy[(int) $row->id] = (int) $cfg['siteId'];
+            }
+        }
+        if (empty($site_by_strategy)) {
+            return $articles;
+        }
+
+        foreach ($articles as $a) {
+            if (empty($a->siteId) && !empty($a->strategyId) && isset($site_by_strategy[(int) $a->strategyId])) {
+                $a->siteId = $site_by_strategy[(int) $a->strategyId];
+            }
+        }
+        return $articles;
     }
 
     /**

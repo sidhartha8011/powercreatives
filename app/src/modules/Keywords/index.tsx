@@ -245,7 +245,13 @@ export function KeywordsModule() {
 
     // Try server-side first
     try {
-      const result: any = await searchSingle.mutateAsync({ query: q, lang });
+      // `gl` (market) is REQUIRED here, exactly as the JSONP calls below pass it.
+      // Omitting it made google_suggest() build a gl-less suggest URL (its
+      // array_filter drops the empty value), so Google geolocated the request by
+      // the HUB SERVER'S IP instead of the chosen market — a Swedish search
+      // returned Indian suggestions. The JSONP fallback never had this bug
+      // because it runs in the browser, on the user's own IP, and always sent gl.
+      const result: any = await searchSingle.mutateAsync({ query: q, lang, gl: country });
       const suggestions: string[] = result?.suggestions ?? [];
 
       if (suggestions.length > 0) {
@@ -526,13 +532,12 @@ export function KeywordsModule() {
     onError: (err: any) => toast.error(err.message ?? 'Failed to create strategy'),
   });
 
+  // No table selection required any more: the dialog lets you TYPE a primary +
+  // supporting keywords (or switch the source to RSS/social), and it blocks its own
+  // Create button until at least one keyword exists from either route.
   const handleOpenStrategy = useCallback(() => {
-    if (selectedKeywords.length === 0) {
-      toast.error('No keywords selected');
-      return;
-    }
     setStrategyDialogOpen(true);
-  }, [selectedKeywords.length]);
+  }, []);
 
   const handlePerformCreateStrategy = useCallback((payload: StrategyPayload) => {
     // An RSS/social strategy's items come from its sources — sending the
@@ -543,7 +548,10 @@ export function KeywordsModule() {
       createStrategyMutation.mutate({ ...payload, keywords: [], keywordMeta: [] });
       return;
     }
-    const keywords = selectedKeywords.map(k => k.keyword);
+    // Table selection first, then anything typed into the dialog (already trimmed,
+    // primary-first and de-duped against the selection by the dialog itself).
+    const manual = ((payload as any).manualKeywords ?? []) as string[];
+    const keywords = [...selectedKeywords.map(k => k.keyword), ...manual];
     // F3: carry the display-only SEO metrics (Ahrefs search volume + keyword
     // difficulty) from the selected Keyword Explorer rows onto the strategy's
     // items. `keywords` stays unchanged for backward compat; keywordMeta is
@@ -684,7 +692,7 @@ export function KeywordsModule() {
             <button
               type="button"
               disabled={isSearching}
-              className="border-input data-[placeholder]:text-muted-foreground flex w-[200px] items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none h-9 disabled:cursor-not-allowed disabled:opacity-50"
+              className="border-input data-[placeholder]:text-muted-foreground flex w-[200px] items-center justify-between gap-2 rounded-md border bg-card px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none h-9 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="truncate">
                 {selectedModifierSet.size === allPrefixes.length
@@ -767,7 +775,7 @@ export function KeywordsModule() {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="border-input flex items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none h-9"
+              className="border-input flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none h-9"
             >
               <FolderOpen className="w-4 h-4 text-muted-foreground" />
               <span className="truncate">

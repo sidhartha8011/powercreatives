@@ -136,6 +136,15 @@ class PCM_REST_Optimizer extends PCM_REST_Base
                 error_log('[PCM_Optimizer] volume enrichment failed: ' . $e->getMessage());
                 return null; // transient failure — never poison the cache
             }
+            // ahrefs_enrich now REPORTS failures instead of swallowing them into
+            // an empty array. Without this branch a dead key wrote null volumes
+            // for every keyword — the exact cache poisoning the catch above
+            // exists to prevent, which it never caught because the old code
+            // returned [] rather than throwing.
+            if (is_wp_error($enriched)) {
+                error_log('[PCM_Optimizer] volume enrichment failed: ' . $enriched->get_error_message());
+                return null;
+            }
             $out = array();
             foreach ($missing as $kw) {
                 $out[$kw] = isset($enriched[$kw]['volume']) ? (int) $enriched[$kw]['volume'] : null;

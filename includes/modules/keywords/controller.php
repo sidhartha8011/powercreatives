@@ -157,6 +157,12 @@ class PCM_REST_Keywords extends PCM_REST_Base
 
         // Phase 1: Volume/KD/CPC enrichment (batch — fast)
         $enriched = PCM_Keywords_Service::ahrefs_enrich($sanitized, $api_key, $country);
+        // A reachability/auth failure is an ERROR, never "Enriched 0 keywords" —
+        // the silent [] made a dead API key look identical to a keyword Ahrefs
+        // genuinely has no data for.
+        if (is_wp_error($enriched)) {
+            return $this->error($enriched->get_error_message(), 502);
+        }
 
         // Phase 2: SERP DR enrichment (per-keyword — slower, opt-in)
         $serp_data = [];

@@ -1,5 +1,15 @@
 # Power Creatives — Codebase Map
-_Last updated: 2026-07-22 (map re-verified vs `feat/seo-suite-port` code; refreshed from the 2026-07-08 version after 9 DB-version bumps + module growth)._
+_Last updated: 2026-07-28 · NEWEST (2026-07-27/28, UNCOMMITTED — a large Strategies/Keywords UI+config
+batch): 2 new item routes (`post-status`, `duplicate`) and 5 new strategy `config` keys — see
+**strategy** below for the contract. Frontend highlights, all in `Strategies/index.tsx` +
+`Keywords/CreateStrategyDialog.tsx`: the create dialog now doubles as the **full settings editor**
+(`editStrategy` prop; the row cog opens it — `ParentSettingsModal` is now unreachable); prompts+models
+consolidated into CONTENT with Publishing moved to 2nd and open; **source-aware template mapping**
+(`templateSourceFit()` detects `{{ post_* }}` usage to tell RSS/Social templates from keyword ones and
+re-maps on source change); typed **primary + supporting keywords** (no table selection needed); per-item
+**bulk select** (Linking/Delete/Duplicate) and a **crown parent toggle**; item rows lead with the KEYWORD
+and carry a publish-date tag. PRIOR: 2026-07-22 (map re-verified vs `feat/seo-suite-port` code; refreshed
+from the 2026-07-08 version after 9 DB-version bumps + module growth)._
 
 > A WordPress plugin (PHP 8.1+) wrapping a React/TypeScript SPA. AI-powered
 > creative generation: copy, images, video, brand management, client approval
@@ -525,6 +535,8 @@ Basic auth with the connected site's WP Application Password). Remote reads use 
 | PATCH | /strategies/{id}/items/{itemId} | controller.php:53 | edit_posts | Update item status |
 | DELETE | /strategies/{id}/items/{itemId} | controller.php:54 | edit_posts | Delete item |
 | POST | /strategies/{id}/items/{itemId}/publish | controller.php:55 | edit_posts | Publish item |
+| POST | /strategies/{id}/items/{itemId}/post-status | controller.php:57 | edit_posts | Set the LIVE post's status on the site: draft \| publish \| trash (trash = recoverable, `force=false`) |
+| POST | /strategies/{id}/items/{itemId}/duplicate | controller.php:58 | edit_posts | Re-queue the item as a FRESH pending copy (no articleId/setId/scheduledDate — it regenerates, never clones output) |
 | POST | /strategies/{id}/interlinks | controller.php:56 | edit_posts | Run interlink pass |
 | POST | /strategies/{id}/sync-status | controller.php:57 | edit_posts | Sync publish status |
 | POST | /strategies/{id}/scan | controller.php:60 | edit_posts | Manual scan-now (RSS/Social) |
@@ -532,6 +544,27 @@ Basic auth with the connected site's WP Application Password). Remote reads use 
 | GET | /strategies/keepalive | controller.php:67 | public | Keep-alive chain link |
 | POST | /strategies/keepalive | controller.php:68 | public | Keep-alive chain link |
 | GET | /strategies/cron-info | controller.php:70 | edit_posts | Background-scan cron health |
+
+**Strategy `config` keys added 2026-07-27/28** (all whitelisted in `sanitize_config_fields()`, merged not
+replaced by `merge_strategy_config()`, so a partial PATCH preserves everything else):
+- **Per-JOB models.** `model`/`provider` = TEXT, `imageModel`/`imageProvider` = IMAGES, and NEW
+  `researchModel`/`researchProvider` = the grounded/deep RESEARCH passes. Research was previously a
+  hardcoded `gemini-2.5-flash` inside `run_grounding_call()`; it now resolves via
+  `resolve_research_model()` (same shape as `resolve_model()`), still defaulting to that model.
+- **`imageTemplateId`** — an `image`-module template that writes the FEATURED-image prompt via
+  `build_image_prompt()` (`{{ title }}` / `{{ keyword }}` / `{{ brand_language }}`). Every failure path
+  (unset, id 0, deleted template, empty render) falls back to the original hardcoded sentence, so an
+  image prompt can never come out blank.
+- **`rssCadence.unit`** (`day|week|month`, default `week`). `perWeek` keeps its historical key name but is
+  now just the COUNT; the trailing backpressure window follows the unit via
+  `rss_cadence_window_days()` → 1/7/30. Missing/unknown → 7, so pre-existing configs are unchanged.
+- **`scheduleConfig.byMonthDay`** (1–31, monthly only). `calculate_recurrence_dates()`'s month branch is now
+  computed from the START anchor with a `min(day, days_in_month)` clamp instead of chaining
+  `strtotime('+N month')` — which OVERFLOWED (Jan 31 → Mar 3) and drifted permanently. Day 31 therefore
+  means "last day" for 28/29/30-day months.
+- **Language.** `build_prompt()` exposes `{{ brand_language }}` and, when the brand sets a language,
+  appends an explicit instruction so **title/metaTitle/metaDescription** are written in it — previously the
+  brand block only language-locked the article BODY, so the JSON fields came back English.
 
 ### templates — `pcm/v1/templates/*` (default `manage_options`)
 | Method | Path | File:Line | Auth/Cap | Purpose |

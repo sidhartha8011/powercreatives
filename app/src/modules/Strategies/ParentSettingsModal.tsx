@@ -138,7 +138,7 @@ export function ParentSettingsModal({
           <div className="space-y-2">
             <Label>Content Hierarchy</Label>
             <Select value={hierarchyMode} onValueChange={setHierarchyMode}>
-              <SelectTrigger className="w-full bg-background">
+              <SelectTrigger className="w-full bg-card">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -160,7 +160,7 @@ export function ParentSettingsModal({
                 value={parentTargetUrl}
                 onChange={(e) => setParentTargetUrl(e.target.value)}
                 placeholder="https://example.com/parent-page"
-                className="w-full bg-background"
+                className="w-full bg-card"
               />
             </div>
           )}
@@ -175,7 +175,7 @@ export function ParentSettingsModal({
                 value={parentKeyword}
                 onChange={(e) => setParentKeyword(e.target.value)}
                 placeholder="e.g. best running shoes"
-                className="w-full bg-background"
+                className="w-full bg-card"
               />
             </div>
           )}
@@ -189,7 +189,7 @@ export function ParentSettingsModal({
               value={parentAnchorKeyword}
               onChange={(e) => setParentAnchorKeyword(e.target.value)}
               placeholder="e.g. our complete guide"
-              className="w-full bg-background"
+              className="w-full bg-card"
             />
           </div>
 

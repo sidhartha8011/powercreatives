@@ -73,7 +73,12 @@ function CommandInput({
       <CommandPrimitive.Input
         data-slot="command-input"
         className={cn(
-          "placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
+          // h-full + min-w-0, NOT h-10 w-full: the wrapper above is h-9, so an h-10
+          // input is 4px TALLER than the row that contains it and bleeds past the
+          // border-b (visible the moment the input takes a focus ring). min-w-0 lets
+          // it shrink below an <input>'s intrinsic ~20ch minimum so it can never push
+          // the icon out of a narrow container either.
+          "placeholder:text-muted-foreground flex h-full min-w-0 flex-1 rounded-md bg-transparent py-3 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
           className
         )}
         {...props}

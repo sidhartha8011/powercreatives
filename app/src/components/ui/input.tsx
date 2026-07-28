@@ -14,7 +14,12 @@ const inputVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-background",
+        // Fields must READ as fields. `--background` (oklch .98) is the PAGE colour, so
+        // a bg-background input dissolved into the page — and inside a dialog (which is
+        // --card, pure white) it read as a grey block instead. `--card` gives a white
+        // field that contrasts with the page and, paired with the existing
+        // `border-input` (oklch .86), stays clearly delineated on white surfaces too.
+        default: "bg-card",
         surface: "bg-card",
       },
     },

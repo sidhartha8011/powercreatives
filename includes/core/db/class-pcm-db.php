@@ -1050,7 +1050,11 @@ class PCM_DB
      * Get all items for a strategy.
      *
      * LEFT JOINs the linked article (when one exists) to additionally expose
-     * where it was actually published — `articlePublishedUrl`/`articleSiteId`,
+     * where it was actually published — `articlePublishedUrl`/`articleSiteId`/
+     * `articlePublishedPostId`/`articleStatus` (the last two let the Strategies
+     * page offer the live post-status control: draft / publish / trash) and
+     * `articlePublishedAt` (WHEN it went live, so a published row can show a real
+     * date instead of only schedule-mode rows having one),
      * aliased to avoid colliding with strategy_items' own `id`/`status` columns
      * when `si.*` is selected alongside them. Purely additive: every existing
      * caller reads specific named strategy_items fields (status/keyword/
@@ -1068,7 +1072,9 @@ class PCM_DB
         $articles_table = self::t('articles');
         return $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT si.*, a.publishedUrl AS articlePublishedUrl, a.siteId AS articleSiteId
+                "SELECT si.*, a.publishedUrl AS articlePublishedUrl, a.siteId AS articleSiteId,
+                        a.publishedPostId AS articlePublishedPostId, a.status AS articleStatus,
+                        a.publishedAt AS articlePublishedAt
                  FROM {$items_table} si
                  LEFT JOIN {$articles_table} a ON a.id = si.articleId
                  WHERE si.strategyId = %d ORDER BY si.position ASC",
@@ -1240,8 +1246,8 @@ class PCM_DB
         $table = self::t('strategies');
         return $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT * FROM {$table} WHERE config LIKE %s AND status != 'paused'",
-                '%' . $wpdb->esc_like('"sourceMode":"rss"') . '%'
+            "SELECT * FROM {$table} WHERE config LIKE %s AND status NOT IN ('paused','completed')",
+            '%' . $wpdb->esc_like('"sourceMode":"rss"') . '%'
             )
         );
     }
@@ -1358,7 +1364,7 @@ class PCM_DB
         global $wpdb;
         $rows = $wpdb->update(
             self::t('strategy_items'),
-            array('status' => 'completed', 'updatedAt' => current_time('mysql')),
+            array('status' => 'written', 'updatedAt' => current_time('mysql')),
             array('id' => $id, 'status' => 'in_review')
         );
         return $rows === 1;

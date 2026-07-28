@@ -16,8 +16,6 @@ import {
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '@/components/ui/select';
-import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Popover, PopoverTrigger } from '@/components/ui/popover';
 import { cn, copyToClipboard } from '@/lib/utils';
 import {
   Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem,
@@ -44,43 +42,36 @@ function ItemCombobox({
   }, [items]);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className="w-full justify-between font-normal"
-        >
-          <span className="truncate text-left">
-            {selected ? selected.label : <span className="text-muted-foreground">{placeholder}</span>}
-          </span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      {/* NOTE: rendered WITHOUT a Portal on purpose. This combobox lives inside a
-          Radix Dialog, whose react-remove-scroll lock blocks wheel/touch scroll on
-          any node outside the dialog subtree (i.e. a portalled popover). Keeping the
-          content inline (inside the dialog) lets the list scroll normally.
-
-          Height is bounded on the CONTENT element itself (a plain div we fully
-          control): a flex column capped at 20rem with overflow-hidden. The
-          CommandList then scrolls inside via `min-h-0 flex-1 overflow-y-auto` — this
-          does NOT depend on cmdk's internal max-height, which was unreliable here. */}
-      <PopoverPrimitive.Content
-        align="start"
-        sideOffset={4}
-        collisionPadding={8}
-        className={cn(
-          // Width: at LEAST the trigger, but allowed to grow to the viewport so a
-          // long trigger description isn't clipped into a horizontal scrollbar
-          // (the popover used to be pinned to the trigger width exactly).
-          'z-50 flex max-h-80 min-w-[--radix-popover-trigger-width] max-w-[min(34rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md outline-hidden',
-          'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-        )}
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        role="combobox"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="w-full justify-between font-normal"
+        onClick={() => setOpen(true)}
       >
-        <Command
+        <span className="truncate text-left">
+          {selected ? selected.label : <span className="text-muted-foreground">{placeholder}</span>}
+        </span>
+        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+      </Button>
+      {/* A DIALOG, not a popover. As a popover this list had to be rendered WITHOUT
+          a Portal — Radix Dialog's react-remove-scroll lock kills wheel scrolling on
+          any portalled node outside the dialog subtree — which left it inline inside
+          the scrollable form, where it was clipped by the form's overflow and needed
+          an --radix-popover-content-available-height cap to half-cope. A nested
+          Dialog portals cleanly, owns its own scroll lock, and is bounded by the
+          VIEWPORT rather than the parent form, so the full list is always reachable
+          and the trigger descriptions get room to breathe. */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-[min(44rem,calc(100vw-4rem))] max-h-[80vh] flex flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
+            <DialogTitle>{placeholder}</DialogTitle>
+            <DialogDescription>Search, then pick one. Grouped by module.</DialogDescription>
+          </DialogHeader>
+          <Command
           className="flex min-h-0 flex-1 flex-col"
           filter={(itemValue, search) => {
             // itemValue is the CommandItem `value` (we pack module+id+label there).
@@ -88,12 +79,22 @@ function ItemCombobox({
           }}
         >
           <CommandInput placeholder="Search…" />
-          {/* Redundant hard cap on the scroll list itself (max-h-72) — independent
-              of the flex chain — guarantees it scrolls even if flex sizing is off. */}
-          <CommandList className="min-h-0 max-h-72 flex-1 overflow-y-auto">
+          {/* No max-h here any more: inside the dialog the height is bounded by the
+              dialog's own max-h-[80vh], so the list should FILL what is available
+              rather than stop at the old 18rem popover cap. */}
+          {/* px-2 keeps rows off the border and the scrollbar; the group rules below
+              give each module its own block instead of one undifferentiated column. */}
+          <CommandList className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
             <CommandEmpty>{emptyText}</CommandEmpty>
             {groups.map(([mod, list]) => (
-              <CommandGroup key={mod} heading={mod}>
+              <CommandGroup
+                key={mod}
+                heading={mod}
+                // shadcn's defaults (group p-1, heading py-1.5) are tuned for a
+                // ONE-LINE command palette. These rows are two lines, so the whole
+                // list read as a wall of text. Space the heading and separate groups.
+                className="p-0 pb-2 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide"
+              >
                 {list.map((it) => {
                   const disabled = it.implemented === false;
                   return (
@@ -103,17 +104,20 @@ function ItemCombobox({
                       value={`${it.module} ${it.id} ${it.label}`}
                       disabled={disabled}
                       onSelect={() => { if (!disabled) { onChange(it.id); setOpen(false); } }}
-                      className={disabled ? 'opacity-50' : ''}
+                      // items-start so the check aligns with the LABEL, not the
+                      // vertical centre of a two-line row; px-3 py-2.5 + rounded-md
+                      // gives each row real breathing room and a proper hit target.
+                      className={`items-start gap-3 rounded-md px-3 py-2.5 ${disabled ? 'opacity-50' : ''}`}
                     >
-                      <Check className={`mr-2 h-4 w-4 shrink-0 ${value === it.id ? 'opacity-100' : 'opacity-0'}`} />
+                      <Check className={`mt-0.5 h-4 w-4 shrink-0 ${value === it.id ? 'opacity-100' : 'opacity-0'}`} />
                       {/* Wrap instead of truncate: the description explains WHEN the
                           trigger fires — clipping it hid the one thing the user needs. */}
                       <div className="min-w-0 flex-1">
-                        <div className="text-pretty">
+                        <div className="text-pretty font-medium">
                           {it.label}{disabled ? <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground">· coming soon</span> : null}
                         </div>
                         {it.description && (
-                          <div className="text-pretty text-xs text-muted-foreground">{it.description}</div>
+                          <div className="mt-0.5 text-pretty text-xs leading-relaxed text-muted-foreground">{it.description}</div>
                         )}
                       </div>
                     </CommandItem>
@@ -122,9 +126,10 @@ function ItemCombobox({
               </CommandGroup>
             ))}
           </CommandList>
-        </Command>
-      </PopoverPrimitive.Content>
-    </Popover>
+          </Command>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -374,13 +379,34 @@ export function AutomationsModule() {
 
         <Button className="gap-2" onClick={openCreate}><Plus className="w-4 h-4" />New automation</Button>
         <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
-          <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
-            <DialogHeader>
+          {/* Sizing: the dialog is a flex COLUMN whose BODY scrolls — not the whole
+              grid. Previously `max-h-[85vh] overflow-y-auto` sat on DialogContent
+              itself, so header, body AND footer scrolled together and the Save/Cancel
+              row simply left the screen on a tall form. It also produced a stray
+              HORIZONTAL scrollbar: per CSS, setting overflow-y to a non-`visible`
+              value forces overflow-x to compute as `auto`, so any child a pixel too
+              wide (the combobox popover, a long trigger description) added a
+              bottom scrollbar. Header/footer are now pinned and only the form body
+              scrolls.
+
+              Width is CLAMPED rather than a plain `sm:max-w-Nxl`: the base
+              `max-w-[calc(100%-2rem)]` in dialog.tsx only guards BELOW the sm
+              breakpoint, so a fixed rem width silently overflows any viewport
+              between 640px and that width. `min(72rem, 100vw-4rem)` gives a big
+              dialog on a desktop while staying inside a narrow laptop window.
+              90vh tall for the same reason — the form is long. */}
+          <DialogContent className="sm:max-w-[min(72rem,calc(100vw-4rem))] max-h-[90vh] flex flex-col overflow-hidden">
+            <DialogHeader className="shrink-0">
               <DialogTitle>{editingId != null ? 'Edit automation' : 'New automation'}</DialogTitle>
               <DialogDescription>Choose a trigger, narrow it with conditions, and pick an action.</DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4 py-2">
+            {/* min-h-0 is what actually lets this shrink inside the flex column
+                (flex items default to min-height:auto and refuse to shrink below
+                their content). overflow-x-hidden kills the implicit horizontal
+                scrollbar described above. -mx-1 px-1 keeps focus rings from being
+                clipped at the scroll edge. */}
+            <div className="space-y-4 py-2 min-h-0 flex-1 overflow-y-auto overflow-x-hidden -mx-1 px-1">
               {/* Name */}
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-muted-foreground">Name (optional)</label>
@@ -545,7 +571,7 @@ export function AutomationsModule() {
               )}
             </div>
 
-            <DialogFooter>
+            <DialogFooter className="shrink-0">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
               <Button onClick={handleSave} disabled={createMutation.isPending || updateMutation.isPending} className="gap-2">
                 {(createMutation.isPending || updateMutation.isPending) && <Loader2 className="w-4 h-4 animate-spin" />}

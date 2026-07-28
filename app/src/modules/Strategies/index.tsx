@@ -10,11 +10,12 @@
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Layers, ChevronRight, ChevronDown, Play, Pause, Trash2, Zap, RefreshCw,
   CheckCircle2, Clock, AlertCircle, Loader2, FileText, ExternalLink,
   Link2, Send, Crown, X, List, CalendarClock, Copy, Settings2, SlidersHorizontal,
-  Rss, Search, Share2,
+  Rss, Search, Share2, Pencil, Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -31,7 +32,14 @@ import { useApp } from '@/contexts/AppContext';
 import { InterlinkManagerModal } from './InterlinkManagerModal';
 import { ScheduleView } from './ScheduleView';
 import { ParentSettingsModal } from './ParentSettingsModal';
+// THE create dialog, reused in edit mode — the row's settings button must expose the
+// SAME fields you set at creation, and reusing it is the only way that stays true.
+import { CreateStrategyDialog, type StrategyPayload } from '../Keywords/CreateStrategyDialog';
 import { RecurrenceEditor, recurrenceFromConfig, recurrenceToConfig, type ScheduleRecurrence } from './RecurrenceEditor';
+// THE SEO page editor, reused verbatim (mode="page"): it self-fetches the served
+// content and saves through the existing dynamic-rule paths, so editing a strategy
+// article here is byte-for-byte the same operation as editing it from the SEO table.
+import { SectionModal } from '../SEO/SectionModal';
 
 // ── Types ──
 interface StrategyItem {
@@ -45,6 +53,16 @@ interface StrategyItem {
   errorMessage?: string;
   /** Where the linked article actually published, if it has (backend LEFT JOIN). */
   articlePublishedUrl?: string;
+  /** The live post's ID on the connected site — non-null ONLY when the article really
+   *  has a post there. Presence is what enables the row's post-status control. */
+  articlePublishedPostId?: number | null;
+  /** The linked article's local status ('published' | 'draft' | …). */
+  articleStatus?: string | null;
+  /** When the linked article actually went live (backend LEFT JOIN, articles.publishedAt). */
+  articlePublishedAt?: string | null;
+  /** The connected site the article was published to (backend LEFT JOIN) — with
+   *  articlePublishedPostId this is what addresses the post for the SEO editor. */
+  articleSiteId?: number | null;
   /** Due date for schedule-mode strategies (Y-m-d H:i:s), null otherwise. */
   scheduledDate?: string;
   /** JSON string — per-item overrides (templateId/publishingMode/approvalMode).
@@ -103,6 +121,57 @@ function feedHost(url: string): string {
 }
 
 /** Safely parse a strategy's stored config JSON (malformed/absent → {}). */
+/** Parse a 'Y-m-d H:i:s' (or ISO) due date; null when absent/unparseable. */
+function parseDue(raw?: string | null): Date | null {
+  if (!raw) return null;
+  const d = new Date(String(raw).replace(' ', 'T'));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Compact tag label: "Aug 12", plus the year only when it isn't the current one —
+ *  a schedule can run into next year, and a bare "Jan 4" there would mislead. */
+export function formatItemDue(raw?: string | null): string {
+  const d = parseDue(raw);
+  if (!d) return '';
+  const opts: Intl.DateTimeFormatOptions = d.getFullYear() === new Date().getFullYear()
+    ? { month: 'short', day: 'numeric' }
+    : { month: 'short', day: 'numeric', year: 'numeric' };
+  return d.toLocaleDateString(undefined, opts);
+}
+
+/**
+ * Which date the row's tag should show, and whether it already happened.
+ *
+ * PUBLISHED WINS over scheduled: once an article is live, when it WENT live is the
+ * fact worth showing; a stale future slot would be a lie. `scheduledDate` is only
+ * ever stamped for schedule-mode strategies (calculate_recurrence_dates), which is
+ * why draft/auto-publish rows previously showed no tag at all — the tag existed but
+ * nothing ever populated it outside schedule mode.
+ *
+ * Returns null when neither date exists (a pending item in a non-scheduled
+ * strategy genuinely has no publish date yet) so the caller renders nothing rather
+ * than an empty pill.
+ */
+export function itemDueTag(item: {
+  scheduledDate?: string;
+  articlePublishedAt?: string | null;
+}): { raw: string; published: boolean } | null {
+  const live = String(item.articlePublishedAt ?? '').trim();
+  if (live !== '' && parseDue(live)) return { raw: live, published: true };
+  const due = String(item.scheduledDate ?? '').trim();
+  if (due !== '' && parseDue(due)) return { raw: due, published: false };
+  return null;
+}
+
+/** Full date + time for the tag's tooltip. */
+export function formatItemDueFull(raw?: string | null): string {
+  const d = parseDue(raw);
+  if (!d) return '';
+  return d.toLocaleString(undefined, {
+    weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
 function parseStrategyConfig(raw?: string): Record<string, any> {
   if (!raw) return {};
   try {
@@ -139,17 +208,37 @@ function summarizeRecurrence(r: ScheduleRecurrence): string {
 }
 
 // ── Status indicator — reusable across Strategies + Approvals ──
-function StatusBadge({ status }: { status: string }) {
+/**
+ * Item/strategy status pill.
+ *
+ * "Done generating" is NOT the same as "live". An article that exists but hasn't been
+ * pushed to the site reads **Written** (blue); only one that actually has a post on the
+ * site reads **Published** (green). Callers pass `published` — derived from the linked
+ * article's publish pointers — and it only affects the completed state.
+ *
+ * NB the design tokens are counter-intuitively named: `statusColors.ready` is GREEN and
+ * `statusColors.published` is BLUE, so the mapping below is deliberate, not swapped.
+ */
+function StatusBadge({ status, published }: { status: string; published?: boolean }) {
   const config: Record<string, { icon: React.ReactNode; label: string; color: string; bg: string }> = {
     pending:      { icon: <Clock className="w-3 h-3" />, label: 'Pending', color: statusColors.draft.text, bg: statusColors.draft.bg },
     in_progress:  { icon: <Loader2 className="w-3 h-3 animate-spin" />, label: 'In Progress', color: colors.primary, bg: colors.primaryLight },
     completed:    { icon: <CheckCircle2 className="w-3 h-3" />, label: 'Completed', color: statusColors.ready.text, bg: statusColors.ready.bg },
+    publishedOk:  { icon: <CheckCircle2 className="w-3 h-3" />, label: 'Published', color: statusColors.ready.text, bg: statusColors.ready.bg },
+    written:      { icon: <FileText className="w-3 h-3" />, label: 'Written', color: statusColors.published.text, bg: statusColors.published.bg },
     paused:       { icon: <Pause className="w-3 h-3" />, label: 'Paused', color: colors.textSecondary, bg: colors.bgHover },
     error:        { icon: <AlertCircle className="w-3 h-3" />, label: 'Error', color: colors.danger, bg: colors.dangerLight },
     generating:   { icon: <Loader2 className="w-3 h-3 animate-spin" />, label: 'Generating...', color: colors.accent, bg: colors.accentLight },
   };
 
-  const c = config[status] ?? config.pending;
+  // Only ITEM callers pass `published` — for them a finished article is "Written" until
+  // it is actually live. Omitting the prop (the STRATEGY badge, where "published" is
+  // meaningless) keeps the plain "Completed" label. Both stored spellings are handled.
+  const isDone = status === 'completed' || status === 'complete';
+  const key = isDone && published !== undefined
+    ? (published ? 'publishedOk' : 'written')
+    : status;
+  const c = config[key] ?? config.pending;
 
   return (
     <span
@@ -162,6 +251,33 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/**
+ * Is this item a generated article that is NOT yet live on the site — i.e. can it
+ * still be published?
+ *
+ * Deliberately mirrors StatusBadge's own "published" derivation so the pill and the
+ * Publish button can never disagree: whenever the pill reads **Written**, this is
+ * true and the button is shown.
+ *
+ * BOTH finished statuses count. The backend stores 'written' for a generated-but-
+ * unpublished item (service.php:937/1598) and promotes it to 'completed' ONLY when a
+ * publish actually succeeded (service.php:961/1653/4048) — but items can sit in
+ * 'completed' with no publish pointers (anything generated before the 'written' state
+ * existed, and any path that completed without a site). Gating on 'written' ALONE
+ * stranded exactly those items with no way to publish them; gating on 'completed'
+ * alone was the original bug. It is an OR, not a swap.
+ */
+export function isPublishableItem(item: {
+  status: string;
+  articleId?: number;
+  articlePublishedUrl?: string;
+  articlePublishedPostId?: number | null;
+}): boolean {
+  const finished = item.status === 'written' || item.status === 'completed' || item.status === 'complete';
+  const live = !!item.articlePublishedPostId || !!item.articlePublishedUrl;
+  return finished && !!item.articleId && !live;
+}
+
 // ── Main Component ──
 export function StrategiesModule() {
   const { navigateToWriterArticle } = useApp();
@@ -170,6 +286,10 @@ export function StrategiesModule() {
   const [view, setView] = useState<'list' | 'schedule'>('list');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  // Quick filters (Approvals parity): narrow the list to one target site, or to the
+  // site a delivery is bound to. 'all' = no narrowing.
+  const [siteFilter, setSiteFilter] = useState('all');
+  const [deliveryFilter, setDeliveryFilter] = useState('all');
   const [sortBy, setSortBy] = useState('newest');
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
@@ -218,8 +338,24 @@ export function StrategiesModule() {
   }) as any;
   const { data: sitesRaw } = trpc.sites.list.useQuery();
   const sites = useMemo(() => (Array.isArray(sitesRaw) ? sitesRaw : []), [sitesRaw]) as any[];
+  // Deliveries — for the toolbar's quick filter. A delivery is bound to an SEO site
+  // (deliveries.seoSiteId), and a strategy targets a site (config.siteId), so a
+  // strategy belongs to a delivery when those two match. Strategies carry no
+  // deliveryId of their own, so this join is the only link available.
+  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery(undefined, { staleTime: 30_000 });
+  const deliveries = useMemo(() => (Array.isArray(deliveriesRaw) ? deliveriesRaw : []), [deliveriesRaw]) as any[];
   const { data: templatesRaw } = trpc.templates.list.useQuery({ module: 'writer' });
   const templates = useMemo(() => (Array.isArray(templatesRaw) ? templatesRaw : []), [templatesRaw]) as any[];
+  // Image-prompt templates (module 'image') — the wording used to generate each
+  // article's featured image. Unset → the built-in default prompt.
+  const { data: imageTemplatesRaw } = trpc.templates.list.useQuery({ module: 'image' });
+  const imageTemplates = useMemo(() => (Array.isArray(imageTemplatesRaw) ? imageTemplatesRaw : []), [imageTemplatesRaw]) as any[];
+  // Per-JOB models, changeable inline on an existing strategy (the create dialog sets
+  // the same config keys). Text writes the article, image draws the featured image.
+  const { data: textModelsRaw } = trpc.models.getForGeneration.useQuery({ type: 'text' }, { staleTime: 30_000 });
+  const textModels = useMemo(() => (Array.isArray(textModelsRaw) ? textModelsRaw : []), [textModelsRaw]) as any[];
+  const { data: imageModelsRaw } = trpc.models.getForGeneration.useQuery({ type: 'image' }, { staleTime: 30_000 });
+  const imageModels = useMemo(() => (Array.isArray(imageModelsRaw) ? imageModelsRaw : []), [imageModelsRaw]) as any[];
 
   // Mutations
   const updateStrategyMutation = trpc.strategy.update.useMutation({
@@ -233,6 +369,60 @@ export function StrategiesModule() {
     },
     onError: (err: any) => toast.error(err.message ?? 'Publish failed'),
   }) as any;
+  // Live post-status control: acts on the post ALREADY on the connected site —
+  // unpublish it (draft), re-publish it, or trash it (recoverable from the site's
+  // own Trash, never a permanent delete).
+  const postStatusMutation = trpc.strategy.setItemPostStatus.useMutation({
+    onSuccess: (data: any) => {
+      toast.success(
+        data?.trashed
+          ? 'Deleted on the site (recoverable from its Trash)'
+          : data?.status === 'publish'
+            ? 'Published on the site'
+            : 'Set to draft on the site',
+      );
+      refetch();
+    },
+    onError: (err: any) => toast.error(err.message ?? 'Could not change the post status'),
+  }) as any;
+
+  // ── Edit / Preview of the LIVE post, without leaving Strategies ──────────
+  // Both address the post by (site, remote post id) — the same coordinates the
+  // SEO table uses — so they're only offered once the item is actually on a site.
+  type LivePost = { siteId: number; postId: number; title: string; permalink: string };
+  const [editPost, setEditPost] = useState<LivePost | null>(null);
+  const [previewPost, setPreviewPost] = useState<LivePost | null>(null);
+  /** (site, postId, title, permalink) for an item, or null when it isn't live yet. */
+  const livePostOf = useCallback((item: StrategyItem): LivePost | null => {
+    const postId = Number(item.articlePublishedPostId ?? 0);
+    const siteId = Number(item.articleSiteId ?? 0);
+    if (!postId || !siteId) return null;
+    return { siteId, postId, title: item.title || item.keyword, permalink: item.articlePublishedUrl ?? '' };
+  }, []);
+
+  // Authenticated preview HTML: a cross-site iframe can't carry the remote login
+  // cookie, so fetch the page server-side through the connector and render it
+  // same-origin (srcDoc) — mirrors the SEO table's preview. A failure falls back
+  // to a direct iframe rather than a dead end.
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const sitePreview = trpc.seo.sitePreview.useMutation();
+  useEffect(() => {
+    if (!previewPost || !previewPost.permalink) {
+      setPreviewHtml(null);
+      setPreviewLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    setPreviewHtml(null);
+    sitePreview.mutateAsync({ siteId: previewPost.siteId, url: previewPost.permalink })
+      .then((r: any) => { if (!cancelled) setPreviewHtml(String(r?.html ?? '')); })
+      .catch(() => { if (!cancelled) setPreviewHtml(null); })
+      .finally(() => { if (!cancelled) setPreviewLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewPost]);
   const generateMutation = trpc.strategy.generate.useMutation({
     onSuccess: (_data: any) => {
       // Surfaced regardless of bulk mode — the draft still saved, but a publish
@@ -432,8 +622,35 @@ export function StrategiesModule() {
     updateStrategyMutation.mutate({ id: strategyId, config: { approvalMode: mode } });
   }, [updateStrategyMutation]);
 
+  // Image-prompt template — partial config merge (backend sanitizes imageTemplateId).
+  // '' = Default prompt, sent as 0 so the stored key is explicitly cleared rather
+  // than left pointing at a template the user just deselected.
+  const handleImageTemplateChange = useCallback((strategyId: number, templateId: string) => {
+    updateStrategyMutation.mutate({ id: strategyId, config: { imageTemplateId: templateId ? parseInt(templateId, 10) : 0 } });
+  }, [updateStrategyMutation]);
+
+  // Per-job model pickers. The model's PROVIDER travels with it (the server routes on
+  // both), and 'default' clears the pair back to empty so the job falls through to its
+  // own server-side default rather than pointing at a model that may be gone.
+  const handleTextModelChange = useCallback((strategyId: number, modelId: string) => {
+    const picked = textModels.find((m) => m.modelId === modelId);
+    updateStrategyMutation.mutate({
+      id: strategyId,
+      config: { model: modelId, provider: picked?.provider ?? '' },
+    });
+  }, [updateStrategyMutation, textModels]);
+
+  const handleImageModelChange = useCallback((strategyId: number, modelId: string) => {
+    const picked = imageModels.find((m) => m.modelId === modelId);
+    updateStrategyMutation.mutate({
+      id: strategyId,
+      config: { imageModel: modelId, imageProvider: picked?.provider ?? '' },
+    });
+  }, [updateStrategyMutation, imageModels]);
+
   // Toggle whether generated articles reuse the source post's image as the
-  // featured image (social/RSS sourced strategies). Partial config merge —
+  // featured image (SOCIAL strategies — reuse is social-only server-side).
+  // Partial config merge —
   // backend sanitizes featuredImages at controller.php:584. Defaults OFF so
   // existing strategies are unaffected until the user opts in.
   const handleFeaturedImagesChange = useCallback((strategyId: number, enabled: boolean) => {
@@ -450,9 +667,19 @@ export function StrategiesModule() {
   // existing startDate must be carried along — the backend then redistributes
   // the PENDING items' due dates from the new recurrence.
   const [recurrenceDialog, setRecurrenceDialog] = useState<{ strategyId: number; value: ScheduleRecurrence } | null>(null);
-  const handleRecurrenceSave = useCallback((strategyId: number, r: ScheduleRecurrence, existingStartDate: string) => {
+  const handleRecurrenceSave = useCallback((
+    strategyId: number,
+    r: ScheduleRecurrence,
+    existingStartDate: string,
+    currentMode?: string,
+  ) => {
     updateStrategyMutation.mutate({
       id: strategyId,
+      // Saving a recurrence on a Draft/Auto-publish strategy also switches it to
+      // 'schedule' — otherwise the schedule would be stored but never honoured, since
+      // the engine only paces publishing in schedule mode. Already-scheduled
+      // strategies are left alone (no needless mode write).
+      ...(currentMode === 'schedule' ? {} : { publishingMode: 'schedule' }),
       config: { scheduleConfig: { ...recurrenceToConfig(r), startDate: existingStartDate || '' } },
     });
     setRecurrenceDialog(null);
@@ -507,6 +734,63 @@ export function StrategiesModule() {
     deleteItemMutation.mutate({ id: strategyId, itemId });
   }, [deleteItemMutation]);
 
+  // ── Item bulk selection ────────────────────────────────────────────────
+  // Item ids are unique across strategies, so ONE set is enough; the bulk bar
+  // only ever renders inside the strategy whose items are selected.
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<number>>(() => new Set());
+  const toggleItemSelected = useCallback((itemId: number) => {
+    setSelectedItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId); else next.add(itemId);
+      return next;
+    });
+  }, []);
+  const clearItemSelection = useCallback(() => setSelectedItemIds(new Set()), []);
+
+  const duplicateItemMutation = trpc.strategy.duplicateItem.useMutation() as any;
+  const [itemBulkBusy, setItemBulkBusy] = useState(false);
+
+  /** Run one mutation across every selected item, then refetch once. Failures are
+   *  counted rather than thrown so one bad item can't abort the rest of the batch. */
+  const runItemBulk = useCallback(async (
+    strategyId: number,
+    ids: number[],
+    verb: string,
+    run: (itemId: number) => Promise<unknown>,
+  ) => {
+    setItemBulkBusy(true);
+    let ok = 0; let failed = 0;
+    for (const itemId of ids) {
+      try { await run(itemId); ok++; } catch { failed++; }
+    }
+    setItemBulkBusy(false);
+    clearItemSelection();
+    refetch();
+    if (failed > 0) toast.error(`${verb} ${ok}, ${failed} failed`);
+    else toast.success(`${verb} ${ok} item${ok === 1 ? '' : 's'}`);
+  }, [clearItemSelection, refetch]);
+
+  // "Select as Parent" (crown): the strategy's parent is identified by KEYWORD
+  // (config.parentKeyword) and hierarchyMode must be parent_and_children for the
+  // link engine to act. Setting both then re-running reapply-parent makes every
+  // other item link to it; clearing parentKeyword and re-running strips those
+  // links back out — reapply_parent_links() resolves an empty parent to "clear".
+  const reapplyParentMutation = trpc.strategy.reapplyParent.useMutation() as any;
+  const handleToggleParent = useCallback(async (strategy: Strategy, keyword: string, isParent: boolean) => {
+    try {
+      await updateStrategyMutation.mutateAsync({
+        id: strategy.id,
+        ...(isParent ? {} : { hierarchyMode: 'parent_and_children' }),
+        config: { parentKeyword: isParent ? '' : keyword },
+      });
+      await reapplyParentMutation.mutateAsync({ id: strategy.id });
+      toast.success(isParent ? 'Parent cleared — links removed' : 'Parent set — other items now link to it');
+      refetch();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Could not update the parent');
+    }
+  }, [updateStrategyMutation, reapplyParentMutation, refetch]);
+
   // Manually publish one completed item's article to the strategy's site —
   // the retro-publish path for items generated in draft mode (or before a
   // site was set).
@@ -530,6 +814,8 @@ export function StrategiesModule() {
   // Parent-settings editor (Task G1) — edits hierarchyMode + parent-link/anchor
   // config for one strategy in a modal (opened from the row's Settings button).
   const [parentSettingsStrategy, setParentSettingsStrategy] = useState<Strategy | null>(null);
+  /** Full settings editor (row cog) — the create dialog opened in edit mode. */
+  const [settingsStrategy, setSettingsStrategy] = useState<Strategy | null>(null);
 
   // Cast to typed array (trpc proxy returns unknown)
   const strategyList: Strategy[] = Array.isArray(strategies) ? strategies : [];
@@ -542,8 +828,17 @@ export function StrategiesModule() {
   // crashes with React error #310 the moment loading flips to false.
   const visibleList = useMemo(() => {
     const q = search.trim().toLowerCase();
+    // A delivery narrows to ITS site — strategies have no deliveryId, so the
+    // delivery's seoSiteId is what actually does the filtering.
+    const deliverySiteId = deliveryFilter === 'all'
+      ? null
+      : String(deliveries.find((d) => String(d.id) === deliveryFilter)?.seoSiteId ?? '');
     const filtered = strategyList.filter((strategy) => {
       if (statusFilter !== 'all' && strategy.status !== statusFilter) return false;
+      const strategySiteId = String(parseStrategyConfig(strategy.config).siteId ?? '');
+      if (siteFilter !== 'all' && strategySiteId !== siteFilter) return false;
+      // A delivery with no site bound matches nothing rather than everything.
+      if (deliverySiteId !== null && (deliverySiteId === '' || strategySiteId !== deliverySiteId)) return false;
       if (!q) return true;
       const nameMatch = strategy.name?.toLowerCase().includes(q);
       const keywordMatch = Array.isArray(strategy.items)
@@ -560,7 +855,7 @@ export function StrategiesModule() {
     }
     // 'newest' (default) — current order (createdAt desc, as returned by the API).
     return sorted;
-  }, [strategyList, search, statusFilter, sortBy]);
+  }, [strategyList, search, statusFilter, sortBy, siteFilter, deliveryFilter, deliveries]);
 
   if (isLoading) {
     return (
@@ -615,7 +910,9 @@ export function StrategiesModule() {
         if (!cfg.siteId) continue; // skip strategies without a configured site
         const items = Array.isArray(s.items) ? s.items : [];
         for (const it of items) {
-          if (it.status === 'completed' && it.articleId && !it.articlePublishedUrl) {
+          // Same predicate as the per-row Publish button, so the bulk sweep and the
+          // single-item button can never disagree about what is publishable.
+          if (isPublishableItem(it)) {
             try {
               await publishItemMutation.mutateAsync({ id: s.id, itemId: it.id });
               published++;
@@ -666,15 +963,23 @@ export function StrategiesModule() {
           Strategies
         </h1>
         <Badge variant="secondary" className="ml-2">
-          {search.trim() || statusFilter !== 'all'
+          {/* Any active filter must switch this to "N of M" — otherwise the badge
+              claims the full count while the list below shows a subset. */}
+          {search.trim() || statusFilter !== 'all' || siteFilter !== 'all' || deliveryFilter !== 'all'
             ? `${visibleList.length} of ${strategyList.length}`
             : `${strategyList.length} ${strategyList.length === 1 ? 'strategy' : 'strategies'}`}
         </Badge>
 
         <AutoScanStatus />
+      </div>
+
+      {/* Toolbar — its OWN row directly beneath the header. It used to be pinned to
+          the header's top-right, which squeezed the view toggle, search, filters and
+          sort into whatever space the title left over. */}
+      <div className="flex flex-wrap items-center gap-2 mb-4 shrink-0">
 
         {/* List | Schedule view toggle */}
-        <div className="flex items-center gap-1 ml-auto rounded-md p-0.5" style={{ border: `1px solid ${colors.border}` }}>
+        <div className="flex items-center gap-1 rounded-md p-0.5" style={{ border: `1px solid ${colors.border}` }}>
           <Button
             variant={view === 'list' ? 'default' : 'ghost'}
             size="sm"
@@ -707,12 +1012,35 @@ export function StrategiesModule() {
           </span>
           <Input
             placeholder="Search strategies…"
-            className="h-8 w-56 text-xs bg-background"
+            className="h-8 w-56 text-xs bg-card"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          {/* Quick filters (Approvals parity): site, then delivery. */}
+          <Select value={siteFilter} onValueChange={setSiteFilter}>
+            <SelectTrigger className="h-8 w-40 text-xs bg-card">
+              <SelectValue placeholder="All sites" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sites</SelectItem>
+              {sites.map((s: any) => (
+                <SelectItem key={s.id} value={String(s.id)}>{s.name || s.url}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={deliveryFilter} onValueChange={setDeliveryFilter}>
+            <SelectTrigger className="h-8 w-40 text-xs bg-card">
+              <SelectValue placeholder="All deliveries" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All deliveries</SelectItem>
+              {deliveries.map((d: any) => (
+                <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-8 w-36 text-xs bg-background">
+            <SelectTrigger className="h-8 w-36 text-xs bg-card">
               <SelectValue placeholder="All statuses" />
             </SelectTrigger>
             <SelectContent>
@@ -724,7 +1052,7 @@ export function StrategiesModule() {
             </SelectContent>
           </Select>
           <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="h-8 w-28 text-xs bg-background">
+            <SelectTrigger className="h-8 w-28 text-xs bg-card">
               <SelectValue placeholder="Sort" />
             </SelectTrigger>
             <SelectContent>
@@ -787,7 +1115,7 @@ export function StrategiesModule() {
                   badges, meta — full width) + icon utilities; line 2 is every
                   editing control and action button. */}
               <div
-                className="px-4 py-3 cursor-pointer"
+                className="px-4 py-2 cursor-pointer"
                 style={{ borderBottom: expandedId === strategy.id ? `1px solid ${colors.borderLight}` : 'none' }}
                 onClick={() => toggleExpand(strategy.id)}
               >
@@ -897,8 +1225,8 @@ export function StrategiesModule() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    title="Parent & anchor settings"
-                    onClick={() => setParentSettingsStrategy(strategy)}
+                    title="Strategy settings — every option from the create dialog"
+                    onClick={() => setSettingsStrategy(strategy)}
                   >
                     <Settings2 className="w-3.5 h-3.5" />
                   </Button>
@@ -937,8 +1265,14 @@ export function StrategiesModule() {
               </div>
 
               {/* Line 2 — every editing control + action button. flex-wrap here
-                  only ever wraps CONTROLS (never the identity line above). */}
-              <div className="flex flex-wrap items-center gap-2 mt-2.5" onClick={(e) => e.stopPropagation()}>
+                  only ever wraps CONTROLS (never the identity line above).
+                  Controls stay h-7 (matching the per-item overrides row and the
+                  Writer module), but they are GROUPED — destination · content ·
+                  workflow · actions — with hairline dividers. Nine same-sized
+                  boxes at gap-1.5 read as one undifferentiated clump; the dividers
+                  give the eye anchors WITHOUT adding height, and gap-y-2 keeps the
+                  wrapped second line from colliding with the first. */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
 
                 {/* Publishing Mode — inline-editable (AutoPress row parity).
                     Switching an existing draft strategy to Auto-publish makes
@@ -949,7 +1283,7 @@ export function StrategiesModule() {
                     value={strategy.publishingMode || 'draft'}
                     onValueChange={(value) => handlePublishingModeChange(strategy.id, value)}
                   >
-                    <SelectTrigger className="h-8 text-xs bg-background">
+                    <SelectTrigger className="h-7 w-full text-xs bg-card">
                       <SelectValue placeholder="Draft" />
                     </SelectTrigger>
                     <SelectContent>
@@ -961,10 +1295,11 @@ export function StrategiesModule() {
                 </div>
 
                 {/* Target Site — inline-editable, merges onto the strategy's
-                    existing config (see handleSiteChange) rather than replacing it. */}
-                <div className="w-36 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    existing config (see handleSiteChange) rather than replacing it.
+                    w-40: hostnames like "massagegoteborg.nu" were truncating at w-32. */}
+                <div className="w-40 shrink-0" onClick={(e) => e.stopPropagation()}>
                   <Select value={siteIdValue} onValueChange={(value) => handleSiteChange(strategy.id, value)}>
-                    <SelectTrigger className="h-8 text-xs bg-background">
+                    <SelectTrigger className="h-7 w-full text-xs bg-card">
                       <SelectValue placeholder="No site" />
                     </SelectTrigger>
                     <SelectContent>
@@ -981,11 +1316,17 @@ export function StrategiesModule() {
                   </Select>
                 </div>
 
-                {/* Reuse source image as featured image — only relevant for
-                    social/RSS sourced strategies (they carry a sourceImage).
+                {/* Reuse source image as featured image — SOCIAL ONLY. Reuse is
+                    implemented by social_source_image() (service.php), which
+                    returns null unless the item config carries `social`; RSS
+                    items never set it, so on an RSS strategy this control could
+                    never reuse anything — it silently fell through to the AI
+                    generator, making the label a lie. RSS (like keyword
+                    strategies, which have never shown this checkbox) toggles
+                    featured images from the strategy settings dialog instead.
                     Partial config merge; defaults OFF so existing strategies
                     are unaffected until the user opts in. */}
-                {(isSocial || isRss) && (
+                {isSocial && (
                   <label
                     className="shrink-0 flex items-center gap-1.5 cursor-pointer text-xs"
                     style={{ color: colors.textSecondary }}
@@ -1001,38 +1342,17 @@ export function StrategiesModule() {
                   </label>
                 )}
 
-                {/* Template (prompt) — inline-editable; drives generation for
-                    items generated AFTER the change. */}
-                <div className="w-36 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    value={strategy.templateId ? String(strategy.templateId) : ''}
-                    onValueChange={(value) => handleTemplateChange(strategy.id, value)}
-                  >
-                    <SelectTrigger className="h-8 text-xs bg-background">
-                      <SelectValue placeholder="Template" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {templates.length > 0 ? (
-                        templates.map((t: any) => (
-                          <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                        ))
-                      ) : (
-                        <div className="p-2 text-xs text-muted-foreground text-center">
-                          No Writer templates
-                        </div>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {/* ── divider: destination │ workflow ── */}
+                <div className="h-5 w-px shrink-0" style={{ background: colors.border }} aria-hidden="true" />
 
                 {/* Approval mode — inline-editable (partial config merge).
                     Affects items generated AFTER the change. */}
-                <div className="w-28 shrink-0" onClick={(e) => e.stopPropagation()}>
+                <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
                   <Select
                     value={config.approvalMode || 'none'}
                     onValueChange={(value) => handleApprovalChange(strategy.id, value)}
                   >
-                    <SelectTrigger className="h-8 text-xs bg-background">
+                    <SelectTrigger className="h-7 w-full text-xs bg-card">
                       <SelectValue placeholder="Approvals" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1044,25 +1364,36 @@ export function StrategiesModule() {
                   </Select>
                 </div>
 
-                {/* Frequency — schedule mode only; opens the recurrence dialog.
-                    Saving redistributes the PENDING items' due dates server-side. */}
-                {strategy.publishingMode === 'schedule' && (
-                  <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 w-full justify-start text-xs font-normal bg-background overflow-hidden"
-                      title="Posting schedule"
-                      onClick={() => setRecurrenceDialog({
-                        strategyId: strategy.id,
-                        value: recurrenceFromConfig(config.scheduleConfig ?? {}),
-                      })}
-                    >
-                      <CalendarClock className="w-3.5 h-3.5 shrink-0" />
-                      <span className="truncate">{summarizeRecurrence(recurrenceFromConfig(config.scheduleConfig ?? {}))}</span>
-                    </Button>
-                  </div>
-                )}
+                {/* Edit schedule — ALWAYS available. This used to render only when
+                    publishingMode was already 'schedule', which was a catch-22: you
+                    could not set a schedule on a Draft/Auto-publish strategy because
+                    the only way in was hidden until it already had one. Saving a
+                    recurrence now also switches the strategy into schedule mode (see
+                    handleRecurrenceSave), so the button always does something. */}
+                <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-full justify-start text-xs font-normal bg-card overflow-hidden"
+                    title={strategy.publishingMode === 'schedule'
+                      ? 'Edit the posting schedule'
+                      : 'Set a posting schedule — this switches the strategy to Scheduled'}
+                    onClick={() => setRecurrenceDialog({
+                      strategyId: strategy.id,
+                      value: recurrenceFromConfig(config.scheduleConfig ?? {}),
+                    })}
+                  >
+                    <CalendarClock className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">
+                      {strategy.publishingMode === 'schedule'
+                        ? summarizeRecurrence(recurrenceFromConfig(config.scheduleConfig ?? {}))
+                        : 'Set schedule'}
+                    </span>
+                  </Button>
+                </div>
+
+                {/* ── divider: workflow │ actions ── */}
+                <div className="h-5 w-px shrink-0" style={{ background: colors.border }} aria-hidden="true" />
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 shrink-0">
@@ -1070,6 +1401,7 @@ export function StrategiesModule() {
                     <Button
                       variant="default"
                       size="sm"
+                      className="h-7"
                       disabled={bulkStrategyId === strategy.id || generatingItemId === strategy.id}
                       onClick={() => handleGenerateAll(strategy)}
                     >
@@ -1084,6 +1416,7 @@ export function StrategiesModule() {
                   <Button
                     variant="outline"
                     size="sm"
+                    className="h-7"
                     disabled={strategy.status === 'completed' || generatingItemId === strategy.id || bulkStrategyId === strategy.id}
                     onClick={() => handleGenerate(strategy.id)}
                   >
@@ -1100,6 +1433,7 @@ export function StrategiesModule() {
                     <Button
                       variant="outline"
                       size="sm"
+                      className="h-7"
                       title="Check the source for new posts right now, instead of waiting for the auto-scan"
                       disabled={scanningId === strategy.id}
                       onClick={() => handleScanNow(strategy.id)}
@@ -1116,6 +1450,7 @@ export function StrategiesModule() {
                     <Button
                       variant="outline"
                       size="sm"
+                      className="h-7"
                       title="Insert internal links between this strategy's generated articles"
                       onClick={() => setInterlinkModalStrategy({ id: strategy.id, name: strategy.name, interlinksConfig: parseStrategyConfig(strategy.config)?.interlinksConfig })}
                     >
@@ -1129,6 +1464,7 @@ export function StrategiesModule() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      className="h-7"
                       title={strategy.status === 'paused' ? 'Resume generation' : 'Pause generation'}
                       onClick={() => handleTogglePause(strategy.id, strategy.status)}
                     >
@@ -1142,11 +1478,186 @@ export function StrategiesModule() {
                   )}
                 </div>
               </div>
+
+              {/* Line 3 — GENERATION settings, on their OWN indented line.
+                  Nine identically-shaped boxes on one line read as an
+                  undifferentiated clump, and no amount of gap/divider tuning fixed
+                  that (tried, reported still cluttered). These four are
+                  set-once-and-forget, unlike the day-to-day controls above, so they
+                  drop to a secondary line marked by a left rule and a quiet caption.
+                  Line 2 keeps what you touch often: destination, approval, schedule,
+                  actions. */}
+              <div
+                className="flex flex-wrap items-center gap-x-4 gap-y-2.5 mt-2.5 ml-1 pl-3"
+                style={{ borderLeft: `2px solid ${colors.borderLight}` }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <span
+                  className="shrink-0 mr-1 select-none"
+                  style={{ fontSize: typography.xs, color: colors.textMuted }}
+                >
+                  Generation
+                </span>
+
+                {/* NB every SelectTrigger in these two rows must carry `w-full`.
+                    The shadcn trigger base is `w-fit whitespace-nowrap`, so without
+                    it the trigger sizes to its TEXT and renders WIDER than its w-36
+                    wrapper — "Default image prompt" overflowed by ~26px and
+                    "Default image model" by ~20px, so the pair visually collided no
+                    matter how much gap-x the row had (the spill simply ate it).
+                    With w-full the trigger obeys the wrapper and the base's
+                    `select-value:line-clamp-1` clips the label instead. */}
+
+                {/* Template (prompt) — inline-editable; drives generation for
+                    items generated AFTER the change. */}
+                <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <Select
+                    value={strategy.templateId ? String(strategy.templateId) : ''}
+                    onValueChange={(value) => handleTemplateChange(strategy.id, value)}
+                  >
+                    <SelectTrigger className="h-7 w-full text-xs bg-card">
+                      <SelectValue placeholder="Template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {templates.length > 0 ? (
+                        templates.map((t: any) => (
+                          <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                        ))
+                      ) : (
+                        <div className="p-2 text-xs text-muted-foreground text-center">
+                          No Writer templates
+                        </div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Text AI model — which model WRITES each article. Pairs with the
+                    content Template on its left. "Default" = the server's own default.
+                    w-36: the "Default text model" option truncated at w-28. */}
+                <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <Select
+                    value={config.model ? String(config.model) : 'default'}
+                    onValueChange={(value) => handleTextModelChange(strategy.id, value === 'default' ? '' : value)}
+                  >
+                    <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model writes each article">
+                      <SelectValue placeholder="Text model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Default text model</SelectItem>
+                      {textModels.map((m: any) => (
+                        <SelectItem key={m.modelId} value={m.modelId}>
+                          {(m.customName || m.originalName || m.modelId)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Image prompt template (module 'image') — the wording used to
+                    generate each article's featured image. "Default prompt" keeps the
+                    built-in sentence, so this is purely opt-in.
+                    w-36: the "Default image prompt" option truncated at w-32. */}
+                <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <Select
+                    value={config.imageTemplateId ? String(config.imageTemplateId) : 'default'}
+                    onValueChange={(value) => handleImageTemplateChange(strategy.id, value === 'default' ? '' : value)}
+                  >
+                    <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which template writes the featured-image prompt">
+                      <SelectValue placeholder="Image prompt" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Default image prompt</SelectItem>
+                      {imageTemplates.map((t: any) => (
+                        <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Image AI model — which model DRAWS the featured image. Sits beside
+                    the Image prompt so the pair (wording + model) reads together.
+                    w-36: the "Default image model" option truncated at w-28. */}
+                <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <Select
+                    value={config.imageModel ? String(config.imageModel) : 'default'}
+                    onValueChange={(value) => handleImageModelChange(strategy.id, value === 'default' ? '' : value)}
+                  >
+                    <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model generates the featured image">
+                      <SelectValue placeholder="Image model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Default image model</SelectItem>
+                      {imageModels.map((m: any) => (
+                        <SelectItem key={m.modelId} value={m.modelId}>
+                          {(m.customName || m.originalName || m.modelId)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               </div>
 
               {/* Expanded items list */}
               {expandedId === strategy.id && strategy.items && (
                 <div style={{ background: colors.bgPage }}>
+                  {/* Item bulk bar — appears once at least one item in THIS strategy
+                      is ticked. Linking opens the same interlink modal the row button
+                      uses; Delete and Duplicate run per item and report a combined
+                      result so one failure can't abort the batch. */}
+                  {(() => {
+                    const ids = (strategy.items ?? [])
+                      .filter((it) => selectedItemIds.has(it.id))
+                      .map((it) => it.id);
+                    if (ids.length === 0) return null;
+                    return (
+                      <div
+                        className="flex flex-wrap items-center gap-2 px-6 py-2"
+                        style={{ background: colors.bgHover, borderBottom: `1px solid ${colors.borderLight}` }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <span style={{ fontSize: typography.xs, color: colors.textSecondary }}>
+                          {ids.length} selected
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7"
+                          disabled={itemBulkBusy}
+                          onClick={() => setInterlinkModalStrategy({ id: strategy.id, name: strategy.name, interlinksConfig: config.interlinksConfig })}
+                        >
+                          <Link2 className="w-3.5 h-3.5" /> Linking
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7"
+                          disabled={itemBulkBusy}
+                          onClick={() => runItemBulk(strategy.id, ids, 'Duplicated', (itemId) =>
+                            duplicateItemMutation.mutateAsync({ id: strategy.id, itemId }))}
+                        >
+                          <Copy className="w-3.5 h-3.5" /> Duplicate
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-destructive hover:text-destructive"
+                          disabled={itemBulkBusy}
+                          onClick={() => {
+                            if (!window.confirm(`Remove ${ids.length} item${ids.length === 1 ? '' : 's'} from this strategy? Generated articles stay in Writer.`)) return;
+                            runItemBulk(strategy.id, ids, 'Removed', (itemId) =>
+                              deleteItemMutation.mutateAsync({ id: strategy.id, itemId }));
+                          }}
+                        >
+                          {itemBulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7" onClick={clearItemSelection}>
+                          <X className="w-3.5 h-3.5" /> Clear
+                        </Button>
+                      </div>
+                    );
+                  })()}
                   {strategy.items.map((item) => {
                     const itemConfig = parseStrategyConfig(item.config);
                     return (
@@ -1158,6 +1669,15 @@ export function StrategiesModule() {
                         borderLeft: `2px solid ${colors.borderLight}`,
                       }}
                     >
+                      {/* Bulk-select checkbox — leftmost, mirrors the strategy rows. */}
+                      <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selectedItemIds.has(item.id)}
+                          onCheckedChange={() => toggleItemSelected(item.id)}
+                          aria-label={`Select ${item.keyword}`}
+                        />
+                      </span>
+
                       {/* Position */}
                       <span
                         className="shrink-0 w-6 text-center"
@@ -1166,17 +1686,65 @@ export function StrategiesModule() {
                         {Number(item.position) + 1}
                       </span>
 
-                      {/* Keyword / Title (+ parent crown for hierarchy strategies) */}
+                      {/* Select as Parent — the crown designates THIS item's keyword as
+                          the pillar every other item links to; clicking it again clears
+                          the parent and strips those links. */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 shrink-0 px-1.5"
+                        title={config.parentKeyword === item.keyword
+                          ? 'Unselect as parent — removes the links to it'
+                          : 'Select as parent — the other items will link to this one'}
+                        aria-pressed={config.parentKeyword === item.keyword}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleParent(strategy, item.keyword, config.parentKeyword === item.keyword);
+                        }}
+                      >
+                        <Crown
+                          className="w-3.5 h-3.5"
+                          style={{ color: config.parentKeyword === item.keyword ? '#f59e0b' : colors.textMuted }}
+                        />
+                      </Button>
+
+                      {/* Calculated publish date — a small leading tag, so the queue reads
+                          chronologically at a glance before you read any names. Compact
+                          (MMM d, + year only when it isn't this year) with the full
+                          date/time on hover. Absent when the item has no due date. */}
+                      {(() => {
+                        const tag = itemDueTag(item);
+                        if (!tag) return null;
+                        return (
+                          <span
+                            className="shrink-0 rounded px-1.5 py-0.5 tabular-nums"
+                            style={{
+                              fontSize: typography.xs,
+                              color: colors.textMuted,
+                              background: colors.bgHover,
+                              border: `1px solid ${colors.borderLight}`,
+                            }}
+                            title={tag.published
+                              ? `Published ${formatItemDueFull(tag.raw)}`
+                              : `Scheduled to publish ${formatItemDueFull(tag.raw)}`}
+                          >
+                            {formatItemDue(tag.raw)}
+                          </span>
+                        );
+                      })()}
+
+                      {/* TARGET KEYWORD on top, article title beneath it — the keyword is
+                          what the row is FOR, so it leads; the generated title is
+                          secondary. With no keyword the title takes the lead line (and
+                          still repeats below, keeping the two-line shape consistent). */}
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: typography.sm, color: colors.text }} className="truncate block">
-                          {config.parentKeyword && item.keyword === config.parentKeyword && (
-                            <Crown className="w-3.5 h-3.5 inline-block mr-1 text-amber-500" aria-label="Parent (hub) article" />
-                          )}
-                          {item.title ?? item.keyword}
+                          {/* (Parent crown now lives in the row's own toggle button.) */}
+                          {(item.keyword ?? '').trim() !== '' ? item.keyword : (item.title ?? '')}
                         </span>
-                        {item.title && (
-                          <span style={{ fontSize: typography.xs, color: colors.textMuted }}>
-                            {item.keyword}
+                        {(item.title ?? '') !== '' && (
+                          <span style={{ fontSize: typography.xs, color: colors.textMuted }} className="truncate block">
+                            {item.title}
                           </span>
                         )}
                         {/* F3: compact display-only SEO metrics carried from the
@@ -1193,24 +1761,23 @@ export function StrategiesModule() {
                         )}
                       </div>
 
-                      {/* Due date — editable while pending on a schedule-mode
-                          strategy; read-only stamp otherwise. */}
+                      {/* Due-date EDITOR — only while pending on a schedule-mode strategy.
+                          The read-only display now lives in the leading date tag above. */}
                       {strategy.publishingMode === 'schedule' && item.status === 'pending' ? (
                         <Input
                           type="date"
-                          className="h-7 w-36 shrink-0 text-xs bg-background"
+                          className="h-7 w-36 shrink-0 text-xs bg-card"
                           defaultValue={item.scheduledDate ? item.scheduledDate.slice(0, 10) : ''}
                           onChange={(e) => handleItemDateChange(strategy.id, item.id, e.target.value)}
                           onClick={(e) => e.stopPropagation()}
                         />
-                      ) : item.scheduledDate ? (
-                        <span className="shrink-0" style={{ fontSize: typography.xs, color: colors.textMuted }}>
-                          Due {new Date(item.scheduledDate.replace(' ', 'T')).toLocaleDateString()}
-                        </span>
                       ) : null}
 
                       {/* Status */}
-                      <StatusBadge status={item.status} />
+                      <StatusBadge
+                        status={item.status}
+                        published={!!item.articlePublishedPostId || !!item.articlePublishedUrl}
+                      />
 
                       {/* Article link */}
                       {item.articleId && (
@@ -1225,22 +1792,55 @@ export function StrategiesModule() {
                         </Button>
                       )}
 
-                      {/* View on the destination site — where it was actually published */}
+                      {/* Edit + Preview the LIVE post without leaving Strategies.
+                          Edit reuses THE SEO page editor (SectionModal mode="page");
+                          Preview is the same popup the SEO table shows. Both need the
+                          post to exist on a site, so they appear only once it does. */}
+                      {livePostOf(item) && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0"
+                            title="Edit this page in the SEO page editor"
+                            onClick={() => setEditPost(livePostOf(item))}
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0"
+                            title="Preview the live page in a popup"
+                            onClick={() => setPreviewPost(livePostOf(item))}
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            Preview
+                          </Button>
+                        </>
+                      )}
+
+                      {/* See live — opens the published page in another window */}
                       {item.articlePublishedUrl && (
                         <Button
                           variant="ghost"
                           size="sm"
                           className="shrink-0"
+                          title="Open the published page in a new tab"
                           onClick={() => window.open(item.articlePublishedUrl, '_blank', 'noopener,noreferrer')}
                         >
                           <ExternalLink className="w-3.5 h-3.5" />
-                          View on site
+                          See live
                         </Button>
                       )}
 
-                      {/* Publish a completed-but-unpublished item to the target
-                          site — the retro-publish path for draft-mode articles. */}
-                      {item.status === 'completed' && item.articleId && !item.articlePublishedUrl && (
+                      {/* Publish a generated, not-yet-live item to the target site — the
+                          retro-publish path for draft-mode articles. Uses the shared
+                          predicate so this button appears for EXACTLY the items whose
+                          pill reads "Written" (both 'written' and unpublished
+                          'completed'), which is what a status-only gate got wrong. */}
+                      {isPublishableItem(item) && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -1369,6 +1969,36 @@ export function StrategiesModule() {
                             ))}
                           </SelectContent>
                         </Select>
+
+                        {/* Live post status on the connected site. Unlike its three
+                            siblings above (which are INHERIT-style overrides saved to
+                            the item's config) this one acts on the REAL post right
+                            away, so it stays disabled until the article actually has
+                            one — the tooltip explains the precondition rather than
+                            hiding the control. */}
+                        <span style={{ fontSize: typography.xs, color: colors.textMuted }}>Post</span>
+                        <Select
+                          value={item.articlePublishedPostId ? (item.articleStatus === 'published' ? 'publish' : 'draft') : ''}
+                          disabled={!item.articlePublishedPostId || postStatusMutation.isPending}
+                          onValueChange={(value) => {
+                            if (value === 'trash' && !window.confirm('Delete this post on the site? It moves to the site’s Trash and can be restored there.')) return;
+                            postStatusMutation.mutate({ id: strategy.id, itemId: item.id, status: value });
+                          }}
+                        >
+                          <SelectTrigger
+                            className="h-7 w-32 text-xs"
+                            title={item.articlePublishedPostId
+                              ? 'Change this post’s status on the connected site'
+                              : 'Available once this article is published to the site'}
+                          >
+                            <SelectValue placeholder="Not on site" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="publish">Published</SelectItem>
+                            <SelectItem value="draft">Draft</SelectItem>
+                            <SelectItem value="trash">Delete</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     )}
                     </div>
@@ -1427,6 +2057,109 @@ export function StrategiesModule() {
         onDone={refetch}
       />
 
+      {/* THE SEO page editor, opened on a strategy item's live post. Same
+          component + same props shape the SEO table uses (mode="page"), so saving
+          routes through the identical dynamic-rule paths. Keyed per post so
+          switching items never bleeds editor state. */}
+      {editPost && (
+        <SectionModal
+          key={`strategy-page-${editPost.postId}`}
+          siteId={editPost.siteId}
+          postId={editPost.postId}
+          type="post"
+          readOnly={false}
+          mode="page"
+          page={{
+            title: editPost.title || 'Untitled',
+            permalink: editPost.permalink || undefined,
+            // Hand the editor's Preview control back to this page's popup.
+            onPreview: editPost.permalink ? () => setPreviewPost(editPost) : undefined,
+          }}
+          onClose={() => setEditPost(null)}
+          onSaved={refetch}
+        />
+      )}
+
+      {/* Live-page preview popup. PORTALED to body for the same reason the SEO
+          table does it: the editor is body-portaled too, and a preview trapped in
+          the app tree's stacking context paints BEHIND it. */}
+      {previewPost && previewPost.permalink && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+          onClick={() => setPreviewPost(null)}
+        >
+          <div
+            className="flex h-[85vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-foreground">{previewPost.title || 'Preview'}</div>
+                <a href={previewPost.permalink} target="_blank" rel="noopener noreferrer" className="truncate text-xs text-muted-foreground hover:text-primary">{previewPost.permalink}</a>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <a href={previewPost.permalink} target="_blank" rel="noopener noreferrer" className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Open in new tab">
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+                <button type="button" onClick={() => setPreviewPost(null)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Close">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            {previewLoading ? (
+              <div className="flex h-full w-full flex-1 items-center justify-center bg-white">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : previewHtml ? (
+              <iframe srcDoc={previewHtml} title="Page preview" className="h-full w-full flex-1 bg-white" />
+            ) : (
+              <iframe src={previewPost.permalink} title="Page preview" className="h-full w-full flex-1 bg-white" />
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* FULL settings editor — the create dialog in edit mode, pre-filled from this
+          strategy. Split on save: the four whitelisted top-level columns go as
+          columns, everything else rides `config`, which the backend sanitizes and
+          MERGES (so keys this dialog doesn't manage survive untouched). */}
+      {settingsStrategy && (
+        <CreateStrategyDialog
+          open
+          onOpenChange={(o) => { if (!o) setSettingsStrategy(null); }}
+          defaultName={settingsStrategy.name}
+          isSaving={updateStrategyMutation.isPending}
+          selectedCount={0}
+          selectedKeywords={[]}
+          editStrategy={{
+            id: settingsStrategy.id,
+            name: settingsStrategy.name,
+            templateId: settingsStrategy.templateId,
+            hierarchyMode: (settingsStrategy as any).hierarchyMode,
+            publishingMode: settingsStrategy.publishingMode,
+            config: parseStrategyConfig(settingsStrategy.config),
+          }}
+          onSave={(payload: StrategyPayload) => {
+            const {
+              name, templateId, hierarchyMode, publishingMode,
+              // Not settings: these only describe how a NEW strategy seeds its items.
+              manualKeywords: _mk, manualPrimaryKeyword: _mpk,
+              ...config
+            } = payload as any;
+            updateStrategyMutation.mutate({
+              id: settingsStrategy.id,
+              name,
+              templateId,
+              hierarchyMode,
+              publishingMode,
+              config,
+            });
+            setSettingsStrategy(null);
+          }}
+        />
+      )}
+
       {/* Parent / anchor settings editor (G1) */}
       <ParentSettingsModal
         open={parentSettingsStrategy !== null}
@@ -1462,7 +2195,12 @@ export function StrategiesModule() {
                 if (!recurrenceDialog) return;
                 const strategy = strategyList.find((s) => s.id === recurrenceDialog.strategyId);
                 const existingStartDate = parseStrategyConfig(strategy?.config).scheduleConfig?.startDate || '';
-                handleRecurrenceSave(recurrenceDialog.strategyId, recurrenceDialog.value, existingStartDate);
+                handleRecurrenceSave(
+                  recurrenceDialog.strategyId,
+                  recurrenceDialog.value,
+                  existingStartDate,
+                  strategy?.publishingMode,
+                );
               }}
             >
               Save

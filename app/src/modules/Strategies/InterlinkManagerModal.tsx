@@ -206,7 +206,7 @@ export function InterlinkManagerModal({
                     max={10}
                     value={maxLinksPerArticle}
                     onChange={(e) => setMaxLinksPerArticle(parseInt(e.target.value, 10) || 1)}
-                    className="w-full bg-background"
+                    className="w-full bg-card"
                   />
                   <p className="text-[0.8rem] text-muted-foreground">
                     Cap on links pointing at any single destination article.
@@ -221,7 +221,7 @@ export function InterlinkManagerModal({
                     max={20}
                     value={maxLinks}
                     onChange={(e) => setMaxLinks(parseInt(e.target.value, 10) || 1)}
-                    className="w-full bg-background"
+                    className="w-full bg-card"
                   />
                   <p className="text-[0.8rem] text-muted-foreground">
                     Total links inserted into each source article.
@@ -289,20 +289,20 @@ export function InterlinkManagerModal({
                         placeholder="Keyword to link…"
                         value={rule.keyword}
                         onChange={(e) => updateRule(rule.id, 'keyword', e.target.value)}
-                        className="w-full bg-background h-8 text-sm"
+                        className="w-full bg-card h-8 text-sm"
                       />
                       <div className="flex gap-2">
                         <Input
                           placeholder="https://target-url…"
                           value={rule.url}
                           onChange={(e) => updateRule(rule.id, 'url', e.target.value)}
-                          className="flex-1 bg-background h-8 text-sm"
+                          className="flex-1 bg-card h-8 text-sm"
                         />
                         <Select
                           value={rule.matchType}
                           onValueChange={(v) => updateRule(rule.id, 'matchType', v as MatchType)}
                         >
-                          <SelectTrigger className="w-28 h-8 text-sm bg-background">
+                          <SelectTrigger className="w-28 h-8 text-sm bg-card">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>

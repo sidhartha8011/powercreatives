@@ -12,8 +12,14 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
         destructive:
           "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
+        // Outline buttons must READ as controls. `bg-transparent` let the page
+        // (`--background`, oklch .98) show through, so an outline button on a
+        // toolbar dissolved into the page. `--card` (white) matches the input/
+        // select treatment and, with the existing border, stays delineated on
+        // white surfaces too. Consumers that pass their own `bg-*` are
+        // unaffected — cn() is tailwind-merge, so the consumer class wins.
         outline:
-          "border bg-transparent shadow-xs hover:bg-accent dark:bg-transparent dark:border-input dark:hover:bg-input/50",
+          "border bg-card shadow-xs hover:bg-accent dark:bg-transparent dark:border-input dark:hover:bg-input/50",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost:

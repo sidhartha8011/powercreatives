@@ -1,5 +1,19 @@
 # Session Log
 
+## 2026-07-28 — Strategies never stop generating (infinite loop + stuck `error` items) [/task]
+- **Ask:** "Some of the strategies just keep generating until infinity — they never stop, and there is an error here."
+- **Diagnosis (two bugs, both verified against code):**
+  1. **PRIMARY — RSS/Social watcher feeds strategies forever.** The keepalive/cron-driven watcher `run_rss_scan()` loops every RSS+social strategy each tick and calls `scan_rss_strategy()`, whose only creation-stop gate is `rss_duration_blocked()` (`service.php:2662`). That returns `false` forever when `duration.mode` is `'ongoing'` OR **absent (the default)**. Worse, the watcher strategy queries only excluded `'paused'` (`class-pcm-db.php` `get_rss_strategies` + `service.php:1995` `get_social_strategies`) — so a strategy the system marked **`'completed'`** kept getting fresh items created, flipping it back to `in_progress`, forever. Keyword/static strategies have a fixed item set → terminate → unaffected; matches "some of the strategies."
+  2. **SECONDARY — consolidated batch re-selected `'error'` items.** `generate_consolidated_batch()` `service.php:783` matched `status === 'pending' || status === 'error'`; on a persistent failure the catch (`:961`) set them back to `'error'`, so every manual Generate/Generate-All re-ran and re-failed the same batch. Not autonomous (queue re-arm is `'pending'`-only) but an infinite manual retry that stranded items in `error`.
+- **Fix (3 edits, 2 files):**
+  1. `class-pcm-db.php` `get_rss_strategies()`: `status != 'paused'` → `status NOT IN ('paused','completed')`.
+  2. `service.php` `get_social_strategies()`: same change. A drained strategy that reaches `completed` (per `recompute_counters` `:4000`, `completed >= total`) is now retired from the watcher — no infinite re-feeding. `ongoing`/`limit`/`until` semantics left untouched (a deliberately-ongoing strategy that hasn't drained keeps running).
+  3. `service.php:783`: dropped `|| $it->status === 'error'` so the consolidated batch matches the per-item `get_next_pending_item()` (`'pending'`-only). Explicit Retry via `$item_id` still targets any status.
+- **Not changed (deliberate):** `rss_duration_blocked()`'s `ongoing`/missing-mode default — flipping it to "block" would silently retire intentionally-indefinite strategies (behavior change, out of scope). Retiring at `completed` achieves termination for drained strategies without that risk.
+- **Verified:** `php -l` clean on both files. Confirmed both watcher queries feed ONLY the watcher (`service.php:1978`, no other caller) → excluding `completed` is safe. Confirmed no test mocks `get_rss_strategies`/`get_social_strategies` to expect a completed row processed (`StrategyCronTickTest` stubs its own `PCM_DB`, never calls the real SQL); existing `rss_duration_blocked` contract test (`StrategyRssWatcherTest:133`) unchanged. ⚠️ **PHPUnit NOT run** — no `composer`/`phpunit` binary in this working copy (partial `vendor/` has runtime autoload only); run `composer test` on a box with dev deps to confirm zero regressions vs the 589-test baseline.
+- **Specialists:** Explore subagent (read-heavy pipeline trace); inline edits (single PHP module + DB class, 3-line logic change). Tier T3 (GLM-5.2) — plan-first, evidence-grounded.
+- **Not committed.**
+
 ## 2026-07-22 — Strategies module: schedule precision, posting parity, post-image reuse [/task]
 - **Ask:** "Strategies module fully done — proper/easy schedule/cadence, posting works on sites, posts can re-use the image in the social media post for the blog."
 - **Diagnosis (three gaps, evidence-grounded):**
@@ -8918,3 +8932,1249 @@ maybe_upgrade() 3 templates (RSS Reposting id=106, Social Media Reposting id=105
 Tests: tests/standalone/template_seed_delivery_test.php 8/8 (incl. "seeds land even when
 pcm_db_version is already current" — the exact bug). Suite 607/4-known, run.php 88/88,
 reposting_templates 22/22, php -l clean. Zip rebuilt with the fix verified inside.
+
+
+## 2026-07-07 — (toolchain, not project) update universal-kit + bootstrap
+- Ran `git pull` in ~/.claude/universal-kit + `./bootstrap.sh`. Pull was blocked by 2 local uncommitted
+  files: AGENT_INDEX.md (generated) + regen-index.sh (a local -d guard on the ECC-skills loop). Upstream
+  6c77640 REWROTE that section (dropped the ECC loop entirely, added Kit-agents/Kit-skills blocks), so the
+  local fix was superseded → reset both to upstream, pulled clean. bootstrap.sh exit 0: indexed 185
+  resources, installed 18 agents / 16 skills / 6 commands (/onboard /task /build /genesis /rootcause /ship).
+  No powercreatives project files changed. NB: bootstrap suggested `~/.claude/universal-kit/migrate.sh` to
+  clean up ECC — not run (not requested). Restart Claude Code to pick up refreshed commands/skills.
+
+## 2026-07-07 (this machine) — git pull origin feat/seo-suite-port (476 commits, clean fast-forward)
+- Pre-check: local was 0 ahead / 476 BEHIND and a strict ancestor (git merge-base --is-ancestor) → true
+  fast-forward, no merge/conflict risk to code. My connector 2.6.x heading work was already COMMITTED and
+  pushed (b37fbbe, a91e9aa), so nothing uncommitted was at risk; only .claude/SESSION_LOG.md was dirty →
+  stashed around the pull, popped, append-append conflict resolved keep-both, stash dropped.
+- Now at 8c30d73 "docs: permanent UI hard rules". Upstream contains a MAJOR connector rewrite (2.6.2 →
+  **3.0.8**): connector is now "four dumb jobs" — /snapshot + /page-state (the HUB does ALL parsing),
+  builder-aware storage writers, guarded render-time apply, hub-pushed config. Consequence: the
+  connector-side scan_headings / collect_headings / scan_template_headings / replace-heading routes are GONE
+  (superseded by hub-side parsing of the snapshot). My /override-heading render-time layer SURVIVED and is
+  still registered. So the 2.5.0/2.6.x heading work was superseded by a better architecture, not lost.
+- Verified: php -l clean on seohub/seo/sites service + sites controller; tsc = 59 errors (matches the new
+  upstream baseline noted in their log, not 56); working tree clean except the SESSION_LOG edit; map is the
+  pulled 2026-07-22 version and already documents 3.0.x, so no map correction was needed.
+- NB for next zip build: connector is 3.0.8 and self-updates with auto-versioning (upstream f73737d "ending
+  the manual re-uploads") — the old 2.6.x rollout instructions in earlier entries are obsolete.
+
+## 2026-07-27 — (location analysis, no code change) per-job models + month day-picker
+- Asked WHERE two PDF items land. Traced both to the **strategy** module.
+- Per-job models: TEXT (config.model/provider, controller.php:485) and IMAGES (config.imageModel/
+  imageProvider, controller.php:624) ALREADY exist backend-side — images just lack UI. RESEARCH does not
+  exist: the model is HARDCODED 'gemini-2.5-flash' at service.php:5033 in run_grounding_call(), which
+  doesn't even receive $strategy (call sites 4929/4938 inside maybe_research_context, which does). Second
+  default at service.php:2647. Frontend destination = the existing Content accordion in
+  CreateStrategyDialog.tsx:928; reuse components/shared/ModelDropdown.tsx.
+- Month day-picker: byMonthDay does NOT exist anywhere (grep 0). Needs UI in RecurrenceEditor.tsx (weekday
+  circles are gated `unit==='week'` at :235-247, month renders nothing), sanitizer beside byDays at
+  controller.php:545, and the step at service.php:618. NOTE: PHP strtotime('+1 month') OVERFLOWS (Jan 31 →
+  Mar 3), so the "31 = last day" clamp also fixes a latent drift bug. A SECOND schedule system exists
+  (PCM_Sites_Service::set_site_schedule, 'monthly' => '+1 month', service.php:1878) with the same flaw —
+  asked the user whether it's in scope.
+- No files changed. Open question logged: strategy recurrence only, or site schedule too?
+
+## 2026-07-27 — Per-job AI models: Text / Images / Research (strategy module)
+- Ask: separate model per job type. Reality found first: TEXT (config.model/provider) and IMAGES
+  (config.imageModel/imageProvider) already existed server-side — images just had NO UI; RESEARCH did not
+  exist at all and was HARDCODED 'gemini-2.5-flash' inside run_grounding_call(), which didn't even receive
+  the strategy.
+- Backend (strategy/controller.php): whitelisted researchModel + researchProvider next to imageModel/
+  imageProvider — same array_key_exists guard, and deliberately NOT added to the CREATE defaults array, so
+  a partial PATCH can't silently reset them (matches the imageModel convention exactly).
+- Backend (strategy/service.php): new private resolve_research_model() mirroring resolve_model(), defaulting
+  to gemini-2.5-flash; run_grounding_call() gained ($model, $provider) params and now builds $options with
+  the provider key OMITTED when unset (keeps the legacy call byte-identical); maybe_research_context()
+  resolves once and passes it to both call sites (single- and multi-pass).
+- Frontend (Keywords/CreateStrategyDialog.tsx): new imageModelId/researchModelId state + reset, a second
+  models query (type:'image'), 4 new optional payload fields + interface decls, and two selects placed with
+  their own job's settings inside the Content accordion — Image Model (shown when featured/in-content images
+  are on) and Research Model (shown when >=1 research pass is selected).
+- Verified: php -l x2 clean; NEW research_model_test.php 10/10 via reflection — default fallback, configured
+  value honored, text vs research resolve INDEPENDENTLY (no leakage), the LLM call actually receives the
+  research model+provider, provider key omitted when unset (legacy path preserved), empty model falls back;
+  tsc 59 = baseline with 0 in the edited file; vite build clean and both new labels confirmed in the bundle.
+- Specialists: none — worked inline (system rule: no AgentTool unless requested). Not committed.
+- NOT live-verified: needs a real strategy run to confirm a non-default research model round-trips through
+  generation. Backwards compatible by construction (every default preserved).
+
+## 2026-07-27 — Monthly schedule: day-of-month 1–31 picker (31 = last day) + notice
+- Ask: selecting "month" should offer days 1–31, where 31 means the LAST day for shorter months, plus a
+  small notice. Screenshot showed the target: "Repeat every [1] [month]" + "Monthly on day 21".
+- Backend (strategy/service.php): new `byMonthDay` (1–31, monthly-only) in the recurrence contract; added to
+  the has_custom detection so a byMonthDay-only config isn't misrouted to the legacy path. REWROTE the month
+  branch of calculate_recurrence_dates: each slot is now computed from the START anchor with explicit
+  year/month arithmetic + `min(day, days_in_month)` clamp, instead of chaining strtotime('+N month').
+  This implements the 31→last-day rule AND fixes a real latent bug — the old chain OVERFLOWED (Jan 31 →
+  Mar 3) and then drifted permanently. Also guards against a back-dated first slot when the chosen day has
+  already passed in the start month. day/week units left byte-identical.
+- Backend (strategy/controller.php): sanitize byMonthDay (absint, 1–31) beside byDays.
+- Frontend (Strategies/RecurrenceEditor.tsx): byMonthDay added to ScheduleRecurrence + normalizer + default
+  + parser + serializer (emitted ONLY when monthly and set, so legacy configs round-trip unchanged); new
+  "Monthly on day N" select (1–31) rendered when unit==='month', with a contextual notice shown for days
+  29/30/31 explaining shorter months post on their last day.
+- Verified: php -l x2 clean; NEW month_schedule_test.php 14/14 — day 31 clamps across Jan–Jun, leap Feb
+  2028-02-29, PROOF the old chained strtotime drifted to Mar 03 while the new logic does not, day 21 exact,
+  time-of-day preserved, past-day rolls forward, interval>1 crosses the year, absent byMonthDay keeps the
+  start day, daily/weekly UNCHANGED, legacy frequency path preserved, ends:after cap still applies, invalid
+  day ignored. tsc 59 = baseline with 0 in the edited file and no caller broken by the new required field;
+  vite build clean; all three new UI strings confirmed in the bundle. research_model_test 10/10 still green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOT live-verified in a browser: no dev server for this WP-embedded SPA; correctness rests on the 14 date
+  tests. Scope note: this is the STRATEGY recurrence only — PCM_Sites_Service::set_site_schedule still uses
+  '+1 month' and has the same overflow flaw (flagged earlier; still awaiting your call).
+
+## 2026-07-27 — Non-English generation: language-lock title/meta + {{ brand_language }} template var
+- Ask: "everything is generated in English"; header/description should come from Templates with a
+  {{ brand_language }}-style variable.
+- ROOT CAUSE found (not a missing feature — a half-wired one): brands.language ALREADY exists and
+  build_prompt ALREADY sent "- Content Language: X" in the brand block, so the article BODY honored it.
+  But $output_format — the line naming the JSON fields — was hardcoded English and never mentioned
+  language, so title/metaTitle/metaDescription came back in ENGLISH for a Swedish brand. Separately
+  PCM_Topic_Suggester (keyword+title for site-schedule strategies) had NO language input at all.
+- Changes (4 files):
+  - strategy/service.php: extract $brand_language from the brand; append an explicit "Write every field —
+    including title, metaTitle and metaDescription — in X." to $output_format ONLY when a language is set
+    (empty => byte-identical original string, preserving the documented back-compat contract); expose
+    'brand_language' in the $vars map as a plain VALUE var (deliberately NOT in $fragment_vars, so it never
+    auto-appends nor triggers the blank-line collapse).
+  - strategy/class-pcm-topic-suggester.php: new optional `language` context key threaded to build_messages,
+    appended as a final "Write the keyword, title and rationale in X." line; empty => prompt unchanged.
+  - strategy/service.php (site-schedule caller): resolve the brand language via $site->brandId +
+    PCM_DB::get_brand_by_id and pass it into the suggester. Best-effort — unlinked site => '' => unchanged.
+  - Templates/SourceVarsHint.tsx: documents {{ brand_language }} for template authors in both editors.
+- Verified: php -l x2 clean; NEW brand_language_test.php 10/10 via reflection on the real build_prompt —
+  title/meta language-locked, brand block unchanged, NO language => original output_format with no lock,
+  null brand safe, {{ brand_language }} substitutes with no raw token left, unset language resolves EMPTY
+  (not the literal token), no stray auto-append, and referencing the token does NOT suppress output_format.
+  tsc 59 = baseline, 0 in the edited file; vite build clean, variable present in the bundle. Regressions
+  green: research_model 10/10, month_schedule 14/14.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOT live-verified with a real LLM call: language adherence is now INSTRUCTED, but a given model can still
+  ignore it. Scope note: this covers strategy generation + topic suggestion. Writer module
+  (writer/service.php:230) has the same brand-block-only pattern and would need the same treatment if its
+  titles/meta also come back English — not touched, flagging for your call.
+
+## 2026-07-27 — Live post-status selector on strategy items (draft / publish / delete)
+- Ask: a post-status selector that enables once the post is on the site, to set it to draft or delete it.
+- Reality check first: strategy_items has NO remote post id — it links via articleId, and articles carries
+  publishedPostId/publishedUrl/siteId. get_strategy_items() already LEFT JOINed publishedUrl+siteId, so the
+  presence of a live post was almost exposed already.
+- Changes (5 files):
+  - core/db/class-pcm-db.php: join now also aliases a.publishedPostId AS articlePublishedPostId and
+    a.status AS articleStatus (additive, mirrors the documented alias pattern). NOTE the list endpoint
+    assigns the RAW row ($strategy->items = get_strategy_items()), so both new columns reach the UI for free.
+  - strategy/service.php: NEW set_item_post_status($strategy,$item,$user,$status) — validates status against
+    draft|publish|trash, re-checks item-in-strategy, article exists, publishedPostId+siteId present, and site
+    still connected BEFORE any remote call; POSTs {status} for draft/publish, DELETEs with force=false for
+    trash (recoverable from the site's Trash — never a permanent delete); then syncs the local article row
+    (trash clears publishedPostId/publishedUrl so the item reverts to its "not on site" affordances).
+    Loads PCM_Sites_Service via the file's existing class_exists+require pattern (I first wrote a call to a
+    non-existent ensure_sites_service() and caught it before running).
+  - strategy/controller.php: new route POST /strategies/{id}/items/{itemId}/post-status + handler mirroring
+    publish_item (ownership check, whitelist, try/catch); schedule-feed payload gains the 2 new fields.
+  - Strategies/index.tsx: item type + postStatusMutation + a Select on the row — DISABLED (with an
+    explanatory tooltip) until articlePublishedPostId exists, so the control is discoverable but inert;
+    Delete asks for confirmation and states it is recoverable.
+  - lib/trpc-routes.ts: strategy.setItemPostStatus.
+- Verified: php -l x3 clean; NEW post_status_test.php 18/18 — exact remote calls asserted (POST status=draft/
+  publish; DELETE with force=false), local row synced, publish pointers cleared on trash, and every guard
+  proven to make NO remote call (unpublished, invalid status, foreign item, disconnected site) plus remote
+  403 surfacing its message while leaving the local row untouched. tsc 59 = baseline, 0 in edited files;
+  build clean, control present in the bundle. Regressions green: brand_language 10/10, research_model 10/10,
+  month_schedule 14/14.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- INTERPRETATION FLAGGED: "delete the post from strategies" was read as trashing the post ON THE SITE (the
+  sentence is about the post being on the site). Removing the ITEM from the strategy is a different, already
+  existing action (DELETE /strategies/{id}/items/{itemId}). Confirm if the other reading was intended.
+- NOT live-verified: no dev server for this WP-embedded SPA; correctness rests on the 18 guard/call tests.
+
+## 2026-07-27 — Post-status selector RELOCATED to the per-item overrides row (screenshot correction)
+- Same ask as the prior entry, now with a screenshot: the annotation circles the space right after
+  "Template / Mode / Approval" on the expanded ITEM row — not the action-button row where I first put it.
+- Frontend-only change (Strategies/index.tsx): removed the Select from the actions row (beside View /
+  View on site / Publish) and re-placed it as a 4th control labelled "Post" in the inline overrides row,
+  matching its siblings' markup (h-7 w-32 text-xs + muted label span). Behaviour unchanged: disabled until
+  articlePublishedPostId exists (tooltip explains the precondition), Delete confirms and states it is
+  recoverable. Commented WHY it differs from its neighbours — the other three are Inherit-style config
+  overrides saved to the item, this one acts on the REAL post immediately.
+- Backend from the previous entry is UNTOUCHED (route, service, DB join, trpc route all unchanged).
+- Verified: exactly ONE instance of the control in source (was 1, no duplicate left behind); structural
+  placement proven by line numbers — overrides block spans 1344-1423, labels Template 1354 / Approval 1381 /
+  Post 1400 all inside it, while the Publish button (actions row) sits at 1270 OUTSIDE the block; tsc 59 =
+  baseline with 0 in the edited file; vite build clean, control present in the bundle; post_status_test.php
+  still 18/18 (backend untouched).
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- Still open from the prior entry: "delete the post from strategies" is implemented as TRASHING the post on
+  the site (recoverable). Removing the ITEM from the strategy remains a separate existing action.
+
+## 2026-07-27 — Strategy item rows: Edit (SEO page editor) + Preview popup + See live
+- Ask: reuse THE SEO page editor modal from the strategy item row; Edit = popup, Preview = popup,
+  See live = new window. Screenshot put the buttons in the ACTION row, right after Publish.
+- IDENTIFIED the editor (my open question from two tasks ago): it is **SEO/SectionModal.tsx** — its
+  docblock documents "PAGE MODE (full-page editor V1)", it self-fetches the served contentHtml and saves via
+  seo.remoteSavePageEdits, which slices it back into sections and routes each change through the EXISTING
+  dynamic-rule paths. Its props address a post by (siteId, postId) — exactly the coordinates I exposed last
+  task as articleSiteId/articlePublishedPostId. Canonical invocation copied from SEO/index.tsx:1789.
+- Frontend-only (2 files):
+  - Strategies/index.tsx: import SectionModal + createPortal + Pencil/Eye icons; added articleSiteId to the
+    item type; livePostOf(item) resolver returning (siteId, postId, title, permalink) or null; Edit +
+    Preview buttons rendered ONLY when the item has a live post (placed after Publish, per the arrow);
+    SectionModal rendered with mode="page" keyed per post; a body-PORTALED preview popup reusing the
+    existing seo.sitePreview route for AUTHENTICATED HTML (a cross-site iframe can't carry the remote login
+    cookie) with a plain-iframe fallback. The editor's own Preview control is wired back to this popup.
+  - ScheduleView.tsx: renamed its identical "View on site" button to "See live" — I renamed the list-view
+    one to match the spec's vocabulary, and leaving the sibling view differently labelled would have been an
+    inconsistency I introduced. Bundle now shows "View on site" 0 / "See live" 2.
+- Verified before writing: strategy.list assigns the RAW row ($strategy->items = get_strategy_items()), so
+  articleSiteId/articlePublishedPostId genuinely reach the UI; and strategy publishing uses /wp/v2/posts, so
+  type="post" is correct (not 'page'). tsc 59 = baseline, 0 in edited files; build clean; all four control
+  strings present in the bundle; post_status_test 18/18 (backend untouched this task).
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOT live-verified: no dev server for this WP-embedded SPA. The editor is reused verbatim with the same
+  props shape as its proven caller, but a real click-through on a connected site is the remaining gap —
+  especially SectionModal's page-mode fetch for a strategy-published post.
+
+## 2026-07-27 — Image prompt dropdown on the strategy row (template-driven featured images)
+- Ask: new "Image prompt" dropdown, sourced from Templates. Screenshot put it in the strategy ROW toolbar
+  (next to the content template / approval selects).
+- Found the real gap: the featured-image prompt was HARDCODED in maybe_generate_featured_image()
+  ('Professional blog featured image for an article titled "%s" about %s — clean, modern, editorial
+  photography, no text overlays.'). A templates module 'image' ALREADY exists and is queryable, so this is
+  wiring an existing surface rather than inventing one.
+- Backend:
+  - strategy/controller.php: whitelist config.imageTemplateId (absint), beside imageModel/imageProvider.
+  - strategy/service.php: NEW private build_image_prompt($strategy,$title,$keyword,$user_id) — loads the
+    selected template via the existing load_template(), concatenates its 'prompt' entries and renders them
+    through the existing render_template_vars() with {{ title }} / {{ keyword }} / {{ brand_language }}
+    (brand resolved via strategy->brandId). maybe_generate_featured_image now calls it.
+    FALLBACK IS THE POINT: no template, id 0, deleted/foreign template (caught + error_log'd, never
+    rethrown), no prompt entries, or a whitespace-only render all return the ORIGINAL sentence
+    byte-identical — an image prompt can never come out blank.
+  - render_template_vars' 3rd arg (collapsible) is intentionally omitted: no blank-line collapse for image
+    prompts.
+- Frontend (Strategies/index.tsx): templates.list({module:'image'}) query, handleImageTemplateChange
+  (partial config merge; "Default image prompt" sends 0 so the key is explicitly cleared, not left stale),
+  and the Select placed after the content Template in the row.
+- Verified: php -l x2 clean; NEW image_prompt_test.php 13/13 — byte-identical default when unset, template
+  wording used with all three tokens resolved and no raw {{ }} left, multiple prompt entries concatenated
+  while non-prompt entries are ignored, and every SAFETY path (empty render / no prompt entries / deleted
+  template) proven to fall back to the default without throwing. tsc 59 = baseline, 0 in the edited file;
+  build clean, dropdown + tooltip in the bundle. Regressions green: brand_language 10/10, research_model
+  10/10, month_schedule 14/14, post_status 18/18.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOTE: this drives the FEATURED image. In-content images (media_instructions / [IMAGE_N]) still use their
+  own path — say the word if that should read the same template.
+- NOT live-verified: no dev server; correctness rests on the 13 tests.
+
+## 2026-07-27 — Text + Image AI model dropdowns on the strategy ROW
+- Ask: a model dropdown for both image and text. Screenshot points at the strategy row toolbar — i.e. these
+  must be changeable on an EXISTING strategy, not only in the create dialog (where I added them earlier).
+- FRONTEND-ONLY: verified first that all four config keys (model/provider, imageModel/imageProvider) are
+  already whitelisted in sanitize_config_fields, and that update_strategy sanitizes + MERGES config
+  (array_merge($existing,$incoming)) rather than replacing it. No backend change needed.
+- Strategies/index.tsx: two models queries (getForGeneration type 'text' / 'image', staleTime 30s);
+  handleTextModelChange / handleImageModelChange sending a partial config merge that carries the model's
+  PROVIDER with it (the server routes on both); two Selects on the row — Text model beside the content
+  Template, Image model beside the Image prompt, so each pair (wording + model) reads together.
+- Clear path VERIFIED end-to-end rather than assumed: 'default' sends '' → sanitize_config_fields keeps ''
+  (array_key_exists guard) → array_merge overwrites the stored value → resolve_model()'s !empty() check
+  falls back to the server default. So "Default" genuinely clears instead of silently keeping the old model.
+- Verified: tsc 59 = baseline, 0 in the edited file; build clean; all four new strings present in the
+  bundle; backend suites untouched and green (research_model 10/10, image_prompt 13/13, brand_language
+  10/10, post_status 18/18, month_schedule 14/14).
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- ROW WIDTH FLAG: the row now carries Auto-publish | site | Reuse image | Template | Text model | Image
+  prompt | Image model | Approval + 5 buttons. The PDF separately asks to "move up the dropdowns and make
+  them smaller ... so we can make the strategy rows smaller" — these two asks pull against each other;
+  worth doing that compaction item next.
+- NOT live-verified: no dev server; the Research model remains create-dialog-only (not requested for the row).
+
+## 2026-07-27 — Compact the strategy row (smaller controls, tighter vertical rhythm)
+- Ask: move the dropdowns up + make them smaller "as they are in the other modules so we keep design
+  tokens the same" → shorter strategy rows.
+- Surveyed the ACTUAL tokens before choosing (not guessed): SelectTrigger heights across modules are h-8 x25,
+  h-9 x12, h-7 x5 — and Strategies itself already used h-7 in its per-item overrides row (plus Writer),
+  while the strategy row used h-8. That inconsistency is exactly what the screenshot shows: the inner row
+  is smaller than the outer one. Chose h-7 = this module's own existing "compact" token.
+- Strategies/index.tsx (frontend-only):
+  - all 7 row SelectTriggers h-8 → h-7; the cadence Button h-8 → h-7; the 5 action Buttons given an explicit
+    h-7 (size="sm" defaults to h-8, so selects and buttons were mismatched) → 0 h-8 left in the row.
+  - control wrappers narrowed, but DELIBERATELY per content rather than uniformly: w-28 for short values
+    (Draft/Approvals/Text model/Image model), w-32 kept for the long ones (site, Template "SEO Pillar
+    Article", Image prompt, cadence). A first pass had cascaded every wrapper to a uniform w-28 — I caught
+    that it would truncate long template names and re-assigned widths individually.
+  - vertical: row padding py-3 → py-2; controls row mt-2.5 → mt-1.5 and gap-2 → gap-1.5 — this is the
+    "move up" (controls pulled tight under the identity line). Fewer/narrower controls also means less
+    flex-wrap, which is the other thing that was making rows tall.
+- Verified: tsc 59 = baseline, 0 in the edited file; build clean; token counts asserted post-edit (7 h-7
+  triggers, 5 h-7 buttons, 0 h-8 remaining in the row, py-2 + gap-1.5/mt-1.5 present); every control string
+  still in the bundle so nothing was lost in the compaction; backend suites untouched and green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- INTERPRETATION: "move up" implemented as pulling the controls tight under the identity line, NOT merging
+  them onto it — with 7 dropdowns + 5 buttons a single line would wrap worse and end up TALLER. Say the word
+  if you literally want them on the title line and I'll move a subset (e.g. mode+site) up there.
+- NOT visually verified: no dev server for this WP-embedded SPA, and this is a purely visual change — the
+  token/count assertions prove what was applied, not how it looks. A screenshot from you would confirm it.
+
+## 2026-07-27 — Item rows lead with the TARGET KEYWORD, title beneath
+- Ask: big text = the inputted keyword when there is one (not the article title); title below only; with no
+  keyword, title top and bottom.
+- The existing logic was the exact INVERSE: big line `{item.title ?? item.keyword}`, sub-line `{item.keyword}`
+  (rendered only when a title existed). Flipped it: big line = keyword when non-blank (trim-checked, so a
+  whitespace-only keyword falls back), else the title; sub-line = the title. Added `truncate block` to the
+  sub-line so long titles clip like the line above instead of overflowing.
+- Applied the SAME ordering to ScheduleView.tsx, which had the identical inverted pattern — otherwise one
+  item would read keyword-first in the list and title-first in the calendar view. Kept that view's existing
+  "don't repeat an identical line" guard (it's a table; duplication is noisier there).
+- Verified: NEW item_label_test.mjs 12/12 — the rule transcribed verbatim from both files and asserted:
+  keyword leads / title below / big line is NOT the title; no keyword => title top AND bottom (the explicitly
+  requested case); pending item (keyword, no title yet) renders no empty sub-line; whitespace-only keyword
+  falls back to title; and both views agree on the top line. tsc 59 = baseline, 0 in either edited file;
+  build clean; backend suites untouched and green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- OBSERVATION for the user: in the screenshot both lines show the SAME text because that strategy is
+  RSS-sourced, where the feed item's title IS stored as the keyword. The new rule is applied correctly, but
+  those rows will still show the text twice in the LIST view (ScheduleView de-dupes). Offered to suppress an
+  exactly-identical sub-line in the list too — not done, because the ask explicitly wants title top+bottom
+  when there is no keyword, and I didn't want to silently override that.
+- NOT visually verified: no dev server; this is a display change, so the 12 logic assertions prove the rule,
+  not the rendering.
+
+## 2026-07-27 — Calculated publish-date tag before the item name
+- Ask: a Date tag for the calculated publish date, before the article name, in small text.
+- Found an EXISTING due-date element first — but it sat AFTER the name block (right side, before Status)
+  and only as a read-only "Due <date>" stamp. So this was a reposition + reformat, not a new data source
+  (item.scheduledDate was already on the row).
+- Strategies/index.tsx:
+  - New leading tag rendered before the name block: bordered pill, xs, tabular-nums, muted — only when
+    scheduledDate exists.
+  - Removed the now-duplicative trailing "Due <date>" stamp; KEPT the editable date Input (schedule-mode +
+    pending), since that is the editing affordance, not a display. Updated its stale comment accordingly.
+  - Two exported helpers: formatItemDue() shows "MMM d", adding the YEAR only when it isn't the current
+    year (a schedule can roll into next year and a bare "Jan 4" would read as imminent); formatItemDueFull()
+    supplies the tooltip with weekday + date + time.
+- Verified: NEW due_tag_test.mjs 12/12 with the formatters transcribed verbatim — parses the stored
+  'Y-m-d H:i:s' shape and ISO alike; current year hides the year while another year shows it; null/undefined/
+  ''/garbage all return '' so the tag renders NOTHING rather than "Invalid Date"; tooltip carries the time
+  while the tag deliberately omits it. tsc 59 = baseline, 0 in the edited file; old stamp confirmed gone
+  (0 matches); build clean, tooltip string in the bundle; prior item_label rule still 12/12; backend suites
+  green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOTE: the tag shows only for items that HAVE a scheduled date. Draft/auto-publish strategies without a
+  schedule show none — there is no "calculated" date to show for those. Also, ScheduleView already has its
+  own dedicated Due column, so it was left alone.
+- NOT visually verified: no dev server; the 12 assertions prove the formatting rule, not the rendering.
+
+## 2026-07-27 — Create-Strategy dialog: prompts + models consolidated into CONTENT
+- Ask: move the prompt/model pickers down into Content; one prompt + one model for TEXT, one prompt + one
+  model for IMAGE — all four together.
+- Keywords/CreateStrategyDialog.tsx (frontend-only):
+  - REMOVED the top-of-dialog "Workflow (Prompt)" + "AI Model" grid (confirmed gone: 0 matches).
+  - Added a 2x2 grid at the TOP of the Content accordion — row 1: Content prompt | Text AI model,
+    row 2: Image prompt | Image AI model. Placed ABOVE the existing keyword-only options because prompts
+    and models apply to every source mode (keywords / RSS / social).
+  - Image prompt is NEW here (imageTemplateId state + reset + a templates.list({module:'image'}) query +
+    payload key + StrategyPayload field). "Default image prompt" sends undefined → built-in wording.
+  - Moved the Image AI model up from inside the images-checkbox group into the grid; verified each of the
+    four controls now appears EXACTLY ONCE (no duplicate left behind). Research Model left where it is
+    (it belongs with the research passes, and wasn't part of this ask).
+- CAUGHT A REGRESSION I WAS ABOUT TO INTRODUCE: the content prompt is REQUIRED (Create is disabled until
+  templateId is set) and the Content accordion was NOT defaultOpen — moving it there would have hidden the
+  only field blocking submission. Added defaultOpen to that section.
+- Backend: none needed. Verified create_strategy builds config as array_merge(defaults,
+  sanitize_config_fields($params)) and the dialog spreads config keys FLAT, so imageTemplateId (already
+  whitelisted for the row) persists on create too.
+- Verified: tsc 59 = baseline, 0 in the edited file; build clean; bundle shows Content prompt/Text AI model/
+  Image AI model x1 each and "Workflow (Prompt)" gone; regressions green (item_label 12/12, due_tag 12/12,
+  image_prompt 13/13, research_model 10/10, brand_language 10/10).
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOT visually verified: no dev server; assertions prove structure/uniqueness, not layout.
+
+## 2026-07-27 — Type-your-own keywords: primary + supporting inputs in Create Strategy
+- Ask: an input to freely add ONE primary keyword and MULTIPLE supporting keywords.
+- Before: keywords could ONLY come from Keyword Explorer row selection — the dialog showed
+  "No keywords selected — pick keywords in the table first". selectedKeywords is a prop; the PARENT built
+  the keywords array from the table.
+- CreateStrategyDialog.tsx: manualPrimary + manualSupporting[] + supportingDraft state (+ reset);
+  a Primary keyword Input and a Supporting keywords chip input (Enter OR comma commits, comma-paste
+  "a, b, c" splits into three chips, blur commits, X removes, + button as an explicit affordance);
+  manualKeywords memo assembles them PRIMARY FIRST, trimmed, de-duped case-insensitively against each
+  other AND the table selection (so typing a term already picked never yields two articles);
+  articleCount/missingKeywords now count typed keywords, so Create unblocks without any table selection;
+  payload gained manualKeywords[] + manualPrimaryKeyword.
+- Keywords/index.tsx: the create handler now sends [...table selection, ...typed]; handleOpenStrategy's
+  "No keywords selected" guard removed (it was dead code — its only caller, BulkActionBar, returns null at
+  count 0 anyway).
+- CHECKED REACHABILITY rather than assuming: BulkActionBar renders nothing at count 0, so I verified the
+  dialog is still reachable with an empty table — an always-visible "New Strategy" button already exists in
+  the module header and opens it directly. No new entry point needed.
+- Verified: NEW manual_keywords_test.mjs 13/13 with the logic transcribed verbatim — primary leads,
+  supporting follow; works with no table selection; trimming; empty primary skipped; case-insensitive
+  dedupe vs table AND vs the primary; comma-paste splits; blank draft is a no-op; final array = selection
+  then typed; and the 0-keyword gate still blocks Create. tsc 59 = baseline (the 4 Keywords/ errors listed
+  are pre-existing, on untouched lines; CreateStrategyDialog has none); build clean; new copy in the bundle
+  and the old "pick keywords in the table first" gone. Other suites green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- SCOPE NOTE: typed keywords carry no volume/difficulty (keywordMeta stays table-only — those metrics come
+  from Ahrefs rows). "Primary" currently means FIRST in the list; it is not yet stored as a distinct
+  config field. Say the word if it should also set config.parentKeyword for pillar/child hierarchies.
+
+## 2026-07-27 — Strategies toolbar moved out of the header into its own row
+- Ask: move the toolbar down out of the header's top-right (annotation boxed the strip just under the header).
+- Strategies/index.tsx (frontend-only, structural): the header <div> now closes right after <AutoScanStatus/>,
+  and a NEW toolbar row opens beneath it holding the List|Schedule toggle plus the list-only search /
+  status filter / sort group. Dropped `ml-auto` from the toggle — it existed only to shove the toolbar to
+  the right edge of the header, which is exactly the layout being removed. Row is `flex flex-wrap
+  items-center gap-2 mb-4 shrink-0`, so the controls wrap instead of compressing on narrow widths.
+- Verified: tsc 59 = baseline, 0 in the edited file (a JSX nesting slip here would surface as a parse error,
+  so a clean tsc is meaningful evidence the divs still balance); `ml-auto rounded-md p-0.5` now 0 matches
+  and the new row marker appears exactly once; build clean with every toolbar control still in the bundle
+  (Search strategies / All statuses / Newest / Schedule); frontend regressions green (item_label 12/12,
+  due_tag 12/12, manual_keywords 13/13).
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOT visually verified: no dev server; this is a pure layout move, so the checks prove the structure and
+  that nothing was dropped, not the final look.
+
+## 2026-07-27 — Posting cadence becomes "POST [X] posts per [day|week|month]"
+- Ask: cadence should read "POST [X] posts per [X]" like the Google-style schedule — i.e. the period was
+  hardcoded to "week" and needed to become a unit picker.
+- This was NOT cosmetic: the cap is real backpressure. rss_free_slots() compares the cap against items
+  created in a TRAILING WINDOW that the caller hardcoded to 7 days, so a unit selector without moving that
+  window would have been a lie (pick "per day", still get a weekly window).
+- Backend:
+  - strategy/controller.php: rssCadence now also sanitizes `unit` against a day|week|month whitelist,
+    defaulting to 'week'. `perWeek` keeps its historical KEY NAME but is documented as just the COUNT —
+    renaming it would have meant migrating stored configs for no functional gain.
+  - strategy/service.php: NEW rss_cadence_window_days($config) → 1 | 7 | 30 (unknown/missing → 7); the
+    watcher's trailing window now uses it instead of a hardcoded `7 * 86400`. Verified no other hardcoded
+    7-day cadence window remains.
+- Frontend (CreateStrategyDialog.tsx): rssCadenceUnit state (+ reset to 'week'), a unit Select beside the
+  number so it reads "[3] posts per [week]", the notice copy now says "per {unit}", and BOTH payload sites
+  (rss + social, which deliberately share these keys) send { perWeek, unit }. Payload type updated; a stray
+  duplicated doc comment left by the edit was cleaned up.
+- Verified: php -l x2 clean; NEW cadence_unit_test.php 16/16 — window maps day/week/month → 1/7/30; ALL
+  FOUR back-compat shapes (no unit / no rssCadence / unknown unit / null cadence) still resolve to 7 so
+  existing strategies are untouched; the cap itself is unchanged by the unit (free-slot maths, 1–21 clamp,
+  never-negative, default 3); plus a behavioural case proving the units actually differ — 3 items made 10
+  days ago are OUTSIDE a 'day' window (3 slots free) but INSIDE a 'month' window (0 free).
+  tsc 59 = baseline, 0 in the edited file; build clean; hardcoded "posts per week" gone from the bundle;
+  other suites green (manual_keywords 13/13, item_label 12/12, due_tag 12/12, month_schedule 14/14,
+  image_prompt 13/13, post_status 18/18).
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOTE: 'month' is approximated as 30 days for the trailing window (calendar months vary); the strategy
+  RECURRENCE editor uses true calendar months. Say the word if the cadence window must be calendar-exact.
+
+## 2026-07-28 — Row cog opens the FULL settings editor (create dialog reused in edit mode)
+- Ask: clicking the row's settings icon should edit ALL settings — the same ones set at creation.
+- Before: that button opened ParentSettingsModal, which covers ONLY hierarchy + parent-link anchors.
+- Approach: added an EDIT MODE to CreateStrategyDialog rather than building a second dialog — a duplicate
+  would drift from create the moment either changed, and "same settings as create" is the requirement.
+  - New optional `editStrategy` prop (id/name/templateId/hierarchyMode/publishingMode/config).
+  - The open-reset effect now sets its normal defaults FIRST and then OVERLAYS the saved values. Overlaying
+    (instead of rewriting all 42 setters) means a key the strategy doesn't carry keeps its sane default
+    instead of going undefined, and create mode is untouched by construction.
+  - Title → "Strategy settings", CTA → "Save changes", and the keyword gate is skipped when editing (an
+    existing strategy already has its items; requiring keywords again would make it unsubmittable).
+- Strategies/index.tsx: cog now opens the full dialog; onSave splits the payload — the four whitelisted
+  top-level columns (name/templateId/hierarchyMode/publishingMode) go as columns, everything else rides
+  `config`, which the backend sanitizes and MERGES so unmanaged keys survive. manualKeywords /
+  manualPrimaryKeyword are destructured OUT (they seed a new strategy's items; they are not settings).
+- KEY VERIFICATION (the real risk with ~20 config keys): diffed the keys the dialog EMITS against the
+  backend's sanitize_config_fields whitelist. Every emitted config key is whitelisted; the only four
+  outside it are name/templateId (sent as top-level columns) and the two manual* keys (excluded on
+  purpose). So no setting can silently fail to save.
+- Verified: NEW settings_edit_test.mjs 17/17 — top-level columns lifted and NOT duplicated into config,
+  create-only keys excluded, zero config keys dropped by the whitelist, and per-job models / image prompt
+  template / cadence-with-unit / recurrence byMonthDay / duration / research passes all carried through.
+  tsc 59 = baseline, 0 in either edited file; build clean, edit-mode strings in the bundle; all other
+  suites green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- ParentSettingsModal is now UNREACHABLE (its only trigger was that cog). Left rendered/unwired rather than
+  deleted — say the word and I'll remove the dead state + component.
+- JUDGEMENT CALL: in edit mode the Source section stays editable (RSS/social lists are read live by the
+  watcher). Editing sourceMode on a strategy that already has items is semantically murky — it changes how
+  FUTURE items are seeded, not existing ones. Flagging in case you want it locked when items exist.
+- NOT visually verified: no dev server. This is the largest UI change of the session (42 hydrated fields);
+  a zip build + click-through is genuinely warranted before trusting it.
+
+## 2026-07-28 — Publishing accordion: 2nd from top + open by default
+- Ask: "make this be 1 open and 2 in the top of all accordions" — annotation boxed PUBLISHING, which was
+  LAST (5th) and collapsed.
+- CreateStrategyDialog.tsx: moved the whole Publishing block to position 2 (directly after Source) and gave
+  it defaultOpen; renumbered the section comments so ①..⑤ still match the rendered order
+  (Source, Publishing, Schedule & cadence, Duration, Content).
+- Verified the MOVE itself rather than trusting the edit: open/close AccordionSection tags balance 5/5,
+  each accordion title appears exactly once (nothing duplicated), and Publishing's own content
+  ("Generation starts automatically", Approvals) is still present exactly once — a block move is the kind
+  of edit that silently duplicates or truncates. tsc 59 = baseline, 0 in the edited file; build clean with
+  the Publishing copy in the bundle; other suites green (settings_edit 17/17, manual_keywords 13/13,
+  cadence_unit 16/16, image_prompt 13/13).
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- DELIBERATELY LEFT ALONE: the other defaultOpen sections (Source, Schedule & cadence, Content). If "1 open"
+  meant "only ONE accordion open at a time", closing Content would re-hide the REQUIRED content prompt —
+  the exact regression I fixed when moving it there — and closing Source would hide the keyword inputs.
+  Say the word and I'll collapse the rest, but Content would then need its prompt promoted out.
+- NOT visually verified: no dev server; checks prove order/integrity, not appearance.
+
+## 2026-07-28 — Item bulk selection (Linking / Delete / Duplicate) + crown parent toggle
+- Ask: item rows need select boxes with bulk Linking/Delete/Duplicate, plus a per-item "Select as Parent"
+  crown that makes the others link to it (and removes those links when unselected).
+- Inventory first: Delete (strategy.deleteItem), Linking (InterlinkManagerModal + strategy.injectInterlinks)
+  and the parent engine (strategy.reapplyParent) ALREADY existed. Only item DUPLICATE was missing.
+- Backend (the one gap): new POST /strategies/{id}/items/{itemId}/duplicate → PCM_Strategy_Service::
+  duplicate_item(). The copy is a FRESH pending item — keyword/title/config/volume/difficulty carried, but
+  articleId, setId, scheduledDate and errorMessage deliberately NOT, so it regenerates instead of cloning
+  finished content (which would double-publish). Position = source + 1. + trpc strategy.duplicateItem.
+- Frontend (Strategies/index.tsx): selectedItemIds Set + per-row Checkbox (mirrors the strategy rows); a
+  bulk bar above the item list showing "N selected" with Linking / Duplicate / Delete / Clear, where the
+  batch runner counts failures instead of throwing so one bad item can't abort the rest; and a per-item
+  Crown toggle button.
+- PARENT TOGGLE — verified against the existing engine rather than assumed: setting sends
+  config.parentKeyword = keyword (+ hierarchyMode parent_and_children) then reapplyParent; clearing sends
+  parentKeyword = ''. Traced resolve_parent_link(): in parent_and_children mode an EMPTY parentKeyword
+  returns null (service.php:1075), and reapply_parent_links ALWAYS strips the existing link first and only
+  re-injects when a link resolves — so "Unselect as parent" genuinely removes the links, via code that
+  already existed.
+- Removed the now-duplicate inline crown from the item title (the toggle button carries it). Confirmed the
+  2 remaining <Crown> renders are DIFFERENT things: the strategy-level "has a parent" badge and the new
+  per-item toggle.
+- Verified: php -l x2 clean; NEW duplicate_item_test.php 19/19 — every copied field asserted AND every
+  output field (articleId/setId/scheduledDate/errorMessage) asserted ABSENT, null metrics omitted rather
+  than inserted as null, position lands after the original, foreign item rejected with nothing inserted.
+  tsc 59 = baseline, 0 in the edited file; build clean, crown tooltips in the bundle; other suites green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- SCOPE NOTE: bulk "Linking" opens the existing strategy-wide interlink modal — the interlink engine runs
+  per STRATEGY, not per selected item, so selection doesn't narrow it. Say the word if linking should apply
+  only to the ticked items; that needs a new item-scoped interlink path server-side.
+- NOT visually verified: no dev server.
+
+## 2026-07-28 — Source-aware template mapping (+ Template/Model shown under Source)
+- Ask: picking a source should find the prompt templates FOR that source and list the Template + Model
+  there, "so it maps the proper Template".
+- Investigated the data first: templates have NO source column (only module + formData.type, and all three
+  relevant seeds are module=writer/type=generation). The real signal is the SOURCE-POST VARIABLES: the
+  seeded "Social Media Reposting" and "RSS Reposting" prompts use {{ post_title|post_content|post_link }},
+  which per the codebase's own SourceVarsHint "resolve to nothing for keyword strategies" — so such a
+  template would generate an empty-context article on a keyword strategy. "SEO Pillar Article" uses none.
+- CreateStrategyDialog.tsx: new exported templateSourceFit()/templateFitsSource() (scan PROMPT entries only
+  for the post_ vars); an effect that re-maps templateId when the source changes IF the current pick doesn't
+  fit (an explicit pick that already fits is never clobbered); the Content template dropdown now sorts
+  fitting templates first and marks the rest ("— for RSS/Social" / "— for Keywords") so a mismatch is
+  deliberate; and a read-only "Template: X · Model: Y — change these under Content" line under the Source
+  tabs, which turns into an actionable warning when NO template suits the chosen source.
+- A false lead worth recording: my first extraction script reported "SEO Pillar Article uses post vars".
+  That was a PHP source COMMENT (line 381) describing the NEXT template, caught inside my scan window —
+  the actual prompt (lines 337-380) has ZERO post-var occurrences. The runtime helper reads
+  template.entries[].value from the API, never PHP source, so the heuristic was never actually at risk.
+- Verified: NEW template_source_fit_test.mjs 17/17 — the three REAL seeds classify correctly; fit per
+  source mode; switching source maps the proper template (incl. replacing an RSS pick when moving to
+  Keywords); an already-fitting explicit pick is preserved; and robustness (no templates / no fitting
+  template / non-prompt entries / missing entries / whitespace in braces). tsc 59 = baseline, 0 in the
+  edited file; build clean, all three new strings in the bundle; other suites green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- PLACEMENT DECISION (flagged, please confirm): the drawing puts Template + Model INSIDE Source, but two
+  tasks ago you asked for exactly those pickers to be MOVED INTO CONTENT. I kept the editable pickers in
+  Content and made Source show a live read-only mapping line instead, so both instructions hold. Say the
+  word and I'll move the actual controls back under Source.
+- NOT visually verified: no dev server.
+
+## 2026-07-28 — /onboard: map verified + brought up to date with this session's batch
+- Map was 6 days old (2026-07-22) → under the 7-day rule, so verified rather than rebuilt. Confirmed still
+  accurate: PCM_VERSION 1.7.0 and DB 1.45.0 match the code, all 23 module sections match the 23 module dirs
+  (no gaps either direction), CLAUDE.md still points at the map and carries the UI HARD RULES.
+- Found the map DID contradict reality on this session's work (post-status / duplicate routes and 5 config
+  keys were all absent) and updated it: added the 2 item routes to the strategy table with file:line + auth,
+  a "Strategy config keys added 2026-07-27/28" block documenting per-JOB models (incl. researchModel
+  replacing the hardcoded gemini-2.5-flash), imageTemplateId, rssCadence.unit + the 1/7/30 window,
+  scheduleConfig.byMonthDay + the strtotime('+N month') overflow it fixes, and the brand-language title/meta
+  lock — plus a NEWEST header summarising the frontend batch (edit-mode dialog, source-aware template
+  mapping, typed keywords, item bulk actions, crown toggle).
+- Re-verified after editing: all 15 distinct strategy routes in the controller now appear in the map table.
+- Working tree: 14 files modified, ALL uncommitted. NB `plan.md` and `tests/unit/StrategyAutoPublishTest.php`
+  are also modified but were NOT touched by me this session — another session/the user changed them.
+- .claude/ only; no code touched.
+
+## 2026-07-28 — Item status: "Written" (blue) until actually published, then "Published" (green)
+- Ask: an item shouldn't read "Completed" until it is published — Written (blue) before, Published (green)
+  after. Screenshot showed the bug plainly: a green "Completed" pill sitting next to a Publish button.
+- DISPLAY-ONLY by design: the stored status stays 'completed'. Renaming the DB value would ripple through
+  the engine (28 references filter on it) for a labelling change — the ask is about what it SAYS.
+- Both StatusBadge implementations updated (Strategies/index.tsx and ScheduleView.tsx's deliberate local
+  mirror): new optional `published` prop; when the status is completed/complete AND the caller passes the
+  flag, it renders Published (green) or Written (blue). Call sites derive it from the linked article's
+  publish pointers (articlePublishedPostId || articlePublishedUrl).
+- CAUGHT MY OWN REGRESSION MID-EDIT: my first pass relabelled `completed` → "Published" globally, which
+  would have made the STRATEGY-level badge say "Published" (meaningless for a strategy). Fixed by making
+  the distinction OPT-IN — omitting the prop keeps the plain "Completed", so the strategy badge is
+  unchanged (verified: index.tsx:1036 still passes no prop).
+- Token note recorded in the code: statusColors.ready is GREEN and statusColors.published is BLUE despite
+  the names, so the mapping reads backwards but is correct.
+- Verified: NEW status_badge_test.mjs 17/17 — unpublished => Written/BLUE and explicitly NOT "Completed";
+  published => Published/GREEN; strategy (no prop) => Completed/GREEN unchanged; the legacy 'complete'
+  spelling behaves identically; pending/error/generating untouched; unknown status still falls back; the
+  call-site derivation (post id OR permalink) correct; and a TRASHED item (pointers cleared by the
+  post-status control) correctly reverts to Written. tsc 59 = baseline, 0 in either file; build clean with
+  all three labels in the bundle; other suites green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOT visually verified: no dev server; the 17 assertions prove the label/colour rule, not the rendering.
+
+## 2026-07-28 — "Edit schedule" button always available (was a catch-22)
+- Ask: the edit-schedule button is missing, asked for before.
+- ROOT CAUSE (not simply "never built"): the control EXISTED but was gated behind
+  `strategy.publishingMode === 'schedule'` — so a Draft/Auto-publish strategy could never reach it, and the
+  only way in was hidden until the strategy already had a schedule. That is why it looked absent on the
+  Social strategy in the screenshot.
+- Strategies/index.tsx: the button now renders unconditionally, labelled "Set schedule" (with an explanatory
+  tooltip) when the strategy isn't scheduled yet, and the recurrence summary when it is.
+- SECOND HALF, which the visibility fix alone would have missed: saving a recurrence from a non-schedule
+  strategy now ALSO sets publishingMode:'schedule'. Without it the schedule would be stored but never
+  honoured — the engine only paces publishing in schedule mode — i.e. a button that appears to work and
+  silently does nothing. Already-scheduled strategies omit the mode write (no needless column update).
+- Confirmed the server-side due-date redistribution still fires: update_strategy sets $schedule_changed from
+  array_key_exists('scheduleConfig', $incoming) (controller.php:407) and my payload always sends it.
+  Verified publishingMode is on the top-level update whitelist.
+- Verified: NEW edit_schedule_test.mjs 13/13 — button renders for draft/auto-publish/scheduled; label is
+  "Set schedule" vs the summary; saving from draft AND auto-publish switches the mode while an
+  already-scheduled save omits it; scheduleConfig is always sent (so redistribution triggers); the
+  recurrence survives intact (byMonthDay 31); an existing startDate is preserved and a missing one becomes
+  '' rather than undefined; unknown mode defaults to switching. tsc 59 = baseline, 0 in the edited file;
+  old gate confirmed gone (0 matches); build clean with all three new strings in the bundle; other suites
+  green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOT visually verified: no dev server.
+
+## 2026-07-28 — Apify social hint: amber ONLY when it genuinely can't work
+- Ask: "showing orange like it is an error — is it an error? if not remove it, only show an error if it is
+  not working."
+- ANSWER: it was NOT an error. The amber line was a static informational note ("Facebook account — watched
+  for new posts via Apify (API key required)") shown for every Instagram/TikTok/X/Facebook ACCOUNT link,
+  warning-coloured whether or not Apify was actually set up.
+- CreateStrategyDialog.tsx: added an integrations query + hasApifyKey (provider 'apify' AND a non-empty
+  apiKey AND isActive — mirroring PCM_Apify::get_token()'s own provider+isActive lookup, so the UI agrees
+  with what the watcher will actually find). The hint is now amber ONLY when needsApify && !hasApifyKey —
+  the one case where the link really won't be watched. With a key present it is muted and simply reads
+  "… watched for new posts via Apify"; without one it turns actionable: "needs an Apify API key to be
+  watched (add it under Integrations)". The footer's unconditional Apify nag is likewise hidden once a key
+  exists.
+- Verified: NEW apify_hint_test.mjs 16/16 — configured => muted with no "API key" nag; unconfigured =>
+  amber AND tells you what to do; post links and free-watch accounts (Reddit/YouTube/Bluesky) stay neutral
+  either way and keep their wording; hasApifyKey detection covers active+key / inactive / empty key /
+  other-provider-only / empty list / mixed list; and a regression guard that the footer nag still appears
+  exactly when the key is missing. tsc 59 = baseline, 0 in the edited file; build clean; the old
+  "(API key required)" wording is gone from the dialog (the 1 remaining bundle match is the Integrations
+  module's unrelated "No API key required").
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOT visually verified: no dev server.
+
+## 2026-07-28 — Site + Delivery quick filters on the Strategies toolbar (Approvals parity)
+- Ask: dropdowns to filter by site and delivery, like Approvals has.
+- Data check first: strategies carry `brandId` and `config.siteId` but NO deliveryId. The only real link to
+  a delivery is `deliveries.seoSiteId` (a delivery is bound to an SEO site), so "filter by delivery" is
+  implemented as "filter by the site that delivery is bound to" — documented in the code so the indirection
+  isn't mistaken for a direct field.
+- Strategies/index.tsx: added a deliveries.list query (sites were already queried), siteFilter +
+  deliveryFilter state, two Selects in the toolbar row beside the status filter, and the filtering in
+  visibleList. A delivery with NO site bound matches NOTHING rather than everything — the obvious trap,
+  since an empty seoSiteId would otherwise compare loosely and pass everything through.
+- Also fixed a consequence: the header count badge only switched to "N of M" for search/status, so with the
+  new filters active it would have claimed the full total while showing a subset. It now reacts to every
+  filter.
+- Verified: NEW site_delivery_filter_test.mjs 17/17 — site filter (incl. excluding site-less strategies);
+  delivery resolving through seoSiteId; unbound AND unknown delivery ids both yield EMPTY not all;
+  combinations with status/name-search/keyword-search; a conflicting site+delivery pair yields empty; the
+  pre-existing status-only and search-only paths unchanged; and the badge switching for every filter.
+  tsc 59 = baseline, 0 in the edited file; build clean with both new labels in the bundle; other suites green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- SCOPE NOTE: filters added to the LIST view only. The Schedule view has its own search/status toolbar and a
+  different data source (scheduleFeed rows, which don't carry siteId) — adding them there would need the
+  feed to expose the site. Say the word and I'll extend the backend row shape.
+- NOT visually verified: no dev server.
+
+## 2026-07-28 — Publish permission error made actionable + input fields given a real background
+### 2. Publish "no permission" error
+- CORRECTED MY EARLIER DIAGNOSIS. When analysing the PDF I called this an `author` impersonation problem.
+  Wrong: grepping the publish payload shows we never send an `author`. The Swedish string maps to TWO WP
+  codes that share identical wording — `rest_cannot_edit_others` (author) and `rest_cannot_create` (the user
+  simply lacks create_posts). Ours is the latter: the connected Application-Password user's ROLE is too low.
+  It has nothing to do with the connector version, which is why "latest connector installed" didn't help.
+- An actionable-message handler for the three WP codes ALREADY existed (arrived in the 476-commit pull).
+  The user still saw the raw text, which means the response `code` was not one of those three — so the
+  branch never fired.
+- sites/service.php: the role branch now ALSO triggers on HTTP 403 (a security plugin or hardened REST
+  setup can 403 with its own code, and the message is localized, so code-matching alone is fragile); added
+  a separate HTTP 401 branch for rejected CREDENTIALS (revoked/regenerated Application Password) — a
+  different remedy that was previously lumped in or shown raw. Wording now also states this is a WordPress
+  user-role issue, not a connector one.
+- Verified: php -l clean; NEW publish_error_test.mjs 13/13 — the exact reported failure (403 + unrecognised
+  code + Swedish message) now yields role guidance instead of raw text; 403 with no code / empty body too;
+  all three WP codes still map; 401 gives credentials guidance and is NOT conflated with role; genuine
+  500/404 failures still surface their real message (no over-catching); HTTP-n fallback intact.
+### 1. Transparent input backgrounds
+- Root cause: the Input primitive defaulted to `bg-background`, but `--background` (oklch .98) is the PAGE
+  colour — so fields dissolved into the page, and inside a dialog (`--card`, pure white) they read as grey
+  blocks. The field contrasted in NEITHER context.
+- components/ui/input.tsx: default variant `bg-background` → `bg-card` (white), which pairs with the
+  existing `border-input` (oklch .86) so fields stay delineated on white surfaces too. Swept the explicit
+  `bg-background` overrides in Strategies + Keywords (55 → 0) so selects/inputs in those toolbars match the
+  primitive instead of staying grey next to it.
+- Verified: tsc 59 = baseline (the input.tsx `variant` typing error is PRE-EXISTING — confirmed via git diff
+  that my change touched only the cva value + comment); build clean; other suites green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- SCOPE: 58 `bg-background` occurrences remain in other modules (SEO/Sites/Approvals/Writer use none; the
+  rest are shared components). Say the word and I'll sweep app-wide — I limited it to the modules under
+  review since this is a visual change I cannot verify.
+- NOT visually verified: no dev server. This one is PURELY visual, so a screenshot from you is the only
+  real confirmation.
+
+## 2026-07-28 — Writer: Publish enabled for strategy-generated drafts (siteId never recorded)
+- Ask: can't click Publish on a draft even though its strategy has a connected site. Screenshot = the WRITER
+  editor with Publish greyed out.
+- ROOT CAUSE: the Writer gates Publish on `activeDoc.generationSettings.siteId`, hydrated from
+  `articles.siteId` (useWriterPersistence.ts already does that — the hydration was not the problem). But
+  BOTH strategy create_article() paths (consolidated service.php:874 and per-item :1506) omitted siteId
+  entirely — the strategy's Target Site was only written at PUBLISH time, which is too late to publish
+  FROM. So every strategy-generated draft reached the Writer with siteId NULL and the button read
+  "Select a Target Site in Settings".
+- Fix, two parts:
+  1. strategy/service.php: new private strategy_site_id($strategy) reading config.siteId; stamped onto
+     BOTH create_article() calls, so new drafts carry their Target Site. (create_article passes straight to
+     $wpdb->insert and siteId is a real column — verified.)
+  2. writer/controller.php: NEW fill_strategy_site_ids() on list_articles — resolves the site for
+     ALREADY-GENERATED drafts (siteId NULL + strategyId set) from the owning strategy's config. Without it
+     the fix would only help future articles and the user's existing drafts would stay stuck.
+- Verified: php -l x2 clean; NEW writer_siteid_test.php 9/9 — the draft gets its site; an existing siteId is
+  preserved; a strategy with NO configured site leaves the field null rather than zeroing it; manual
+  (non-strategy) articles untouched; NO query at all when nothing needs filling; and ONE query for 25
+  articles across 2 strategies (explicitly guarding against N+1), with all 13 matching rows filled.
+  tsc 59 = baseline; build clean; 7 other suites green.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- SCOPE: backfill added to list_articles (writer.list — what hydrates the Writer). get_article (single) is
+  untouched; say the word if a direct deep-link to one article needs it too.
+- NOT live-verified: no dev server; correctness rests on the 9 assertions.
+
+## 2026-07-28 — RSS/strategy articles rendered their own IMAGE PROMPT as a visible caption
+- Ask: "generating from RSS the prompt or something is showing in the article itself." Screenshot: red text
+  under an in-content image reading "A cinematic, high-resolution image showing a modern AI PR workflow:
+  journalists, analysts, and AI data dashboards collab" — cut mid-word.
+- ROOT CAUSE, exact: strategy/service.php's in-content media builder took `$desc = $asset['prompt']` (the
+  IMAGE GENERATION instruction) and emitted it BOTH as alt AND as a visible <figcaption>, sliced with
+  substr($desc, 0, 120) — which is precisely the mid-word "…collab" truncation in the screenshot. There is
+  no caption field in the media-asset schema at all; the prompt was simply being reused as reader-facing
+  copy. Affects every strategy article with in-content media, not only RSS.
+- Fix: dropped the <figcaption> entirely — the prompt stays in `alt`, where it genuinely helps
+  accessibility/SEO and is invisible — and the alt is now trimmed on a WORD BOUNDARY (mb_* aware, with a
+  >60-char guard so a space-less string still truncates) instead of being severed mid-word.
+- Verified: php -l clean; NEW media_caption_test.php 13/13 using the EXACT prompt from the screenshot —
+  the rendered figure has NO visible text at all (strip_tags is empty), no figcaption, and the prompt's
+  words are not readable copy; alt still carries the description and the src is preserved; alt is <=120 and
+  no longer ends mid-word (the old "collab" cut is gone); short prompts pass through whole; quotes/tags in a
+  prompt are escaped/stripped so they cannot break the attribute; and the publish-time sideload regex in
+  sites/service.php STILL MATCHES the caption-less figure (it keys on figure→img src, so nothing downstream
+  breaks). 6 other PHP suites green; build clean.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+- NOTE: this fixes NEW generations. Articles already generated still contain the <figcaption> in their
+  stored HTML — say the word if you want a one-off cleanup pass over existing article content.
+
+## "Reuse image" checkbox shown on RSS strategies (dead/misleading control)
+- Report: screenshot of an RSS strategy row ("Repost SEO posts", RSS badge) with a checked "Reuse image"
+  box — "reuse images should not be here for RSS".
+- Root cause: app/src/modules/Strategies/index.tsx gated the checkbox on `(isSocial || isRss)`, and its
+  comment claimed social/RSS strategies "carry a sourceImage". Not true for RSS. Reuse is implemented by
+  social_source_image() (includes/modules/strategy/service.php:3074), whose FIRST line is
+  `if (empty($item_cfg['social'])) return null;` — and RSS items never set `social` (only the social scan
+  paths at service.php:385/2273 do). So on RSS the control could never reuse anything: it fell through to
+  the AI generator while advertising reuse.
+- Note on semantics: `featuredImages` is the featured-image MASTER switch (service.php:1528 —
+  featured_images_enabled() ? social_source_image() ?? maybe_generate_featured_image() : null), not a
+  reuse-only flag. So the row checkbox is not a no-op for RSS; it is MISLABELED. It was added FOR the
+  social reuse feature, which is why KEYWORD strategies have never shown it — they toggle featured images
+  from the strategy settings dialog ("Generate featured images", CreateStrategyDialog.tsx:1472).
+- Fix: gate on `isSocial` only, so RSS behaves exactly like keyword strategies. Corrected the two comments
+  that asserted RSS carries a sourceImage. RSS users keep the toggle via Edit settings → Generation options.
+- Verified: new scratchpad reuse_image_gate_test.mjs 15/15 — transcribes the row gate AND social_source_image()
+  verbatim; asserts RSS hidden, RSS WAS shown pre-fix (change bites), social still shown, keywords/absent/
+  unknown still hidden, an RSS item cannot reuse even WITH a sourceImage, social can, non-http rejected, and
+  the invariant that the checkbox is shown exactly when reuse is reachable. tsc 59 errors = unchanged post-pull
+  baseline. npm run build clean; "Reuse image" still present in dist (social path intact).
+- Specialists: none — inline, single-file frontend change (system rule: no AgentTool unless requested).
+- NOT visually verified: no dev server for this WP-embedded SPA. Not committed.
+
+## Keywords toolbar controls transparent — give them white backgrounds
+- Report: screenshot of the Keywords toolbar with arrows at "All modifiers (25)", "Saved Lists" and
+  "New Strategy" — all dissolving into the page.
+- TWO different causes, which is why the earlier input.tsx fix never reached them:
+  1. "All modifiers" (Keywords/index.tsx:689) and "Saved Lists" (:772) are HAND-ROLLED <button>s that
+     copy SelectTrigger's class string but hardcode `bg-transparent`. Not Select/Button components at all.
+  2. "New Strategy" is <Button variant="outline">, and the outline variant itself was `bg-transparent`
+     (components/ui/button.tsx).
+- Fix: `bg-transparent` → `bg-card` in all three places. Kept `dark:bg-transparent` on the outline variant.
+- BLAST RADIUS (flagged deliberately): the button.tsx change is global — 157 `variant="outline"` usages.
+  9 already pass their own `bg-*` and are unaffected (cn() is tailwind-merge → consumer class wins), so
+  ~148 outline buttons go transparent → white. On the oklch .98 page that is the intended "raised control";
+  on white cards it is a visual no-op (the `border-input` outline still delineates them). Same reasoning
+  already accepted for input.tsx's default variant earlier this session.
+- Verified: all 3 controls now emit bg-card; zero `bg-transparent` left in Keywords/index.tsx; tsc 59 errors
+  = unchanged post-pull baseline; npm run build clean; the outline variant string ships in dist
+  ("border bg-card shadow-xs hover:bg-accent" found in index-writer.js); and traced the token end-to-end in
+  the built CSS — `.bg-card{background-color:var(--card)!important}` with `--card: oklch(100% 0 0)` (pure
+  white) vs `--background: oklch(98% .002 250)` (the page grey that was showing through).
+- Specialists: none — inline (system rule: no AgentTool unless requested).
+- REMAINING, same defect class, NOT in the screenshot so left alone: hand-rolled `bg-transparent` triggers at
+  Settings/index.tsx:151 and SEO/RedirectPopup.tsx:101; and select.tsx's default variant is still
+  `bg-background` (page grey) — many call sites work around it by passing `bg-card` explicitly.
+- NOT visually verified: no dev server for this WP-embedded SPA. Not committed.
+
+## Swedish keyword searches returning Indian results — root cause + fix
+- Report: Keyword Explorer, seed "seo företag", market Swedish (SE) → results "best seo company in india /
+  noida / jaipur / delhi / chennai / kolkata / mumbai...". User asked whether something was hardcoded or
+  ALTERED and needs restoring.
+- ANSWER TO BOTH: no India hardcoding exists anywhere (test asserts unknown country codes pass through
+  untouched, and get_country() has no 'in' entry), and NOTHING WAS ALTERED. `git log -L` on the offending
+  line shows it identical since the file's FIRST commit (98cd776, 2026-05-12); `git log --all -S "gl: country"`
+  returns nothing — the market was never sent on that path. This is a LATENT bug newly exposed, not a regression.
+- Root cause: Keywords/index.tsx fetchSuggestions() tries the SERVER proxy first and only falls back to JSONP
+  when the server returns empty/throws. The three JSONP calls all passed `country`; the ONE server call sent
+  `{ query, lang }` with NO `gl`. google_suggest() (keywords/service.php:35) builds its URL with
+  array_filter([... 'gl' => $gl ?: null]) — an empty gl is DROPPED, so Google geolocated by the HUB SERVER'S
+  IP (India) rather than the chosen market. The JSONP path never had the bug because it runs in the browser on
+  the user's own Swedish IP. Why it "wasn't like this before": whenever the server path was rate-limited it
+  returned empty and the correct JSONP path took over; now the server path succeeds, so its India-geolocated
+  results win and JSONP never runs. Language was never wrong (hl=sv throughout) — only the market.
+- Fix (1 line, app/src/modules/Keywords/index.tsx:254): pass `gl: country` on the proxy call, matching the
+  JSONP calls. `country` already comes from /keywords/prefixes (controller.php:76 → get_country('sv') = 'se');
+  keywords.search has no transform in trpc-routes.ts, so the body reaches the controller, which already reads
+  and sanitizes `gl` (controller.php:99). No backend change needed.
+- Verified: new scratchpad suggest_geo_test.php 20/20 — loads the REAL service.php against WP stubs and captures
+  the URL wp_remote_get would receive. Proves empty gl emits NO gl param (the bug), gl=se is carried through
+  (the fix), hl=sv was correct all along, the two URLs differ (change bites), se/us/de/in all round-trip with no
+  special-casing, get_country mappings, and that the sv modifier list is intact at 25 Swedish prefixes with no
+  English "best". tsc 59 = unchanged baseline; build clean; `gl:` present in dist.
+- Specialists: none — inline, one-line frontend change (system rule: no AgentTool unless requested).
+- SEPARATE, still open (same screenshot): all Volume cells "—" (Ahrefs enrichment returning nothing), and the
+  cosmetic "across 0 categories" message at index.tsx:405 which prints 0 while the sidebar shows 3 categories.
+- NOT visually verified: no dev server. Not committed.
+
+## "Enriched 0 keywords" — failures were indistinguishable from no-data
+- Report: 3 Swedish keywords selected → Fetch Volume → toast "Enriched 0 keywords", every metric column "—".
+  User suspected alteration.
+- NOT ALTERED, proven: `git status` shows NO modified file under includes/modules/keywords/ (backend untouched
+  this session); the trpc-routes.ts diff adds only strategy.* routes; `git log -L` on BOTH the frontend call
+  (`enrichMutation.mutate({ keywords, country: lang, includeSerpDR })`) and the swallowing `catch → return []`
+  shows them unchanged since the first commit 98cd776 (2026-05-12). Also confirmed the previous task's `gl` fix
+  is on a DIFFERENT mutation (searchSingle vs enrichMutation) and could not have caused this.
+- Ruled out as the cause: the market. ahrefs_enrich already maps via `strtoupper(self::get_country($country))`,
+  so the frontend sending `country: 'sv'` becomes 'SE' correctly (test asserts this).
+- REAL DEFECT: ahrefs_enrich() swallowed EVERY failure — dead/expired key, HTTP 401/429/500, network timeout,
+  missing MCP tool — into `return []`. The UI then reported "Enriched 0 keywords", identical to Ahrefs
+  genuinely having no data. Exactly the bug class this same file already fixed for google_suggest ("an
+  unreachable Google is an ERROR, never an empty result — proven live 2026-07-14").
+  SECOND VICTIM: optimizer/controller.php already wrapped the call in `catch (\Throwable)` commented
+  "never poison the cache" — dead code, because ahrefs_enrich never threw. A failure returned [] →
+  `$out[$kw] = null` → false "no data" cached for every keyword.
+- Fix (3 files, minimal): ahrefs_enrich returns `array|WP_Error`; WP_Error on transport/protocol failure
+  (pcm_kw_ahrefs_failed, carries the underlying HTTP status) and on a missing Keywords Explorer tool
+  (pcm_kw_ahrefs_no_tool, hints at plan). keywords/controller.php returns it as a 502 instead of a 0-count
+  success. optimizer/controller.php adds an is_wp_error branch → returns null, so failures no longer poison
+  the volume cache. A genuine zero-row answer still returns [] — an honest "no data".
+- Verified: php -l x3 clean; new scratchpad ahrefs_enrich_test.php 15/15 drives the REAL service.php with a
+  queued 3-leg MCP transport (initialize → tools/list → tools/call): 401/429/500 and missing-tool all return
+  WP_Error with the right codes and surface the HTTP status; happy path still returns a plain keyed array;
+  a zero-row answer is still [] and NOT an error; sv→'SE' still reaches the tool arguments; empty-keywords and
+  empty-key guards unchanged; UTF-8 "SEO Företag Stockholm" still re-keys to the caller's casing.
+  Existing standalone harness 88/88 ALL GREEN (documented baseline). No test referenced ahrefs_enrich before.
+  Error chain traced end-to-end: WP_Error → base-controller error() → REST {code,message,status} → trpc.ts
+  reads error.message → enrichMutation onError → toast.error.
+- HONEST LIMIT: this does not itself prove WHY the user's Ahrefs returned nothing — it makes the system say so.
+  Next Fetch Volume will show the real reason (e.g. "Ahrefs could not be reached: MCP HTTP 401: ...") instead
+  of a silent 0. Since a MISSING key already 400s with its own message, a key exists — so a 401/plan issue or a
+  genuine no-data answer are the live candidates.
+- Specialists: none — inline (system rule: no AgentTool unless requested).
+- NOT fixed, same swallow: ahrefs_serp_dr() still returns [] on failure (Include SERP DR path). No frontend
+  change in this task, so the last build stands. Not committed.
+
+## AUDIT — strategy posting schedule vs Google "Custom recurrence" reference
+- Task: full audit of the schedule/cadence part of strategies (how often to post), against a Google Calendar
+  Custom-recurrence dialog supplied as the reference. Delivered as an AUDIT (report + evidence), not a rewrite;
+  one stale comment corrected. No behavioural change.
+- GREEN — full parity with the reference, proven by new scratchpad schedule_audit_test.php 27/27 (drives the real
+  calculate_recurrence_dates): Repeat every [1-12] [day|week|month] incl. clamping and unknown-unit fallback;
+  Repeat on [weekday set] with the block advancing by interval, dedupe/sort/range-drop, and correct first slot
+  when the start weekday isn't selected; monthly day-of-month with 31 -> each month's last day and NO
+  strtotime('+1 month') overflow; Ends Never / On <date> (cap day inclusive) / After <N>; unparseable ends.date
+  degrades to NEVER rather than stopping everything; legacy bare {frequency} path still byte-identical and never
+  emits nulls. Sanitizer (controller.php:535-595) whitelists every field and DROPS invalid values instead of
+  defaulting. Editing a schedule redistributes only PENDING items (history preserved).
+- FINDING 1 (P1, real): tightening an `ends` cap does NOT un-schedule already-dated items.
+  reschedule_pending_items() does `if ($slot === null) { continue; }`, so going from 20 scheduled items to
+  "After 5" leaves items 6-20 with their OLD dates — they still publish. The stated reason (wpdb->update can't
+  write NULL) is worth re-testing: WP has supported NULL in $wpdb->update() since 4.4 (explicit `field = NULL`
+  branch), and NOTHING in this codebase writes NULL via update or a raw query, so the premise was never
+  exercised. Fix: prepared `UPDATE ... SET scheduledDate = NULL` for capped items and count them as cleared.
+  NOTE the identical `continue` on the CREATE path (service.php:186) is CORRECT there — items are new with a
+  NULL date already.
+- FINDING 2 (P2, UX): a capped item is invisible. formatItemDue(null) returns '' so it renders with NO date tag,
+  indistinguishable from a merely unscheduled item, and silently never publishes. Suggest a muted
+  "No slot — past schedule end" badge.
+- FINDING 3 (P3, FIXED — reality contradicted the comment): service.php:172 claimed "the create dialog has no
+  date-picker yet (always sends startDate:'')". False: CreateStrategyDialog.tsx renders a picker (1128/1212),
+  sends startDate (675), and the controller whitelists it (540). Comment corrected; no code change.
+- FINDING 4 (P3, drift risk): the drip path anchors on count_scheduled_strategy_items() and slices
+  array_slice($all_dates, $already). Deleting a scheduled item shrinks $already, so the next batch can reuse
+  slots already consumed → duplicate/backwards dates. Low likelihood; noted, not changed.
+- FINDING 5 (observation, no action): there is no "posts per period" control — the model is ONE post per slot,
+  exactly like the Google reference (3x/week = select 3 weekdays). A literal "POST [X] per [week]" field would
+  be a different model requiring a new field.
+- Verified: php -l clean; standalone harness 88/88 ALL GREEN; existing month_schedule_test.php 14/14 still green;
+  new schedule_audit_test.php 27/27. Comment-only edit, so no rebuild needed.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+
+## Zip build — powerplatform.zip (v1.7.0)
+- Built C:\Users\sanky\Desktop\powerplatform.zip (1,915,017 bytes, 212 entries) from a FRESH `npm run build`
+  (19.9s, clean) so the artifact provably matches source.
+- Payload determined by tracing runtime deps, not guessed: every `PCM_PLUGIN_DIR . '...'` path resolves under
+  `includes/`, `app/dist/` or `app/` — plus power-creatives.php + uninstall.php + vendor/.
+  CATCH: `includes/core/kie/class-pcm-kie-api.php:337` reads `app/shared/kieMarketplaceModels.json`, so
+  **app/shared is a RUNTIME dependency** despite being TS source — excluding it would have broken the KIE
+  marketplace models. (The only other app/shared mention in PHP is a stale comment in brands/service.php:531.)
+  Seed JSONs confirmed inside includes/: core/providers/models.json, core/fal/fal-models.json.
+- Excluded: app/src, app/node_modules, tests/, scripts/, docs/, *.md, mock.js, test.jpg, plan*.md,
+  export-metadata.json, composer.* .
+- NOTE: vendor/ is untracked by git and `vendor/autoload.php` is loaded NOWHERE (the plugin uses explicit
+  require_once throughout; classmap has 97 entries). Shipped anyway for parity with previous working zips —
+  it is inert. Worth deciding later whether to drop it.
+- Method (Windows, no composer/rsync/zip): GNU tar stream-copy into scratchpad/pkg/powerplatform, then
+  `/c/Windows/System32/tar.exe --format=zip -a -c -f <out> powerplatform`.
+- Verified: top-level entry is ONLY `powerplatform`; 0 backslash paths (all forward slashes); 0 leaks
+  (node_modules / app/src / tests / .git); PHP file count in zip == repo exactly (144 == 144); all 8 critical
+  runtime files present (main file, uninstall, dist js+css, kieMarketplaceModels.json, models.json,
+  fal-models.json, vendor/autoload.php). Session fixes confirmed INSIDE the artifact: `gl:` on the suggest
+  proxy, `border bg-card shadow-xs hover:bg-accent` outline variant, "Reuse image" still present (social path),
+  pcm_kw_ahrefs_failed + is_wp_error handling in both enrich callers, and figcaption present ONLY in a comment
+  (emitted markup at service.php:3764 is `<figure><img/></figure>`).
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+
+## Post-status selector "missing" — NO CODE CHANGE, stale installed bundle
+- Report: screenshot of an expanded strategy item showing only Template / Mode / Approval in the overrides
+  row — no post-status control — for items that are Completed with "View on site".
+- Finding: the feature is ALREADY IMPLEMENTED (built earlier this session) and fully present in the current
+  source, the current app/dist, AND the powerplatform.zip handed over minutes earlier. Nothing was lost.
+  - Frontend: Strategies/index.tsx — "Post" label + Select (Published/Draft/Delete) at ~1874, disabled via
+    `!item.articlePublishedPostId`, tooltip "Available once this article is published to the site",
+    trash confirmed via window.confirm.
+  - Backend: route controller.php:57 POST /strategies/{id}/items/{itemId}/post-status;
+    service.php:4752 set_item_post_status() (draft|publish|trash, force=false so it is recoverable).
+  - Data: class-pcm-db.php:1074 join exposes articlePublishedPostId + articleStatus; controller.php:187
+    whitelists both into the item payload; the other item paths pass the joined row through.
+- PROOF it is a stale bundle, not a hidden/broken control: the Post Select lives in the SAME
+  `<div className="flex items-center gap-3 ...">` as Template/Mode/Approval (opens at index.tsx:1820).
+  Those three render in the screenshot, so a running bundle containing this code could not omit only Post.
+  A disabled control would still be VISIBLE (greyed, placeholder "Not on site") — absence proves old code.
+- Verified: 'Not on site', 'Available once this article is published' and the trash-confirm copy each appear
+  exactly once in app/dist/index-writer.js AND in the staged zip payload; post_status_test.php 18/18 green
+  (incl. disconnected => no remote call, remote 403 surfaces message, remote failure leaves the local row
+  untouched, no-article rejected).
+- ACTION FOR USER: install Desktop\powerplatform.zip (built 02:40) and hard-refresh Ctrl+F5 — CODEBASE_MAP
+  line ~86 warns WP serves the cached bundle otherwise.
+- Specialists: none — inline verification only (system rule: no AgentTool unless requested). No files changed.
+
+## Strategy default image prompt seeded as a Template + toolbar de-cluttered
+### 1. Default image prompt now exists in the Templates module (Image tab)
+- Ask: "the default image prompt from the strategy module should also be present here" (Templates > Image).
+- Added ONE seed to includes/core/class-pcm-template-seeds.php: name "Default Featured Image Prompt",
+  module 'image', formData.type 'generation', single entry category 'prompt' (the ONLY category
+  build_image_prompt() reads), isDefault 0.
+- The value is build_image_prompt()'s hardcoded $default (strategy/service.php:2992) with its two sprintf
+  slots turned into {{ title }} / {{ keyword }} — so picking the template changes NOTHING until edited; it
+  just stops the built-in wording being invisible and uneditable. {{ brand_language }} is documented in the
+  description as also available.
+- Delivery needs no DB bump: maybe_seed() fingerprints this file's mtime+size, so editing it re-seeds on the
+  next page load, exactly once; insert_if_missing() keys on name+module so re-runs are harmless.
+- Why it lands in the right dropdown: CreateStrategyDialog:506 queries templates.list {module:'image'}.
+- isDefault deliberately 0 — the templates module enforces one default per userId+module (controller.php:607)
+  and the strategy dropdown does NOT auto-select by it; seeding 1 could hijack a user's existing default.
+- Verified: php -l clean; new scratchpad image_prompt_seed_test.php 18/18. The parity assertion DERIVES the
+  expectation from source (regexes the real sprintf literal out of service.php, then sprintf's it with the
+  placeholder tokens) rather than re-typing it, so the seed is provably word-for-word — including the em dash,
+  no leftover %s, and rendered-output equality for 3 cases (plain, UTF-8 åäö + quotes, empty strings).
+  Also asserts no duplicate name+module across ALL seeds (the idempotency key).
+
+### 2. Strategy row toolbar was "very clustered" (user screenshot, mid-turn)
+- Cause: NINE controls in one flat `flex-wrap gap-1.5` row, all similar-sized, several truncating their own
+  selected values ("Default text model" in w-28, "massagegoteborg.nu" in w-32).
+- Fix (Strategies/index.tsx, layout only): container → `gap-x-2 gap-y-2 mt-2`; three hairline dividers
+  (`h-5 w-px`, colors.border, aria-hidden) splitting the row into destination │ content │ workflow │ actions;
+  widths raised only where text truncated — site w-32→w-40, template w-32→w-36, text model w-28→w-36,
+  image prompt w-32→w-36, image model w-28→w-36, approvals w-28→w-32. Dividers add structure with NO extra
+  height; gap-y-2 stops the wrapped second line colliding with the first.
+- Verified: tsc 59 = unchanged baseline; build clean (38.1s); 3 dividers present; colors.border is a
+  pre-existing token in this file (8 usages). Strategy PHP suites still green: post_status 18/18,
+  month_schedule 14/14, duplicate_item 19/19, image_prompt 13/13.
+- NOT visually verified — no dev server. This is a spacing/grouping judgement made from the screenshot;
+  tell me if the dividers read as too heavy or the row now wraps somewhere awkward.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+
+## REGRESSION FIXED (mine): per-item Publish button disappeared
+- Report: "you removed the publish button from here please put it back" — screenshot of an item whose pill
+  reads "Written" with only View / overrides / delete, no Publish.
+- CONFIRMED MY REGRESSION, found via `git diff`: in the earlier Written/Published-badge task I changed the
+  gate from `item.status === 'completed'` to `item.status === 'written'` — a SWAP where it needed to be an OR.
+  Same mistake in handleBulkPublish. I also left a comment asserting "'completed' now means already published",
+  which is false and is contradicted by StatusBadge itself (it renders `completed && !published` as "Written").
+- Why it stranded items: the backend stores 'written' for generated-but-unpublished (service.php:937/1598) and
+  promotes to 'completed' ONLY when a publish succeeded (961/1653/4048) — but items still sit in 'completed'
+  with no publish pointers (anything generated before the 'written' state existed, or completed with no site).
+  Gating on 'written' alone hid Publish for exactly those. Gating on 'completed' alone was the ORIGINAL bug
+  ("I cannot click publish on a draft even if it was generated from a strategy with connected site").
+- Fix: new exported `isPublishableItem(item)` (Strategies/index.tsx:244) — finished ∈ {written, completed,
+  complete} AND has articleId AND NOT live (live = articlePublishedPostId || articlePublishedUrl). It mirrors
+  StatusBadge's own `published` derivation, so the pill and the button can no longer drift. Used by BOTH the
+  per-row button (:1784) and the bulk sweep (:889), replacing two hand-rolled conditions.
+- Verified: new scratchpad publish_button_gate_test.mjs 21/21 — transcribes the predicate AND the badge label
+  derivation verbatim; asserts the reported case (completed+unpublished → shows) while proving the regressed
+  gate hid it, that the ORIGINAL gate hid 'written' (so this is an OR not a swap back), both live paths hidden,
+  five unfinished statuses hidden, missing/zero articleId hidden, the 'complete' spelling honoured, and the
+  INVARIANT "pill reads Written ⟺ button shown" across all three finished statuses. One divergence documented
+  in-test: a 'written' item carrying live pointers still reads "Written" but is correctly not publishable —
+  unreachable in practice since publish promotes to 'completed'.
+  tsc 59 = unchanged baseline; build clean; status_badge 17/17, publish_error 13/13, post_status 18/18 green.
+- Rebuilt zip: Desktop\powercreatives\powerplatform-2026-07-28_0401.zip (1,915,627 bytes) — top-level
+  `powerplatform` only, 0 backslashes, 0 leaks, 144/144 PHP files, fix confirmed inside the bundle.
+  NOTE the earlier 0355 zip contains the regression — use 0401.
+- Specialists: none — inline (system rule: no AgentTool unless requested). NOT visually verified (no dev
+  server). Not committed.
+
+## Zip build — powerplatform-2026-07-28_0403.zip
+- Built to the requested dir: C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-07-28_0403.zip
+  (1,915,627 bytes, 212 entries) from a fresh `npm run build` (18.9s, clean).
+- Verified: top-level entry ONLY `powerplatform`; 0 backslash paths; 0 leaks (node_modules / app/src / tests);
+  PHP count in zip == repo exactly (144 == 144). Session fixes confirmed inside the artifact: the
+  isPublishableItem Publish-button fix, 3 toolbar dividers, the "Default Featured Image Prompt" seed, the
+  post-status control, the `gl` geo fix, and pcm_kw_ahrefs_failed.
+- Byte-identical in size to the 0401 zip — no source changed between them; this is a re-stamp, not new work.
+  Superseded zips still on disk: powerplatform-2026-07-28_0355.zip (CONTAINS THE PUBLISH-BUTTON REGRESSION —
+  should be deleted) and _0401.zip. Also Desktop\powerplatform.zip + powercreatives-full-source.zip from earlier.
+- Specialists: none — inline (system rule: no AgentTool unless requested). No code changed. Not committed.
+
+## Strategy toolbar STILL clustered — restructured into two lines (2nd attempt)
+- Report: "the ui is still not fixed properly it still looks clustered together" (2nd complaint).
+- Diagnosis of my FIRST attempt's failure: I treated it as a SPACING problem (bigger gaps + 3 hairline
+  dividers). The dividers did ship and were visible in the new screenshot, so the user was on the new build —
+  the fix simply didn't address the cause. The real cause is UNIFORM VISUAL WEIGHT: nine identically shaped,
+  unlabeled outlined boxes on one line. Gaps cannot fix that.
+- Asked the user rather than guess a third time (1 question, 3 concrete options with previews). They chose:
+  split into two lines by meaning.
+- Implemented: line 2 now holds only what is touched often — publishing mode, site, Reuse image, approval,
+  Set schedule, divider, actions. A new line 3 holds the four set-once GENERATION controls (Template, Text
+  model, Image prompt, Image model), indented behind a 2px left rule with a quiet "Generation" caption.
+  Remaining dividers: 2 (destination │ workflow, workflow │ actions).
+- Deliberately MOVED THE JSX rather than using flex `order`/`basis-full` to fake two rows: CSS reordering
+  would have left DOM order != visual order, breaking tab order (WCAG 2.4.3).
+- Verified: each of the 6 row controls appears EXACTLY ONCE (no duplication from the block move —
+  handleTemplateChange / handleTextModelChange / handleImageTemplateChange / handleImageModelChange /
+  handleApprovalChange / handleSiteChange all count 1); colors.borderLight is a pre-existing token (8 usages);
+  a source-order assertion proves DOM order == visual order (publishingMode 1258 < site 1275 < approval 1327
+  < schedule 1355 < actions 1380 < the four generation controls 1481-1549), so tab order follows the two rows;
+  tsc 59 = unchanged baseline; build clean (29.9s).
+- Zip: Desktop\powercreatives\powerplatform-2026-07-28_1611.zip (1,915,694 bytes) — top-level `powerplatform`
+  only, 0 backslashes, 0 leaks, 144/144 PHP.
+- STILL NOT VISUALLY VERIFIED (no dev server) — this is the second layout attempt; the structure is now
+  materially different (two rows), not another spacing tweak.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+
+## Controls inside a strategy card — gaps doubled (I had misread the previous ask)
+- Correction: on the previous turn I read "the accordions are still clustered ... add some gap among them"
+  as the CARDS being packed and changed list spacing (space-y-3→5) and card padding (py-2→1.5). Wrong target.
+  The user meant the CONTROLS INSIDE one card. Both card-level edits REVERTED to their original values
+  (space-y-3, px-4 py-2) — verified back at lines 1070 and 1092.
+- Actual fix, both control rows in the card header: `gap-x-2 gap-y-2` → `gap-x-4 gap-y-2.5` (horizontal gap
+  between controls 8px → 16px, doubled) and the generation row's `mt-1` → `mt-2.5` so the two rows sit apart
+  instead of nearly touching. The two hairline dividers now get real air around them.
+- Why widening is free: measured from the user's screenshot, line A ended ~810px and line B ~730px inside a
+  ~1360px card — ~550px of unused width. Arithmetic check on the WIDEST case (social card: draft, site,
+  Reuse image, divider, approval, schedule, divider, Generate All+Generate+Scan+Pause) gives 1132px → 1188px,
+  leaving 172px of headroom; generation row 753px. So no new wrapping and no re-truncation of the values
+  that earlier width fixes were meant to protect.
+- Verified: tsc 59 = unchanged baseline; build clean (14.2s); both rows carry the new classes (source lines
+  1249 and 1465) and the class ships twice in dist; card-level values confirmed reverted.
+- Zip: Desktop\powercreatives\powerplatform-2026-07-28_1625.zip (1,915,698 bytes) — top-level `powerplatform`
+  only, 0 backslashes, 0 leaks, 144/144 PHP.
+- NOT visually verified (no dev server). Third layout iteration; each previous one missed because I was
+  guessing at the target — this time the target was stated explicitly.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+
+## ROOT CAUSE of the "cluttered" strategy controls — overflowing Select triggers
+- Report: "add gap between Default image prompt and Default image model, they are still cluttered together"
+  — after three rounds of gap/layout tuning had failed to fix it.
+- ROOT CAUSE (not a spacing problem at all): shadcn's SelectTrigger base is `w-fit whitespace-nowrap`
+  (components/ui/select.tsx), and NONE of the 7 strategy-row triggers passed a width. So each trigger sized
+  to its TEXT and rendered WIDER than its fixed-width wrapper div, spilling over the next control.
+  Measured at text-xs: "Default image prompt" overflowed its w-36 box by ~26px and "Default image model" by
+  ~20px — 46px of spill between exactly the pair the user named, versus the 16px gap-x-4 I had just added.
+  THAT is why every previous gap increase failed: the overflow simply ate the gap. Shorter labels (Draft,
+  No approval) never overflowed, which is why only some pairs looked glued.
+- Fix, two parts:
+  1. `w-full` on all 7 row SelectTriggers → the trigger obeys its wrapper instead of its text (7/7 confirmed,
+     0 left without).
+  2. Wrappers sized so labels FIT rather than clip — the 4 generation selects w-36 → w-44 (176px vs the 170px
+     longest label) and publishing mode w-28 → w-32 (fits "Auto-publish", 121px). w-full alone would have
+     traded overlap for ellipsis, which is just a different annoyance.
+  Documented in-code above the generation row so the next person does not re-break it by dropping w-full.
+- Verified: arithmetic suite 9/9 — every label now fits its box with margin ("Default image prompt" 170px in
+  176px, "Default image model" 164px in 176px, "massagegoteborg.nu" 158px in 160px, "Auto-publish" 121px in
+  128px), AND both rows still fit the ~1360px card (line A 1204px, line B 881px — 156px and 479px headroom),
+  so nothing newly wraps. tsc 59 = unchanged baseline; build clean; 7 w-full triggers present in dist.
+- Zip: Desktop\powercreatives\powerplatform-2026-07-28_1638.zip (1,915,694 bytes) — verified structure,
+  144/144 PHP, 0 backslashes, 0 leaks.
+- NOT visually verified (no dev server). Unlike the previous three attempts this one fixes a measurable
+  overflow rather than adjusting spacing by eye.
+- Specialists: none — inline (system rule: no AgentTool unless requested). Not committed.
+
+## Item date tag — now covers PUBLISHED as well as SCHEDULED
+- Ask: date tag for when an item is "calculated to be published or scheduled to publish", before the article
+  name, small text.
+- What already existed: the tag component was built earlier this session and IS positioned before the name in
+  typography.xs (renders at index.tsx:1716, name at :1736) — placement was already right.
+- THE REAL GAP: it was gated on `item.scheduledDate` alone, and the backend only ever stamps that for
+  SCHEDULE-MODE strategies (calculate_recurrence_dates). Every draft/auto-publish strategy — i.e. all of the
+  user's cards — therefore showed no tag at all. Worse, articles.publishedAt EXISTS in the schema
+  (class-pcm-schema.php:480) but get_strategy_items() never selected it, so even a published row had no date
+  to show.
+- Fix, three layers:
+  1. DB: get_strategy_items() join now also selects `a.publishedAt AS articlePublishedAt` (doc comment updated).
+  2. Controller: the whitelisted item payload passes `articlePublishedAt` through (the other item paths hand
+     the joined row over verbatim, so they get it for free).
+  3. Frontend: new exported `itemDueTag(item)` — PUBLISHED WINS over scheduled (once live, when it went live
+     is the fact; a stale future slot would be a lie), returns null when neither date is usable so the row
+     renders nothing rather than an empty pill. Tooltip switches between "Published …" and
+     "Scheduled to publish …". Type gained `articlePublishedAt`.
+- Verified: new scratchpad due_tag_source_test.mjs 17/17 — transcribes parseDue/itemDueTag/formatItemDue
+  verbatim. Covers both asked-for cases, proves the published-row-in-draft-mode case NOW shows a tag while the
+  OLD gate showed nothing (change bites), published-beats-scheduled precedence, null/empty/whitespace → no
+  pill, and three junk-input paths that must fall through rather than blank the tag: MySQL '0000-00-00'
+  (would otherwise render as 1970), unparseable publishedAt, and garbage in both. Plus year-omission
+  formatting rules.
+  php -l x2 clean; tsc 59 = unchanged baseline; standalone harness 88/88; due_tag 12/12, status_badge 17/17,
+  publish_button_gate 21/21 still green; build clean.
+- Zip: Desktop\powercreatives\powerplatform-2026-07-28_1646.zip (1,915,996 bytes) — verified structure,
+  144/144 PHP, 0 backslashes, 0 leaks; articlePublishedAt present in the shipped SQL.
+- NOTE tied to the earlier schedule audit: items past an `ends` cap still have NO date at all (Finding 1/2 of
+  that audit) — they will correctly show no tag, which is the invisible-dead-item problem still outstanding.
+- NOT visually verified (no dev server). Specialists: none — inline. Not committed.
+
+## Source → Template/Model pickers moved into SOURCE + Automations dialog sizing
+### 1. Template + Model now live in the SOURCE accordion (CreateStrategyDialog)
+- Ask: selecting a source should find that source's prompt templates and list Template + Model there.
+- What was there: SOURCE showed a READ-ONLY summary line ("Template: X · Model: Y — change these under
+  Content"), with the real pickers in the Content accordion. The source-fit machinery already existed
+  (templateSourceFit/templateFitsSource, `sourceTemplates` memo, and an auto-map effect that re-points an
+  unsuitable pick when the source changes) — only the placement was wrong.
+- Change: replaced that summary with the real Template + Model selects, directly under the source tabs, and
+  REMOVED the now-duplicate pair from Content (Content keeps only the IMAGE prompt + IMAGE model). Same state
+  in two accordions would be free to disagree. Behaviour preserved deliberately: the list is fit-first with
+  non-fitting templates still selectable but labelled ("— for RSS/Social" / "— for Keywords"), so a deliberate
+  mismatch remains possible; the destructive "no writer template is written for this source" message is kept
+  because Create is gated on templateId.
+- Verified: each control id appears EXACTLY ONCE (source-template 1, source-model 1, content-prompt 0,
+  ai-model 0, image-prompt 1, image-model 1) and setTemplateId/setModelId are each bound once — proving a MOVE,
+  not a duplication. Ordering confirms SOURCE (759) precedes Content (1327). New scratchpad
+  source_template_map_test.mjs 19/19 transcribes the fit classifier, the dropdown's sort comparator and the
+  auto-map effect: fitting templates lead for rss/social/keywords, nothing is dropped, an unsuitable pick is
+  re-mapped on source change while an already-fitting pick is never touched, the no-fit error condition, and
+  the marker text. Existing template_source_fit 17/17 and settings_edit 17/17 still green.
+
+### 2. Automations "New automation" dialog — size-locked, content unreachable
+- Report (mid-turn screenshot): dialog clipped, a stray HORIZONTAL scrollbar, trigger list cut off.
+- Causes, all on `DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto"`:
+  a) DialogContent's base is a GRID, so header + body + FOOTER scrolled as one block — the Save/Cancel row
+     scrolled off screen. That is the "cannot see everything".
+  b) The stray horizontal scrollbar is a CSS rule, not a stray width: setting overflow-y to a non-`visible`
+     value forces overflow-x to compute as `auto`, so any child a pixel too wide adds a bottom scrollbar.
+  c) The trigger combobox is intentionally NOT portalled (documented: Radix Dialog's react-remove-scroll
+     blocks wheel scroll on portalled nodes), so its fixed `max-h-80` list got clipped by the dialog when
+     opened low in the form.
+- Fix: DialogContent → `sm:max-w-3xl max-h-[85vh] flex flex-col overflow-hidden`; header and footer pinned
+  with shrink-0; the FORM BODY scrolls via `min-h-0 flex-1 overflow-y-auto overflow-x-hidden -mx-1 px-1`
+  (min-h-0 is required or a flex item refuses to shrink below its content). Popover height
+  `max-h-80` → `max-h-[min(20rem,var(--radix-popover-content-available-height))]` so the list shrinks to the
+  measured room instead of being clipped.
+- Verified: ran the project's ACTUAL tailwind-merge over base+consumer classes, 7/7 — display resolves to
+  flex with grid dropped, flex-col/overflow-hidden/max-h-[85vh] kept, sm:max-w-3xl beats the base sm:max-w-lg,
+  and base padding/border/positioning survive. (Claimed it first, then proved it.)
+- Both: tsc 59 = unchanged baseline; build clean; both changes confirmed present in dist.
+- Zip: Desktop\powercreatives\powerplatform-2026-07-28_1659.zip (1,915,964 bytes) — verified structure,
+  144/144 PHP, 0 backslashes, 0 leaks.
+- NOT visually verified (no dev server). Specialists: none — inline. Not committed.
+
+## Automations "New automation" dialog made bigger
+- Change (Automations/index.tsx, one className): `sm:max-w-3xl max-h-[85vh]` →
+  `sm:max-w-[min(72rem,calc(100vw-4rem))] max-h-[90vh]`. Width 768px → up to 1152px, height 85vh → 90vh.
+- Width is CLAMPED rather than a plain `sm:max-w-Nxl` on purpose: dialog.tsx's base
+  `max-w-[calc(100%-2rem)]` only guards BELOW the sm breakpoint, so any fixed rem width silently overflows a
+  viewport between 640px and that width. (My own earlier bump to sm:max-w-3xl carried that latent risk on a
+  <768px window.) `min(72rem, 100vw-4rem)` scales down instead of overflowing.
+- Verified with the project's ACTUAL tailwind-merge, 5/5: the clamped width beats the base sm:max-w-lg, the
+  old sm:max-w-3xl is gone, max-h-[90vh] replaced 85vh, the flex-column + overflow-hidden structure survives
+  (so header/footer stay pinned and only the body scrolls), and the base <640px cap is still present.
+  Plus a viewport table — 1920/1440/1280 → 1152px; 1024 → 960; 900 → 836; 768 → 704; 640 → 576; 480 → 448 —
+  every case fits with margin, none overflow.
+- tsc 59 = unchanged baseline; build clean; the new width ships in dist.
+- Zip: Desktop\powercreatives\powerplatform-2026-07-28_1705.zip (1,915,992 bytes) — verified structure,
+  144/144 PHP, 0 backslashes, 0 leaks.
+- NOT visually verified (no dev server). Specialists: none — inline. Not committed.
+
+## Automations: IF-trigger + THEN-action pickers converted from popover → nested Dialog
+- Ask: "instead of accordion make these two a popup also" — the two full-width pickers in the New automation
+  form (IF trigger, THEN action). Both are the same component, ItemCombobox, used at exactly 2 call sites.
+- Why this is the right fix rather than more CSS: as a Popover the list had to be rendered WITHOUT a Portal
+  (documented in the old code: Radix Dialog's react-remove-scroll lock kills wheel scrolling on any portalled
+  node outside the dialog subtree). Non-portalled meant it lived inside the scrollable form and was clipped by
+  that form's overflow — which is what the earlier `--radix-popover-content-available-height` cap was
+  half-coping with. A nested Dialog portals cleanly, owns its own scroll lock, and is bounded by the VIEWPORT
+  instead of the parent form, so the whole list is always reachable.
+- Change (Automations/index.tsx only): ItemCombobox's Popover/PopoverTrigger/PopoverPrimitive.Content replaced
+  by a plain trigger Button (aria-haspopup="dialog") + <Dialog> whose DialogContent is
+  `sm:max-w-[min(44rem,calc(100vw-4rem))] max-h-[80vh] flex flex-col overflow-hidden`, with DialogTitle taken
+  from the existing `placeholder` prop (no new prop at either call site) and a DialogDescription for a11y.
+  CommandList lost its `max-h-72` popover-era cap so the list now FILLS the dialog height. Removed the three
+  now-unused Popover imports; `cn` stays (still used at :546).
+- Behaviour preserved: same grouped-by-module list, same cmdk filter packing module+id+label, same
+  `implemented:false` disabling + "coming soon" tag, same Check mark on the selected row, and selecting an item
+  still calls onChange then closes.
+- Verified: 0 Popover references remain in the file (the only surviving mention of the old
+  available-height hack is inside my explanatory comment); both call sites intact (2); nesting is well-formed
+  — inner Dialog 68-119 sits inside the outer New-automation Dialog 369-570; tsc 59 = unchanged baseline with
+  NO Automations errors (which also proves no unused-import fallout); build clean; the picker dialog's copy
+  ships in dist.
+- Zip: Desktop\powercreatives\powerplatform-2026-07-28_1715.zip (1,915,518 bytes) — verified structure,
+  144/144 PHP, 0 backslashes, 0 leaks.
+- NOT visually verified (no dev server). Nested modals are the one thing worth eyeballing: confirm Escape
+  closes only the picker (Radix DismissableLayer stacking) and that focus returns to the trigger.
+- Specialists: none — inline. Not committed.
+
+## Automations picker: search-input overflow + cramped list
+- Report (2 screenshots): the search field's focus ring escaping the container on the right, and the option
+  list packed together.
+- CAUSE 1 — the overflow is a real box-model bug in the SHARED primitive, not styling taste:
+  components/ui/command.tsx renders CommandInput as `h-10` inside a wrapper that is `h-9`. The input is 4px
+  TALLER than the row containing it, so it bleeds past the wrapper's border-b and is then sliced by the
+  Command root's `overflow-hidden` — which is exactly the hard blue edge in the screenshot. Fixed:
+  `h-10 w-full` → `h-full min-w-0 flex-1` (fills its row exactly; min-w-0 also lets it shrink below an
+  <input>'s intrinsic ~20ch minimum so it can't push the search icon out in a narrow popover).
+- CAUSE 2 — the density: shadcn's Command defaults (item `px-2 py-1.5`, group `p-1`, heading `py-1.5`) are
+  tuned for a ONE-LINE command palette. These rows are TWO lines (label + description), so the list read as a
+  wall of text. Fixed at the CALL SITE (not the primitive, so no other consumer changes): rows are
+  `items-start gap-3 rounded-md px-3 py-2.5` with the check aligned to the label rather than the row's
+  vertical centre, label `font-medium`, description `mt-0.5 leading-relaxed`; groups get `pb-2` with an
+  uppercase tracked heading; the list gets `px-2 py-2` so rows sit off the border and the scrollbar.
+- Blast-radius check on the primitive (8 other consumers: ApprovalSetPicker, BrandDropdown,
+  creatable-combobox, multiple-selector, Copy/TemplateDropdown, DeliveryProjects, VideoTemplateDropdown,
+  ComponentShowcase): ran the project's ACTUAL tailwind-merge, 5/5 — a consumer that passes its own `h-9`
+  (TemplateDropdown) still wins over the new base exactly as it won over the old `h-10`, so those are
+  unchanged; consumers passing nothing now fill their row instead of overflowing by 4px.
+- Verified: tsc 59 = unchanged baseline; build clean; the roomier row classes ship in dist.
+- Zip: Desktop\powercreatives\powerplatform-2026-07-28_1724.zip (1,915,924 bytes) — verified structure,
+  144/144 PHP, 0 backslashes, 0 leaks.
+- NOT visually verified (no dev server). Specialists: none — inline. Not committed.

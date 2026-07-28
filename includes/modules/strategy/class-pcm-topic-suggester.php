@@ -33,6 +33,7 @@ class PCM_Topic_Suggester
      *     @type string   $siteUrl        Site URL.
      *     @type string   $audience       Target audience description.
      *     @type string[] $existingTopics Topics already covered — avoid duplicating these.
+     *     @type string   $language       Brand content language (e.g. 'Swedish'). Empty → English default.
      * }
      * @param int    $count    Number of topic ideas requested. Default 5.
      * @param string $model    Model ID; empty → PCM_LLM default.
@@ -49,8 +50,10 @@ class PCM_Topic_Suggester
             $site_url        = (string)($context['siteUrl'] ?? '');
             $audience        = (string)($context['audience'] ?? '');
             $existing_topics = array_map('strval', (array)($context['existingTopics'] ?? array()));
+            // Brand content language (see PCM_Strategy_Service::build_prompt) — '' = English default.
+            $language        = trim((string)($context['language'] ?? ''));
 
-            $messages = self::build_messages($niche, $site_name, $site_url, $audience, $existing_topics, $count);
+            $messages = self::build_messages($niche, $site_name, $site_url, $audience, $existing_topics, $count, $language);
             $schema   = self::build_schema();
 
             $options = array(
@@ -94,7 +97,8 @@ class PCM_Topic_Suggester
         string $site_url,
         string $audience,
         array $existing_topics,
-        int $count
+        int $count,
+        string $language = ''
     ): array {
         $system = 'You are an SEO content strategist. Given a site\'s niche and audience, you propose fresh, ' .
             'high-value blog topic ideas. Each idea must include a specific target keyword, a compelling ' .
@@ -123,6 +127,13 @@ class PCM_Topic_Suggester
             );
         }
         $lines[] = 'For each idea, provide a target keyword, a title, and a short rationale.';
+        // Language-lock the OUTPUT. Without this the model answers in English no
+        // matter the brand — the same defect the article prompt had. Appended last
+        // so it is the final instruction the model reads. Empty language → omitted,
+        // leaving the prompt byte-identical to before.
+        if ($language !== '') {
+            $lines[] = sprintf('Write the keyword, title and rationale in %s.', $language);
+        }
 
         return array(
             array('role' => 'system', 'content' => $system),

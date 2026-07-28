@@ -746,6 +746,37 @@ Present the product or service as the relief that removes the pain, then close w
                 ),
             ),
 
+            // ─────────────────────────────────────────────
+            // IMAGE: the strategy module's built-in featured-image prompt.
+            // WORD-FOR-WORD identical to build_image_prompt()'s hardcoded
+            // $default (strategy/service.php:2992), with its two sprintf slots
+            // turned into {{ title }} / {{ keyword }} — so picking this template
+            // changes NOTHING until the author edits it, and the built-in wording
+            // stops being invisible/uneditable.
+            //   module 'image'      → what the strategy dialog's Image-prompt
+            //                         dropdown queries (templates.list module=image)
+            //   entry category 'prompt' → the only category build_image_prompt() reads
+            // {{ brand_language }} is also passed in and may be added for localized
+            // art direction; left out here to stay faithful to the default.
+            // ─────────────────────────────────────────────
+            array(
+                'name' => 'Default Featured Image Prompt',
+                'module' => 'image',
+                'description' => 'The built-in featured-image prompt strategies use when no image template is picked. Available variables: {{ title }}, {{ keyword }}, {{ brand_language }}.',
+                'isDefault' => 0,
+                'formData' => array(
+                    'type' => 'generation',
+                    'entries' => array(
+                        array(
+                            'key' => 'strategy_featured_image_prompt',
+                            'category' => 'prompt',
+                            'label' => 'Image Prompt',
+                            'value' => 'Professional blog featured image for an article titled "{{ title }}" about {{ keyword }} — clean, modern, editorial photography, no text overlays.',
+                        ),
+                    ),
+                ),
+            ),
+
         );
     }
 }
