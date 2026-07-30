@@ -82,19 +82,30 @@ class PCM_Teacher_Interlink implements PCM_Optimizer_Teacher
             }
         }
 
+        // No hidden prompt: this system prompt is a Templates (module=
+        // optimizer) row a user can view/edit — resolve_prompt() returns
+        // this exact default verbatim when no override exists. The two
+        // {{ }} vars are non-empty only when a GSC key mapped ranksFor
+        // queries onto the page list (matches the pre-templating conditional).
+        $default_system = 'You are an internal-linking strategist. You get OUR page content and the site\'s other '
+            . 'pages (title, url{{ranksfor_note}}). '
+            . 'Propose links FROM our content TO the most relevant pages. HARD LAWS: the anchor phrase must '
+            . 'already exist VERBATIM in our content (never invent or reword text); descriptive anchors only '
+            . '(never "click here"); at most ONE link per target page; only genuinely relevant targets '
+            . '{{gsc_preference_note}}maximum 6 proposals; fewer is better than forced. Respond with ONLY this JSON, no markdown: '
+            . '{"links":[{"anchor":"<verbatim phrase from our content>","url":"<target url>","target":"<target title>","why":"<one short sentence>"}]}';
+        $system_tpl = PCM_Optimizer_Service::resolve_prompt('teacher_interlink', $default_system, $user_id);
+        $system     = PCM_Optimizer_Service::render_prompt_vars($system_tpl, array(
+            'ranksfor_note'       => $source === 'gsc' ? ', ranksFor = the queries Google actually ranks that page for' : '',
+            'gsc_preference_note' => $source === 'gsc' ? '(prefer targets whose ranksFor queries match the anchor\'s meaning); ' : '',
+        ));
+
         $messages = array(
             array(
                 'role'    => 'system',
                 // The exact output contract lives IN the prompt (the
                 // Anthropic law — no response_format there).
-                'content' => 'You are an internal-linking strategist. You get OUR page content and the site\'s other '
-                    . 'pages (title, url' . ($source === 'gsc' ? ', ranksFor = the queries Google actually ranks that page for' : '') . '). '
-                    . 'Propose links FROM our content TO the most relevant pages. HARD LAWS: the anchor phrase must '
-                    . 'already exist VERBATIM in our content (never invent or reword text); descriptive anchors only '
-                    . '(never "click here"); at most ONE link per target page; only genuinely relevant targets '
-                    . ($source === 'gsc' ? '(prefer targets whose ranksFor queries match the anchor\'s meaning); ' : '')
-                    . 'maximum 6 proposals; fewer is better than forced. Respond with ONLY this JSON, no markdown: '
-                    . '{"links":[{"anchor":"<verbatim phrase from our content>","url":"<target url>","target":"<target title>","why":"<one short sentence>"}]}',
+                'content' => $system,
             ),
             array(
                 'role'    => 'user',

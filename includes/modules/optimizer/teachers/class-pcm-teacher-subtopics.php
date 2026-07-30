@@ -58,18 +58,26 @@ class PCM_Teacher_Subtopics implements PCM_Optimizer_Teacher
             ? 'From the page content, determine the ONE core topic, then list'
             : 'The page\'s core topic IS its primary keyword (given in the context below) — echo it as the topic, then list';
 
+        // No hidden prompt: this system prompt is a Templates (module=
+        // optimizer) row a user can view/edit — resolve_prompt() returns
+        // this exact default verbatim when no override exists. {{topic_rule}}
+        // switches between "derive the topic" and "the keyword IS the topic".
+        $default_system = 'You are a topical-coverage auditor. {{topic_rule}}'
+            . ' the 4 to 7 subtopics a COMPLETE page about that topic covers (what '
+            . 'genuinely comprehensive pages on this topic actually include — never filler). Judge each '
+            . 'subtopic ONLY against the given content: covered=true needs real substance about it, not a '
+            . 'passing mention; evidence = a short verbatim quote when covered, or one short sentence of '
+            . 'what a section about it should say when missing. Respond with ONLY this JSON, no markdown: '
+            . '{"topic":"...","subtopics":[{"name":"...","covered":true,"evidence":"..."}]}';
+        $system_tpl = PCM_Optimizer_Service::resolve_prompt('teacher_subtopics', $default_system, (int) ($context['userId'] ?? 0));
+        $system     = PCM_Optimizer_Service::render_prompt_vars($system_tpl, array('topic_rule' => $topic_rule));
+
         $messages = array(
             array(
                 'role'    => 'system',
                 // The exact output contract lives IN the prompt (the
                 // Anthropic law — no response_format there).
-                'content' => 'You are a topical-coverage auditor. ' . $topic_rule
-                    . ' the 4 to 7 subtopics a COMPLETE page about that topic covers (what '
-                    . 'genuinely comprehensive pages on this topic actually include — never filler). Judge each '
-                    . 'subtopic ONLY against the given content: covered=true needs real substance about it, not a '
-                    . 'passing mention; evidence = a short verbatim quote when covered, or one short sentence of '
-                    . 'what a section about it should say when missing. Respond with ONLY this JSON, no markdown: '
-                    . '{"topic":"...","subtopics":[{"name":"...","covered":true,"evidence":"..."}]}',
+                'content' => $system,
             ),
             array(
                 'role'    => 'user',

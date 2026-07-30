@@ -731,7 +731,7 @@ class PCM_REST_Prompts extends PCM_REST_Base
 
         // SEO module: verbatim field prompts flattened to {use}_{mode} sections.
         if ($module === 'seo' && class_exists('PCM_SEO_Service')) {
-            $defaults = PCM_SEO_Service::get_default_prompts();
+            $defaults = PCM_SEO_AI::get_default_prompts();
             return $defaults[$section] ?? '';
         }
 

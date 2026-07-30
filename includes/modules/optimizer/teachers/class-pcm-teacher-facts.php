@@ -102,19 +102,24 @@ class PCM_Teacher_Facts implements PCM_Optimizer_Teacher
             self::CHECKS
         );
 
+        // No hidden prompt: this system prompt is a Templates (module=
+        // optimizer) row a user can view/edit — resolve_prompt() returns
+        // this exact default verbatim when no override exists.
+        $default_system = 'You are a strict fact auditor. You hold the business\'s REAL verified facts and the '
+            . 'page content. Judge each check ONLY from what is given — the business facts are the truth, '
+            . 'the content is what you audit. For every check answer passes=true or passes=false. evidence: '
+            . 'when it passes, a short verbatim quote from the content proving it; when it fails, one short '
+            . 'sentence naming the concrete thing missing or wrong. Never invent content or facts. Respond '
+            . 'with ONLY this JSON, no markdown, no commentary: '
+            . '{"checks":[{"id":"<the check id, echoed EXACTLY as given>","passes":true,"evidence":"..."}]} '
+            . '— one entry per check, every id present.';
+
         $messages = array(
             array(
                 'role'    => 'system',
                 // The exact output contract lives IN the prompt (the
                 // Anthropic law — no response_format there).
-                'content' => 'You are a strict fact auditor. You hold the business\'s REAL verified facts and the '
-                    . 'page content. Judge each check ONLY from what is given — the business facts are the truth, '
-                    . 'the content is what you audit. For every check answer passes=true or passes=false. evidence: '
-                    . 'when it passes, a short verbatim quote from the content proving it; when it fails, one short '
-                    . 'sentence naming the concrete thing missing or wrong. Never invent content or facts. Respond '
-                    . 'with ONLY this JSON, no markdown, no commentary: '
-                    . '{"checks":[{"id":"<the check id, echoed EXACTLY as given>","passes":true,"evidence":"..."}]} '
-                    . '— one entry per check, every id present.',
+                'content' => PCM_Optimizer_Service::resolve_prompt('teacher_facts', $default_system, (int) ($context['userId'] ?? 0)),
             ),
             array(
                 'role'    => 'user',

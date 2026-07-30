@@ -95,10 +95,10 @@ $rule_insert = array(
 
 // ═══ 1. page_fingerprint ═══
 echo "page_fingerprint\n";
-$fp = PCM_SEO_Service::page_fingerprint(array($rule_section, $rule_insert));
+$fp = PCM_SEO_Page_State::page_fingerprint(array($rule_section, $rule_insert));
 check('sha1 format', (bool) preg_match('/^[0-9a-f]{40}$/', $fp));
-check('stable across calls', PCM_SEO_Service::page_fingerprint(array($rule_section, $rule_insert)) === $fp);
-check('rule order is a storage accident', PCM_SEO_Service::page_fingerprint(array($rule_insert, $rule_section)) === $fp);
+check('stable across calls', PCM_SEO_Page_State::page_fingerprint(array($rule_section, $rule_insert)) === $fp);
+check('rule order is a storage accident', PCM_SEO_Page_State::page_fingerprint(array($rule_insert, $rule_section)) === $fp);
 
 $reordered_keys = array(
     'anchor'      => null,
@@ -109,19 +109,19 @@ $reordered_keys = array(
     'target'      => 'section',
     'id'          => 11,
 );
-check('map-key order is a storage accident (nested too)', PCM_SEO_Service::page_fingerprint(array($reordered_keys, $rule_insert)) === $fp);
+check('map-key order is a storage accident (nested too)', PCM_SEO_Page_State::page_fingerprint(array($reordered_keys, $rule_insert)) === $fp);
 
 $new_id       = $rule_section;
 $new_id['id'] = 999;
-check('row id is a storage handle, never content', PCM_SEO_Service::page_fingerprint(array($new_id, $rule_insert)) === $fp);
+check('row id is a storage handle, never content', PCM_SEO_Page_State::page_fingerprint(array($new_id, $rule_insert)) === $fp);
 
 $edited                = $rule_section;
 $edited['replacement'] = '<h2>About us</h2><p>Different body.</p>';
-check('replacement change changes the fingerprint', PCM_SEO_Service::page_fingerprint(array($edited, $rule_insert)) !== $fp);
+check('replacement change changes the fingerprint', PCM_SEO_Page_State::page_fingerprint(array($edited, $rule_insert)) !== $fp);
 
 $inactive           = $rule_section;
 $inactive['active'] = false;
-check('active flag is content (it changes serving)', PCM_SEO_Service::page_fingerprint(array($inactive, $rule_insert)) !== $fp);
+check('active flag is content (it changes serving)', PCM_SEO_Page_State::page_fingerprint(array($inactive, $rule_insert)) !== $fp);
 
 $with_paras            = $rule_section;
 $with_paras['section'] = array('level' => 2, 'fingerprint' => 'abc123', 'paragraphs' => array(
@@ -133,32 +133,32 @@ $paras_swapped['section'] = array('level' => 2, 'fingerprint' => 'abc123', 'para
     array('text' => 'second', 'occurrence' => 0),
     array('text' => 'first', 'occurrence' => 0),
 ));
-check('order INSIDE a rule list is content', PCM_SEO_Service::page_fingerprint(array($with_paras)) !== PCM_SEO_Service::page_fingerprint(array($paras_swapped)));
+check('order INSIDE a rule list is content', PCM_SEO_Page_State::page_fingerprint(array($with_paras)) !== PCM_SEO_Page_State::page_fingerprint(array($paras_swapped)));
 
-check('subset is not the set', PCM_SEO_Service::page_fingerprint(array($rule_section)) !== $fp);
-check('empty set fingerprints deterministically', PCM_SEO_Service::page_fingerprint(array()) === PCM_SEO_Service::page_fingerprint(array()) && PCM_SEO_Service::page_fingerprint(array()) !== $fp);
+check('subset is not the set', PCM_SEO_Page_State::page_fingerprint(array($rule_section)) !== $fp);
+check('empty set fingerprints deterministically', PCM_SEO_Page_State::page_fingerprint(array()) === PCM_SEO_Page_State::page_fingerprint(array()) && PCM_SEO_Page_State::page_fingerprint(array()) !== $fp);
 
 // ═══ 2. page state record ═══
 echo "page state record\n";
-$state0 = PCM_SEO_Service::page_state(2, 3);
+$state0 = PCM_SEO_Page_State::page_state(2, 3);
 check('never-saved baseline is version 0 / empty fingerprint', $state0['version'] === 0 && $state0['fingerprint'] === '' && $state0['savedAt'] === 0);
 
 // write_page_state runs only after an ACCEPTED push (private by design) —
 // exercised directly here, exactly as push_current_rules_or_rollback calls it.
-$write = new ReflectionMethod('PCM_SEO_Service', 'write_page_state');
+$write = new ReflectionMethod('PCM_SEO_Page_State', 'write_page_state');
 $write->setAccessible(true);
-$write->invoke(null, 2, 3, PCM_SEO_Service::page_state(2, 3)['version'] + 1, 'fp-one');
-$state1 = PCM_SEO_Service::page_state(2, 3);
+$write->invoke(null, 2, 3, PCM_SEO_Page_State::page_state(2, 3)['version'] + 1, 'fp-one');
+$state1 = PCM_SEO_Page_State::page_state(2, 3);
 check('first accepted push records version 1', $state1['version'] === 1 && $state1['fingerprint'] === 'fp-one');
 check('savedAt recorded', $state1['savedAt'] > 0);
 
-$write->invoke(null, 2, 3, PCM_SEO_Service::page_state(2, 3)['version'] + 1, 'fp-two');
-$state2 = PCM_SEO_Service::page_state(2, 3);
+$write->invoke(null, 2, 3, PCM_SEO_Page_State::page_state(2, 3)['version'] + 1, 'fp-two');
+$state2 = PCM_SEO_Page_State::page_state(2, 3);
 check('next accepted push bumps to version 2', $state2['version'] === 2 && $state2['fingerprint'] === 'fp-two');
 
 check('option map keyed "siteId:postId"', isset($GLOBALS['__opts']['pcm_page_state']['2:3']));
-check('other post untouched', PCM_SEO_Service::page_state(2, 4)['version'] === 0);
-check('other site untouched', PCM_SEO_Service::page_state(3, 3)['version'] === 0);
+check('other post untouched', PCM_SEO_Page_State::page_state(2, 4)['version'] === 0);
+check('other site untouched', PCM_SEO_Page_State::page_state(3, 3)['version'] === 0);
 
 // ═══ 3. superseded_rule_ids (W2 net set) ═══
 echo "superseded_rule_ids\n";
@@ -173,16 +173,16 @@ $rows = array(
     array('id' => 8, 'target' => 'image'),         // image reconciliation owns it
     array('id' => 9, 'target' => 'title'),         // never section-family
 );
-$dead = PCM_SEO_Service::superseded_rule_ids($rows, array(1, 4));
+$dead = PCM_SEO_Page_State::superseded_rule_ids($rows, array(1, 4));
 check('replace supersedes: the dead section row drops', in_array(2, $dead, true));
 check('dead insert identity drops', in_array(3, $dead, true));
 check('exactly the dead section-family rows', $dead === array(2, 3));
 check('attributed rows survive', !in_array(1, $dead, true) && !in_array(4, $dead, true));
 check('sectionRemove is kept by law', !in_array(5, $dead, true));
 check('other targets are never swept', !array_intersect(array(6, 7, 8, 9), $dead));
-check('all live = nothing to flatten', PCM_SEO_Service::superseded_rule_ids($rows, array(1, 2, 3, 4)) === array());
-check('no rows = nothing to flatten', PCM_SEO_Service::superseded_rule_ids(array(), array(1)) === array());
-check('string ids from the wire still match', PCM_SEO_Service::superseded_rule_ids($rows, array('1', '4')) === array(2, 3));
+check('all live = nothing to flatten', PCM_SEO_Page_State::superseded_rule_ids($rows, array(1, 2, 3, 4)) === array());
+check('no rows = nothing to flatten', PCM_SEO_Page_State::superseded_rule_ids(array(), array(1)) === array());
+check('string ids from the wire still match', PCM_SEO_Page_State::superseded_rule_ids($rows, array('1', '4')) === array(2, 3));
 
 // ═══ 4. THE SAVE TRANSACTION chokepoints (gap ATOMIC-SAVE 2026-07-17) ═══
 // With the deferral flag set, the two chokepoints every routed save flows
@@ -199,10 +199,10 @@ $queue->setValue(null, array());
 
 $push_m = new ReflectionMethod('PCM_SEO_Service', 'push_current_rules_or_rollback');
 $push_m->setAccessible(true);
-$state_before = PCM_SEO_Service::page_state(2, 3);
+$state_before = PCM_SEO_Page_State::page_state(2, 3);
 $stub = $push_m->invoke(null, 1, (object) array('id' => 2), 3, array());
 check('deferred push returns the stub', is_array($stub) && ($stub['deferred'] ?? false) === true);
-check('deferred push writes NO page state', PCM_SEO_Service::page_state(2, 3) === $state_before);
+check('deferred push writes NO page state', PCM_SEO_Page_State::page_state(2, 3) === $state_before);
 
 $rec_m = new ReflectionMethod('PCM_SEO_Service', 'record_version');
 $rec_m->setAccessible(true);
@@ -276,7 +276,7 @@ if (!class_exists('WP_Error')) {
     }
 }
 echo "business ladder\n";
-$ladder = PCM_SEO_Service::merge_business_ladder(
+$ladder = PCM_SEO_Business::merge_business_ladder(
     array('address' => 'Göteborg'),                                      // site override
     array(
         'fetched' => array('address' => 'Avenyn 1, Göteborg', 'phone' => '031-111'),
@@ -290,25 +290,25 @@ check('site override wins the ladder', $ladder['fields']['address'] === 'Götebo
 check('unit manual beats unit fetched', $ladder['fields']['phone'] === '031-222' && $ladder['sources']['phone'] === 'manual');
 check('brand basics beat site basics', $ladder['fields']['name'] === 'Profit Media' && $ladder['sources']['name'] === 'brand');
 check('site basics survive uncontested', $ladder['fields']['siteUrl'] === 'http://powerleads.local' && $ladder['sources']['siteUrl'] === 'site-basics');
-check('fetched keeps its per-key source tag', PCM_SEO_Service::merge_business_ladder(
+check('fetched keeps its per-key source tag', PCM_SEO_Business::merge_business_ladder(
     array(),
     array('fetched' => array('cid' => '123'), 'manual' => array(), 'sources' => array('cid' => 'maps-paste')),
     array(),
     array()
 )['sources']['cid'] === 'maps-paste');
-$empty_ladder = PCM_SEO_Service::merge_business_ladder(array('phone' => ''), array(), array('phone' => ''), array());
+$empty_ladder = PCM_SEO_Business::merge_business_ladder(array('phone' => ''), array(), array('phone' => ''), array());
 check('empty values never land (no invention)', !isset($empty_ladder['fields']['phone']));
 
 echo "parse_maps_url\n";
-$mp = PCM_SEO_Service::parse_maps_url('https://maps.google.com/maps?cid=12345678901234567890');
+$mp = PCM_SEO_Business::parse_maps_url('https://maps.google.com/maps?cid=12345678901234567890');
 check('cid query parses', !($mp instanceof WP_Error) && $mp['fields']['cid'] === '12345678901234567890');
 check('cid embed built', $mp['fields']['mapsEmbedUrl'] === 'https://maps.google.com/maps?cid=12345678901234567890&output=embed');
-$mp2 = PCM_SEO_Service::parse_maps_url('https://www.google.com/maps/place/X/@57.7089,11.9746,17z/data=!1s0x464ff3abc:0xffffffffffffffff');
+$mp2 = PCM_SEO_Business::parse_maps_url('https://www.google.com/maps/place/X/@57.7089,11.9746,17z/data=!1s0x464ff3abc:0xffffffffffffffff');
 check('hex place ref -> exact 64-bit decimal cid', !($mp2 instanceof WP_Error) && $mp2['fields']['cid'] === '18446744073709551615');
 check('coordinates parse', $mp2['fields']['lat'] === '57.7089' && $mp2['fields']['lng'] === '11.9746');
-$mp3 = PCM_SEO_Service::parse_maps_url('https://example.com/not-maps');
+$mp3 = PCM_SEO_Business::parse_maps_url('https://example.com/not-maps');
 check('non-maps host = named error', $mp3 instanceof WP_Error && $mp3->get_error_code() === 'pcm_seo_maps_not_maps');
-$mp4 = PCM_SEO_Service::parse_maps_url('https://maps.google.com/maps/nothing-here');
+$mp4 = PCM_SEO_Business::parse_maps_url('https://maps.google.com/maps/nothing-here');
 check('unparseable maps link = named error', $mp4 instanceof WP_Error && $mp4->get_error_code() === 'pcm_seo_maps_unparsed');
 
 // ═══ 7. GBP normalize — THE WIDE MASK (Google Native A, gap 670d0e0) ═══

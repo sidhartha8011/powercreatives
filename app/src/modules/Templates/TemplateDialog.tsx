@@ -131,6 +131,7 @@ const MODULE_BADGE_COLORS: Record<TemplateModule, string> = {
   video: "bg-amber-50 text-amber-700 border-amber-200",
   writer: "bg-teal-50 text-teal-700 border-teal-200",
   seo: "bg-sky-50 text-sky-700 border-sky-200",
+  optimizer: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
 // ============================================
@@ -434,7 +435,7 @@ export function TemplateDialog({
     if (types && types.length > 0 && !types.find((t) => t.value === type)) {
       setType(types[0].value);
     }
-    if (module === "video" || module === "seo") {
+    if (module === "video" || module === "seo" || module === "optimizer") {
       setSelectedCategory("prompt");
     }
   }, [module]);
@@ -599,7 +600,7 @@ export function TemplateDialog({
             </p>
 
             {/* Module + Type dropdowns (+ Category for non-video modules) */}
-            <div className={`grid ${module === "video" || module === "seo" ? "grid-cols-2" : "grid-cols-3"} gap-2`}>
+            <div className={`grid ${module === "video" || module === "seo" || module === "optimizer" ? "grid-cols-2" : "grid-cols-3"} gap-2`}>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Module</Label>
                 <Select
@@ -616,6 +617,7 @@ export function TemplateDialog({
                     <SelectItem value="video">Video</SelectItem>
                     <SelectItem value="writer">Writer</SelectItem>
                     <SelectItem value="seo">SEO</SelectItem>
+                    <SelectItem value="optimizer">AI Optimization</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -640,8 +642,8 @@ export function TemplateDialog({
                 </Select>
               </div>
 
-              {/* Category dropdown — only for Copy/Image (Video & SEO auto-default to 'prompt') */}
-              {module !== "video" && module !== "seo" && (
+              {/* Category dropdown — only for Copy/Image (Video/SEO/Optimizer auto-default to 'prompt') */}
+              {module !== "video" && module !== "seo" && module !== "optimizer" && (
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">
                     Category

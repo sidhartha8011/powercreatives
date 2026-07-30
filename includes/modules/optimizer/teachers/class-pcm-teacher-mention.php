@@ -160,11 +160,20 @@ class PCM_Teacher_Mention implements PCM_Optimizer_Teacher
      */
     private function ask_engine(array $engine, array $questions, int $user_id): array
     {
-        $prompt = "Answer the following user questions exactly as you would answer a real user asking you for a recommendation. "
-            . "Be concrete: name the actual providers/businesses you would recommend and why.\n\n"
-            . "QUESTIONS:\n- " . implode("\n- ", $questions)
+        // No hidden prompt: this wrapper is a Templates (module=optimizer)
+        // row a user can view/edit — resolve_prompt() returns this exact
+        // default verbatim when no override exists. The "RECOMMENDED: [...]"
+        // sentinel is parsed below; removing it degrades to empty
+        // recommendations rather than failing (never a hard break).
+        $default_prompt = "Answer the following user questions exactly as you would answer a real user asking you for a recommendation. "
+            . "Be concrete: name the actual providers/businesses you would recommend and why."
+            . "\n\nQUESTIONS:\n{{questions}}"
             . "\n\nAfter your answer, on the LAST line output exactly: "
             . 'RECOMMENDED: ["name1","name2",...] — the JSON array of the concrete provider/business names you recommended.';
+        $prompt_tpl = PCM_Optimizer_Service::resolve_prompt('teacher_mention', $default_prompt, $user_id);
+        $prompt     = PCM_Optimizer_Service::render_prompt_vars($prompt_tpl, array(
+            'questions' => '- ' . implode("\n- ", $questions),
+        ));
 
         $messages = array(array('role' => 'user', 'content' => $prompt));
         $options  = array(

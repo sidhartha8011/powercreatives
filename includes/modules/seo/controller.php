@@ -162,7 +162,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             ? array_map('sanitize_key', explode(',', $types_param))
             : PCM_SEO_Service::VALID_TYPES;
 
-        return $this->success($this->service->list_content($types));
+        return $this->success(PCM_SEO_Local::list_content($types));
     }
 
     /** GET /seo/content/options — dropdown data + detected SEO plugin. */
@@ -195,7 +195,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
 
         $post = get_post((int) $id);
-        return $this->success($this->service->build_row($post), 201);
+        return $this->success(PCM_SEO_Local::build_row($post), 201);
     }
 
     /** POST /seo/content/{id}/duplicate — clone a post/page (as draft) with its meta. */
@@ -214,11 +214,11 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->error('You cannot create this content type.', 403, 'pcm_forbidden');
         }
 
-        $new_id = $this->service->duplicate($id);
+        $new_id = PCM_SEO_Local::duplicate($id);
         if ($new_id instanceof WP_Error) {
             return $new_id;
         }
-        return $this->success($this->service->build_row(get_post((int) $new_id)), 201);
+        return $this->success(PCM_SEO_Local::build_row(get_post((int) $new_id)), 201);
     }
 
     /** POST /seo/content/{id}/cell — inline save one cell. */
@@ -240,7 +240,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->error('Field is required.', 400, 'pcm_seo_missing_field');
         }
 
-        $result = $this->service->save_cell($id, $field, $params['value'] ?? '');
+        $result = PCM_SEO_Local::save_cell($id, $field, $params['value'] ?? '');
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -581,7 +581,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        return $this->success($this->service->list_redirects((int) $user->id, $site));
+        return $this->success(PCM_SEO_Redirects::list_redirects((int) $user->id, $site));
     }
 
     /** POST /seo/sites/{id}/redirects — save (UPSERT on from-path) + push. */
@@ -593,7 +593,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $params = $request->get_json_params() ?: array();
-        $result = $this->service->save_redirect((int) $user->id, $site, array(
+        $result = PCM_SEO_Redirects::save_redirect((int) $user->id, $site, array(
             'from'        => (string) ($params['from'] ?? ''),
             'to'          => (string) ($params['to'] ?? ''),
             'code'        => (int) ($params['code'] ?? 301),
@@ -613,7 +613,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        $result = $this->service->delete_redirect((int) $user->id, $site, absint($request->get_param('rid')));
+        $result = PCM_SEO_Redirects::delete_redirect((int) $user->id, $site, absint($request->get_param('rid')));
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -654,7 +654,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if ($url === '') {
             return new WP_Error('pcm_seo_usage_no_url', __('No URL to search for.', 'power-creatives'), array('status' => 400));
         }
-        return $this->success(PCM_SEO_Service::remote_url_usage($site, $url));
+        return $this->success(PCM_SEO_Redirects::remote_url_usage($site, $url));
     }
 
     /** POST /seo/sites/{id}/content/{post}/image-rule — save an image METADATA
@@ -729,7 +729,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        return $this->success(PCM_SEO_Service::page_state_compare($site, absint($request->get_param('post')), (int) $user->id));
+        return $this->success(PCM_SEO_Page_State::page_state_compare($site, absint($request->get_param('post')), (int) $user->id));
     }
 
     public function remote_optimize_section(WP_REST_Request $request): WP_REST_Response|WP_Error
@@ -930,7 +930,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$brand_id && ($site->name ?? '') !== '') {
             $overrides['business.name'] = (string) $site->name;
         }
-        $result = $this->service->generate_site_field($field, $brand_id, $model, $user ? (int) $user->id : null, $provider, $overrides);
+        $result = PCM_SEO_AI::generate_site_field($field, $brand_id, $model, $user ? (int) $user->id : null, $provider, $overrides);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -1105,7 +1105,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
 
         $user   = $this->get_current_pcm_user();
-        $result = $this->service->generate_field($id, $field, $brand_id, $model, $user ? (int) $user->id : null, $provider, $template_id);
+        $result = PCM_SEO_AI::generate_field($id, $field, $brand_id, $model, $user ? (int) $user->id : null, $provider, $template_id);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -1122,7 +1122,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!current_user_can('edit_post', $id)) {
             return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
         }
-        $result = $this->service->scan_links($id);
+        $result = PCM_SEO_Local::scan_links($id);
         return $this->success(array_merge(array('id' => $id), $result));
     }
 
@@ -1133,7 +1133,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$id || !get_post($id)) {
             return $this->not_found('Content');
         }
-        return $this->success(array('links' => $this->service->get_post_links($id)));
+        return $this->success(array('links' => PCM_SEO_Local::get_post_links($id)));
     }
 
     /** POST /seo/content/{id}/links/{idx} — edit a link's anchor/href in the post content. */
@@ -1149,7 +1149,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $params = $request->get_json_params() ?: array();
         $anchor = array_key_exists('anchor', $params) ? (string) $params['anchor'] : null;
         $href   = array_key_exists('href', $params) ? (string) $params['href'] : null;
-        $result = $this->service->update_post_link($id, absint($request->get_param('idx')), $anchor, $href);
+        $result = PCM_SEO_Local::update_post_link($id, absint($request->get_param('idx')), $anchor, $href);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -1166,7 +1166,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!current_user_can('edit_post', $id)) {
             return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
         }
-        $result = $this->service->remove_post_link($id, absint($request->get_param('idx')));
+        $result = PCM_SEO_Local::remove_post_link($id, absint($request->get_param('idx')));
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -1180,7 +1180,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$id || !get_post($id)) {
             return $this->not_found('Content');
         }
-        return $this->success(array('headings' => $this->service->get_post_headings($id)));
+        return $this->success(array('headings' => PCM_SEO_Local::get_post_headings($id)));
     }
 
     /** GET /seo/content/{id}/content-nodes — ordered headings + paragraphs for the outline. */
@@ -1190,7 +1190,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$id || !get_post($id)) {
             return $this->not_found('Content');
         }
-        return $this->success(array('nodes' => $this->service->get_post_content_nodes($id)));
+        return $this->success(array('nodes' => PCM_SEO_Local::get_post_content_nodes($id)));
     }
 
     /** POST /seo/content/{id}/headings/{idx} — change a heading's text and/or tag level. */
@@ -1206,7 +1206,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $params = $request->get_json_params() ?: array();
         $text   = array_key_exists('text', $params) ? wp_kses_post((string) $params['text']) : null;
         $level  = array_key_exists('level', $params) ? absint($params['level']) : null;
-        $result = $this->service->update_post_heading($id, absint($request->get_param('idx')), $text, $level);
+        $result = PCM_SEO_Local::update_post_heading($id, absint($request->get_param('idx')), $text, $level);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -1230,7 +1230,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
         $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
         $user     = $this->get_current_pcm_user();
-        $result   = $this->service->optimize_heading($id, $text, $brand_id, $model, $user ? (int) $user->id : null, $provider, $template_id);
+        $result   = PCM_SEO_Local::optimize_heading($id, $text, $brand_id, $model, $user ? (int) $user->id : null, $provider, $template_id);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -1282,7 +1282,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $brand_id = isset($params['brandId']) && $params['brandId'] ? absint($params['brandId']) : null;
         $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
         $user     = $this->get_current_pcm_user();
-        $result   = $this->service->optimize_body($id, $brand_id, $model, $user ? (int) $user->id : null);
+        $result   = PCM_SEO_AI::optimize_body($id, $brand_id, $model, $user ? (int) $user->id : null);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -1297,7 +1297,7 @@ class PCM_REST_SEO extends PCM_REST_Base
     public function views_list(WP_REST_Request $request): WP_REST_Response
     {
         $user = $this->get_current_pcm_user();
-        return $this->success($this->service->list_views((int) $user->id));
+        return $this->success(PCM_SEO_Views::list_views((int) $user->id));
     }
 
     /** POST /seo/views — create a saved view for the current user. */
@@ -1316,7 +1316,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
 
         $user = $this->get_current_pcm_user();
-        return $this->success($this->service->create_view((int) $user->id, $name, $config), 201);
+        return $this->success(PCM_SEO_Views::create_view((int) $user->id, $name, $config), 201);
     }
 
     /**
@@ -1331,7 +1331,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $isDefault = array_key_exists('isDefault', $params) ? (bool) $params['isDefault'] : true;
 
         $user = $this->get_current_pcm_user();
-        if (!$this->service->set_default_view($id, (int) $user->id, $isDefault)) {
+        if (!PCM_SEO_Views::set_default_view($id, (int) $user->id, $isDefault)) {
             return $this->not_found('View');
         }
         return $this->success(array('id' => $id, 'isDefault' => $isDefault));
@@ -1342,7 +1342,7 @@ class PCM_REST_SEO extends PCM_REST_Base
     {
         $id = absint($request->get_param('id'));
         $user = $this->get_current_pcm_user();
-        if (!$this->service->delete_view($id, (int) $user->id)) {
+        if (!PCM_SEO_Views::delete_view($id, (int) $user->id)) {
             return $this->not_found('View');
         }
         return $this->success(array('deleted' => true));
@@ -1409,7 +1409,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
 
         $user   = $this->get_current_pcm_user();
-        $result = $this->service->generate_site_field($field, $brand_id, $model, $user ? (int) $user->id : null, $provider);
+        $result = PCM_SEO_AI::generate_site_field($field, $brand_id, $model, $user ? (int) $user->id : null, $provider);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -1465,7 +1465,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        $record = PCM_SEO_Business::business_record_for_site((int) $site->id);
         $record['units'] = $record['brandId'] > 0 ? PCM_Brands_Service::list_business_units($record['brandId']) : array();
         // The DYNAMIC provider name (owner correction, gap 23955b9): the
         // working line names the ACTUAL configured fetcher — registry
@@ -1495,7 +1495,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $params = $request->get_json_params() ?: array();
-        $result = PCM_SEO_Service::save_site_business_overrides((int) $site->id, (array) ($params['fields'] ?? array()));
+        $result = PCM_SEO_Business::save_site_business_overrides((int) $site->id, (array) ($params['fields'] ?? array()));
         return $result instanceof WP_Error ? $result : $this->success($result);
     }
 
@@ -1509,7 +1509,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        $record = PCM_SEO_Business::business_record_for_site((int) $site->id);
         if ($record['brandId'] === 0) {
             return $this->error(__('Link this site to a brand first — the refresh writes into the brand\'s business unit.', 'power-creatives'), 409, 'pcm_seo_biz_unmapped');
         }
@@ -1520,7 +1520,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $custom_url  = esc_url_raw((string) ($params['url'] ?? ''));
         $scrape_url  = ($custom_url !== '' && preg_match('#^https?://#i', $custom_url)) ? $custom_url : (string) $site->url;
         if ($custom_url !== '' && $scrape_url === $custom_url) {
-            PCM_SEO_Service::save_site_business_overrides((int) $site->id, array('indexedurl' => $custom_url));
+            PCM_SEO_Business::save_site_business_overrides((int) $site->id, array('indexedurl' => $custom_url));
         }
         $scraped = (new PCM_Brands_Service())->scrape_and_prepare($scrape_url);
         $info    = (array) ($scraped['businessInfo'] ?? array());
@@ -1537,7 +1537,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if ($saved instanceof WP_Error) {
             return $saved;
         }
-        return $this->success(PCM_SEO_Service::business_record_for_site((int) $site->id));
+        return $this->success(PCM_SEO_Business::business_record_for_site((int) $site->id));
     }
 
     /** POST /seo/sites/{id}/business/maps — ONE pasted Maps Share URL →
@@ -1550,13 +1550,13 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        $record = PCM_SEO_Business::business_record_for_site((int) $site->id);
         if ($record['brandId'] === 0) {
             return $this->error(__('Link this site to a brand first — the Maps details belong to the brand\'s business unit.', 'power-creatives'), 409, 'pcm_seo_biz_unmapped');
         }
         $params = $request->get_json_params() ?: array();
         $url    = (string) ($params['url'] ?? '');
-        $parsed = PCM_SEO_Service::parse_maps_url($url);
+        $parsed = PCM_SEO_Business::parse_maps_url($url);
         // FLOW-ORDER FIX (gap 972481e, live-proven): short links (share.google,
         // maps.app.goo.gl) legitimately parse to NOTHING locally — that is
         // NOT fatal; the resolver + provider below do the real work. Only a
@@ -1584,7 +1584,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             // fields (cid/geo) are extractable — salvage them (gap 972481e).
             $err_data = $pid->get_error_data();
             if (is_array($err_data) && !empty($err_data['resolvedUrl'])) {
-                $late = PCM_SEO_Service::parse_maps_url((string) $err_data['resolvedUrl']);
+                $late = PCM_SEO_Business::parse_maps_url((string) $err_data['resolvedUrl']);
                 if (!($late instanceof WP_Error)) {
                     PCM_Brands_Service::save_business_unit($record['brandId'], array('mergeFetched' => $late['fields'], 'sourceTag' => 'maps-paste'), $record['unitId']);
                 }
@@ -1602,7 +1602,7 @@ class PCM_REST_SEO extends PCM_REST_Base
                 }
             }
         }
-        $out = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        $out = PCM_SEO_Business::business_record_for_site((int) $site->id);
         $out['google'] = $google;
         return $this->success($out);
     }
@@ -1617,7 +1617,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        $record = PCM_SEO_Service::business_record_for_site((int) $site->id);
+        $record = PCM_SEO_Business::business_record_for_site((int) $site->id);
         if ($record['brandId'] === 0) {
             return $this->error(__('Link this site to a brand first — the place details belong to the brand\'s business unit.', 'power-creatives'), 409, 'pcm_seo_biz_unmapped');
         }
@@ -1637,7 +1637,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if ($saved instanceof WP_Error) {
             return $saved;
         }
-        return $this->success(PCM_SEO_Service::business_record_for_site((int) $site->id));
+        return $this->success(PCM_SEO_Business::business_record_for_site((int) $site->id));
     }
 
     /** POST /seo/gbp/search — search places (via the configured provider). */

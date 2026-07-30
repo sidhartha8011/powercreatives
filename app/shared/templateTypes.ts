@@ -87,7 +87,7 @@ export interface TemplateEntry {
 //   both derive their options from these constants automatically.
 // ============================================
 
-export const TEMPLATE_MODULES = ["copy", "image", "video", "writer", "seo"] as const;
+export const TEMPLATE_MODULES = ["copy", "image", "video", "writer", "seo", "optimizer"] as const;
 export type TemplateModule = (typeof TEMPLATE_MODULES)[number];
 
 /** SEO prompt-template sections (each = one generatable field × mode). */
@@ -99,6 +99,24 @@ export const SEO_PROMPT_SECTIONS = [
   "meta_keywords_generate",
   "primary_keyword_generate", "primary_keyword_optimize",
   "content_optimize",
+  "site_ai_description_generate",
+  "llm_info_page_generate",
+  "revise_contract_generate",
+  "revise_envelope_generate",
+  "revise_scope_classifier_generate",
+] as const;
+
+/** AI Optimization prompt-template sections — the compiler + one per teacher
+ *  that calls an LLM (demand/onpage are fully deterministic, no prompt). */
+export const OPTIMIZER_PROMPT_SECTIONS = [
+  "compile",
+  "teacher_answerability",
+  "teacher_facts",
+  "teacher_interlink",
+  "teacher_mention",
+  "teacher_search",
+  "teacher_serp",
+  "teacher_subtopics",
 ] as const;
 
 export const TEMPLATE_TYPES: Record<TemplateModule, string[]> = {
@@ -107,6 +125,7 @@ export const TEMPLATE_TYPES: Record<TemplateModule, string[]> = {
   video: ["scene", "recipe", "enhance"],
   writer: ["generation", "research", "outline"],
   seo: [...SEO_PROMPT_SECTIONS],
+  optimizer: [...OPTIMIZER_PROMPT_SECTIONS],
 };
 
 export const MODULE_LABELS: Record<TemplateModule, string> = {
@@ -115,6 +134,7 @@ export const MODULE_LABELS: Record<TemplateModule, string> = {
   video: "Video",
   writer: "Writer",
   seo: "SEO",
+  optimizer: "AI Optimization",
 };
 
 export const TYPE_LABELS: Record<string, string> = {
@@ -139,6 +159,19 @@ export const TYPE_LABELS: Record<string, string> = {
   primary_keyword_generate: "Primary Keyword — Generate",
   primary_keyword_optimize: "Primary Keyword — Optimize",
   content_optimize: "Content — Optimize",
+  site_ai_description_generate: "AI Index Description (llms.txt)",
+  llm_info_page_generate: "/llm-info/ Page",
+  revise_contract_generate: "Section Revise — Editor Contract",
+  revise_envelope_generate: "Section Revise — Change-Card Format",
+  revise_scope_classifier_generate: "Section Revise — Scope Classifier",
+  compile: "Directive Compiler",
+  teacher_answerability: "Direct Answers Auditor",
+  teacher_facts: "Business Facts Auditor",
+  teacher_interlink: "Internal Linking Strategist",
+  teacher_mention: "AI Recommendation Panel",
+  teacher_search: "Structure & Language Auditor",
+  teacher_serp: "Competitor Gaps (SERP) Analyst",
+  teacher_subtopics: "Topic Coverage Auditor",
 };
 
 // ============================================

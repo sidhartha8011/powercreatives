@@ -127,7 +127,7 @@ class PCM_SEO_Site
         if (!is_singular() || !class_exists('PCM_SEO_Service')) {
             return;
         }
-        $kw = PCM_SEO_Service::seo_get((int) get_the_ID(), 'meta_keywords');
+        $kw = PCM_SEO_Local::seo_get((int) get_the_ID(), 'meta_keywords');
         if ($kw !== '') {
             echo '<meta name="keywords" content="' . esc_attr($kw) . '">' . "\n";
         }

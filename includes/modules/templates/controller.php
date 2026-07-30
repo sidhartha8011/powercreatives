@@ -83,8 +83,12 @@ class PCM_REST_Templates extends PCM_REST_Base
 
         // Ensure the shared (system) SEO prompt templates exist before listing them,
         // so they appear in the Templates UI + SEO header picker without a prior generate.
-        if ($module === 'seo' && class_exists('PCM_SEO_Service')) {
-            PCM_SEO_Service::seed_seo_templates();
+        if ($module === 'seo' && class_exists('PCM_SEO_AI')) {
+            PCM_SEO_AI::seed_seo_templates();
+        }
+        // Same for optimizer's prompt templates — visible without a prior analyze run.
+        if ($module === 'optimizer' && class_exists('PCM_Optimizer_Service')) {
+            PCM_Optimizer_Service::seed_optimizer_templates();
         }
 
         // Build query with optional module filter
@@ -189,8 +193,8 @@ class PCM_REST_Templates extends PCM_REST_Base
         if (empty($params['name'])) {
             return $this->error('Template name is required.');
         }
-        if (empty($params['module']) || !in_array($params['module'], array('copy', 'image', 'video', 'writer', 'seo'), true)) {
-            return $this->error('Module must be one of: copy, image, video, writer.');
+        if (empty($params['module']) || !in_array($params['module'], array('copy', 'image', 'video', 'writer', 'seo', 'optimizer'), true)) {
+            return $this->error('Module must be one of: copy, image, video, writer, seo, optimizer.');
         }
         if (empty($params['entries']) || !is_array($params['entries'])) {
             return $this->error('Template must have at least one entry.');

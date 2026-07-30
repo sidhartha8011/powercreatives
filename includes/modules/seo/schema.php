@@ -68,9 +68,9 @@ class PCM_SEO_Schema
     {
         $id     = (int) $post->ID;
         $author = get_userdata($post->post_author);
-        $desc   = class_exists('PCM_SEO_Service') ? PCM_SEO_Service::seo_get($id, 'description') : '';
-        $kw_raw = class_exists('PCM_SEO_Service') ? PCM_SEO_Service::seo_get($id, 'meta_keywords') : '';
-        $primary = class_exists('PCM_SEO_Service') ? PCM_SEO_Service::seo_get($id, 'keyword') : '';
+        $desc   = class_exists('PCM_SEO_Service') ? PCM_SEO_Local::seo_get($id, 'description') : '';
+        $kw_raw = class_exists('PCM_SEO_Service') ? PCM_SEO_Local::seo_get($id, 'meta_keywords') : '';
+        $primary = class_exists('PCM_SEO_Service') ? PCM_SEO_Local::seo_get($id, 'keyword') : '';
         $site_lang = get_bloginfo('language');
 
         // sameAs: verified Wikidata entries → flat list + per-term map; else

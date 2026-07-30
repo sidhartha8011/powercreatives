@@ -178,20 +178,30 @@ class PCM_Optimizer_Service
             $outline_block = "\n\nTHE PAGE OUTLINE (section index. heading):\n" . implode("\n", $lines);
         }
 
+        // No hidden prompt: the compiler's instructions are a Templates
+        // (module=optimizer) row a user can view/edit — resolve_prompt()
+        // returns this exact default verbatim when no override exists.
+        $default_system = 'You compile content-optimization directives into ONE concise, ordered to-do list for a '
+            . 'rewriting AI. Rules: NEVER drop an intent — every input index must appear in at least one '
+            . 'directive\'s sources; MERGE overlapping directives into one stronger directive; when two '
+            . 'directives collide, produce one directive that explicitly preserves both intents; order by '
+            . 'execution sense (structure first, then content, then wording). Keep each directive one '
+            . 'sentence, imperative, self-contained.{{routing_rules}}'
+            . ' Respond with ONLY this JSON, no markdown: '
+            . '{"directives":[{"text":"...","sources":[0,2]{{routing_json}}}]} — sources are the input '
+            . 'indexes each directive covers.';
+        $system_tpl = self::resolve_prompt('compile', $default_system, (int) ($context['userId'] ?? 0));
+        $system_msg = self::render_prompt_vars($system_tpl, array(
+            'routing_rules' => $routing_rules,
+            'routing_json'  => $routing_json,
+        ));
+
         $messages = array(
             array(
                 'role'    => 'system',
                 // The exact output contract lives IN the prompt (the Anthropic
                 // law — PCM_LLM drops response_format there by design).
-                'content' => 'You compile content-optimization directives into ONE concise, ordered to-do list for a '
-                    . 'rewriting AI. Rules: NEVER drop an intent — every input index must appear in at least one '
-                    . 'directive\'s sources; MERGE overlapping directives into one stronger directive; when two '
-                    . 'directives collide, produce one directive that explicitly preserves both intents; order by '
-                    . 'execution sense (structure first, then content, then wording). Keep each directive one '
-                    . 'sentence, imperative, self-contained.' . $routing_rules
-                    . ' Respond with ONLY this JSON, no markdown: '
-                    . '{"directives":[{"text":"...","sources":[0,2]' . $routing_json . '}]} — sources are the input '
-                    . 'indexes each directive covers.',
+                'content' => $system_msg,
             ),
             array(
                 'role'    => 'user',
@@ -685,7 +695,7 @@ class PCM_Optimizer_Service
         if ($site_id <= 0 || !class_exists('PCM_SEO_Service')) {
             return array();
         }
-        return (array) (PCM_SEO_Service::business_record_for_site($site_id)['fields'] ?? array());
+        return (array) (PCM_SEO_Business::business_record_for_site($site_id)['fields'] ?? array());
     }
 
     /**
@@ -741,6 +751,206 @@ class PCM_Optimizer_Service
     {
         $block = self::context_block($context);
         return $block === '' ? '' : "\n\n" . $block;
+    }
+
+    /**
+     * No hidden prompt (owner mandate): every optimizer system prompt (the
+     * compiler + each teacher) is exposed as a Templates row (module=
+     * 'optimizer') the user can view, edit or replace — mirrors
+     * PCM_SEO_Service's field-prompt mechanism verbatim.
+     */
+
+    /** The shipped default prompts, keyed by section — filterable. */
+    public static function prompts(): array
+    {
+        static $prompts = null;
+        if ($prompts === null) {
+            $prompts = require __DIR__ . '/prompts.php';
+        }
+        $filtered = apply_filters('pcm_optimizer_prompts', $prompts);
+        return is_array($filtered) ? $filtered : $prompts;
+    }
+
+    /**
+     * Flatten prompts() into the shared Prompt-Editor registry shape
+     * ({module:'optimizer'} → section → content string) — the verbatim
+     * shipped defaults, seeded as Templates rows.
+     *
+     * @return array<string, string>
+     */
+    public static function get_default_prompts(): array
+    {
+        $out = array();
+        foreach (self::prompts() as $section => $prompt) {
+            $out[$section] = (string) $prompt;
+        }
+        return $out;
+    }
+
+    /**
+     * Resolve a section's prompt: the user's active Templates override
+     * (module=optimizer) when present, else the shipped default. Mirrors
+     * PCM_SEO_AI::resolve_prompt().
+     *
+     * @param string   $section     Section key, e.g. `teacher_answerability`.
+     * @param string   $default     Shipped default template (fallback).
+     * @param int|null $user_id     PCM user id (wp_pcm_users.id), NOT the WP user id.
+     * @param int|null $template_id Optional explicit template row to prefer.
+     * @return string
+     */
+    public static function resolve_prompt(string $section, string $default, ?int $user_id = null, ?int $template_id = null): string
+    {
+        if ($user_id && $user_id > 0) {
+            self::seed_optimizer_templates();
+            $tpl = self::optimizer_template_prompt($user_id, $section, $template_id);
+            if ($tpl !== null && $tpl !== '') {
+                return $tpl;
+            }
+        }
+        return $default;
+    }
+
+    /**
+     * Render {{var}} placeholders in a resolved prompt template — single
+     * pass, unknown/missing tokens left untouched (mirrors the strategy
+     * module's render_source_vars convention: a custom template that omits
+     * a var simply never sees it substituted, never a hard failure).
+     *
+     * @param string $text Template text.
+     * @param array  $vars name => value map.
+     * @return string
+     */
+    public static function render_prompt_vars(string $text, array $vars): string
+    {
+        return (string) preg_replace_callback('/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/', static function (array $m) use ($vars): string {
+            return array_key_exists($m[1], $vars) ? (string) $vars[$m[1]] : $m[0];
+        }, $text);
+    }
+
+    /**
+     * Seed one default prompt Template per optimizer section (idempotent).
+     * Stored in wp_pcm_templates (module=optimizer, formData={type,section,
+     * prompt}) — same shape PCM_SEO_AI::seed_seo_templates() uses.
+     */
+    public static function seed_optimizer_templates(): void
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('templates');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows = $wpdb->get_col("SELECT formData FROM {$table} WHERE userId = 0 AND module = 'optimizer'");
+        $have = array();
+        foreach ($rows as $json) {
+            $fd = json_decode((string) $json, true);
+            if (!empty($fd['type'])) {
+                $have[$fd['type']] = true;
+            }
+        }
+        foreach (self::get_default_prompts() as $section => $prompt) {
+            if (isset($have[$section])) {
+                continue;
+            }
+            $name = self::optimizer_section_label($section);
+            $form = array(
+                'type'      => $section,
+                'entries'   => array(array(
+                    'key'      => 'prompt_' . $section,
+                    'category' => 'prompt',
+                    'label'    => $name,
+                    'value'    => $prompt,
+                )),
+                'sortOrder' => 0,
+            );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->insert($table, array(
+                'userId'    => 0,
+                'name'      => $name,
+                'module'    => 'optimizer',
+                'formData'  => wp_json_encode($form),
+                'isDefault' => 1,
+            ), array('%d', '%s', '%s', '%s', '%d'));
+        }
+    }
+
+    /** Resolve a section's prompt from Templates (module=optimizer): the
+     *  chosen template, else the user's own default, else the SYSTEM
+     *  default, else any — identical priority chain to seo_template_prompt(). */
+    private static function optimizer_template_prompt(int $user_id, string $section, ?int $template_id): ?string
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('templates');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT id, userId, formData, isDefault, updatedAt FROM {$table} WHERE (userId = %d OR userId = 0) AND module = 'optimizer' ORDER BY updatedAt DESC, id DESC", $user_id), ARRAY_A);
+        $chosen         = null;
+        $chosen_shared  = false;
+        $user_fork      = null;
+        $user_default   = null;
+        $system_default = null;
+        $any            = null;
+        foreach ($rows as $r) {
+            $fd = json_decode((string) ($r['formData'] ?? ''), true);
+            if (!is_array($fd) || ($fd['type'] ?? '') !== $section) {
+                continue;
+            }
+            $prompt = self::optimizer_entry_prompt($fd);
+            if ($prompt === null) {
+                continue;
+            }
+            if ($template_id && (int) $r['id'] === $template_id) {
+                $chosen        = $prompt;
+                $chosen_shared = ((int) $r['userId'] === 0);
+            }
+            if ((int) $r['userId'] === $user_id && $user_fork === null) {
+                $user_fork = $prompt;
+            }
+            if (!empty($r['isDefault'])) {
+                if ((int) $r['userId'] === $user_id && $user_default === null) {
+                    $user_default = $prompt;
+                } elseif ((int) $r['userId'] === 0 && $system_default === null) {
+                    $system_default = $prompt;
+                }
+            }
+            if ($any === null) {
+                $any = $prompt;
+            }
+        }
+        // A picker can pass the ORIGINAL shared template's id from a cached list
+        // even after the user's edit forked it into their own copy — redirect to
+        // their fork instead of the stale shared row (seo_template_prompt precedent).
+        if ($chosen !== null && $chosen_shared && $user_fork !== null) {
+            $chosen = $user_fork;
+        }
+        // A user's OWN template beats the shipped system default even unstarred —
+        // matches seo_template_prompt (a created/duplicated template is intent to
+        // use it); a starred one still wins, ties broken newest-first.
+        return $chosen ?? $user_default ?? $user_fork ?? $system_default ?? $any;
+    }
+
+    /** Extract the prompt string from an optimizer template's formData (entries[].value). */
+    private static function optimizer_entry_prompt(array $fd): ?string
+    {
+        $entries = (isset($fd['entries']) && is_array($fd['entries'])) ? $fd['entries'] : array();
+        foreach ($entries as $e) {
+            if (($e['category'] ?? '') === 'prompt' && isset($e['value'])) {
+                return (string) $e['value'];
+            }
+        }
+        return isset($entries[0]['value']) ? (string) $entries[0]['value'] : null;
+    }
+
+    /** Human label for an optimizer prompt section, shown in the Templates UI. */
+    private static function optimizer_section_label(string $section): string
+    {
+        $labels = array(
+            'compile'               => 'Optimizer: Directive Compiler',
+            'teacher_answerability' => 'Optimizer: Direct Answers Auditor',
+            'teacher_facts'         => 'Optimizer: Business Facts Auditor',
+            'teacher_interlink'     => 'Optimizer: Internal Linking Strategist',
+            'teacher_mention'       => 'Optimizer: AI Recommendation Panel',
+            'teacher_search'        => 'Optimizer: Structure & Language Auditor',
+            'teacher_serp'          => 'Optimizer: Competitor Gaps (SERP) Analyst',
+            'teacher_subtopics'     => 'Optimizer: Topic Coverage Auditor',
+        );
+        return $labels[$section] ?? ucwords(str_replace('_', ' ', $section));
     }
 
     /** Option holding the research tunables — hub-controlled DATA (the

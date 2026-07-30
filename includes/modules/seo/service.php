@@ -27,6 +27,12 @@ require_once __DIR__ . '/site.php';
 require_once __DIR__ . '/gbp.php';
 require_once __DIR__ . '/export.php';
 require_once __DIR__ . '/class-pcm-text-matcher.php';
+require_once __DIR__ . '/views.php';
+require_once __DIR__ . '/business.php';
+require_once __DIR__ . '/redirects.php';
+require_once __DIR__ . '/ai.php';
+require_once __DIR__ . '/local.php';
+require_once __DIR__ . '/page-state.php';
 
 class PCM_SEO_Service
 {
@@ -39,972 +45,11 @@ class PCM_SEO_Service
     /** Max rows fetched per content type. */
     public const PER_TYPE = 100;
 
-    // =====================================================================
-    // Cross-plugin SEO meta registry (ported verbatim; pcm_seo_ backup keys)
-    // =====================================================================
-
-    /**
-     * Map of supported SEO plugins to their meta key names.
-     * Each entry: slug => [title, description, keyword, meta_keywords].
-     *
-     * @return array<string, array<string, string>>
-     */
-    public static function seo_key_map(): array
-    {
-        return [
-            'yoast' => [
-                'title'         => '_yoast_wpseo_title',
-                'description'   => '_yoast_wpseo_metadesc',
-                'keyword'       => '_yoast_wpseo_focuskw',
-                'meta_keywords' => 'pcm_seo_meta_keywords', // no native Yoast support
-            ],
-            'rankmath' => [
-                'title'         => 'rank_math_title',
-                'description'   => 'rank_math_description',
-                'keyword'       => 'rank_math_focus_keyword',
-                'meta_keywords' => 'pcm_seo_meta_keywords',
-            ],
-            'seopress' => [
-                'title'         => '_seopress_titles_title',
-                'description'   => '_seopress_titles_desc',
-                'keyword'       => '_seopress_analysis_target_kw',
-                'meta_keywords' => 'pcm_seo_meta_keywords',
-            ],
-            'simple' => [
-                'title'         => 'pcm_seo_meta_title',
-                'description'   => 'pcm_seo_meta_description',
-                'keyword'       => 'pcm_seo_primary_keyword',
-                'meta_keywords' => 'pcm_seo_meta_keywords',
-            ],
-        ];
-    }
-
-    /**
-     * Detect the active SEO plugin via class/constant/function checks
-     * (works with must-use plugins / custom paths). Priority by market
-     * share: Yoast > Rank Math > SEOPress > internal fallback.
-     *
-     * @return string One of: yoast | rankmath | seopress | simple.
-     */
-    public static function detect_seo_plugin(): string
-    {
-        if (defined('WPSEO_VERSION')) {
-            return 'yoast';
-        }
-        if (class_exists('RankMath')) {
-            return 'rankmath';
-        }
-        if (function_exists('seopress_init')) {
-            return 'seopress';
-        }
-        return 'simple';
-    }
-
-    /**
-     * Read an SEO field: active plugin key → internal backup → ''.
-     *
-     * @param int    $post_id Post id.
-     * @param string $field   title | description | keyword | meta_keywords.
-     * @return string
-     */
-    public static function seo_get(int $post_id, string $field): string
-    {
-        $map    = self::seo_key_map();
-        $plugin = self::detect_seo_plugin();
-
-        if (isset($map[$plugin][$field])) {
-            $value = get_post_meta($post_id, $map[$plugin][$field], true);
-            if ($value !== '' && $value !== false) {
-                return (string) $value;
-            }
-        }
-        if ($plugin !== 'simple' && isset($map['simple'][$field])) {
-            $value = get_post_meta($post_id, $map['simple'][$field], true);
-            if ($value !== '' && $value !== false) {
-                return (string) $value;
-            }
-        }
-        return '';
-    }
-
-    /**
-     * Write an SEO field to the active plugin's key AND the internal backup
-     * (dual-write so the value survives a plugin switch).
-     *
-     * @param int    $post_id Post id.
-     * @param string $field   title | description | keyword | meta_keywords.
-     * @param string $value   Sanitized value.
-     */
-    public static function seo_update(int $post_id, string $field, string $value): void
-    {
-        $map    = self::seo_key_map();
-        $plugin = self::detect_seo_plugin();
-
-        if (isset($map[$plugin][$field])) {
-            update_post_meta($post_id, $map[$plugin][$field], $value);
-        }
-        if ($plugin !== 'simple' && isset($map['simple'][$field])) {
-            update_post_meta($post_id, $map['simple'][$field], $value);
-        }
-    }
-
-    // =====================================================================
-    // Content rows
-    // =====================================================================
-
-    /**
-     * List content rows for the requested types (post/page), newest first.
-     *
-     * @param string[] $types Subset of VALID_TYPES.
-     * @return array[] Row arrays.
-     */
-    public function list_content(array $types): array
-    {
-        $types = array_values(array_intersect($types, self::VALID_TYPES));
-        if (empty($types)) {
-            $types = self::VALID_TYPES;
-        }
-
-        $rows = array();
-        foreach ($types as $type) {
-            $query = new WP_Query(array(
-                'post_type'      => $type,
-                'post_status'    => array('publish', 'draft', 'pending', 'private', 'future'),
-                'posts_per_page' => self::PER_TYPE,
-                'orderby'        => 'date',
-                'order'          => 'DESC',
-                'no_found_rows'  => true,
-            ));
-            foreach ($query->posts as $post) {
-                $rows[] = $this->build_row($post);
-            }
-        }
-        return $rows;
-    }
-
-    /**
-     * Build a single content row (SEO-focused field set).
-     *
-     * @param WP_Post $post Post object.
-     * @return array
-     */
-    public function build_row(WP_Post $post): array
-    {
-        $id = (int) $post->ID;
-        return array(
-            'id'                 => $id,
-            'type'               => $post->post_type,
-            'title'              => $post->post_title,
-            'slug'               => $post->post_name,
-            'status'             => $post->post_status,
-            'date'               => $post->post_date,
-            'authorId'           => (int) $post->post_author,
-            'author'             => get_the_author_meta('display_name', (int) $post->post_author),
-            'permalink'          => get_permalink($id),
-            'editUrl'            => get_edit_post_link($id, 'raw'),
-            'featuredImage'      => (string) get_the_post_thumbnail_url($id, 'thumbnail'),
-            'featuredImageId'    => (int) get_post_thumbnail_id($id),
-            'excerpt'            => wp_trim_words(wp_strip_all_tags($post->post_content), 20, '…'),
-            'metaTitle'          => self::seo_get($id, 'title'),
-            'metaDescription'    => self::seo_get($id, 'description'),
-            'primaryKeyword'     => self::seo_get($id, 'keyword'),
-            'metaKeywords'       => self::seo_get($id, 'meta_keywords'),
-            'supportingKeyword'  => (string) get_post_meta($id, 'pcm_seo_supporting_keyword', true),
-            'clusterLabel'       => (string) get_post_meta($id, 'pcm_seo_cluster_label', true),
-            'schemaTypes'        => class_exists('PCM_SEO_Schema') ? PCM_SEO_Schema::types_for($id) : array(),
-            'internalLinks'      => self::link_count_meta($id, 'internal'),
-            'externalLinks'      => self::link_count_meta($id, 'external'),
-            'brokenLinks'        => self::link_count_meta($id, 'broken'),
-            'linksScannedAt'     => (string) get_post_meta($id, 'pcm_seo_links_scanned_at', true),
-        );
-    }
-
-    /** Stored link-scan count for a post, or null when it was never scanned. */
-    private static function link_count_meta(int $id, string $which): ?int
-    {
-        if (get_post_meta($id, 'pcm_seo_links_scanned_at', true) === '') {
-            return null;
-        }
-        return (int) get_post_meta($id, "pcm_seo_{$which}_links", true);
-    }
-
-    /**
-     * Scan a post's links: count internal/external + detect broken (HTTP).
-     * Caches counts in post meta (read back by build_row). Ported from
-     * Optimizer Simple's link-analyzer (max 20 broken-checks, 4s timeout each).
-     *
-     * @return array{internal:int,external:int,broken:int,scannedAt:string}
-     */
-    public function scan_links(int $post_id, bool $check_status = true): array
-    {
-        $post    = get_post($post_id);
-        $content = $post ? (string) $post->post_content : '';
-        $from    = get_permalink($post_id) ?: '';
-        $links   = self::scan_link_details($content, $from, home_url(), $check_status);
-        $internal = 0; $external = 0; $broken = 0;
-        foreach ($links as $l) {
-            if ($l['kind'] === 'internal') { $internal++; } else { $external++; }
-            if (!empty($l['broken'])) { $broken++; }
-        }
-        $now = current_time('mysql');
-        update_post_meta($post_id, 'pcm_seo_internal_links', $internal);
-        update_post_meta($post_id, 'pcm_seo_external_links', $external);
-        update_post_meta($post_id, 'pcm_seo_broken_links', $broken);
-        update_post_meta($post_id, 'pcm_seo_links_scanned_at', $now);
-        // wp_slash: update_metadata() runs wp_unslash() on the value, which would strip the
-        // backslashes JSON uses to escape the quotes inside each link's <a href="…"> HTML and
-        // corrupt the stored JSON (counts saved fine, but the popup detail list came back empty).
-        update_post_meta($post_id, 'pcm_seo_links', wp_slash(wp_json_encode($links)));
-        return array('internal' => $internal, 'external' => $external, 'broken' => $broken, 'scannedAt' => $now);
-    }
-
-    /**
-     * Parse every <a> in content into a detailed record: anchor text, source URL,
-     * target, the exact HTML, an HTTP status, internal/external kind, and broken flag.
-     * Shared by local + remote scanning. HTTP status is checked (capped) so a big
-     * page doesn't time out; uncapped links get status 0 (unchecked).
-     *
-     * @return array<int,array{anchor:string,from:string,to:string,html:string,status:int,kind:string,broken:bool}>
-     */
-    public static function scan_link_details(string $content, string $from_url, string $site_url, bool $check_status = true): array
-    {
-        if ($content === '' || !preg_match_all('/<a\s([^>]*?)>(.*?)<\/a>/is', $content, $matches, PREG_SET_ORDER)) {
-            return array();
-        }
-        $site_host = wp_parse_url($site_url, PHP_URL_HOST);
-        $args = array('timeout' => 4, 'redirection' => 5, 'user-agent' => 'WordPress/PowerCreatives; ' . home_url(), 'sslverify' => false);
-        $checked = 0;
-        $links   = array();
-        foreach ($matches as $m) {
-            if (!preg_match('/href=[\'"]([^\'"]+)[\'"]/i', $m[1], $h)) {
-                continue;
-            }
-            $href = trim($h[1]);
-            if ($href === '' || preg_match('#^(\#|tel:|mailto:|javascript:|data:)#i', $href)) {
-                continue;
-            }
-            $anchor = trim(wp_strip_all_tags($m[2]));
-            $host   = wp_parse_url($href, PHP_URL_HOST);
-            $kind   = (!$host || $host === $site_host || ($site_host && str_ends_with($host, '.' . $site_host))) ? 'internal' : 'external';
-
-            $check_url = str_starts_with($href, '/') ? rtrim($site_url, '/') . $href : $href;
-            $status = 0;
-            $broken = false;
-            if ($check_status && $checked < 30 && preg_match('#^https?://#i', $check_url)) {
-                $resp = wp_remote_head($check_url, $args);
-                if (is_wp_error($resp)) {
-                    $broken = true;
-                } else {
-                    $status = (int) wp_remote_retrieve_response_code($resp);
-                    if ($status === 405) {
-                        $resp   = wp_remote_get($check_url, $args);
-                        $status = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
-                    }
-                    $broken = ($status === 0 || $status >= 400);
-                }
-                $checked++;
-            }
-            $links[] = array(
-                'anchor' => $anchor,
-                'from'   => $from_url,
-                'to'     => $href,
-                'html'   => $m[0],
-                'status' => $status,
-                'kind'   => $kind,
-                'broken' => $broken,
-            );
-        }
-        return $links;
-    }
-
-    /** Stored per-link details for a local post (from the last scan), with index ids. */
-    public function get_post_links(int $post_id): array
-    {
-        $raw   = get_post_meta($post_id, 'pcm_seo_links', true);
-        $links = (is_string($raw) && $raw !== '') ? json_decode($raw, true) : array();
-        if (!is_array($links)) {
-            $links = array();
-        }
-        return array_values(array_map(static function ($l, $i) {
-            $l = is_array($l) ? $l : array();
-            $l['id'] = (int) $i;
-            $l['editable'] = true; // local links live in post_content → always editable
-            return $l;
-        }, $links, array_keys($links)));
-    }
-
-    /**
-     * Byte offset of the link at $index within $content — OCCURRENCE-AWARE so that
-     * duplicate <a> HTML (the same anchor + href appearing several times, e.g. repeated
-     * "View Details" buttons) resolves to the CORRECT occurrence instead of always the
-     * first. Returns null when not found (content changed since the scan the index came
-     * from). $links must be in document order (as scan_link_details returns them).
-     */
-    private static function nth_link_pos(string $content, array $links, int $index): ?int
-    {
-        if (!isset($links[$index]['html'])) {
-            return null;
-        }
-        $html = (string) $links[$index]['html'];
-        if ($html === '') {
-            return null;
-        }
-        // Count earlier links with the exact same HTML → which occurrence to target.
-        $occurrence = 0;
-        for ($i = 0; $i < $index; $i++) {
-            if (isset($links[$i]['html']) && (string) $links[$i]['html'] === $html) {
-                $occurrence++;
-            }
-        }
-        $pos    = false;
-        $offset = 0;
-        for ($n = 0; $n <= $occurrence; $n++) {
-            $pos = strpos($content, $html, $offset);
-            if ($pos === false) {
-                return null;
-            }
-            $offset = $pos + 1;
-        }
-        return ($pos === false) ? null : (int) $pos;
-    }
-
-    /** Fire known WP + page-builder + CDN-bridge cache purges for a post so a programmatic edit
-     *  (which many cache plugins SKIP vs. an editor save) shows on the live page. A bare Cloudflare
-     *  proxy with no WP integration must be purged manually. Mirrors the connector's purge so the
-     *  OWN site behaves like a connected one. */
-    private static function purge_post_caches(int $post_id): void
-    {
-        if (function_exists('clean_post_cache'))            { clean_post_cache($post_id); }
-        if (function_exists('rocket_clean_post'))           { rocket_clean_post($post_id); }            // WP Rocket
-        if (function_exists('w3tc_flush_post'))             { w3tc_flush_post($post_id); }              // W3 Total Cache
-        if (function_exists('wp_cache_post_change'))        { wp_cache_post_change($post_id); }         // WP Super Cache
-        if (function_exists('wpfc_clear_post_cache_by_id')) { wpfc_clear_post_cache_by_id($post_id); }  // WP Fastest Cache
-        do_action('litespeed_purge_post', $post_id);
-        do_action('cache_enabler_clear_page_cache_by_post', $post_id);
-        do_action('breeze_clear_all_cache');
-        do_action('siteground_optimizer_flush_cache');
-        do_action('swcfpc_purge_cache');           // Super Page Cache for Cloudflare → purges CF edge
-        do_action('autoptimize_flush_pagecache');
-        do_action('elementor/core/files/clear_cache');
-    }
-
-    /** Recursively replace strings inside a value (string / array / object) — serialization-safe. */
-    private static function deep_str_replace(array $search, array $replace, $val, int &$count)
-    {
-        if (is_string($val)) { $c = 0; $out = str_replace($search, $replace, $val, $c); $count += $c; return $out; }
-        if (is_array($val))  { foreach ($val as $k => $v) { $val[$k] = self::deep_str_replace($search, $replace, $v, $count); } return $val; }
-        if (is_object($val)) { foreach (get_object_vars($val) as $k => $v) { $val->$k = self::deep_str_replace($search, $replace, $v, $count); } return $val; }
-        return $val;
-    }
-
-    /** Replace an old URL with a new one across EVERY custom field — page builders (Elementor/Divi/
-     *  Beaver/etc.) store the layout in meta and render from THERE, not post_content. Serialization-
-     *  safe (JSON strings, PHP-serialized arrays/objects). Returns the number of places changed. */
-    private static function replace_url_in_meta(int $post_id, string $old, string $new): int
-    {
-        if ($old === '' || $new === '' || $old === $new) { return 0; }
-        global $wpdb;
-        $search = array($old); $replace = array($new);
-        $oe = str_replace('/', '\\/', $old); // slash-escaped (JSON-in-meta) form
-        if ($oe !== $old) { $search[] = $oe; $replace[] = str_replace('/', '\\/', $new); }
-        $changed = 0;
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-        $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
-        foreach ((array) $rows as $row) {
-            $raw = (string) $row->meta_value; $hit = false;
-            foreach ($search as $s) { if ($s !== '' && strpos($raw, $s) !== false) { $hit = true; break; } }
-            if (!$hit) { continue; }
-            $cnt = 0;
-            $newVal = self::deep_str_replace($search, $replace, maybe_unserialize($raw), $cnt);
-            if ($cnt > 0) { update_metadata_by_mid('post', (int) $row->meta_id, wp_slash($newVal)); $changed += $cnt; }
-        }
-        return $changed;
-    }
-
-    /**
-     * Edit a link in a local post's content: replace its href and/or anchor text in
-     * the stored <a> HTML, save the post, re-scan. Returns the refreshed link list.
-     */
-    public function update_post_link(int $post_id, int $index, ?string $anchor, ?string $href)
-    {
-        $links = $this->get_post_links($post_id);
-        if (!isset($links[$index])) {
-            return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
-        }
-        $post = get_post($post_id);
-        if (!$post) {
-            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
-        }
-        $old_html = (string) $links[$index]['html'];
-        $new_href = $href !== null ? esc_url_raw($href) : (string) $links[$index]['to'];
-        $new_text = $anchor !== null ? wp_kses_post($anchor) : (string) $links[$index]['anchor'];
-
-        // Rebuild the <a> (callbacks avoid $-escaping issues in replacements).
-        $new_html = preg_replace_callback('/href=[\'"][^\'"]*[\'"]/i', static fn() => 'href="' . $new_href . '"', $old_html, 1);
-        $new_html = preg_replace_callback('/(<a\s[^>]*>)(.*)(<\/a>)/is', static fn($m) => $m[1] . $new_text . $m[3], $new_html, 1);
-
-        $content = (string) $post->post_content;
-        $pos = self::nth_link_pos($content, $links, $index);
-        if ($pos === null) {
-            return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
-        }
-        $content = substr_replace($content, (string) $new_html, $pos, strlen($old_html));
-        wp_update_post(array('ID' => $post_id, 'post_content' => $content));
-
-        // If the link's TARGET changed, propagate it across custom fields too — page builders store
-        // the layout in meta and render from THERE, not post_content — then purge caches so the live
-        // page reflects it. Brings the OWN site to parity with the connector's remote behaviour.
-        $old_url = (string) $links[$index]['to'];
-        if ($new_href !== '' && $new_href !== $old_url) {
-            self::replace_url_in_meta($post_id, $old_url, $new_href);
-        }
-        self::purge_post_caches($post_id);
-
-        $this->scan_links($post_id, false); // fast refresh — skip per-link HTTP checks (avoid timeout)
-        return $this->get_post_links($post_id);
-    }
-
-    /** Remove a link from a local post's content (unwrap the <a>, keep its text), save, re-scan. */
-    public function remove_post_link(int $post_id, int $index)
-    {
-        $links = $this->get_post_links($post_id);
-        if (!isset($links[$index])) {
-            return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
-        }
-        $post = get_post($post_id);
-        if (!$post) {
-            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
-        }
-        $old_html = (string) $links[$index]['html'];
-        $inner    = preg_replace('/^<a\s[^>]*>(.*)<\/a>$/is', '$1', $old_html);
-        $content  = (string) $post->post_content;
-        $pos      = self::nth_link_pos($content, $links, $index);
-        if ($pos === null) {
-            return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
-        }
-        $content = substr_replace($content, (string) $inner, $pos, strlen($old_html));
-        wp_update_post(array('ID' => $post_id, 'post_content' => $content));
-        self::purge_post_caches($post_id);
-        $this->scan_links($post_id, false); // fast refresh — skip per-link HTTP checks (avoid timeout)
-        return $this->get_post_links($post_id);
-    }
-
-    // =====================================================================
-    // HEADINGS (H1–H6) — the SEO table's expandable heading editor
-    // =====================================================================
-
-    /** Parse every <h1>..<h6> out of an HTML string, in document order. */
-    public static function parse_heading_details(string $content): array
-    {
-        if ($content === '' || !preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>#is', $content, $m, PREG_SET_ORDER)) {
-            return array();
-        }
-        $out = array();
-        foreach ($m as $mm) {
-            $text = trim(wp_strip_all_tags($mm[3]));
-            if ($text === '') { continue; } // skip empty/spacer headings
-            $out[] = array(
-                'level'  => (int) $mm[1],
-                'text'   => $text,
-                'html'   => $mm[0],
-                'source' => 'content',
-                'elId'   => '',
-                'field'  => '',
-                'tagKey' => '',
-                'textKey' => '',
-            );
-        }
-        return $out;
-    }
-
-    /** Rebuild a heading's HTML with a new tag level and/or new inner text, preserving attributes. */
-    private static function rebuild_heading_html(string $old_html, int $old_level, int $new_level, ?string $new_text): string
-    {
-        $html = $old_html;
-        if ($new_level !== $old_level && $new_level >= 1 && $new_level <= 6) {
-            $html = preg_replace('/^<h[1-6]/i', '<h' . $new_level, $html, 1);
-            $html = preg_replace('/<\/h[1-6]>(\s*)$/i', '</h' . $new_level . '>$1', $html, 1);
-        }
-        if ($new_text !== null) {
-            $safe = wp_kses_post($new_text);
-            // Callback keeps $-sequences in the replacement literal.
-            $html = preg_replace_callback('/(<h[1-6][^>]*>)(.*)(<\/h[1-6]>)/is', static fn($m) => $m[1] . $safe . $m[3], $html, 1);
-        }
-        return (string) $html;
-    }
-
-    /** Local post's headings (parsed from post_content), indexed for editing. */
-    public function get_post_headings(int $post_id): array
-    {
-        $post    = get_post($post_id);
-        $content = $post ? (string) $post->post_content : '';
-        $list    = self::parse_heading_details($content);
-        return array_values(array_map(static function ($h, $i) {
-            $h['index']    = (int) $i;
-            $h['id']       = (int) $i;
-            $h['editable'] = true; // local content headings live in post_content → editable
-            return $h;
-        }, $list, array_keys($list)));
-    }
-
-    // =====================================================================
-    // CONTENT NODES (headings + paragraphs) — the SEO outline's page-content
-    // rows (dynamic-optimization pair 1). NODE IDENTITY CONTRACT v1: a node
-    // is addressed by { kind, index (position in THIS ordered list),
-    // normalized text } — the exact identity dynamic rules will target and
-    // the AI optimizer will rewrite. Never change the ordering or the skip
-    // rules without bumping the contract version (documented in
-    // docs/DYNAMIC-OPTIMIZATION-ARCHITECTURE.md → "Node identity contract").
-    // =====================================================================
-
-    /**
-     * Parse an HTML string into ordered content nodes: every H1–H6 heading
-     * (exactly as parse_heading_details sees them — same skip rule, so
-     * heading order/count always matches the heading scan) plus every <p>
-     * paragraph, in document order.
-     *
-     * Classic-editor content stores paragraphs as bare newline-separated text
-     * (no <p> tags — WP adds them at render via wpautop). When the content
-     * contains no <p> at all, the same wpautop is applied for the parse so
-     * the nodes mirror what the site actually serves. Headings are untouched
-     * by wpautop, so this never desyncs the heading indices.
-     *
-     * @param string $content Raw post content HTML.
-     * @return array<int,array{kind:string,level?:int,text:string,html:string}>
-     */
-    public static function parse_content_nodes(string $content): array
-    {
-        if (trim($content) === '') {
-            return array();
-        }
-        if (stripos($content, '<p') === false && function_exists('wpautop')) {
-            $content = wpautop($content);
-        }
-        // One combined pattern keeps document order: heading branch (groups
-        // 1–3, with the </h\1> backreference) OR paragraph branch (groups 4–5).
-        if (!preg_match_all('#<h([1-6])(\s[^>]*)?>(.*?)</h\1>|<p(\s[^>]*)?>(.*?)</p>#is', $content, $m, PREG_SET_ORDER)) {
-            return array();
-        }
-        $out = array();
-        foreach ($m as $mm) {
-            if (($mm[1] ?? '') !== '') {
-                $text = trim(wp_strip_all_tags($mm[3]));
-                if ($text === '') { continue; } // same skip rule as parse_heading_details
-                $out[] = array('kind' => 'heading', 'level' => (int) $mm[1], 'text' => $text, 'html' => $mm[0]);
-            } else {
-                $text  = trim(wp_strip_all_tags((string) ($mm[5] ?? '')));
-                // Skip spacer paragraphs: empty after stripping tags AND
-                // decoding entities (a lone &nbsp; is a spacer, not content).
-                $plain = trim(html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8'), " \t\n\r\0\x0B\xC2\xA0");
-                if ($plain === '') { continue; }
-                $out[] = array('kind' => 'paragraph', 'text' => $text, 'html' => $mm[0]);
-            }
-        }
-        return $out;
-    }
-
-    /**
-     * Local post's ordered content nodes for the SEO outline, indexed.
-     *
-     * `index` = the node's position in THIS list (the rule-target identity).
-     * Heading nodes ALSO carry `headingIndex` — their position in the
-     * headings-only list (get_post_headings) — so the existing heading
-     * edit/optimize endpoints keep working unchanged from the combined view.
-     * Paragraphs are read-only here (they become editable via dynamic rules,
-     * pair 3 — never via source writes).
-     *
-     * @return array[] Node rows.
-     */
-    public function get_post_content_nodes(int $post_id): array
-    {
-        $post      = get_post($post_id);
-        $content   = $post ? (string) $post->post_content : '';
-        $nodes     = self::parse_content_nodes($content);
-        $out       = array();
-        $heading_i = 0;
-        foreach ($nodes as $i => $n) {
-            $n['index']  = (int) $i;
-            $n['id']     = (int) $i;
-            $n['source'] = 'content';
-            $n['elId']   = '';
-            if ($n['kind'] === 'heading') {
-                $n['headingIndex'] = $heading_i++;
-                $n['editable']     = true; // via the existing heading endpoints (headingIndex)
-                $n['field']        = '';
-                $n['tagKey']       = '';
-                $n['textKey']      = '';
-            } else {
-                $n['editable'] = false; // read-only until the dynamic-rule path (pair 3)
-            }
-            $out[] = $n;
-        }
-        return $out;
-    }
-
-    /**
-     * Edit a local heading: change its text and/or tag level in post_content (occurrence-aware),
-     * propagate to any content-based builder meta, purge caches, re-scan. Returns the heading list.
-     */
-    public function update_post_heading(int $post_id, int $index, ?string $text, ?int $level)
-    {
-        $headings = $this->get_post_headings($post_id);
-        if (!isset($headings[$index])) {
-            return new WP_Error('pcm_seo_heading_not_found', __('Heading not found — re-open and try again.', 'power-creatives'), array('status' => 404));
-        }
-        $post = get_post($post_id);
-        if (!$post) {
-            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
-        }
-        $old_html  = (string) $headings[$index]['html'];
-        $old_level = (int) $headings[$index]['level'];
-        $new_level = ($level !== null) ? max(1, min(6, $level)) : $old_level;
-        $new_html  = self::rebuild_heading_html($old_html, $old_level, $new_level, $text);
-        if ($new_html === $old_html) {
-            return $this->get_post_headings($post_id); // no-op
-        }
-
-        $content = (string) $post->post_content;
-        $pos     = self::nth_link_pos($content, $headings, $index); // html-generic occurrence finder
-        if ($pos === null) {
-            return new WP_Error('pcm_seo_heading_stale', __('The page changed — re-open and try again.', 'power-creatives'), array('status' => 409));
-        }
-        $content = substr_replace($content, $new_html, $pos, strlen($old_html));
-        wp_update_post(array('ID' => $post_id, 'post_content' => $content));
-
-        // Content-based page builders (Divi/WPBakery shortcodes, etc.) keep the heading HTML in meta
-        // too — replace it there, serialization-safe (incl. the JSON-slash-escaped variant), so the
-        // live page reflects the edit. (Field-based builders — Elementor heading widget — store text
-        // and level in separate meta fields; those are edited on the remote via the connector.)
-        self::replace_url_in_meta($post_id, $old_html, $new_html);
-        self::purge_post_caches($post_id);
-
-        return $this->get_post_headings($post_id);
-    }
-
-    /** Shared AI runner for a prompt section (resolve override → substitute → invoke → sanitize).
-     *  $single_line: true = pick-the-value-line sanitize (titles/headings/keywords);
-     *  false = keep the whole text as ONE flowing block (paragraphs: strip fences,
-     *  collapse whitespace, strip matched surrounding quotes — never drop sentences). */
-    private static function run_prompt_section(string $section, string $mode, array $vars, int $max, ?string $model, ?int $user_id, ?string $provider, ?int $template_id, bool $single_line = true)
-    {
-        $prompts = self::field_prompts();
-        if (empty($prompts[$section][$mode])) {
-            return new WP_Error('pcm_seo_no_prompt', __('No prompt configured for this field.', 'power-creatives'), array('status' => 500));
-        }
-        $default = (string) $prompts[$section][$mode];
-        $tpl     = self::resolve_prompt($section . '_' . $mode, $default, $user_id, $template_id);
-        // A user's free-form INSTRUCTION ('topic') must reach the model even when
-        // the resolved template predates the {{topic}} placeholder (already-seeded
-        // or user-edited templates are never rewritten) — append it honestly.
-        if (!empty($vars['topic']) && strpos($tpl, '{{topic}}') === false) {
-            $tpl .= "\n\nExtra instruction (follow it): {{topic}}";
-        }
-        // Same append law for the PAGE TYPE and the linked brand's BUSINESS
-        // context (owner order 2026-07-13): they must reach the model even on
-        // templates that predate the placeholders.
-        if (!empty($vars['page.type']) && strpos($tpl, '{{page.type}}') === false) {
-            $tpl .= "\n\nPage type: {{page.type}} — match the content to this intent (a local page targets local searches).";
-        }
-        if ((!empty($vars['business.phone']) || !empty($vars['business.address'])) && strpos($tpl, '{{business.') === false) {
-            $tpl .= "\n\nBusiness context: {{business.name}} — phone {{business.phone}}, address {{business.address}}, category {{business.category}}, hours {{business.hours}}. About: {{business.description}}. Use the real details where relevant; never invent contact data.";
-        }
-        $prompt  = self::substitute_vars($tpl, $vars);
-        if (!class_exists('PCM_LLM')) {
-            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
-        }
-        try {
-            $opts = array('max_tokens' => $max);
-            if (!empty($model))    { $opts['model'] = $model; }
-            if (!empty($provider)) { $opts['provider'] = $provider; }
-            // The caller's user owns the API keys — without this, key lookup
-            // silently leaned on the WP session user (absent in cron/CLI).
-            if (!empty($user_id))  { $opts['user_id'] = $user_id; }
-            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
-            $raw    = (string) ($result['content'] ?? '');
-            // What ACTUALLY answered (the API's own report, not the request) —
-            // callers surface it so the UI never claims one model and runs another.
-            $meta = array(
-                'model'    => (string) ($result['model'] ?? ($model ?? '')),
-                'provider' => (string) ($result['provider'] ?? ($provider ?? '')),
-            );
-            if ($single_line) {
-                $value = self::sanitize_ai_output($raw);
-            } else {
-                $value = trim((string) preg_replace('/^```[a-zA-Z0-9]*\s*|\s*```$/', '', trim($raw)));
-                $value = trim((string) preg_replace('/\s+/u', ' ', $value));
-                $len   = strlen($value);
-                if ($len >= 2 && (($value[0] === '"' && $value[$len - 1] === '"') || ($value[0] === "'" && $value[$len - 1] === "'"))) {
-                    $value = trim(substr($value, 1, $len - 2));
-                }
-            }
-            if ($value === '') {
-                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
-            }
-            return array('value' => $value, 'model' => $meta['model'], 'provider' => $meta['provider']);
-        } catch (\Throwable $e) {
-            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
-        }
-    }
-
-    /** AI-optimize a single heading's text (NOT saved). Returns { value }. */
-    public function optimize_heading(int $post_id, string $text, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
-    {
-        $vars = $this->build_field_vars($post_id, $brand_id);
-        $vars['current_value'] = $text;
-        $mode = ($text !== '') ? 'optimize' : 'generate';
-        $max  = (int) (self::field_prompts()['heading']['max'] ?? 80);
-        // run_prompt_section returns {value, model, provider} — pass it through.
-        return self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
-    }
-
-    /** Count internal vs external <a href> links in content. */
-    private static function count_links(string $content, string $site_url): array
-    {
-        if ($content === '') {
-            return array('internal' => 0, 'external' => 0);
-        }
-        $site_host = wp_parse_url($site_url, PHP_URL_HOST);
-        preg_match_all('/<a\s[^>]*href=[\'"]([^\'"]+)[\'"][^>]*>/i', $content, $matches);
-        $internal = 0;
-        $external = 0;
-        foreach (($matches[1] ?? array()) as $url) {
-            $url = trim($url);
-            if ($url === '' || str_starts_with($url, '#') || str_starts_with($url, 'tel:') || str_starts_with($url, 'mailto:')) {
-                continue;
-            }
-            $host = wp_parse_url($url, PHP_URL_HOST);
-            if ($host) {
-                if ($host === $site_host || ($site_host && str_ends_with($host, '.' . $site_host))) {
-                    $internal++;
-                } else {
-                    $external++;
-                }
-            } elseif (!str_starts_with($url, 'javascript:') && !str_starts_with($url, 'data:')) {
-                $internal++;
-            }
-        }
-        return array('internal' => $internal, 'external' => $external);
-    }
-
-    /** Count broken links (HTTP 4xx/5xx/error). Caps at 20 checks, 4s each. */
-    private static function check_broken_links(string $content, ?string $base = null): int
-    {
-        if ($content === '') {
-            return 0;
-        }
-        preg_match_all('/<a\s[^>]*href=[\'"]([^\'"]+)[\'"][^>]*>/i', $content, $matches);
-        $broken  = 0;
-        $checked = 0;
-        $args    = array(
-            'timeout'     => 4,
-            'redirection' => 5,
-            'user-agent'  => 'WordPress/PowerCreatives; ' . home_url(),
-            'sslverify'   => false,
-        );
-        foreach (array_unique($matches[1] ?? array()) as $url) {
-            if ($checked >= 20) {
-                break;
-            }
-            $url = trim($url);
-            if ($url === '' || str_starts_with($url, '#') || str_starts_with($url, 'tel:')
-                || str_starts_with($url, 'mailto:') || str_starts_with($url, 'javascript:') || str_starts_with($url, 'data:')) {
-                continue;
-            }
-            if (str_starts_with($url, '/')) {
-                $url = rtrim($base ?: home_url('/'), '/') . $url;
-            }
-            $response = wp_remote_head($url, $args);
-            if (is_wp_error($response)) {
-                $broken++;
-            } else {
-                $code = (int) wp_remote_retrieve_response_code($response);
-                if ($code === 405) {
-                    $response = wp_remote_get($url, $args);
-                    $code     = is_wp_error($response) ? 400 : (int) wp_remote_retrieve_response_code($response);
-                }
-                if ($code >= 400) {
-                    $broken++;
-                }
-            }
-            $checked++;
-        }
-        return $broken;
-    }
-
-    /**
-     * Fields accepted by the inline cell-save endpoint, with how each maps to
-     * storage. SEO fields go through the cross-plugin dual-write; native
-     * fields update the post; the rest are internal `pcm_seo_*` meta.
-     *
-     * @return array<string, string> field => handler kind.
-     */
-    public static function save_cell_fields(): array
-    {
-        return array(
-            // Native post columns.
-            'title'             => 'post_title',
-            'slug'              => 'post_name',
-            'status'            => 'post_status',
-            'author'            => 'post_author',
-            // Cross-plugin SEO meta (dual-write).
-            'metaTitle'         => 'seo:title',
-            'metaDescription'   => 'seo:description',
-            'primaryKeyword'    => 'seo:keyword',
-            'metaKeywords'      => 'seo:meta_keywords',
-            // Internal SEO meta.
-            'supportingKeyword' => 'meta:pcm_seo_supporting_keyword',
-            'clusterLabel'      => 'meta:pcm_seo_cluster_label',
-        );
-    }
-
-    /**
-     * Duplicate a post/page as a DRAFT, copying its content, post meta (incl.
-     * every SEO plugin's meta + our pcm_seo_ backups) and taxonomy terms.
-     * Caller has already checked create + per-post edit capability.
-     *
-     * @param int $post_id Source post id.
-     * @return int|WP_Error New post id, or error.
-     */
-    public function duplicate(int $post_id)
-    {
-        $src = get_post($post_id);
-        if (!$src) {
-            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
-        }
-
-        $new_id = wp_insert_post(array(
-            'post_type'      => $src->post_type,
-            'post_status'    => 'draft',
-            'post_title'     => $src->post_title . ' ' . __('(Copy)', 'power-creatives'),
-            'post_content'   => $src->post_content,
-            'post_excerpt'   => $src->post_excerpt,
-            'post_author'    => get_current_user_id(),
-            'comment_status' => $src->comment_status,
-            'ping_status'    => $src->ping_status,
-            'post_parent'    => $src->post_parent,
-            'menu_order'     => $src->menu_order,
-        ), true);
-        if (is_wp_error($new_id)) {
-            return $new_id;
-        }
-        $new_id = (int) $new_id;
-
-        // Copy post meta (SEO keys + pcm_seo_ backups), skipping WP internals.
-        foreach (get_post_meta($post_id) as $key => $values) {
-            if (in_array($key, array('_edit_lock', '_edit_last', '_wp_old_slug'), true)) {
-                continue;
-            }
-            foreach ($values as $value) {
-                add_post_meta($new_id, $key, maybe_unserialize($value));
-            }
-        }
-
-        // Copy taxonomy terms (categories, tags, custom) for a faithful copy.
-        foreach (get_object_taxonomies($src->post_type) as $tax) {
-            $terms = wp_get_object_terms($post_id, $tax, array('fields' => 'ids'));
-            if (!is_wp_error($terms) && !empty($terms)) {
-                wp_set_object_terms($new_id, $terms, $tax);
-            }
-        }
-
-        return $new_id;
-    }
-
-    /**
-     * Save a single content cell. Returns the canonical stored value or a
-     * WP_Error on validation failure. Caller has already verified the
-     * per-post edit capability.
-     *
-     * @param int    $post_id Post id.
-     * @param string $field   Field key (see save_cell_fields()).
-     * @param mixed  $value   Raw request value.
-     * @return array|WP_Error { field, value } or error.
-     */
-    public function save_cell(int $post_id, string $field, $value)
-    {
-        // Featured image — a post-thumbnail action (set/clear by attachment id),
-        // not a column/meta field. Mirrors the WP "Featured image" behavior.
-        if ($field === 'featuredImage') {
-            $att_id = (int) $value;
-            if ($att_id > 0) {
-                $ptype = get_post_type($post_id);
-                if ($ptype && !post_type_supports($ptype, 'thumbnail')) {
-                    add_post_type_support($ptype, 'thumbnail');
-                }
-                if (!set_post_thumbnail($post_id, $att_id)) {
-                    return new WP_Error('pcm_seo_thumbnail_failed', __('Failed to set featured image.', 'power-creatives'), array('status' => 500));
-                }
-            } else {
-                delete_post_thumbnail($post_id);
-            }
-            $tid = (int) get_post_thumbnail_id($post_id);
-            return array(
-                'field'           => 'featuredImage',
-                'value'           => $tid ? (string) wp_get_attachment_image_url($tid, 'thumbnail') : '',
-                'featuredImageId' => $tid,
-            );
-        }
-
-        $fields = self::save_cell_fields();
-        if (!isset($fields[$field])) {
-            return new WP_Error('pcm_seo_bad_field', __('Unknown field.', 'power-creatives'), array('status' => 400));
-        }
-        $handler = $fields[$field];
-
-        // Cross-plugin SEO meta.
-        if (strpos($handler, 'seo:') === 0) {
-            $seo_field = substr($handler, 4);
-            $clean     = sanitize_text_field((string) $value);
-            self::seo_update($post_id, $seo_field, $clean);
-            return array('field' => $field, 'value' => $clean);
-        }
-
-        // Internal meta.
-        if (strpos($handler, 'meta:') === 0) {
-            $meta_key = substr($handler, 5);
-            $clean    = sanitize_text_field((string) $value);
-            update_post_meta($post_id, $meta_key, $clean);
-            return array('field' => $field, 'value' => $clean);
-        }
-
-        // Native post fields.
-        switch ($handler) {
-            case 'post_title':
-                $clean = sanitize_text_field((string) $value);
-                wp_update_post(array('ID' => $post_id, 'post_title' => $clean));
-                return array('field' => $field, 'value' => $clean);
-
-            case 'post_name':
-                $clean = sanitize_title((string) $value);
-                wp_update_post(array('ID' => $post_id, 'post_name' => $clean));
-                // sanitize_title can dedupe — read back the stored slug.
-                $stored = get_post_field('post_name', $post_id);
-                return array('field' => $field, 'value' => (string) $stored);
-
-            case 'post_status':
-                $clean = (string) $value;
-                if (!in_array($clean, self::VALID_STATUSES, true)) {
-                    return new WP_Error('pcm_seo_bad_status', __('Invalid status.', 'power-creatives'), array('status' => 400));
-                }
-                wp_update_post(array('ID' => $post_id, 'post_status' => $clean));
-                return array('field' => $field, 'value' => $clean);
-
-            case 'post_author':
-                $author_id = (int) $value;
-                if ($author_id <= 0 || !get_userdata($author_id)) {
-                    return new WP_Error('pcm_seo_bad_author', __('Invalid author.', 'power-creatives'), array('status' => 400));
-                }
-                wp_update_post(array('ID' => $post_id, 'post_author' => $author_id));
-                return array('field' => $field, 'value' => $author_id);
-        }
-
-        return new WP_Error('pcm_seo_bad_field', __('Unhandled field.', 'power-creatives'), array('status' => 400));
-    }
 
     // ── Remote-site SEO (connected sites via the connector proxy; Phase 1: read + edit) ──
 
     /** Ensure the Sites service (remote proxy + credential decrypt) is loaded. */
-    private static function ensure_sites_service(): void
+    public static function ensure_sites_service(): void
     {
         if (!class_exists('PCM_Sites_Service')) {
             require_once dirname(__DIR__) . '/sites/service.php';
@@ -1498,7 +543,7 @@ class PCM_SEO_Service
         // letting a Save fail later as "link not found" / "not editable".
         $editable = ($raw !== '');
         $content  = $editable ? $raw : (string) ($res['body']['content']['rendered'] ?? '');
-        $links    = self::scan_link_details($content, $from, (string) $site->url, $check_status);
+        $links    = PCM_SEO_Local::scan_link_details($content, $from, (string) $site->url, $check_status);
         return array_values(array_map(static function ($l, $i) use ($editable) {
             $l['id']       = (int) $i;
             $l['editable'] = $editable;
@@ -1528,13 +573,13 @@ class PCM_SEO_Service
         if ($raw === '') {
             return new WP_Error('pcm_seo_no_raw', __('This page’s content isn’t editable through the API (e.g. a page-builder layout), so its links can’t be edited here.', 'power-creatives'), array('status' => 422));
         }
-        $links = self::scan_link_details($raw, $from, (string) $site->url, false); // find by index; no HTTP checks
+        $links = PCM_SEO_Local::scan_link_details($raw, $from, (string) $site->url, false); // find by index; no HTTP checks
         if (!isset($links[$index])) {
             return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
         }
         $old_html = (string) $links[$index]['html'];
         $new_html = (string) $build($old_html, $links[$index]);
-        $pos = self::nth_link_pos($raw, $links, $index);
+        $pos = PCM_SEO_Local::nth_link_pos($raw, $links, $index);
         if ($pos === null) {
             return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
         }
@@ -2028,10 +1073,13 @@ class PCM_SEO_Service
                 break;
             }
         }
-        $name   = ($site->name ?? '') !== '' ? $site->name : (string) $site->url;
-        $prompt = "Write a concise 1-2 sentence description of this website for an AI/LLM index file (llms.txt). "
-            . "Factual, answer-first, no marketing fluff. Plain text only — no quotes, labels, or markdown.\n\n"
-            . "Site name: {$name}\nKey pages:\n" . implode("\n", $titles);
+        $name    = ($site->name ?? '') !== '' ? $site->name : (string) $site->url;
+        $default = (string) (PCM_SEO_AI::field_prompts()['site_ai_description']['generate'] ?? '');
+        $tpl     = PCM_SEO_AI::resolve_prompt('site_ai_description_generate', $default, $user_id);
+        $prompt  = PCM_SEO_AI::substitute_vars($tpl, array(
+            'site_name' => $name,
+            'key_pages' => implode("\n", $titles),
+        ));
         try {
             $opts = array('max_tokens' => 120);
             if (!empty($model)) {
@@ -2105,7 +1153,7 @@ class PCM_SEO_Service
         if (trim((string) ($ctx['keywords'] ?? '')) === '' && !empty($ctx['pages']) && is_array($ctx['pages'])) {
             $ctx['keywords'] = self::keywords_to_string(self::top_keywords($ctx['pages']));
         }
-        $prompt = self::llm_info_prompt($ctx);
+        $prompt = self::llm_info_prompt($ctx, $user_id);
         try {
             $opts = array('max_tokens' => 1400);
             if (!empty($model)) {
@@ -2214,7 +1262,7 @@ class PCM_SEO_Service
     }
 
     /** The persuasive, truthful /llm-info/ prompt — only emits guidance for facts that are present. */
-    private static function llm_info_prompt(array $ctx): string
+    private static function llm_info_prompt(array $ctx, ?int $user_id = null): string
     {
         $g         = static fn ($k) => trim((string) ($ctx[$k] ?? ''));
         $name      = $g('name') !== '' ? $g('name') : 'the business';
@@ -2267,22 +1315,25 @@ class PCM_SEO_Service
             }
         }
 
-        return "You are writing the content for an /llm-info/ page — a concise, factual overview of a business, written so AI search engines (ChatGPT, Perplexity, Google AI Overviews) cite it accurately and favourably.\n\n"
-            . "FACTS (use ONLY these — never invent reviews, ratings, awards, numbers, or any claim not given):\n{$facts}\n"
-            . $corpus
-            . "Write the page as clean semantic HTML body content. Rules:\n"
-            . ($corpus !== '' ? "- Base the summary on the SITE CONTENT above — reflect the real services, topics and expertise found across the pages; if the FACTS and the content conflict, prefer the content.\n" : '')
-            . "- Use only <h1>, <h2>, <h3>, <p>, <ul>, <li>, <strong>, <a> tags. No <html>/<head>/<body>, no markdown, no code fences.\n"
-            . "- Open with a one-paragraph positioning summary naming {$name} and its specialist niche/expertise"
-            . ($area !== '' ? ", and that it serves {$area}" : '') . ".\n"
-            . ($keywords !== '' ? "- Naturally weave in the target keywords (no keyword stuffing).\n" : '')
-            . "- Establish authority and specialist expertise within the niche.\n"
-            . ($years !== '' ? "- Frame the years in business as a proven, trusted track record.\n" : '')
-            . ($area !== '' ? "- Emphasise how local and dedicated the business is to {$area}.\n" : '')
-            . ($strengths !== '' ? "- Present the strengths/recommendations positively — but only the facts provided.\n" : '')
-            . "- Sections: an intro, \"What {$name} does\", \"Why choose {$name}\""
-            . ($area !== '' ? ", \"Areas served\"" : '') . ", and a brief FAQ if useful.\n"
-            . "- Be truthful and specific. Omit anything not provided. Output ONLY the HTML body content.";
+        // No hidden prompt: this template is a Templates (module=seo) row a
+        // user can view/edit — resolve_prompt() returns the shipped default
+        // (llm_info_page.generate) verbatim when no override exists. Every
+        // conditional clause below becomes an empty-when-absent fragment var,
+        // same convention as the strategy module's {{output_format}} etc.
+        $default = (string) (PCM_SEO_AI::field_prompts()['llm_info_page']['generate'] ?? '');
+        $tpl     = PCM_SEO_AI::resolve_prompt('llm_info_page_generate', $default, $user_id);
+        return PCM_SEO_AI::substitute_vars($tpl, array(
+            'facts'              => $facts,
+            'corpus'             => $corpus,
+            'name'               => $name,
+            'corpus_note'        => $corpus !== '' ? "- Base the summary on the SITE CONTENT above — reflect the real services, topics and expertise found across the pages; if the FACTS and the content conflict, prefer the content.\n" : '',
+            'area_serves_clause' => $area !== '' ? ", and that it serves {$area}" : '',
+            'keywords_bullet'    => $keywords !== '' ? "- Naturally weave in the target keywords (no keyword stuffing).\n" : '',
+            'years_bullet'       => $years !== '' ? "- Frame the years in business as a proven, trusted track record.\n" : '',
+            'area_bullet'        => $area !== '' ? "- Emphasise how local and dedicated the business is to {$area}.\n" : '',
+            'strengths_bullet'   => $strengths !== '' ? "- Present the strengths/recommendations positively — but only the facts provided.\n" : '',
+            'area_section'       => $area !== '' ? ", \"Areas served\"" : '',
+        ));
     }
 
     /** Gather the local site's published pages/posts as a trimmed text corpus for /llm-info/. */
@@ -2448,7 +1499,7 @@ class PCM_SEO_Service
         // remote generation; unit pinning + the owner's per-site
         // corrections included. Fallbacks preserved: no brand = site
         // name/url exactly as before.
-        $gbp  = (array) (self::business_record_for_site((int) ($site->id ?? 0))['fields'] ?? array());
+        $gbp  = (array) (PCM_SEO_Business::business_record_for_site((int) ($site->id ?? 0))['fields'] ?? array());
         $name = !empty($gbp['name']) ? (string) $gbp['name'] : (!empty($site->name) ? (string) $site->name : $host);
         return array(
             'title'                     => (string) ($row['title'] ?? ''),
@@ -2487,12 +1538,12 @@ class PCM_SEO_Service
      */
     public static function remote_generate_field(object $site, int $post_id, string $type, string $field, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
     {
-        $use_map = self::field_use_map();
+        $use_map = PCM_SEO_AI::field_use_map();
         if (!isset($use_map[$field])) {
             return new WP_Error('pcm_seo_not_generatable', __('This field cannot be AI-generated.', 'power-creatives'), array('status' => 400));
         }
         $use     = $use_map[$field];
-        $prompts = self::field_prompts();
+        $prompts = PCM_SEO_AI::field_prompts();
         if (!isset($prompts[$use])) {
             return new WP_Error('pcm_seo_no_prompt', __('No prompt configured for this field.', 'power-creatives'), array('status' => 500));
         }
@@ -2521,8 +1572,8 @@ class PCM_SEO_Service
 
         $mode    = (!empty($current) && !empty($prompts[$use]['optimize'])) ? 'optimize' : 'generate';
         $default = $prompts[$use][$mode];
-        $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
-        $prompt  = self::substitute_vars($tpl, $vars);
+        $tpl     = PCM_SEO_AI::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
+        $prompt  = PCM_SEO_AI::substitute_vars($tpl, $vars);
         $max     = (int) ($prompts[$use]['max'] ?? 200);
 
         if (!class_exists('PCM_LLM')) {
@@ -2537,7 +1588,7 @@ class PCM_SEO_Service
                 $opts['provider'] = $provider;
             }
             $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
-            $value  = self::sanitize_ai_output((string) ($result['content'] ?? ''));
+            $value  = PCM_SEO_AI::sanitize_ai_output((string) ($result['content'] ?? ''));
             // The slug field must be a valid URL slug — slugify whatever the model
             // returned (handles chatty output / spaces / casing reliably).
             if ($field === 'slug') {
@@ -2606,7 +1657,7 @@ class PCM_SEO_Service
         $raw      = (string) ($res['body']['content']['raw'] ?? '');
         $editable = ($raw !== '');
         $content  = $editable ? $raw : (string) ($res['body']['content']['rendered'] ?? '');
-        $list     = self::parse_heading_details($content);
+        $list     = PCM_SEO_Local::parse_heading_details($content);
         return array_values(array_map(static function ($h, $i) use ($editable) {
             $h['index']    = (int) $i;
             $h['id']       = (int) $i;
@@ -2795,7 +1846,7 @@ class PCM_SEO_Service
             $via = 'override';
             return self::remote_apply_heading_override($site, $post_id, $type, (string) $h['text'], $old_level, $new_text, $new_level);
         }
-        $new_html = self::rebuild_heading_html($old_html, $old_level, $new_level, $new_text);
+        $new_html = PCM_SEO_Local::rebuild_heading_html($old_html, $old_level, $new_level, $new_text);
         if ($new_html === $old_html) {
             return self::remote_get_headings($site, $post_id, $type);
         }
@@ -2833,9 +1884,9 @@ class PCM_SEO_Service
         $vars  = self::remote_field_vars($site, $row, $user_id, $post_id);
         $vars['current_value'] = $text;
         $mode  = ($text !== '') ? 'optimize' : 'generate';
-        $max   = (int) (self::field_prompts()['heading']['max'] ?? 80);
+        $max   = (int) (PCM_SEO_AI::field_prompts()['heading']['max'] ?? 80);
         // run_prompt_section returns {value, model, provider} — pass it through.
-        return self::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
+        return PCM_SEO_Local::run_prompt_section('heading', $mode, $vars, $max, $model, $user_id, $provider, $template_id);
     }
 
     // =====================================================================
@@ -3503,7 +2554,7 @@ class PCM_SEO_Service
                 'brandId'   => (int) ($site->brandId ?? 0),
                 // Page versioning (frozen contract, 2026-07-16): hub record +
                 // drift verdict from the connector's echo in this snapshot.
-                'pageState' => self::page_state_reply((int) $site->id, $post_id, $inv['pageState']),
+                'pageState' => PCM_SEO_Page_State::page_state_reply((int) $site->id, $post_id, $inv['pageState']),
             );
             if (isset($inv['contentHtml'])) {
                 $out['contentHtml'] = (string) $inv['contentHtml'];
@@ -3523,7 +2574,7 @@ class PCM_SEO_Service
             'nodes'     => (array) $meta['nodes'],
             // Pre-3.0 fleet: no snapshot, no echo — the record with an honest
             // no-echo verdict (drifted:false).
-            'pageState' => self::page_state_reply((int) $site->id, $post_id, null),
+            'pageState' => PCM_SEO_Page_State::page_state_reply((int) $site->id, $post_id, null),
         );
         if (!empty($meta['error'])) {
             $out['error'] = (string) $meta['error'];
@@ -3537,199 +2588,6 @@ class PCM_SEO_Service
     {
         self::ensure_sites_service();
         return PCM_Sites_Service::remote_upload_media($site, $image_url);
-    }
-
-    // ── Slug-change redirects (connector 3.0.5): hub-owned store, connector-
-    //    served copy. Same laws as rules: capability BEFORE any write, the
-    //    connector receives the COMPLETE set, push-fail rolls the hub row back. ──
-
-    /** Whether the site's connector answers /redirects (3.0.5+) — the capability handle. */
-    public static function connector_supports_redirects(object $site): bool
-    {
-        static $memo = array();
-        $key = (int) $site->id;
-        if (isset($memo[$key])) {
-            return $memo[$key];
-        }
-        self::ensure_sites_service();
-        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/redirects');
-        return $memo[$key] = (!is_wp_error($res) && (int) ($res['status'] ?? 0) === 200 && !empty($res['body']['supported']));
-    }
-
-    /** @return array[] the site's redirect rows (ARRAY_A, id-ordered). */
-    private static function redirect_rows(int $user_id, int $site_id): array
-    {
-        global $wpdb;
-        $table = PCM_Schema::table('seo_redirects');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
-        return (array) $wpdb->get_results($wpdb->prepare(
-            "SELECT id, fromPath, toUrl, code, active, createdAt FROM {$table} WHERE userId = %d AND siteId = %d ORDER BY id",
-            $user_id,
-            $site_id
-        ), ARRAY_A);
-    }
-
-    /** Push the COMPLETE active set to the connector. WP_Error on any non-2xx. */
-    private static function push_redirects(object $site, array $rows)
-    {
-        self::ensure_sites_service();
-        $wire = array();
-        foreach ($rows as $r) {
-            if (empty($r['active'])) {
-                continue;
-            }
-            $wire[] = array('from' => (string) $r['fromPath'], 'to' => (string) $r['toUrl'], 'code' => (int) $r['code']);
-        }
-        $res = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/redirects', array(), array('redirects' => $wire), 30);
-        if (is_wp_error($res)) {
-            return $res;
-        }
-        if ((int) ($res['status'] ?? 0) >= 300) {
-            return new WP_Error('pcm_seo_redirect_push', __('The connector rejected the redirect set.', 'power-creatives'), array('status' => 502));
-        }
-        return array('pushed' => count($wire));
-    }
-
-    /** @return array{supported:bool,redirects:array[]} the settings panel's list. */
-    public function list_redirects(int $user_id, object $site): array
-    {
-        return array(
-            'supported' => self::connector_supports_redirects($site),
-            'redirects' => self::redirect_rows($user_id, (int) $site->id),
-        );
-    }
-
-    /**
-     * Save a redirect (UPSERT on siteId+fromPath). Capability-first honest 409;
-     * push-fail restores the exact previous row state (never a dangling row).
-     *
-     * @param array{from:string,to:string,code:int} $input
-     * @return array|\WP_Error
-     */
-    public function save_redirect(int $user_id, object $site, array $input)
-    {
-        global $wpdb;
-        if (!self::connector_supports_redirects($site)) {
-            return new WP_Error(
-                'pcm_seo_redirects_unsupported',
-                __('Redirects need connector 3.0.5+ — update the connector from the Sites module, then retry.', 'power-creatives'),
-                array('status' => 409)
-            );
-        }
-        $from = PCM_Text_Matcher::normalize_path((string) ($input['from'] ?? ''));
-        $to   = esc_url_raw((string) ($input['to'] ?? ''));
-        $code = (int) ($input['code'] ?? 301);
-        $code = in_array($code, array(301, 302, 307, 308), true) ? $code : 301;
-        if ($from === '/') {
-            return new WP_Error('pcm_seo_redirect_root', __('The front page can’t be redirected.', 'power-creatives'), array('status' => 400));
-        }
-        if ($to === '' || !preg_match('#^https?://#i', $to)) {
-            return new WP_Error('pcm_seo_redirect_target', __('The redirect target must be a full http(s) URL.', 'power-creatives'), array('status' => 400));
-        }
-        $table   = PCM_Schema::table('seo_redirects');
-        $site_id = (int) $site->id;
-        $prev    = null;
-        foreach (self::redirect_rows($user_id, $site_id) as $r) {
-            if ((string) $r['fromPath'] === $from) {
-                $prev = $r;
-                break;
-            }
-        }
-        if ($prev !== null) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $wpdb->update($table, array('toUrl' => $to, 'code' => $code, 'active' => 1), array('id' => (int) $prev['id']), array('%s', '%d', '%d'), array('%d'));
-            $row_id = (int) $prev['id'];
-        } else {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $wpdb->insert($table, array(
-                'userId' => $user_id, 'siteId' => $site_id, 'fromPath' => $from, 'toUrl' => $to, 'code' => $code, 'active' => 1,
-            ), array('%d', '%d', '%s', '%s', '%d', '%d'));
-            $row_id = (int) $wpdb->insert_id;
-        }
-        $push = self::push_redirects($site, self::redirect_rows($user_id, $site_id));
-        if ($push instanceof WP_Error) {
-            if ($prev !== null) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                $wpdb->update($table, array('toUrl' => (string) $prev['toUrl'], 'code' => (int) $prev['code'], 'active' => (int) $prev['active']), array('id' => (int) $prev['id']), array('%s', '%d', '%d'), array('%d'));
-            } else {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                $wpdb->delete($table, array('id' => $row_id), array('%d'));
-            }
-            return $push;
-        }
-        $result = array('id' => $row_id, 'from' => $from, 'to' => $to, 'code' => $code);
-        // Optional internal-link rewrite (the popup's checkbox): per-post
-        // builder-aware /replace-url — the EXISTING writer path, looped
-        // hub-side. Best-effort BY DESIGN: the redirect above is already
-        // live, so rewrite failures are reported, never rolled back into.
-        if (!empty($input['updateLinks'])) {
-            $old_full = preg_match('#^https?://#i', (string) ($input['from'] ?? '')) ? (string) $input['from'] : rtrim((string) $site->url, '/') . $from;
-            $links    = 0;
-            $touched  = 0;
-            foreach ((array) (self::remote_url_usage($site, $old_full)['posts'] ?? array()) as $p) {
-                $rep = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/replace-url', array(), array(
-                    'post_id' => (int) ($p['id'] ?? 0),
-                    'old'     => $old_full,
-                    'new'     => $to,
-                ), 60);
-                if (!is_wp_error($rep) && (int) ($rep['status'] ?? 0) < 300) {
-                    $touched++;
-                    $links += (int) ($rep['body']['replaced'] ?? 0);
-                }
-            }
-            $result['linksUpdated'] = $links;
-            $result['postsTouched'] = $touched;
-        }
-        return $result;
-    }
-
-    /** Delete a redirect; push-fail re-inserts the exact row (same id). */
-    public function delete_redirect(int $user_id, object $site, int $redirect_id)
-    {
-        global $wpdb;
-        $table = PCM_Schema::table('seo_redirects');
-        $prev  = null;
-        foreach (self::redirect_rows($user_id, (int) $site->id) as $r) {
-            if ((int) $r['id'] === $redirect_id) {
-                $prev = $r;
-                break;
-            }
-        }
-        if ($prev === null) {
-            return new WP_Error('pcm_seo_redirect_missing', __('Redirect not found.', 'power-creatives'), array('status' => 404));
-        }
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $wpdb->delete($table, array('id' => $redirect_id), array('%d'));
-        $push = self::push_redirects($site, self::redirect_rows($user_id, (int) $site->id));
-        if ($push instanceof WP_Error) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $wpdb->insert($table, array(
-                'id'     => (int) $prev['id'], 'userId' => $user_id, 'siteId' => (int) $site->id,
-                'fromPath' => (string) $prev['fromPath'], 'toUrl' => (string) $prev['toUrl'],
-                'code'   => (int) $prev['code'], 'active' => (int) $prev['active'], 'createdAt' => (string) $prev['createdAt'],
-            ), array('%d', '%d', '%d', '%s', '%s', '%d', '%d', '%s'));
-            return $push;
-        }
-        return array('deleted' => $redirect_id);
-    }
-
-    /** Site-wide "who links to this URL" (connector /url-usage passthrough). */
-    public static function remote_url_usage(object $site, string $url)
-    {
-        if (!self::connector_supports_redirects($site)) {
-            return array('url' => $url, 'posts' => array(), 'total' => 0, 'supported' => false);
-        }
-        self::ensure_sites_service();
-        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/url-usage', array('url' => $url), null, 30);
-        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
-            return array('url' => $url, 'posts' => array(), 'total' => 0, 'supported' => true);
-        }
-        return array(
-            'url'       => $url,
-            'posts'     => array_values((array) ($res['body']['posts'] ?? array())),
-            'total'     => (int) ($res['body']['total'] ?? 0),
-            'supported' => true,
-        );
     }
 
     /** Whether a connected site's connector accepts rule schema v1 (capability check). */
@@ -3946,190 +2804,6 @@ class PCM_SEO_Service
             return $out;
         }, $rows);
     }
-
-    // =====================================================================
-    // PAGE STATE (page versioning, frozen contracts 2026-07-16) — ONE
-    // version+fingerprint per "siteId:postId": the hub records it beside
-    // every accepted push, the connector stores the VALUE and echoes it
-    // (never recomputes), the inventory reply compares echo vs record.
-    // =====================================================================
-
-    /**
-     * Content fingerprint of a NET rule set (schema shape, rules_to_schema
-     * output) — sha1 of its normalized JSON. THE one fingerprint function
-     * (frozen contract): the connector receives the value and echoes it,
-     * nothing anywhere recomputes it from served HTML.
-     *
-     * Normalization = CONTENT identity, not storage identity: row ids are
-     * dropped (rollback/replace re-creates rows without changing what
-     * serves), map keys sort recursively, and the rule LIST sorts by its
-     * encoded form (row order is a storage accident). Lists inside a rule
-     * (paragraphs, units) keep their order — order there IS content.
-     */
-    public static function page_fingerprint(array $rules): string
-    {
-        $normalize = static function ($value) use (&$normalize) {
-            if (!is_array($value)) {
-                return $value;
-            }
-            $out = array();
-            foreach ($value as $k => $v) {
-                $out[$k] = $normalize($v);
-            }
-            if ($out !== array_values($out)) {
-                ksort($out);
-            }
-            return $out;
-        };
-        $encoded = array();
-        foreach ($rules as $rule) {
-            $rule = (array) $rule;
-            unset($rule['id']);
-            $encoded[] = (string) wp_json_encode($normalize($rule));
-        }
-        sort($encoded, SORT_STRING);
-        return sha1('[' . implode(',', $encoded) . ']');
-    }
-
-    /**
-     * The recorded page state for one "siteId:postId" (option 'pcm_page_state',
-     * the proven option-map pattern — no schema change). version 0 +
-     * fingerprint '' = never saved under versioning: the documented baseline,
-     * which the inventory reply reports as drifted:false (nothing recorded =
-     * nothing to drift from).
-     *
-     * @return array{version:int,fingerprint:string,savedAt:int}
-     */
-    public static function page_state(int $site_id, int $post_id): array
-    {
-        $map = get_option('pcm_page_state', array());
-        $rec = is_array($map) ? ($map[$site_id . ':' . $post_id] ?? null) : null;
-        return array(
-            'version'     => is_array($rec) ? (int) ($rec['version'] ?? 0) : 0,
-            'fingerprint' => is_array($rec) ? (string) ($rec['fingerprint'] ?? '') : '',
-            'savedAt'     => is_array($rec) ? (int) ($rec['savedAt'] ?? 0) : 0,
-        );
-    }
-
-    /**
-     * THE FEATHERWEIGHT CHECK (gap e48b1ff): local record vs the connector's
-     * /page-state answer — no page render anywhere. remote=null + error set
-     * when the site could not answer (an unanswered question is reported as
-     * unanswered, never as a verdict). brandId/pageType ride along so the
-     * editor's instant-open path needs NO inventory fetch for them.
-     *
-     * @return array{local:array,remote:?array,drifted:?bool,error:?string,brandId:int,pageType:string}
-     */
-    public static function page_state_compare(object $site, int $post_id, ?int $user_id = null): array
-    {
-        self::ensure_sites_service();
-        $local = self::page_state((int) $site->id, $post_id);
-        $out   = array(
-            'local'    => $local,
-            'remote'   => null,
-            'drifted'  => null,
-            'error'    => null,
-            'brandId'  => (int) ($site->brandId ?? 0),
-            'pageType' => ($user_id && $post_id) ? self::get_page_type($user_id, (int) $site->id, $post_id) : '',
-        );
-        // Timeout is hub DATA (read-through seed — the tunables law).
-        $cfg = get_option('pcm_seo_state_check');
-        if (!is_array($cfg) || !isset($cfg['timeoutS'])) {
-            $cfg = array('timeoutS' => 5);
-            add_option('pcm_seo_state_check', $cfg, '', false);
-        }
-        // $body MUST be null on GET: any non-null body is wp_json_encode()d to a
-        // STRING, and WP's cURL transport http_build_query()s GET data — a string
-        // there is a TypeError 500 before the request ever leaves the hub (the
-        // 2026-07-17 red-cloud root cause; this was the codebase's only array()-body GET).
-        $rep = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/page-state', array('post_id' => $post_id), null, max(1, (int) $cfg['timeoutS']));
-        if (is_wp_error($rep)) {
-            $out['error'] = $rep->get_error_message();
-            return $out;
-        }
-        // remote_rest answers {status, body} for EVERY HTTP status — only a
-        // 200 is an ANSWER. HONESTY (gap 89ef71a, proven probe): 404 means
-        // the site IS reachable but its connector predates the state check —
-        // name the fix, never call a reachable site unreachable.
-        $status = (int) ($rep['status'] ?? 0);
-        if ($status === 404) {
-            $out['error'] = __('The site\'s connector is outdated (needs 3.0.7+) — update it from the Sites module.', 'power-creatives');
-            return $out;
-        }
-        if ($status !== 200 || !is_array($rep['body'] ?? null)) {
-            $out['error'] = sprintf(__('The site answered the state check with HTTP %d.', 'power-creatives'), $status);
-            return $out;
-        }
-        $remote = array(
-            'version'     => (int) ($rep['body']['version'] ?? 0),
-            'fingerprint' => (string) ($rep['body']['fingerprint'] ?? ''),
-        );
-        $out['remote'] = $remote;
-        // Nothing recorded on either side = nothing to drift from (the
-        // documented pre-versioning baseline).
-        $out['drifted'] = ($local['version'] !== 0 || $remote['version'] !== 0)
-            ? ($local['fingerprint'] !== $remote['fingerprint'])
-            : false;
-        return $out;
-    }
-
-    /**
-     * The inventory reply's pageState block (frozen contract keys): the HUB
-     * RECORD is the reported state; drifted = the connector's ECHO disagreeing
-     * with it. An absent echo (pre-versioning connector, or a reply without
-     * the field) is honest ignorance — reported drifted:false, never a guess
-     * presented as truth.
-     *
-     * @param array{version:int,fingerprint:string}|null $echo Connector echo.
-     * @return array{version:int,fingerprint:string,drifted:bool}
-     */
-    private static function page_state_reply(int $site_id, int $post_id, ?array $echo): array
-    {
-        $record = self::page_state($site_id, $post_id);
-        return array(
-            'version'     => $record['version'],
-            'fingerprint' => $record['fingerprint'],
-            'drifted'     => is_array($echo) && (
-                (int) ($echo['version'] ?? 0) !== $record['version']
-                || (string) ($echo['fingerprint'] ?? '') !== $record['fingerprint']
-            ),
-        );
-    }
-
-    /** Record an ACCEPTED push's page state — called only after the connector stored the same pair. */
-    private static function write_page_state(int $site_id, int $post_id, int $version, string $fingerprint): void
-    {
-        $map = get_option('pcm_page_state', array());
-        $map = is_array($map) ? $map : array();
-        $map[$site_id . ':' . $post_id] = array('version' => $version, 'fingerprint' => $fingerprint, 'savedAt' => time());
-        update_option('pcm_page_state', $map, false);
-    }
-
-    /**
-     * W2 (replace-not-append): ids of page rule rows SUPERSEDED by the served
-     * truth — section/sectionInsert rows the served view attributes to no
-     * section serve nothing and can only stack (the observed 63-rule pile).
-     * sectionRemove rows are part of the NET set BY LAW (they stay while the
-     * doc omits their baseline section); every other target keeps its own
-     * lifecycle law (absorb/clean-revert) and is never swept here.
-     *
-     * @param array[] $rows          The page's rule rows (post_rule_rows shape).
-     * @param int[]   $live_rule_ids Rule ids the served inventory attributed.
-     * @return int[] Row ids that must die with the save.
-     */
-    public static function superseded_rule_ids(array $rows, array $live_rule_ids): array
-    {
-        $live = array_map('intval', $live_rule_ids);
-        $dead = array();
-        foreach ($rows as $r) {
-            $target = (string) ($r['target'] ?? '');
-            if (($target === 'section' || $target === 'sectionInsert') && !in_array((int) ($r['id'] ?? 0), $live, true)) {
-                $dead[] = (int) $r['id'];
-            }
-        }
-        return $dead;
-    }
-
     // NOTE (consolidation, 2026-07-11): save_paragraph_rule was DELETED with
     // its endpoints — paragraph-rule CREATION had zero UI callers (the page +
     // section editors superseded it). Existing paragraph rules keep serving
@@ -4214,15 +2888,15 @@ class PCM_SEO_Service
         // an accepted push. A rejected push rolls the rows back and leaves
         // the record untouched (the connector kept the previous set).
         $next = array(
-            'version'     => self::page_state((int) $site->id, $post_id)['version'] + 1,
-            'fingerprint' => self::page_fingerprint($schema),
+            'version'     => PCM_SEO_Page_State::page_state((int) $site->id, $post_id)['version'] + 1,
+            'fingerprint' => PCM_SEO_Page_State::page_fingerprint($schema),
         );
         $push = self::push_rules($site, $post_id, $schema, $next);
         if ($push instanceof WP_Error) {
             self::restore_rule_rows($user_id, (int) $site->id, $post_id, $snapshot);
             return $push;
         }
-        self::write_page_state((int) $site->id, $post_id, $next['version'], $next['fingerprint']);
+        PCM_SEO_Page_State::write_page_state((int) $site->id, $post_id, $next['version'], $next['fingerprint']);
         return $push;
     }
 
@@ -5317,7 +3991,7 @@ class PCM_SEO_Service
             }
         }
         $page_rows = self::post_rule_rows($user_id, (int) $site->id, $post_id);
-        $dead_ids  = self::superseded_rule_ids($page_rows, $live_ids);
+        $dead_ids  = PCM_SEO_Page_State::superseded_rule_ids($page_rows, $live_ids);
         $flattened = 0;
         // ── THE SAVE TRANSACTION OPENS (gap ATOMIC-SAVE 2026-07-17):
         //    $page_rows (pre-mutation) is the WHOLE save's rollback point.
@@ -5643,7 +4317,7 @@ class PCM_SEO_Service
             // the connector echoed. A no-op reply (pushed=false) must never
             // overwrite the frontend's verdict.
             'pushed'    => $pushed,
-            'pageState' => self::page_state((int) $site->id, $post_id),
+            'pageState' => PCM_SEO_Page_State::page_state((int) $site->id, $post_id),
         );
     }
 
@@ -6011,10 +4685,14 @@ class PCM_SEO_Service
         $vars  = self::remote_field_vars($site, $row, $user_id, $post_id);
         $vars['current_value'] = $html;
         $vars['topic']         = $topic;
-        $contract = 'You are a careful human editor revising an existing draft. Apply the user\'s request below EXACTLY '
+        // No hidden prompt: previously baked directly into $vars['topic'] as a
+        // literal string, invisible to and unremovable by any template — now
+        // its own Templates (module=seo) row ('revise_contract').
+        $default_contract = 'You are a careful human editor revising an existing draft. Apply the user\'s request below EXACTLY '
             . 'and ONLY. Every sentence the request does not cover must be reproduced VERBATIM — word for word, '
             . 'unchanged, in full. Only if the request explicitly asks for a broad rewrite (tone, style, length, full '
             . 'rework) may you change text beyond it. Never invent facts.';
+        $contract = PCM_SEO_AI::resolve_prompt('revise_contract_generate', $default_contract, $user_id);
         if ($draft !== '') {
             $vars['topic'] = $contract . "\n\nUSER REQUEST: " . $topic
                 . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft;
@@ -6025,19 +4703,22 @@ class PCM_SEO_Service
         // above, so user-customized templates need no migration. The reply is
         // PARSED AND VERIFIED by parse_section_reply(); an unparseable reply
         // falls back to raw — byte-identical legacy behavior, the floor.
+        // Also no hidden prompt: 'revise_envelope' is its own Templates row.
         $envelope = '';
         if ($report_changes) {
             $why = !empty($purposes)
                 ? 'one of these purpose ids: ' . implode(', ', array_map('sanitize_key', $purposes)) . ' (or an empty string when none fits)'
                 : 'an empty string';
-            $envelope = "\n\nOUTPUT FORMAT (mandatory): respond with ONLY this JSON, no markdown fences, no text around it: "
-                . '{"html":"<the COMPLETE revised section HTML>","changes":[{"what":"one plain sentence describing ONE change you actually made","why":"<' . $why . '>","quote":"5-12 words copied VERBATIM from your revised html"}]}'
+            $default_envelope = "\n\nOUTPUT FORMAT (mandatory): respond with ONLY this JSON, no markdown fences, no text around it: "
+                . '{"html":"<the COMPLETE revised section HTML>","changes":[{"what":"one plain sentence describing ONE change you actually made","why":"<{{why}}>","quote":"5-12 words copied VERBATIM from your revised html"}]}'
                 . ' List every real change you made; NEVER list a change you did not make.';
+            $envelope_tpl = PCM_SEO_AI::resolve_prompt('revise_envelope_generate', $default_envelope, $user_id);
+            $envelope     = PCM_SEO_AI::substitute_vars($envelope_tpl, array('why' => $why));
             $vars['topic'] .= $envelope;
         }
         $mode  = ($html !== '') ? 'optimize' : 'generate';
-        $max   = (int) (self::field_prompts()['section']['max'] ?? 1200);
-        $val   = self::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
+        $max   = (int) (PCM_SEO_AI::field_prompts()['section']['max'] ?? 1200);
+        $val   = PCM_SEO_Local::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
         if ($val instanceof WP_Error) {
             return $val;
         }
@@ -6055,7 +4736,7 @@ class PCM_SEO_Service
                     . 'cover. Copy the draft exactly and change ONLY what the request demands.'
                     . "\n\nUSER REQUEST: " . $topic . "\n\nTHE CURRENT DRAFT (revise THIS text):\n" . $draft
                     . $envelope;
-                $retry = self::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
+                $retry = PCM_SEO_Local::run_prompt_section('section', $mode, $vars, $max, $model, $user_id, $provider, $template_id, false);
                 if (!($retry instanceof WP_Error)) {
                     $retry_parsed = self::parse_section_reply((string) $retry['value'], $purposes, $report_changes);
                     if (self::sentence_retention($draft, $retry_parsed['value']) > $retention) {
@@ -6149,229 +4830,6 @@ class PCM_SEO_Service
         return array('value' => $value, 'changes' => $changes);
     }
 
-    // =====================================================================
-    // THE BUSINESS CARD (Business Spine P2+P3, gap 616870f). Ownership law:
-    // brands own brand truth · SITES own the connection (brandId +
-    // businessUnitId FKs) · SEO consumes and owns exactly ONE layer — the
-    // per-site SEO overrides. The ladder is a PURE function (harness-
-    // tested); the resolver is data reads + that call. Malleable by
-    // construction: fields are open keys (the frontend registry decides
-    // what renders), sources ride every field.
-    // =====================================================================
-
-    /**
-     * THE LADDER — pure. Precedence upward: site basics < brand basics <
-     * unit fetched (its own per-key sources) < unit manual < site override.
-     * Empty values never overwrite (empty stays empty, never invents);
-     * every landed field carries its source tag.
-     *
-     * @param array $site_overrides Sparse per-site SEO fields.
-     * @param array $unit           Brands unit record {fetched,manual,sources} (may be empty).
-     * @param array $brand_basics   Flat brand-row fields (may be empty).
-     * @param array $site_basics    Flat site fields (name/siteUrl).
-     * @return array{fields:array<string,mixed>,sources:array<string,string>}
-     */
-    public static function merge_business_ladder(array $site_overrides, array $unit, array $brand_basics, array $site_basics): array
-    {
-        $fields  = array();
-        $sources = array();
-        $lay = static function (array $layer, $tag) use (&$fields, &$sources): void {
-            foreach ($layer as $k => $v) {
-                if ($v === '' || $v === null || $v === array()) {
-                    continue;
-                }
-                $fields[$k]  = $v;
-                $sources[$k] = is_array($tag) ? (string) ($tag[$k] ?? 'gbp') : (string) $tag;
-            }
-        };
-        $lay($site_basics, 'site-basics');
-        $lay($brand_basics, 'brand');
-        $lay((array) ($unit['fetched'] ?? array()), (array) ($unit['sources'] ?? array()));
-        $lay((array) ($unit['manual'] ?? array()), 'manual');
-        $lay($site_overrides, 'site');
-        return array('fields' => $fields, 'sources' => $sources);
-    }
-
-    /** The per-site SEO override layer's option key. */
-    private static function biz_site_option(int $site_id): string
-    {
-        return 'pcm_seo_biz_site_' . $site_id;
-    }
-
-    /**
-     * The resolved business record for a SITE — what every generation and
-     * the card consume. Site row (FKs) → brands unit API → SEO site layer
-     * → the pure ladder. No brand linked = brand layers empty, honest.
-     *
-     * @return array{fields:array,sources:array,brandId:int,brandName:string,unitId:int,unitLabel:string}
-     */
-    public static function business_record_for_site(int $site_id): array
-    {
-        $empty = array('fields' => array(), 'sources' => array(), 'brandId' => 0, 'brandName' => '', 'unitId' => 0, 'unitLabel' => '');
-        if ($site_id <= 0) {
-            return $empty;
-        }
-        global $wpdb;
-        $sites = PCM_Schema::table('sites');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $site = $wpdb->get_row($wpdb->prepare("SELECT name, url, brandId, businessUnitId FROM {$sites} WHERE id = %d", $site_id));
-        if (!$site) {
-            return $empty;
-        }
-        $site_basics = array(
-            'name'    => (string) ($site->name ?? ''),
-            'website' => (string) ($site->url ?? ''),
-            'siteUrl' => (string) ($site->url ?? ''),
-        );
-        $brand_id     = (int) ($site->brandId ?? 0);
-        $unit_id      = (int) ($site->businessUnitId ?? 0);
-        $brand_basics = array();
-        $unit         = array();
-        $brand_name   = '';
-        $unit_label   = '';
-        if ($brand_id > 0) {
-            $brands = PCM_Schema::table('brands');
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $brand = $wpdb->get_row($wpdb->prepare(
-                "SELECT name, website, phone, location, language, businessSummary FROM {$brands} WHERE id = %d",
-                $brand_id
-            ));
-            if ($brand) {
-                $brand_name   = (string) ($brand->name ?? '');
-                $brand_basics = array(
-                    'name'        => (string) ($brand->name ?? ''),
-                    'website'     => (string) ($brand->website ?? ''),
-                    'phone'       => (string) ($brand->phone ?? ''),
-                    'address'     => (string) ($brand->location ?? ''),
-                    'language'    => (string) ($brand->language ?? ''),
-                    'description' => (string) ($brand->businessSummary ?? ''),
-                );
-            }
-            if (class_exists('PCM_Brands_Service')) {
-                $unit       = PCM_Brands_Service::get_business_record($brand_id, $unit_id);
-                $unit_label = (string) ($unit['label'] ?? '');
-                $unit_id    = (int) ($unit['unitId'] ?? 0);
-            }
-        }
-        $overrides = get_option(self::biz_site_option($site_id), array());
-        $ladder    = self::merge_business_ladder(is_array($overrides) ? $overrides : array(), $unit, $brand_basics, $site_basics);
-        return array(
-            'fields'    => $ladder['fields'],
-            'sources'   => $ladder['sources'],
-            'brandId'   => $brand_id,
-            'brandName' => $brand_name,
-            'unitId'    => $unit_id,
-            'unitLabel' => $unit_label,
-        );
-    }
-
-    /**
-     * Save the per-site SEO override layer (sparse). Open keys by design —
-     * the frontend registry decides what exists; the server guards shape:
-     * sanitized keys, textarea-sanitized scalar values, caps on count and
-     * length. An EMPTY value removes the override (back to the brand
-     * truth). Returns the fresh resolved record.
-     *
-     * @param int   $site_id Site id.
-     * @param array $fields  key => value (scalar).
-     * @return array|\WP_Error business_record_for_site() shape.
-     */
-    public static function save_site_business_overrides(int $site_id, array $fields)
-    {
-        if ($site_id <= 0) {
-            return new WP_Error('pcm_seo_biz_no_site', __('A site is required.', 'power-creatives'), array('status' => 400));
-        }
-        $stored = get_option(self::biz_site_option($site_id), array());
-        $stored = is_array($stored) ? $stored : array();
-        $n      = 0;
-        foreach ($fields as $k => $v) {
-            $key = sanitize_key((string) $k);
-            if ($key === '' || !is_scalar($v)) {
-                continue;
-            }
-            if (++$n > 40) {
-                return new WP_Error('pcm_seo_biz_too_many', __('Too many fields in one save (max 40).', 'power-creatives'), array('status' => 400));
-            }
-            $val = sanitize_textarea_field((string) $v);
-            if (function_exists('mb_substr')) {
-                $val = mb_substr($val, 0, 2000);
-            } else {
-                $val = substr($val, 0, 2000);
-            }
-            if ($val === '') {
-                unset($stored[$key]); // clearing = back to the brand truth
-            } else {
-                $stored[$key] = $val;
-            }
-        }
-        update_option(self::biz_site_option($site_id), $stored, false);
-        return self::business_record_for_site($site_id);
-    }
-
-    /**
-     * Parse a pasted Google Maps share URL — pure, harness-tested. ONE
-     * human paste yields CID + coordinates + a buildable embed URL: the
-     * zero-API Google surface (Business Spine, Google-free ruling).
-     *
-     * @param string $url The pasted URL.
-     * @return array{fields:array<string,string>}|\WP_Error Named error when nothing parses.
-     */
-    public static function parse_maps_url(string $url)
-    {
-        $url  = trim($url);
-        $host = strtolower((string) (wp_parse_url($url, PHP_URL_HOST) ?: ''));
-        if ($host === '' || (strpos($host, 'google') === false && strpos($host, 'goo.gl') === false)) {
-            return new WP_Error('pcm_seo_maps_not_maps', __('That is not a Google Maps link — paste the Share URL from Google Maps.', 'power-creatives'), array('status' => 400));
-        }
-        $fields = array('mapsShareUrl' => esc_url_raw($url));
-        if (preg_match('/[?&]cid=(\d+)/', $url, $m)) {
-            $fields['cid'] = $m[1];
-        } elseif (preg_match('/!1s0x[0-9a-f]+:0x([0-9a-f]+)/i', $url, $m)) {
-            // The hex place ref's second half IS the CID in decimal. CIDs are
-            // 64-bit — hexdec() would overflow to float; exact string math.
-            $fields['cid'] = self::hex_to_dec($m[1]);
-        }
-        if (preg_match('/@(-?\d+\.\d+),(-?\d+\.\d+)/', $url, $m)
-            || preg_match('/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/', $url, $m)) {
-            $fields['lat'] = $m[1];
-            $fields['lng'] = $m[2];
-        }
-        if (!empty($fields['cid'])) {
-            $fields['mapsEmbedUrl'] = 'https://maps.google.com/maps?cid=' . $fields['cid'] . '&output=embed';
-        } elseif (!empty($fields['lat'])) {
-            $fields['mapsEmbedUrl'] = 'https://maps.google.com/maps?q=' . $fields['lat'] . ',' . $fields['lng'] . '&output=embed';
-        }
-        if (count($fields) === 1) {
-            return new WP_Error('pcm_seo_maps_unparsed', __('Nothing recognizable in that Maps link — use the Share button in Google Maps and paste that URL.', 'power-creatives'), array('status' => 400));
-        }
-        return array('fields' => $fields);
-    }
-
-    /** Exact hex → decimal string (64-bit CIDs overflow hexdec) — pure string math, no extension dependency. */
-    private static function hex_to_dec(string $hex): string
-    {
-        $dec = '0';
-        $len = strlen($hex);
-        for ($i = 0; $i < $len; $i++) {
-            $digit = (int) hexdec($hex[$i]);
-            $carry = $digit;
-            $out   = '';
-            for ($j = strlen($dec) - 1; $j >= 0; $j--) {
-                $v     = ((int) $dec[$j]) * 16 + $carry;
-                $out   = (string) ($v % 10) . $out;
-                $carry = intdiv($v, 10);
-            }
-            while ($carry > 0) {
-                $out   = (string) ($carry % 10) . $out;
-                $carry = intdiv($carry, 10);
-            }
-            $dec = ltrim($out, '0');
-            if ($dec === '') {
-                $dec = '0';
-            }
-        }
-        return $dec;
-    }
 
     /**
      * How much of the draft survived, sentence-wise: the share of the
@@ -6416,9 +4874,15 @@ class PCM_SEO_Service
     private static function note_wants_broad_rewrite(string $note, ?string $model, ?int $user_id, ?string $provider): bool
     {
         try {
+            // No hidden prompt: 'revise_scope_classifier' is its own Templates
+            // (module=seo) row a user can view/edit.
+            $default_system = 'Judge ONE thing about the user\'s revision request: does it ask for a BROAD rewrite of the whole text '
+                . '(tone, style, length, full rework) or a TARGETED change (specific facts, words, numbers, links)? '
+                . 'Respond with ONLY this JSON, no markdown: {"broad":true} or {"broad":false}.';
+            $system = PCM_SEO_AI::resolve_prompt('revise_scope_classifier_generate', $default_system, $user_id);
             $parsed = PCM_LLM::invoke_json(
                 array(
-                    array('role' => 'system', 'content' => 'Judge ONE thing about the user\'s revision request: does it ask for a BROAD rewrite of the whole text (tone, style, length, full rework) or a TARGETED change (specific facts, words, numbers, links)? Respond with ONLY this JSON, no markdown: {"broad":true} or {"broad":false}.'),
+                    array('role' => 'system', 'content' => $system),
                     array('role' => 'user', 'content' => $note),
                 ),
                 array('name' => 'revise_scope', 'schema' => array('type' => 'object', 'properties' => array('broad' => array('type' => 'boolean')), 'required' => array('broad'))),
@@ -6445,672 +4909,8 @@ class PCM_SEO_Service
             'authors'    => $authors,
             'statuses'   => self::VALID_STATUSES,
             'types'      => self::VALID_TYPES,
-            'seoPlugin'  => self::detect_seo_plugin(),
+            'seoPlugin'  => PCM_SEO_Local::detect_seo_plugin(),
         );
     }
 
-    // =====================================================================
-    // Saved Views — per-user column/filter configurations
-    // =====================================================================
-
-    /**
-     * List a user's saved views, newest first.
-     *
-     * @param int $userId PCM user id (wp_pcm_users.id).
-     * @return array[] [{ id:int, name:string, config:array }, ...].
-     */
-    public function list_views(int $userId): array
-    {
-        global $wpdb;
-        $table = PCM_Schema::table('seo_views');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
-        $rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT id, name, config, isDefault FROM {$table} WHERE userId = %d ORDER BY id DESC",
-            $userId
-        ));
-
-        $views = array();
-        foreach ($rows as $row) {
-            $config = json_decode((string) $row->config, true);
-            $views[] = array(
-                'id'        => (int) $row->id,
-                'name'      => (string) $row->name,
-                'config'    => is_array($config) ? $config : array(),
-                'isDefault' => (bool) (int) $row->isDefault,
-            );
-        }
-        return $views;
-    }
-
-    /**
-     * Create a saved view for a user.
-     *
-     * @param int    $userId PCM user id.
-     * @param string $name   Sanitized, non-empty view name.
-     * @param array  $config { columns: {colKey:bool}, filters: {colKey:string} }.
-     * @return array { id:int, name:string, config:array }.
-     */
-    public function create_view(int $userId, string $name, array $config): array
-    {
-        global $wpdb;
-        $table = PCM_Schema::table('seo_views');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $wpdb->insert(
-            $table,
-            array(
-                'userId' => $userId,
-                'name'   => $name,
-                'config' => wp_json_encode($config),
-            ),
-            array('%d', '%s', '%s')
-        );
-
-        return array(
-            'id'        => (int) $wpdb->insert_id,
-            'name'      => $name,
-            'config'    => $config,
-            'isDefault' => false,
-        );
-    }
-
-    /**
-     * Mark a view as the user's default (or clear it), enforcing at most one
-     * default per user. Only affects views owned by the given user.
-     *
-     * @param int  $id        View id.
-     * @param int  $userId    PCM user id.
-     * @param bool $isDefault True to make this the default, false to unset it.
-     * @return bool True if the target view exists and belongs to the user.
-     */
-    public function set_default_view(int $id, int $userId, bool $isDefault): bool
-    {
-        global $wpdb;
-        $table = PCM_Schema::table('seo_views');
-
-        // Ownership check — never touch another user's views.
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
-        $owned = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table} WHERE id = %d AND userId = %d",
-            $id,
-            $userId
-        ));
-        if ($owned === 0) {
-            return false;
-        }
-
-        // Clear any existing default for this user (single-default invariant).
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $wpdb->update($table, array('isDefault' => 0), array('userId' => $userId), array('%d'), array('%d'));
-
-        if ($isDefault) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $wpdb->update(
-                $table,
-                array('isDefault' => 1),
-                array('id' => $id, 'userId' => $userId),
-                array('%d'),
-                array('%d', '%d')
-            );
-        }
-        return true;
-    }
-
-    /**
-     * Delete a saved view, but only if it belongs to the given user.
-     *
-     * @param int $id     View id.
-     * @param int $userId PCM user id.
-     * @return bool True if a row was deleted, false if none matched.
-     */
-    public function delete_view(int $id, int $userId): bool
-    {
-        global $wpdb;
-        $table = PCM_Schema::table('seo_views');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $deleted = $wpdb->delete(
-            $table,
-            array('id' => $id, 'userId' => $userId),
-            array('%d', '%d')
-        );
-        return (int) $deleted > 0;
-    }
-
-    // =====================================================================
-    // AI field generation (Phase 3) — reuses PC's PCM_LLM provider routing
-    // =====================================================================
-
-    /** Cell field → prompt `use` key. Only these fields are AI-generatable. */
-    public static function field_use_map(): array
-    {
-        return array(
-            'title'           => 'page_title',
-            'metaTitle'       => 'meta_title',
-            'metaDescription' => 'meta_description',
-            'metaKeywords'    => 'meta_keywords',
-            'primaryKeyword'  => 'primary_keyword',
-            'slug'            => 'slug',
-        );
-    }
-
-    /**
-     * Default field prompts (verbatim port), filterable for site overrides.
-     *
-     * @return array<string, array{max:int, generate:string, optimize?:string}>
-     */
-    public static function field_prompts(): array
-    {
-        static $prompts = null;
-        if ($prompts === null) {
-            $prompts = require __DIR__ . '/prompts.php';
-        }
-        $filtered = apply_filters('pcm_seo_field_prompts', $prompts);
-        return is_array($filtered) ? $filtered : $prompts;
-    }
-
-    /**
-     * Flatten the field prompts into the shared Prompt-Editor registry shape
-     * ({module:'seo'} → section → content string). Sections are keyed
-     * `{use}_{mode}` (e.g. `page_title_generate`, `content_optimize`). These
-     * are the verbatim shipped defaults — surfaced as the "Built-in" variant
-     * in Settings → Prompts → SEO and used whenever the user has no active
-     * override. Consumed by PCM_REST_Prompts::get_default_prompt().
-     *
-     * @return array<string, string>
-     */
-    public static function get_default_prompts(): array
-    {
-        $out = array();
-        foreach (self::field_prompts() as $use => $cfg) {
-            if (!empty($cfg['generate'])) {
-                $out[$use . '_generate'] = (string) $cfg['generate'];
-            }
-            if (!empty($cfg['optimize'])) {
-                $out[$use . '_optimize'] = (string) $cfg['optimize'];
-            }
-        }
-        return $out;
-    }
-
-    /**
-     * Resolve the prompt template for a Prompt-Editor section: the user's
-     * ACTIVE override (Settings → Prompts → SEO) when present, else the shipped
-     * default. Mirrors PCM_Writer_Service::get_system_prompt.
-     *
-     * @param string   $section Section key, e.g. `meta_title_optimize`.
-     * @param string   $default Shipped default template (fallback).
-     * @param int|null $user_id PCM user id (wp_pcm_users.id), NOT the WP user id.
-     * @return string
-     */
-    public static function resolve_prompt(string $section, string $default, ?int $user_id = null, ?int $template_id = null): string
-    {
-        if ($user_id && $user_id > 0) {
-            // Prompts now live as Templates (module=seo). Seed defaults once, then
-            // resolve the chosen/default template for this section.
-            self::seed_seo_templates();
-            $tpl = self::seo_template_prompt($user_id, $section, $template_id);
-            if ($tpl !== null && $tpl !== '') {
-                return $tpl;
-            }
-            // Legacy fallback: a pre-migration Settings→Prompts→SEO override.
-            global $wpdb;
-            $table    = PCM_Schema::table('prompt_overrides');
-            $override = $wpdb->get_var($wpdb->prepare(
-                "SELECT content FROM {$table} WHERE userId = %d AND module = 'seo' AND section = %s AND isActive = 1 ORDER BY updatedAt DESC LIMIT 1",
-                $user_id,
-                $section
-            ));
-            if (!empty($override)) {
-                return (string) $override;
-            }
-        }
-        return $default;
-    }
-
-    /**
-     * Seed one default prompt Template per SEO section for a user (idempotent).
-     * Stored in wp_pcm_templates (module=seo, formData={type,section,prompt,isDefault})
-     * so prompts are managed as Templates rather than Prompt-Editor overrides.
-     */
-    public static function seed_seo_templates(): void
-    {
-        global $wpdb;
-        $table = PCM_Schema::table('templates');
-        // SYSTEM set (userId=0) — one shared default per section, visible to every
-        // user (the Templates list + resolver both read `userId = me OR 0`). Idempotent.
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-        $rows  = $wpdb->get_col("SELECT formData FROM {$table} WHERE userId = 0 AND module = 'seo'");
-        $have  = array();
-        foreach ($rows as $json) {
-            $fd = json_decode((string) $json, true);
-            if (!empty($fd['type'])) {
-                $have[$fd['type']] = true;
-            }
-        }
-        // Stored in the SAME shape the Templates module edits: module=seo,
-        // formData.type=<section>, one entry {category:'prompt', value:<prompt>}.
-        foreach (self::get_default_prompts() as $section => $prompt) {
-            if (isset($have[$section])) {
-                continue;
-            }
-            $name = self::seo_section_label($section);
-            $form = array(
-                'type'      => $section,
-                'entries'   => array(array(
-                    'key'      => 'prompt_' . $section,
-                    'category' => 'prompt',
-                    'label'    => $name,
-                    'value'    => $prompt,
-                )),
-                'sortOrder' => 0,
-            );
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $wpdb->insert($table, array(
-                'userId'    => 0,
-                'name'      => $name,
-                'module'    => 'seo',
-                'formData'  => wp_json_encode($form),
-                'isDefault' => 1,
-            ), array('%d', '%s', '%s', '%s', '%d'));
-        }
-    }
-
-    /** Resolve a section's prompt from Templates (module=seo): the chosen template,
-     *  else the user's own default, else the SYSTEM default, else any. */
-    private static function seo_template_prompt(int $user_id, string $section, ?int $template_id): ?string
-    {
-        global $wpdb;
-        $table = PCM_Schema::table('templates');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-        $rows  = $wpdb->get_results($wpdb->prepare("SELECT id, userId, formData, isDefault FROM {$table} WHERE (userId = %d OR userId = 0) AND module = 'seo'", $user_id), ARRAY_A);
-        $chosen = null;
-        $chosen_shared = false; // requested id points at a SHARED (userId=0) row
-        $user_fork = null;      // the user's edited copy of this section (fork-on-edit)
-        $user_default = null;
-        $system_default = null;
-        $any = null;
-        foreach ($rows as $r) {
-            $fd = json_decode((string) ($r['formData'] ?? ''), true);
-            if (!is_array($fd) || ($fd['type'] ?? '') !== $section) {
-                continue;
-            }
-            $prompt = self::seo_entry_prompt($fd);
-            if ($prompt === null) {
-                continue;
-            }
-            if ($template_id && (int) $r['id'] === $template_id) {
-                $chosen = $prompt;
-                $chosen_shared = ((int) $r['userId'] === 0);
-            }
-            if ((int) $r['userId'] === $user_id && $user_fork === null) {
-                $user_fork = $prompt;
-            }
-            if (!empty($r['isDefault'])) {
-                if ((int) $r['userId'] === $user_id && $user_default === null) {
-                    $user_default = $prompt;
-                } elseif ((int) $r['userId'] === 0 && $system_default === null) {
-                    $system_default = $prompt;
-                }
-            }
-            if ($any === null) {
-                $any = $prompt;
-            }
-        }
-        // A picker can pass the ORIGINAL shared template's id from a cached list even after the
-        // user's edit forked it into their own copy (the shared row stays in the DB, only hidden
-        // from the list). Honoring the stale shared row would silently ignore the user's edit —
-        // redirect to their fork of the same section instead.
-        if ($chosen !== null && $chosen_shared && $user_fork !== null) {
-            $chosen = $user_fork;
-        }
-        return $chosen ?? $user_default ?? $system_default ?? $any;
-    }
-
-    /** Extract the prompt string from a SEO template's formData (entries[].value). */
-    private static function seo_entry_prompt(array $fd): ?string
-    {
-        $entries = (isset($fd['entries']) && is_array($fd['entries'])) ? $fd['entries'] : array();
-        foreach ($entries as $e) {
-            if (($e['category'] ?? '') === 'prompt' && isset($e['value'])) {
-                return (string) $e['value'];
-            }
-        }
-        return isset($entries[0]['value']) ? (string) $entries[0]['value'] : null;
-    }
-
-    /** Human label for a section key, e.g. `meta_title_optimize` → "Meta Title — Optimize". */
-    private static function seo_section_label(string $section): string
-    {
-        $mode = '';
-        if (str_ends_with($section, '_generate')) {
-            $mode = 'Generate';
-            $section = substr($section, 0, -9);
-        } elseif (str_ends_with($section, '_optimize')) {
-            $mode = 'Optimize';
-            $section = substr($section, 0, -9);
-        }
-        $field = ucwords(str_replace('_', ' ', $section));
-        return $mode !== '' ? "{$field} — {$mode}" : $field;
-    }
-
-    /**
-     * Substitute {{key}} placeholders. Keys are matched literally (the map
-     * carries the exact key strings, incl. dotted/piped ones), mirroring the
-     * source's replacePromptVariables.
-     *
-     * @param string               $template Prompt template.
-     * @param array<string, string> $vars    key => value.
-     * @return string
-     */
-    public static function substitute_vars(string $template, array $vars): string
-    {
-        foreach ($vars as $key => $value) {
-            $template = str_replace('{{' . $key . '}}', (string) $value, $template);
-        }
-        return $template;
-    }
-
-    /**
-     * Trim AI output and strip a single matching pair of surrounding quotes
-     * (faithful to opt_simple_sanitize_ai_output).
-     *
-     * @param string $content Raw model output.
-     * @return string
-     */
-    public static function sanitize_ai_output(string $content): string
-    {
-        $content = trim($content);
-        if ($content === '') {
-            return '';
-        }
-        // Strip a wrapping code fence (```lang ... ```), if any.
-        if (str_starts_with($content, '```')) {
-            $content = trim((string) preg_replace('/^```[a-zA-Z0-9]*\s*|\s*```$/', '', $content));
-        }
-        // These are single-value fields. A chatty model (e.g. Claude Haiku) may wrap the
-        // value in a markdown heading and follow it with commentary (character counts,
-        // checklists) or lead with a "Here is…:" preamble. Pick the first line that looks
-        // like the actual value: strip leading markdown markers + bold, skip empty/marker
-        // lines and label/preamble lines (those ending in a colon).
-        $lines = preg_split('/\r\n|\r|\n/', $content) ?: array($content);
-        $value = $content;
-        foreach ($lines as $line) {
-            $line = trim((string) $line);
-            if ($line === '') {
-                continue;
-            }
-            $line = trim((string) preg_replace('/^\s*(#{1,6}|>|[-*+]|\d+\.)\s+/', '', $line));
-            $line = trim(str_replace(array('**', '__'), '', $line));
-            if ($line === '' || preg_match('/:\s*$/', $line)) {
-                continue; // pure marker line, or a label/preamble line ("Meta title:")
-            }
-            $value = $line;
-            break;
-        }
-        // Strip a leading "Label:" / "Label -" prefix on the value itself.
-        $value = trim((string) preg_replace('/^(meta\s+title|title|meta\s+description|description|slug|keywords?|primary\s+keyword)\s*[:\-\x{2013}]\s+/iu', '', trim($value)));
-        // Strip surrounding matched quotes.
-        $len = strlen($value);
-        if ($len >= 2) {
-            $first = $value[0];
-            $last  = $value[$len - 1];
-            if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
-                $value = trim(substr($value, 1, $len - 2));
-            }
-        }
-        return trim($value);
-    }
-
-    /**
-     * Build the substitution variable map for a post (+ optional brand for
-     * business context; falls back to site info).
-     *
-     * @param int      $post_id  Post id.
-     * @param int|null $brand_id Optional PC brand for {{business.*}}.
-     * @return array<string, string>
-     */
-    public function build_field_vars(int $post_id, ?int $brand_id = null): array
-    {
-        $post = get_post($post_id);
-        $home = home_url('/');
-        $host = (string) wp_parse_url($home, PHP_URL_HOST);
-
-        $business_name = (string) get_bloginfo('name');
-        $business_tag  = (string) get_bloginfo('description');
-        // GBP business context for the brand (resolved = snapshot + overrides).
-        $gbp = array();
-        if ($brand_id && $brand_id > 0) {
-            global $wpdb;
-            $brands = PCM_Schema::table('brands');
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $brand = $wpdb->get_row($wpdb->prepare("SELECT name FROM {$brands} WHERE id = %d", $brand_id));
-            if ($brand && !empty($brand->name)) {
-                $business_name = (string) $brand->name;
-            }
-            if (class_exists('PCM_SEO_GBP')) {
-                $gbp = PCM_SEO_GBP::get_for_brand($brand_id)['resolved'];
-                if (!empty($gbp['name'])) {
-                    $business_name = (string) $gbp['name'];
-                }
-            }
-        }
-
-        $locale = get_locale();
-        return array(
-            'title'                     => $post ? $post->post_title : '',
-            'primary_keyword'           => self::seo_get($post_id, 'keyword'),
-            'supporting_keyword'        => (string) get_post_meta($post_id, 'pcm_seo_supporting_keyword', true),
-            'meta_keywords'             => self::seo_get($post_id, 'meta_keywords'),
-            'meta_title'                => self::seo_get($post_id, 'title'),
-            'meta_description'          => self::seo_get($post_id, 'description'),
-            'post_type'                 => $post ? $post->post_type : '',
-            'site.lang'                 => $locale ? substr($locale, 0, 2) : 'en',
-            'website.url'               => $home,
-            'today'                     => gmdate('Y-m-d'),
-            'business.name'             => $business_name,
-            'business.tagline'          => $business_tag,
-            'business.website'          => !empty($gbp['website']) ? (string) $gbp['website'] : $home,
-            'business.website|hostname' => $host,
-            'business.address'          => (string) ($gbp['address'] ?? ''),
-            'business.phone'            => (string) ($gbp['phone'] ?? ''),
-            'business.category'         => (string) ($gbp['category'] ?? ''),
-            'business.hours'            => (string) ($gbp['hours'] ?? ''),
-            'business.description'      => (string) ($gbp['description'] ?? ''),
-            'business.rating'           => isset($gbp['rating']) ? (string) $gbp['rating'] : '',
-            'business.lat'              => isset($gbp['lat']) ? (string) $gbp['lat'] : '',
-            'business.lng'              => isset($gbp['lng']) ? (string) $gbp['lng'] : '',
-            'business.types'            => !empty($gbp['types']) ? implode(', ', (array) $gbp['types']) : '',
-        );
-    }
-
-    /**
-     * Generate (or optimize) an SEO field value with AI. Returns the suggested
-     * value WITHOUT saving — the caller stages it for accept/reject. Reuses
-     * PC's PCM_LLM provider routing.
-     *
-     * @param int      $post_id  Post id.
-     * @param string   $field    Cell field (must be in field_use_map()).
-     * @param int|null $brand_id Optional brand for business context.
-     * @param string|null $model Optional model override.
-     * @param int|null $user_id  PCM user (for prompt overrides + provider key).
-     * @param string|null $provider Optional provider override (paired with $model).
-     * @return array|WP_Error { field, value }.
-     */
-    public function generate_field(int $post_id, string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
-    {
-        $use_map = self::field_use_map();
-        if (!isset($use_map[$field])) {
-            return new WP_Error('pcm_seo_not_generatable', __('This field cannot be AI-generated.', 'power-creatives'), array('status' => 400));
-        }
-        $use     = $use_map[$field];
-        $prompts = self::field_prompts();
-        if (!isset($prompts[$use])) {
-            return new WP_Error('pcm_seo_no_prompt', __('No prompt configured for this field.', 'power-creatives'), array('status' => 500));
-        }
-
-        $vars    = $this->build_field_vars($post_id, $brand_id);
-        // Read the current value (for optimize mode) from the right storage key.
-        $get_key_map = array(
-            'metaTitle'       => 'title',
-            'metaDescription' => 'description',
-            'metaKeywords'    => 'meta_keywords',
-            'primaryKeyword'  => 'keyword',
-        );
-        $current = in_array($field, array('title', 'slug'), true) ? '' : self::seo_get($post_id, $get_key_map[$field] ?? 'meta_keywords');
-        // 'title' and 'slug' are native post fields, not SEO meta — read them directly.
-        if ($field === 'title' || $field === 'slug') {
-            $p = get_post($post_id);
-            $current = $p ? ($field === 'title' ? $p->post_title : $p->post_name) : '';
-        }
-        $vars['current_value'] = $current;
-
-        // Optimize an existing value when present and an optimize prompt exists.
-        $mode    = (!empty($current) && !empty($prompts[$use]['optimize'])) ? 'optimize' : 'generate';
-        $default = $prompts[$use][$mode];
-        // Honor the user's Settings → Prompts → SEO override (falls back to default).
-        $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
-        $prompt  = self::substitute_vars($tpl, $vars);
-        $max     = (int) ($prompts[$use]['max'] ?? 200);
-
-        if (!class_exists('PCM_LLM')) {
-            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
-        }
-
-        try {
-            $opts = array('max_tokens' => $max);
-            if (!empty($model)) {
-                $opts['model'] = $model;
-            }
-            // Data-driven provider routing — when the caller picks a model it also
-            // sends its provider, so we never fall back to detect_provider().
-            if (!empty($provider)) {
-                $opts['provider'] = $provider;
-            }
-            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
-            $value  = self::sanitize_ai_output((string) ($result['content'] ?? ''));
-            // The slug field must be a valid URL slug — slugify whatever the model
-            // returned (handles chatty output / spaces / casing reliably).
-            if ($field === 'slug') {
-                $value = sanitize_title($value);
-            }
-            if ($value === '') {
-                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
-            }
-            return array('field' => $field, 'value' => $value);
-        } catch (\Throwable $e) {
-            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
-        }
-    }
-
-    /**
-     * Generate a SITE-wide field (robots.txt / LocalBusiness JSON-LD) from its
-     * editable prompt (Settings → Templates, module=seo). Brand supplies the
-     * business context for the schema; robots only needs the site URL. Returns
-     * the generated text WITHOUT saving (the Site tab previews + saves).
-     *
-     * @param string      $field    'robots' | 'schema'.
-     * @param int|null    $brand_id Optional brand for {{business.*}} context.
-     * @param string|null $model    Optional model override.
-     * @param int|null    $user_id  PCM user (for prompt-template override).
-     * @param string|null $provider Optional provider override (paired with $model).
-     * @return array|WP_Error { field, value }.
-     */
-    public function generate_site_field(string $field, ?int $brand_id = null, ?string $model = null, ?int $user_id = null, ?string $provider = null, array $var_overrides = array())
-    {
-        $use_map = array(
-            'robots'       => 'robots',
-            'schema'       => 'site_schema',
-            'site_title'   => 'site_title',
-            'site_tagline' => 'site_tagline',
-        );
-        if (!isset($use_map[$field])) {
-            return new WP_Error('pcm_seo_not_generatable', __('This site field cannot be generated.', 'power-creatives'), array('status' => 400));
-        }
-        $use     = $use_map[$field];
-        $prompts = self::field_prompts();
-        if (empty($prompts[$use]['generate'])) {
-            return new WP_Error('pcm_seo_no_prompt', __('No prompt configured for this field.', 'power-creatives'), array('status' => 500));
-        }
-
-        // Site-level vars (no post): business.* (from brand), website.url, site.lang.
-        // $var_overrides lets a CONNECTED site inject its own url/name so {{website.url}}
-        // (robots Sitemap, schema url) resolves to the remote site, not the hub.
-        $vars    = array_merge($this->build_field_vars(0, $brand_id), $var_overrides);
-        $default = $prompts[$use]['generate'];
-        $tpl     = self::resolve_prompt($use . '_generate', $default, $user_id);
-        $prompt  = self::substitute_vars($tpl, $vars);
-        $max     = (int) ($prompts[$use]['max'] ?? 600);
-
-        if (!class_exists('PCM_LLM')) {
-            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
-        }
-
-        try {
-            $opts = array('max_tokens' => $max);
-            if (!empty($model)) {
-                $opts['model'] = $model;
-            }
-            if (!empty($provider)) {
-                $opts['provider'] = $provider;
-            }
-            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
-            $value = trim((string) ($result['content'] ?? ''));
-            if ($field === 'site_title' || $field === 'site_tagline') {
-                // Single-line value fields — strip markdown/commentary a chatty model adds.
-                $value = self::sanitize_ai_output($value);
-            } elseif (strpos($value, '```') === 0) {
-                // Multi-line output (robots/schema) — strip only a wrapping ```code fence```
-                // (do NOT use sanitize_ai_output, which collapses to a single line).
-                $value = trim((string) preg_replace('/^```[a-zA-Z0-9]*\s*|\s*```$/', '', $value));
-            }
-            if ($value === '') {
-                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
-            }
-            return array('field' => $field, 'value' => $value);
-        } catch (\Throwable $e) {
-            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
-        }
-    }
-
-    /**
-     * AI-optimize a post's full body (SEO + AEO). Returns the suggested HTML
-     * WITHOUT saving (caller previews + accepts). Reuses PCM_LLM.
-     *
-     * @return array|WP_Error { body }.
-     */
-    public function optimize_body(int $post_id, ?int $brand_id = null, ?string $model = null, ?int $user_id = null)
-    {
-        $post = get_post($post_id);
-        if (!$post) {
-            return new WP_Error('pcm_seo_no_post', __('Content not found.', 'power-creatives'), array('status' => 404));
-        }
-        $prompts = self::field_prompts();
-        if (empty($prompts['content']['optimize'])) {
-            return new WP_Error('pcm_seo_no_prompt', __('No content prompt configured.', 'power-creatives'), array('status' => 500));
-        }
-        $vars = $this->build_field_vars($post_id, $brand_id);
-        $vars['current_value'] = $post->post_content;
-        // Honor the user's Settings → Prompts → SEO override (falls back to default).
-        $tpl    = self::resolve_prompt('content_optimize', $prompts['content']['optimize'], $user_id);
-        $prompt = self::substitute_vars($tpl, $vars);
-
-        if (!class_exists('PCM_LLM')) {
-            return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
-        }
-        try {
-            $opts = array('max_tokens' => (int) ($prompts['content']['max'] ?? 4096));
-            if (!empty($model)) {
-                $opts['model'] = $model;
-            }
-            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
-            $body   = trim((string) ($result['content'] ?? ''));
-            // Strip accidental code fences.
-            $body   = preg_replace('/^```[a-z]*\n?|\n?```$/i', '', $body);
-            if ($body === '') {
-                return new WP_Error('pcm_seo_empty', __('The model returned no content — try again.', 'power-creatives'), array('status' => 502));
-            }
-            return array('body' => $body);
-        } catch (\Throwable $e) {
-            return new WP_Error('pcm_seo_optimize_failed', $e->getMessage(), array('status' => 502));
-        }
-    }
 }

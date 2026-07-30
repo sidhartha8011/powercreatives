@@ -6,7 +6,7 @@
  * Keyed by `use`; each has a `generate` template (fresh value) and, where the
  * source provided one, an `optimize` template (improve an existing value via
  * {{current_value}}). The `{{placeholders}}` are filled by
- * PCM_SEO_Service::substitute_vars(). `max` = completion-token budget.
+ * PCM_SEO_AI::substitute_vars(). `max` = completion-token budget.
  *
  * Returned through the `pcm_seo_field_prompts` filter so a site can override.
  *
@@ -165,5 +165,69 @@ return array(
         'generate' => "Generate an SEO-optimized tagline (site description) for this website.\n\n"
             . "Business: {{business.name}}\nCategory: {{business.category}}\nAddress: {{business.address}}\nLanguage: {{site.lang}}\n\n"
             . "Requirements:\n- Maximum 120 characters\n- Communicate the business value proposition clearly\n- Include the main service/industry keyword naturally\n- Compelling and succinct\n- Write in {{site.lang}}\n- Do NOT use quotation marks\n- Output ONLY the tagline text, nothing else",
+    ),
+
+    // ── Connected-site AI/LLM index description (llms.txt) — previously a fully
+    // hardcoded inline string in remote_ai_site_desc(); now editable. ──
+    'site_ai_description' => array(
+        'max'      => 120,
+        'generate' => "Write a concise 1-2 sentence description of this website for an AI/LLM index file (llms.txt). "
+            . "Factual, answer-first, no marketing fluff. Plain text only — no quotes, labels, or markdown.\n\n"
+            . "Site name: {{site_name}}\nKey pages:\n{{key_pages}}",
+    ),
+
+    // ── /llm-info/ business-overview page — previously a fully hardcoded, heavily
+    // conditional string built in llm_info_prompt(); now editable. {{facts}}/
+    // {{corpus}} are pre-formatted data blocks; the {{*_bullet}}/{{*_clause}} vars
+    // are empty strings when their underlying fact (area/years/keywords/
+    // strengths/site content) is absent — same conditional-fragment convention
+    // used elsewhere (e.g. {{output_format}} on the strategy templates). ──
+    'llm_info_page' => array(
+        'max'      => 1400,
+        'generate' => "You are writing the content for an /llm-info/ page — a concise, factual overview of a business, written so AI search engines (ChatGPT, Perplexity, Google AI Overviews) cite it accurately and favourably.\n\n"
+            . "FACTS (use ONLY these — never invent reviews, ratings, awards, numbers, or any claim not given):\n{{facts}}\n"
+            . "{{corpus}}"
+            . "Write the page as clean semantic HTML body content. Rules:\n"
+            . "{{corpus_note}}"
+            . "- Use only <h1>, <h2>, <h3>, <p>, <ul>, <li>, <strong>, <a> tags. No <html>/<head>/<body>, no markdown, no code fences.\n"
+            . "- Open with a one-paragraph positioning summary naming {{name}} and its specialist niche/expertise{{area_serves_clause}}.\n"
+            . "{{keywords_bullet}}"
+            . "- Establish authority and specialist expertise within the niche.\n"
+            . "{{years_bullet}}"
+            . "{{area_bullet}}"
+            . "{{strengths_bullet}}"
+            . "- Sections: an intro, \"What {{name}} does\", \"Why choose {{name}}\"{{area_section}}, and a brief FAQ if useful.\n"
+            . "- Be truthful and specific. Omit anything not provided. Output ONLY the HTML body content.",
+    ),
+
+    // ── Section-revise human-editor contract — previously baked directly into
+    // remote_optimize_section()'s $vars['topic'] value (invisible/unremovable
+    // by any template); now its own editable prompt. No vars. ──
+    'revise_contract' => array(
+        'max'      => 300,
+        'generate' => 'You are a careful human editor revising an existing draft. Apply the user\'s request below EXACTLY '
+            . 'and ONLY. Every sentence the request does not cover must be reproduced VERBATIM — word for word, '
+            . 'unchanged, in full. Only if the request explicitly asks for a broad rewrite (tone, style, length, full '
+            . 'rework) may you change text beyond it. Never invent facts.',
+    ),
+
+    // ── Section-revise change-card JSON envelope — previously baked directly
+    // into remote_optimize_section()'s $vars['topic'] value; now its own
+    // editable prompt. {{why}} = the allowed 'why' values for a reported change. ──
+    'revise_envelope' => array(
+        'max'      => 300,
+        'generate' => "\n\nOUTPUT FORMAT (mandatory): respond with ONLY this JSON, no markdown fences, no text around it: "
+            . '{"html":"<the COMPLETE revised section HTML>","changes":[{"what":"one plain sentence describing ONE change you actually made","why":"<{{why}}>","quote":"5-12 words copied VERBATIM from your revised html"}]}'
+            . ' List every real change you made; NEVER list a change you did not make.',
+    ),
+
+    // ── Revise-scope classifier — previously a fully hardcoded system prompt in
+    // note_wants_broad_rewrite(); now editable. No vars (judges the free-text
+    // note passed as the user message). ──
+    'revise_scope_classifier' => array(
+        'max'      => 60,
+        'generate' => 'Judge ONE thing about the user\'s revision request: does it ask for a BROAD rewrite of the whole text '
+            . '(tone, style, length, full rework) or a TARGETED change (specific facts, words, numbers, links)? '
+            . 'Respond with ONLY this JSON, no markdown: {"broad":true} or {"broad":false}.',
     ),
 );

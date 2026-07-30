@@ -16,7 +16,7 @@ class SeoIntegrationTest extends TestCase
 {
     public function test_key_map_is_faithful(): void
     {
-        $map = PCM_SEO_Service::seo_key_map();
+        $map = PCM_SEO_Local::seo_key_map();
 
         $this->assertSame('_yoast_wpseo_title', $map['yoast']['title']);
         $this->assertSame('_yoast_wpseo_metadesc', $map['yoast']['description']);
@@ -43,7 +43,7 @@ class SeoIntegrationTest extends TestCase
     public function test_detect_defaults_to_simple_without_seo_plugin(): void
     {
         // No Yoast/RankMath/SEOPress symbols defined in the unit env.
-        $this->assertSame('simple', PCM_SEO_Service::detect_seo_plugin());
+        $this->assertSame('simple', PCM_SEO_Local::detect_seo_plugin());
     }
 
     public function test_seo_get_reads_active_key(): void
@@ -53,13 +53,13 @@ class SeoIntegrationTest extends TestCase
             ->with(5, 'pcm_seo_meta_title', true)
             ->andReturn('Hello World');
 
-        $this->assertSame('Hello World', PCM_SEO_Service::seo_get(5, 'title'));
+        $this->assertSame('Hello World', PCM_SEO_Local::seo_get(5, 'title'));
     }
 
     public function test_seo_get_empty_returns_blank(): void
     {
         WP_Mock::userFunction('get_post_meta')->andReturn('');
-        $this->assertSame('', PCM_SEO_Service::seo_get(5, 'description'));
+        $this->assertSame('', PCM_SEO_Local::seo_get(5, 'description'));
     }
 
     public function test_seo_update_simple_writes_internal_key_once(): void
@@ -69,7 +69,7 @@ class SeoIntegrationTest extends TestCase
             ->once()
             ->with(9, 'pcm_seo_primary_keyword', 'roofing');
 
-        PCM_SEO_Service::seo_update(9, 'keyword', 'roofing');
+        PCM_SEO_Local::seo_update(9, 'keyword', 'roofing');
         $this->assertConditionsMet();
     }
 
@@ -80,8 +80,7 @@ class SeoIntegrationTest extends TestCase
             ->once()
             ->with(7, 'pcm_seo_meta_description', 'A great page');
 
-        $svc = new PCM_SEO_Service();
-        $res = $svc->save_cell(7, 'metaDescription', 'A great page');
+        $res = PCM_SEO_Local::save_cell(7, 'metaDescription', 'A great page');
 
         $this->assertSame('metaDescription', $res['field']);
         $this->assertSame('A great page', $res['value']);
@@ -94,15 +93,14 @@ class SeoIntegrationTest extends TestCase
             ->once()
             ->with(7, 'pcm_seo_cluster_label', 'Services');
 
-        $svc = new PCM_SEO_Service();
-        $res = $svc->save_cell(7, 'clusterLabel', 'Services');
+        $res = PCM_SEO_Local::save_cell(7, 'clusterLabel', 'Services');
 
         $this->assertSame('Services', $res['value']);
     }
 
     public function test_save_cell_whitelist_covers_seo_and_native_fields(): void
     {
-        $fields = PCM_SEO_Service::save_cell_fields();
+        $fields = PCM_SEO_Local::save_cell_fields();
 
         $this->assertSame('seo:title', $fields['metaTitle']);
         $this->assertSame('seo:description', $fields['metaDescription']);
@@ -118,7 +116,7 @@ class SeoIntegrationTest extends TestCase
     public function test_substitute_vars_replaces_all_placeholders(): void
     {
         $tpl  = 'Title: {{title}} / KW: {{primary_keyword}} / Biz: {{business.name}} / Host: {{business.website|hostname}}';
-        $out  = PCM_SEO_Service::substitute_vars($tpl, array(
+        $out  = PCM_SEO_AI::substitute_vars($tpl, array(
             'title'                     => 'Roof Repair',
             'primary_keyword'           => 'roofing',
             'business.name'             => 'ACME Roofing',
@@ -130,15 +128,15 @@ class SeoIntegrationTest extends TestCase
     public function test_substitute_vars_unknown_placeholder_is_left_intact(): void
     {
         // Only declared keys are replaced; others pass through unchanged.
-        $this->assertSame('{{unknown}}', PCM_SEO_Service::substitute_vars('{{unknown}}', array('title' => 'x')));
+        $this->assertSame('{{unknown}}', PCM_SEO_AI::substitute_vars('{{unknown}}', array('title' => 'x')));
     }
 
     public function test_sanitize_ai_output_strips_one_quote_pair(): void
     {
-        $this->assertSame('Best Roofers in Town', PCM_SEO_Service::sanitize_ai_output('  "Best Roofers in Town"  '));
-        $this->assertSame('Plain text', PCM_SEO_Service::sanitize_ai_output("'Plain text'"));
+        $this->assertSame('Best Roofers in Town', PCM_SEO_AI::sanitize_ai_output('  "Best Roofers in Town"  '));
+        $this->assertSame('Plain text', PCM_SEO_AI::sanitize_ai_output("'Plain text'"));
         // Mismatched / inner quotes untouched.
-        $this->assertSame('He said "hi"', PCM_SEO_Service::sanitize_ai_output('He said "hi"'));
+        $this->assertSame('He said "hi"', PCM_SEO_AI::sanitize_ai_output('He said "hi"'));
     }
 
     public function test_top_keywords_ranks_frequent_terms_and_phrases(): void
@@ -182,7 +180,7 @@ class SeoIntegrationTest extends TestCase
 
     public function test_field_use_map_only_lists_generatable_fields(): void
     {
-        $map = PCM_SEO_Service::field_use_map();
+        $map = PCM_SEO_AI::field_use_map();
         $this->assertSame('page_title', $map['title']);
         $this->assertSame('meta_title', $map['metaTitle']);
         $this->assertSame('meta_description', $map['metaDescription']);
@@ -194,8 +192,8 @@ class SeoIntegrationTest extends TestCase
     public function test_field_prompts_provide_generate_for_every_use(): void
     {
         WP_Mock::userFunction('apply_filters')->andReturnUsing(fn($hook, $value) => $value);
-        $prompts = PCM_SEO_Service::field_prompts();
-        foreach (PCM_SEO_Service::field_use_map() as $use) {
+        $prompts = PCM_SEO_AI::field_prompts();
+        foreach (PCM_SEO_AI::field_use_map() as $use) {
             $this->assertArrayHasKey($use, $prompts, "missing prompt for {$use}");
             $this->assertNotEmpty($prompts[$use]['generate']);
             $this->assertIsInt($prompts[$use]['max']);
@@ -207,7 +205,7 @@ class SeoIntegrationTest extends TestCase
     public function test_get_default_prompts_covers_every_editor_section(): void
     {
         WP_Mock::userFunction('apply_filters')->andReturnUsing(fn($hook, $value) => $value);
-        $defaults = PCM_SEO_Service::get_default_prompts();
+        $defaults = PCM_SEO_AI::get_default_prompts();
 
         // The SEO prompt sections shipped by get_default_prompts(). SEO prompts are
         // now managed as Templates (module=seo) — deregistered from the Prompt Editor,
@@ -219,6 +217,8 @@ class SeoIntegrationTest extends TestCase
             'meta_description_generate', 'meta_description_optimize',
             'meta_keywords_generate',
             'heading_generate', 'heading_optimize',
+            'paragraph_generate', 'paragraph_optimize',
+            'section_generate', 'section_optimize',
             'primary_keyword_generate', 'primary_keyword_optimize',
             'content_optimize',
             'robots_generate',
@@ -226,6 +226,13 @@ class SeoIntegrationTest extends TestCase
             'site_tagline_generate',
             'site_title_generate',
             'slug_generate', 'slug_optimize',
+            // No hidden prompt (owner mandate): these 5 were previously fully
+            // hardcoded string literals with no Templates row at all.
+            'site_ai_description_generate',
+            'llm_info_page_generate',
+            'revise_contract_generate',
+            'revise_envelope_generate',
+            'revise_scope_classifier_generate',
         );
         $actual = array_keys($defaults);
         sort($expected);
@@ -240,8 +247,8 @@ class SeoIntegrationTest extends TestCase
     public function test_resolve_prompt_returns_default_without_user(): void
     {
         // No PCM user id → no DB lookup → shipped default returned verbatim.
-        $this->assertSame('DEFAULT', PCM_SEO_Service::resolve_prompt('meta_title_generate', 'DEFAULT', null));
-        $this->assertSame('DEFAULT', PCM_SEO_Service::resolve_prompt('meta_title_generate', 'DEFAULT', 0));
+        $this->assertSame('DEFAULT', PCM_SEO_AI::resolve_prompt('meta_title_generate', 'DEFAULT', null));
+        $this->assertSame('DEFAULT', PCM_SEO_AI::resolve_prompt('meta_title_generate', 'DEFAULT', 0));
     }
 
     public function test_resolve_prompt_prefers_active_db_override(): void
@@ -254,7 +261,7 @@ class SeoIntegrationTest extends TestCase
         WP_Mock::userFunction('apply_filters')->andReturnUsing(fn($hook, $value) => $value);
         $seeded = array_map(
             fn($s) => json_encode(array('type' => $s)),
-            array_keys(PCM_SEO_Service::get_default_prompts())
+            array_keys(PCM_SEO_AI::get_default_prompts())
         );
 
         global $wpdb;
@@ -267,7 +274,7 @@ class SeoIntegrationTest extends TestCase
 
         $this->assertSame(
             'MY CUSTOM PROMPT',
-            PCM_SEO_Service::resolve_prompt('content_optimize', 'DEFAULT', 42)
+            PCM_SEO_AI::resolve_prompt('content_optimize', 'DEFAULT', 42)
         );
     }
 
@@ -278,7 +285,7 @@ class SeoIntegrationTest extends TestCase
         WP_Mock::userFunction('apply_filters')->andReturnUsing(fn($hook, $value) => $value);
         $seeded = array_map(
             fn($s) => json_encode(array('type' => $s)),
-            array_keys(PCM_SEO_Service::get_default_prompts())
+            array_keys(PCM_SEO_AI::get_default_prompts())
         );
 
         global $wpdb;
@@ -291,7 +298,43 @@ class SeoIntegrationTest extends TestCase
 
         $this->assertSame(
             'DEFAULT',
-            PCM_SEO_Service::resolve_prompt('content_optimize', 'DEFAULT', 42)
+            PCM_SEO_AI::resolve_prompt('content_optimize', 'DEFAULT', 42)
+        );
+    }
+
+    public function test_resolve_prompt_prefers_users_own_unstarred_template_over_system_default(): void
+    {
+        // BUG (owner report 2026-07-29): a user created a "Meta Title — Optimize (copy)"
+        // template but generation ignored it and used the shipped default. A duplicated/
+        // created template is isDefault=0, and the old chain preferred the system default
+        // over an unstarred user template. A user's OWN template for a section must win.
+        WP_Mock::userFunction('apply_filters')->andReturnUsing(fn($hook, $value) => $value);
+        $seeded = array_map(
+            fn($s) => json_encode(array('type' => $s)),
+            array_keys(PCM_SEO_AI::get_default_prompts())
+        );
+
+        global $wpdb;
+        $wpdb = \Mockery::mock();
+        $wpdb->prefix = 'wp_';
+        $wpdb->shouldReceive('get_col')->andReturn($seeded);
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        // Newest-first (matches the query's ORDER BY updatedAt DESC): the user's own
+        // unstarred copy (isDefault=0), then the shipped system default (userId=0, isDefault=1).
+        $wpdb->shouldReceive('get_results')->andReturn(array(
+            array('id' => 99, 'userId' => 42, 'isDefault' => 0, 'formData' => json_encode(array(
+                'type' => 'meta_title_optimize',
+                'entries' => array(array('category' => 'prompt', 'value' => 'MY COPY — WRITE IN CHINESE')),
+            ))),
+            array('id' => 5, 'userId' => 0, 'isDefault' => 1, 'formData' => json_encode(array(
+                'type' => 'meta_title_optimize',
+                'entries' => array(array('category' => 'prompt', 'value' => 'SHIPPED DEFAULT')),
+            ))),
+        ));
+
+        $this->assertSame(
+            'MY COPY — WRITE IN CHINESE',
+            PCM_SEO_AI::resolve_prompt('meta_title_optimize', 'DEFAULT', 42)
         );
     }
 
@@ -418,8 +461,7 @@ class SeoIntegrationTest extends TestCase
             );
         $wpdb->insert_id = 42;
 
-        $svc = new PCM_SEO_Service();
-        $res = $svc->create_view(7, 'My View', $config);
+        $res = PCM_SEO_Views::create_view(7, 'My View', $config);
 
         $this->assertSame(42, $res['id']);
         $this->assertSame('My View', $res['name']);
@@ -436,8 +478,7 @@ class SeoIntegrationTest extends TestCase
             (object) array('id' => '3', 'name' => 'Newest', 'config' => '{"columns":{"title":true}}', 'isDefault' => '0'),
         ));
 
-        $svc   = new PCM_SEO_Service();
-        $views = $svc->list_views(7);
+        $views = PCM_SEO_Views::list_views(7);
 
         $this->assertCount(1, $views);
         $this->assertSame(3, $views[0]['id']);
@@ -456,8 +497,7 @@ class SeoIntegrationTest extends TestCase
             ->with('wp_pcm_seo_views', array('id' => 5, 'userId' => 7), array('%d', '%d'))
             ->andReturn(1);
 
-        $svc = new PCM_SEO_Service();
-        $this->assertTrue($svc->delete_view(5, 7));
+        $this->assertTrue(PCM_SEO_Views::delete_view(5, 7));
     }
 
     public function test_delete_view_returns_false_when_no_row(): void
@@ -467,8 +507,7 @@ class SeoIntegrationTest extends TestCase
         $wpdb->prefix = 'wp_';
         $wpdb->shouldReceive('delete')->once()->andReturn(0);
 
-        $svc = new PCM_SEO_Service();
-        $this->assertFalse($svc->delete_view(5, 7));
+        $this->assertFalse(PCM_SEO_Views::delete_view(5, 7));
     }
 
     public function test_gbp_provider_factory_defaults_to_n8n(): void

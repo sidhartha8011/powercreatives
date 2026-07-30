@@ -66,7 +66,7 @@ import {
 // Filter tabs
 // ============================================
 
-type FilterTab = "all" | "copy" | "image" | "video" | "writer" | "seo";
+type FilterTab = "all" | "copy" | "image" | "video" | "writer" | "seo" | "optimizer";
 
 const FILTER_TABS: { value: FilterTab; label: string }[] = [
   { value: "all", label: "All" },
@@ -75,6 +75,7 @@ const FILTER_TABS: { value: FilterTab; label: string }[] = [
   { value: "video", label: "Video" },
   { value: "writer", label: "Writer" },
   { value: "seo", label: "SEO" },
+  { value: "optimizer", label: "AI Optimization" },
 ];
 
 // ============================================

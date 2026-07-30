@@ -9,9 +9,11 @@
  *
  * Renders nothing unless the entry is a Writer-side `prompt`: only those run
  * through PCM_Strategy_Service::build_prompt(), which resolves these tokens.
- * Video and SEO templates are force-set to the "prompt" category by
- * TemplateDialog's module effect but are never resolved, so advertising the
- * variables there would be a lie.
+ * Video, SEO and Optimizer templates are force-set to the "prompt" category
+ * by TemplateDialog's module effect but never resolve THESE tokens (SEO and
+ * Optimizer have their own distinct {{ }} vars, substituted server-side by
+ * PCM_SEO_Service/PCM_Optimizer_Service — a different vocabulary), so
+ * advertising the Writer variables there would be a lie.
  */
 
 const SOURCE_VARS = ["{{ post_title }}", "{{ post_content }}", "{{ post_link }}"];
@@ -37,7 +39,7 @@ interface SourceVarsHintProps {
 }
 
 export function SourceVarsHint({ module, category, className }: SourceVarsHintProps) {
-  if (category !== "prompt" || module === "video" || module === "seo") return null;
+  if (category !== "prompt" || module === "video" || module === "seo" || module === "optimizer") return null;
 
   const code = (v: string) => (
     <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem]">{v}</code>

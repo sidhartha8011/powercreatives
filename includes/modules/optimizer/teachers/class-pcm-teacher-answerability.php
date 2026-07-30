@@ -89,18 +89,23 @@ class PCM_Teacher_Answerability implements PCM_Optimizer_Teacher
             self::CHECKS
         );
 
+        // No hidden prompt: this system prompt is a Templates (module=
+        // optimizer) row a user can view/edit — resolve_prompt() returns
+        // this exact default verbatim when no override exists.
+        $default_system = 'You are a strict auditor of how quotable a page is for AI assistants (answer engines). '
+            . 'Judge the given page content against each check, ONLY from the content provided. For every '
+            . 'check answer passes=true or passes=false. evidence: when it passes, a short verbatim quote '
+            . 'proving it; when it fails, one short sentence naming the concrete thing that is missing. '
+            . 'Never invent content. Respond with ONLY this JSON, no markdown, no commentary: '
+            . '{"checks":[{"id":"<the check id, echoed EXACTLY as given>","passes":true,"evidence":"..."}]} '
+            . '— one entry per check, every id present.';
+
         $messages = array(
             array(
                 'role'    => 'system',
                 // The exact output contract lives IN the prompt (the
                 // Anthropic law — no response_format there).
-                'content' => 'You are a strict auditor of how quotable a page is for AI assistants (answer engines). '
-                    . 'Judge the given page content against each check, ONLY from the content provided. For every '
-                    . 'check answer passes=true or passes=false. evidence: when it passes, a short verbatim quote '
-                    . 'proving it; when it fails, one short sentence naming the concrete thing that is missing. '
-                    . 'Never invent content. Respond with ONLY this JSON, no markdown, no commentary: '
-                    . '{"checks":[{"id":"<the check id, echoed EXACTLY as given>","passes":true,"evidence":"..."}]} '
-                    . '— one entry per check, every id present.',
+                'content' => PCM_Optimizer_Service::resolve_prompt('teacher_answerability', $default_system, (int) ($context['userId'] ?? 0)),
             ),
             array(
                 'role'    => 'user',

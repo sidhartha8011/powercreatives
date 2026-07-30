@@ -110,24 +110,29 @@ class PCM_Teacher_Serp implements PCM_Optimizer_Teacher
             $winners[] = $winner;
         }
 
+        // No hidden prompt: this system prompt is a Templates (module=
+        // optimizer) row a user can view/edit — resolve_prompt() returns
+        // this exact default verbatim when no override exists.
+        $default_system = 'You are a search-results analyst. You get the REAL top organic results for a keyword — '
+            . 'the leading ones INCLUDING their actual page content (headings + paragraphs; a winner with '
+            . 'contentNote could not be fetched, judge it by title only) — and the content of OUR page '
+            . 'targeting it. Judge three things about OUR content, honestly and only from the given data: '
+            . '(1) format — do the winners use a different content format (guide, list, service page, '
+            . 'comparison) than ours? (2) coverage — which concrete topics/sections/facts the winners\' '
+            . 'CONTENT covers that ours does not (max 4, only real gaps a reader would miss); (3) angle — '
+            . 'is there a clearly stronger angle in the winners (price, locality, speed, proof) that ours '
+            . 'misses? For each verdict: matches=true means we already align (evidence = why, short); '
+            . 'matches=false means a gap (evidence = the concrete gap NAMING which winner shows it; fix = '
+            . 'ONE imperative sentence for a rewriting AI). NEVER invent winners or content. Respond with '
+            . 'ONLY this JSON, no markdown: '
+            . '{"verdicts":[{"id":"format|coverage-<slug>|angle","matches":true,"evidence":"...","fix":"..."}]}';
+
         $messages = array(
             array(
                 'role'    => 'system',
                 // The exact output contract lives IN the prompt (the
                 // Anthropic law — no response_format there).
-                'content' => 'You are a search-results analyst. You get the REAL top organic results for a keyword — '
-                    . 'the leading ones INCLUDING their actual page content (headings + paragraphs; a winner with '
-                    . 'contentNote could not be fetched, judge it by title only) — and the content of OUR page '
-                    . 'targeting it. Judge three things about OUR content, honestly and only from the given data: '
-                    . '(1) format — do the winners use a different content format (guide, list, service page, '
-                    . 'comparison) than ours? (2) coverage — which concrete topics/sections/facts the winners\' '
-                    . 'CONTENT covers that ours does not (max 4, only real gaps a reader would miss); (3) angle — '
-                    . 'is there a clearly stronger angle in the winners (price, locality, speed, proof) that ours '
-                    . 'misses? For each verdict: matches=true means we already align (evidence = why, short); '
-                    . 'matches=false means a gap (evidence = the concrete gap NAMING which winner shows it; fix = '
-                    . 'ONE imperative sentence for a rewriting AI). NEVER invent winners or content. Respond with '
-                    . 'ONLY this JSON, no markdown: '
-                    . '{"verdicts":[{"id":"format|coverage-<slug>|angle","matches":true,"evidence":"...","fix":"..."}]}',
+                'content' => PCM_Optimizer_Service::resolve_prompt('teacher_serp', $default_system, $user_id),
             ),
             array(
                 'role'    => 'user',
