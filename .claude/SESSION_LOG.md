@@ -10178,3 +10178,271 @@ reposting_templates 22/22, php -l clean. Zip rebuilt with the fix verified insid
 - Zip: Desktop\powercreatives\powerplatform-2026-07-28_1724.zip (1,915,924 bytes) — verified structure,
   144/144 PHP, 0 backslashes, 0 leaks.
 - NOT visually verified (no dev server). Specialists: none — inline. Not committed.
+
+## 2026-07-29 — SEO / AI Optimization: no hidden prompt (every prompt exposed as a Template) [/task]
+Ask: "in SEO / AI Optimization all the prompts should be exposed to the templates so user can change or
+use any of them." Both modules are the teammate's frozen lanes (optimizer/** + seo/** + all teachers) —
+flagged the conflict first; owner explicitly authorized proceeding anyway.
+INVENTORY (Explore agent, full pass): SEO already exposed 11 field prompts via prompts.php +
+resolve_prompt()/Templates(module=seo) — a lightweight prior version of the strategy module's
+{{ var }} pattern. Optimizer had ZERO exposure — the compiler + all 7 LLM-calling teachers
+(answerability/facts/interlink/mention/search/serp/subtopics; demand/onpage are deterministic, no
+prompt) were 100% hardcoded PHP string literals. 4 more SEO prompts were also fully hardcoded, bypassing
+prompts.php entirely: remote_ai_site_desc(), llm_info_prompt() (long, heavily conditional), the
+"careful human editor" revise contract + JSON change-card envelope baked directly into
+remote_optimize_section()'s topic var (invisible/unremovable by any template), and
+note_wants_broad_rewrite()'s classifier prompt.
+BUILT — Optimizer (new includes/modules/optimizer/prompts.php + resolve/seed plumbing in
+optimizer/service.php, mirroring PCM_SEO_Service's mechanism exactly: prompts()/get_default_prompts()/
+resolve_prompt()/seed_optimizer_templates()/optimizer_template_prompt()/optimizer_entry_prompt()/
+optimizer_section_label(), plus a new render_prompt_vars() single-pass {{ }} substitution matching the
+strategy module's render_source_vars convention — unknown tokens left untouched). compile() and all 7
+teachers now resolve their system prompt through Templates(module=optimizer) with the exact shipped
+string as the byte-identical default; conditional fragments (routing_rules/routing_json on compile,
+ranksfor_note/gsc_preference_note on interlink, topic_rule on subtopics, questions on mention) became
+{{ vars }}.
+BUILT — SEO gaps: 5 new prompts.php entries (site_ai_description, llm_info_page — with 9 conditional
+fragment vars, revise_contract, revise_envelope, revise_scope_classifier), each wired through the
+EXISTING resolve_prompt()/substitute_vars() so no new mechanism was needed on that side.
+Frontend: 'optimizer' registered as a Templates module end-to-end — templates/controller.php allowlist
++ auto-seed-on-list (mirrors seo); app/shared/templateTypes.ts (TEMPLATE_MODULES, OPTIMIZER_PROMPT_SECTIONS,
+TEMPLATE_TYPES/MODULE_LABELS/TYPE_LABELS — MODULE_TYPE_OPTIONS in TemplateDialog derives automatically,
+confirmed by reading it, not assumed); TemplateDialog.tsx (module dropdown option, category-picker
+suppression, 2-col grid, MODULE_BADGE_COLORS); SourceVarsHint.tsx also excluded for 'optimizer' — its
+hint advertises WRITER-only {{ post_title }}/{{ keyword }} vars that optimizer prompts never resolve,
+same reasoning already applied to video/seo.
+VERIFIED: hand-written byte-identity harnesses (not trusted-by-construction) proving every conditional
+fragment substitution reproduces the ORIGINAL hardcoded string exactly, both branches, for compile/
+interlink/subtopics/mention/llm_info_page — all passed. New OptimizerPromptExposureTest.php (9 tests):
+default-without-user, user-template precedence, no-match fallback, seed-inserts-all-8,
+seed-is-idempotent, render_prompt_vars known/unknown/empty-removal. Fixed one PRE-EXISTING gap surfaced
+by my own new-section additions: SeoIntegrationTest's get_default_prompts() coverage test was pinning
+an exact section list that was already missing paragraph_generate/optimize + section_generate/optimize
+(unrelated to this task) — corrected to the full real list, all 5 new sections included.
+Gates: phpunit 616 (1 error + 27 failures = the unchanged pre-existing 'completed'→'written' baseline
+the owner said to leave alone; was 607 at task start, +9 mine, zero new failures), standalone 88/88,
+php -l clean on all 12 touched PHP files, tsc 59 = unchanged baseline (0 new, confirmed no touched file
+appears in the error list), vite build clean.
+NOT DONE: no live browser verification (no local WP server active this session) — TypeScript/build
+green is the available proof. Not committed.
+
+## 2026-07-29 — SEO service decomposition, phase 1: 3 concerns extracted [/task]
+Ask: "proceed with the restructuring" — split the 7,135-line `PCM_SEO_Service` god-class.
+ARCHITECTURE CORRECTION FIRST (important): my earlier proposal to use PHP traits was WRONG for this
+codebase. Verified by grep: there are ZERO traits anywhere in includes/. The module's OWN established
+convention — already used by `PCM_SEO_Site`/`PCM_SEO_Export`/`PCM_SEO_Schema`/`PCM_SEO_GBP`, and
+mirrored in strategy/ (5 concern classes) and automations/ (5) — is a standalone class per concern in
+its own file, `require_once`'d at the top of service.php, called DIRECTLY from controller.php with no
+facade. Followed that instead.
+GROUNDING: wrote a call-graph analyser (scratchpad/depmap.php) that bucketed all 129 methods into 9
+domains by line range and found every cross-domain `self::` call. Result drove the order: VIEWS had
+ZERO in and ZERO out; REDIRECTS had zero incoming; true BUSINESS (after correcting my own boundary —
+`sentence_retention`/`note_wants_broad_rewrite` are section-revise helpers, NOT business, and belong
+with RULES) had zero outgoing + 1 incoming. Everything else (LOCAL/REMOTE/SNAPSHOT/RULES/AI) is
+mutually entangled — 60+ cross edges — and deliberately NOT touched this pass.
+EXTRACTED (verbatim moves, no logic rewritten):
+1. `views.php` → `PCM_SEO_Views` (4 methods, 141 lines) — saved column/filter configs. 4 controller
+   call sites + 4 test call sites repointed from `$this->service->` to the static class.
+2. `business.php` → `PCM_SEO_Business` (6 methods, 237 lines) — the business-card ladder,
+   `business_record_for_site`, `save_site_business_overrides`, `parse_maps_url`. 14 call sites across
+   controller.php, optimizer/service.php, seo/service.php and page_versioning_test.php repointed.
+3. `redirects.php` → `PCM_SEO_Redirects` (7 methods, 208 lines) — slug-change redirects. Instance
+   methods converted to static; 4 controller call sites repointed.
+`ensure_sites_service()` promoted private→public static — it is the ONE helper the extracted classes
+still need, and the honest minimum seam rather than duplicating it three times.
+GOTCHA FOUND THE HARD WAY: composer autoloads `includes/` by CLASSMAP, so a new class file is invisible
+to PHPUnit until `composer dump-autoload` runs — the first views run failed with 4x
+`Class "PCM_SEO_Views" not found`. Re-ran dump-autoload after each extraction.
+VERIFIED after EVERY slice (not just at the end): phpunit 616 tests, 1 error + 27 failures = the exact
+unchanged pre-existing 'completed'→'written' baseline the owner said to leave alone — zero new failures
+at any step; standalone run.php 88/88; php -l clean on every touched file; grep-proved zero dangling
+`self::` in the 3 new classes (every one resolves to a method that class owns) and zero stale
+`PCM_SEO_Service::` refs to moved methods.
+RESULT: service.php 7,135 → 6,596 lines. No frontend files touched (no tsc/build needed).
+NOT DONE / NEXT: the entangled core remains — local editing, remote editing, snapshot parsing, the
+rules+versioning engine (incl. the 738-line `save_page_edits()`), and AI generation. AI generation is
+the best next candidate (14 methods, all `public static` already, ~22 incoming call sites — mechanical).
+The rules/versioning engine should be sliced like SectionModal.tsx was (S1..Sn, verify per slice), never
+in one cut. Map updated with the convention + the autoload gotcha. Not committed.
+
+## 2026-07-29 — SEO service decomposition, phase 2: AI generation extracted [/task]
+Ask: "yes" — continue with the AI-generation extraction named as next in phase 1.
+GROUNDING (re-derived against the CURRENT file, not the stale phase-1 line numbers): the AI block is
+lines 6058–6595, 14 methods. Its ONLY outgoing dependency is `self::seo_get()` (5 calls) — everything
+else it calls, it owns. `$this->build_field_vars()` (3 calls) is internal to the block. That single
+clean seam is what made this safe.
+EXTRACTED → `includes/modules/seo/ai.php` / `PCM_SEO_AI` (557 lines, 14 methods): field_use_map,
+field_prompts, get_default_prompts, resolve_prompt, seed_seo_templates, seo_template_prompt,
+seo_entry_prompt, seo_section_label, substitute_vars, sanitize_ai_output, build_field_vars,
+generate_field, generate_site_field, optimize_body. The 4 instance methods became static (module
+convention); `self::seo_get()` → `PCM_SEO_Service::seo_get()` (the deliberate seam, seo_get stays put).
+REWIRED: 22 intra-service `self::` calls (count matched the pre-move prediction exactly — field_prompts
+7, resolve_prompt 7, substitute_vars 5, sanitize_ai_output 2, field_use_map 1), plus external callers in
+prompts/controller.php, templates/controller.php, seo/controller.php (4 `$this->service->` sites) and
+SeoIntegrationTest.php. Careful point: `resolve_prompt`/`get_default_prompts`/`substitute_vars` exist on
+BOTH PCM_SEO_Service and PCM_Optimizer_Service, so every rewrite was prefix-scoped — the optimizer's own
+identically-named methods were left untouched (verified by grep after).
+TWO SMALL CORRECTNESS FIXES found while rewiring (not cosmetic): templates/controller.php guarded a
+`PCM_SEO_AI::seed_seo_templates()` call with `class_exists('PCM_SEO_Service')` — the wrong class after
+the move; and 3 docblocks in optimizer/service.php + seo/prompts.php still named
+`PCM_SEO_Service::resolve_prompt/seed_seo_templates/substitute_vars`. All corrected.
+VERIFIED: phpunit 616 tests, 1 error + 27 failures = the exact unchanged pre-existing
+'completed'→'written' baseline — zero new failures; standalone run.php 88/88; php -l clean on all
+touched files; grep-proved zero stale `PCM_SEO_Service::` refs to moved methods, zero leftover
+`$this->service->` calls to moved methods, and every `self::` inside ai.php resolves to a method the
+class owns.
+RESULT: service.php 6,596 → 6,059 lines (7,135 at session start, −15% total). seo/ is now 14 files.
+NEXT (analysed, NOT done): re-ran the call graph on what remains — **`LOCAL` (29 methods) now has ZERO
+outgoing cross-domain calls** and only 9 incoming (REMOTE 3, REMOTE_HEADINGS 3, RULES 3), making it the
+next safe extraction and the one the owner specifically flagged ("shouldn't do local SEO editing in the
+same file"). The `RULES`↔`SNAPSHOT` knot (14+2 edges, incl. the 738-line save_page_edits) remains the
+hard one and must be sliced incrementally. Map updated. Not committed.
+
+## 2026-07-29 — SEO service decomposition, phase 3: LOCAL extracted + a phase-2 regression caught [/task]
+Ask: "yes" — continue with the LOCAL extraction named as next in phase 2.
+⚠ FOUND AND FIXED A REGRESSION I SHIPPED IN PHASE 2. While mapping LOCAL's dependencies I found
+`$this->build_field_vars()` still in optimize_heading() (service.php:756) — but build_field_vars had
+been MOVED to PCM_SEO_AI in phase 2. That is a fatal at runtime ("Call to undefined method
+PCM_SEO_Service::build_field_vars") on the SEO table's ✦ Optimize-heading action. The phase-2 rewrite
+was name-scoped to the block being moved, so a caller OUTSIDE that block was never touched, and the
+suite stayed green because nothing exercises that path. Fixed → PCM_SEO_AI::build_field_vars().
+BUILT A GATE SO IT CANNOT RECUR: tests/standalone/seo_decomposition_orphan_check.php — asserts every
+moved method is defined on its new class, then flags any `self::x()` / `$this->x()` / `$var->x()` /
+`PCM_SEO_Service::x()` call still aimed at the old owner. First version had two defects I caught and
+fixed: (a) it ignored inheritance and produced 364 false positives on `$this->success()` etc — rewritten
+to only ever consider the ~60 methods actually moved; (b) it missed instance-variable calls, which is
+exactly how two `$svc->save_cell()` calls in SeoIntegrationTest slipped past and turned up as 2 new
+phpunit errors — hardened, both fixed, now reports NONE. It caught 10 stale sites I would otherwise
+have missed, including schema.php and site.php which I had not thought to look at.
+EXTRACTED → `includes/modules/seo/local.php` / `PCM_SEO_Local` (983 lines, 29 methods): the hub's OWN
+posts/pages — cross-plugin meta registry (Yoast/RankMath/SEOPress + pcm_seo_*), content rows, link
+scan/rewrite, heading + content-node parse/edit, run_prompt_section, save_cell. Chosen because the
+call-graph showed it had ZERO outgoing cross-domain calls.
+DECISIONS: 12 instance methods → static (module convention); 10 internal `$this->` → `self::`; the
+VALID_TYPES/VALID_STATUSES/PER_TYPE constants deliberately STAY on PCM_SEO_Service (controller.php
+already reads them there — moving them would have added external churn for no gain), so the 4 refs
+inside the moved block became `PCM_SEO_Service::`. Three `private static` helpers (run_prompt_section,
+nth_link_pos, rebuild_heading_html) had to be promoted to `public` because service.php still calls them
+— stated rather than hidden.
+REWIRED: 9 intra-service calls (count matched the prediction exactly), 12 controller instance calls
+(13 sites), 5 `PCM_SEO_Service::seo_get` in ai.php, plus schema.php/site.php/SeoIntegrationTest.
+VERIFIED: phpunit 616 tests, 1 error + 27 failures = the exact unchanged pre-existing baseline (the 1
+error is the known SeoIntegrationTest GBP-provider one from the teammate's lane, NOT mine); standalone
+88/88; php -l clean on all touched files; orphan check EXIT 0 with zero stale sites.
+RESULT: service.php 6,059 → 5,099 lines (7,135 at session start, −28.5% total). seo/ is now 15 files;
+the 5 extracted classes hold 60 methods.
+NEXT: what remains is remote/connected-site editing (46), THE SAVE TRANSACTION (22, incl. the 738-line
+save_page_edits), page-inventory parsing (17), remote headings (6), page state (6), section rules (3).
+No domain is cleanly isolated any more — the remaining work is the genuinely entangled core and should
+be sliced incrementally with the orphan check run every slice. Map updated with both gotchas. Not committed.
+
+## 2026-07-29 — SEO decomposition, phase 4: PAGE STATE extracted; orphan gate hardened + mutation-tested [/task]
+Ask: "start" — begin slicing the entangled core.
+SLICE CHOICE (evidence-driven, not guesswork): re-ran the call graph on the current file. `SECTION RULES`
+was the only domain with zero outgoing — but it is just 2 private helpers (post_rule_rows,
+restore_rule_rows) that THE SAVE TRANSACTION calls 13x, i.e. not a real boundary; extracting them would
+manufacture a 2-method class serving one caller. Chose `PAGE STATE` instead: 6 coherent methods (page
+versioning), only 2 outgoing edges, and a self-contained contract.
+EXTRACTED → `includes/modules/seo/page-state.php` / `PCM_SEO_Page_State` (203 lines, 6 methods):
+page_fingerprint, page_state, page_state_compare, page_state_reply, write_page_state,
+superseded_rule_ids. Outgoing `get_page_type`/`ensure_sites_service` repointed to PCM_SEO_Service.
+REWIRED: 7 intra-service calls (matched prediction), 1 controller call, and page_versioning_test.php.
+VISIBILITY: page_state_reply + write_page_state were `private` and are called cross-class by the save
+transaction / inventory reply, so both had to become `public`. I had initially written a docblock
+claiming write_page_state "stays PRIVATE by design" — that became FALSE the moment the save transaction
+called it from another class, so I corrected the docblock to state the real reason and that the
+contract (only after an ACCEPTED push) is unchanged. Running total of forced private→public:
+run_prompt_section, nth_link_pos, rebuild_heading_html, page_state_reply, write_page_state.
+THIRD DETECTOR GAP FOUND + CLOSED: page_versioning_test.php reached write_page_state via
+`ReflectionMethod('PCM_SEO_Service', 'write_page_state')` — a STRING class name, invisible to every
+`::`-based scan. Added a string-literal check to the orphan gate. **MUTATION-TESTED it**: reintroduced
+the exact bug, confirmed the gate reports it and exits 1; restored, confirmed clean and exits 0. (Also
+caught that my first "EXIT: $?" reading was measuring `tail`'s status through a pipe, not the script's —
+re-verified without the pipe.) The gate now covers four shapes, each added only after it let a real bug
+through: `self::`, `$this->`/`$var->`, `PCM_SEO_Service::`, and string class-names.
+VERIFIED: phpunit 616 tests, 1 error + 27 failures = unchanged pre-existing baseline (the 1 error is the
+teammate-lane GBP one); standalone run.php 88/88; orphan check NONE / exit 0; php -l clean on all 15
+seo/ files.
+RESULT: service.php 5,099 → 4,916 lines (7,135 at session start, −31% total). 6 extracted classes,
+66 methods.
+STOPPING POINT — STATED HONESTLY: the easy extractions are now exhausted. Nothing remaining has zero
+outgoing edges except those 2 SECTION RULES helpers that belong with the save transaction. What is left
+is the real knot: THE SAVE TRANSACTION -> PAGE INVENTORY (14 edges) + -> SECTION RULES (13), with
+REMOTE HEADINGS straddling Remote/Save/Inventory. Further progress needs true incremental slicing of
+save_page_edits() itself (738 lines), not another whole-domain move — that is a different and riskier
+kind of work and should be a deliberate, separately-scoped effort with the teammate in the loop.
+Map updated (incl. the forced-visibility note + the 4 detector shapes). Not committed.
+
+## 2026-07-29 — BUG: user's custom SEO template ignored (meta title wrote Swedish not Chinese) [/task]
+Report: user created "Meta Title — Optimize (copy)" whose prompt said "WRITE EVERYTHING IN CHINESE NOW";
+generation ignored it and produced Swedish.
+ROOT CAUSE (one bug, both symptoms): seo_template_prompt()'s resolution chain was
+`$chosen ?? $user_default ?? $system_default ?? $any`. A duplicated/created template is isDefault=0
+(bulk_duplicate hardcodes it; create defaults it), so it is NOT $user_default; and the row-level/bulk
+"Re-generate" button calls generateField() WITHOUT a templateId (only the column-header generate passes
+one), so it is NOT $chosen either. Result: $system_default (the shipped prompt) won and the user's copy
+was silently skipped. The shipped meta_title_optimize prompt carries `Language: {{site.lang}}`, and the
+connected site is Swedish → Swedish output. So "template not used" AND "wrote Swedish not Chinese" are
+the SAME root cause; there is no separate language-lock in the SEO path (grep-confirmed — that law lives
+only in the strategy module). The `$user_fork` var was even computed for exactly this row but was unused
+except to redirect a stale shared id.
+FIX (2 files, minimal): add `$user_fork` to the chain before `$system_default` →
+`$chosen ?? $user_default ?? $user_fork ?? $system_default ?? $any`, so a user's OWN template for a
+section beats the shipped default even unstarred (a starred one still wins via $user_default). Made the
+pick deterministic: `SELECT ... , updatedAt ORDER BY updatedAt DESC, id DESC` so the NEWEST user template
+wins ties ("the one I just made"). Applied the identical fix to the optimizer sibling
+(optimizer_template_prompt — same latent bug in code I wrote earlier today). No schema change (updatedAt
+already exists); no DB-version bump.
+VERIFIED: new SeoIntegrationTest::test_resolve_prompt_prefers_users_own_unstarred_template_over_system_default
+— MUTATION-TESTED (reverting the one-line chain change makes it fail, restoring passes). Existing
+resolve/template tests 12/12 still green (a starred user_default and the no-user-template→default paths
+are unchanged). Full phpunit 617 (was 616; 1 error + 27 failures = the unchanged pre-existing baseline,
+none in scope); standalone 88/88; orphan check clean; php -l clean on both files.
+NOT LIVE-VERIFIED: no local WP server this session and the reported case is a remote Swedish site, so the
+proof is the unit+mutation test, not a browser run. The exact Chinese-vs-Swedish output can only be
+confirmed on the owner's box after deploy — but the resolution now provably returns the user's template.
+OPEN / SEPARATE (not this task): an earlier screenshot in the same message flagged the Custom-approval
+"New approval set" editor — first text block still renders XL + a "No notes" state. That task was
+interrupted before I reached it; left untouched. Not committed.
+
+## 2026-07-29 — BUG: Custom-approval editor text renders XL inside the "New approval set" dialog [/task]
+Report (screenshot): the CustomCardEditor's first block / body text is oversized ("size of text is
+still XL") in the New approval set popup.
+ROOT CAUSE (found, not guessed): CustomCardEditor's typography lives in index.css as
+`#pcm-root .pcm-card-editor …` — scoped under #pcm-root specifically to out-specify the global
+`#pcm-root :where(p|h1…)` reset (id-specificity 1,0,0). But this editor is rendered by
+CreateCustomSetDialog inside a shared Radix `<Dialog>`, whose `DialogPortal` mounts to <body> with NO
+container override — i.e. OUTSIDE #pcm-root. So the `#pcm-root .pcm-card-editor` rules never matched the
+portal DOM and the text fell back to browser/Tailwind-preflight defaults (large). In-page editors (SEO
+table, Approvals canvas) were unaffected because they ARE under #pcm-root — which is why it looked
+inconsistent.
+FIX (1 file, index.css): gave each `.pcm-card-editor` typography rule a SECOND, bare-class selector
+(`#pcm-root .pcm-card-editor X, .pcm-card-editor X`). The two DOM contexts are disjoint: in-page the
+(1,1,0) `#pcm-root` branch still beats the #pcm-root reset; in the portal (where the #pcm-root reset also
+doesn't apply) the (0,1,0) bare branch beats plain browser defaults. Same declared values in both, so no
+behavioral change in-page — purely additive coverage for the portal. Rejected the alternative of pointing
+the shared DialogPortal `container` at #pcm-root: 42 dialogs use DialogContent, far too broad a blast
+radius (z-index/stacking/WP-media-frame interactions) for a text-size bug.
+VERIFIED: `vite build` compiles; confirmed BOTH selector branches shipped verbatim into dist/index.css
+(base + every h1–h4/p/li/etc. rule) — guards against a typo silently not shipping. HONEST GAP: could not
+get a live computed-style measurement — the preview pane sandboxes file:// pages with `script-src 'none'`
+so my measurement script couldn't run, and there's no running WP admin this session. Proof is therefore
+build + shipped-selector confirmation + deterministic cascade analysis, NOT a live render; the owner
+should eyeball once on their box.
+NOTE: the report also said "No notes, in this" — no concrete defect identified for that phrase (may be an
+empty-state observation, not a bug); left untouched, flagged to the user. Not committed.
+
+## 2026-07-29 — Zip build (+ fixed build_zip.py shipping dev-only vendor) [/task]
+Rebuilt app/dist (vite, clean) then ran scripts/build_zip.py. FIRST run produced a 5.13MB / 2169-file zip
+— investigated the jump from the ~1.9MB historical zips and found the tracked build_zip.py bundles the
+FULL vendor/ dir (phpunit, mockery, wp_mock, nikic/php-parser, ~3MB of test tooling). Verified this is
+wrong: composer `require` has NO runtime packages (only `php`); every dep is `require-dev`; and the plugin
+never loads vendor/autoload at runtime (grep clean) — so vendor is 100% dev-only and must not reach a
+client WP install. Added `vendor` to EXCLUDE_DIRS with a comment explaining why.
+FINAL zip: 671 files, 3.42MB. Verified in the built artifact: 0 vendor entries, 0 app/src entries,
+app/dist present (index.css + index-writer.js + browser.js, freshly rebuilt), 217 PHP files, all 6
+SEO-decomposition classes shipped (ai/local/page-state/business/redirects/views.php). Confirmed THIS
+session's fixes are in the shipped files (not a stale dist): ai.php + optimizer/service.php carry the
+`user_fork ?? $system_default` resolution fix and `ORDER BY updatedAt DESC`; dist/index.css carries the
+dual-selector `.pcm-card-editor` typography fix. Outputs at the usual four paths incl.
+~/Desktop/powercreatives/power-creatives.zip. Not committed.
