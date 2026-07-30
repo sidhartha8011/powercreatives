@@ -965,28 +965,38 @@
    unstyled browser defaults — oversized headings and loose spacing ("much
    bigger and bloaty"). This restores a small, clean type scale. Scoped under
    #pcm-root to beat the global :where() heading/margin/list reset (spec 1,0,1).
+
+   DUAL SELECTOR (bug 2026-07-29): this editor ALSO renders inside a Radix Dialog
+   (CreateCustomSetDialog → "New approval set"), whose portal mounts to <body> —
+   OUTSIDE #pcm-root — so the #pcm-root-scoped rules never reached it and text fell
+   back to browser defaults ("size of text is still XL"). Each rule therefore carries
+   TWO selectors: the `#pcm-root .pcm-card-editor` branch (spec 1,1,0) still beats the
+   #pcm-root reset in-page, and the bare `.pcm-card-editor` branch (spec 0,1,0) wins in
+   the portal, where the #pcm-root reset does not apply. The two DOM contexts are
+   disjoint, so the branches never fight — values stay identical in both.
    ========================================================= */
-#pcm-root .pcm-card-editor {
+#pcm-root .pcm-card-editor,
+.pcm-card-editor {
   font-size: 13px;
   line-height: 1.6;
   color: inherit;
 }
-#pcm-root .pcm-card-editor h1 { font-size: 1.5em; font-weight: 700; line-height: 1.3; margin: 1em 0 0.4em; }
-#pcm-root .pcm-card-editor h2 { font-size: 1.3em; font-weight: 650; line-height: 1.35; margin: 0.9em 0 0.35em; }
-#pcm-root .pcm-card-editor h3 { font-size: 1.12em; font-weight: 600; line-height: 1.4; margin: 0.8em 0 0.3em; }
-#pcm-root .pcm-card-editor h4 { font-size: 1em; font-weight: 600; line-height: 1.4; margin: 0.7em 0 0.3em; }
-#pcm-root .pcm-card-editor p { margin: 0.5em 0; }
-#pcm-root .pcm-card-editor p:first-child { margin-top: 0; }
-#pcm-root .pcm-card-editor ul,
-#pcm-root .pcm-card-editor ol { margin: 0.5em 0; padding-left: 1.4em; }
-#pcm-root .pcm-card-editor ul { list-style: disc; }
-#pcm-root .pcm-card-editor ul ul { list-style: circle; }
-#pcm-root .pcm-card-editor ul ul ul { list-style: square; }
-#pcm-root .pcm-card-editor ol { list-style: decimal; }
-#pcm-root .pcm-card-editor ol ol { list-style: lower-alpha; }
-#pcm-root .pcm-card-editor li { margin: 0.2em 0; }
-#pcm-root .pcm-card-editor li p { margin: 0; }
-#pcm-root .pcm-card-editor blockquote { margin: 0.6em 0; padding-left: 0.9em; border-left: 3px solid rgba(0, 0, 0, 0.12); color: rgba(0, 0, 0, 0.62); }
-#pcm-root .pcm-card-editor img { max-width: 100%; height: auto; border-radius: 6px; margin: 0.5em 0; }
-#pcm-root .pcm-card-editor a { color: #2563eb; text-decoration: underline; }
-#pcm-root .pcm-card-editor hr { margin: 1em 0; border: 0; border-top: 1px solid rgba(0, 0, 0, 0.1); }
+#pcm-root .pcm-card-editor h1, .pcm-card-editor h1 { font-size: 1.5em; font-weight: 700; line-height: 1.3; margin: 1em 0 0.4em; }
+#pcm-root .pcm-card-editor h2, .pcm-card-editor h2 { font-size: 1.3em; font-weight: 650; line-height: 1.35; margin: 0.9em 0 0.35em; }
+#pcm-root .pcm-card-editor h3, .pcm-card-editor h3 { font-size: 1.12em; font-weight: 600; line-height: 1.4; margin: 0.8em 0 0.3em; }
+#pcm-root .pcm-card-editor h4, .pcm-card-editor h4 { font-size: 1em; font-weight: 600; line-height: 1.4; margin: 0.7em 0 0.3em; }
+#pcm-root .pcm-card-editor p, .pcm-card-editor p { margin: 0.5em 0; }
+#pcm-root .pcm-card-editor p:first-child, .pcm-card-editor p:first-child { margin-top: 0; }
+#pcm-root .pcm-card-editor ul, .pcm-card-editor ul,
+#pcm-root .pcm-card-editor ol, .pcm-card-editor ol { margin: 0.5em 0; padding-left: 1.4em; }
+#pcm-root .pcm-card-editor ul, .pcm-card-editor ul { list-style: disc; }
+#pcm-root .pcm-card-editor ul ul, .pcm-card-editor ul ul { list-style: circle; }
+#pcm-root .pcm-card-editor ul ul ul, .pcm-card-editor ul ul ul { list-style: square; }
+#pcm-root .pcm-card-editor ol, .pcm-card-editor ol { list-style: decimal; }
+#pcm-root .pcm-card-editor ol ol, .pcm-card-editor ol ol { list-style: lower-alpha; }
+#pcm-root .pcm-card-editor li, .pcm-card-editor li { margin: 0.2em 0; }
+#pcm-root .pcm-card-editor li p, .pcm-card-editor li p { margin: 0; }
+#pcm-root .pcm-card-editor blockquote, .pcm-card-editor blockquote { margin: 0.6em 0; padding-left: 0.9em; border-left: 3px solid rgba(0, 0, 0, 0.12); color: rgba(0, 0, 0, 0.62); }
+#pcm-root .pcm-card-editor img, .pcm-card-editor img { max-width: 100%; height: auto; border-radius: 6px; margin: 0.5em 0; }
+#pcm-root .pcm-card-editor a, .pcm-card-editor a { color: #2563eb; text-decoration: underline; }
+#pcm-root .pcm-card-editor hr, .pcm-card-editor hr { margin: 1em 0; border: 0; border-top: 1px solid rgba(0, 0, 0, 0.1); }
