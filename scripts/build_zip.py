@@ -13,7 +13,12 @@ EXCLUDE_DIRS = {
     '.git',
     'node_modules',
     '.claude',
-    'scripts'
+    'scripts',
+    # vendor/ is DEV-ONLY: composer 'require' has no runtime packages (only php),
+    # every dep is require-dev test tooling (phpunit/mockery/wp_mock/php-parser) and
+    # the plugin never loads vendor/autoload at runtime. Shipping it bloated the zip
+    # ~1.9MB -> 5.1MB with test frameworks a client install must not receive.
+    'vendor',
 }
 
 EXCLUDE_FILES = {
