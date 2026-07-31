@@ -30,7 +30,13 @@ class PCM_REST_SEOHub extends PCM_REST_Base
             array('POST',   '/seohub/sites/(?P<id>\d+)/revoke',   'revoke_site',      array(), 'manage_options:strict'),
             array('DELETE', '/seohub/sites/(?P<id>\d+)',          'delete_site',      array(), 'manage_options:strict'),
             array('GET',    '/seohub/sites/(?P<id>\d+)/connector', 'download_connector', array(), 'manage_options:strict'),
-            array('GET',    '/seohub/connector-download',          'download_connector_generic', array(), 'manage_options:strict'),
+            // GENERIC connector = tenant-free: no clientId/secret is baked in (the
+            // site pairs later with a one-time code), so this is a plain plugin zip,
+            // not a credential. :coadmin lets a platform ADMIN download it too —
+            // :strict blocked them entirely (owner report 2026-07-31, "Download
+            // failed" for a platform Administrator). The PER-SITE download above
+            // stays :strict: that one DOES bake in tenant credentials.
+            array('GET',    '/seohub/connector-download',          'download_connector_generic', array(), 'manage_options:coadmin'),
             // Public — HMAC-verified inside the handler.
             array('POST',   '/seohub/connector/hello',            'connector_hello',  array(), 'public'),
             // Public — the connector's WP-native self-update fetches these (no auth; the connector

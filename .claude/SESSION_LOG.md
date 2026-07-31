@@ -10730,3 +10730,41 @@ dual-selector `.pcm-card-editor` typography fix. Outputs at the usual four paths
 - ⚠ The Brizy portion is a CONNECTOR change — connected sites need the connector re-downloaded + reinstalled;
   connector version deliberately not bumped. The Save & close fix is hub-side, so this zip alone fixes it.
 - Not committed.
+
+## 2026-07-31 — Platform admin blocked from editing deliveries + downloading the connector [/task]
+Report (2 screenshots, create.widgetify.co, user "test / Administrator" logged in via the PLATFORM gate,
+not wp-admin): (1) Deliveries → "You can view this delivery but not edit it."; (2) Sites → "Download failed".
+ROOT CAUSE 1 — deliveries, a read/write inconsistency (not a missing feature). PCM_DB::get_delivery_by_id
+DELIBERATELY returns any delivery to an admin ("or by an admin (team-wide oversight)", db.php:577), and
+PCM_Access::is_admin's own docblock states the intent outright: "a platform admin gets the same team-wide
+oversight (all brands/deliveries/approvals) a WP admin has." But both write paths
+(deliveries/controller.php update_item + the lead-assign handler) tested raw ownership only
+`$existing->userId !== $user->id`, so an admin could SEE a delivery and was then refused the edit — the
+read grant was a dead end.
+FIX: one private helper `can_edit_delivery($delivery, $user_id)` = owner OR PCM_Access::is_admin, used by
+BOTH write paths so they cannot drift. is_admin covers both kinds of admin (WP admin — role reconciled
+from manage_options each request; platform admin — role='admin', settable only by an existing admin, an
+invariant PlatformRoleInvariantTest separately guards).
+ROOT CAUSE 2 — connector download. `/seohub/connector-download` was tier `manage_options:strict`
+(= real WP admin only, no gate bypass; reserved per base-controller for "infrastructure/credential
+routes"). But this route serves the GENERIC connector: build_connector_zip_generic() bakes in NO
+clientId/secret (the site pairs later with a one-time code) — it is a plain plugin zip, not a credential.
+FIX: tier → `manage_options:coadmin` (WP admin OR platform admin). SECURITY BOUNDARY HELD, verified by
+diff: the PER-SITE download `/seohub/sites/{id}/connector`, which DOES bake in tenant credentials, stays
+`:strict`, as do list/create/revoke/delete sites. Exactly one route tier changed.
+VERIFIED: new tests/unit/DeliveryEditPermissionTest.php 4/4 (owner edits; admin edits a delivery they do
+not own — the bug; assigned non-admin cannot; missing role row does not read as admin).
+MUTATION-TESTED: removing the admin grant makes it fail, restoring passes. Full phpunit 621 (was 617;
+1 error + 27 failures = the unchanged pre-existing baseline), standalone 88/88, orphan gate clean,
+php -l clean. No frontend change (no TS touched).
+FOUND, NOT FIXED (pre-existing, separate) — PlatformRoleInvariantTest has been RED before this task and
+still is, flagging deliveries/controller.php. Proved pre-existing by running its two regexes against
+`git show HEAD:` — FLAGGED=true both before and after my edit. It is a FALSE POSITIVE: the test requires
+`table('users')` AND `'role' =>` anywhere in the same file, and this file reads the users table (assignee
+names) while separately writing the DELIVERY-ASSIGNMENT role ('lead'/'member') — two unrelated things the
+regex conflates. Consequence worth an owner decision: a security tripwire that is permanently red cannot
+do its job, since a REAL violation would be indistinguishable from this noise. Fix is either an allowlist
+entry or tightening the regex to correlate the two matches — deliberately left alone as it changes a
+security test's detection.
+NOT LIVE-VERIFIED: no local WP admin this session; proof is unit + mutation tests. Both fixes need a
+30-second check on create.widgetify.co after deploy. Not committed.

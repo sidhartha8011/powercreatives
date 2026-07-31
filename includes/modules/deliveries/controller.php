@@ -292,6 +292,25 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         return $this->success($this->service->format_delivery($row), 201);
     }
 
+    /**
+     * May this user EDIT this delivery? Owner, or an admin.
+     *
+     * The read side (PCM_DB::get_delivery_by_id) already returns any delivery to
+     * an admin for team-wide oversight; without the same grant here an admin can
+     * see a delivery and is then refused the edit. One helper so the write paths
+     * cannot drift apart.
+     *
+     * @param object $delivery Delivery row (needs ->userId).
+     * @param int    $user_id  PCM user id (wp_pcm_users.id), NOT the WP user id.
+     */
+    private static function can_edit_delivery(object $delivery, int $user_id): bool
+    {
+        if ((int) $delivery->userId === $user_id) {
+            return true;
+        }
+        return class_exists('PCM_Access') && PCM_Access::is_admin($user_id);
+    }
+
     /** PATCH /deliveries/<id> — Update a delivery's name / clientName / status. */
     public function update_item(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
@@ -303,10 +322,15 @@ class PCM_REST_Deliveries extends PCM_REST_Base
             return $this->not_found('Delivery');
         }
         // get_delivery_by_id also returns deliveries merely ASSIGNED to the
-        // caller (view + use). Editing stays owner-only, so reject a non-owner
-        // explicitly instead of letting the owner-scoped UPDATE silently no-op
-        // and return a misleading success.
-        if ((int) $existing->userId !== (int) $user->id) {
+        // caller (view + use), and any delivery for an ADMIN (team-wide
+        // oversight — PCM_DB::get_delivery_by_id). Editing is owner-or-admin:
+        // an admin who can SEE every delivery must be able to edit it too, or
+        // the read grant is a dead end (owner report 2026-07-31 — a platform
+        // Administrator hit "view but not edit" on deliveries they administer).
+        // PCM_Access::is_admin covers BOTH kinds of admin: a WP admin (role
+        // reconciled from manage_options each request) and a platform admin
+        // (role='admin', settable only by an existing admin).
+        if (!self::can_edit_delivery($existing, (int) $user->id)) {
             return $this->error('You can view this delivery but not edit it.', 403, 'pcm_forbidden');
         }
 
@@ -395,8 +419,8 @@ class PCM_REST_Deliveries extends PCM_REST_Base
         if (!$existing) {
             return $this->not_found('Delivery');
         }
-        // Same owner rule as update_item: assigned users can view, not edit.
-        if ((int) $existing->userId !== (int) $user->id) {
+        // Same owner-or-admin rule as update_item: assigned users can view, not edit.
+        if (!self::can_edit_delivery($existing, (int) $user->id)) {
             return $this->error('You can view this delivery but not edit it.', 403, 'pcm_forbidden');
         }
 
