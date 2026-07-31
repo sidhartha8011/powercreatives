@@ -7,6 +7,12 @@
  * written `self::` is intra-class. Callees promoted private→public for this move
  * are listed in service.php's class docblock.
  *
+ * PROMOTED private→public (2026-07-31): split_unit_sections, section_runs,
+ * assemble_content_html, rules_to_schema. They were private helpers of the SAVE
+ * TRANSACTION back when both lived on PCM_SEO_Service; that code is now
+ * PCM_SEO_Editing, so the calls are cross-class and private would fatal at
+ * runtime ("Call to private method … from scope PCM_SEO_Editing"). Not public API.
+ *
  * @package PowerCreatives
  */
 
@@ -81,7 +87,7 @@ class PCM_SEO_Page_Inventory
      *         from/to = unit indexes; norm = normalized heading visible text;
      *         ptexts = the section's paragraph visible texts (fingerprint input).
      */
-    private static function split_unit_sections(array $units): array
+    public static function split_unit_sections(array $units): array
     {
         $secs = array();
         $cur  = null;
@@ -117,7 +123,7 @@ class PCM_SEO_Page_Inventory
      *
      * @return array<int,array> heading index → its paragraph nodes.
      */
-    private static function section_runs(array $headings, array $nodes): array
+    public static function section_runs(array $headings, array $nodes): array
     {
         $runs = array();
         foreach ($nodes as $n) {
@@ -329,7 +335,7 @@ class PCM_SEO_Page_Inventory
      * - Empty-text paragraphs are dropped (the parse's own empty-p law), so
      *   an untouched round-trip stays fingerprint-identical.
      */
-    private static function assemble_content_html(string $html, array $headings): string
+    public static function assemble_content_html(string $html, array $headings): string
     {
         $blocks = PCM_Text_Matcher::content_blocks($html);
         $spans  = PCM_Text_Matcher::chrome_spans($html);
@@ -835,7 +841,7 @@ class PCM_SEO_Page_Inventory
     }
 
     /** Map hub rule rows to rule schema v1/v2 payload entries (the push shape). */
-    private static function rules_to_schema(array $rows): array
+    public static function rules_to_schema(array $rows): array
     {
         return array_map(static function ($r) {
             $target = (string) $r['target'];

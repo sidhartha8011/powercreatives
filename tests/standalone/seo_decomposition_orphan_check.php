@@ -126,7 +126,36 @@ foreach ($files as $f) {
     }
 }
 
+// ── ACCESSIBILITY ──────────────────────────────────────────────────────────────
+// Being DEFINED on the new class is not enough — it must be REACHABLE. A method
+// that was `private static` while its caller lived in the same class becomes a
+// fatal the moment the caller moves to a different class:
+//   "Call to private method PCM_SEO_Page_Inventory::section_runs() from scope
+//    PCM_SEO_Editing"
+// php -l accepts it, every test above stays green, and it only blows up when a
+// user clicks the button. This check is why that class of bug is now catchable.
+echo "\n=== inaccessible cross-class calls ===\n";
+$access = [];
+$seoFiles = glob("$root/includes/modules/seo/*.php");
+foreach ($seoFiles as $file) {
+    $src = file_get_contents($file);
+    if (!preg_match('/^class (PCM_SEO_[A-Za-z_]+)/m', $src, $cm)) { continue; }
+    $cls = $cm[1];
+    preg_match_all('/^    (private|protected) static function ([a-z_][a-z0-9_]*)\(/m', $src, $mm, PREG_SET_ORDER);
+    foreach ($mm as $x) {
+        foreach ($seoFiles as $other) {
+            if ($other === $file) { continue; }
+            if (preg_match('/\b' . $cls . '::' . $x[2] . '\s*\(/', file_get_contents($other))) {
+                $access[] = "$cls::{$x[2]}() is {$x[1]} but is called from " . basename($other)
+                          . " — promote it to public";
+            }
+        }
+    }
+}
+$access = array_unique($access);
+if (empty($access)) { echo "  NONE\n"; } else { foreach ($access as $a) { echo "  $a\n"; } }
+
 echo "\n=== stale call sites ===\n";
-if (empty($problems)) { echo "  NONE\n"; exit(0); }
-foreach ($problems as $p) { echo "  $p\n"; }
-exit(1);
+if (empty($problems)) { echo "  NONE\n"; }
+else { foreach ($problems as $p) { echo "  $p\n"; } }
+exit((empty($problems) && empty($access)) ? 0 : 1);

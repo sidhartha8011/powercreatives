@@ -761,9 +761,39 @@ function pcm_conn_purge_caches($post_id) {
 }
 // Recursively replace strings inside a meta value (which may be a JSON string, a PHP-serialized
 // array, or nested objects — page builders use all three). Counts replacements via $count.
+/** The same search/replace terms as they appear INSIDE a JSON payload.
+ *
+ *  Builders store their page as JSON — Brizy inside a base64 blob, Elementor in
+ *  `_elementor_data` directly — and json_encode escapes every "/" as "\/". So a URL
+ *  saved as https://site.com/page is stored `https:\/\/site.com\/page` and a literal
+ *  str_replace of the unescaped URL matches NOTHING. The replace then reports 0 hits,
+ *  the data is written back unchanged, and the builder is told to recompile — from the
+ *  OLD data. That is exactly "links/edits do nothing on Brizy".
+ *
+ *  Purely ADDITIVE: these variants are only tried after the literal pass found nothing,
+ *  so no string that matched before can stop matching. Returns array($search, $replace)
+ *  pairs, or empty arrays when no term contains a slash. */
+function pcm_conn_json_variants($search, $replace) {
+    $s = array(); $r = array();
+    $search = (array) $search; $replace = (array) $replace;
+    foreach ($search as $i => $term) {
+        $term = (string) $term;
+        if ($term === '' || strpos($term, '/') === false) { continue; }
+        $esc = str_replace('/', '\\/', $term);
+        if ($esc === $term) { continue; }
+        $s[] = $esc;
+        $r[] = str_replace('/', '\\/', (string) (isset($replace[$i]) ? $replace[$i] : ''));
+    }
+    return array($s, $r);
+}
 function pcm_conn_replace_in($val, $search, $replace, &$count) {
     if (is_string($val)) {
         $c = 0; $out = str_replace($search, $replace, $val, $c); $count += $c;
+        // JSON-escaped form (Elementor's _elementor_data and any plain JSON meta).
+        if ($c === 0) {
+            list($js, $jr) = pcm_conn_json_variants($search, $replace);
+            if ($js) { $c2 = 0; $out = str_replace($js, $jr, $out, $c2); $count += $c2; $c += $c2; }
+        }
         // Builders like Brizy store their page (editor_data) and compiled HTML BASE64-encoded, so a
         // plain string pass can't see the URLs. If nothing matched and this is a base64 blob whose
         // DECODED form carries a search term, replace inside and re-encode. Guarded on a real hit +
@@ -781,10 +811,16 @@ function pcm_conn_replace_b64($val, $search, $replace, &$count) {
     if (strlen($val) < 24 || !preg_match('/^[A-Za-z0-9+\/]+={0,2}$/', $val)) { return $val; }
     $dec = base64_decode($val, true);
     if ($dec === false || $dec === '' || !preg_match('//u', $dec)) { return $val; }
+    // Brizy's decoded blob is JSON, so the URL is stored with escaped slashes
+    // (https:\/\/…). Try the literal terms first, then the JSON-escaped variants —
+    // BOTH for the "is it in here at all" probe and for the replace itself.
+    list($js, $jr) = pcm_conn_json_variants($search, $replace);
     $hit = false;
     foreach ($search as $s) { if ($s !== '' && strpos($dec, $s) !== false) { $hit = true; break; } }
+    if (!$hit) { foreach ($js as $s) { if (strpos($dec, $s) !== false) { $hit = true; break; } } }
     if (!$hit) { return $val; }
     $c = 0; $ndec = str_replace($search, $replace, $dec, $c);
+    if ($c === 0 && $js) { $ndec = str_replace($js, $jr, $ndec, $c); }
     if ($c === 0) { return $val; }
     $count += $c;
     return base64_encode($ndec);
@@ -792,6 +828,10 @@ function pcm_conn_replace_b64($val, $search, $replace, &$count) {
 /** True if a search term appears in $raw directly, OR inside a base64-encoded blob within it — so
  *  the replace pass isn't skipped for builders (Brizy) that store their data base64-encoded. */
 function pcm_conn_meta_may_contain($raw, $search) {
+    // Include the JSON-escaped forms, or this PRE-FILTER skips Brizy/Elementor meta
+    // outright and the replace pass never even runs on it.
+    list($js, ) = pcm_conn_json_variants($search, $search);
+    $search = array_merge((array) $search, $js);
     foreach ($search as $s) { if ($s !== '' && strpos($raw, $s) !== false) { return true; } }
     if (preg_match_all('/[A-Za-z0-9+\/]{32,}={0,2}/', $raw, $m)) {
         foreach ($m[0] as $blob) {

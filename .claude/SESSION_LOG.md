@@ -10622,3 +10622,111 @@ dual-selector `.pcm-card-editor` typography fix. Outputs at the usual four paths
   `new PCM_SEO_Editing()`; all 3 new require_once lines wired. php -l clean on all 19 staged seo files.
 - Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks.
 - Not committed. STILL UNVERIFIED: `composer test` (617 tests) — composer/PHPUnit absent here.
+
+## 2026-07-31 — Approvals: emoji stripped when an ad is edited (INVESTIGATED, NOT FIXED)
+- Report: copy module → send to approvals → open set → click an ad → click outside → saved WITHOUT emoji.
+- Narrowed to the LAST unprotected step. The REST endpoint `update_snapshot_asset`
+  (approvals/controller.php:368) is already heavily hardened — raw-body fallback for WAF-stripped 4-byte
+  UTF-8, `decode_numeric_entities()` for the client's ASCII-escaped astral chars, and an opt-in WP_DEBUG probe
+  that logs raw→parsed→sanitized emoji counts. Storage is safe too (snapshot written via `wp_json_encode`,
+  i.e. \uXXXX ASCII).
+- The remaining suspect is the SERVICE: `PCM_Approvals_Service::update_snapshot_asset()` applies
+  `sanitize_textarea_field()` to `body` (service.php:1344) and `description` (:1350) and
+  `sanitize_text_field()` to `headline` (:1347). That is exactly the step the controller's own probe measures
+  as `sanitized=` — the author already suspected it.
+- NOT FIXED, deliberately: the screenshots show 🎬 lost from the BODY while 📊 SURVIVED in the headline, even
+  though both go through the same family of sanitizer. That asymmetry means I do not yet understand the
+  mechanism, and a blind "swap the sanitizer" change could silently alter what HTML/whitespace is allowed in
+  client-visible copy. WP core's `sanitize_*_field()` cannot be exercised in this environment (no WordPress
+  bootstrap, no PHPUnit), so I could not verify a fix before shipping it.
+- NEXT STEP for whoever picks this up: enable `WP_DEBUG` and reproduce once. The probe at controller.php:411
+  prints `[PCM emoji probe] asset=… raw=N parsed=N sanitized=N` and pinpoints the losing stage in one run —
+  raw>parsed = a request-level/WAF strip; parsed>sanitized = the service sanitizer; raw=0 = the browser never
+  sent it (stale bundle). Fix at whichever boundary the numbers indict.
+- No files changed.
+
+## 2026-07-31 — Brizy: links/edits silently did nothing (JSON-escaped slashes) — FIXED
+- Report: "brizy — Links / edits are not working on Brizy sites."
+- Hypotheses tested and DISCARDED first: (a) the Brizy adapter missing → it exists and is solid
+  (seohub/service.php:882, detects via brizy_post_uid/brizy-post/brizy); (b) the link path never calling
+  `regenerate()` → it does, all THREE calls (`replace_links`, `replace_link_in_element`,
+  `replace_anchor_in_element`) already regenerate. Both wrong, both cheap to rule out.
+- ROOT CAUSE: `pcm_conn_replace_in()` handled two shapes — plain strings and base64 blobs (decode → replace →
+  re-encode) — but NOT the JSON inside them. Builders store the page as JSON and `json_encode` escapes every
+  "/" as "\/", so a URL saved as `https://site.com/page` sits in the data as `https:\/\/site.com\/page`. The
+  literal `str_replace` matched NOTHING, `$c` stayed 0, the blob was returned unchanged — and then Brizy was
+  correctly told to recompile, which it did FROM THE OLD DATA. Perfectly silent: no error, DB "written",
+  page unchanged. `pcm_conn_meta_may_contain()` had the same blind spot and could skip the meta entirely
+  before the replace pass ever ran.
+- FIX (connector template, purely ADDITIVE): new `pcm_conn_json_variants()` returns the JSON-escaped form of
+  each search/replace pair. Tried ONLY after the literal pass finds nothing, in three places — the plain-string
+  path (covers Elementor's `_elementor_data`), inside `pcm_conn_replace_b64()` after the base64 decode (covers
+  Brizy) for BOTH the "is it in here" probe and the replace, and in the `meta_may_contain` pre-filter. Nothing
+  that matched before can stop matching.
+- VERIFIED: `php -l` on service.php AND on the extracted 2,148-line connector NOWDOC (it ships as its own
+  plugin). New behaviour test 14/14 against realistic payloads — Brizy base64+JSON now replaces and still
+  decodes to valid JSON with the old URL fully gone; Elementor plain JSON replaces; the pre-filter now sees
+  escaped URLs while still rejecting unrelated text. REGRESSIONS covered: plain HTML still replaced with the
+  same count, non-matching strings untouched, random binary base64 never corrupted, slash-free terms produce
+  no variants. Harness 88/88, connector_selfupdate 11/11.
+- ⚠ ASSUMPTION-BASED, as requested: not reproduced against a live Brizy site. The mechanism is proven in
+  isolation but the last mile needs the Brizy login. ⚠ Connector change ⇒ requires re-download + reinstall on
+  each connected site (connector version NOT bumped — do that when shipping).
+- Not committed.
+
+## 2026-07-31 — Zip build: powerplatform-2026-07-31_1620.zip (Brizy link fix + SEO decomposition)
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-07-31_1620.zip (1,939,177 bytes) from a fresh
+  `npm run build` (28.3s, clean).
+- Gates before packaging: orphan exit 0 (NONE) · harness 88/88 · connector_selfupdate 11/11 ·
+  page_versioning 67/67 (the file outside the harness).
+- Payload verified to carry BOTH changes:
+  · Brizy fix — `pcm_conn_json_variants` defined once and referenced 4× in the staged seohub/service.php; the
+    staged connector NOWDOC extracts to 2,148 lines, `php -l` clean, and contains the fix (4 refs) — i.e. the
+    code that actually ships to client sites has it, not just the hub wrapper.
+  · SEO decomposition — staged service.php is 1,661 lines; php -l clean on every staged seo + seohub file.
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
+- ⚠ CONNECTOR CHANGE: installing this hub zip does NOT fix existing connected sites. Each connected site needs
+  the connector re-downloaded + reinstalled. Connector version was deliberately NOT bumped — bump it when
+  shipping so the self-update feed offers it.
+- ⚠ Brizy fix is assumption-based (mechanism proven in isolation, 14/14) but NOT reproduced on a live Brizy
+  site. `composer test` still unavailable in this environment.
+- Not committed.
+
+## 2026-07-31 — FATAL from my decomposition: private methods called cross-class — FIXED + gate closed
+- Live error: "Call to private method PCM_SEO_Page_Inventory::section_runs() from scope PCM_SEO_Editing"
+  on SEO editor → Save & close.
+- MY REGRESSION, and a REAL HOLE IN MY GATE. When PAGE INVENTORY moved out, its methods kept their original
+  visibility. That was fine while their callers lived in the same class — but the SAVE TRANSACTION callers then
+  moved to PCM_SEO_Editing, making those calls CROSS-CLASS, and `private` fatals at runtime. The orphan checker
+  verified each moved method is DEFINED on its new class; it never verified it is REACHABLE. `php -l` accepts
+  it, all 88+67 tests stayed green, and it only blows up when a user clicks the button.
+- NOT just the one the user hit — a full scan found FOUR, all PCM_SEO_Page_Inventory called from editing.php:
+  `section_runs`, `split_unit_sections`, `assemble_content_html`, `rules_to_schema`. The other three would have
+  fatalled on different actions. All promoted to public with a docblock note recording WHY (never hide a
+  promotion — the decomposition convention).
+- GATE CLOSED: `seo_decomposition_orphan_check.php` gained an "inaccessible cross-class calls" section — for
+  every `PCM_SEO_*` class it flags any `private`/`protected static` method that another seo file calls
+  statically, and now exits 1 on that too. PROVEN to work: temporarily re-privatised `section_runs` and the
+  checker reported it by name, then restored and it went back to NONE/exit 0.
+- VERIFIED: full re-scan reports NONE inaccessible · orphan gate exit 0 · RUNTIME reflection confirms all four
+  are `public` and callable from PCM_SEO_Editing · harness 88/88 · page_versioning 67/67 · php -l clean on all
+  19 seo files.
+- LESSON for the remaining decomposition work: after ANY slice, visibility must be re-derived from the NEW call
+  graph, not inherited from the old one. The three earlier slices' promotions were all for stay-behind callees;
+  this is the mirror case — MOVED methods whose callers left.
+- Not committed. Zip not rebuilt yet — this is a production fatal, so it needs one.
+
+## 2026-07-31 — Zip build: powerplatform-2026-07-31_1632.zip (ships the Save & close FATAL fix)
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-07-31_1632.zip (1,939,351 bytes) from a fresh
+  `npm run build` (21.6s, clean).
+- Gates before packaging: orphan + NEW accessibility gate exit 0 (NONE) · harness 88/88 · page_versioning
+  67/67 · connector_selfupdate 11/11.
+- THE FATAL FIX VERIFIED IN THE STAGED PAYLOAD (not just the working tree): all four
+  PCM_SEO_Page_Inventory methods are public=1 / private=0 in the staged page-inventory.php —
+  `section_runs`, `split_unit_sections`, `assemble_content_html`, `rules_to_schema`.
+- Also confirmed still present: Brizy `pcm_conn_json_variants` (4 refs), decomposed service.php at 1,661 lines,
+  the corrected `private PCM_SEO_Editing $editing;` type hint. php -l clean on all staged seo + seohub files.
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
+- ⚠ The Brizy portion is a CONNECTOR change — connected sites need the connector re-downloaded + reinstalled;
+  connector version deliberately not bumped. The Save & close fix is hub-side, so this zip alone fixes it.
+- Not committed.
