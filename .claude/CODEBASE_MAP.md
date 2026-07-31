@@ -483,6 +483,57 @@ Basic auth with the connected site's WP Application Password). Remote reads use 
 | GET | /seo/export | controller.php:152 | Export SEO config |
 | POST | /seo/import | controller.php:153 | Import SEO config |
 
+**Previously undocumented seo routes** (all `manage_options`; verified against
+`includes/modules/seo/controller.php` on 2026-07-31 — the section listed 64 rows
+against 99 registered routes):
+
+_Remote site suite (`/seo/sites/{id}/*`, proxied via the connector):_
+| Method | Path | File:Line | Purpose |
+|---|---|---|---|
+| POST | /seo/sites/{id}/site/generate | controller.php:69 | Remote site generate |
+| GET | /seo/sites/{id}/ai/posts | controller.php:73 | Remote AI posts |
+| POST | /seo/sites/{id}/ai/site-desc | controller.php:74 | Remote AI site description |
+| POST | /seo/sites/{id}/content/{post}/links/{idx} | controller.php:79 | Remote update link |
+| POST | /seo/sites/{id}/content/{post}/links/{idx}/remove | controller.php:80 | Remote remove link |
+| GET | /seo/sites/{id}/content/{post}/content-nodes | controller.php:82 | Remote content nodes |
+| POST | /seo/sites/{id}/migrate-overrides | controller.php:84 | Remote migrate overrides |
+| POST | /seo/sites/{id}/media | controller.php:90 | Remote add media |
+| POST | /seo/sites/{id}/redirects/{rid}/delete | controller.php:93 | Remote delete redirect |
+| GET | /seo/sites/{id}/url-usage | controller.php:94 | Remote URL usage |
+| POST | /seo/sites/{id}/content/{post}/page-type | controller.php:95 | Remote save page type |
+| POST | /seo/sites/{id}/content/{post}/section-optimize | controller.php:96 | Remote optimize section |
+| GET | /seo/sites/{id}/content/{post}/page-versions | controller.php:100 | Remote page versions |
+| POST | /seo/sites/{id}/content/{post}/section-versions/{vid}/delete | controller.php:101 | Remote delete section version |
+| POST | /seo/sites/{id}/content/{post}/headings/{idx}/optimize | controller.php:103 | Remote optimize heading |
+| POST | /seo/sites/{id}/llm-info/build | controller.php:108 | Remote llm-info build |
+| POST | /seo/sites/{id}/llm-info/keywords | controller.php:109 | Remote llm-info keywords |
+| POST | /seo/sites/{id}/ai | controller.php:71 | Remote AI readiness SAVE (map had only the GET) |
+| POST | /seo/sites/{id}/llm-info | controller.php:107 | Remote llm-info SAVE (map had only the GET) |
+
+_AI-readiness, llm-info, local site:_
+| Method | Path | File:Line | Purpose |
+|---|---|---|---|
+| POST | /seo/ai-readiness/settings | controller.php:119 | AI-readiness settings |
+| POST | /seo/ai-readiness/generate | controller.php:120 | AI-readiness generate |
+| POST | /seo/ai-readiness/summarize | controller.php:121 | AI-readiness summarize |
+| POST | /seo/ai-readiness/save-llms | controller.php:122 | Save llms.txt |
+| POST | /seo/ai-readiness/site-desc | controller.php:123 | Generate site description |
+| POST | /seo/ai-readiness/delete-all | controller.php:124 | Delete all AI-readiness |
+| POST | /seo/llm-info | controller.php:126 | Save local llm-info (map had only the GET) |
+| POST | /seo/llm-info/keywords | controller.php:128 | Local llm-info keywords |
+| POST | /seo/site/generate | controller.php:135 | Local site SEO generate |
+| POST | /seo/site/restore | controller.php:136 | Local site SEO restore |
+
+_Business card / Google Business Profile:_
+| Method | Path | File:Line | Purpose |
+|---|---|---|---|
+| POST | /seo/sites/{id}/business/overrides | controller.php:143 | Business overrides |
+| POST | /seo/sites/{id}/business/refresh | controller.php:144 | Business refresh |
+| POST | /seo/sites/{id}/business/maps | controller.php:145 | Business maps |
+| POST | /seo/sites/{id}/business/place | controller.php:146 | Business place lookup |
+| POST | /seo/gbp/brand/{brand}/save | controller.php:148 | Save brand GBP record |
+| POST | /seo/gbp/brand/{brand}/overrides | controller.php:150 | Brand GBP overrides |
+
 ### seohub — `pcm/v1/seohub/*` (tenant CRUD `manage_options:strict`; handshake `public`)
 | Method | Path | File:Line | Auth/Cap | Purpose |
 |---|---|---|---|---|
@@ -522,6 +573,13 @@ Basic auth with the connected site's WP Application Password). Remote reads use 
 | POST | /sites/{id}/update-connector | controller.php:48 | edit_posts | Push connector update |
 
 ### strategy — `pcm/v1/strategies/*` (default `edit_posts`, grants `['strategies']`)
+> **Item payload.** `PCM_DB::get_strategy_items()` LEFT JOINs the linked article and
+> aliases its columns onto each item: `articlePublishedUrl`, `articleSiteId`,
+> `articlePublishedPostId`, `articleStatus`, `articlePublishedAt`. The Strategies UI
+> keys real behaviour off these — `articlePublishedPostId` enables the live
+> post-status control, and the row's date tag prefers `articlePublishedAt` over
+> `scheduledDate` (which only ever exists for schedule-mode strategies).
+
 | Method | Path | File:Line | Auth/Cap | Purpose |
 |---|---|---|---|---|
 | GET | /strategies | controller.php:41 | edit_posts | List strategies |
@@ -653,7 +711,7 @@ replaced by `merge_strategy_config()`, so a partial PATCH preserves everything e
 | `PCM_Providers` | `core/class-pcm-providers.php` | Static provider metadata registry (apiKeyUrl, knownModels, capability flags). |
 | `PCM_Access` | `core/class-pcm-access.php` | Team-access grants via delivery assignments; `scope_clause()` for "owned OR granted" SQL. |
 | `PCM_Gate_Auth` | `core/class-pcm-gate-auth.php` | HMAC-signed cookie gate auth (`pcm_shortcode_auth`); platform users only (bcrypt). |
-| `PCM_Template_Seeds` / `PCM_Prompt_Seeds` | `core/class-pcm-*-seeds.php` | Seed default templates + prompt variants (userId=0; idempotent on name+module). |
+| `PCM_Template_Seeds` / `PCM_Prompt_Seeds` | `core/class-pcm-*-seeds.php` | Seed default templates + prompt variants (userId=0; idempotent on name+module). **Delivery:** `maybe_seed()` fingerprints the seeds file's own mtime+size into option `pcm_template_seeds_sig` — so ADDING A SEED needs no `PCM_DB_VERSION` bump; it lands on the next page load, once. Modules seeded: video/writer/copy, plus `image` (`Default Featured Image Prompt`, which reproduces `build_image_prompt()`'s hardcoded fallback verbatim with `{{ title }}`/`{{ keyword }}` so selecting it changes nothing until edited). |
 | `PCM_LLM` | `core/llm/class-pcm-llm.php` | Central text-LLM dispatcher: `invoke`/`invoke_json`/`invoke_with_grounding`. 3-tier JSON fidelity (json_schema → json_object → prompt-only) with refusal/truncation/repair/salvage recovery. |
 
 **Provider system** — `PCM_Provider_Registry` (`core/providers/`): generation-capable impls `openai`, `google`, `kieai`, `fal` implementing `PCM_Provider_Interface` (`generate_image/generate_video/edit_image/validate_key`). `detect_provider()` is **deprecated** — routing is data-driven via `model.provider`. Provider metadata registry also carries: `ahrefs`, `proranktracker`, `gsc`, `apify` (supportsSeo + supportsSocial), `google_places`, `brevo` (supportsEmail).
@@ -703,11 +761,13 @@ All per-user provider API keys live in **`wp_pcm_integrations`** (`apiKey` text)
 ## SEO suite detail
 The SEO capability spans `includes/modules/seo/` (hub-local + remote proxy) and `includes/modules/seohub/` (connector distribution).
 
-⚠ **`seo/service.php` is down to 4,916 lines / 94 methods** (was 7,135 — −31%). A decomposition is IN PROGRESS (started 2026-07-29) following this module's own existing convention — one standalone `PCM_SEO_*` class per concern in its own file, `require_once`'d at the top of `service.php`, called DIRECTLY from `controller.php` (never through a facade). Traits are NOT used anywhere in this plugin — don't introduce them.
+⚠ **`seo/service.php` is down to 4,639 lines / 88 methods** (was 7,135 — −35%). A decomposition is IN PROGRESS (started 2026-07-29) following this module's own existing convention — one standalone `PCM_SEO_*` class per concern in its own file, `require_once`'d at the top of `service.php`, called DIRECTLY from `controller.php` (never through a facade). Traits are NOT used anywhere in this plugin — don't introduce them.
 
-**Extracted (6 classes, 66 methods):** `local.php` (`PCM_SEO_Local`, 29 — the hub's OWN posts/pages: cross-plugin meta registry, content rows, link scan/rewrite, headings + content nodes, `run_prompt_section`, `save_cell`), `ai.php` (`PCM_SEO_AI`, 14 — all prompt resolution + field generation), `redirects.php` (`PCM_SEO_Redirects`, 7), `business.php` (`PCM_SEO_Business`, 6), `page-state.php` (`PCM_SEO_Page_State`, 6 — page versioning: fingerprint/version per `siteId:postId`), `views.php` (`PCM_SEO_Views`, 4).
+**Extracted (7 classes, 72 methods):** `local.php` (`PCM_SEO_Local`, 29 — the hub's OWN posts/pages: cross-plugin meta registry, content rows, link scan/rewrite, headings + content nodes, `run_prompt_section`, `save_cell`), `ai.php` (`PCM_SEO_AI`, 14 — all prompt resolution + field generation), `redirects.php` (`PCM_SEO_Redirects`, 7), `business.php` (`PCM_SEO_Business`, 6), `page-state.php` (`PCM_SEO_Page_State`, 6 — page versioning: fingerprint/version per `siteId:postId`), `remote-headings.php` (`PCM_SEO_Remote_Headings`, 6 — H1–H6 on a CONNECTED post: snapshot read, override apply, the three update paths, AI optimize), `views.php` (`PCM_SEO_Views`, 4).
 
-**Still inside `service.php`:** remote/connected-site editing (46), THE SAVE TRANSACTION (22, incl. the 738-line `save_page_edits()`), page-inventory parsing (17), remote headings (6), section-rule row snapshot/restore (2), dynamic rules (1).
+**Still inside `service.php`:** remote/connected-site editing (46), THE SAVE TRANSACTION (22, incl. the 738-line `save_page_edits()`), page-inventory parsing (17), section-rule row snapshot/restore (2), dynamic rules (1).
+
+⚠ **Phase 5 (REMOTE HEADINGS) cost SIX more `private static` → `public static` promotions** — `served_inventory` (PAGE INVENTORY), `rekey_section_rules` (SECTION RULES), `update_owned_heading_unit` + `update_section_owned_heading` (SAVE TRANSACTION), `remote_row` + `remote_field_vars` (Remote-site SEO). Only `heading_target_post_id()` was edge-free; every other heading method reaches back into four different concerns, which is precisely why the map flagged this one as "straddling". They are listed in `service.php`'s class docblock — **the next slices (PAGE INVENTORY, Remote-site SEO) should reclaim them as those concerns move out**, not accumulate more.
 
 ⚠ **The easy extractions are DONE — nothing left has zero outgoing edges except the 2 `SECTION RULES` helpers, which the save transaction calls 13× and which belong WITH it, not as their own class.** The remaining knot is `THE SAVE TRANSACTION` → `PAGE INVENTORY` (14 edges) + `→ SECTION RULES` (13), with `REMOTE HEADINGS` straddling. Slice incrementally like `SectionModal.tsx` was, never in one cut, and run the orphan check after every slice.
 

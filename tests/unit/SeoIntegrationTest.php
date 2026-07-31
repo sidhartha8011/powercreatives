@@ -525,11 +525,11 @@ class SeoIntegrationTest extends TestCase
     public function test_heading_target_post_id_routes_to_owning_source(): void
     {
         // Page's own heading (no / zero sourcePostId) → edits the page.
-        $this->assertSame(42, PCM_SEO_Service::heading_target_post_id(array('text' => 'A'), 42));
-        $this->assertSame(42, PCM_SEO_Service::heading_target_post_id(array('sourcePostId' => 0), 42));
+        $this->assertSame(42, PCM_SEO_Remote_Headings::heading_target_post_id(array('text' => 'A'), 42));
+        $this->assertSame(42, PCM_SEO_Remote_Headings::heading_target_post_id(array('sourcePostId' => 0), 42));
         // Shared-source heading → edits the owning template/block, not the page.
-        $this->assertSame(7, PCM_SEO_Service::heading_target_post_id(array('sourcePostId' => 7), 42));
+        $this->assertSame(7, PCM_SEO_Remote_Headings::heading_target_post_id(array('sourcePostId' => 7), 42));
         // Defensive: a stringy id (wpdb returns strings) still coerces to the owning int.
-        $this->assertSame(7, PCM_SEO_Service::heading_target_post_id(array('sourcePostId' => '7'), 42));
+        $this->assertSame(7, PCM_SEO_Remote_Headings::heading_target_post_id(array('sourcePostId' => '7'), 42));
     }
 }

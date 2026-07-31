@@ -32,6 +32,9 @@ $moved = [
                             'get_post_content_nodes','update_post_heading','run_prompt_section',
                             'optimize_heading','count_links','check_broken_links','save_cell_fields',
                             'duplicate','save_cell'],
+    'PCM_SEO_Remote_Headings' => ['remote_get_headings','heading_target_post_id',
+                            'remote_apply_heading_override','remote_update_heading',
+                            'remote_update_heading_apply','remote_optimize_heading'],
 ];
 $owner = [];
 foreach ($moved as $cls => $ms) { foreach ($ms as $m) { $owner[$m] = $cls; } }

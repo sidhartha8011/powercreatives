@@ -394,7 +394,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
-        return $this->success(array('headings' => PCM_SEO_Service::remote_get_headings($site, absint($request->get_param('post')), $type, (int) $user->id)));
+        return $this->success(array('headings' => PCM_SEO_Remote_Headings::remote_get_headings($site, absint($request->get_param('post')), $type, (int) $user->id)));
     }
 
     /** GET /seo/sites/{id}/content/{post}/content-nodes — the connected post's paragraph
@@ -776,7 +776,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $level  = array_key_exists('level', $params) ? absint($params['level']) : null;
         // user id rides along so a successful edit RE-KEYS any section rules
         // anchored to this heading (interaction law, contracts v2).
-        $result = PCM_SEO_Service::remote_update_heading($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $text, $level, (int) $user->id);
+        $result = PCM_SEO_Remote_Headings::remote_update_heading($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $text, $level, (int) $user->id);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -797,7 +797,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
         $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
         $template_id = isset($params['templateId']) && $params['templateId'] ? absint($params['templateId']) : null;
-        $result = PCM_SEO_Service::remote_optimize_heading($site, absint($request->get_param('post')), $type, $text, $model, (int) $user->id, $provider, $template_id ?: null);
+        $result = PCM_SEO_Remote_Headings::remote_optimize_heading($site, absint($request->get_param('post')), $type, $text, $model, (int) $user->id, $provider, $template_id ?: null);
         if ($result instanceof WP_Error) {
             return $result;
         }

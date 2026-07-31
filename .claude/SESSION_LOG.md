@@ -10446,3 +10446,76 @@ session's fixes are in the shipped files (not a stale dist): ai.php + optimizer/
 `user_fork ?? $system_default` resolution fix and `ORDER BY updatedAt DESC`; dist/index.css carries the
 dual-selector `.pcm-card-editor` typography fix. Outputs at the usual four paths incl.
 ~/Desktop/powercreatives/power-creatives.zip. Not committed.
+
+## 2026-07-31 — /onboard: map re-verified against code, 35 undocumented routes added
+- Map existed and was dated today (<7 days), so per /onboard the job was to CONFIRM it still matches — not
+  rebuild it. graphify is not on PATH, so the structural-index step was skipped (no graphify-out/, nothing
+  added to .gitignore).
+- Verification was mechanical, not by eye: a scratchpad script (verify_map.php) extracts every
+  `array('METHOD','/path',...)` from includes/modules/*/controller.php, normalises `(?P<id>\d+)` → `{id}`,
+  and diffs against the map's route rows.
+- FOUND: 35 registered routes missing from the map, ALL in the seo module — its section documented 64 rows
+  against 99 registered. Two were nearly missed:
+  - my first pass over-reported 3 paths as missing; an exact-row grep proved they WERE documented → do not
+    trust the loose matcher's raw count;
+  - conversely 3 paths (`POST /seo/llm-info`, `POST /seo/sites/{id}/ai`, `POST /seo/sites/{id}/llm-info`)
+    had ONLY their GET row documented, which a verb-agnostic check would have passed. Both directions were
+    resolved by checking method+path exactly.
+- ADDED to the map: 35 rows with real file:line and cap, grouped as remote site suite / AI-readiness+llm-info+
+  local site / business+GBP, matching the 4-column format of the table they join. Also documented
+  `PCM_Template_Seeds::maybe_seed()`'s mtime+size signature (adding a seed needs NO PCM_DB_VERSION bump) and
+  the new `image` module seed; and added a note to the strategy section listing the item payload's joined
+  article fields incl. `articlePublishedAt` (what the row date tag prefers over scheduledDate).
+- RESULT: "every registered route appears in the map" — 336 documented vs 320 extracted from module
+  controllers (the surplus is expected: the map also covers the connector's `pcm-conn/v1/*` surface, which
+  lives outside includes/modules/*/controller.php).
+- CLAUDE.md already points at the map (line 4) and carries the HARD RULES — no change needed.
+- Nothing edited outside .claude/. Not committed.
+
+## 2026-07-31 — SEO decomposition phase 5: REMOTE HEADINGS → PCM_SEO_Remote_Headings
+- `seo/service.php` **4,916 → 4,639 lines** (−277; 94 → 88 methods). New `includes/modules/seo/remote-headings.php`
+  (310 lines, `PCM_SEO_Remote_Headings`, 6 methods): `remote_get_headings`, `heading_target_post_id`,
+  `remote_apply_heading_override`, `remote_update_heading`, `remote_update_heading_apply`,
+  `remote_optimize_heading`. `require_once`'d from service.php next to its siblings; called DIRECTLY from
+  controller.php. No facade, no traits — per the existing convention.
+- EDGE ANALYSIS FIRST (the task said to): only `heading_target_post_id()` is edge-free. The other five reach
+  into FOUR concerns that stay behind, so the slice forced 6 `private static` → `public static` promotions —
+  `served_inventory` (PAGE INVENTORY), `rekey_section_rules` (SECTION RULES), `update_owned_heading_unit` +
+  `update_section_owned_heading` (SAVE TRANSACTION), `remote_row` + `remote_field_vars` (Remote-site SEO).
+  Recorded in service.php's class docblock AND the map, not hidden. There is no cleaner sub-slice: splitting
+  the group would just create cross-calls back the other way.
+- VERBATIM, proven not asserted: the block was extracted BY SCRIPT (never retyped) and then diffed against a
+  pre-slice backup — expected 18,737 bytes vs actual 18,737, byte-identical, with ONLY the 10 documented
+  `self::` → `PCM_SEO_Service::` rewrites applied. The whole service.php diff is 293 removed / **16 added**,
+  and every added line is accounted for: 8 docblock + 1 require_once + 6 promoted signatures + 1 repointed call.
+- Gotcha the gate caught (exactly the class it exists for): `tests/unit/SeoIntegrationTest.php` reflected into
+  `PCM_SEO_Service::heading_target_post_id()` at 4 call sites — invisible to a name-scoped rewrite. Repointed;
+  `$moved` map in the orphan checker extended with the new class.
+- CRLF: this file is 100% CRLF. My first extraction script used `\n` anchors and aborted BEFORE writing
+  (nothing corrupted); scripts and the new file were made CRLF-consistent (310 CRLF, 0 bare LF).
+- VERIFIED: orphan check **NONE, exit 0** · standalone harness **88/88** · `php -l` clean on all 5 touched
+  files · tsc **59 = unchanged baseline** · vite build clean (20.6s).
+- ⚠ COULD NOT RUN, environment gap (not a skip): **`composer` is not on PATH and there is no PHPUnit binary**,
+  so `composer test` (the 617-test baseline) and `composer dump-autoload` did not run. Related finding:
+  `vendor/composer/autoload_classmap.php` here is STALE — it contains none of the previously extracted SEO
+  classes (PCM_SEO_Local/AI/Page_State/Views all absent), so it is not what keeps the decomposition working;
+  runtime relies on service.php's `require_once` chain. **Before PHPUnit runs in a real dev env,
+  `composer dump-autoload` is still required** for `PCM_SEO_Remote_Headings` to be autoloadable on its own.
+- Not committed (workspace rule: don't commit unless asked). Remaining toward the ≤1,500-line goal:
+  Remote-site SEO (46), THE SAVE TRANSACTION (22, incl. the 738-line `save_page_edits()`), PAGE INVENTORY (17).
+
+## 2026-07-31 — Zip build: powerplatform-2026-07-31_0955.zip (ships SEO decomposition phase 5)
+- Built to C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-07-31_0955.zip (1,935,118 bytes,
+  220 entries) from a fresh `npm run build` (13.4s, clean).
+- Gates re-run BEFORE packaging (it ships a refactor): orphan check exit 0 (NONE), standalone harness 88/88,
+  service.php 4,639 lines.
+- ⚠ PHP COUNT CHANGED, and it is NOT a leak: `includes/` now holds **152** .php files, not the 144 every
+  earlier zip this session verified. +8 = the 7 decomposition files the 09:32 repo sync brought in
+  (local/ai/page-state/redirects/business/views/prompts era) + my remote-headings.php. Verified against the
+  LIVE repo count rather than the stale 144 constant — zip 152 == repo 152.
+- Verified: top-level entry ONLY `powerplatform`; 0 backslash paths; 0 leaks (node_modules / app/src / tests).
+  Payload proven to be the REFACTORED code, not a stale copy: staged service.php is 4,639 lines, carries the
+  `require_once .../remote-headings.php`, `PCM_SEO_Remote_Headings` is defined in the staged file,
+  controller.php has 3 calls repointed to the new class and ZERO stale `PCM_SEO_Service::remote_get_headings`.
+  php -l clean on all three slice-touched files IN THE STAGED PAYLOAD.
+- Not committed.
