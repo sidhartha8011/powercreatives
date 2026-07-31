@@ -29,10 +29,13 @@ class PCM_REST_SEO extends PCM_REST_Base
 
     private PCM_SEO_Service $service;
 
+    private PCM_SEO_Editing $editing;
+
     public function __construct()
     {
         require_once __DIR__ . '/service.php';
         $this->service = new PCM_SEO_Service();
+        $this->editing = new PCM_SEO_Editing();
     }
 
     protected function routes(): array
@@ -168,7 +171,7 @@ class PCM_REST_SEO extends PCM_REST_Base
     /** GET /seo/content/options — dropdown data + detected SEO plugin. */
     public function get_options(WP_REST_Request $request): WP_REST_Response
     {
-        return $this->success($this->service->get_options());
+        return $this->success($this->editing->get_options());
     }
 
     /** POST /seo/content — quick-create a draft post/page. */
@@ -420,7 +423,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $type = sanitize_key($request->get_param('type') ?? 'post') === 'page' ? 'page' : 'post';
-        return $this->success(PCM_SEO_Service::remote_get_inventory($site, absint($request->get_param('post')), $type, (int) $user->id));
+        return $this->success(PCM_SEO_Page_Inventory::remote_get_inventory($site, absint($request->get_param('post')), $type, (int) $user->id));
     }
 
     /** POST /seo/sites/{id}/migrate-overrides — cleanup C4: convert the site's legacy
@@ -432,7 +435,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        $result = PCM_SEO_Service::migrate_site_overrides((int) $user->id, $site);
+        $result = PCM_SEO_Editing::migrate_site_overrides((int) $user->id, $site);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -479,14 +482,14 @@ class PCM_REST_SEO extends PCM_REST_Base
         $params = $request->get_json_params() ?: array();
         $kind   = in_array((string) ($params['kind'] ?? 'replace'), array('insert', 'slice'), true) ? (string) $params['kind'] : 'replace';
         if ($kind === 'slice') {
-            $result = $this->service->save_section_slice((int) $user->id, $site, absint($request->get_param('post')), array(
+            $result = $this->editing->save_section_slice((int) $user->id, $site, absint($request->get_param('post')), array(
                 'ruleId'      => (int) ($params['ruleId'] ?? 0),
                 'unitFrom'    => (int) ($params['unitFrom'] ?? 0),
                 'unitTo'      => (int) ($params['unitTo'] ?? 0),
                 'replacement' => (string) ($params['replacement'] ?? ''),
             ));
         } elseif ($kind === 'insert') {
-            $result = $this->service->save_section_insert((int) $user->id, $site, absint($request->get_param('post')), array(
+            $result = $this->editing->save_section_insert((int) $user->id, $site, absint($request->get_param('post')), array(
                 'anchorText'       => (string) ($params['anchorText'] ?? ''),
                 'anchorLevel'      => (int) ($params['anchorLevel'] ?? 2),
                 'anchorOccurrence' => (int) ($params['anchorOccurrence'] ?? 0),
@@ -495,7 +498,7 @@ class PCM_REST_SEO extends PCM_REST_Base
                 'ruleId'           => (int) ($params['ruleId'] ?? 0),
             ));
         } else {
-            $result = $this->service->save_section_rule((int) $user->id, $site, absint($request->get_param('post')), array(
+            $result = $this->editing->save_section_rule((int) $user->id, $site, absint($request->get_param('post')), array(
                 'headingText'       => (string) ($params['headingText'] ?? ''),
                 'headingLevel'      => (int) ($params['headingLevel'] ?? 2),
                 'headingOccurrence' => (int) ($params['headingOccurrence'] ?? 0),
@@ -521,7 +524,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $params = $request->get_json_params() ?: array();
-        $result = $this->service->save_page_edits(
+        $result = $this->editing->save_page_edits(
             (int) $user->id,
             $site,
             absint($request->get_param('post')),
@@ -542,7 +545,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        return $this->success(array('versions' => $this->service->list_section_versions(
+        return $this->success(array('versions' => $this->editing->list_section_versions(
             (int) $user->id,
             (int) $site->id,
             absint($request->get_param('post')),
@@ -566,7 +569,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if ($url === '') {
             return new WP_Error('pcm_seo_media_no_url', __('No image URL to deliver.', 'power-creatives'), array('status' => 400));
         }
-        $result = PCM_SEO_Service::remote_add_media($site, $url);
+        $result = PCM_SEO_Page_Inventory::remote_add_media($site, $url);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -668,7 +671,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $this->not_found('Site');
         }
         $params = $request->get_json_params() ?: array();
-        $result = $this->service->save_image_rule((int) $user->id, $site, absint($request->get_param('post')), array(
+        $result = $this->editing->save_image_rule((int) $user->id, $site, absint($request->get_param('post')), array(
             'src'           => (string) ($params['src'] ?? ''),
             'occurrence'    => (int) ($params['occurrence'] ?? 0),
             'alt'           => (string) ($params['alt'] ?? ''),
@@ -695,7 +698,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         // ?rowsOnly=1 = the editor's OPEN path (pure DB read); without it the
         // reply includes the remote-assembled Original (gap 02d3cb7 D1).
-        return $this->success($this->service->list_page_versions((int) $user->id, $site, absint($request->get_param('post')), (bool) $request->get_param('rowsOnly')));
+        return $this->success($this->editing->list_page_versions((int) $user->id, $site, absint($request->get_param('post')), (bool) $request->get_param('rowsOnly')));
     }
 
     /** POST /seo/sites/{id}/content/{post}/section-versions/{vid}/delete — delete one saved version. */
@@ -706,7 +709,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         if (!$site) {
             return $this->not_found('Site');
         }
-        $result = $this->service->delete_section_version((int) $user->id, absint($request->get_param('vid')));
+        $result = $this->editing->delete_section_version((int) $user->id, absint($request->get_param('vid')));
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -755,7 +758,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         // legal `why` values (the verifier blanks anything else).
         $report_changes = !empty($params['reportChanges']);
         $purposes       = array_values(array_filter(array_map('sanitize_key', (array) ($params['purposes'] ?? array()))));
-        $result = PCM_SEO_Service::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id, $draft, $report_changes, $purposes);
+        $result = PCM_SEO_Editing::remote_optimize_section($site, absint($request->get_param('post')), $type, $html, $topic, $model, (int) $user->id, $provider, $template_id, $draft, $report_changes, $purposes);
         if ($result instanceof WP_Error) {
             return $result;
         }

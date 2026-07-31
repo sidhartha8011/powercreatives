@@ -10519,3 +10519,106 @@ dual-selector `.pcm-card-editor` typography fix. Outputs at the usual four paths
   controller.php has 3 calls repointed to the new class and ZERO stale `PCM_SEO_Service::remote_get_headings`.
   php -l clean on all three slice-touched files IN THE STAGED PAYLOAD.
 - Not committed.
+
+## 2026-07-31 — SEO decomposition phase 6: PAGE INVENTORY → PCM_SEO_Page_Inventory
+- `seo/service.php` **4,639 → 3,761 lines** (−878; 88 → 72 methods). Cumulative: 7,135 → 3,761 = **−47%**.
+  New `includes/modules/seo/page-inventory.php` (894 lines, `PCM_SEO_Page_Inventory`, 16 methods):
+  assemble_content_html, attribute_inventory, connector_rules_schema_version, connector_supports_rules,
+  extract_imgs, heading_instructions, parse_page_snapshot, push_rules, remote_add_media,
+  remote_fetch_snapshot, remote_get_inventory, rule_rows_for_display, rules_to_schema, section_runs,
+  served_inventory, split_unit_sections.
+- MUCH cleaner than phase 5: only 3 outward edges (ensure_sites_service, get_page_type,
+  remote_get_content_nodes) and **ZERO private→public promotions**. It also RECLAIMED `served_inventory`,
+  which phase 5 had been forced to promote — the map's "next slices should reclaim them" note held.
+- 36 call sites repointed across service.php / controller.php / remote-headings.php.
+- VERBATIM proven: extracted by script (never retyped), diffed against a pre-slice backup —
+  **44,099 bytes expected vs 44,099 actual, byte-identical**, modulo the 3 documented qualifications.
+- ⚠ PROCESS FAILURE WORTH RECORDING: my first run of the generic slicer left the block DUPLICATED — a shell
+  `str_replace` patch to the slicer's DELETION pass silently didn't apply (quote mismatch), so it cut only the
+  4-line banner and service.php reported 4,637 instead of ~3,760. Caught by asserting the line count instead of
+  trusting the script's own output; service.php was restored from the backup and re-sliced correctly. The
+  slicer now refuses to cut fewer than 50 lines (`ABORT: refusing to cut only N lines`).
+- ⚠ SAVE TRANSACTION NOT ATTEMPTED — scoping found two landmines that make a scripted whole-section move a
+  guaranteed fatal, now recorded in the map:
+  1. `private const VERSION_CAP = 20;` is declared INSIDE the block (service.php:1922) — it must MOVE with the
+     block, so the default "qualify self::CONST → PCM_SEO_Service::CONST" rewrite would point at a constant
+     that no longer exists there.
+  2. `save_page_edits()` is `public function` — an INSTANCE method, unlike every method extracted so far. A
+     `static function`-scoped regex misses it entirely, and moving it changes the call convention.
+  The task's own guidance (slice save_page_edits internally FIRST) is correct; I stopped rather than run a
+  2,097-line move through a script that had already mis-fired once today.
+- VERIFIED: orphan check **NONE, exit 0** · standalone **88/88** · `php -l` clean on **all 18** seo files ·
+  tsc **59 = unchanged baseline**.
+- ⚠ STILL UNVERIFIED: `composer test` (617-test baseline) — composer/PHPUnit absent in this environment.
+- TARGET NOT YET MET: 3,761 vs the ~1,500 goal. Remaining path: slice `save_page_edits()` internally, then
+  extract SAVE TRANSACTION + SECTION RULES (~2,097 → lands ~1,660), then a Remote-site SEO slice to cross 1,500.
+- Not committed.
+
+## 2026-07-31 — SEO decomposition phase 7: SECTION RULES + SAVE TRANSACTION → PCM_SEO_Editing
+- **`seo/service.php` 3,761 → 1,661 lines / 47 methods.** Cumulative 7,135 → 1,661 = **−77%**.
+  New `includes/modules/seo/editing.php` (2,121 lines, `PCM_SEO_Editing`, 24 methods) — the connected-site
+  EDITING write path: section-rule contracts (FROZEN), the atomic save transaction (`save_page_edits`,
+  `save_section_insert/slice/remove/rule`, `save_image_rule`), page/section version history, `get_options`.
+- BOTH landmines from the phase-6 scoping were handled explicitly, not worked around:
+  1. `private const VERSION_CAP = 20;` is declared INSIDE the block → it MOVED with the block and its refs
+     stayed `self::`. The slicer separates "constants the block OWNS" from "constants it borrows"
+     (VALID_TYPES / VALID_STATUSES, which DID get qualified). Proven at runtime: reflection reports
+     `PCM_SEO_Editing::VERSION_CAP = 20`.
+  2. The block held 10 INSTANCE methods (`public function`), reached as `$this->service->x()`. Safe to move
+     because PCM_SEO_Service is STATELESS — verified: no instance properties, no constructor, and `$this->`
+     is only ever used to call siblings that moved with them. controller.php now holds
+     `private PCM_SEO_Editing $editing;` + `$this->editing = new PCM_SEO_Editing();`.
+- ⚠ BUG I INTRODUCED AND CAUGHT: the generated property declaration was
+  `private PCM_SEO_Service $editing;` (my patch swapped the variable name but not the TYPE HINT) while being
+  assigned `new PCM_SEO_Editing()` — a runtime TypeError that `php -l` accepts silently. Found by reading the
+  generated declaration rather than trusting the script, then fixed. This is why the run also includes a
+  RUNTIME SMOKE TEST (below), not just linting.
+- VERBATIM proven: **115,842 bytes expected vs 115,842 actual**, byte-identical to the pre-slice block modulo
+  the documented qualifications.
+- Gate caught 7 more stale refs the 88/88 harness did NOT — `tests/standalone/page_versioning_test.php`,
+  including 2 **string** class-name refs (`ReflectionMethod('PCM_SEO_Service', …)`). Exactly the shape the map
+  warns about. Repointed.
+- VERIFIED: orphan check **NONE, exit 0** · standalone **88/88** · `php -l` clean on all **19** seo files ·
+  tsc **59 = unchanged baseline** · NEW runtime smoke test: all 4 extracted classes load through service.php's
+  require chain, `PCM_SEO_Editing` + `PCM_SEO_Service` both instantiate, `VERSION_CAP` resolves to 20.
+- ⚠ STILL UNVERIFIED: `composer test` (617-test baseline) — composer/PHPUnit absent in this environment.
+- Landing point: 1,661 lines. What remains is ONE coherent concern (Remote-site SEO, the connector proxy)
+  plus the deliberate seams (VALID_TYPES/VALID_STATUSES/PER_TYPE, `ensure_sites_service`). Going below ~1,500
+  would mean splitting that single domain arbitrarily. Not committed.
+
+## 2026-07-31 — Post-decomposition behaviour audit (user asked "is it working the same?")
+- Asking the question was worth it: the audit found **a second real break** the gates had NOT caught.
+- FOUND + FIXED: `tests/standalone/page_versioning_test.php` reflected two STATIC PROPERTIES off the old
+  owner — `new ReflectionProperty('PCM_SEO_Service', 'push_deferred' / 'deferred_versions')`. Both properties
+  correctly MOVED to `PCM_SEO_Editing` with the block (every use is `self::` inside it), so the old refs now
+  throw `ReflectionException: Class "PCM_SEO_Service" does not exist`... in reflection terms, the property is
+  gone. Repointed to `PCM_SEO_Editing`; the file now passes **67/67** run directly.
+- WHY BOTH GATES MISSED IT — two independent blind spots, worth fixing before the next slice:
+  1. `seo_decomposition_orphan_check.php` tracks **methods only**. Static PROPERTIES moved by a slice are
+     invisible to it. (`push_deferred`, `deferred_versions` are the first properties any slice has moved.)
+  2. `tests/standalone/run.php` does **NOT** include `page_versioning_test.php` (grep count 0) — so the
+     "88/88 ALL GREEN" headline never exercised it. Several standalone tests are outside the harness.
+- Also re-confirmed: nothing outside `includes/modules/seo/` calls the moved code. The only external
+  references are `class_exists('PCM_SEO_Service')` guards in optimizer/service.php:695 and
+  prompts/controller.php:733 — the class still exists, so they are unaffected.
+- FULL STANDALONE SWEEP (every file, not just the harness): run.php 88/88 · page_versioning 67/67 ·
+  optimizer_research 34/34 · connector_selfupdate 11/11 · reposting_templates 22/22 ·
+  template_seed_delivery 8/8 · orphan check NONE exit 0.
+- Running tally of defects introduced by the decomposition and caught before hand-off: (1) duplicated block
+  from the slicer's silent patch failure, (2) `private PCM_SEO_Service $editing` type hint vs
+  `new PCM_SEO_Editing()`, (3) these stale ReflectionProperty refs. All three fixed.
+
+## 2026-07-31 — Zip build: powerplatform-2026-07-31_1253.zip (ships the SEO decomposition)
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-07-31_1253.zip (1,938,419 bytes) from a fresh
+  `npm run build` (17.8s, clean).
+- Gates re-run BEFORE packaging: orphan check exit 0 (NONE) · harness 88/88 · page_versioning 67/67
+  (the file outside the harness — checked explicitly this time).
+- PHP count now **154** (was 152 at the previous zip): +2 = page-inventory.php + editing.php. Verified against
+  the LIVE repo count, zip 154 == repo 154 — a jump in file count is exactly what the leak check would
+  otherwise flag.
+- Payload proven to be the REFACTORED code, not a stale copy: staged service.php is **1,661** lines;
+  editing.php 2,121 / page-inventory.php 894 / remote-headings.php 310 all present; controller carries the
+  CORRECTED `private PCM_SEO_Editing $editing;` type hint (the runtime-TypeError bug) and its
+  `new PCM_SEO_Editing()`; all 3 new require_once lines wired. php -l clean on all 19 staged seo files.
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks.
+- Not committed. STILL UNVERIFIED: `composer test` (617 tests) — composer/PHPUnit absent here.

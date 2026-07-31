@@ -190,21 +190,21 @@ check('string ids from the wire still match', PCM_SEO_Page_State::superseded_rul
 // stub before touching rows/state (this harness has no $wpdb — reaching it
 // would fatal, so a passing check IS the proof), and record_version queues.
 echo "save transaction chokepoints\n";
-$flag = new ReflectionProperty('PCM_SEO_Service', 'push_deferred');
+$flag = new ReflectionProperty('PCM_SEO_Editing', 'push_deferred');
 $flag->setAccessible(true);
-$queue = new ReflectionProperty('PCM_SEO_Service', 'deferred_versions');
+$queue = new ReflectionProperty('PCM_SEO_Editing', 'deferred_versions');
 $queue->setAccessible(true);
 $flag->setValue(null, true);
 $queue->setValue(null, array());
 
-$push_m = new ReflectionMethod('PCM_SEO_Service', 'push_current_rules_or_rollback');
+$push_m = new ReflectionMethod('PCM_SEO_Editing', 'push_current_rules_or_rollback');
 $push_m->setAccessible(true);
 $state_before = PCM_SEO_Page_State::page_state(2, 3);
 $stub = $push_m->invoke(null, 1, (object) array('id' => 2), 3, array());
 check('deferred push returns the stub', is_array($stub) && ($stub['deferred'] ?? false) === true);
 check('deferred push writes NO page state', PCM_SEO_Page_State::page_state(2, 3) === $state_before);
 
-$rec_m = new ReflectionMethod('PCM_SEO_Service', 'record_version');
+$rec_m = new ReflectionMethod('PCM_SEO_Editing', 'record_version');
 $rec_m->setAccessible(true);
 $rec_m->invoke(null, 1, 2, 3, 'section', 'heading key', 0, '<p>queued</p>');
 $queued = $queue->getValue(null);
@@ -228,7 +228,7 @@ $reply = json_encode(array(
         array('what' => '',                      'why' => 'answerability', 'quote' => 'personal data'),
     ),
 ));
-$p = PCM_SEO_Service::parse_section_reply($reply, array('answerability'), true);
+$p = PCM_SEO_Editing::parse_section_reply($reply, array('answerability'), true);
 check('html extracted as the value', strpos($p['value'], '<h2>Privacy</h2>') === 0);
 check('verified change kept', count($p['changes']) === 2 && $p['changes'][0]['what'] === 'Added a direct answer');
 check('verified why kept', $p['changes'][0]['why'] === 'answerability');
@@ -237,20 +237,20 @@ check('foreign why blanked, change kept', $p['changes'][1]['why'] === '' && $p['
 check('empty what dropped', count($p['changes']) === 2);
 
 $fenced = "```json\n" . $reply . "\n```";
-$pf = PCM_SEO_Service::parse_section_reply($fenced, array('answerability'), true);
+$pf = PCM_SEO_Editing::parse_section_reply($fenced, array('answerability'), true);
 check('fenced reply still parses', strpos($pf['value'], '<h2>Privacy</h2>') === 0 && count($pf['changes']) === 2);
 
 $raw = '<h2>Plain</h2><p>Just html, no JSON envelope.</p>';
-$pr = PCM_SEO_Service::parse_section_reply($raw, array(), true);
+$pr = PCM_SEO_Editing::parse_section_reply($raw, array(), true);
 check('non-JSON falls back to the raw reply (the floor)', $pr['value'] === $raw && $pr['changes'] === array());
-$pn = PCM_SEO_Service::parse_section_reply($raw, array(), false);
+$pn = PCM_SEO_Editing::parse_section_reply($raw, array(), false);
 check('envelope not requested = raw untouched', $pn['value'] === $raw && $pn['changes'] === array());
 
 $many = array('html' => '<p>' . str_repeat('word ', 50) . 'quoted words here.</p>', 'changes' => array());
 for ($ci = 0; $ci < 20; $ci++) {
     $many['changes'][] = array('what' => 'Change ' . $ci, 'why' => '', 'quote' => 'quoted words here');
 }
-$pm = PCM_SEO_Service::parse_section_reply(json_encode($many), array(), true);
+$pm = PCM_SEO_Editing::parse_section_reply(json_encode($many), array(), true);
 check('change list capped', count($pm['changes']) === 12);
 
 // ═══ 6. THE BUSINESS LADDER + MAPS PARSE (Business Spine, gap 616870f) ═══

@@ -35,6 +35,16 @@ $moved = [
     'PCM_SEO_Remote_Headings' => ['remote_get_headings','heading_target_post_id',
                             'remote_apply_heading_override','remote_update_heading',
                             'remote_update_heading_apply','remote_optimize_heading'],
+    'PCM_SEO_Page_Inventory' => ['assemble_content_html','attribute_inventory',
+                            'connector_rules_schema_version','connector_supports_rules','extract_imgs',
+                            'heading_instructions','parse_page_snapshot','push_rules','remote_add_media',
+                            'remote_fetch_snapshot','remote_get_inventory','rule_rows_for_display',
+                            'rules_to_schema','section_runs','served_inventory','split_unit_sections'],
+    'PCM_SEO_Editing'   => ['list_versions','migrate_site_overrides','note_wants_broad_rewrite',
+                            'parse_section_reply','post_rule_rows','push_current_rules_or_rollback',
+                            'record_version','rekey_section_rules','remote_optimize_section',
+                            'restore_rule_rows','save_heading_rule','sentence_retention',
+                            'update_owned_heading_unit','update_section_owned_heading'],
 ];
 $owner = [];
 foreach ($moved as $cls => $ms) { foreach ($ms as $m) { $owner[$m] = $cls; } }

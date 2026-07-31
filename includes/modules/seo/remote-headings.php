@@ -33,7 +33,7 @@ class PCM_SEO_Remote_Headings
     public static function remote_get_headings(object $site, int $post_id, string $type, ?int $user_id = null): array
     {
         PCM_SEO_Service::ensure_sites_service();
-        $inv = PCM_SEO_Service::served_inventory($site, $post_id, $user_id);
+        $inv = PCM_SEO_Page_Inventory::served_inventory($site, $post_id, $user_id);
         if ($inv !== null) {
             return $inv['headings'];
         }
@@ -151,7 +151,7 @@ class PCM_SEO_Remote_Headings
             $new_level = ($level !== null) ? max(1, min(6, $level)) : (int) $headings[$index]['level'];
             $new_texts = is_array($result) ? array_map(static fn($hh) => (string) ($hh['text'] ?? ''), $result) : array();
             $new_occ   = isset($new_texts[$index]) ? PCM_Text_Matcher::occurrence_of($new_texts, $index) : $old_occ;
-            PCM_SEO_Service::rekey_section_rules($user_id, $site, $post_id, $old_norm, $old_occ, PCM_Text_Matcher::normalize($new_text), $new_occ, $new_level);
+            PCM_SEO_Editing::rekey_section_rules($user_id, $site, $post_id, $old_norm, $old_occ, PCM_Text_Matcher::normalize($new_text), $new_occ, $new_level);
         }
         return $result;
     }
@@ -187,7 +187,7 @@ class PCM_SEO_Remote_Headings
             // resolve it by identity.
             $att = (isset($h['rule']) && is_array($h['rule'])) ? $h['rule'] : null;
             if ($att !== null && in_array((string) ($att['target'] ?? ''), array('section', 'sectionInsert'), true)) {
-                $owned = PCM_SEO_Service::update_owned_heading_unit((int) $user_id, $site, (int) ($att['id'] ?? 0), (int) ($att['unitFrom'] ?? 0), (string) $h['text'], $new_text, $new_level);
+                $owned = PCM_SEO_Editing::update_owned_heading_unit((int) $user_id, $site, (int) ($att['id'] ?? 0), (int) ($att['unitFrom'] ?? 0), (string) $h['text'], $new_text, $new_level);
                 if ($owned instanceof WP_Error) {
                     return $owned;
                 }
@@ -195,7 +195,7 @@ class PCM_SEO_Remote_Headings
                 return self::remote_get_headings($site, $post_id, $type, $user_id);
             }
             if ($post_scope && $att === null) {
-                $owned = PCM_SEO_Service::update_section_owned_heading((int) $user_id, $site, $post_id, $h, $new_text, $new_level);
+                $owned = PCM_SEO_Editing::update_section_owned_heading((int) $user_id, $site, $post_id, $h, $new_text, $new_level);
                 if ($owned !== null) {
                     if ($owned instanceof WP_Error) {
                         return $owned;
@@ -204,7 +204,7 @@ class PCM_SEO_Remote_Headings
                     return self::remote_get_headings($site, $post_id, $type, $user_id);
                 }
             }
-            $saved      = PCM_SEO_Service::save_heading_rule((int) $user_id, $site, array(
+            $saved      = PCM_SEO_Editing::save_heading_rule((int) $user_id, $site, array(
                 'postId'       => $post_scope ? $post_id : 0,
                 'matchText'    => (string) ($h['matchText'] ?? PCM_Text_Matcher::normalize((string) $h['text'])),
                 'matchLevel'   => (int) ($h['matchLevel'] ?? $old_level),
