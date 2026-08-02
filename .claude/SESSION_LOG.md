@@ -10768,3 +10768,38 @@ entry or tightening the regex to correlate the two matches — deliberately left
 security test's detection.
 NOT LIVE-VERIFIED: no local WP admin this session; proof is unit + mutation tests. Both fixes need a
 30-second check on create.widgetify.co after deploy. Not committed.
+
+## 2026-07-31 — Integrations empty under a platform (id/pass) login — workspace-scoped keys [/task]
+Report: integrations visible in wp-admin, all missing when logged in through the platform id/pass.
+ROOT CAUSE — and it was NOT just a display bug. Integrations are stored per pcm-user. That was fine when
+every gate visitor shared ONE workspace row — base-controller's get_current_pcm_user docblock still says
+"return the shared workspace user (one shared row for all visitors)" — but the CODE now returns "the
+specific platform user their login cookie identifies", i.e. per-user platform logins (the user-management
+feature). So a platform user owns no integrations. Worse: SIX separate call sites resolved keys with
+`... WHERE provider = %s AND userId = %d AND isActive = 1` and NO fallback (PCM_LLM::get_api_key which
+THROWS, PCM_LLM google-grounding, has_api_key, PCM_Optimizer_Service::provider_key for gsc/ahrefs,
+PCM_Strategy_Image, PCM_Apify) — so every AI feature failed for a platform user with "No active API key
+found", not merely an empty list. Three of those six were near-duplicate copies of the same query, which
+is how they had already drifted apart.
+OWNER DECISION (asked — two readings meant materially different work + different security posture):
+API keys belong to the BUSINESS → all platform users share the workspace's keys.
+BUILT: ONE resolver, PCM_Access::workspace_api_key($provider,$user_id) — precedence encoded in the
+ORDER BY: the caller's OWN key first, then an ADMIN's, newest as tiebreak; isActive=1 only; not memoized
+(a rotated key must not be served from cache). All six call sites now delegate to it — grep-proved zero
+`integrations ... userId = %d` queries remain outside PCM_Access/PCM_DB, so the three duplicates are gone.
+Collection reads got the same own-then-admin fallback via a shared PCM_DB::admin_owned_rows():
+get_user_integrations (fixes the empty page; the list already MASKS keys to 8 chars, so shared visibility
+leaks no secret) and get_user_models (without it the AI-model dropdowns stay empty even once keys resolve).
+Own-rows-if-any means a user with their own keys sees exactly theirs — no duplicate providers.
+VERIFIED: new tests/unit/WorkspaceApiKeyTest.php 6/6. MUTATION-TESTED the billing-safety guard —
+dropping the own-key term from the ORDER BY (so an admin's key would silently win and get billed) makes
+it fail; restoring passes. Full phpunit 627 (was 621; 1 error + 27 failures = the unchanged pre-existing
+baseline), standalone 88/88, orphan gate clean, php -l clean, no frontend change.
+ONE TEST UPDATED, NOT SUPPRESSED: StrategyApifyClientTest pinned the literal old SQL
+("ORDER BY updatedAt DESC LIMIT 1"). Behavior is unchanged (still returns the seeded key, still
+provider+isActive filtered) — only the query SHAPE moved, so I re-pointed that one assertion at the new
+precedence chain, which guards more than the old string did. Every other assertion in it still holds.
+STALE DOC FOUND (not fixed, 1 line): base-controller.php:400's docblock describes the OLD one-shared-row
+model and contradicts its own code — worth correcting when someone is next in that file.
+NOT LIVE-VERIFIED: no local WP admin; proof is unit + mutation tests. Needs a check on the real site.
+Not committed.

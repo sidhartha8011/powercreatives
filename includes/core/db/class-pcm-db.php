@@ -302,10 +302,44 @@ class PCM_DB
         return self::cached(self::cache_key('integrations', $user_id), function () use ($user_id) {
             global $wpdb;
             $table = self::t('integrations');
-            return $wpdb->get_results(
+            $own   = $wpdb->get_results(
                 $wpdb->prepare("SELECT * FROM {$table} WHERE userId = %d ORDER BY createdAt DESC", $user_id)
-            );
+            ) ?: array();
+            if (!empty($own)) {
+                return $own;
+            }
+            // WORKSPACE FALLBACK (owner decision 2026-07-31): a platform (id/pass)
+            // user is their own pcm-user row and owns no integrations, so this
+                // returned [] and the Integrations page looked empty under a platform
+            // login while wp-admin showed them. API keys belong to the business —
+            // fall back to the workspace admin's. Only when the caller has NONE of
+            // their own, so a user with their own keys still sees exactly theirs
+            // (no duplicate providers). Key USE resolves the same way, in
+            // PCM_Access::workspace_api_key.
+            return self::admin_owned_rows($table) ?: array();
         });
+    }
+
+    /**
+     * Rows on $table owned by a workspace ADMIN — the shared-workspace fallback
+     * for per-user resources (integrations, models). Newest first.
+     *
+     * @param string $table Fully-qualified table name from self::t().
+     * @param string $order Column to sort by, descending.
+     * @return array<int, object>
+     */
+    private static function admin_owned_rows(string $table, string $order = 'createdAt'): array
+    {
+        global $wpdb;
+        $users = self::t('users');
+        $order = preg_replace('/[^a-zA-Z0-9_]/', '', $order); // identifier, never user input
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        return $wpdb->get_results(
+            "SELECT r.* FROM {$table} r
+               JOIN {$users} u ON u.id = r.userId
+              WHERE u.role = 'admin'
+           ORDER BY r.{$order} DESC"
+        ) ?: array();
     }
 
     /**
@@ -350,12 +384,19 @@ class PCM_DB
         return self::cached(self::cache_key('models', $user_id), function () use ($user_id) {
             global $wpdb;
             $table = self::t('models');
-            return $wpdb->get_results(
+            $own   = $wpdb->get_results(
                 $wpdb->prepare(
                 "SELECT * FROM {$table} WHERE userId = %d ORDER BY sortOrder ASC, displayName ASC",
                 $user_id
             )
-            );
+            ) ?: array();
+            if (!empty($own)) {
+                return $own;
+            }
+            // Same workspace fallback as get_user_integrations: without it a
+            // platform (id/pass) user has no model rows, so every AI-model
+            // dropdown renders empty even once the keys resolve.
+            return self::admin_owned_rows($table, 'sortOrder') ?: array();
         });
     }
 

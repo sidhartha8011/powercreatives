@@ -53,20 +53,14 @@ class PCM_Apify
      */
     public static function get_token(int $user_id): string
     {
-        global $wpdb;
+        // Workspace-scoped (own key, else an admin's) — see
+        // PCM_Access::workspace_api_key. A strategy owned by a platform id/pass
+        // user found no token and every social scan silently pulled 0 items.
+        $result = class_exists('PCM_Access')
+            ? PCM_Access::workspace_api_key('apify', $user_id)
+            : null;
 
-        $table = PCM_Schema::table('integrations');
-        $result = $wpdb->get_var($wpdb->prepare(
-            "SELECT apiKey FROM $table WHERE provider = %s AND userId = %d AND isActive = 1 ORDER BY updatedAt DESC LIMIT 1",
-            'apify',
-            $user_id
-        ));
-
-        if (empty($result)) {
-            return '';
-        }
-
-        return (string) $result;
+        return $result ?? '';
     }
 
     /**

@@ -1638,14 +1638,12 @@ class PCM_LLM
      */
     private static function get_api_key(string $provider, int $user_id): string
     {
-        global $wpdb;
-
-        $table = PCM_Schema::table('integrations');
-        $result = $wpdb->get_var($wpdb->prepare(
-            "SELECT apiKey FROM $table WHERE provider = %s AND userId = %d AND isActive = 1 ORDER BY updatedAt DESC LIMIT 1",
-            $provider,
-            $user_id
-        ));
+        // Workspace-scoped: the caller's own key, else an admin's (PCM_Access::
+        // workspace_api_key). Platform (id/pass) users own no integrations, so a
+        // per-user lookup failed for every one of them.
+        $result = class_exists('PCM_Access')
+            ? PCM_Access::workspace_api_key($provider, $user_id)
+            : null;
 
         if (empty($result)) {
             throw new \RuntimeException(

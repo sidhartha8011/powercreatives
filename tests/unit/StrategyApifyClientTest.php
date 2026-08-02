@@ -117,13 +117,21 @@ class StrategyApifyClientTest extends \PHPUnit\Framework\TestCase
         $this->assertSame('apify_api_token_abc123', PCM_Apify::get_token(42));
         $this->assertTrue(PCM_Apify::has_key(42));
 
-        // Mirrors PCM_LLM::get_api_key: provider + userId + isActive filter,
-        // newest first, against the PCM_Schema-resolved integrations table.
+        // Still the same provider + userId + isActive filter against the
+        // PCM_Schema-resolved integrations table — but the lookup now goes
+        // through PCM_Access::workspace_api_key (2026-07-31), so ordering
+        // encodes the workspace fallback instead of a bare "newest first":
+        // the caller's OWN key wins, then an admin's, then newest. A platform
+        // (id/pass) user owns no integrations, and the old per-user query
+        // returned nothing for them.
         $this->assertStringContainsString('wp_pcm_integrations', $this->wpdb->lastPrepareQuery);
         $this->assertStringContainsString('provider = %s', $this->wpdb->lastPrepareQuery);
         $this->assertStringContainsString('userId = %d', $this->wpdb->lastPrepareQuery);
         $this->assertStringContainsString('isActive = 1', $this->wpdb->lastPrepareQuery);
-        $this->assertStringContainsString('ORDER BY updatedAt DESC LIMIT 1', $this->wpdb->lastPrepareQuery);
+        $this->assertMatchesRegularExpression(
+            '/ORDER BY \(i\.userId = %d\) DESC, \(u\.role = \'admin\'\) DESC, i\.updatedAt DESC\s+LIMIT 1/',
+            $this->wpdb->lastPrepareQuery
+        );
         $this->assertSame(array('apify', 42), $this->wpdb->lastPrepareArgs);
         // The prepared (sprintf'd) string is what actually hits get_var().
         $this->assertStringContainsString("provider = 'apify'", $this->wpdb->lastQuery);

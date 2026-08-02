@@ -319,6 +319,53 @@ class PCM_Access
         return count($project_ids) === 1 ? $project_ids[0] : null;
     }
 
+    /**
+     * THE WORKSPACE API KEY for a provider — the one place credentials resolve.
+     *
+     * Integrations are stored per pcm-user. That was fine when every visitor
+     * shared one workspace row, but platform (id/pass) users are now each their
+     * OWN user row, so a user the admin creates owns no integrations and every
+     * AI feature failed for them with "No active API key found" (owner report
+     * 2026-07-31 — integrations visible in wp-admin, empty under a platform login).
+     *
+     * API keys belong to the BUSINESS, not the individual, so resolution falls
+     * back across the workspace (owner decision 2026-07-31):
+     *   1. the caller's OWN key for that provider — a user who added their own
+     *      key keeps using it, so nothing that worked before changes;
+     *   2. otherwise an ADMIN's key — the workspace's shared credential.
+     * Newest `updatedAt` breaks ties within a tier.
+     *
+     * Only `isActive = 1` rows are eligible, matching every previous lookup.
+     * Not memoized: a key can be rotated mid-request and callers must not cache
+     * a revoked credential.
+     *
+     * @param string $provider Provider slug, e.g. 'openai', 'ahrefs', 'apify'.
+     * @param int    $user_id  PCM user id (wp_pcm_users.id), NOT the WP user id.
+     * @return string|null The key, or null when the workspace has none.
+     */
+    public static function workspace_api_key(string $provider, int $user_id): ?string
+    {
+        if ($provider === '') {
+            return null;
+        }
+        global $wpdb;
+        $integrations = PCM_Schema::table('integrations');
+        $users        = PCM_Schema::table('users');
+        // ORDER BY encodes the fallback: own key first, then an admin's.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $key = $wpdb->get_var($wpdb->prepare(
+            "SELECT i.apiKey
+               FROM {$integrations} i
+               LEFT JOIN {$users} u ON u.id = i.userId
+              WHERE i.provider = %s AND i.isActive = 1
+           ORDER BY (i.userId = %d) DESC, (u.role = 'admin') DESC, i.updatedAt DESC
+              LIMIT 1",
+            $provider,
+            $user_id
+        ));
+        return (is_string($key) && $key !== '') ? $key : null;
+    }
+
     /** Test helper: clear the per-request memo. */
     public static function reset_memo(): void
     {
