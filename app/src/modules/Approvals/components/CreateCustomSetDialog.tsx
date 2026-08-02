@@ -1,12 +1,19 @@
 /**
  * CreateCustomSetDialog — "+ Add Approval Set" for a Custom (Notion-style) document.
  *
- * Two steps only:
- *   1. Author the document on a clean canvas (rich text + images + clipboard paste + draw).
- *   2. ONE combined popup (the shared SendToApprovalSetDialog) that names the set, picks the
- *      Project (brand + delivery are inherited live from it — never set here), and emails the
- *      client the link. The document inherits the set name as its title, so there's no separate
- *      "name the doc" step.
+ * ONE step. You author the document and fill in the three things the set needs — name,
+ * project, client email — in the same dialog, then create.
+ *
+ * It used to hand off to the shared SendToApprovalSetDialog as a second popup. That dialog
+ * still exists and is still used from Ads/Copy/Image, where you're sending EXISTING assets and
+ * genuinely have to choose between "new set" and "append to an existing one". Here there is
+ * nothing to choose — the document was just authored, so it can only be a new set — which made
+ * the second popup a step that asked one real question (the name) and re-asked things the
+ * caller already knew.
+ *
+ * Create payload is deliberately identical to the one that dialog sends (see
+ * handleGenerateLink there), including escapeAstralDeep on the snapshot so a WAF that strips
+ * 4-byte UTF-8 can't eat emoji in transit, and the untitled-doc-inherits-the-set-name rule.
  */
 
 import { useEffect, useState } from 'react';
@@ -16,10 +23,14 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Send } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
-  SendToApprovalSetDialog, type SnapshotCustomItem,
-} from '@/components/shared/SendToApprovalSetDialog';
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from '@/components/ui/select';
+import { Send, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { escapeAstralDeep } from '@/lib/escapeAstral';
 
 import { CustomCardEditor } from './CustomCardEditor';
 
@@ -31,59 +42,84 @@ function uid(): string {
 interface CreateCustomSetDialogProps {
   open: boolean;
   onClose: () => void;
-  /** Create-from-delivery preset: pre-selects brand/project/delivery in the
-   *  share step (the user can still change them). */
+  /** Create-from-delivery preset: pre-selects brand/project/delivery (still overridable). */
   preset?: { brandId: number | null; projectId: number; deliveryId: number };
 }
 
 export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSetDialogProps) {
-  const [step, setStep] = useState<'author' | 'send'>('author');
   const [content, setContent] = useState('<p></p>');
   const [overlay, setOverlay] = useState<string | null>(null);
-  const [card, setCard] = useState<SnapshotCustomItem | null>(null);
+  const [name, setName] = useState('');
+  const [projectSel, setProjectSel] = useState<string>('');
+  const [clientEmail, setClientEmail] = useState('');
 
   const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
   const projects: { id: number; name: string }[] = Array.isArray(projectsRaw)
     ? (projectsRaw as any[]).map((p) => ({ id: Number(p.id), name: String(p.name) })) : [];
 
-  // Reset to the author step whenever the dialog opens.
+  // Fresh canvas + fields every time it opens, so a cancelled draft never leaks into the next one.
   useEffect(() => {
     if (!open) return;
-    setStep('author'); setContent('<p></p>'); setOverlay(null); setCard(null);
-  }, [open]);
+    setContent('<p></p>');
+    setOverlay(null);
+    setName('');
+    setProjectSel(preset?.projectId ? String(preset.projectId) : '');
+    setClientEmail('');
+  }, [open, preset?.projectId]);
 
-  // Canvas → the single combined popup: freeze the card, then open the share dialog (which
-  // collects name + project + recipient and sends).
-  const handleSend = () => {
+  const createMutation = trpc.approvals.createSet.useMutation({
+    onSuccess: () => {
+      toast.success(clientEmail.trim()
+        ? 'Approval set created — invite emailed to the client.'
+        : 'Approval set created.');
+      onClose();
+    },
+    onError: (err: any) => toast.error(err?.message || 'Failed to create the approval set.'),
+  }) as any;
+
+  const handleCreate = () => {
+    const setName = name.trim();
+    if (!setName) { toast.error('Please enter an approval set name.'); return; }
+
     const now = new Date().toISOString();
-    setCard({ id: uid(), type: 'custom', content, overlay: overlay ?? undefined, createdAt: now, updatedAt: now });
-    setStep('send');
+    const card = {
+      id: uid(),
+      type: 'custom' as const,
+      content,
+      overlay: overlay ?? undefined,
+      createdAt: now,
+      updatedAt: now,
+      // An untitled doc inherits the set name — same rule as the old share step, so there is
+      // still no separate "name the document" field.
+      title: setName,
+    };
+    const inviteEmail = clientEmail.trim();
+
+    createMutation.mutate({
+      name: setName,
+      brandId: preset?.brandId ?? null,
+      projectId: projectSel ? Number(projectSel) : (preset?.projectId ?? null),
+      deliveryId: preset?.deliveryId ?? null,
+      // When present the SERVER shares on create (moves the set to the client lane AND emails
+      // the invite) — one request, nothing for the browser to miss.
+      clientEmail: inviteEmail || null,
+      clientMessage: null,
+      snapshot: escapeAstralDeep({
+        media: [],
+        copy: [],
+        custom: [card],
+      }),
+    });
   };
 
-  // Step 2 — the single combined popup (shared share dialog, Project picker enabled).
-  if (step === 'send' && card) {
-    return (
-      <SendToApprovalSetDialog
-        isOpen={open}
-        onClose={onClose}
-        custom={[card]}
-        projects={projects}
-        defaultName="Custom document"
-        itemSummary="1 custom document"
-        brandId={preset?.brandId}
-        projectId={preset?.projectId}
-        defaultDeliveryId={preset?.deliveryId}
-      />
-    );
-  }
+  const busy = createMutation.isPending ?? createMutation.isLoading ?? false;
 
-  // Step 1 — author on a clean canvas.
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
       <DialogContent
-        className="sm:max-w-5xl max-h-[94vh] overflow-y-auto"
-        // Keep the dialog open while interacting with the WordPress media library
-        // frame or the image annotator (both portal to <body>).
+        className="sm:max-w-[min(64rem,calc(100vw-4rem))] max-h-[92vh] flex flex-col overflow-hidden"
+        // Keep the dialog open while interacting with the WordPress media library frame or the
+        // image annotator (both portal to <body>).
         onInteractOutside={(e) => {
           const t = e.target as HTMLElement | null;
           if (t?.closest?.('.media-modal, .media-frame, .media-modal-backdrop, .wp-core-ui, [data-pcm-annotator]')) {
@@ -91,22 +127,66 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
           }
         }}
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <DialogTitle>New approval set</DialogTitle>
           <DialogDescription>
-            Author your custom, Notion-style document, then send it to your client — you’ll name it,
-            pick the project, and email the link all in one step.
+            Write the document, name the set, and send it — all here.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="py-2">
+        {/* Only the BODY scrolls; header and footer stay put, so Create is always reachable
+            on a long document. */}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden py-2">
+          {/* The three set fields, up top: they're short, and reading them before writing tells
+              you what this document is going to be called. bg-card on every input — no
+              transparent fields sitting on the dialog surface. */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="set-name">Name <span className="text-destructive">*</span></Label>
+              <Input
+                id="set-name"
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. October campaign"
+                className="bg-card"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="set-project">Project</Label>
+              <Select value={projectSel || 'none'} onValueChange={(v) => setProjectSel(v === 'none' ? '' : v)}>
+                <SelectTrigger id="set-project" className="w-full bg-card">
+                  <SelectValue placeholder="No project" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No project</SelectItem>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="set-email">Client email</Label>
+              <Input
+                id="set-email"
+                type="email"
+                value={clientEmail}
+                onChange={(e) => setClientEmail(e.target.value)}
+                placeholder="Optional — emails the link"
+                className="bg-card"
+              />
+            </div>
+          </div>
+
           <CustomCardEditor content={content} onChange={setContent} overlay={overlay} onOverlayChange={setOverlay} />
         </div>
 
-        <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button type="button" onClick={handleSend} className="gap-1.5">
-            <Send className="h-4 w-4" /> Send to Approval Set
+        <DialogFooter className="shrink-0">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button type="button" onClick={handleCreate} disabled={busy || !name.trim()} className="gap-1.5">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            Create approval set
           </Button>
         </DialogFooter>
       </DialogContent>

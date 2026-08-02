@@ -44,6 +44,7 @@ class PCM_REST_Integrations extends PCM_REST_Base
                 array('GET', '/integrations/proranktracker/history', 'prt_history'),
                 array('POST', '/integrations/proranktracker/page-ranks', 'prt_page_ranks'),
                 array('GET', '/integrations/gsc/properties', 'gsc_properties'),
+                array('POST', '/integrations/gsc/property', 'gsc_set_property'),
                 array('POST', '/integrations/gsc/stats', 'gsc_stats'),
                 array('POST', '/integrations/gsc/oauth-start', 'gsc_oauth_start'),
                 // Public: Google's browser redirect carries no REST nonce. The handler authenticates
@@ -268,6 +269,52 @@ class PCM_REST_Integrations extends PCM_REST_Base
      * @param WP_REST_Request $request Request.
      * @return WP_REST_Response|WP_Error
      */
+    /**
+     * POST /integrations/gsc/property — pin a site to a specific GSC property.
+     *
+     * Input: { site: string, property: string }. An empty `property` CLEARS the pin and
+     * returns the site to auto-matching. Validated against the properties this account can
+     * actually read, so a typo or a property the service account cannot see is rejected
+     * rather than silently producing an empty stats pull later.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function gsc_set_property(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        try {
+            $key = $this->get_provider_api_key('gsc', (int) $pcm_user->id);
+        } catch (\RuntimeException $e) {
+            return $this->error('No active Google Search Console integration found.', 400);
+        }
+        $p        = $request->get_json_params();
+        $site     = is_array($p) ? trim((string) ($p['site'] ?? '')) : '';
+        $property = is_array($p) ? trim((string) ($p['property'] ?? '')) : '';
+        if ($site === '') {
+            return $this->error('A site URL is required.', 400);
+        }
+        if ($property !== '') {
+            $props = PCM_GSC::list_properties($key);
+            if (is_wp_error($props)) {
+                return $this->error($props->get_error_message(), 502);
+            }
+            if (!in_array($property, $props, true)) {
+                return $this->error(sprintf(
+                    'This Search Console account cannot read "%s". Pick one of: %s.',
+                    $property,
+                    empty($props) ? 'none available' : implode(', ', $props)
+                ), 400);
+            }
+        }
+        PCM_GSC::set_property_override($site, $property);
+        return $this->success(array(
+            'site'     => $site,
+            'property' => $property,
+            'cleared'  => $property === '',
+        ));
+    }
+
     public function gsc_properties(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $pcm_user = $this->get_current_pcm_user();
@@ -316,6 +363,16 @@ class PCM_REST_Integrations extends PCM_REST_Base
             return $this->error($props->get_error_message(), 502);
         }
         $candidates = PCM_GSC::match_properties($props, $site);
+        // An EXPLICIT mapping wins over the heuristic. A site can own several properties
+        // (www / non-www / sc-domain) and match_properties() only guesses; without this the
+        // "try each until one has data" loop below would quietly re-pick the wrong one on the
+        // next pull and the user's correction would look like it never saved. Guarded on the
+        // property still being visible to this account — a stale pin (property removed, or the
+        // service account lost access) falls back to auto-matching rather than 404-ing.
+        $pinned = PCM_GSC::property_override($site);
+        if ($pinned !== '' && in_array($pinned, $props, true)) {
+            $candidates = array($pinned);
+        }
         if (empty($candidates)) {
             $creds = PCM_GSC::parse_credentials($key);
             $email = is_wp_error($creds) ? 'the service account' : $creds['email'];

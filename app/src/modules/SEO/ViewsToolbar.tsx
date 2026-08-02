@@ -12,7 +12,7 @@
  */
 
 import { useState } from 'react';
-import { Eye, Columns3, ChevronDown, Trash2, Check, Plus, Star, RotateCcw } from 'lucide-react';
+import { Eye, Columns3, ChevronDown, Trash2, Check, Plus, Star, RotateCcw, Pencil, Pin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -36,6 +36,8 @@ interface ViewsToolbarProps {
   onResetView: () => void;
   onSaveView: (name: string) => void;
   onDeleteView: (id: number) => void;
+  onRenameView: (id: number, name: string) => void;
+  onPinView: (id: number, isPinned: boolean) => void;
   /** Toggle a view as the user's default (auto-applied when the table loads). */
   onSetDefaultView: (id: number, isDefault: boolean) => void;
   /** Reset column widths + order back to defaults (spreadsheet layout). */
@@ -54,6 +56,8 @@ export function ViewsToolbar({
   onResetView,
   onSaveView,
   onDeleteView,
+  onRenameView,
+  onPinView,
   onSetDefaultView,
   onResetLayout,
   show = 'all',
@@ -61,9 +65,20 @@ export function ViewsToolbar({
   const [viewOpen, setViewOpen] = useState(false);
   const [colsOpen, setColsOpen] = useState(false);
   const [newName, setNewName] = useState('');
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  /** Commit an inline rename. No-ops on an empty name or when nothing actually changed, so
+   *  blurring the field (which also commits) can never wipe a view's name or fire a pointless
+   *  request. Always leaves edit mode. */
+  const commitRename = (id: number) => {
+    const next = renameValue.trim();
+    const prev = views.find((v) => v.id === id)?.name ?? '';
+    if (next && next !== prev) onRenameView(id, next);
+    setRenamingId(null);
+  };
 
   const appliedName = views.find((v) => v.id === appliedViewId)?.name;
-  const anyHidden = columns.some((c) => visible[c.key] === false);
 
   const save = () => {
     const name = newName.trim();
@@ -79,7 +94,11 @@ export function ViewsToolbar({
       {show !== 'columns' && (
       <DropdownMenu open={viewOpen} onOpenChange={setViewOpen}>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className={`h-8 gap-1.5 bg-card text-xs ${appliedName ? 'border-primary text-primary' : ''}`}>
+          {/* Pill radius + neutral colours, matching the AI/model button and the PillButtons
+              beside it. The applied/hidden state used to tint the trigger `border-primary
+              text-primary`; the label already says which view is applied, so the colour was
+              redundant emphasis that made this control louder than its neighbours. */}
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 rounded-full bg-card text-xs">
             <Eye className="h-3.5 w-3.5" />
             <span className="max-w-[120px] truncate">{appliedName ?? 'View'}</span>
             <ChevronDown className="h-3 w-3 opacity-60" />
@@ -97,6 +116,23 @@ export function ViewsToolbar({
           ) : (
             views.map((v) => (
               <div key={v.id} className="flex items-center gap-1 pr-1">
+                {renamingId === v.id ? (
+                  // Inline rename, in place of the row label. Keystrokes are stopped for the
+                  // same reason as the "new view name" field: Radix menu TYPEAHEAD would
+                  // otherwise steal focus and jump to a matching item on every letter.
+                  <Input
+                    autoFocus
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitRename(v.id); return; }
+                      if (e.key === 'Escape') { e.preventDefault(); setRenamingId(null); return; }
+                      e.stopPropagation();
+                    }}
+                    onBlur={() => commitRename(v.id)}
+                    className="h-7 flex-1 text-sm"
+                  />
+                ) : (
                 <DropdownMenuItem
                   onSelect={() => { onApplyView(v); setViewOpen(false); }}
                   className="flex-1 gap-1.5 min-w-0"
@@ -105,6 +141,24 @@ export function ViewsToolbar({
                   <span className="truncate">{v.name}</span>
                   {v.isDefault && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">Default</span>}
                 </DropdownMenuItem>
+                )}
+                <button
+                  type="button"
+                  title={v.isPinned ? 'Unpin from the tab strip' : 'Pin as a tab above the table'}
+                  aria-pressed={v.isPinned}
+                  onClick={() => onPinView(v.id, !v.isPinned)}
+                  className={`shrink-0 rounded p-1 hover:bg-accent ${v.isPinned ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <Pin className={`h-3.5 w-3.5 ${v.isPinned ? 'fill-current' : ''}`} />
+                </button>
+                <button
+                  type="button"
+                  title="Rename view"
+                  onClick={() => { setRenamingId(v.id); setRenameValue(v.name); }}
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
                 <button
                   type="button"
                   title={v.isDefault ? 'Remove as default view' : 'Make default view'}
@@ -133,7 +187,7 @@ export function ViewsToolbar({
       {show !== 'views' && (
       <DropdownMenu open={colsOpen} onOpenChange={setColsOpen}>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className={`h-8 gap-1.5 bg-card text-xs ${anyHidden ? 'border-primary text-primary' : ''}`}>
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 rounded-full bg-card text-xs">
             <Columns3 className="h-3.5 w-3.5" /> Columns <ChevronDown className="h-3 w-3 opacity-60" />
           </Button>
         </DropdownMenuTrigger>
@@ -155,7 +209,18 @@ export function ViewsToolbar({
             <Input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } }}
+              // Keystrokes must NOT reach DropdownMenuContent. Radix menus implement
+              // TYPEAHEAD on keydown: an unhandled letter moves focus to the menu item
+              // starting with it — which here yanked focus out of this input and toggled
+              // a column checkbox on every character. That is the "type one letter, then
+              // wait" behaviour. The existing onClick stopPropagation could never help,
+              // because typeahead is keydown-driven, not click-driven.
+              // Escape is deliberately allowed through so it still closes the menu.
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); save(); return; }
+                if (e.key === 'Escape') { return; }
+                e.stopPropagation();
+              }}
               placeholder="New view name…"
               className="h-8 text-sm"
             />

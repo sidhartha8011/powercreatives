@@ -332,6 +332,7 @@ const SELECT_COL_WIDTH = 44;
 export function SEOModule() {
   const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete: localBulkDelete, bulkDuplicate: localBulkDuplicate, generateField: localGenerateField, scanLinks: localScanLinks } = useSeoContent();
 
+
   // Text models available for AI generation (registry). The user picks one in the
   // header dropdown; its id+provider is sent with every generate call so that
   // model produces the content (else the backend default is used).
@@ -403,6 +404,36 @@ export function SEOModule() {
   const remote = useRemoteSeoContent(isLocal || typeof siteId !== 'number' ? null : siteId);
   const rows = isLocal ? localRows : remote.rows;
   const saveCell = isLocal ? localSaveCell : remote.saveCell;
+
+  // ── New author ──
+  // `options.authors` comes from the useSeoContent hook, which exposes no refetch handle, so a
+  // freshly created author is appended locally instead. The id is the REAL one the server
+  // returned, so the row's saveCell writes a valid post_author either way — this only avoids a
+  // full content reload to see the name in the list.
+  const [newAuthorFor, setNewAuthorFor] = useState<number | null>(null);
+  const [newAuthorName, setNewAuthorName] = useState('');
+  const [newAuthorEmail, setNewAuthorEmail] = useState('');
+  const [extraAuthors, setExtraAuthors] = useState<{ id: number; name: string }[]>([]);
+  const createAuthorMutation = trpc.seo.createAuthor.useMutation({
+    onError: (e: any) => toast.error(e.message ?? 'Could not create the author'),
+  }) as any;
+  const submitNewAuthor = useCallback(() => {
+    const rowId = newAuthorFor;
+    if (rowId === null) return;
+    createAuthorMutation.mutate(
+      { name: newAuthorName.trim(), email: newAuthorEmail.trim() },
+      {
+        onSuccess: (created: any) => {
+          const a = { id: Number(created?.id), name: String(created?.name ?? newAuthorName.trim()) };
+          if (!a.id) { toast.error('The server did not return a user id.'); return; }
+          setExtraAuthors((prev) => [...prev, a]);
+          saveCell(rowId, 'author', String(a.id));   // assign the new author to the row
+          toast.success(`“${a.name}” created and assigned`);
+          setNewAuthorFor(null); setNewAuthorName(''); setNewAuthorEmail('');
+        },
+      },
+    );
+  }, [newAuthorFor, newAuthorName, newAuthorEmail, createAuthorMutation, saveCell]);
   const isLoading = isLocal ? localLoading : remote.isLoading;
   // Generation works for both: the hub runs the LLM, then writes back via saveCell.
   const generateField = isLocal ? localGenerateField : remote.generateField;
@@ -435,11 +466,11 @@ export function SEOModule() {
       return (host + path.replace(/\/+$/, '')).toLowerCase();
     } catch { return ''; }
   }, []);
-  const handlePullGsc = useCallback(async () => {
+  const handlePullGsc = useCallback(async (days: number) => {
     if (gscPulling) return;
     setGscPulling(true);
     try {
-      const data: any = await gscStatsMutation.mutateAsync({ site: isLocal ? '' : (activeSite?.url ?? ''), days: 28 });
+      const data: any = await gscStatsMutation.mutateAsync({ site: isLocal ? '' : (activeSite?.url ?? ''), days });
       const pages = data?.pages && typeof data.pages === 'object' ? data.pages : {};
       setGscPages(pages);
       setGscRange(data?.range ?? null);
@@ -602,7 +633,7 @@ export function SEOModule() {
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   // Saved Views (per-user, persisted via the seo REST API).
-  const { views, saveView, removeView, setDefaultView } = useViews();
+  const { views, saveView, removeView, setDefaultView, renameView, setPinnedView } = useViews();
   const [appliedViewId, setAppliedViewId] = useState<number | null>(null);
 
   const applyView = useCallback((view: SeoView) => {
@@ -626,6 +657,14 @@ export function SEOModule() {
     void removeView(id);
     setAppliedViewId((cur) => (cur === id ? null : cur));
   }, [removeView]);
+
+  const handlePinView = useCallback((id: number, isPinned: boolean) => {
+    void setPinnedView(id, isPinned);
+  }, [setPinnedView]);
+
+  const handleRenameView = useCallback((id: number, name: string) => {
+    void renameView(id, name);
+  }, [renameView]);
 
   const handleSetDefaultView = useCallback((id: number, isDefault: boolean) => {
     void setDefaultView(id, isDefault);
@@ -1159,8 +1198,49 @@ export function SEOModule() {
             />
           </TableCell>
         );
-      case 'author':
-        return <TableCell key={key} className="text-xs text-muted-foreground">{row.author}</TableCell>;
+      case 'author': {
+        // LOCAL rows only. `options.authors` are users on THIS WordPress install, so offering
+        // them for a connected site would write a hub user id onto a remote post and silently
+        // reassign it to whoever happens to hold that id there. Remote rows stay read-only until
+        // the connector can serve that site's own users.
+        // Server list + any author created in this session (see extraAuthors).
+        const authors = [...(options?.authors ?? []), ...extraAuthors];
+        if (!isLocal || authors.length === 0) {
+          return <TableCell key={key} className="text-xs text-muted-foreground">{row.author}</TableCell>;
+        }
+        return (
+          <TableCell key={key}>
+            <Select
+              value={row.authorId ? String(row.authorId) : ''}
+              onValueChange={(v) => saveCell(row.id, 'author', v)}
+            >
+              <SelectTrigger className="h-full w-full border-0 rounded-none bg-transparent px-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
+                {/* Fall back to the stored NAME when the current author isn't in the list —
+                    e.g. an author who has since lost edit_posts. Showing the raw id would be
+                    worse than showing a name we already have. */}
+                <SelectValue placeholder={row.author || '—'}>{row.author || '—'}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {authors.map((a: { id: number; name: string }) => (
+                  <SelectItem key={a.id} value={String(a.id)} className="text-xs">{a.name}</SelectItem>
+                ))}
+                {/* Create a new WordPress author without leaving the table. onSelect is
+                    prevented so opening the dialog doesn't also commit a bogus selection —
+                    the new author is assigned only after the server returns its real id. */}
+                <div className="border-t mt-1 pt-1">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setNewAuthorFor(row.id); }}
+                  >
+                    <Plus className="h-3.5 w-3.5" /> New author…
+                  </button>
+                </div>
+              </SelectContent>
+            </Select>
+          </TableCell>
+        );
+      }
       case 'slug': {
         const ckey = `${row.id}:slug`;
         return (
@@ -1440,6 +1520,8 @@ export function SEOModule() {
             onResetView={resetView}
             onSaveView={handleSaveView}
             onDeleteView={handleDeleteView}
+            onRenameView={handleRenameView}
+            onPinView={handlePinView}
             onSetDefaultView={handleSetDefaultView}
           />
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -1465,14 +1547,40 @@ export function SEOModule() {
           >
             {scanningAll ? 'Scanning…' : 'Scan links'}
           </PillButton>
-          {/* Pulls clicks / impressions / CTR / position / top queries (last 28 days). */}
-          <PillButton
-            icon={gscPulling ? <Loader2 className="animate-spin" /> : <TrendingUp />}
-            onClick={handlePullGsc}
-            disabled={busy || gscPulling}
-          >
-            {gscPulling ? 'Pulling…' : 'GSC stats'}
-          </PillButton>
+          {/* Clicks / impressions / CTR / position / top queries. Clicking the button opens the
+              period menu and the pull starts as soon as you pick one — so it's one gesture, and
+              there's no second control parked in the toolbar advertising a number you rarely
+              change. Values are whole days; the endpoint clamps to 1–180. */}
+          <DropdownMenu>
+            {/* asChild targets this SPAN, never the PillButton. PillButtonProps is a CLOSED
+                interface — no forwardRef, no {...rest} — so Radix's cloned onClick/ref would be
+                silently dropped and the button would do nothing at all (shipped exactly that
+                once). The span is a real DOM node, so it receives the handler and ref, and the
+                inner button's click bubbles up to it. PillButton is given NO onClick here. */}
+            <DropdownMenuTrigger asChild disabled={busy || gscPulling}>
+              <span className="inline-flex">
+                <PillButton
+                  icon={gscPulling ? <Loader2 className="animate-spin" /> : <TrendingUp />}
+                  disabled={busy || gscPulling}
+                >
+                  {gscPulling ? 'Pulling…' : 'GSC stats'}
+                </PillButton>
+              </span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-40">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">Pull period</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {[7, 30, 60, 90, 120].map((d) => (
+                <DropdownMenuItem
+                  key={d}
+                  className="text-xs"
+                  onSelect={() => { void handlePullGsc(d); }}
+                >
+                  Last {d} days
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
           {/* Pulls ProRankTracker rank of each row's Primary Keyword → "Pos (PRT)" column. */}
           <PillButton
             icon={prtPulling ? <Loader2 className="animate-spin" /> : <Target />}
@@ -1524,11 +1632,49 @@ export function SEOModule() {
             onResetView={resetView}
             onSaveView={handleSaveView}
             onDeleteView={handleDeleteView}
+            onRenameView={handleRenameView}
+            onPinView={handlePinView}
             onSetDefaultView={handleSetDefaultView}
             onResetLayout={resetColumnLayout}
           />
         </div>
       </div>
+
+      {/* Pinned views — a tab strip directly above the table. Only renders when at least one
+          view is pinned, so the layout is unchanged for anyone who never uses it. Clicking a
+          tab applies that view exactly like picking it from the dropdown; "All" clears back to
+          the default (all columns, no filters). The active tab is the applied view, so the
+          strip always reflects what the table is actually showing. */}
+      {views.some((v) => v.isPinned) && (
+        <div className="mb-2 flex items-center gap-1 overflow-x-auto border-b border-border">
+          <button
+            type="button"
+            onClick={resetView}
+            className={`shrink-0 border-b-2 px-3 py-1.5 text-xs transition-colors ${
+              appliedViewId === null
+                ? 'border-primary text-primary font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            All
+          </button>
+          {views.filter((v) => v.isPinned).map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => applyView(v)}
+              title={`Apply “${v.name}”`}
+              className={`shrink-0 max-w-[12rem] truncate border-b-2 px-3 py-1.5 text-xs transition-colors ${
+                appliedViewId === v.id
+                  ? 'border-primary text-primary font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {v.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Bulk actions — a compact FLOATING bar (fixed, so the table never reflows /
           "pops down" on select). The "Generate all" split button generates the
@@ -1744,6 +1890,55 @@ export function SEOModule() {
                 Overwrite existing
               </Button>
               <Button size="sm" variant="ghost" className="justify-center" onClick={() => setPendingGen(null)}>Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* New-author form. A plain overlay rather than the shared Dialog: this file already
+          hand-rolls its overlays (see the portal above) and pulling in Dialog here would add an
+          import for one small form. Creates a WP user server-side (role fixed to `author`). */}
+      {newAuthorFor !== null && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
+          onClick={() => setNewAuthorFor(null)}
+        >
+          <div
+            className="w-[22rem] rounded-lg border bg-card p-4 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-1 text-sm font-medium">New author</h3>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Creates a WordPress user with the <strong>Author</strong> role and assigns them to this page.
+            </p>
+            <div className="space-y-2">
+              <Input
+                autoFocus
+                value={newAuthorName}
+                onChange={(e) => setNewAuthorName(e.target.value)}
+                placeholder="Display name"
+                className="h-8 text-sm"
+              />
+              <Input
+                type="email"
+                value={newAuthorEmail}
+                onChange={(e) => setNewAuthorEmail(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && newAuthorName.trim() && newAuthorEmail.trim()) submitNewAuthor(); }}
+                placeholder="Email address"
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <Button variant="outline" size="sm" className="h-8" onClick={() => setNewAuthorFor(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-8"
+                disabled={!newAuthorName.trim() || !newAuthorEmail.trim() || createAuthorMutation.isPending}
+                onClick={submitNewAuthor}
+              >
+                {createAuthorMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Create'}
+              </Button>
             </div>
           </div>
         </div>

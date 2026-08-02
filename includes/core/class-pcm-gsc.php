@@ -291,16 +291,31 @@ class PCM_GSC
         $domain = array();
         $exact  = array();
         $other  = array();
+        $parent = array();
         foreach ($properties as $p) {
             if (stripos($p, 'sc-domain:') === 0) {
-                if (strtolower(substr($p, 10)) === $bare) { $domain[] = $p; }
+                $d = strtolower(substr($p, 10));
+                if ($d === $bare) {
+                    $domain[] = $p;
+                } elseif ($d !== '' && substr($bare, -(strlen($d) + 1)) === '.' . $d) {
+                    // A GSC DOMAIN property covers every subdomain — that is the whole point of
+                    // one. `sc-domain:example.com` therefore serves blog.example.com too, and an
+                    // exact-equality check meant a subdomain site reported "no access" even
+                    // though the account could read it (hit live: brizy.profitmedia.pro vs
+                    // sc-domain:profitmedia.pro). Anchored on the leading dot so
+                    // `notexample.com` can never match `example.com`.
+                    $parent[] = $p;
+                }
                 continue;
             }
             $ph = strtolower((string) (wp_parse_url($p, PHP_URL_HOST) ?: ''));
             if ($ph === '' || preg_replace('/^www\./', '', $ph) !== $bare) { continue; }
             if ($ph === $host) { $exact[] = $p; } else { $other[] = $p; }
         }
-        return array_values(array_unique(array_merge($domain, $exact, $other)));
+        // Order = most specific first: the site's OWN domain property, then its exact URL
+        // property, then www/non-www variants, and only then a parent-domain property that
+        // merely covers it (its data spans every sibling subdomain, so it is the last resort).
+        return array_values(array_unique(array_merge($domain, $exact, $other, $parent)));
     }
 
     /**
@@ -361,6 +376,57 @@ class PCM_GSC
      *                            period of the same length (the compare).
      * @return array|WP_Error
      */
+    /** Option holding the per-site GSC property overrides: norm_url(site) => property. */
+    private const PROPERTY_MAP_OPTION = 'pcm_gsc_property_map';
+
+    /**
+     * The property a site is EXPLICITLY mapped to, or '' when it has never been overridden.
+     *
+     * Auto-matching (match_properties()) stays the default: a site nobody has touched behaves
+     * exactly as before. This only records a human saying "no, pull stats from THAT property"
+     * — which matters because a site can own several (www / non-www / sc-domain) and the
+     * auto-pick is a heuristic, so a wrong guess otherwise silently re-asserts itself on the
+     * next pull.
+     *
+     * @param string $site_url Site URL (any form — normalised internally).
+     * @return string Property string, or '' when unmapped.
+     */
+    public static function property_override(string $site_url): string
+    {
+        $map = get_option(self::PROPERTY_MAP_OPTION);
+        if (!is_array($map)) {
+            return '';
+        }
+        $key = self::norm_url($site_url);
+        return isset($map[$key]) ? (string) $map[$key] : '';
+    }
+
+    /**
+     * Pin a site to a GSC property, or clear the pin with an empty $property (back to auto).
+     *
+     * @param string $site_url Site URL (any form — normalised internally).
+     * @param string $property GSC property, or '' to clear.
+     * @return void
+     */
+    public static function set_property_override(string $site_url, string $property): void
+    {
+        $map = get_option(self::PROPERTY_MAP_OPTION);
+        if (!is_array($map)) {
+            $map = array();
+        }
+        $key = self::norm_url($site_url);
+        if ($key === '') {
+            return;
+        }
+        $property = trim($property);
+        if ($property === '') {
+            unset($map[$key]);          // cleared → fall back to auto-matching
+        } else {
+            $map[$key] = $property;
+        }
+        update_option(self::PROPERTY_MAP_OPTION, $map, false);
+    }
+
     public static function query_stats(string $json, string $property, int $days = 30, string $page_url = '', int $offset_days = 0): array|WP_Error
     {
         $offset_days = max(0, $offset_days);

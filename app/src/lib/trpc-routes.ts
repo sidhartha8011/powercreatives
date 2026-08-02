@@ -47,6 +47,8 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "integrations.prtPageRanks": { endpoint: "integrations/proranktracker/page-ranks", method: "POST" },
     "integrations.gscProperties": { endpoint: "integrations/gsc/properties", method: "GET" },
     "integrations.gscStats": { endpoint: "integrations/gsc/stats", method: "POST" },
+    // Pin a site to a GSC property (empty `property` clears the pin → back to auto-matching).
+    "integrations.gscSetProperty": { endpoint: "integrations/gsc/property", method: "POST" },
     "integrations.gscOauthStart": { endpoint: "integrations/gsc/oauth-start", method: "POST" },
     "integrations.validateApiKey": { endpoint: "integrations/validate", method: "POST" },
     "integrations.create": { endpoint: "integrations", method: "POST" },
@@ -422,6 +424,8 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     // ── SEO (content-SEO workbench) ──
     "seo.listContent": { endpoint: "seo/content", method: "GET" },
     "seo.contentOptions": { endpoint: "seo/content/options", method: "GET" },
+    // Creates a WordPress user (role fixed to `author` server-side).
+    "seo.createAuthor": { endpoint: "seo/authors", method: "POST" },
     "seo.quickCreate": { endpoint: "seo/content", method: "POST" },
     "seo.saveCell": {
         endpoint: "seo/content",
@@ -848,6 +852,16 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "seo/views",
         method: "PATCH",
         transform: (input: any) => ({ url: `seo/views/${input.id}/default`, body: { isDefault: input.isDefault } }),
+    },
+    "seo.setPinnedView": {
+        endpoint: "seo/views",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `seo/views/${input.id}/pin`, body: { isPinned: input.isPinned } }),
+    },
+    "seo.renameView": {
+        endpoint: "seo/views",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `seo/views/${input.id}/name`, body: { name: input.name } }),
     },
     // SEO Hub — managed remote sites
     "seohub.listSites": { endpoint: "seohub/sites", method: "GET" },
