@@ -23,6 +23,7 @@ export interface SeoView {
   config: ViewConfig;
   /** Whether this is the user's default view (auto-applied on load). */
   isDefault: boolean;
+  isPinned: boolean;
 }
 
 const LIST_KEY = ['seo', 'listViews'] as const;
@@ -33,6 +34,8 @@ export interface UseViewsResult {
   saveView: (name: string, config: ViewConfig) => Promise<SeoView | null>;
   removeView: (id: number) => Promise<void>;
   setDefaultView: (id: number, isDefault: boolean) => Promise<void>;
+  renameView: (id: number, name: string) => Promise<void>;
+  setPinnedView: (id: number, isPinned: boolean) => Promise<void>;
 }
 
 export function useViews(): UseViewsResult {
@@ -42,6 +45,8 @@ export function useViews(): UseViewsResult {
   const createMutation = trpc.seo.createView.useMutation();
   const deleteMutation = trpc.seo.deleteView.useMutation();
   const setDefaultMutation = trpc.seo.setDefaultView.useMutation();
+  const renameMutation = trpc.seo.renameView.useMutation();
+  const pinMutation = trpc.seo.setPinnedView.useMutation();
 
   const views = useMemo<SeoView[]>(() => {
     if (!Array.isArray(listQuery.data)) return [];
@@ -50,6 +55,7 @@ export function useViews(): UseViewsResult {
       name: String(v.name ?? ''),
       config: (v.config ?? {}) as ViewConfig,
       isDefault: Boolean((v as { isDefault?: unknown }).isDefault),
+      isPinned: Boolean((v as { isPinned?: unknown }).isPinned),
     }));
   }, [listQuery.data]);
 
@@ -102,5 +108,30 @@ export function useViews(): UseViewsResult {
     [setDefaultMutation, invalidate],
   );
 
-  return { views, isLoading: listQuery.isLoading, saveView, removeView, setDefaultView };
+  const renameView = useCallback(
+    (id: number, name: string): Promise<void> =>
+      renameMutation
+        .mutateAsync({ id, name })
+        .then(() => {
+          void invalidate();
+          toast.success('View renamed');
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'Failed to rename view');
+        }),
+    [renameMutation, invalidate],
+  );
+
+  const setPinnedView = useCallback(
+    (id: number, isPinned: boolean): Promise<void> =>
+      pinMutation
+        .mutateAsync({ id, isPinned })
+        .then(() => { void invalidate(); })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'Failed to pin view');
+        }),
+    [pinMutation, invalidate],
+  );
+
+  return { views, isLoading: listQuery.isLoading, saveView, removeView, setDefaultView, renameView, setPinnedView };
 }

@@ -43,6 +43,10 @@ class PCM_REST_SEO extends PCM_REST_Base
         return array(
             // Static segments before the numeric matcher.
             array('GET',  '/seo/content/options',            'get_options'),
+            // Creating a WordPress USER — gated at manage_options, NOT the module's
+            // edit_posts default. A second, explicit create_users check lives in the
+            // handler (see create_author).
+            array('POST', '/seo/authors',                    'create_author', array(), 'manage_options'),
             array('POST', '/seo/content/bulk-delete',        'bulk_delete'),
             array('GET',  '/seo/content',                    'list_content'),
             array('POST', '/seo/content',                    'quick_create'),
@@ -114,6 +118,8 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',    '/seo/views',                'views_list'),
             array('POST',   '/seo/views',                'views_create'),
             array('PATCH',  '/seo/views/(?P<id>\d+)/default', 'views_set_default'),
+            array('PATCH',  '/seo/views/(?P<id>\d+)/name',    'views_rename'),
+            array('PATCH',  '/seo/views/(?P<id>\d+)/pin',     'views_set_pinned'),
             array('DELETE', '/seo/views/(?P<id>\d+)',     'views_delete'),
             // AI Readiness (site-wide → admin only).
             array('GET',  '/seo/ai-readiness',           'air_status',   array(), 'manage_options'),
@@ -172,6 +178,73 @@ class PCM_REST_SEO extends PCM_REST_Base
     public function get_options(WP_REST_Request $request): WP_REST_Response
     {
         return $this->success($this->editing->get_options());
+    }
+
+    /**
+     * POST /seo/authors — create a WordPress user to assign as a post author.
+     *
+     * Input: { name: string, email: string }.
+     *
+     * SECURITY. This creates a real WP user, so it is deliberately stricter than the rest of
+     * this controller:
+     *  - the route is gated at `manage_options` (the module default is only `edit_posts`);
+     *  - `create_users` is re-checked here, because on Multisite an admin does NOT hold it and
+     *    the route capability alone would let the call through;
+     *  - the role is FIXED to `author` and never taken from input — accepting a role would turn
+     *    this into a privilege-escalation endpoint;
+     *  - the password is generated, never accepted, so this can't be used to set a known
+     *    credential on an account.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function create_author(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        if (!current_user_can('create_users')) {
+            return $this->error('You do not have permission to create users.', 403);
+        }
+        $p     = $request->get_json_params();
+        $name  = is_array($p) ? sanitize_text_field((string) ($p['name'] ?? '')) : '';
+        $email = is_array($p) ? sanitize_email((string) ($p['email'] ?? '')) : '';
+        if ($name === '') {
+            return $this->error('A name is required.', 400);
+        }
+        if ($email === '' || !is_email($email)) {
+            return $this->error('A valid email address is required.', 400);
+        }
+        if (email_exists($email)) {
+            return $this->error('A user with that email already exists.', 409);
+        }
+
+        // Derive a login from the name, then de-duplicate. sanitize_user() can empty a
+        // non-latin name entirely, so fall back to the email's local part before giving up.
+        $base = sanitize_user(sanitize_title($name), true);
+        if ($base === '') {
+            $base = sanitize_user((string) strstr($email, '@', true), true);
+        }
+        if ($base === '') {
+            return $this->error('Could not derive a username from that name — try a different one.', 400);
+        }
+        $login = $base;
+        for ($i = 2; username_exists($login) && $i < 100; $i++) {
+            $login = $base . $i;
+        }
+        if (username_exists($login)) {
+            return $this->error('Could not find a free username for that name.', 409);
+        }
+
+        $user_id = wp_insert_user(array(
+            'user_login'   => $login,
+            'user_email'   => $email,
+            'display_name' => $name,
+            'nickname'     => $name,
+            'user_pass'    => wp_generate_password(24, true, true), // generated, never from input
+            'role'         => 'author',                            // FIXED — never from input
+        ));
+        if (is_wp_error($user_id)) {
+            return $this->error($user_id->get_error_message(), 400);
+        }
+        return $this->success(array('id' => (int) $user_id, 'name' => $name));
     }
 
     /** POST /seo/content — quick-create a draft post/page. */
@@ -1327,6 +1400,38 @@ class PCM_REST_SEO extends PCM_REST_Base
      * default. Enforces at most one default per user. Body: { isDefault: bool }
      * (omitted/true makes it the default).
      */
+    /**
+ * PATCH /seo/views/{id}/name — rename a saved view. Input: { name }.
+ * Ownership is enforced in PCM_SEO_Views::rename_view(); a view that isn't yours 404s.
+ */
+    /** PATCH /seo/views/{id}/pin — pin/unpin a view to the tab strip. Input: { isPinned }. */
+    public function views_set_pinned(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id       = absint($request->get_param('id'));
+        $params   = $request->get_json_params() ?: array();
+        $isPinned = array_key_exists('isPinned', $params) ? (bool) $params['isPinned'] : true;
+        $user = $this->get_current_pcm_user();
+        if (!PCM_SEO_Views::set_pinned($id, (int) $user->id, $isPinned)) {
+            return $this->not_found('View');
+        }
+        return $this->success(array('id' => $id, 'isPinned' => $isPinned));
+    }
+
+    public function views_rename(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id     = absint($request->get_param('id'));
+        $params = $request->get_json_params() ?: array();
+        $name   = sanitize_text_field((string) ($params['name'] ?? ''));
+        if ($name === '') {
+            return $this->error('A view name is required.', 400);
+        }
+        $user = $this->get_current_pcm_user();
+        if (!PCM_SEO_Views::rename_view($id, (int) $user->id, $name)) {
+            return $this->not_found('View');
+        }
+        return $this->success(array('id' => $id, 'name' => $name));
+    }
+
     public function views_set_default(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $id     = absint($request->get_param('id'));

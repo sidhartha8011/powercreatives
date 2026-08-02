@@ -180,6 +180,10 @@ class PCM_SEO_Local
             'date'               => $post->post_date,
             'authorId'           => (int) $post->post_author,
             'author'             => get_the_author_meta('display_name', (int) $post->post_author),
+            // The raw id too: save_cell maps `author` → `post_author` and therefore expects an
+            // ID, while the display name above is only for reading. Matching the name back to a
+            // user would break the moment two users share a display_name.
+            'authorId'           => (int) $post->post_author,
             'permalink'          => get_permalink($id),
             'editUrl'            => get_edit_post_link($id, 'raw'),
             'featuredImage'      => (string) get_the_post_thumbnail_url($id, 'thumbnail'),

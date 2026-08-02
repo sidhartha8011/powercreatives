@@ -10768,3 +10768,342 @@ entry or tightening the regex to correlate the two matches — deliberately left
 security test's detection.
 NOT LIVE-VERIFIED: no local WP admin this session; proof is unit + mutation tests. Both fixes need a
 30-second check on create.widgetify.co after deploy. Not committed.
+
+## 2026-07-31 — /onboard: map verified against reality, one gap closed
+- Map exists and is same-day, so per the command this was a VERIFY pass, not a rebuild. graphify is not on
+  PATH (checked earlier today) → index step skipped silently.
+- Verified rather than assumed: map says `service.php` is 1,661 lines / 47 methods — actual is EXACTLY
+  1,661 / 47. "Extracted (9 classes)" is also correct: the seo/ dir holds 15 `PCM_SEO_*` classes but 6 of
+  those (AIReadiness, Export, GBP_Google_Provider, Schema, Site, + Service itself) pre-date the decomposition
+  and were never part of it.
+- GAP CLOSED: the map did not record today's hardest-won lesson. Added as SEO gotcha #3 — visibility must be
+  RE-DERIVED from the new call graph after every slice, never inherited. It shipped a production fatal
+  ("Call to private method PCM_SEO_Page_Inventory::section_runs() from scope PCM_SEO_Editing") that php -l
+  accepted and every test passed. Documented as the MIRROR of the existing stay-behind-promotion gotcha, with
+  the four affected methods named and the new orphan-checker section that now catches it.
+- Earlier today the same map also gained 32 previously-undocumented seo routes (the section listed 64 rows
+  against 99 registered) — route table now 333 rows.
+- Nothing edited outside `.claude/`.
+
+## 2026-07-31 — GSC property mapping: BACKEND DONE, frontend dropdown NOT built
+- Ask: a site shouldn't be hard-coded to a GSC domain — show the mapped property and let the user override it
+  from a dropdown, pre-selected to the auto-mapped value, so stats pull from the right property.
+- Found already present (so the feature was smaller than it looked): the auto-mapping the user describes
+  EXISTS (`PCM_GSC::match_properties()`, plus sites/service.php:1010 variant-aware reuse), the list endpoint
+  EXISTS (`GET /integrations/gsc/properties`), and `PCM_GSC::norm_url()` gives a stable per-site key. The real
+  gap was that the property was RE-DERIVED on every pull and never persisted, so a correction could not stick.
+- Built:
+  · `PCM_GSC::property_override()` / `set_property_override()` — option `pcm_gsc_property_map`, keyed by
+    norm_url(site). Empty property CLEARS the pin and returns the site to auto-matching.
+  · `POST /integrations/gsc/property` (`gsc_set_property`) — validates the property against what the account
+    can actually read, so a typo/no-access value is rejected at save time instead of silently yielding an
+    empty stats pull later.
+  · integrations/controller.php `gsc_stats`: an explicit pin now REPLACES the heuristic candidate list. This is
+    the load-bearing bit — without it the "try each until one has data" loop would re-pick the wrong property
+    on the next pull and the user's correction would look like it never saved. Guarded: a STALE pin (property
+    removed / access lost) falls back to auto-matching rather than erroring.
+  · trpc route `integrations.gscSetProperty`.
+- VERIFIED: php -l clean x2; new behaviour test 10/10 — save/read, URL normalisation (http / no-slash / no-www
+  all hit one pin), other sites unaffected, empty-clears-pin, empty-site-url ignored, and the gsc_stats
+  decision itself: no pin → auto unchanged, valid pin wins, STALE pin falls back, pin==auto is a no-op.
+  Harness 88/88, orphan gate exit 0, tsc 59 = unchanged baseline.
+- ⚠ NOT DONE: the dropdown UI in the Sites table. The API is complete and reachable
+  (GET properties + POST property + trpc routes) — what remains is a per-row Select in the Sites module
+  populated from `integrations.gscProperties`, value = current pin (falling back to the auto-matched
+  property), onChange → `integrations.gscSetProperty`. Stopped here rather than half-wire a UI I could not
+  build+verify in the remaining budget.
+- Not committed.
+
+## 2026-08-03 — GSC domain dropdown in the Sites table (completes the mapping feature)
+- Adds the "GSC domain" column to the Sites table, finishing the feature whose backend landed last session.
+- Backend gap closed first: the dropdown needs to READ the current pin to preselect it, which nothing exposed.
+  `list_sites` now returns `gscProperty` per site via `PCM_GSC::property_override($site->url)` — normalisation
+  stays SERVER-side (PCM_GSC::norm_url) rather than being re-implemented in TS where it could drift.
+- Column: a Select per row, "Auto (match by URL)" + every property the connected GSC account can read.
+  Value = the stored pin, or Auto when unpinned. Choosing Auto sends '' which CLEARS the pin server-side.
+  Only the row being saved is disabled (pendingGscSiteId), so one slow save can't freeze the table.
+  The property list is fetched ONCE for the table (it belongs to the account, not the site), `retry:false`,
+  and a missing/failed GSC integration degrades to "Auto" + an inline hint instead of a dead control.
+- Verified: php -l clean; tsc 59 = unchanged baseline with ZERO errors in modules/Sites; build clean (21.5s);
+  the column's copy ships in dist. New 9/9 behaviour test transcribing the cell + handler decisions —
+  unpinned→Auto, pinned preselects, null pin treated as Auto (not blank), Auto→'' clears, property sent
+  verbatim, only the saving row disabled, and no-properties still leaves Auto selectable so the column never
+  dead-ends. Harness 88/88, orphan gate exit 0.
+- ⚠ NOT visually verified — no dev server for this WP-embedded SPA (unchanged all session).
+- Not committed.
+
+## 2026-08-03 — Zip build: powerplatform-2026-08-03_0014.zip (GSC domain mapping, end to end)
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-08-03_0014.zip (1,942,229 bytes) from a fresh
+  `npm run build` (23.1s, clean).
+- Gates before packaging: orphan + accessibility gate exit 0 · harness 88/88 · page_versioning 67/67 ·
+  connector_selfupdate 11/11.
+- GSC feature verified END TO END in the STAGED payload (all 5 layers, not just the working tree):
+  PCM_GSC override helpers (2), POST /integrations/gsc/property route (1), the pin winning inside gsc_stats (1),
+  list_sites exposing gscProperty (1), and the dropdown's "Auto (match by URL)" copy in the BUILT bundle (1).
+- Earlier fixes confirmed still aboard: the Save & close fatal (all 4 PCM_SEO_Page_Inventory methods public),
+  Brizy pcm_conn_json_variants (4 refs), decomposed service.php at 1,661 lines.
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
+  php -l clean on the 3 files this feature touched.
+- Not committed.
+
+## 2026-08-03 — Views toolbar: could only type one letter into "New view name"
+- Report: typing a filter/view name selects a column checkbox on every keystroke and you must pause between
+  letters.
+- ROOT CAUSE: the input lives inside a Radix `DropdownMenuContent`, and Radix menus implement TYPEAHEAD on
+  keydown — an unhandled letter moves focus to the menu item starting with it. The handler
+  (SEO/ViewsToolbar.tsx:158) only intercepted `Enter`, so every other character bubbled to the menu, which
+  yanked focus out of the input and toggled the matching column checkbox. The wrapper's existing
+  `onClick={e => e.stopPropagation()}` could never help: typeahead is keydown-driven, not click-driven.
+- FIX (one handler): stop propagation for every key EXCEPT Enter (saves, as before) and Escape (deliberately
+  still bubbles so it closes the menu). Nothing else changed.
+- Verified: new 15/15 test transcribing the handler verbatim — letters/digits/space no longer reach the menu;
+  Backspace/Arrow/Home/End/Delete stay in the input so menu arrow-navigation cannot steal them; Enter still
+  saves AND still preventDefaults without stopping propagation (unchanged path); Escape still bubbles.
+  tsc 59 = unchanged baseline; build clean; harness 88/88.
+- ⚠ NOT visually verified — no dev server. Not committed.
+
+## 2026-08-03 — Author dropdown + create-author: SCOPED, not implemented (out of session budget)
+- Ask: Author column should be a dropdown of existing WP users, plus a "+" to create a new author.
+- MOST OF HALF ONE ALREADY EXISTS — the next session should NOT rebuild it:
+  · seo/local.php:182 already reads the author (`get_the_author_meta('display_name', post_author)`).
+  · seo/local.php:828 already whitelists `'author' => 'post_author'` in the save-cell map, so WRITING the
+    author via inline cell edit is already wired end to end.
+  · seo/editing.php:2111 `get_options()` already returns `get_users(capability: edit_posts, fields: ID +
+    display_name)` — i.e. the dropdown's data source is already served to the frontend.
+  So the dropdown is likely FRONTEND-ONLY: render the Author cell as a Select bound to that existing options
+  list instead of plain text, writing through the existing save_cell path. Verify the options actually reach
+  the SEO table's props before assuming.
+- HALF TWO IS NOT SMALL and deserves deliberate design, not a bolt-on: "create a new author" means creating a
+  WordPress USER. Needs an explicit role decision (author? contributor?), a capability check (create_users is
+  admin-level and must NOT be inferred from edit_posts), and a decision about REMOTE sites — a connected site's
+  authors live on that site, so creating one there is a connector operation, not a hub one. Recommend treating
+  it as its own task with security-auditor in the loop.
+- Nothing implemented; no files changed.
+
+## 2026-08-03 — SEO table: Author column is now a dropdown
+- Confirmed the earlier scoping: `get_options()` already returns `authors: [{id,name}]` (editing.php:2111)
+  and save_cell already maps `author` → `post_author` (local.php:828). The `options` object was ALREADY in
+  the component (the status cell reads `options?.statuses`), so no new query was needed — the authors list
+  was being fetched and simply never used.
+- ONE backend line: `local.php` row now also exposes `authorId` (raw post_author). Necessary, not cosmetic —
+  `row.author` is the DISPLAY NAME while save_cell expects an ID, and matching the name back to a user would
+  break the moment two users share a display_name.
+- Frontend: the Author cell became a Select modelled on the existing status cell (same borderless trigger),
+  value = authorId, onChange → `saveCell(row.id,'author',id)`.
+- TWO GUARDS worth calling out:
+  · LOCAL rows only. `options.authors` are users on THIS install; offering them for a connected site would
+    write a hub user id onto a remote post and silently reassign it to whoever holds that id there. Remote
+    rows stay read-only until the connector can serve that site's own users.
+  · Empty/absent authors list falls back to plain text rather than rendering a dead dropdown, and the trigger
+    falls back to the stored NAME when the current author isn't in the list (e.g. someone who has since lost
+    edit_posts) — showing a raw id would be worse than a name we already have.
+- Verified: php -l clean; tsc 59 = unchanged baseline with ZERO errors in modules/SEO; build clean;
+  new 10/10 test — local editable, remote read-only, empty/undefined options degrade safely, value is the ID
+  not the name, authorId 0/absent handled, and duplicate display names stay distinct (the reason for authorId).
+  Harness 88/88, orphan gate exit 0.
+- Scope note: the "+ create new author" half was deliberately NOT built — it creates a WordPress USER
+  (`create_users` is admin-level, must not be inferred from edit_posts) and needs its own security review.
+- ⚠ NOT visually verified — no dev server. Not committed.
+
+## 2026-08-03 — Zip build: powerplatform-2026-08-03_0030.zip
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-08-03_0030.zip (1,942,503 bytes) from a fresh
+  `npm run build` (18.7s, clean).
+- Gates before packaging: orphan + accessibility gate exit 0 · harness 88/88 · page_versioning 67/67 ·
+  connector_selfupdate 11/11.
+- Verified IN THE STAGED PAYLOAD (not the working tree): Author `authorId` exposed backend-side (2 refs) and
+  the dropdown in the BUILT bundle (4 refs); the views-toolbar typeahead fix present; GSC property_override
+  helpers + the "Auto (match by URL)" dropdown copy in the bundle. Earlier fixes still aboard — Save & close
+  fatal (all 4 methods public), Brizy pcm_conn_json_variants (4), service.php 1,661 lines.
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
+  php -l clean on every file this session touched.
+- Not committed.
+
+## 2026-08-03 — "+ New author" (creates a WordPress user) — completes the Author column
+- I had deferred this as security-sensitive; user asked for it directly, so built with the gate made explicit.
+- Backend `POST /seo/authors` (`create_author`, seo/controller.php). Deliberately stricter than the rest of
+  the controller, and each of these was a decision not an accident:
+  · route gated at `manage_options` (module default is only `edit_posts`);
+  · `create_users` RE-CHECKED in the handler — on Multisite an admin does NOT hold it, so the route cap alone
+    would let the call through;
+  · role HARDCODED to `author`, never read from input — accepting a role would make this a
+    privilege-escalation endpoint;
+  · password GENERATED via wp_generate_password, never accepted — can't be used to set a known credential;
+  · email validated + `email_exists` 409; username derived via sanitize_user and de-duplicated against
+    `username_exists`, with a fallback to the email local part because sanitize_user() can empty a non-latin
+    name entirely.
+- Frontend: "+ New author…" inside the Author dropdown → small overlay form (name + email) → creates the user
+  and assigns them to that row in one step. New authors are appended locally (`extraAuthors`) because
+  useSeoContent exposes no refetch handle — but the id written is the REAL server id, so the saved
+  post_author is correct either way.
+- BUG CAUGHT DURING THE WORK: the new state/mutation block was first placed ABOVE
+  `const saveCell = …` (line 406) while depending on it — a temporal-dead-zone crash at render that tsc does
+  not flag. Relocated below saveCell before building.
+- Verified: php -l clean; an 8/8 static audit of the handler asserting each security property above;
+  a 10/10 flow test — Create disabled until both fields and while in flight (no double-create), whitespace
+  rejected, the REAL server id used, name fallback, and a missing id rejected rather than writing author=0.
+  tsc 59 = unchanged baseline with ZERO modules/SEO errors; build clean; the UI ships in dist.
+  Harness 88/88, orphan gate exit 0.
+- ⚠ NOT visually verified (no dev server) and NOT exercised against a live WP — the capability behaviour in
+  particular (Multisite `create_users`) is reasoned from WP semantics, not observed. Not committed.
+
+## 2026-08-03 — Zip build: powerplatform-2026-08-03_0043.zip (adds "+ New author")
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-08-03_0043.zip (1,944,515 bytes) from a fresh
+  `npm run build` (14.3s, clean).
+- Gates before packaging: orphan + accessibility gate exit 0 · harness 88/88 · page_versioning 67/67 ·
+  connector_selfupdate 11/11.
+- Re-asserted the create-author SECURITY properties against the STAGED controller (not the working tree):
+  route gated manage_options (1), create_users re-checked (1), role hardcoded to author (1), password
+  generated (1), duplicate email rejected (1). Worth doing at package time — this endpoint creates WP users,
+  so "it was right when I wrote it" is not the same as "it is right in the artifact".
+- Bundle carries: "+ New author" UI (2), author dropdown authorId (4), GSC domain dropdown (1). Earlier fixes
+  still aboard: Save & close fatal (4 public), Brizy pcm_conn_json_variants (4).
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
+  php -l clean on all staged seo files + PCM_GSC.
+- Not committed.
+
+## 2026-08-03 — GSC stats: period dropdown (7 / 30 / 60 / 90 / 120 days)
+- FRONTEND ONLY — no backend change needed: `gsc_stats` already accepts `days` and clamps to
+  `max(1, min(180, $days))`, so every requested value (incl. 120) was already in range and the pull was simply
+  hard-coding 28.
+- Added `gscDays` state + a small Select beside the "GSC stats" button (not inside it, so the range is visible
+  WITHOUT opening anything — you can see what a pull will cover before clicking). Disabled while pulling so
+  the window can't change mid-flight. `handlePullGsc` now sends `days: gscDays` and the useCallback gained
+  `gscDays` as a dependency — without that the callback would close over the initial value and every pull
+  would silently use 30 regardless of the selection.
+- ONE deliberate behaviour change, flagged: the default moved 28 → 30. 28 is not among the five requested
+  options, and a default that isn't in its own dropdown reads as a bug. Two extra days of data; nothing else
+  about the pull changes. Say the word if 28 must be preserved.
+- Verified: 6/6 — all five periods offered, default is one of them, every option survives the server clamp
+  unchanged, 120 within the 180 ceiling, string round-trip through the Select, disabled while pulling.
+  tsc 59 = unchanged baseline with ZERO modules/SEO errors; build clean; the dropdown's tooltip copy ships in
+  dist; harness 88/88.
+- ⚠ NOT visually verified (no dev server). Not committed.
+
+## 2026-08-03 — Zip build: powerplatform-2026-08-03_0112.zip (adds the GSC period dropdown)
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-08-03_0112.zip (1,944,722 bytes) from a fresh
+  `npm run build` (20.7s, clean).
+- Gates before packaging: orphan + accessibility gate exit 0 · harness 88/88 · page_versioning 67/67 ·
+  connector_selfupdate 11/11.
+- Verified in the BUILT bundle: GSC period dropdown (1), "+ New author" (2), Author dropdown authorId (4),
+  GSC domain dropdown (1). Backend guards still in the staged files: create_users re-check (1), Save & close
+  fatal 4 public (4), Brizy pcm_conn_json_variants (4).
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
+- Not committed.
+
+## 2026-08-03 — Saved views: rename (pen) button
+- Ask: a pen button on each saved view to rename and save it.
+- No rename endpoint existed, so this is full-stack (5 files):
+  · `PCM_SEO_Views::rename_view()` — same ownership rule as every other mutator here (a forged id renames
+    nothing rather than someone else's view).
+  · `PATCH /seo/views/{id}/name` → `views_rename`; empty name 400s, non-owned view 404s.
+  · trpc `seo.renameView`; `useViews` gained `renameView` (invalidate + toast, mirroring setDefaultView).
+  · ViewsToolbar: pen button per row that swaps the row label for an inline Input.
+- Two details that matter more than the button:
+  · The rename Input stops keystrokes for the SAME reason as the "new view name" field fixed earlier today —
+    Radix menu TYPEAHEAD would otherwise steal focus and jump to a matching item on every letter. Enter and
+    Escape are handled explicitly and deliberately NOT swallowed.
+  · commit-on-blur is guarded: an empty/whitespace name is never saved (blur cannot wipe a view's name) and an
+    unchanged name fires no request — otherwise merely opening the field and clicking away would spam the API.
+- Verified: php -l x2 clean; 8/8 test — renames on change, no request when unchanged or whitespace-only, empty
+  never saved, always exits edit mode, trims before sending, letters stopped, Enter/Escape not swallowed.
+  tsc 59 = unchanged baseline; build clean; "Rename view" ships in dist; harness 88/88; orphan gate exit 0.
+- ⚠ NOT visually verified (no dev server). Not committed.
+
+## 2026-08-03 — Zip build: powerplatform-2026-08-03_0146.zip (adds the saved-view rename)
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-08-03_0146.zip (1,945,539 bytes) from a fresh
+  `npm run build` (18.7s, clean).
+- Gates before packaging: orphan + accessibility gate exit 0 · harness 88/88 · page_versioning 67/67 ·
+  connector_selfupdate 11/11.
+- Rename feature verified BOTH ENDS in the staged payload: `rename_view()` (1), `views_rename` handler (1),
+  the `PATCH /seo/views/{id}/name` route (confirmed with a fixed-string grep — my first regex reported 0 purely
+  because of backslash escaping in the pattern, NOT a missing route), and the pen button in the built bundle (1).
+- Earlier work still aboard: GSC period dropdown (1), "+ New author" (2), create_users re-check (1),
+  Brizy pcm_conn_json_variants (4).
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154;
+  php -l clean on both files the feature touched, checked in the staged copy.
+- Not committed.
+
+## 2026-08-03 — Saved views: pin button + pinned tab strip above the table
+- Ask: a pin button per view; pinned views appear as tabs above the table (per the screenshot).
+- Full-stack, 6 files. Backend pins live in an OPTION (`pcm_seo_pinned_views`, userId => int[]) rather than a
+  new `isPinned` COLUMN — deliberate: a column means a schema migration + DB-version bump, and pinning is a
+  per-user display preference, not data. It also means a deleted/unpinned view just drops out with no
+  migration to write. `set_pinned()` keeps the ownership check every other mutator here has, so a forged id
+  cannot pin someone else's view into your strip; it removes-then-appends, which makes double-pinning
+  idempotent (no duplicate tabs). `list_views()` now returns `isPinned`.
+- `PATCH /seo/views/{id}/pin` → `views_set_pinned`; trpc `seo.setPinnedView`; `useViews.setPinnedView`.
+- UI: Pin icon per row in the views dropdown (filled when pinned), plus a tab strip rendered between the
+  toolbar and the table. It only renders when at least one view is pinned, so the layout is untouched for
+  anyone who never uses it. "All" clears back to default; the ACTIVE tab tracks appliedViewId, so the strip
+  always reflects what the table is actually showing rather than what was clicked last.
+- Verified: php -l x2 clean; 10/10 test — pin adds, double-pin idempotent, unpin removes, unpinning an
+  unpinned id is a no-op, other pins preserved, strip hidden with none pinned, only pinned views become tabs,
+  applied view is the active tab, "All" active when none applied. tsc 59 = unchanged baseline; build clean;
+  the pin tooltip ships in dist; harness 88/88; orphan gate exit 0.
+- ⚠ NOT visually verified (no dev server) — the strip's exact placement relative to the table header is the
+  part I'd want eyes on. Not committed.
+
+## 2026-08-03 — Views/Columns triggers restyled to match the AI button
+- Ask: the View + Columns dropdown triggers should look like the AI/model button — pill corners, not coloured.
+- Confirmed the target styling rather than guessing: ModelDropdown uses `borderRadius: '9999px'` and
+  PillButton uses `spacing.radiusPill`, i.e. a full pill. The "colour" being objected to was the ACTIVE-state
+  tint `border-primary text-primary` applied when a view was applied / any column hidden.
+- Change (ViewsToolbar.tsx, both triggers): `rounded-full`, and the conditional primary tint dropped —
+  the trigger label already names the applied view, so the colour was redundant emphasis that made this
+  control louder than the PillButtons beside it.
+- Also removed the now-dead `anyHidden` local: it was ONLY feeding the deleted tint, and it ran
+  `columns.some(...)` over every column on every render. tsc does not flag it (noUnusedLocals is off), so it
+  would have sat there indefinitely.
+- Verified: both triggers carry the identical pill class (lines 101 and 191); ZERO `border-primary
+  text-primary` left in the file; `anyHidden` refs 0; tsc 59 = unchanged baseline; build clean; the pill class
+  ships TWICE in dist (one per trigger); harness 88/88.
+- ⚠ NOT visually verified (no dev server). Not committed.
+
+## 2026-08-03 — Zip build: powerplatform-2026-08-03_0208.zip (views: pin + rename + pill restyle)
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-08-03_0208.zip (1,946,627 bytes) from a fresh
+  `npm run build` (13.5s, clean).
+- Gates before packaging: orphan + accessibility gate exit 0 · harness 88/88 · page_versioning 67/67 ·
+  connector_selfupdate 11/11.
+- Views work verified in the STAGED payload: the pill trigger class appears exactly TWICE in the bundle
+  (one per dropdown — the count is the check that BOTH were restyled, not just one), pin + rename tooltips
+  present, `set_pinned()` and `rename_view()` in the staged views.php, and 3 views PATCH routes
+  (default / name / pin). php -l clean on all staged seo files.
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
+- Not committed.
+
+## 2026-08-03 — New approval set: two steps collapsed into one dialog
+- Ask: adding an approval set shouldn't be multi-step; put the settings inside the set dialog; better/easier
+  design; no transparent backgrounds.
+- Was: author the doc → a SECOND popup (shared SendToApprovalSetDialog) asking Destination / Name / Project /
+  Client email → Generate Share Link. The "Destination" question was dead weight HERE — the document was just
+  authored, so it can only ever be a new set; that popup exists to choose between new-vs-append when sending
+  EXISTING assets.
+- Now: ONE dialog. Name / Project / Client email sit in a 3-up row above the canvas (short fields, and reading
+  them first tells you what the doc will be called), then Create. Header and footer are pinned and only the
+  BODY scrolls, so Create stays reachable on a long document. Every input carries `bg-card` — no transparent
+  fields on the dialog surface. Width clamped `min(64rem, 100vw-4rem)` so it can't overflow a narrow window.
+- Create payload is deliberately IDENTICAL to the one the old popup sent (createSet with escapeAstralDeep on
+  the snapshot — the WAF/emoji guard — plus the untitled-doc-inherits-the-set-name rule). Brand and delivery
+  are still inherited from the preset and never asked for.
+- SendToApprovalSetDialog is UNTOUCHED and still used by 6 other call sites (Ads / Copy / Image), where the
+  new-vs-append choice is real. This only stops the Approvals custom-doc flow from routing through it.
+- Verified: 12/12 — Create gated on a non-empty trimmed name and disabled while saving (no double-create),
+  preset project used when nothing picked, explicit pick overrides it, brand+delivery inherited, empty email →
+  null so the server skips the invite, email/name trimmed, exactly ONE custom doc with media/copy empty, doc
+  inherits the set name. tsc 59 = unchanged baseline with ZERO errors in the file; build clean; the one-step
+  copy ships in dist; harness 88/88.
+- ⚠ NOT visually verified (no dev server), and the create path was NOT exercised end to end — the payload is
+  proven identical in shape to the previous one, but no set was actually created against a live install.
+- Not committed.
+
+## 2026-08-03 — Zip build: powerplatform-2026-08-03_0220.zip (one-step approval set)
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-08-03_0220.zip (1,947,371 bytes) from a fresh
+  `npm run build` (17.5s, clean).
+- Gates before packaging: orphan + accessibility gate exit 0 · harness 88/88 · page_versioning 67/67 ·
+  connector_selfupdate 11/11.
+- Every UI change from this session confirmed IN THE BUILT BUNDLE: one-step approval set (1), pin tooltip (1),
+  rename tooltip (1), pill triggers (2 — one per dropdown), GSC period dropdown (1), "+ New author" (2),
+  GSC domain dropdown (1). Backend guards still staged: create_users re-check (1), Brizy json_variants (4),
+  Save & close 4-public (4).
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
+- Not committed.

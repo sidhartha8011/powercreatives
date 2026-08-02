@@ -218,10 +218,16 @@ class PCM_REST_Sites extends PCM_REST_Base
         $pcm_user = $this->get_current_pcm_user();
         $sites = PCM_DB::get_user_sites((int)$pcm_user->id);
 
-        // Never expose passwords in list responses
+        // Never expose passwords in list responses. Also surface the site's PINNED Search
+        // Console property (empty = none, i.e. stats auto-match by URL variant) so the Sites
+        // table can pre-select it — normalisation lives in PCM_GSC::norm_url(), server-side,
+        // rather than being re-implemented in TS where it could drift.
         $safe = array_map(function ($site) {
             $s = (array)$site;
             $s['appPassword'] = '••••••••';
+            $s['gscProperty'] = class_exists('PCM_GSC')
+                ? PCM_GSC::property_override((string)($s['url'] ?? ''))
+                : '';
             return $s;
         }, $sites);
 

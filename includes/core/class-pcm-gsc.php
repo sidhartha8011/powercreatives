@@ -361,6 +361,57 @@ class PCM_GSC
      *                            period of the same length (the compare).
      * @return array|WP_Error
      */
+    /** Option holding the per-site GSC property overrides: norm_url(site) => property. */
+    private const PROPERTY_MAP_OPTION = 'pcm_gsc_property_map';
+
+    /**
+     * The property a site is EXPLICITLY mapped to, or '' when it has never been overridden.
+     *
+     * Auto-matching (match_properties()) stays the default: a site nobody has touched behaves
+     * exactly as before. This only records a human saying "no, pull stats from THAT property"
+     * — which matters because a site can own several (www / non-www / sc-domain) and the
+     * auto-pick is a heuristic, so a wrong guess otherwise silently re-asserts itself on the
+     * next pull.
+     *
+     * @param string $site_url Site URL (any form — normalised internally).
+     * @return string Property string, or '' when unmapped.
+     */
+    public static function property_override(string $site_url): string
+    {
+        $map = get_option(self::PROPERTY_MAP_OPTION);
+        if (!is_array($map)) {
+            return '';
+        }
+        $key = self::norm_url($site_url);
+        return isset($map[$key]) ? (string) $map[$key] : '';
+    }
+
+    /**
+     * Pin a site to a GSC property, or clear the pin with an empty $property (back to auto).
+     *
+     * @param string $site_url Site URL (any form — normalised internally).
+     * @param string $property GSC property, or '' to clear.
+     * @return void
+     */
+    public static function set_property_override(string $site_url, string $property): void
+    {
+        $map = get_option(self::PROPERTY_MAP_OPTION);
+        if (!is_array($map)) {
+            $map = array();
+        }
+        $key = self::norm_url($site_url);
+        if ($key === '') {
+            return;
+        }
+        $property = trim($property);
+        if ($property === '') {
+            unset($map[$key]);          // cleared → fall back to auto-matching
+        } else {
+            $map[$key] = $property;
+        }
+        update_option(self::PROPERTY_MAP_OPTION, $map, false);
+    }
+
     public static function query_stats(string $json, string $property, int $days = 30, string $page_url = '', int $offset_days = 0): array|WP_Error
     {
         $offset_days = max(0, $offset_days);

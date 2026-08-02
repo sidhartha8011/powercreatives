@@ -23,6 +23,51 @@ class PCM_SEO_Views
      * @param int $userId PCM user id (wp_pcm_users.id).
      * @return array[] [{ id:int, name:string, config:array }, ...].
      */
+    /** Option holding pinned view ids: userId => int[]. */
+    private const PINNED_OPTION = 'pcm_seo_pinned_views';
+
+    /**
+     * Ids this user has pinned to the tab strip.
+     *
+     * Stored in an OPTION rather than an `isPinned` column on purpose: adding a column means a
+     * schema migration + DB-version bump, and pinning is a per-user display preference, not
+     * data. Keeping it out of the table also means an unpinned/deleted view simply drops out
+     * of the list with no migration to write.
+     */
+    public static function pinned_ids(int $userId): array
+    {
+        $map = get_option(self::PINNED_OPTION);
+        $ids = (is_array($map) && isset($map[$userId]) && is_array($map[$userId])) ? $map[$userId] : array();
+        return array_values(array_unique(array_map('intval', $ids)));
+    }
+
+    /**
+     * Pin/unpin a view. Ownership checked, so a forged id can never pin someone else's view
+     * into this user's tab strip.
+     */
+    public static function set_pinned(int $id, int $userId, bool $pinned): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_views');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $owned = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table} WHERE id = %d AND userId = %d",
+            $id,
+            $userId
+        ));
+        if ($owned === 0) {
+            return false;
+        }
+        $map = get_option(self::PINNED_OPTION);
+        if (!is_array($map)) { $map = array(); }
+        $ids = self::pinned_ids($userId);
+        $ids = array_values(array_diff($ids, array($id)));   // remove first — keeps it idempotent
+        if ($pinned) { $ids[] = $id; }
+        $map[$userId] = $ids;
+        update_option(self::PINNED_OPTION, $map, false);
+        return true;
+    }
+
     public static function list_views(int $userId): array
     {
         global $wpdb;
@@ -33,6 +78,7 @@ class PCM_SEO_Views
             $userId
         ));
 
+        $pinned = self::pinned_ids($userId);
         $views = array();
         foreach ($rows as $row) {
             $config = json_decode((string) $row->config, true);
@@ -41,6 +87,7 @@ class PCM_SEO_Views
                 'name'      => (string) $row->name,
                 'config'    => is_array($config) ? $config : array(),
                 'isDefault' => (bool) (int) $row->isDefault,
+                'isPinned'  => in_array((int) $row->id, $pinned, true),
             );
         }
         return $views;
@@ -86,6 +133,34 @@ class PCM_SEO_Views
      * @param bool $isDefault True to make this the default, false to unset it.
      * @return bool True if the target view exists and belongs to the user.
      */
+    /**
+     * Rename a saved view. Same ownership rule as every other mutator here — a user can only
+     * touch their own views, so a forged id returns false rather than renaming someone else's.
+     *
+     * @param int    $id     View id.
+     * @param int    $userId Owner id.
+     * @param string $name   New name (already sanitized by the controller).
+     * @return bool False when the view doesn't exist or isn't this user's.
+     */
+    public static function rename_view(int $id, int $userId, string $name): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_views');
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $owned = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table} WHERE id = %d AND userId = %d",
+            $id,
+            $userId
+        ));
+        if ($owned === 0) {
+            return false;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        return $wpdb->update($table, array('name' => $name), array('id' => $id, 'userId' => $userId)) !== false;
+    }
+
     public static function set_default_view(int $id, int $userId, bool $isDefault): bool
     {
         global $wpdb;

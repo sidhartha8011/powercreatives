@@ -223,6 +223,35 @@ export function SitesModule() {
     onError: (e: any) => toast.error(e.message ?? 'Connection test failed'),
     onSettled: () => setTestingId(null),
   }) as any;
+  // ── GSC property mapping ──
+  // Fetched ONCE for the whole table (the property list belongs to the connected GSC account,
+  // not to a site) rather than per row. Failure is non-fatal: the column degrades to "Auto"
+  // plus a hint, because a site with no Search Console integration must still be manageable.
+  const { data: gscPropsRaw } = trpc.integrations.gscProperties.useQuery(undefined, {
+    retry: false,
+  }) as any;
+  const gscProperties: string[] = Array.isArray(gscPropsRaw?.properties) ? gscPropsRaw.properties : [];
+  const [pendingGscSiteId, setPendingGscSiteId] = useState<number | null>(null);
+  const gscPropertyMutation = trpc.integrations.gscSetProperty.useMutation({
+    onError: (e: any) => toast.error(e.message ?? 'Could not save the Search Console mapping'),
+    onSettled: () => setPendingGscSiteId(null),
+  }) as any;
+  /** Pin this site to a property, or pass '' to clear the pin and return it to auto-matching. */
+  const setGscProperty = useCallback((site: Site, property: string) => {
+    setPendingGscSiteId(Number(site.id));
+    gscPropertyMutation.mutate(
+      { site: site.url, property },
+      {
+        onSuccess: () => {
+          toast.success(property
+            ? `${site.name}: stats will use ${property}`
+            : `${site.name}: back to automatic matching`);
+          refetch(); // re-read gscProperty so the row reflects what the server stored
+        },
+      },
+    );
+  }, [gscPropertyMutation, refetch]);
+
   // Connect/disconnect a project ↔ this site. Same endpoint as the Projects and Deliveries
   // controls — the link lives only in projects.siteId, so all surfaces stay in sync.
   const setProjectSiteMutation = trpc.assets.setProjectSite.useMutation({
@@ -348,6 +377,44 @@ export function SitesModule() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+        );
+      },
+    },
+    {
+      // Which Search Console property this site's stats are pulled from. The backend already
+      // AUTO-matches by URL variant (www / non-www / sc-domain), so this is a confirm-or-
+      // override control, not a setup step: "Auto" = no pin, keep matching. Picking a property
+      // pins it, and the pin WINS over the heuristic on every subsequent pull — which is the
+      // whole point, since a wrong auto-guess would otherwise silently reassert itself.
+      key: 'gscProperty', header: 'GSC domain', width: '14%',
+      sortAccessor: (s) => String((s as any).gscProperty ?? '').toLowerCase(),
+      cell: (site) => {
+        const current = String((site as any).gscProperty ?? '');
+        const busy = gscPropertyMutation.isPending && pendingGscSiteId === Number(site.id);
+        return (
+          <Select
+            value={current || 'auto'}
+            disabled={busy}
+            onValueChange={(v) => setGscProperty(site, v === 'auto' ? '' : v)}
+          >
+            <SelectTrigger className="h-7 w-full text-xs bg-card" title={current
+              ? `Stats are pulled from ${current}`
+              : 'Auto — matched from the site URL. Pick a property to pin it.'}>
+              <SelectValue placeholder="Auto" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto (match by URL)</SelectItem>
+              {gscProperties.length > 0 ? (
+                gscProperties.map((p: string) => (
+                  <SelectItem key={p} value={p}>{p}</SelectItem>
+                ))
+              ) : (
+                <div className="p-2 text-xs text-muted-foreground text-center">
+                  No Search Console properties — connect GSC in Integrations.
+                </div>
+              )}
+            </SelectContent>
+          </Select>
         );
       },
     },
