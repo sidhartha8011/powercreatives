@@ -275,6 +275,36 @@ class PCM_GSC
     }
 
     /**
+     * Does $property serve EXACTLY the www/non-www variant in $site_url?
+     *
+     * match_properties() is deliberately variant-INSENSITIVE — for auto-matching, the www
+     * property is a fine stand-in for the non-www site. But when a human has explicitly
+     * picked a variant in the "Verify in GSC" dialog, treating the other one as equivalent
+     * silently discards their choice (owner report 2026-08-03: picked non-www, got connected
+     * to the www property, which had no data). This is the strict test for that case.
+     *
+     * An `sc-domain:` property counts as an exact cover: a domain property genuinely serves
+     * BOTH variants, so reusing it honours either pick rather than overriding it.
+     *
+     * @param string $property GSC property id (url-prefix or `sc-domain:host`).
+     * @param string $site_url The URL whose variant must be served.
+     * @return bool
+     */
+    public static function covers_exact_variant(string $property, string $site_url): bool
+    {
+        $host = strtolower((string) (wp_parse_url($site_url, PHP_URL_HOST) ?: $site_url));
+        if ($host === '') {
+            return false;
+        }
+        if (stripos($property, 'sc-domain:') === 0) {
+            $bare = preg_replace('/^www\./', '', $host);
+            return strtolower(substr($property, 10)) === $bare;
+        }
+        $ph = strtolower((string) (wp_parse_url($property, PHP_URL_HOST) ?: ''));
+        return $ph !== '' && $ph === $host;
+    }
+
+    /**
      * ALL GSC properties covering $site_url, ranked best-first:
      *   1. sc-domain:host  (covers every protocol/subdomain — one property, all data)
      *   2. url-prefix whose host EXACTLY matches the site's host

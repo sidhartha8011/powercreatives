@@ -991,6 +991,9 @@ class PCM_Sites_Service
         // lets the user pick the actually-indexed variant (www vs non-www) so we don't create a second,
         // empty property next to the one Google already has data for.
         $url = trim($target_url) !== '' ? trim($target_url) : (string) $site->url;
+        // Did a HUMAN pick this variant in the dialog, or is it just the stored site URL?
+        // The two must behave differently — see the reuse guard and the pin below.
+        $chosen = trim($target_url) !== '';
 
         // The user's active GSC integration (OAuth connection or service-account JSON).
         $key = '';
@@ -1014,12 +1017,27 @@ class PCM_Sites_Service
         $existing = PCM_GSC::list_properties($key);
         if (!is_wp_error($existing)) {
             $matches = PCM_GSC::match_properties($existing, $url);
+            // When the user PICKED a variant, reuse only a property that actually serves
+            // THAT variant (an sc-domain property serves both, so it still counts).
+            // match_properties is variant-insensitive by design, so without this filter the
+            // www property was returned for a non-www pick — the choice became a no-op and
+            // the user got connected to an empty property (owner report 2026-08-03).
+            if ($chosen) {
+                $matches = array_values(array_filter(
+                    $matches,
+                    static fn(string $p): bool => PCM_GSC::covers_exact_variant($p, $url)
+                ));
+            }
             if (!empty($matches)) {
                 $report['added']         = true;
                 $report['alreadyExists'] = true;
                 $report['property']      = $matches[0];
                 $report['verified']      = true;
                 $report['hasData']       = self::gsc_has_data($key, $matches[0]);
+                // Make the pick STICK. Later stats pulls re-run match_properties against the
+                // STORED site url — which may still be the other variant — so without pinning,
+                // the choice silently reverts on the next pull ("it insists on using the www").
+                self::gsc_pin($site, $matches[0], $chosen);
                 return $report;
             }
         }
@@ -1080,8 +1098,31 @@ class PCM_Sites_Service
         // Tell the UI whether the property actually HAS Search Analytics data yet — a freshly
         // registered property is verified but empty for a few days, and without this flag the
         // user sees "Verified ✓" then an empty SEO table and assumes something broke.
-        $report['hasData'] = self::gsc_has_data($key, rtrim($url, '/') . '/');
+        $property          = rtrim($url, '/') . '/';
+        $report['hasData'] = self::gsc_has_data($key, $property);
+        // Same pin as the reuse branch: the variant the user just registered is the one their
+        // stats must come from, even though the stored site url may be the other variant.
+        self::gsc_pin($site, $property, $chosen);
         return $report;
+    }
+
+    /**
+     * Pin a site to the GSC property its stats must come from — but ONLY when a human chose
+     * the variant in the "Verify in GSC" dialog. Auto-provisioning stays unpinned so
+     * match_properties() keeps its heuristic (PCM_GSC::property_override's stated contract:
+     * "a site nobody has touched behaves exactly as before").
+     *
+     * @param object $site     Site row (needs ->url).
+     * @param string $property Resolved GSC property.
+     * @param bool   $chosen   True when the property came from an explicit user pick.
+     */
+    private static function gsc_pin(object $site, string $property, bool $chosen): void
+    {
+        if (!$chosen || $property === '' || !class_exists('PCM_GSC')
+            || !method_exists('PCM_GSC', 'set_property_override')) {
+            return;
+        }
+        PCM_GSC::set_property_override((string) $site->url, $property);
     }
 
     /**

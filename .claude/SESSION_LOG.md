@@ -11227,3 +11227,70 @@ Not committed.
   structural argument (native element + event bubbling) backed by the existing working pattern, NOT on an
   observed click. That is precisely the gap that let the break ship.
 - ZIP: Desktop\powercreatives\powerplatform-2026-08-03_0259.zip. Not committed.
+
+## 2026-08-03 — Pulled teammate work; completed the workspace-key sweep I had left unfinished [/task]
+Pulled 2 commits (Mon 02:22 + 03:01): GSC property pinning (new /integrations/gsc/property route +
+PCM_GSC changes), SEO saved-views extensions (views.php +75, ViewsToolbar, useViews), SEO index +221,
+Sites +67, CreateCustomSetDialog +182. Merge was clean except .claude/SESSION_LOG.md (append-append,
+resolved keep-both — the only conflicted file). Committed my workspace-key work first so the merge
+couldn't tangle it.
+⚠ CORRECTION TO MY OWN PRIOR CLAIM. Yesterday I wrote "grep-proved zero `integrations ... userId = %d`
+queries remain outside PCM_Access/PCM_DB". THAT WAS WRONG. My pattern required the literal word
+`integrations` in the FROM clause, but most of these build the query as `FROM $table` / `FROM {$table}`,
+so the regex could never match them. There were ELEVEN key lookups, not six. Caught it only because the
+teammate's new GSC route called `$this->get_provider_api_key(...)` and I checked what that helper does.
+The five I had missed — all now routed through PCM_Access::workspace_api_key:
+  - base-controller.php get_provider_api_key  ← THE BIG ONE: 23 call sites (optimizer, video, image,
+    integrations/brevo, proranktracker, gsc). A platform user still hit "No API key found" on all of them,
+    so the reported bug was NOT actually fixed by yesterday's change.
+  - video/service.php (private duplicate of the same helper)
+  - automations/channels/class-pcm-brevo-email-channel.php (Brevo sends)
+  - seo/gbp.php x2 (google_places + apify providers)
+Re-swept with a pattern that cannot miss (`SELECT apiKey`): exactly ONE match remains, PCM_Access:357.
+Lesson recorded for future sweeps: never grep for a table NAME when the codebase interpolates table
+variables — grep the SELECTed column instead.
+VERIFIED after both the merge and the completion: phpunit 627, 1 error + 27 failures = unchanged
+pre-existing baseline; standalone 88/88; orphan gate NONE; php -l clean on every touched file; tsc 59 =
+baseline with 0 new (he changed 6 TS files); vite build clean.
+Not committed (the 5-site completion is uncommitted; the merge itself is committed).
+
+## 2026-08-03 — "Verify in GSC" ignored the picked domain variant and insisted on www [/task]
+Report: the dialog auto-detected the indexed domain as https://knallenstandvard.se, the user deleted the
+"www." and clicked Verify — and got "connected to https://www.knallenstandvard.se/ ... no data yet".
+Their pick was silently discarded, and the property it connected to is the empty one.
+ROOT CAUSE (two independent halves — fixing either alone would NOT have fixed it):
+ 1. gsc_provision's step-0 "reuse, don't duplicate" guard calls PCM_GSC::match_properties(), which is
+    deliberately variant-INSENSITIVE (that is correct for AUTO-matching: the www property is a fine
+    stand-in and stops the app creating an empty duplicate). It ranks tiers domain→exact→OTHER→parent,
+    and "other" is precisely the www/non-www sibling — so for a non-www request the www property still
+    matched, `$matches[0]` was the www one, and the function returned "alreadyExists" without ever
+    honouring the user's variant. The dialog's whole purpose is to pick the variant, so the pick was a
+    no-op by construction.
+ 2. Even if it HAD registered the non-www property, later stats pulls re-run match_properties against
+    the STORED site url (still the www variant), so the choice would silently revert on the next pull —
+    which is literally the complaint ("when I pull data from GSC it's insisting on using the www").
+BUILT:
+ - PCM_GSC::covers_exact_variant($property,$site_url) — the STRICT variant test. `sc-domain:` counts as
+   an exact cover (a domain property genuinely serves both www and non-www, so reusing it honours either
+   pick). match_properties itself is UNTOUCHED — it has 6 callers and its variant-insensitivity is
+   correct for all of them.
+ - gsc_provision: new `$chosen` flag (did a human pick this, or is it just the stored site url?). When
+   chosen, the reuse candidates are filtered through covers_exact_variant, so the www property can no
+   longer stand in for a non-www pick; otherwise it proceeds to actually add the requested variant.
+ - gsc_pin() helper: on BOTH success paths (reuse + fresh add) an explicit pick is persisted via
+   PCM_GSC::set_property_override, so subsequent stats pulls use it. Auto-provisioning stays UNPINNED,
+   honouring property_override's stated contract ("a site nobody has touched behaves exactly as before").
+CHAIN VERIFIED TO CLOSE: integrations/controller.php gsc_stats (the SEO data pull) already reads the pin
+and lets it win over the heuristic — that route was added by the teammate ~1.5h before this fix; the pin
+existed but nothing in the Verify dialog ever SET it. This change connects the two. NB the optimizer's
+per-page keyword-stats path (optimizer/controller.php:236) is not pin-aware, but it already tries up to
+3 candidates until one returns data, so an empty www property loses there anyway — left alone.
+NO FRONTEND CHANGE: the dialog already sends targetUrl (Sites/index.tsx:671) — the backend was dropping it.
+VERIFIED: new tests/unit/GscVariantMatchTest.php 8/8 — non-www pick rejects the www property (the bug),
+and vice-versa; exact matches pass; sc-domain covers both; parent-domain does NOT count as exact; plus two
+tests pinning that AUTO-matching stays variant-insensitive and still ranks exact above the sibling (so the
+anti-duplicate behaviour is provably unchanged). MUTATION-TESTED: making covers_exact_variant
+variant-insensitive again (the original bug) fails 2 tests; restoring passes. Full phpunit 635 (was 627;
+1 error + 27 failures = unchanged pre-existing baseline), standalone 88/88, orphan gate clean, php -l clean.
+NOT LIVE-VERIFIED: needs a real GSC account; proof is unit + mutation tests. On the live site the user
+should now be able to pick non-www, get connected to it, and have stats keep using it. Not committed.
