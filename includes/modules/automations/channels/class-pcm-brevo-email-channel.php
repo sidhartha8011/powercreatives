@@ -158,14 +158,10 @@ class PCM_Brevo_Email_Channel implements PCM_Automation_Channel
      */
     private static function get_brevo_key(int $user_id): string
     {
-        global $wpdb;
-
-        $table = PCM_Schema::table('integrations');
-        $key = $wpdb->get_var($wpdb->prepare(
-            "SELECT apiKey FROM $table WHERE provider = %s AND userId = %d AND isActive = 1 LIMIT 1",
-            'brevo',
-            $user_id
-        ));
+        // Workspace-scoped (own key, else an admin's) — see PCM_Access::workspace_api_key.
+        $key = class_exists('PCM_Access')
+            ? PCM_Access::workspace_api_key('brevo', $user_id)
+            : null;
 
         return is_string($key) ? $key : '';
     }

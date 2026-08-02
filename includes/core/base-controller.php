@@ -591,14 +591,13 @@ abstract class PCM_REST_Base
      */
     protected function get_provider_api_key(string $provider, int $user_id): string
     {
-        global $wpdb;
-
-        $table = PCM_Schema::table('integrations');
-        $key = $wpdb->get_var($wpdb->prepare(
-            "SELECT apiKey FROM $table WHERE provider = %s AND userId = %d AND isActive = 1 LIMIT 1",
-            $provider,
-            $user_id
-        ));
+        // Workspace-scoped: caller's own key, else an admin's (PCM_Access::
+        // workspace_api_key). A platform (id/pass) user owns no integrations, so
+        // the old per-user lookup threw for them on all 23 call sites that reach
+        // this helper — video, image, optimizer, Brevo, ProRankTracker, GSC.
+        $key = class_exists('PCM_Access')
+            ? PCM_Access::workspace_api_key($provider, $user_id)
+            : null;
 
         if (empty($key)) {
             throw new \RuntimeException("No API key found for provider: {$provider}");

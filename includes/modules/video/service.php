@@ -230,14 +230,10 @@ class PCM_Video_Service
      */
     private function get_provider_api_key(string $provider, int $user_id): string
     {
-        global $wpdb;
-
-        $table = PCM_Schema::table('integrations');
-        $api_key = $wpdb->get_var($wpdb->prepare(
-            "SELECT apiKey FROM {$table} WHERE userId = %d AND provider = %s AND isActive = 1 LIMIT 1",
-            $user_id,
-            $provider
-        ));
+        // Workspace-scoped (own key, else an admin's) — see PCM_Access::workspace_api_key.
+        $api_key = class_exists('PCM_Access')
+            ? PCM_Access::workspace_api_key($provider, $user_id)
+            : null;
 
         if (empty($api_key)) {
             throw new \RuntimeException("No active API key found for provider: {$provider}");

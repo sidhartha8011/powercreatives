@@ -55,14 +55,10 @@ class PCM_SEO_GBP_Google_Provider implements PCM_SEO_GBP_Provider
 
     private function api_key(): string
     {
-        global $wpdb;
-        $table = PCM_Schema::table('integrations');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $key = $wpdb->get_var($wpdb->prepare(
-            "SELECT apiKey FROM {$table} WHERE provider = %s AND userId = %d AND isActive = 1 LIMIT 1",
-            'google_places',
-            $this->user_id
-        ));
+        // Workspace-scoped (own key, else an admin's) — see PCM_Access::workspace_api_key.
+        $key = class_exists('PCM_Access')
+            ? PCM_Access::workspace_api_key('google_places', $this->user_id)
+            : null;
         return (string) ($key ?: '');
     }
 
@@ -159,14 +155,10 @@ class PCM_SEO_GBP_Apify_Provider implements PCM_SEO_GBP_Provider
 
     private function api_key(): string
     {
-        global $wpdb;
-        $table = PCM_Schema::table('integrations');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $key = $wpdb->get_var($wpdb->prepare(
-            "SELECT apiKey FROM {$table} WHERE provider = %s AND userId = %d AND isActive = 1 LIMIT 1",
-            'apify',
-            $this->user_id
-        ));
+        // Workspace-scoped (own key, else an admin's) — see PCM_Access::workspace_api_key.
+        $key = class_exists('PCM_Access')
+            ? PCM_Access::workspace_api_key('apify', $this->user_id)
+            : null;
         return (string) ($key ?: '');
     }
 
