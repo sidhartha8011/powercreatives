@@ -11107,3 +11107,89 @@ NOT LIVE-VERIFIED: no local WP admin this session; proof is unit + mutation test
   Save & close 4-public (4).
 - Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
 - Not committed.
+
+## 2026-08-03 — GSC sc-domain subdomain matching (verified) + zip 0233
+- Context: the brizy.profitmedia.pro "no access" error was CORRECT — the readable list holds
+  `sc-domain:profitmedia.se` (.se, not .pro), so nothing could match. But the fix that message tells you to
+  make would NOT have worked: `match_properties()` matched `sc-domain:` by EXACT equality, and a GSC DOMAIN
+  property covers every SUBDOMAIN. After adding `sc-domain:profitmedia.pro` the code would compare
+  `profitmedia.pro === brizy.profitmedia.pro`, get false, and throw the same error.
+- FIX (class-pcm-gsc.php): a domain property also matches when the site is a subdomain of it, anchored on the
+  leading dot (`substr($bare, -(strlen($d)+1)) === '.'.$d`) so `notexample.com` can never match
+  `example.com`. Ranked LAST (own domain property → exact URL → www variant → parent domain), because a
+  parent property's data spans every sibling subdomain and is the least specific answer.
+- VERIFIED 11/11 (finishing the pass interrupted earlier): the reported case still correctly unmatched against
+  the REAL 56-property list — proving the original error message was right, not papered over; matches once
+  sc-domain:profitmedia.pro exists; notprofitmedia.pro rejected; different TLD rejected; deep subdomain
+  (a.b.example.com) matches; own domain property still first; www variant unchanged; exact URL outranks a
+  parent domain; unrelated excluded; empty list safe; a www SITE still prefers its exact www property
+  (ordering untouched).
+- Also re-confirmed the PIN path end-to-end for connected sites (the www/non-www complaint): Sites dropdown
+  saves `site.url`, list_sites reads the same key, gsc_stats reads it and REPLACES the auto-match — all four
+  points normalise through PCM_GSC::norm_url(), so save → read → pull agree.
+- Gates: orphan + accessibility exit 0 · harness 88/88 · page_versioning 67/67 · connector 11/11 · tsc 59
+  unchanged · build clean.
+- ZIP: Desktop\powercreatives\powerplatform-2026-08-03_0233.zip (1,947,716 bytes). Staged payload verified —
+  subdomain fix (1), property_override helpers (2), pin honored in gsc_stats (1), Sites dropdown in the
+  bundle (1), list_sites gscProperty (1); php -l clean; top-level only `powerplatform`, 0 backslashes,
+  0 leaks, PHP 154 == 154.
+- ⚠ This fix does NOT by itself make brizy.profitmedia.pro work — GSC still has no profitmedia.pro property.
+  Add `sc-domain:profitmedia.pro` (covers all subdomains) or a URL-prefix property for that host, grant the
+  connected account access, then pull.
+- Not committed.
+
+## 2026-08-03 — GSC period: moved INTO the button as a click-to-open menu (replaces the sibling Select)
+- Correction to my earlier build: I had put the period in a Select PARKED NEXT TO the "GSC stats" button.
+  The ask was for the dropdown to appear AFTER clicking the button. Rebuilt as a DropdownMenu whose trigger IS
+  the GSC stats PillButton — click it, pick a period, and the pull starts on that click. The standalone Select
+  is removed.
+- `handlePullGsc` now takes `days` as an ARGUMENT instead of reading `gscDays` state. That matters: with
+  pick-then-pull in one gesture, a setState would not have applied yet when the pull fired, so every pull
+  would have used the PREVIOUS period. The `gscDays` state is deleted entirely (0 refs left).
+- The trigger is disabled while `busy || gscPulling`, so the menu cannot be opened mid-pull — no concurrent or
+  overlapping pulls.
+- Verified: 8/8 — all five periods offered, each item pulls with ITS OWN period (no shared state to go stale),
+  every option survives the server's 1–180 clamp, 120 within the ceiling, the period comes from the click
+  rather than state, and the menu can't open while busy/pulling but does when idle.
+  tsc 59 = unchanged baseline with ZERO SEO errors; build clean; "Pull period" ships in dist and the OLD
+  Select's tooltip copy is GONE from dist (0) — i.e. the removal actually reached the bundle, not just source.
+  harness 88/88.
+- ⚠ NOT visually verified (no dev server). Not committed.
+
+## 2026-08-03 — Zip build: powerplatform-2026-08-03_0253.zip (GSC period menu rework)
+- C:\Users\sanky\Desktop\powercreatives\powerplatform-2026-08-03_0253.zip (1,947,689 bytes) from a fresh
+  `npm run build` (27.7s, clean).
+- Gates before packaging: orphan + accessibility gate exit 0 · harness 88/88 · page_versioning 67/67 ·
+  connector_selfupdate 11/11.
+- Rework verified in the STAGED bundle BOTH WAYS: the new click-to-open "Pull period" menu is present (1), and
+  the OLD sibling Select's tooltip copy is ABSENT (0). Checking the removal — not just the addition — is what
+  proves the bundle is actually rebuilt rather than a stale copy carrying both controls.
+- Other GSC work still aboard: sc-domain subdomain matcher fix (1), pin honored in gsc_stats (1), Sites
+  GSC-domain dropdown (1).
+- Structure: top-level ONLY `powerplatform`, 0 backslash paths, 0 leaks, PHP zip 154 == repo 154.
+- Not committed.
+
+## 2026-08-03 — I BROKE the GSC stats button; fixed (asChild on a non-forwarding component)
+- Report: after the period-menu rework, clicking "GSC stats" did NOTHING.
+- MY BUG. I wrapped the button as `<DropdownMenuTrigger asChild><PillButton …>`. Radix `asChild` CLONES the
+  child with its own onClick/ref/aria — but `PillButtonProps` is a CLOSED interface: no `forwardRef`, no
+  `{...rest}`. So every prop Radix injected was silently dropped and the trigger had no handler at all. The
+  button rendered perfectly and did nothing.
+- WHY MY CHECKS MISSED IT — worth recording, this is the third time today a green check hid dead code:
+  tsc passes (asChild accepts any ReactNode), the build passes, and my "does the string ship in dist" check
+  passed too — the MARKUP was there, only the WIRING was dead. None of my available gates can see an event
+  handler that never attaches.
+- FIX: `asChild` now targets a native `<span className="inline-flex">` that wraps the PillButton. A span is a
+  real DOM node, so it receives the handler and ref, and the inner button's click bubbles to it. PillButton is
+  given NO onClick. Disabled still works correctly — a disabled <button> emits no click, so the menu can't
+  open mid-pull.
+- JUSTIFIED BY AN EXISTING PATTERN, not a guess: PillButton.tsx:240 already does
+  `<DropdownMenuTrigger asChild><button …>` — proving Radix asChild works here WHEN ITS CHILD IS A NATIVE
+  ELEMENT. Also checked `PillSplitButton` (same file) and deliberately did NOT use it: it is a SPLIT button
+  (main click + separate caret menu), whereas the ask is for the whole button to open the menu.
+- Verified: tsc 59 = unchanged baseline; build clean; the trigger's child is now `<span>` (structural check on
+  source); menu copy still in dist; harness 88/88.
+- ⚠ HONEST LIMIT: I cannot click-test this — no dev server for this WP-embedded SPA. The fix rests on a
+  structural argument (native element + event bubbling) backed by the existing working pattern, NOT on an
+  observed click. That is precisely the gap that let the break ship.
+- ZIP: Desktop\powercreatives\powerplatform-2026-08-03_0259.zip. Not committed.

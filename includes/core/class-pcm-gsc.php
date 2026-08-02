@@ -291,16 +291,31 @@ class PCM_GSC
         $domain = array();
         $exact  = array();
         $other  = array();
+        $parent = array();
         foreach ($properties as $p) {
             if (stripos($p, 'sc-domain:') === 0) {
-                if (strtolower(substr($p, 10)) === $bare) { $domain[] = $p; }
+                $d = strtolower(substr($p, 10));
+                if ($d === $bare) {
+                    $domain[] = $p;
+                } elseif ($d !== '' && substr($bare, -(strlen($d) + 1)) === '.' . $d) {
+                    // A GSC DOMAIN property covers every subdomain — that is the whole point of
+                    // one. `sc-domain:example.com` therefore serves blog.example.com too, and an
+                    // exact-equality check meant a subdomain site reported "no access" even
+                    // though the account could read it (hit live: brizy.profitmedia.pro vs
+                    // sc-domain:profitmedia.pro). Anchored on the leading dot so
+                    // `notexample.com` can never match `example.com`.
+                    $parent[] = $p;
+                }
                 continue;
             }
             $ph = strtolower((string) (wp_parse_url($p, PHP_URL_HOST) ?: ''));
             if ($ph === '' || preg_replace('/^www\./', '', $ph) !== $bare) { continue; }
             if ($ph === $host) { $exact[] = $p; } else { $other[] = $p; }
         }
-        return array_values(array_unique(array_merge($domain, $exact, $other)));
+        // Order = most specific first: the site's OWN domain property, then its exact URL
+        // property, then www/non-www variants, and only then a parent-domain property that
+        // merely covers it (its data spans every sibling subdomain, so it is the last resort).
+        return array_values(array_unique(array_merge($domain, $exact, $other, $parent)));
     }
 
     /**

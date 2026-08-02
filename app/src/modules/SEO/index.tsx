@@ -453,10 +453,6 @@ export function SEOModule() {
   const [gscPages, setGscPages] = useState<Record<string, { clicks: number; impressions: number; ctr: number; position: number; keywords: string[] }>>({});
   const [gscRange, setGscRange] = useState<{ start: string; end: string } | null>(null);
   const [gscPulling, setGscPulling] = useState(false);
-  // Look-back window for the GSC pull. Defaults to 30 rather than the old hard-coded 28 so the
-  // active value is always one of the offered options — a default that isn't in its own dropdown
-  // reads as a bug. Two extra days of data; nothing else about the pull changes.
-  const [gscDays, setGscDays] = useState(30);
   const gscStatsMutation = trpc.integrations.gscStats.useMutation();
   // Mirrors PCM_GSC::norm_url — strip protocol/www/trailing slash, PERCENT-DECODE the path, and
   // lowercase. Decoding + lowercasing is what lets non-ASCII slugs (Swedish å/ä/ö) match: GSC
@@ -470,11 +466,11 @@ export function SEOModule() {
       return (host + path.replace(/\/+$/, '')).toLowerCase();
     } catch { return ''; }
   }, []);
-  const handlePullGsc = useCallback(async () => {
+  const handlePullGsc = useCallback(async (days: number) => {
     if (gscPulling) return;
     setGscPulling(true);
     try {
-      const data: any = await gscStatsMutation.mutateAsync({ site: isLocal ? '' : (activeSite?.url ?? ''), days: gscDays });
+      const data: any = await gscStatsMutation.mutateAsync({ site: isLocal ? '' : (activeSite?.url ?? ''), days });
       const pages = data?.pages && typeof data.pages === 'object' ? data.pages : {};
       setGscPages(pages);
       setGscRange(data?.range ?? null);
@@ -498,7 +494,7 @@ export function SEOModule() {
     } finally {
       setGscPulling(false);
     }
-  }, [gscPulling, gscStatsMutation, isLocal, activeSite, rows, normGscUrl, gscDays]);
+  }, [gscPulling, gscStatsMutation, isLocal, activeSite, rows, normGscUrl]);
 
   // ── ProRankTracker ranks ("Pos (PRT)" column) — the rank of each row's PRIMARY KEYWORD in the
   // PRT project auto-matched to this site. PRT is more accurate than GSC's average position, so the
@@ -1551,27 +1547,40 @@ export function SEOModule() {
           >
             {scanningAll ? 'Scanning…' : 'Scan links'}
           </PillButton>
-          {/* Pulls clicks / impressions / CTR / position / top queries over the selected window. */}
-          <PillButton
-            icon={gscPulling ? <Loader2 className="animate-spin" /> : <TrendingUp />}
-            onClick={handlePullGsc}
-            disabled={busy || gscPulling}
-          >
-            {gscPulling ? 'Pulling…' : 'GSC stats'}
-          </PillButton>
-          {/* Period for the pull above. Sits beside the button rather than inside it so the
-              range is visible WITHOUT opening anything — you can see what a pull will cover
-              before clicking. Values are whole days; the endpoint clamps to 1–180. */}
-          <Select value={String(gscDays)} onValueChange={(v) => setGscDays(Number(v))} disabled={gscPulling}>
-            <SelectTrigger className="h-7 w-[5.5rem] text-xs bg-card" title="How far back to pull Search Console data">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
+          {/* Clicks / impressions / CTR / position / top queries. Clicking the button opens the
+              period menu and the pull starts as soon as you pick one — so it's one gesture, and
+              there's no second control parked in the toolbar advertising a number you rarely
+              change. Values are whole days; the endpoint clamps to 1–180. */}
+          <DropdownMenu>
+            {/* asChild targets this SPAN, never the PillButton. PillButtonProps is a CLOSED
+                interface — no forwardRef, no {...rest} — so Radix's cloned onClick/ref would be
+                silently dropped and the button would do nothing at all (shipped exactly that
+                once). The span is a real DOM node, so it receives the handler and ref, and the
+                inner button's click bubbles up to it. PillButton is given NO onClick here. */}
+            <DropdownMenuTrigger asChild disabled={busy || gscPulling}>
+              <span className="inline-flex">
+                <PillButton
+                  icon={gscPulling ? <Loader2 className="animate-spin" /> : <TrendingUp />}
+                  disabled={busy || gscPulling}
+                >
+                  {gscPulling ? 'Pulling…' : 'GSC stats'}
+                </PillButton>
+              </span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-40">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">Pull period</DropdownMenuLabel>
+              <DropdownMenuSeparator />
               {[7, 30, 60, 90, 120].map((d) => (
-                <SelectItem key={d} value={String(d)} className="text-xs">{d} days</SelectItem>
+                <DropdownMenuItem
+                  key={d}
+                  className="text-xs"
+                  onSelect={() => { void handlePullGsc(d); }}
+                >
+                  Last {d} days
+                </DropdownMenuItem>
               ))}
-            </SelectContent>
-          </Select>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {/* Pulls ProRankTracker rank of each row's Primary Keyword → "Pos (PRT)" column. */}
           <PillButton
             icon={prtPulling ? <Loader2 className="animate-spin" /> : <Target />}
