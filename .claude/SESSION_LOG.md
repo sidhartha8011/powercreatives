@@ -11294,3 +11294,120 @@ variant-insensitive again (the original bug) fails 2 tests; restoring passes. Fu
 1 error + 27 failures = unchanged pre-existing baseline), standalone 88/88, orphan gate clean, php -l clean.
 NOT LIVE-VERIFIED: needs a real GSC account; proof is unit + mutation tests. On the live site the user
 should now be able to pick non-www, get connected to it, and have stats keep using it. Not committed.
+
+## 2026-08-03 — /onboard: map verified, 4 missing routes added
+- Map is 3 days old (<7), graphify not installed → VERIFY pass per the command, not a rebuild.
+- Core claim exact: map says seo/service.php is 1,661 lines / 47 methods; actual is 1,661 / 47.
+- GAP FOUND AND FIXED — 4 routes added by THIS session were absent from the route table, which the map itself
+  calls the thing future sessions rely on most: `POST /seo/authors`, `PATCH /seo/views/{id}/name`,
+  `PATCH /seo/views/{id}/pin`, `POST /integrations/gsc/property`. All four now documented WITH the reasoning
+  that is not recoverable from the code alone — the create-author capability rules (why `create_users` is
+  re-checked, why the role is hardcoded), and why the GSC pin + view pins live in OPTIONS rather than columns
+  (no migration / DB-version bump; per-user display preference).
+- Route table now 340 rows.
+- Note: my first check used a prefix-stripped grep and reported the two views routes as "map=2" — a FALSE
+  PASS caused by matching the generic `seo/views/` prefix. The exact-row re-check showed 0. Same class of
+  false-negative-then-false-positive grep error I hit earlier today on the connector route; when checking the
+  map, always anchor on `^| METHOD | /exact/path`.
+- Nothing edited outside `.claude/`.
+
+## 2026-08-04 — Bugfix: brand page logo/image upload
+Two independent bugs, one per symptom the report described.
+
+1. "does not work / error message in the logo" — `PCM_REST_Brands::add_asset()` read ONLY
+   `$_FILES['file']`, but EVERY caller in app/ (BrandLogoSection, ReferenceImageSelector,
+   ContextPanel, and 4 more) POSTs JSON `{fileData(base64), filename, mimeType}`. No $_FILES entry
+   ever existed, so the handler returned "No file uploaded." before the service was reached.
+   `wp_handle_upload()` can't serve that payload (hard `is_uploaded_file()` requirement), so added
+   `PCM_Brands_Service::add_asset_from_data()`. Factored the shared tail of `add_asset_from_url()`
+   into `store_asset_bytes()` — write / SVG-rasterize / append / extract-colours now lives once.
+   Multipart branch KEPT (API clients); the controller now dispatches on which one arrived.
+   Security: MIME allowlisted via the new `ASSET_MIME_EXT` const. `mime_to_ext()`'s ".png fallback"
+   must never become an implicit allowlist — hence `is_supported_asset_mime()` as a separate check.
+   Traversal is structurally impossible: `pathinfo(..., PATHINFO_FILENAME)` drops any directory part
+   BEFORE sanitize_file_name, and the extension always comes from the validated MIME, never the name.
+
+2. "falsely says you updated a brand when you just updated the image" — all 11 buttons in
+   ReferenceImageSelector.tsx lacked `type`, so they defaulted to `submit` INSIDE
+   BrandDialog's `<form onSubmit={handleSubmit}>`. Clicking Upload submitted the brand form →
+   "Brand updated" toast AND `setDialogOpen(false)`, which also unmounted the file input before the
+   user finished picking — so the reference-image path failed silently while the logo path (already
+   `type="button"` throughout) got as far as the server error. BrandColorSection already had
+   type="button" on all 4 of its buttons, which is what isolated the bug to one file.
+
+3. BrandLogoSection's bare `catch {}` replaced with the server message — that swallow is why a
+   flat-out broken endpoint read as a generic failure.
+
+VERIFIED
+- `php -l` clean on both PHP files.
+- NEW `tests/standalone/brand_asset_upload_test.php` — 29/29 pass. Covers the real browser payload,
+  data: prefix, append-not-replace, the MIME allowlist (4 rejected / 4 accepted / charset+casing
+  normalized), hostile filename, undecodable base64, role validation.
+- `npx tsc --noEmit` → 59 errors = baseline exactly, unchanged.
+- `npm run build` → built in 36.13s. Proved the fix is IN the bundle: the ReferenceImageSelector
+  region of dist/index-writer.js has `type: "button"` 11 times against 11 `onClick` — matching the
+  11 buttons.
+- NOT verified: no live WordPress run (no dev server for this WP-embedded SPA). The 29 tests use
+  stubs; in particular `sanitize_file_name` is my approximation, though the traversal defence does
+  not depend on it.
+
+Map: `POST /brands/{id}/assets` row now documents BOTH wire formats + the allowlist rule.
+
+## 2026-08-04 — Fetched brand images are now kept (create mode + page scrape)
+Reported: creating a brand from a URL keeps the logo but discards every other fetched image.
+
+ROOT CAUSE — `useBrandFetch.handleFetchBrand()` has two branches. The EDIT branch already stored the
+scraped images as `reference` assets; the CREATE branch created the brand and returned, dropping
+`allImages` on the floor. It was only ever passed onward to the logo picker. BrandDialog's own comment
+("fetches fresh data instead of the cache that may pre-date the images saved during fetch") already
+assumed the create path saved them — it never did.
+
+FIX
+- Pulled the edit branch's save loop into `saveScrapedImages(brandId, images)` and called it from BOTH
+  branches. Same cap (8), same skip-individual-failures behaviour. Create-mode toast now reports the
+  image count like edit mode does.
+- The loop returns sourceUrl → {fileKey, colors}, carried through `FetchResult.savedAssets` into
+  `WizardData.savedAssets`. `handleLogoSelected` now PROMOTES that stored asset via set-logo instead of
+  re-downloading the URL. Without this, saving the images first would have left every brand holding the
+  logo TWICE (once 'logo', once 'reference') — a duplicate this change would have introduced. Colors
+  are reused from the original store so the color step behaves the same on both paths.
+  Note the same double-save exists in edit mode today and is now fixed there too, by the same code path.
+
+ALSO FOUND — SECOND BROKEN PATH, fixed. Pasting a webpage URL into Reference Images calls
+`brands.fetchAssets` and reads `result.added.length`. The endpoint returned `{images}` only, so
+`result.added` was undefined → TypeError on EVERY call → "Failed to fetch images from URL", and nothing
+was ever stored. `fetch_website_assets()` only ever returned URLs. Added
+`PCM_Brands_Service::fetch_and_store_website_assets()` which scrapes AND stores (max 8), returning
+`{added, images, message}` — the contract the frontend already expected. Flagged rather than hidden:
+this is a widening beyond the literal report, but it is the same feature ("images that are fetched need
+to be saved") and was 100% broken.
+
+VERIFIED
+- `php -l` clean on both PHP files.
+- `tests/standalone/brand_asset_upload_test.php` extended 29 → 40 checks, all pass. New sections cover
+  the scrape-and-store path and its degradation (no images / all images dead / one dead one good).
+- NEGATIVE CONTROL, and it mattered: the first version of the accumulation test PASSED with the fix
+  removed. The PCM_DB stub was mutating the same object the service held, so the staleness could not
+  show. Rewrote the stub so update_brand() never touches the caller's object — as a real DB write
+  doesn't. Re-ran with the re-read disabled: now fails "brand accumulated all 3 assets" with got: 1,
+  i.e. 2 of 3 images silently overwritten. Restored → 40/40.
+- `npx tsc --noEmit` → 59 = baseline, unchanged.
+- `npm run build` → 17.91s. Bundle contains `saveScrapedImages` ×3 (definition + both branches),
+  `savedAssets` ×6, and the new `+ ${addedCount} image` toast.
+- Other standalone tests still pass: orphan check, reposting templates, template seed, connector.
+- NOT verified: no live WordPress. The scrape/HTTP layer is stubbed; real og:image/favicon markup and
+  real remote fetches are untested.
+
+Map: `/brands/{id}/fetch-assets` row now records that it STORES, its return shape, how it differs from
+`brands.scrapeUrl`, and the re-read-between-iterations rule.
+
+## 2026-08-04 — Zip build
+`C:\Users\sanky\Desktop\powercreatives\powercreatives-2026-08-04_0359.zip` — 4.9 MB, 1,088 entries,
+all rooted at `powercreatives/` so it installs as a WP plugin directly.
+Excluded node_modules + .git (207.3 MB dropped, 27,514 files → 1,088). `app/dist` and `vendor` KEPT —
+dist is what WordPress actually serves.
+No `zip` binary on this box; built with System.IO.Compression via PowerShell.
+Verified by reading back FROM INSIDE the archive, not from disk: no node_modules/.git leakage,
+every file this session touched present, and the bundled JS/PHP carry today's changes
+(`saveScrapedImages` ×3, `savedAssets` ×11, `type: "button"` ×298, `add_asset_from_data`,
+`fetch_and_store_website_assets`, `store_asset_bytes`, `ASSET_MIME_EXT`).

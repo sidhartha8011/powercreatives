@@ -141,6 +141,7 @@ export function BrandDialog({
         ...prev,
         scrapedImages: result.images,
         cssColors: result.colors,
+        savedAssets: result.savedAssets,
       }));
       setCurrentStep("logo");
     } else {
@@ -158,7 +159,21 @@ export function BrandDialog({
 
       setIsConfirmingLogo(true);
       try {
-        const result = await addAssetFromUrlMutation.mutateAsync({ brandId, imageUrl: logoUrl, role: 'logo' });
+        // The fetch already downloaded every scraped image onto the brand, so the
+        // chosen logo is usually one we hold. Promote it in place — downloading
+        // the same URL again would leave the brand with the image twice, once as
+        // 'logo' and once as 'reference'.
+        const alreadySaved = wizardData.savedAssets[logoUrl];
+
+        let result: any;
+        if (alreadySaved) {
+          await setAssetAsLogoMutation.mutateAsync({ brandId, fileKey: alreadySaved.fileKey });
+          // Colors came back when the image was first stored — reuse them so the
+          // color step behaves identically on both paths.
+          result = { extractedColors: alreadySaved.colors };
+        } else {
+          result = await addAssetFromUrlMutation.mutateAsync({ brandId, imageUrl: logoUrl, role: 'logo' });
+        }
 
         fetchHook.brandQuery.refetch();
         utils.brands.getById.invalidate();
@@ -184,7 +199,8 @@ export function BrandDialog({
         setIsConfirmingLogo(false);
       }
     },
-    [editBrand, fetchHook.lastCreatedBrandId, addAssetFromUrlMutation, fetchHook.brandQuery, utils, formHook]
+    [editBrand, fetchHook.lastCreatedBrandId, addAssetFromUrlMutation, setAssetAsLogoMutation,
+     wizardData.savedAssets, fetchHook.brandQuery, utils, formHook]
   );
 
   /** Colors assigned in LogoSelectionContent → merge into form */

@@ -20,8 +20,8 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useSettings } from "@/contexts/AppContext";
 import { mapScrapedToFormValues, mapFormValuesToBrandKeys, normalizeLanguage } from "@shared/brandTypes";
-import { MAX_COLORS } from "../types";
-import type { BrandFormData, Brand } from "../types";
+import { MAX_COLORS, MAX_FETCHED_IMAGES } from "../types";
+import type { BrandFormData, Brand, SavedScrapedAssets } from "../types";
 import type { ImageInfo } from "@/components/shared/LogoSelectionDialog";
 
 /** Data returned by handleFetchBrand — wizard uses this to drive step transitions */
@@ -34,6 +34,8 @@ export interface FetchResult {
   filledCount: number;
   /** Brand ID if one was created during this fetch (create mode only) */
   createdBrandId: number | null;
+  /** Scraped images stored on the brand, keyed by source URL */
+  savedAssets: SavedScrapedAssets;
 }
 
 interface UseBrandFetchOptions {
@@ -74,6 +76,44 @@ export function useBrandFetch({
     { id: editBrand?.id ?? 0 },
     { enabled: !!editBrand?.id }
   );
+
+  /**
+   * Download the scraped images onto the brand as reusable 'reference' assets.
+   *
+   * The whole point of the fetch is to pull the brand's imagery ONCE so Ads /
+   * Image can reuse it later — so this runs in BOTH modes. It used to run only
+   * in edit mode, which is why creating a brand from a URL kept the logo and
+   * silently discarded every other image it had just found.
+   *
+   * Returns sourceUrl → stored asset so the wizard's logo step can promote one
+   * of these rather than downloading the same URL again.
+   */
+  const saveScrapedImages = async (
+    brandId: number,
+    images: ImageInfo[]
+  ): Promise<SavedScrapedAssets> => {
+    const saved: SavedScrapedAssets = {};
+
+    for (const img of images.slice(0, MAX_FETCHED_IMAGES)) {
+      const imageUrl = (img as any)?.url ?? (img as unknown as string);
+      if (!imageUrl || typeof imageUrl !== "string") continue;
+
+      try {
+        const asset: any = await addAssetFromUrlMutation.mutateAsync({
+          brandId,
+          imageUrl,
+          role: "reference",
+        });
+        if (asset?.fileKey) {
+          saved[imageUrl] = { fileKey: asset.fileKey, colors: asset.extractedColors ?? [] };
+        }
+      } catch {
+        // Skip individual image failures — one dead URL must not cost the rest.
+      }
+    }
+
+    return saved;
+  };
 
   // ── Main fetch handler ──
   // Returns FetchResult so the wizard orchestrator can drive step transitions.
@@ -135,6 +175,7 @@ export function useBrandFetch({
       // Collect all scraped images (sorted by resolution from backend)
       const allImages: ImageInfo[] = scraped.images ?? [];
       let createdBrandId: number | null = null;
+      let savedAssets: SavedScrapedAssets = {};
 
       // 2. Handle edit mode — save images + colors to existing brand
       if (editBrand) {
@@ -148,19 +189,8 @@ export function useBrandFetch({
           }
 
           // Add scraped images as brand assets
-          let addedCount = 0;
-          for (const img of allImages.slice(0, 8)) {
-            try {
-              await addAssetFromUrlMutation.mutateAsync({
-                brandId: editBrand.id,
-                imageUrl: img.url ?? img,
-                role: 'reference',
-              });
-              addedCount++;
-            } catch {
-              // Skip individual image failures
-            }
-          }
+          savedAssets = await saveScrapedImages(editBrand.id, allImages);
+          const addedCount = Object.keys(savedAssets).length;
 
           brandQuery.refetch();
           utils.brands.list.invalidate();
@@ -215,8 +245,19 @@ export function useBrandFetch({
             createdBrandId = brandId;
             setLastCreatedBrandId(brandId);
             onBrandCreated?.(newBrand as Brand);
+
+            // Store the images we just found. Without this the brand keeps only
+            // whichever image the user later picks as the logo, and everything
+            // else the scrape turned up is lost the moment the wizard advances.
+            savedAssets = await saveScrapedImages(brandId, allImages);
+            const addedCount = Object.keys(savedAssets).length;
+
             utils.brands.list.invalidate();
-            toast.success(`Brand created with ${filledCount} field${filledCount > 1 ? "s" : ""}`);
+            toast.success(
+              addedCount > 0
+                ? `Brand created with ${filledCount} field${filledCount > 1 ? "s" : ""} + ${addedCount} image${addedCount > 1 ? "s" : ""}`
+                : `Brand created with ${filledCount} field${filledCount > 1 ? "s" : ""}`
+            );
           }
         } catch (createErr: any) {
           toast.error(createErr?.message || "Failed to create brand");
@@ -229,6 +270,7 @@ export function useBrandFetch({
         colors: scrapedColors,
         filledCount,
         createdBrandId,
+        savedAssets,
       };
     } catch (err: any) {
       toast.error(err?.message || "Failed to fetch brand info");

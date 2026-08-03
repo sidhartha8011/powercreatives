@@ -246,8 +246,8 @@ never raw `WP_REST_Response`.
 | DELETE | /brands/{id} | controller.php:72 | manage_options | Delete brand |
 | POST | /brands/bulk/delete | controller.php:75 | manage_options | Bulk delete |
 | POST | /brands/bulk/duplicate | controller.php:76 | manage_options | Bulk duplicate |
-| POST | /brands/{id}/fetch-assets | controller.php:79 | manage_options | Auto-fetch assets |
-| POST | /brands/{id}/assets | controller.php:80 | manage_options | Add brand asset |
+| POST | /brands/{id}/fetch-assets | controller.php:79 | manage_options | Scrape a page for images **and store them** on the brand as `reference` assets (max 8). Returns `{added, images, message}` — `added` is what was persisted, and ReferenceImageSelector reads it. NOT the same as `brands.scrapeUrl`, which is the wizard's read-only scrape. Storing loops `add_asset_from_url()`, which appends to the `$brand` object it is HANDED — the row must be re-read between iterations or each write overwrites the last. |
+| POST | /brands/{id}/assets | controller.php:80 | manage_options | Add brand asset. TWO wire formats: multipart `$_FILES['file']` (API clients) **and** JSON `{ fileData(base64), filename, mimeType, role }` — the JSON form is what EVERY caller in `app/` sends, so do not "simplify" it away. MIME is allowlisted in the service (`ASSET_MIME_EXT`); `mime_to_ext()`'s .png fallback is NOT an allowlist. |
 | POST | /brands/{id}/assets/from-url | controller.php:81 | manage_options | Add asset from URL |
 | DELETE | /brands/{id}/assets | controller.php:82 | manage_options | Remove brand asset |
 | POST | /brands/{id}/assets/reorder | controller.php:83 | manage_options | Reorder assets |
@@ -312,6 +312,7 @@ never raw `WP_REST_Response`.
 | POST | /integrations/proranktracker/page-ranks | controller.php:45 | manage_options | PRT page-level ranks |
 | GET | /integrations/gsc/properties | controller.php:46 | manage_options | GSC properties |
 | POST | /integrations/gsc/stats | controller.php:47 | manage_options | GSC search stats |
+| POST | /integrations/gsc/property | controller.php:48 | manage_options | PIN a site to a GSC property (empty `property` clears it → back to auto-matching). The pin REPLACES the heuristic candidate list in gsc_stats, so a correction cannot be silently re-guessed on the next pull. Stored in option `pcm_gsc_property_map` keyed by PCM_GSC::norm_url(site) — deliberately NOT a column, so no migration. |
 | POST | /integrations/gsc/oauth-start | controller.php:48 | manage_options | Start GSC OAuth flow |
 | GET | /integrations/gsc/oauth-callback | controller.php:51 | public | GSC OAuth redirect callback |
 | POST | /integrations/validate | controller.php:54 | manage_options | Validate provider key |
@@ -482,6 +483,14 @@ Basic auth with the connected site's WP Application Password). Remote reads use 
 | GET | /seo/gbp/brand/{brand} | controller.php:149 | Get brand GBP record |
 | GET | /seo/export | controller.php:152 | Export SEO config |
 | POST | /seo/import | controller.php:153 | Import SEO config |
+
+**Added 2026-08-03** (`manage_options` unless noted):
+
+| Method | Path | File:Line | Purpose |
+|---|---|---|---|
+| POST | /seo/authors | controller.php:46 | Create a WordPress USER to assign as a post author. ⚠ STRICTER than the rest of this controller ON PURPOSE: route gated `manage_options` (module default is only `edit_posts`), `create_users` RE-CHECKED in the handler (on Multisite an admin does NOT hold it), role HARDCODED to `author` and never read from input (otherwise this is a privilege-escalation endpoint), password GENERATED not accepted. |
+| PATCH | /seo/views/{id}/name | controller.php:121 | Rename a saved view. Ownership enforced in PCM_SEO_Views::rename_view(); a view that isn't yours 404s. |
+| PATCH | /seo/views/{id}/pin | controller.php:122 | Pin/unpin a view to the tab strip above the table. Pins live in option `pcm_seo_pinned_views` (userId => int[]), NOT an `isPinned` column — pinning is a per-user display preference, and a column would need a migration + DB-version bump. |
 
 **Previously undocumented seo routes** (all `manage_options`; verified against
 `includes/modules/seo/controller.php` on 2026-07-31 — the section listed 64 rows
