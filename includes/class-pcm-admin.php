@@ -121,12 +121,20 @@ class PCM_Admin
         }
 
         // Enqueue the main React app JS
-        // Using index-writer.js to bypass stubborn Nginx server caches
+        // Using index-writer.js to bypass stubborn Nginx server caches.
+        //
+        // Version = filemtime, matching the stylesheet above. It was time(), which
+        // changes on every request — so the browser could never cache the bundle and
+        // re-downloaded ~5 MB on EVERY admin page load. filemtime still busts the
+        // cache on every build (the filename is fixed, so the version is what does
+        // it), while letting an unchanged bundle be served from cache.
         wp_enqueue_script(
             'pcm-app',
             $app_url . 'index-writer.js',
             array(), // Dependencies managed by Vite build
-            time(), // Cache-bust on every page load for dev testing
+            file_exists($app_dir . 'index-writer.js')
+                ? filemtime($app_dir . 'index-writer.js')
+                : PCM_VERSION,
             true // Load in footer
         );
 

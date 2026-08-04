@@ -44,9 +44,9 @@
   transition: padding-left var(--pck-transition-fast);
 }
 
-/* Reserve left space for the checkbox whenever it's visible. Avoids
- * overlapping the title text when the user hovers / when in select-mode. */
-.card:hover .title,
+/* Reserve left space for the checkbox only when it is actually shown — i.e. in
+ * select-mode. Hover used to reserve it too, which meant hovering any card
+ * shifted its title and offered selection before the user had asked for it. */
 .card[data-selected] .title,
 .card[data-select-mode] .title {
   padding-left: 22px;
@@ -86,8 +86,9 @@
               border-color var(--pck-transition-fast);
 }
 
-.card:hover .checkbox,
-.card:focus-within .checkbox,
+/* Only in select-mode (or when this card is selected). Hover no longer reveals
+ * it: selection is a mode the user turns on from the toolbar, not something a
+ * passing cursor offers. */
 .card[data-selected] .checkbox,
 .card[data-select-mode] .checkbox {
   opacity: 1;

@@ -18,7 +18,15 @@
  *   - Optional drag-and-drop (via @hello-pangea/dnd) when onItemMove is set.
  */
 
-import { useCallback, useMemo, useState, type DragEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type ReactNode,
+} from 'react';
+import { Plus } from 'lucide-react';
 import {
   DragDropContext,
   Draggable,
@@ -160,6 +168,16 @@ function KanbanColumn<T extends { id: string | number }>({
     color: column.accentText ?? undefined,
   };
 
+  /**
+   * Publish this lane's accent as CSS custom properties on the header, so any
+   * control inside it (today the "+") can wear the lane's own colours from the
+   * stylesheet instead of being hardcoded a single neutral in TSX.
+   */
+  const headerAccentVars = {
+    '--pck-column-accent-bg': column.accentColor ?? undefined,
+    '--pck-column-accent-text': column.accentText ?? undefined,
+  } as CSSProperties;
+
   // Lane reorder (native HTML5 drag on the header — separate element and
   // mechanism from the hello-pangea card DnD, so the two never interfere).
   const reorderable = Boolean(onColumnReorder);
@@ -195,7 +213,7 @@ function KanbanColumn<T extends { id: string | number }>({
       onDragOver={reorderable ? handleHeaderDragOver : undefined}
       onDragLeave={reorderable ? () => setColumnDropTarget(false) : undefined}
       onDrop={reorderable ? handleHeaderDrop : undefined}
-      style={reorderable ? { cursor: 'grab' } : undefined}
+      style={reorderable ? { ...headerAccentVars, cursor: 'grab' } : headerAccentVars}
       title={reorderable ? 'Drag to reorder lanes' : undefined}
     >
       <span
@@ -221,14 +239,7 @@ function KanbanColumn<T extends { id: string | number }>({
           aria-label={`Create in ${column.label}`}
           title={`Create in ${column.label}`}
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-            <path
-              d="M7 2.5v9M2.5 7h9"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-            />
-          </svg>
+          <Plus size={14} strokeWidth={2} aria-hidden="true" />
         </button>
       )}
     </header>

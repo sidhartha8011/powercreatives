@@ -84,7 +84,8 @@ export function useProjectPickerData(): {
   deliveries: DeliveryOption[];
   brands: BrandOption[];
 } {
-  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
+  // basic=1 — names + links only; skips the asset/copy aggregation this view never reads.
+  const { data: projectsRaw } = trpc.assets.getProjects.useQuery({ basic: 1 });
   const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
   const { data: brandsRaw } = trpc.brands.list.useQuery();
 

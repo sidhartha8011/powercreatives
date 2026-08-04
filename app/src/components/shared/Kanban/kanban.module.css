@@ -86,9 +86,13 @@
   white-space: nowrap;
 }
 
-/* "Create in this lane" — sits at the far right of the header, quiet until the
- * lane is hovered or the button itself is focused. Opacity (not display) so it
- * keeps its space and the header never reflows. */
+/* "Create in this lane" — a pill sibling of the lane label, at the far right of
+ * the header. Always visible on EVERY lane: it was hover-gated, which made it
+ * look like only the hovered lane had one.
+ *
+ * It wears the lane's own colours: the header sets --pck-column-accent-bg /
+ * --pck-column-accent-text per column, so the button belongs to its lane instead
+ * of being one neutral grey across all six. Hover/focus changes emphasis only. */
 .columnCreate {
   margin-left: auto;
   display: inline-flex;
@@ -99,20 +103,17 @@
   padding: 0;
   border: none;
   border-radius: var(--pck-radius-pill);
-  background: transparent;
-  color: var(--pck-pill-text);
+  background: var(--pck-column-accent-bg, var(--pck-pill-bg));
+  color: var(--pck-column-accent-text, var(--pck-pill-text));
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease, background 120ms ease;
+  opacity: 0.75;
+  transition: opacity 120ms ease, filter 120ms ease;
 }
 
-.column:hover .columnCreate,
+.columnCreate:hover,
 .columnCreate:focus-visible {
   opacity: 1;
-}
-
-.columnCreate:hover {
-  background: var(--pck-pill-bg);
+  filter: brightness(0.94);
 }
 
 .columnList {

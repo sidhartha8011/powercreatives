@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { KanbanSquare, Trash2, X } from 'lucide-react';
+import { CheckSquare, KanbanSquare, Trash2, X } from 'lucide-react';
 
 import { trpc } from '@/lib/trpc';
 import { useApp } from '@/contexts/AppContext';
@@ -87,26 +87,35 @@ function nameMap(rows: ReadonlyArray<NamedRow>): Map<number, string> {
 }
 
 /**
- * Dropdown options for one link: only ids that actually occur on the board, each
- * labelled from its registry. Narrowing to present ids means every choice returns
- * at least one card — no dead options. An id with no registry row (deleted brand,
- * project outside the caller's scope) is labelled honestly rather than hidden, so
- * the card it belongs to stays reachable.
+ * Dropdown options for one link: the FULL registry, plus any id a set carries that
+ * the registry no longer explains (a deleted brand, a project outside the caller's
+ * scope) so that card stays reachable.
+ *
+ * This used to narrow to ids present on the board, on the reasoning that every
+ * choice should return at least one card. That was wrong: on a sparse board it
+ * empties the dropdowns entirely — with one set whose project has no delivery, the
+ * Delivery and Brand lists came back empty while the registries held 3 deliveries
+ * and 2 brands, so there was nothing to search and nothing to filter by. A filter
+ * exists to answer "what is available"; a choice that matches nothing already has
+ * an honest answer in the board's "No sets match your filters" notice.
  */
 function linkOptions(
+  registry: ReadonlyArray<NamedRow>,
   sets: ReadonlyArray<ApprovalSet>,
   accessor: (s: ApprovalSet) => number | null | undefined,
-  names: Map<number, string>,
   unknownLabel: string
 ): SearchableSelectOption[] {
-  const present = new Set<number>();
+  const known = new Set(registry.map((r) => r.id));
+  const options = registry.map((r) => ({ value: String(r.id), label: r.name }));
+
   for (const s of sets) {
     const id = accessor(s);
-    if (id != null) present.add(Number(id));
+    if (id != null && !known.has(Number(id))) {
+      known.add(Number(id));
+      options.push({ value: String(id), label: `${unknownLabel} #${id}` });
+    }
   }
-  return Array.from(present)
-    .map((id) => ({ value: String(id), label: names.get(id) ?? `${unknownLabel} #${id}` }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+  return options.sort((a, b) => a.label.localeCompare(b.label));
 }
 
 /** Currently-selected value of a searchable filter, or null when unset. */
@@ -165,7 +174,6 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
     openPreview,
     closePreview,
     selectedIds,
-    hasSelection,
     isSelected,
     toggleSelection,
     clearSelection,
@@ -175,11 +183,13 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
   // that own those names — the set row carries only the ids.
   const { data: brandsRaw } = trpc.brands.list.useQuery();
   const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
-  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
+  // basic=1 — names + links only; skips the asset/copy aggregation this view never reads.
+  const { data: projectsRaw } = trpc.assets.getProjects.useQuery({ basic: 1 });
 
-  const brandNameById = useMemo(() => nameMap(toNamedRows(brandsRaw)), [brandsRaw]);
-  const deliveryNameById = useMemo(() => nameMap(toNamedRows(deliveriesRaw)), [deliveriesRaw]);
-  const projectNameById = useMemo(() => nameMap(toNamedRows(projectsRaw)), [projectsRaw]);
+  const brandRows = useMemo(() => toNamedRows(brandsRaw), [brandsRaw]);
+  const deliveryRows = useMemo(() => toNamedRows(deliveriesRaw), [deliveriesRaw]);
+  const projectRows = useMemo(() => toNamedRows(projectsRaw), [projectsRaw]);
+  const brandNameById = useMemo(() => nameMap(brandRows), [brandRows]);
 
   const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
     // `.v2`: the 2026-08-04 bar dropped the `search` + `set` filters. applyFilters
@@ -209,16 +219,16 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
   }, [pendingFocusId, sets.length]);
 
   const brandOptions = useMemo(
-    () => linkOptions(sets, (s) => s.brandId, brandNameById, 'Brand'),
-    [sets, brandNameById]
+    () => linkOptions(brandRows, sets, (s) => s.brandId, 'Brand'),
+    [brandRows, sets]
   );
   const deliveryOptions = useMemo(
-    () => linkOptions(sets, (s) => s.deliveryId, deliveryNameById, 'Delivery'),
-    [sets, deliveryNameById]
+    () => linkOptions(deliveryRows, sets, (s) => s.deliveryId, 'Delivery'),
+    [deliveryRows, sets]
   );
   const projectOptions = useMemo(
-    () => linkOptions(sets, (s) => s.projectId, projectNameById, 'Project'),
-    [sets, projectNameById]
+    () => linkOptions(projectRows, sets, (s) => s.projectId, 'Project'),
+    [projectRows, sets]
   );
 
   const brandValue = readSelect(listState.filterState, 'brand');
@@ -244,6 +254,18 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
   );
 
   const getColumnId = useCallback((s: ApprovalSet) => s.status, []);
+
+  // ─── Select mode ─────────────────────────────────────────────
+  // An explicit mode, toggled from the toolbar. It used to be inferred from
+  // "is anything selected", which meant the only way in was a checkbox that
+  // appeared on hover — selection was offered before it was asked for.
+  const [selectMode, setSelectMode] = useState(false);
+  const toggleSelectMode = useCallback(() => {
+    setSelectMode((on) => {
+      if (on) clearSelection(); // leaving the mode drops the selection with it
+      return !on;
+    });
+  }, [clearSelection]);
 
   // ─── Delete confirmation flow ────────────────────────────────
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
@@ -289,7 +311,7 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
         onRequestDelete={requestSingleDelete}
         onToggleSelect={handleToggleSelect}
         isSelected={isSelected(s.id)}
-        selectMode={hasSelection}
+        selectMode={selectMode}
       />
     ),
     [
@@ -299,7 +321,7 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
       requestSingleDelete,
       handleToggleSelect,
       isSelected,
-      hasSelection,
+      selectMode,
       brandNameById,
     ]
   );
@@ -339,7 +361,7 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
       {/* Top bar: bulk-action bar when any card is selected, otherwise
           the standard filter/sort bar. They occupy the same slot so the
           layout below never shifts. */}
-      {hasSelection ? (
+      {selectMode ? (
         <div
           className="flex flex-wrap items-center gap-3 mb-6 bg-blue-50 p-2 rounded-lg border border-blue-200"
           role="region"
@@ -362,11 +384,11 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
             type="button"
             variant="ghost"
             size="sm"
-            onClick={clearSelection}
+            onClick={toggleSelectMode}
             className="h-9 ml-auto text-slate-600"
           >
             <X className="w-4 h-4 mr-1" aria-hidden="true" />
-            Cancel
+            Done
           </Button>
         </div>
       ) : (
@@ -434,6 +456,20 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
                 ))}
               </SelectContent>
             </Select>
+
+            {/* Selection is a mode you turn ON here — cards no longer offer a
+                checkbox just because the cursor passed over them. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={toggleSelectMode}
+              className="h-9 gap-1.5"
+              aria-pressed={selectMode}
+            >
+              <CheckSquare className="w-4 h-4" aria-hidden="true" />
+              Select
+            </Button>
           </div>
         </div>
       )}

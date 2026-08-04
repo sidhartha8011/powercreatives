@@ -381,6 +381,23 @@ class PCM_REST_Assets extends PCM_REST_Base
             return $this->success(array());
         }
 
+        // `basic=1` — the caller only needs id/name/deliveryId (dropdowns, pickers).
+        // Skips everything below: a GROUP_CONCAT of every asset URL for every
+        // project, a per-type COUNT, a second COUNT over copy_results, and a
+        // `SET SESSION group_concat_max_len`. The Approvals board asked for project
+        // NAMES and was paying for all of it on first paint.
+        if (filter_var($request->get_param('basic'), FILTER_VALIDATE_BOOLEAN)) {
+            return $this->success(array_map(static function ($row) {
+                return array(
+                    'id'         => (int) $row->id,
+                    'name'       => $row->name,
+                    'deliveryId' => $row->deliveryId !== null ? (int) $row->deliveryId : null,
+                    'siteId'     => $row->siteId !== null ? (int) $row->siteId : null,
+                    'status'     => $row->status,
+                );
+            }, $results));
+        }
+
         // --- BATCH LOADING ---
         $project_ids = array_map(function($row) { return (int)$row->id; }, $results);
         $placeholders = implode(',', array_fill(0, count($project_ids), '%d'));
