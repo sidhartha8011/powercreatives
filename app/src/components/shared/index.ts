@@ -48,4 +48,11 @@ export { SearchableSelect } from './SearchableSelect';
 export type { SearchableSelectOption, SearchableSelectProps } from './SearchableSelect';
 export { ProjectPicker, resolveProjectId, EMPTY_PROJECT_PICK } from './ProjectPicker';
 export type { ProjectPickerValue, ProjectPickerProps, ProjectOption } from './ProjectPicker';
+export { ApprovalSharePanel, buildDefaultInviteMessage } from './ApprovalSharePanel';
+export type { ApprovalSharePanelProps } from './ApprovalSharePanel';
+export {
+  APPROVAL_SETS_QUERY_KEY,
+  buildPublicBoardUrl,
+  useApprovalSetsCache,
+} from './approvalSets';
 

@@ -1,8 +1,9 @@
 /**
  * CreateCustomSetDialog — "+ Add Approval Set" for a Custom (Notion-style) document.
  *
- * ONE step. You author the document and fill in the three things the set needs — name,
- * project, client email — in the same dialog, then create.
+ * TWO views, ONE dialog. You author the document and fill in the three things the set needs
+ * — name, project, client email — then create; the dialog then swaps to the shared
+ * ApprovalSharePanel with the client link, instead of closing.
  *
  * It used to hand off to the shared SendToApprovalSetDialog as a second popup. That dialog
  * still exists and is still used from Ads/Copy/Image, where you're sending EXISTING assets and
@@ -10,6 +11,10 @@
  * nothing to choose — the document was just authored, so it can only be a new set — which made
  * the second popup a step that asked one real question (the name) and re-asked things the
  * caller already knew.
+ *
+ * What that removal DID drop, until 2026-08-04, was the client link: this dialog closed on a
+ * toast, so the one thing the flow exists to produce was never shown (gap ebe6501). The share
+ * panel is now the same component all three create flows end on.
  *
  * Create payload is deliberately identical to the one that dialog sends (see
  * handleGenerateLink there), including escapeAstralDeep on the snapshot so a WAF that strips
@@ -31,6 +36,11 @@ import {
   EMPTY_PROJECT_PICK,
   type ProjectPickerValue,
 } from '@/components/shared/ProjectPicker';
+import {
+  ApprovalSharePanel,
+  buildDefaultInviteMessage,
+} from '@/components/shared/ApprovalSharePanel';
+import { buildPublicBoardUrl, useApprovalSetsCache } from '@/components/shared/approvalSets';
 import { Send, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { escapeAstralDeep } from '@/lib/escapeAstral';
@@ -56,6 +66,8 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
   // The set's ONE mapping: a project (existing, or created on submit).
   const [project, setProject] = useState<ProjectPickerValue>(EMPTY_PROJECT_PICK);
   const [clientEmail, setClientEmail] = useState('');
+  // Set once created — switches the dialog from authoring to the share panel.
+  const [created, setCreated] = useState<{ id: number; shareUrl: string } | null>(null);
 
   const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
   const projects: { id: number; name: string }[] = Array.isArray(projectsRaw)
@@ -66,6 +78,7 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     ? (deliveriesRaw as any[]).map((d) => ({ id: Number(d.id), name: String(d.name) })) : [];
 
   const createProjectMutation = trpc.assets.createProject.useMutation();
+  const approvalSetsCache = useApprovalSetsCache();
 
   // Fresh canvas + fields every time it opens, so a cancelled draft never leaks into the next one.
   useEffect(() => {
@@ -79,14 +92,23 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
         : EMPTY_PROJECT_PICK
     );
     setClientEmail('');
+    setCreated(null);
   }, [open, preset?.projectId]);
 
   const createMutation = trpc.approvals.createSet.useMutation({
-    onSuccess: () => {
+    onSuccess: (data: any) => {
+      // Put the new card on the board NOW (the response is the full row), then
+      // reconcile — without this the board showed nothing until a page reload.
+      approvalSetsCache.registerCreated(data);
+
+      // Stay open on the share panel: this set has a token, and the client link
+      // is the point of the whole flow. Closing on a toast (what this dialog used
+      // to do) dropped it silently — the only create path that did.
+      setCreated({ id: Number(data.id), shareUrl: buildPublicBoardUrl(data.token) });
+
       toast.success(clientEmail.trim()
         ? 'Approval set created — invite emailed to the client.'
         : 'Approval set created.');
-      onClose();
     },
     onError: (err: any) => toast.error(err?.message || 'Failed to create the approval set.'),
   }) as any;
@@ -155,12 +177,28 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
         }}
       >
         <DialogHeader className="shrink-0">
-          <DialogTitle>New approval set</DialogTitle>
+          <DialogTitle>{created ? 'Approval set created' : 'New approval set'}</DialogTitle>
           <DialogDescription>
-            Write the document, name the set, and send it — all here.
+            {created
+              ? 'Send this link to your client, or email it from here.'
+              : 'Write the document, name the set, and send it — all here.'}
           </DialogDescription>
         </DialogHeader>
 
+        {created ? (
+          <div className="min-h-0 flex-1 overflow-y-auto py-2">
+            <ApprovalSharePanel
+              setId={created.id}
+              shareUrl={created.shareUrl}
+              defaultEmail={clientEmail}
+              defaultMessage={buildDefaultInviteMessage(null)}
+              // An email entered before Create was already sent by the server
+              // (create_set → share_set → client_invite) — don't invite a resend.
+              alreadySent={clientEmail.trim() !== ''}
+            />
+          </div>
+        ) : (
+        <>
         {/* Only the BODY scrolls; header and footer stay put, so Create is always reachable
             on a long document. */}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden py-2">
@@ -211,13 +249,23 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
 
           <CustomCardEditor content={content} onChange={setContent} overlay={overlay} onOverlayChange={setOverlay} />
         </div>
+        </>
+        )}
 
         <DialogFooter className="shrink-0">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button type="button" onClick={handleCreate} disabled={busy || !name.trim()} className="gap-1.5">
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Create approval set
-          </Button>
+          {created ? (
+            <Button type="button" onClick={onClose} variant="secondary" className="w-full">
+              Done &amp; Close
+            </Button>
+          ) : (
+            <>
+              <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+              <Button type="button" onClick={handleCreate} disabled={busy || !name.trim()} className="gap-1.5">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Create approval set
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
