@@ -1148,7 +1148,16 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "approvals.shareSet": {
         endpoint: "approvals/sets",
         method: "POST",
-        transform: (input: any) => ({ url: `approvals/sets/${input.id}/share`, body: { email: input.email, message: input.message } }),
+        // Carries `emails` (the share step's recipient pills) AND `email` (the
+        // original single-recipient callers). This body used to be hand-picked as
+        // { email, message } only, which silently dropped `emails` — the server
+        // then saw no recipient at all and answered "A valid email is required"
+        // for a perfectly valid address. A hand-built body is an allow-list: any
+        // field added at both ends disappears here unless it is named.
+        transform: (input: any) => ({
+            url: `approvals/sets/${input.id}/share`,
+            body: { email: input.email, emails: input.emails, message: input.message },
+        }),
     },
 
     // ── Notifications (approval-flow activity feed) ──

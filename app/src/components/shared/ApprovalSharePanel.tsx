@@ -10,10 +10,10 @@
  * Three actions, and the difference between the last two is only how much closes:
  *
  *   Cancel         — nothing sent, nothing moved, the step closes.
- *   Save           — sends, moves the lane, closes THIS step only.
- *   Save and Close — sends, moves the lane, and asks the host dialog to close too.
+ *   Send           — sends, moves the lane, closes THIS step only.
+ *   Send and Close — sends, moves the lane, and asks the host dialog to close too.
  *
- * A send is never undone by closing: by the time either Save returns, the email
+ * A send is never undone by closing: by the time either Send returns, the email
  * is out and the lane has already changed.
  *
  * One surface for every send path (Ads / Copy / Image / the custom card), which
@@ -27,16 +27,10 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { trpc } from '@/lib/trpc';
 import { copyToClipboard } from '@/lib/utils';
 
+import { SearchableSelect } from './SearchableSelect';
 import { useApprovalSetsCache } from './approvalSets';
 
 /**
@@ -316,19 +310,21 @@ export function ApprovalSharePanel({
             <span className="text-xs font-semibold text-muted-foreground">
               Move to lane after sending
             </span>
-            <Select value={laneAfterSend} onValueChange={setLaneAfterSend} disabled={busy}>
-              <SelectTrigger className="bg-card" aria-label="Move to lane after sending">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_MOVE}>Leave where it is</SelectItem>
-                {laneOptions.map((lane) => (
-                  <SelectItem key={lane.id} value={lane.id}>
-                    {lane.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* The shared control, so the choice can be CLEARED — clearing means
+                "leave the set where it is". A plain Select had no clear
+                affordance, so a pre-selected lane could never be un-chosen. */}
+            <SearchableSelect
+              options={laneOptions.map((lane) => ({ value: lane.id, label: lane.label }))}
+              value={laneAfterSend === NO_MOVE ? null : laneAfterSend}
+              onChange={(next) => setLaneAfterSend(next ?? NO_MOVE)}
+              placeholder="Leave where it is"
+              allLabel="Leave where it is"
+              searchPlaceholder="Search lanes…"
+              emptyLabel="No lanes match"
+              className="w-full"
+              ariaLabel="Move to lane after sending"
+              disabled={busy}
+            />
           </>
         )}
 
@@ -350,7 +346,7 @@ export function ApprovalSharePanel({
             className="gap-2"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : inviteSent ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-            Save
+            Send
           </Button>
           <Button
             type="button"
@@ -359,7 +355,7 @@ export function ApprovalSharePanel({
             className="gap-2"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Save and Close
+            Send and Close
           </Button>
         </div>
       </div>

@@ -1,9 +1,10 @@
 /**
  * CreateCustomSetDialog — "+ Add Approval Set" for a Custom (Notion-style) document.
  *
- * TWO views, ONE dialog. You author the document and fill in the three things the set needs
- * — name, project, client email — then create; the dialog then swaps to the shared
- * ApprovalSharePanel with the client link, instead of closing.
+ * You author the document and fill in what the set IS — name, lane, and its project
+ * mapping — then create. Creating never emails anyone: the client link and every send
+ * live in the ApprovalSharePanel popover, anchored to Generate Share Link, so there is
+ * exactly ONE route an invite can leave by.
  *
  * It used to hand off to the shared SendToApprovalSetDialog as a second popup. That dialog
  * still exists and is still used from Ads/Copy/Image, where you're sending EXISTING assets and
@@ -90,7 +91,6 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
   const [name, setName] = useState('');
   // The set's ONE mapping: a project (existing, or created on submit).
   const [project, setProject] = useState<ProjectPickerValue>(EMPTY_PROJECT_PICK);
-  const [clientEmail, setClientEmail] = useState('');
   // Which lane the set is CREATED in (distinct from the share step's
   // "move to lane after sending"). Registry-driven, defaults to the clicked "+".
   const [lane, setLane] = useState<ApprovalStatus>('draft');
@@ -122,7 +122,6 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
       deliveryId: preset?.deliveryId ?? null,
       brandId: preset?.brandId ?? null,
     });
-    setClientEmail('');
     setShareOpen(false);
     closeAfterCreate.current = false;
     setLane(
@@ -144,9 +143,7 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
       // to do) dropped it silently — the only create path that did.
       setCreated({ id: Number(data.id), shareUrl: buildPublicBoardUrl(data.token) });
 
-      toast.success(clientEmail.trim()
-        ? 'Approval set created — invite emailed to the client.'
-        : 'Approval set created.');
+      toast.success('Approval set created.');
 
       // "Save and Close" finishes here; "Generate Share Link" opens the step.
       if (closeAfterCreate.current) {
@@ -190,8 +187,6 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
       // still no separate "name the document" field.
       title: setName,
     };
-    const inviteEmail = clientEmail.trim();
-
     createMutation.mutate({
       name: setName,
       // Narrowing value from the mapping row; the live chain overwrites it the
@@ -202,10 +197,9 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
       // The set's ONE mapping. Delivery + brand are derived live from this
       // project server-side (PCM_Hierarchy) — never stored on the set.
       projectId: effProjectId,
-      // When present the SERVER shares on create (moves the set to the client lane AND emails
-      // the invite) — one request, nothing for the browser to miss.
-      clientEmail: inviteEmail || null,
-      clientMessage: null,
+      // Creating no longer sends anything. All sharing happens in the share
+      // popover, so this dialog never asks the server to email on create — there
+      // is exactly one route an invite can leave by.
       snapshot: escapeAstralDeep({
         media: [],
         copy: [],
@@ -284,16 +278,12 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
                   <ApprovalSharePanel
                     setId={created.id}
                     shareUrl={created.shareUrl}
-                    defaultEmail={clientEmail}
                     defaultMessage={buildDefaultInviteMessage(null)}
-                    // An email entered before saving was already sent by the server
-                    // (create_set → share_set → client_invite) — don't invite a resend.
-                    alreadySent={clientEmail.trim() !== ''}
                     lanes={laneOptions.map((l) => ({ id: l.value, label: l.label }))}
                     defaultLaneAfterSend="client"
-                    // Save = sent + moved, close THIS step only; the editor stays.
+                    // Send = sent + moved, close THIS step only; the editor stays.
                     onSaved={() => setShareOpen(false)}
-                    // Save and Close = sent + moved, everything closes.
+                    // Send and Close = sent + moved, everything closes.
                     onSaveAndClose={onClose}
                     onCancel={() => setShareOpen(false)}
                   />
@@ -308,7 +298,7 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden py-2">
           {/* Row 1 — what the set IS. bg-card on every input; no transparent
               fields sitting on the dialog surface. */}
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="set-name">Name <span className="text-destructive">*</span></Label>
               <Input
@@ -317,17 +307,6 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. October campaign"
-                className="bg-card"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="set-email">Recipient Email</Label>
-              <Input
-                id="set-email"
-                type="email"
-                value={clientEmail}
-                onChange={(e) => setClientEmail(e.target.value)}
-                placeholder="Optional — emails the link"
                 className="bg-card"
               />
             </div>
@@ -351,7 +330,7 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
           </div>
 
           {/* Row 2 — the mapping. Any one narrows the other two. */}
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <ProjectPicker
               projects={projects}
               deliveries={deliveries}
