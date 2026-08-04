@@ -90,8 +90,8 @@ export function ContextPanel(props: ContextPanelProps) {
                 return extracted;
               }
               await mutations.refreshBrand(brandId);
-            } catch (err) {
-              toast.error("Failed to save logo.");
+            } catch (err: any) {
+              toast.error(err?.message || "Failed to save logo.");
             } finally {
               actions.setIsConfirmingLogo(false);
             }
@@ -121,8 +121,11 @@ export function ContextPanel(props: ContextPanelProps) {
                 } catch (err) { }
               }
               await mutations.refreshBrand(brandId);
-            } catch (err) {
-              toast.error("Failed to upload logo.");
+            } catch (err: any) {
+              // Surface the server's reason — the tRPC shim already carries the WP
+              // error message, and discarding it is what made a flat-out broken
+              // upload endpoint read as a generic failure.
+              toast.error(err?.message || "Failed to upload logo.");
             } finally {
               actions.setIsConfirmingLogo(false);
             }
@@ -145,8 +148,8 @@ export function ContextPanel(props: ContextPanelProps) {
                 } catch (err) { }
               }
               await mutations.refreshBrand(brandId);
-            } catch (err) {
-              toast.error("Failed to fetch logo from URL.");
+            } catch (err: any) {
+              toast.error(err?.message || "Failed to fetch logo from URL.");
             } finally {
               actions.setIsConfirmingLogo(false);
             }

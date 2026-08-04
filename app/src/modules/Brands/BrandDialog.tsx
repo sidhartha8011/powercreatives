@@ -239,6 +239,23 @@ export function BrandDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Only save when the submit actually came from OUR submit button.
+    //
+    // This form hosts a whole asset manager — the logo popover, the colour
+    // swatches, and the reference-image grid, ~20 buttons in components that live
+    // outside this file. A native <button> defaults to type="submit", so ANY of
+    // them that forgets type="button" silently becomes "save the brand and close",
+    // which is exactly the "clicked Upload, got 'Brand updated'" bug. Fixing the
+    // buttons one by one only holds until the next one is added; this holds always.
+    //
+    // submitter is null for implicit submission (Enter in a text field) and
+    // undefined on browsers without SubmitEvent.submitter — both stay allowed, so
+    // neither Enter-to-save nor older Safari regresses. Only a real element that
+    // isn't our button is rejected.
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLElement | null | undefined;
+    if (submitter && submitter.dataset.brandSubmit !== "1") return;
+
     if (!formHook.form.name.trim()) return;
     const cleanedColors = formHook.form.colors.filter((c) => c && c.trim());
     onSubmit({ ...formHook.form, colors: cleanedColors });
@@ -422,7 +439,7 @@ export function BrandDialog({
               <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={!formHook.form.name.trim() || isLoading || fetchHook.isFetching}>
+              <Button type="submit" data-brand-submit="1" disabled={!formHook.form.name.trim() || isLoading || fetchHook.isFetching}>
                 {isLoading ? "Saving..." : isEdit ? "Update Brand" : "Create Brand"}
               </Button>
             </DialogFooter>

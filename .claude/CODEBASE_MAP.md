@@ -847,3 +847,18 @@ Client approval boards + public share links. Four asset buckets: `media`, `copy`
 ## Open questions
 1. The git/commit ritual in `AGENTS.md` (BEFORE/AFTER/VERIFIED empty commits, dated CHANGELOG per change) — should it be followed for every change, or only when explicitly requested? (The workspace rule says don't commit unless asked.)
 2. Where are provider API keys configured for local testing — which provider keys, if any, are seeded in the local DB's `wp_pcm_integrations`?
+
+## Packaging / release
+
+Build the distributable with **`python scripts/build_zip.py`** — never hand-roll the zip.
+
+- The archive roots at **`powerplatform/`** (`PROJECT_NAME`, build_zip.py:9), NOT `powercreatives`.
+  WordPress keys a plugin off its FOLDER, so a zip with any other root installs as a SEPARATE,
+  inactive plugin beside the live one and the update silently does nothing. That cost a full
+  session of "the fix isn't landing" on 2026-08-04.
+- Output: `~/Desktop/power-creatives.zip` plus `~/Desktop/powercreatives/power-creatives[-DATE].zip`.
+- Excludes `app/src`, `vendor`, `.claude`, `scripts`, `.git`, `node_modules`. `vendor` is dev-only
+  (require-dev test tooling; nothing loads vendor/autoload.php at runtime) — shipping it triples the
+  zip and sends phpunit/mockery to a client install. `app/dist` IS shipped; it is what WordPress serves.
+- To confirm a deploy landed, fetch the enqueued bundle in the browser console and grep it. The script
+  `src` also reveals the ACTIVE plugin folder — the fastest way to spot a duplicate install.
