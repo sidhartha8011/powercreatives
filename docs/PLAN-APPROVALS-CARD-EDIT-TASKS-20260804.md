@@ -25,8 +25,21 @@ written once.
 
 ## STEP 1+2 (MERGED) — Card-type registry, with editability as one of its properties
 
+**Contract fact established before writing it (verified 2026-08-04):**
+- `CreativeAssetCard` has exactly **one** consumer — `ClientReviewPage.tsx:557`. The
+  extraction's blast radius is one file.
+- The existing save reads its token from **`window.location.search`**
+  (`CreativeAssetCard.tsx:349`), because the update route is token-scoped:
+  `POST /approvals/sets/{token}/assets/{asset_id}` (`controller.php:81`).
+- ⇒ **The contract must NOT be `save(patch)`.** A per-type `save` that reached into
+  `window.location` would copy ambient global state into all four type files, and each would
+  silently break on any surface that lacks that query param. The **host resolves the token
+  once** and passes it down. A type file stays a pure function of its props.
+
 - [ ] 1.1 `cardTypes/types.ts` — the contract every type implements:
-      `{ id, label, render(ctx), editable: boolean, editFields, save(patch) }`.
+      `{ id, label, render(ctx), editable: boolean, editFields, save(patch, ctx) }`, where
+      `ctx` carries `{ token, assetId, isTeamMember, updateAsset }` — supplied by the host,
+      never read from `window` inside a type.
 - [ ] 1.2 One file per type, moved **verbatim** out of the host so behaviour cannot drift in
       the same commit that moves it: `media.tsx`, `copy.tsx`, `article.tsx`, `custom.tsx`.
 - [ ] 1.3 `copy` declares `editable: true` with its existing inline-edit behaviour intact
