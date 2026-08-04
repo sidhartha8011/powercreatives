@@ -185,7 +185,15 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
               projects={projects}
               deliveries={deliveries}
               value={project}
-              onChange={setProject}
+              onChange={(next) =>
+                setProject(
+                  // Came from a delivery's "+" and you're creating a project?
+                  // Seed that delivery — you can still change or clear it.
+                  next.newProjectName !== null && project.newProjectName === null
+                    ? { ...next, newProjectDeliveryId: preset?.deliveryId ?? null }
+                    : next
+                )
+              }
               disabled={busy}
             />
             <div className="space-y-1.5">
