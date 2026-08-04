@@ -1148,15 +1148,18 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "approvals.shareSet": {
         endpoint: "approvals/sets",
         method: "POST",
-        // Carries `emails` (the share step's recipient pills) AND `email` (the
-        // original single-recipient callers). This body used to be hand-picked as
-        // { email, message } only, which silently dropped `emails` — the server
-        // then saw no recipient at all and answered "A valid email is required"
-        // for a perfectly valid address. A hand-built body is an allow-list: any
-        // field added at both ends disappears here unless it is named.
+        // PASS THE WHOLE INPUT. This was hand-picked as { email, message }, which
+        // silently dropped `emails` when the panel and the server both moved to a
+        // recipient list — the server saw no recipient and answered "A valid email
+        // is required" for a perfectly valid address, with nothing erroring
+        // anywhere. Naming the missing key would only have fixed that one field;
+        // a hand-built body is an allow-list, so the NEXT field added at both ends
+        // vanishes identically. The handler reads only what it needs and
+        // sanitises it — the client has no business deciding which of its own
+        // fields survive the trip.
         transform: (input: any) => ({
             url: `approvals/sets/${input.id}/share`,
-            body: { email: input.email, emails: input.emails, message: input.message },
+            body: input,
         }),
     },
 

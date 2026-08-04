@@ -18,7 +18,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckSquare, KanbanSquare, Trash2, X } from 'lucide-react';
 
-import { trpc } from '@/lib/trpc';
 import { useApp } from '@/contexts/AppContext';
 
 import {
@@ -40,6 +39,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/shared';
+import { useProjectPickerData } from '@/components/shared/ProjectPicker';
 import {
   DefaultEmptyState,
   KanbanBoard,
@@ -68,23 +68,16 @@ function isApprovalStatus(value: string): value is ApprovalStatus {
   return (APPROVAL_STATUSES as ReadonlyArray<string>).includes(value);
 }
 
-/** A registry row reduced to what a dropdown needs. */
+/**
+ * A registry row reduced to what a dropdown needs.
+ *
+ * This file used to carry its own `toNamedRows()` normaliser for brands,
+ * deliveries and projects — a second definition of "what a registry row is",
+ * beside `useProjectPickerData()`. Two normalisers for the same three registries
+ * is exactly how `deliveryId` went missing from the picker options once already,
+ * so the board now consumes the shared hook and keeps no copy.
+ */
 type NamedRow = { id: number; name: string };
-
-/** Normalize a registry response (wpdb serializes ids as strings) to id + name. */
-function toNamedRows(raw: unknown): NamedRow[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((r) => {
-      const row = r as { id?: unknown; name?: unknown };
-      return { id: Number(row.id), name: String(row.name ?? '') };
-    })
-    .filter((r) => Number.isFinite(r.id) && r.name !== '');
-}
-
-function nameMap(rows: ReadonlyArray<NamedRow>): Map<number, string> {
-  return new Map(rows.map((r) => [r.id, r.name]));
-}
 
 /**
  * Dropdown options for one link: the FULL registry, plus any id a set carries that
@@ -180,16 +173,18 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
   } = useApprovalSets();
 
   // The three dropdowns filter by ID and read their labels from the registries
-  // that own those names — the set row carries only the ids.
-  const { data: brandsRaw } = trpc.brands.list.useQuery();
-  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
-  // basic=1 — names + links only; skips the asset/copy aggregation this view never reads.
-  const { data: projectsRaw } = trpc.assets.getProjects.useQuery({ basic: 1 });
+  // that own those names — the set row carries only the ids. ONE normaliser,
+  // shared with the pickers: the board keeps no copy of that boundary code.
+  const {
+    projects: projectRows,
+    deliveries: deliveryRows,
+    brands: brandRows,
+  } = useProjectPickerData();
 
-  const brandRows = useMemo(() => toNamedRows(brandsRaw), [brandsRaw]);
-  const deliveryRows = useMemo(() => toNamedRows(deliveriesRaw), [deliveriesRaw]);
-  const projectRows = useMemo(() => toNamedRows(projectsRaw), [projectsRaw]);
-  const brandNameById = useMemo(() => nameMap(brandRows), [brandRows]);
+  const brandNameById = useMemo(
+    () => new Map(brandRows.map((b) => [b.id, b.name])),
+    [brandRows]
+  );
 
   const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
     // `.v2`: the 2026-08-04 bar dropped the `search` + `set` filters. applyFilters
