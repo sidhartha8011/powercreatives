@@ -443,12 +443,21 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
                 Clear filters
               </Button>
             )}
+            {/* Always-present slot: it reports the count, or says nothing matched.
+                Either way it is the SAME element in the SAME row, so the board
+                below never moves because of filter state. */}
             <div className="text-xs text-muted-foreground font-medium">
-              Showing {listState.filteredItems.length} set
-              {listState.filteredItems.length === 1 ? '' : 's'}
+              {isFilterEmpty ? (
+                'No sets match your filters'
+              ) : (
+                <>
+                  Showing {listState.filteredItems.length} set
+                  {listState.filteredItems.length === 1 ? '' : 's'}
+                </>
+              )}
             </div>
             <Select value={sortValue} onValueChange={handleSortChange}>
-              <SelectTrigger className="w-[170px] h-9 bg-white" aria-label="Sort">
+              <SelectTrigger className="w-[170px] h-9 bg-card" aria-label="Sort">
                 <SelectValue placeholder="Sort" />
               </SelectTrigger>
               <SelectContent>
@@ -487,18 +496,10 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
         />
       ) : (
         <div className="flex-1 min-h-0 overflow-auto flex flex-col">
-          {isFilterEmpty && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3 shrink-0">
-              <span>No sets match your filters.</span>
-              <button
-                type="button"
-                onClick={listState.clearAll}
-                className="text-foreground underline underline-offset-2 hover:text-foreground/80"
-              >
-                Clear filters
-              </button>
-            </div>
-          )}
+          {/* No "nothing matched" row here. It used to render above the board and
+              pushed every lane down the moment a filter matched nothing — the
+              layout must not move because of filter state. The same message now
+              occupies the bar's existing counter slot, which is always present. */}
           <KanbanBoard<ApprovalSet>
             columns={setColumns}
             items={listState.filteredItems}
