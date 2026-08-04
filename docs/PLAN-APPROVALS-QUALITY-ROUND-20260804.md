@@ -8,13 +8,42 @@ Ordered so the unknown is measured first and the user-facing breakage is fixed b
 ---
 
 ## STEP 1 — Measure the share-link time (C10) · the only item whose fix is unknown
-- [ ] 1.1 Instrument the real path in **web** context and record elapsed ms per stage:
-      `create_set` · `share_set` · `dispatch` · `fire_trigger` · `update_status`.
-- [ ] 1.2 Record the numbers in this file. No fix is designed before they exist.
-- [ ] 1.3 Delete the probe; verify it no longer answers.
-- **Verify:** per-stage ms written below; probe gone.
+- [x] 1.1 Instrumented the real path in **web** context (secret-keyed probe over HTTP; the
+      CLI route was abandoned — `wp-load` there cannot reach the DB, which is also what hung
+      the first attempt for 3 minutes).
+- [x] 1.2 Numbers recorded below.
+- [x] 1.3 Probe deleted; re-requested and confirmed **HTTP 404**.
 
-**MEASURED RESULT:** _(filled in by 1.2)_
+**MEASURED RESULT — the server is not the problem.**
+
+```
+wp-load boot                  436.8 ms
+create_set                     17.9 ms
+build_share_url x1              3.4 ms
+get_set_by_id + chain           2.2 ms
+share_set FULL                 81.8 ms   <== the whole server-side share chain
+update_status                  18.8 ms
+```
+
+**Total server work for the button: ~120 ms** (plus one ~440 ms WP boot per REST request).
+Not 15 s, not 30 s — off by more than two orders of magnitude.
+
+**Payload also ruled out.** The stored snapshots for every existing set are **262–885 bytes**
+with **no base64 images**, so the request body is under 1 KB. The "the card embeds
+multi-megabyte data-URL images" theory is dead for these cards.
+
+**Therefore the time is spent in the browser or in transport, not in PHP.** What remains,
+and none of it is guessable from here:
+- The button issues up to **two sequential REST calls** (create the project, then the set),
+  each paying its own ~440 ms WP boot.
+- `pm.max_children = 2` on this box — concurrent SPA requests (listSets + three registries +
+  the create + the post-create invalidate refetch) queue behind two workers.
+- Avast is documented in HANDOVER-20260717 §4 as interfering with local HTTP on this machine.
+
+**BLOCKED — needs one artifact I cannot produce:** the **DevTools → Network** timing for the
+Generate Share Link click (which request, and its Waiting vs Content-Download split). That
+single screenshot decides between "queued behind workers", "one slow request", and "the
+browser was still fetching the bundle". No fix is designed before it exists.
 
 ---
 
