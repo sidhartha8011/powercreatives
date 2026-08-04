@@ -829,7 +829,12 @@
     Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji";
   --pcm-notion-ink: #37352f;
   position: fixed; inset: 0; z-index: 9999;
-  background: rgba(15, 15, 15, 0.55);
+  /* Scrim PLUS blur. It was a flat scrim, so the page behind stayed sharp and
+     the document never separated from it - the single biggest reason the opened
+     card read as an unfinished panel rather than a page. */
+  background: rgba(15, 15, 15, 0.48);
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
   display: flex; align-items: flex-start; justify-content: center;
   padding: 4vh 16px;
   cursor: default;
@@ -876,7 +881,7 @@
 .pcm-notion-iconbtn:hover { background: rgba(55,53,47,0.08); color: rgba(55,53,47,0.9); }
 
 .pcm-notion-page { padding: 6px 0 22vh; }
-.pcm-notion-col { max-width: 708px; margin: 0 auto; padding: 0 24px; }
+.pcm-notion-col { max-width: var(--pcm-doc-measure); margin: 0 auto; padding: 0 24px; }
 @media (min-width: 820px) { .pcm-notion-col { padding: 0; } }
 
 /* Approve action inside the opened document (client peek view). The client asked
@@ -905,7 +910,7 @@
 
 .pcm-notion-title {
   font-family: var(--pcm-notion-font);
-  font-size: 40px; line-height: 1.2; font-weight: 700;
+  font-size: var(--pcm-doc-title-size); line-height: var(--pcm-doc-title-leading); font-weight: var(--pcm-doc-title-weight);
   letter-spacing: -0.018em;
   color: var(--pcm-notion-ink);
   margin: 34px 0 6px;
@@ -927,7 +932,7 @@
 .pcm-notion-prose {
   font-family: var(--pcm-notion-font);
   color: var(--pcm-notion-ink);
-  font-size: 16px; line-height: 1.5;
+  font-size: var(--pcm-doc-size); line-height: var(--pcm-doc-leading);
 }
 .pcm-notion-prose .ProseMirror { outline: none; }
 .pcm-notion-prose h1,

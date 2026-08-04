@@ -566,13 +566,34 @@
    margins to 0 via :where() selectors (specificity 1,0,1). Our article
    typography MUST include #pcm-root prefix to exceed that specificity. */
 
-/* ── THE ONE PROSE SCALE ──
-   Every rich-text editing surface reads these. Defined once so the Writer canvas
-   and the approval card editor cannot drift apart — they had, at 11px vs 13px,
-   which is what made card text look oversized next to the Writer. Change the
-   scale here and both follow. */
-#pcm-root,
-.pcm-card-editor {
+/* ═══════════════════════════════════════════════════════════════════════
+   TWO SCALES, DELIBERATELY DISTINCT — do not merge them.
+
+   1. THE DOCUMENT SCALE (--pcm-doc-*) — approval-card documents. A page you
+      read and write prose in: 16px on a 708px measure, Notion-like.
+   2. THE ADMIN-COMPACT SCALE (--pcm-prose-*) — the Writer canvas, which
+      documents its own 11px as "compact fit with admin UI".
+
+   These were briefly collapsed into one on 2026-08-04, which dragged the card
+   editor from 13px down to 11px. Sharing a definition was right; sharing it with
+   ADMIN CHROME was not — a document surface is not admin chrome.
+
+   Declared on BOTH :root and #pcm-root on purpose. The card viewer
+   (ArticleViewerDialog) createPortals to document.body, i.e. OUTSIDE #pcm-root,
+   so a #pcm-root-only declaration would never reach it.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root,
+#pcm-root {
+  /* 1 — the document scale (card viewer + card editor) */
+  --pcm-doc-measure: 708px;
+  --pcm-doc-size: 16px;
+  --pcm-doc-leading: 1.5;
+  --pcm-doc-ink: #37352f;
+  --pcm-doc-title-size: 40px;
+  --pcm-doc-title-leading: 1.2;
+  --pcm-doc-title-weight: 700;
+
+  /* 2 — the admin-compact scale (Writer canvas only) */
   --pcm-prose-size: 11px;
   --pcm-prose-leading: 1.7;
   --pcm-prose-color: #1a1a2e;
@@ -989,21 +1010,26 @@
    the portal, where the #pcm-root reset does not apply. The two DOM contexts are
    disjoint, so the branches never fight — values stay identical in both.
    ========================================================= */
+/* The card editor is a DOCUMENT surface, so it reads the document scale — the
+   same variables the card viewer reads, which is what makes authoring and
+   reading the same page rather than two lookalikes.
+
+   Both branches are required and are NOT redundant: `#pcm-root .pcm-card-editor`
+   (1,1,0) is what beats the `#pcm-root :where(p|h1…)` resets (1,0,1) in-page,
+   and the bare `.pcm-card-editor` (0,1,0) is what applies inside a portal, where
+   the reset never runs. The two DOM contexts are disjoint, so the branches never
+   fight and the values stay identical in both. */
 #pcm-root .pcm-card-editor,
 .pcm-card-editor {
-  /* The SAME prose scale the Writer canvas uses — see "THE ONE PROSE SCALE".
-     This was a bespoke 13px/1.6, which rendered visibly larger than the Writer
-     and was the "the card font got bigger" report. */
-  font-size: var(--pcm-prose-size);
-  line-height: var(--pcm-prose-leading);
-  color: var(--pcm-prose-color);
+  font-size: var(--pcm-doc-size);
+  line-height: var(--pcm-doc-leading);
+  color: var(--pcm-doc-ink);
   font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
-}
-
-#pcm-root .pcm-card-editor p,
-.pcm-card-editor p {
-  line-height: var(--pcm-prose-p-leading);
-  color: var(--pcm-prose-p-color);
+  /* A page, not a form field: a centred measure the text actually reads at. */
+  max-width: var(--pcm-doc-measure);
+  margin-inline: auto;
+  /* The caret is never against the bottom edge. */
+  padding-bottom: 12vh;
 }
 #pcm-root .pcm-card-editor h1, .pcm-card-editor h1 { font-size: 1.5em; font-weight: 700; line-height: 1.3; margin: 1em 0 0.4em; }
 #pcm-root .pcm-card-editor h2, .pcm-card-editor h2 { font-size: 1.3em; font-weight: 650; line-height: 1.35; margin: 0.9em 0 0.35em; }
