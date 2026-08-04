@@ -356,15 +356,35 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->not_found('Brand');
         }
 
-        $files = $request->get_file_params();
-        if (empty($files['file'])) {
-            return $this->error('No file uploaded.');
-        }
-
         $role = sanitize_text_field($request->get_param('role') ?? '');
 
+        // Two wire formats, because the app and API clients disagree:
+        //   - multipart/form-data → $_FILES['file'], handled by wp_handle_upload().
+        //   - JSON { fileData, filename, mimeType } → what EVERY caller in app/ sends.
+        // Only the multipart branch existed, so every upload from the UI died on
+        // "No file uploaded." before reaching the service.
+        $files = $request->get_file_params();
+        $file_data = $request->get_param('fileData');
+
         try {
-            $asset = $this->service->upload_asset($files['file'], $id, $user->id, $brand, $role);
+            if (!empty($files['file'])) {
+                $asset = $this->service->upload_asset($files['file'], $id, $user->id, $brand, $role);
+            }
+            elseif (is_string($file_data) && $file_data !== '') {
+                $asset = $this->service->add_asset_from_data(
+                    $file_data,
+                    sanitize_file_name((string) $request->get_param('filename')),
+                    sanitize_text_field((string) $request->get_param('mimeType')),
+                    $id,
+                    $user->id,
+                    $brand,
+                    $role
+                );
+            }
+            else {
+                return $this->error('No file uploaded.');
+            }
+
             return $this->success($asset, 201);
         }
         catch (\InvalidArgumentException $e) {
@@ -426,8 +446,9 @@ class PCM_REST_Brands extends PCM_REST_Base
         }
 
         try {
-            $images = $this->service->fetch_website_assets($url);
-            return $this->success(array('images' => $images));
+            // Stores what it finds — the caller reads `added`, not just `images`.
+            $result = $this->service->fetch_and_store_website_assets($url, $id, $user->id, $brand);
+            return $this->success($result);
         }
         catch (\RuntimeException $e) {
             return $this->error($e->getMessage());

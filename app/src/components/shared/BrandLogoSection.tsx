@@ -111,8 +111,10 @@ export function BrandLogoSection({
         if (extracted && extracted.length > 0) {
           onColorsExtracted?.(extracted);
         }
-      } catch {
-        toast.error("Failed to upload logo");
+      } catch (err: any) {
+        // Surface the server's reason. A bare `catch {}` here is what made the
+        // broken upload endpoint look like a generic failure for as long as it did.
+        toast.error(err?.message || "Failed to upload logo");
       } finally {
         setUploadingLogo(false);
         if (logoInputRef.current) logoInputRef.current.value = "";

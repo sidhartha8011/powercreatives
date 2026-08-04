@@ -20,6 +20,26 @@ export type { Brand };
 /** Steps in the brand creation wizard flow */
 export type WizardStep = 'url' | 'logo' | 'colors' | 'form';
 
+/** Max scraped images persisted to a brand in one fetch. */
+export const MAX_FETCHED_IMAGES = 8;
+
+/** A scraped image that has been downloaded and stored on the brand. */
+export interface SavedScrapedAsset {
+  /** fileKey of the stored brand asset. */
+  fileKey: string;
+  /** Dominant colors the backend extracted while storing it. */
+  colors: string[];
+}
+
+/**
+ * Source image URL → the brand asset it was stored as.
+ *
+ * Lets the logo step PROMOTE an already-stored image (set-logo) instead of
+ * downloading the same URL a second time, which would leave the brand holding
+ * two copies of the logo — one 'logo', one 'reference'.
+ */
+export type SavedScrapedAssets = Record<string, SavedScrapedAsset>;
+
 /** Data collected during wizard steps, passed between steps */
 export interface WizardData {
   /** Scraped images from website (sorted by size, largest first) */
@@ -30,6 +50,8 @@ export interface WizardData {
   logoColors: string[];
   /** Colors scraped from CSS on the website */
   cssColors: string[];
+  /** Scraped images already stored on the brand, keyed by source URL */
+  savedAssets: SavedScrapedAssets;
 }
 
 /** Empty wizard data sentinel */
@@ -38,6 +60,7 @@ export const EMPTY_WIZARD_DATA: WizardData = {
   selectedLogoUrl: null,
   logoColors: [],
   cssColors: [],
+  savedAssets: {},
 };
 
 // ============================================

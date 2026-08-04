@@ -141,6 +141,7 @@ export function BrandDialog({
         ...prev,
         scrapedImages: result.images,
         cssColors: result.colors,
+        savedAssets: result.savedAssets,
       }));
       setCurrentStep("logo");
     } else {
@@ -158,7 +159,21 @@ export function BrandDialog({
 
       setIsConfirmingLogo(true);
       try {
-        const result = await addAssetFromUrlMutation.mutateAsync({ brandId, imageUrl: logoUrl, role: 'logo' });
+        // The fetch already downloaded every scraped image onto the brand, so the
+        // chosen logo is usually one we hold. Promote it in place — downloading
+        // the same URL again would leave the brand with the image twice, once as
+        // 'logo' and once as 'reference'.
+        const alreadySaved = wizardData.savedAssets[logoUrl];
+
+        let result: any;
+        if (alreadySaved) {
+          await setAssetAsLogoMutation.mutateAsync({ brandId, fileKey: alreadySaved.fileKey });
+          // Colors came back when the image was first stored — reuse them so the
+          // color step behaves identically on both paths.
+          result = { extractedColors: alreadySaved.colors };
+        } else {
+          result = await addAssetFromUrlMutation.mutateAsync({ brandId, imageUrl: logoUrl, role: 'logo' });
+        }
 
         fetchHook.brandQuery.refetch();
         utils.brands.getById.invalidate();
@@ -184,7 +199,8 @@ export function BrandDialog({
         setIsConfirmingLogo(false);
       }
     },
-    [editBrand, fetchHook.lastCreatedBrandId, addAssetFromUrlMutation, fetchHook.brandQuery, utils, formHook]
+    [editBrand, fetchHook.lastCreatedBrandId, addAssetFromUrlMutation, setAssetAsLogoMutation,
+     wizardData.savedAssets, fetchHook.brandQuery, utils, formHook]
   );
 
   /** Colors assigned in LogoSelectionContent → merge into form */
@@ -223,6 +239,23 @@ export function BrandDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Only save when the submit actually came from OUR submit button.
+    //
+    // This form hosts a whole asset manager — the logo popover, the colour
+    // swatches, and the reference-image grid, ~20 buttons in components that live
+    // outside this file. A native <button> defaults to type="submit", so ANY of
+    // them that forgets type="button" silently becomes "save the brand and close",
+    // which is exactly the "clicked Upload, got 'Brand updated'" bug. Fixing the
+    // buttons one by one only holds until the next one is added; this holds always.
+    //
+    // submitter is null for implicit submission (Enter in a text field) and
+    // undefined on browsers without SubmitEvent.submitter — both stay allowed, so
+    // neither Enter-to-save nor older Safari regresses. Only a real element that
+    // isn't our button is rejected.
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLElement | null | undefined;
+    if (submitter && submitter.dataset.brandSubmit !== "1") return;
+
     if (!formHook.form.name.trim()) return;
     const cleanedColors = formHook.form.colors.filter((c) => c && c.trim());
     onSubmit({ ...formHook.form, colors: cleanedColors });
@@ -406,7 +439,7 @@ export function BrandDialog({
               <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={!formHook.form.name.trim() || isLoading || fetchHook.isFetching}>
+              <Button type="submit" data-brand-submit="1" disabled={!formHook.form.name.trim() || isLoading || fetchHook.isFetching}>
                 {isLoading ? "Saving..." : isEdit ? "Update Brand" : "Create Brand"}
               </Button>
             </DialogFooter>

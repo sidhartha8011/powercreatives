@@ -4,6 +4,21 @@ import { toast } from "sonner";
 import type { ContextData } from "@/components/shared/ContextPanel";
 import { getBrandLogo } from "@shared/brandAssetResolver";
 
+/**
+ * Throw with the server's actual reason when an upload fails.
+ *
+ * The two uploads below post multipart/form-data with a raw fetch instead of the
+ * tRPC shim, so nothing unwraps the WordPress error envelope for them. Reading it
+ * here is the difference between "Failed to upload logo." and being told the nonce
+ * expired, the type is unsupported, or no file arrived at all.
+ */
+async function uploadError(response: Response): Promise<Error> {
+  const body: any = await response.json().catch(() => ({}));
+  return new Error(
+    body?.message || `Upload failed (${response.status} ${response.statusText})`
+  );
+}
+
 export function useBrandAssets(
   contextData: ContextData,
   onContextChange: (data: ContextData) => void
@@ -167,12 +182,12 @@ export function useBrandAssets(
       });
 
       if (!response.ok) {
-        throw new Error("Upload failed");
+        throw await uploadError(response);
       }
       
       await refreshBrand(currentContext.brandId);
-    } catch (err) {
-      toast.error("Failed to upload logo.");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to upload logo.");
     } finally {
       setIsUploadingLogo(false);
     }
@@ -198,12 +213,12 @@ export function useBrandAssets(
       });
 
       if (!response.ok) {
-        throw new Error("Upload failed");
+        throw await uploadError(response);
       }
       
       await refreshBrand(currentContext.brandId);
-    } catch (err) {
-      toast.error("Failed to upload certification.");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to upload certification.");
     } finally {
       setIsUploadingCertification(false);
     }

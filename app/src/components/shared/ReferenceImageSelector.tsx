@@ -334,6 +334,7 @@ export function ReferenceImageSelector({
         <SectionLabel count={assets.length}>Reference Images</SectionLabel>
         {assets.length > 0 && (
           <button
+            type="button"
             onClick={handleClearAll}
             disabled={isBusy}
             className="flex items-center gap-1 text-xs transition-colors hover:opacity-80 disabled:opacity-40"
@@ -392,6 +393,7 @@ export function ReferenceImageSelector({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
+                        type="button"
                         onClick={() => onSetAsPrimary(index)}
                         disabled={isBusy}
                         className="p-0.5 rounded hover:bg-yellow-500/40 text-white disabled:opacity-40"
@@ -410,6 +412,7 @@ export function ReferenceImageSelector({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
+                        type="button"
                         onClick={() => handleMoveUp(index)}
                         disabled={isBusy}
                         className="p-0.5 rounded hover:bg-white/20 text-white disabled:opacity-40"
@@ -428,6 +431,7 @@ export function ReferenceImageSelector({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
+                        type="button"
                         onClick={() => handleMoveDown(index)}
                         disabled={isBusy}
                         className="p-0.5 rounded hover:bg-white/20 text-white disabled:opacity-40"
@@ -445,6 +449,7 @@ export function ReferenceImageSelector({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
+                      type="button"
                       onClick={() => handleRemove(asset.fileKey)}
                       disabled={isBusy}
                       className="p-0.5 rounded hover:bg-red-500/40 text-white disabled:opacity-40"
@@ -465,6 +470,7 @@ export function ReferenceImageSelector({
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
+                  type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isBusy}
                   className="flex items-center justify-center rounded transition-colors"
@@ -509,6 +515,7 @@ export function ReferenceImageSelector({
           </p>
           <div className="flex gap-2">
             <Button
+              type="button"
               variant="outline"
               size="sm"
               onClick={() => fileInputRef.current?.click()}
@@ -519,6 +526,7 @@ export function ReferenceImageSelector({
               Upload
             </Button>
             <Button
+              type="button"
               variant="outline"
               size="sm"
               onClick={() => setShowUrlInput(true)}
@@ -556,6 +564,7 @@ export function ReferenceImageSelector({
               autoFocus
             />
             <Button
+              type="button"
               variant="outline"
               size="sm"
               onClick={handleFetchUrl}
@@ -570,6 +579,7 @@ export function ReferenceImageSelector({
               {fetchingUrl ? "" : "Fetch"}
             </Button>
             <Button
+              type="button"
               variant="ghost"
               size="sm"
               onClick={() => {
@@ -595,6 +605,7 @@ export function ReferenceImageSelector({
       {/* Fetch from URL link (when images exist and URL input is hidden) */}
       {assets.length > 0 && !showUrlInput && (
         <button
+          type="button"
           onClick={() => setShowUrlInput(true)}
           disabled={isBusy}
           className="flex items-center gap-1 text-xs transition-colors hover:opacity-80"

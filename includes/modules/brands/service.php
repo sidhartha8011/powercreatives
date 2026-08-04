@@ -270,13 +270,133 @@ class PCM_Brands_Service
             throw new \RuntimeException('Downloaded image is empty.');
         }
 
-        // Save to uploads directory
+        return $this->store_asset_bytes(
+            $body,
+            'pcm-brand-' . wp_generate_uuid4() . $this->mime_to_ext($mime_type),
+            $mime_type,
+            $brand_id,
+            $user_id,
+            $brand,
+            $role,
+            'url_fetch'
+        );
+    }
+
+    /**
+     * Add a brand asset from a base64 payload.
+     *
+     * THIS is the path the browser actually uses. Every caller in app/ —
+     * BrandLogoSection, ReferenceImageSelector, ContextPanel — reads the file with
+     * FileReader/arrayBuffer and POSTs JSON { fileData, filename, mimeType }, not
+     * multipart/form-data. There is therefore no $_FILES entry and wp_handle_upload()
+     * (which hard-requires an is_uploaded_file() tmp_name) cannot serve it; see
+     * upload_asset() for the multipart path, which is kept for API clients.
+     *
+     * @param string $base64    Base64 body, with or without a `data:...;base64,` prefix.
+     * @param string $filename  Client-supplied filename (sanitized here, never trusted).
+     * @param string $mime_type Client-supplied MIME — checked against the allowlist.
+     * @param int    $brand_id  Brand ID.
+     * @param int    $user_id   PCM user ID.
+     * @param object $brand     Brand DB row.
+     * @param string $role      Required role: 'logo' | 'certification' | 'reference'.
+     *
+     * @return array Asset data.
+     * @throws \InvalidArgumentException If role is empty or not in the allowed set.
+     * @throws \RuntimeException On an unsupported type or undecodable payload.
+     */
+    public function add_asset_from_data(
+        string $base64,
+        string $filename,
+        string $mime_type,
+        int $brand_id,
+        int $user_id,
+        object $brand,
+        string $role
+    ): array {
+        $this->assert_valid_role($role);
+
+        $mime_type = strtolower(trim(explode(';', $mime_type)[0]));
+
+        // Allowlist, not sniffing: the extension we are about to write comes from this
+        // map, so anything outside it has nowhere safe to land. Rejecting here also
+        // stops a caller from smuggling e.g. text/html into the uploads directory.
+        if (!$this->is_supported_asset_mime($mime_type)) {
+            throw new \RuntimeException('Unsupported image type "' . $mime_type . '". Use JPEG, PNG, WebP, GIF, or SVG.');
+        }
+
+        // Browsers vary on whether the data: prefix survives — strip it either way.
+        if (strpos($base64, 'base64,') !== false) {
+            $base64 = explode('base64,', $base64)[1];
+        }
+
+        $binary = base64_decode($base64, true);
+        if ($binary === false || $binary === '') {
+            throw new \RuntimeException('Failed to decode the uploaded image data.');
+        }
+
+        // Keep the user's filename (it is what they will recognize in the Media
+        // Library) but force our own extension, so the name can never disagree with
+        // the validated MIME.
+        $base = sanitize_file_name(pathinfo($filename, PATHINFO_FILENAME));
+        if ($base === '') {
+            $base = 'brand-asset';
+        }
+
+        return $this->store_asset_bytes(
+            $binary,
+            $base . $this->mime_to_ext($mime_type),
+            $mime_type,
+            $brand_id,
+            $user_id,
+            $brand,
+            $role,
+            'upload'
+        );
+    }
+
+    /**
+     * Write already-in-memory image bytes into the uploads directory and register
+     * them as a brand asset.
+     *
+     * Shared tail of add_asset_from_url() and add_asset_from_data() — the two differ
+     * only in where the bytes came from, so the rasterization / append / colour
+     * extraction sequence lives here once.
+     *
+     * @param string $binary    Raw image bytes.
+     * @param string $file_name Desired filename (uniquified against the target dir).
+     * @param string $mime_type MIME type of $binary.
+     * @param int    $brand_id  Brand ID.
+     * @param int    $user_id   PCM user ID.
+     * @param object $brand     Brand DB row.
+     * @param string $role      Asset role (already validated by the caller).
+     * @param string $source    Provenance label stored on the asset.
+     *
+     * @return array Asset data, including `extractedColors`.
+     * @throws \RuntimeException If the bytes cannot be written.
+     */
+    private function store_asset_bytes(
+        string $binary,
+        string $file_name,
+        string $mime_type,
+        int $brand_id,
+        int $user_id,
+        object $brand,
+        string $role,
+        string $source
+    ): array {
         $upload_dir = wp_upload_dir();
-        $file_name = 'pcm-brand-' . wp_generate_uuid4() . $this->mime_to_ext($mime_type);
+
+        if (!empty($upload_dir['error'])) {
+            throw new \RuntimeException('Uploads directory is not writable: ' . $upload_dir['error']);
+        }
+
+        $file_name = wp_unique_filename($upload_dir['path'], $file_name);
         $file_path = $upload_dir['path'] . '/' . $file_name;
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-        file_put_contents($file_path, $body);
+        if (file_put_contents($file_path, $binary) === false) {
+            throw new \RuntimeException('Failed to write the image to the uploads directory.');
+        }
 
         // SVG → PNG rasterization:
         // AI image generation models (Flux, DALL-E, etc.) cannot process SVG vector
@@ -292,12 +412,12 @@ class PCM_Brands_Service
             // If rasterization fails, we keep the original SVG — better than nothing.
         }
 
-        $asset = $this->create_asset_entry($brand_id, $upload_dir['url'] . '/' . $file_name, $mime_type, 'url_fetch', $role);
+        $asset = $this->create_asset_entry($brand_id, $upload_dir['url'] . '/' . $file_name, $mime_type, $source, $role);
 
         // Append to brand assets
         $this->append_asset($brand_id, $user_id, $brand, $asset);
 
-        // Extract dominant colors from the downloaded image.
+        // Extract dominant colors from the image.
         // Return them in the response so the frontend can show a
         // toast notification asking the user to approve/dismiss.
         $extracted = PCM_Image_Utils::extract_dominant_colors($file_path, 5);
@@ -353,6 +473,74 @@ class PCM_Brands_Service
         }
 
         return array_values(array_unique($images));
+    }
+
+    /** Max images stored from a single website scrape. */
+    private const MAX_SCRAPED_ASSETS = 8;
+
+    /**
+     * Scrape a website AND store what it finds as brand assets.
+     *
+     * fetch_website_assets() only returns URLs — nothing was ever persisted, so
+     * "fetch images from this page" found images and then dropped them. The single
+     * caller (ReferenceImageSelector) has always read `added`/`message` off this
+     * response, so it errored on every call; this makes the endpoint do what that
+     * contract already said it did.
+     *
+     * @param string $url      Website URL to scrape.
+     * @param int    $brand_id Brand ID.
+     * @param int    $user_id  PCM user ID.
+     * @param object $brand    Brand DB row.
+     * @param string $role     Role to store them under.
+     *
+     * @return array{added: array, images: array, message: string}
+     * @throws \RuntimeException On fetch failure.
+     */
+    public function fetch_and_store_website_assets(
+        string $url,
+        int $brand_id,
+        int $user_id,
+        object $brand,
+        string $role = 'reference'
+    ): array {
+        $images = $this->fetch_website_assets($url);
+
+        $added = array();
+        $current = $brand;
+
+        foreach (array_slice($images, 0, self::MAX_SCRAPED_ASSETS) as $image_url) {
+            try {
+                $added[] = $this->add_asset_from_url($image_url, $brand_id, $user_id, $current, $role);
+
+                // add_asset_from_url() appends to whatever $current holds and writes the
+                // row. Re-read it, or the next iteration appends to a stale asset list
+                // and silently overwrites the one we just stored.
+                $refreshed = PCM_DB::get_brand_by_id($brand_id, $user_id);
+                if ($refreshed) {
+                    $current = $refreshed;
+                }
+            }
+            catch (\Throwable $e) {
+                // One unreachable image must not cost the rest of the page.
+                continue;
+            }
+        }
+
+        if (empty($images)) {
+            $message = 'No images found on this page.';
+        }
+        elseif (empty($added)) {
+            $message = 'Found ' . count($images) . ' image(s), but none could be downloaded.';
+        }
+        else {
+            $message = '';
+        }
+
+        return array(
+            'added' => $added,
+            'images' => $images,
+            'message' => $message,
+        );
     }
 
     /**
@@ -574,6 +762,15 @@ class PCM_Brands_Service
         ));
     }
 
+    /** MIME types a brand asset may be stored as — also the extension map. */
+    private const ASSET_MIME_EXT = array(
+        'image/png' => '.png',
+        'image/jpeg' => '.jpg',
+        'image/gif' => '.gif',
+        'image/webp' => '.webp',
+        'image/svg+xml' => '.svg',
+    );
+
     /**
      * Map MIME type to file extension.
      *
@@ -583,15 +780,22 @@ class PCM_Brands_Service
      */
     private function mime_to_ext(string $mime): string
     {
-        $map = array(
-            'image/png' => '.png',
-            'image/jpeg' => '.jpg',
-            'image/gif' => '.gif',
-            'image/webp' => '.webp',
-            'image/svg+xml' => '.svg',
-        );
+        return self::ASSET_MIME_EXT[$mime] ?? '.png';
+    }
 
-        return $map[$mime] ?? '.png';
+    /**
+     * Whether a MIME type may be stored as a brand asset.
+     *
+     * Deliberately separate from mime_to_ext(), which falls back to .png for the
+     * URL-fetch path — that tolerance must NOT become an implicit allowlist.
+     *
+     * @param string $mime Lowercased MIME type, no parameters.
+     *
+     * @return bool
+     */
+    private function is_supported_asset_mime(string $mime): bool
+    {
+        return isset(self::ASSET_MIME_EXT[$mime]);
     }
 
     // =========================================================================
