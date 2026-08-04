@@ -21,7 +21,7 @@
  * 4-byte UTF-8 can't eat emoji in transit, and the untitled-doc-inherits-the-set-name rule.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { trpc } from '@/lib/trpc';
 import {
@@ -42,11 +42,21 @@ import {
   buildDefaultInviteMessage,
 } from '@/components/shared/ApprovalSharePanel';
 import { buildPublicBoardUrl, useApprovalSetsCache } from '@/components/shared/approvalSets';
-import { Send, Loader2 } from 'lucide-react';
+import { SearchableSelect } from '@/components/shared/SearchableSelect';
+import { Send, Loader2, Check, Link as LinkIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { escapeAstralDeep } from '@/lib/escapeAstral';
 
 import { CustomCardEditor } from './CustomCardEditor';
+import { setColumns } from '../kanban/setColumns';
+import { APPROVAL_STATUSES, type ApprovalStatus } from '../types';
+
+/**
+ * Lane choices for Row 1 and for the share step's "move after sending" — both
+ * read the ONE registry, so adding a lane stays a one-line change in
+ * setColumns.ts and can never disagree between the two dropdowns.
+ */
+const laneOptions = setColumns.map((c) => ({ value: c.id as string, label: c.label }));
 
 function uid(): string {
   try { return crypto.randomUUID(); } catch { /* older browsers */ }
@@ -80,10 +90,18 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
   // The set's ONE mapping: a project (existing, or created on submit).
   const [project, setProject] = useState<ProjectPickerValue>(EMPTY_PROJECT_PICK);
   const [clientEmail, setClientEmail] = useState('');
-  // Set once created — switches the dialog from authoring to the share panel.
+  // Which lane the set is CREATED in (distinct from the share step's
+  // "move to lane after sending"). Registry-driven, defaults to the clicked "+".
+  const [lane, setLane] = useState<ApprovalStatus>('draft');
+  // Set once created — reveals the share panel; the editor stays open beside it.
   const [created, setCreated] = useState<{ id: number; shareUrl: string } | null>(null);
+  // Whether the share step is showing. "Save" in that step closes it and leaves
+  // you in the editor; the header button re-opens it.
+  const [shareOpen, setShareOpen] = useState(false);
+  // Set by "Save and Close" so the create's success handler closes the dialog.
+  const closeAfterCreate = useRef(false);
 
-  const { projects, deliveries } = useProjectPickerData();
+  const { projects, deliveries, brands } = useProjectPickerData();
 
   const createProjectMutation = trpc.assets.createProject.useMutation();
   const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation();
@@ -95,14 +113,24 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     setContent('<p></p>');
     setOverlay(null);
     setName('');
-    setProject(
-      preset?.projectId
-        ? { projectId: preset.projectId, newProjectName: null, newProjectDeliveryId: null }
-        : EMPTY_PROJECT_PICK
-    );
+    // Seed the mapping row from wherever the create was started (lane "+" with
+    // filters on, or a delivery card's "+"). Every value stays changeable.
+    setProject({
+      projectId: preset?.projectId ?? null,
+      newProjectName: null,
+      deliveryId: preset?.deliveryId ?? null,
+      brandId: preset?.brandId ?? null,
+    });
     setClientEmail('');
+    setShareOpen(false);
+    closeAfterCreate.current = false;
+    setLane(
+      preset?.status && (APPROVAL_STATUSES as ReadonlyArray<string>).includes(preset.status)
+        ? (preset.status as ApprovalStatus)
+        : 'draft'
+    );
     setCreated(null);
-  }, [open, preset?.projectId]);
+  }, [open, preset?.projectId, preset?.status]);
 
   const createMutation = trpc.approvals.createSet.useMutation({
     onSuccess: (data: any) => {
@@ -118,6 +146,14 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
       toast.success(clientEmail.trim()
         ? 'Approval set created — invite emailed to the client.'
         : 'Approval set created.');
+
+      // "Save and Close" finishes here; "Generate Share Link" opens the step.
+      if (closeAfterCreate.current) {
+        closeAfterCreate.current = false;
+        onClose();
+      } else {
+        setShareOpen(true);
+      }
     },
     onError: (err: any) => toast.error(err?.message || 'Failed to create the approval set.'),
   }) as any;
@@ -133,7 +169,8 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
       effProjectId = await resolveProjectId(
         project,
         createProjectMutation.mutateAsync,
-        setProjectDeliveryMutation.mutateAsync
+        setProjectDeliveryMutation.mutateAsync,
+        projects
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create the project.');
@@ -156,9 +193,11 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
 
     createMutation.mutate({
       name: setName,
-      brandId: preset?.brandId ?? null,
-      // The lane it was created in (board "+"); omitted → the server's 'draft'.
-      status: preset?.status ?? null,
+      // Narrowing value from the mapping row; the live chain overwrites it the
+      // moment the set has a project, so it can never contradict the mapping.
+      brandId: project.brandId ?? preset?.brandId ?? null,
+      // The lane picked in Row 1 (seeded from the board "+").
+      status: lane,
       // The set's ONE mapping. Delivery + brand are derived live from this
       // project server-side (PCM_Hierarchy) — never stored on the set.
       projectId: effProjectId,
@@ -192,34 +231,42 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
         }}
       >
         <DialogHeader className="shrink-0">
-          <DialogTitle>{created ? 'Approval set created' : 'New approval set'}</DialogTitle>
-          <DialogDescription>
-            {created
-              ? 'Send this link to your client, or email it from here.'
-              : 'Write the document, name the set, and send it — all here.'}
-          </DialogDescription>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <DialogTitle>{created ? 'Approval set' : 'New approval set'}</DialogTitle>
+              <DialogDescription>
+                {created
+                  ? 'Saved. Copy the link or email it — the editor stays open.'
+                  : 'Write the document, name the set, and send it — all here.'}
+              </DialogDescription>
+            </div>
+            {/* Generate Share Link: saves the set and reveals the link WITHOUT
+                closing anything. Once saved it reports that, and the panel below
+                owns copying and sending. */}
+            <Button
+              type="button"
+              variant={created ? 'secondary' : 'default'}
+              onClick={() => (created ? setShareOpen((v) => !v) : void handleCreate())}
+              disabled={busy || !name.trim()}
+              className="shrink-0 gap-1.5"
+            >
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : created ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <LinkIcon className="h-4 w-4" />
+              )}
+              {created ? (shareOpen ? 'Saved' : 'Share link') : 'Generate Share Link'}
+            </Button>
+          </div>
         </DialogHeader>
 
-        {created ? (
-          <div className="min-h-0 flex-1 overflow-y-auto py-2">
-            <ApprovalSharePanel
-              setId={created.id}
-              shareUrl={created.shareUrl}
-              defaultEmail={clientEmail}
-              defaultMessage={buildDefaultInviteMessage(null)}
-              // An email entered before Create was already sent by the server
-              // (create_set → share_set → client_invite) — don't invite a resend.
-              alreadySent={clientEmail.trim() !== ''}
-            />
-          </div>
-        ) : (
-        <>
-        {/* Only the BODY scrolls; header and footer stay put, so Create is always reachable
-            on a long document. */}
+        {/* Only the BODY scrolls; header and footer stay put, so the actions are
+            always reachable on a long document. */}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden py-2">
-          {/* The three set fields, up top: they're short, and reading them before writing tells
-              you what this document is going to be called. bg-card on every input — no
-              transparent fields sitting on the dialog surface. */}
+          {/* Row 1 — what the set IS. bg-card on every input; no transparent
+              fields sitting on the dialog surface. */}
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="set-name">Name <span className="text-destructive">*</span></Label>
@@ -232,34 +279,8 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
                 className="bg-card"
               />
             </div>
-            {/* The set's ONE mapping. Search the list or type a new name to create
-                the project; delivery + brand follow from it. */}
-            <ProjectPicker
-              projects={projects}
-              deliveries={deliveries}
-              value={project}
-              onChange={(next) => {
-                // Started from a delivery's "+", or with a Delivery filter on?
-                // Seed that delivery the moment a project needs one — whether it
-                // is being created or is an existing one with no link yet. Still
-                // changeable, and clearing it back to "No delivery" sticks.
-                const startedNewProject =
-                  next.newProjectName !== null && project.newProjectName === null;
-                const pickedUnlinkedProject =
-                  next.projectId != null &&
-                  next.projectId !== project.projectId &&
-                  projects.find((p) => p.id === next.projectId)?.deliveryId == null;
-
-                setProject(
-                  startedNewProject || pickedUnlinkedProject
-                    ? { ...next, newProjectDeliveryId: preset?.deliveryId ?? null }
-                    : next
-                );
-              }}
-              disabled={busy}
-            />
             <div className="space-y-1.5">
-              <Label htmlFor="set-email">Client email</Label>
+              <Label htmlFor="set-email">Recipient Email</Label>
               <Input
                 id="set-email"
                 type="email"
@@ -269,27 +290,79 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
                 className="bg-card"
               />
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="set-lane">Lane</Label>
+              {/* Options come from the lane registry — adding a lane stays a
+                  one-line change in setColumns.ts, never here. */}
+              <SearchableSelect
+                options={laneOptions}
+                value={lane}
+                onChange={(next) => setLane((next as ApprovalStatus) ?? 'draft')}
+                placeholder="Draft"
+                allLabel="Draft"
+                searchPlaceholder="Search lanes…"
+                emptyLabel="No lanes match"
+                className="w-full"
+                ariaLabel="Lane"
+                disabled={busy || created !== null}
+              />
+            </div>
           </div>
+
+          {/* Row 2 — the mapping. Any one narrows the other two. */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <ProjectPicker
+              projects={projects}
+              deliveries={deliveries}
+              brands={brands}
+              value={project}
+              onChange={setProject}
+              disabled={busy}
+            />
+          </div>
+
+          {/* The link + send step, revealed by Generate Share Link. The editor
+              stays mounted below it — nothing is lost by sharing. */}
+          {created && shareOpen && (
+            <ApprovalSharePanel
+              setId={created.id}
+              shareUrl={created.shareUrl}
+              defaultEmail={clientEmail}
+              defaultMessage={buildDefaultInviteMessage(null)}
+              // An email entered before saving was already sent by the server
+              // (create_set → share_set → client_invite) — don't invite a resend.
+              alreadySent={clientEmail.trim() !== ''}
+              lanes={laneOptions.map((l) => ({ id: l.value, label: l.label }))}
+              defaultLaneAfterSend="client"
+              // Save = sent + moved, close THIS step only; the editor stays.
+              onSaved={() => setShareOpen(false)}
+              // Save and Close = sent + moved, everything closes.
+              onSaveAndClose={onClose}
+              onCancel={() => setShareOpen(false)}
+            />
+          )}
 
           <CustomCardEditor content={content} onChange={setContent} overlay={overlay} onOverlayChange={setOverlay} />
         </div>
-        </>
-        )}
 
         <DialogFooter className="shrink-0">
-          {created ? (
-            <Button type="button" onClick={onClose} variant="secondary" className="w-full">
-              Done &amp; Close
-            </Button>
-          ) : (
-            <>
-              <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-              <Button type="button" onClick={handleCreate} disabled={busy || !name.trim()} className="gap-1.5">
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Create approval set
-              </Button>
-            </>
-          )}
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              // Already saved? There is nothing left to create — just close.
+              if (created) { onClose(); return; }
+              closeAfterCreate.current = true;
+              void handleCreate();
+            }}
+            disabled={busy || !name.trim()}
+            className="gap-1.5"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            Save and Close
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

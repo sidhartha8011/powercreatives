@@ -139,7 +139,7 @@ export function SendToApprovalSetDialog({
   const [targetSet, setTargetSet] = useState<AppendableSet | null>(null);
 
   // Projects the set can belong to; deliveries feed the project→delivery link.
-  const { projects: projectOptions, deliveries } = useProjectPickerData();
+  const { projects: projectOptions, deliveries, brands } = useProjectPickerData();
 
   const createProjectMutation = trpc.assets.createProject.useMutation();
   const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation();
@@ -159,11 +159,12 @@ export function SendToApprovalSetDialog({
       setInviteSent(false);
       setMode('create');
       setTargetSet(null);
-      setProject(
-        projectId != null
-          ? { projectId, newProjectName: null, newProjectDeliveryId: null }
-          : EMPTY_PROJECT_PICK
-      );
+      setProject({
+        ...EMPTY_PROJECT_PICK,
+        projectId: projectId ?? null,
+        deliveryId: defaultDeliveryId ?? null,
+        brandId: brandId ?? null,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -244,7 +245,8 @@ export function SendToApprovalSetDialog({
       effProjectId = await resolveProjectId(
         project,
         createProjectMutation.mutateAsync,
-        setProjectDeliveryMutation.mutateAsync
+        setProjectDeliveryMutation.mutateAsync,
+        projectOptions
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create the project.');
@@ -351,16 +353,8 @@ export function SendToApprovalSetDialog({
                     projects={projectOptions}
                     deliveries={deliveries}
                     value={project}
-                    onChange={(next) =>
-                      setProject(
-                        // Seed the caller's delivery the moment a NEW project is
-                        // started (create-from-delivery flow); the user can change
-                        // it, and clearing it back to "No delivery" sticks.
-                        next.newProjectName !== null && project.newProjectName === null
-                          ? { ...next, newProjectDeliveryId: defaultDeliveryId ?? null }
-                          : next
-                      )
-                    }
+                    onChange={setProject}
+                    brands={brands}
                     disabled={createMutation.isLoading || createProjectMutation.isLoading}
                   />
 

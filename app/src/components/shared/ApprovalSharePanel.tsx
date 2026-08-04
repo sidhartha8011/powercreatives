@@ -1,26 +1,44 @@
 /**
  * ApprovalSharePanel — what you see the moment an approval set exists.
  *
- * The client link (copyable) + "email the link to your client" with an editable
- * message. Extracted VERBATIM from SendToApprovalSetDialog, which was the only
- * flow that showed it: Ads had a near-identical copy and the custom-card flow
- * had none at all — it just closed on a toast, so the link the whole feature
- * exists for was silently dropped (gap ebe6501, GAP B).
+ * The client link (copy is a deliberate second click, never automatic), a
+ * Google-style recipient box where every committed address becomes a removable
+ * pill, the editable default invite message, and a "move to lane after sending"
+ * dropdown whose options come from the CONSUMER's lane registry — never a list
+ * literal in here.
  *
- * One surface, three callers. It owns the email/message state and the share
- * mutation; the caller owns only the set it just created.
+ * Three actions, and the difference between the last two is only how much closes:
+ *
+ *   Cancel         — nothing sent, nothing moved, the step closes.
+ *   Save           — sends, moves the lane, closes THIS step only.
+ *   Save and Close — sends, moves the lane, and asks the host dialog to close too.
+ *
+ * A send is never undone by closing: by the time either Save returns, the email
+ * is out and the lane has already changed.
+ *
+ * One surface for every send path (Ads / Copy / Image / the custom card), which
+ * is why it lives in the shared layer and takes its lanes as a prop.
  */
 
-import { useEffect, useState } from 'react';
-import { Check, Copy, Loader2, Mail } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Check, Copy, Loader2, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { colors, typography } from '@/components/shared/design-tokens';
 import { trpc } from '@/lib/trpc';
 import { copyToClipboard } from '@/lib/utils';
+
+import { useApprovalSetsCache } from './approvalSets';
 
 /**
  * Default invite message for the editable "Message to client" box. Lives here
@@ -33,12 +51,34 @@ export function buildDefaultInviteMessage(brandName?: string | null): string {
   );
 }
 
+/** A lane the set can be moved to after sending. Supplied by the consumer. */
+export interface ShareLaneOption {
+  id: string;
+  label: string;
+}
+
+/** Sentinel for "leave the set where it is". */
+const NO_MOVE = '__stay__';
+
+/** Split on comma / semicolon / whitespace so a pasted list becomes pills. */
+function splitAddresses(raw: string): string[] {
+  return raw
+    .split(/[,;\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Same shape the server accepts — a light client-side check, not the authority. */
+function looksLikeEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 export interface ApprovalSharePanelProps {
   /** The created set's id — the share endpoint is ownership-scoped by it. */
   setId: number;
   /** Public client-review URL (build it with buildPublicBoardUrl). */
   shareUrl: string;
-  /** Pre-fills the recipient (brand's remembered client email). */
+  /** Seeds the first recipient pill (Row 1's "Recipient Email"). */
   defaultEmail?: string | null;
   /** Pre-fills the editable message. */
   defaultMessage?: string;
@@ -48,6 +88,20 @@ export interface ApprovalSharePanelProps {
    * inviting a second, duplicate send.
    */
   alreadySent?: boolean;
+  /**
+   * Lanes offered by "move to lane after sending". Comes from the consumer's
+   * registry (Approvals passes `setColumns`), so adding a lane stays a one-line
+   * change in that one file.
+   */
+  lanes?: ReadonlyArray<ShareLaneOption>;
+  /** Which lane the dropdown starts on. Omit for "leave it where it is". */
+  defaultLaneAfterSend?: string | null;
+  /** Sent + moved; close this step only. */
+  onSaved?: () => void;
+  /** Sent + moved; close this step AND the host dialog. */
+  onSaveAndClose?: () => void;
+  /** Nothing sent; close this step. Omit to hide the Cancel button. */
+  onCancel?: () => void;
 }
 
 export function ApprovalSharePanel({
@@ -56,31 +110,68 @@ export function ApprovalSharePanel({
   defaultEmail,
   defaultMessage,
   alreadySent = false,
+  lanes,
+  defaultLaneAfterSend,
+  onSaved,
+  onSaveAndClose,
+  onCancel,
 }: ApprovalSharePanelProps) {
   const [copied, setCopied] = useState(false);
-  const [clientEmail, setClientEmail] = useState(defaultEmail || '');
+  const [recipients, setRecipients] = useState<string[]>([]);
+  const [draft, setDraft] = useState('');
   const [clientMessage, setClientMessage] = useState(defaultMessage ?? '');
+  const [laneAfterSend, setLaneAfterSend] = useState<string>(defaultLaneAfterSend ?? NO_MOVE);
   const [inviteSent, setInviteSent] = useState(alreadySent);
+  const [busy, setBusy] = useState(false);
+  const draftRef = useRef<HTMLInputElement>(null);
 
   // Adopt the caller's values when the panel is (re)used for a new set. Guarded
   // on setId so it can never wipe an edit the user is in the middle of typing.
   useEffect(() => {
     setCopied(false);
-    setClientEmail(defaultEmail || '');
+    setRecipients(defaultEmail && looksLikeEmail(defaultEmail) ? [defaultEmail] : []);
+    setDraft('');
     setClientMessage(defaultMessage ?? '');
+    setLaneAfterSend(defaultLaneAfterSend ?? NO_MOVE);
     setInviteSent(alreadySent);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setId]);
 
-  const shareMutation = trpc.approvals.shareSet.useMutation({
-    onSuccess: () => {
-      setInviteSent(true);
-      toast.success('Invite email sent to the client.');
-    },
-    onError: (err: any) => {
-      toast.error(err.message || 'Failed to send invite email.');
-    },
-  });
+  const shareMutation = trpc.approvals.shareSet.useMutation();
+  const statusMutation = trpc.approvals.updateSetStatus.useMutation();
+  const approvalSetsCache = useApprovalSetsCache();
+
+  const laneOptions = useMemo(() => lanes ?? [], [lanes]);
+
+  /** Commit whatever is typed into a pill. Returns the resulting list. */
+  const commitDraft = (): string[] => {
+    const parts = splitAddresses(draft);
+    if (parts.length === 0) return recipients;
+
+    const invalid = parts.filter((p) => !looksLikeEmail(p));
+    if (invalid.length > 0) {
+      toast.error(`Not a valid email: ${invalid.join(', ')}`);
+    }
+    const next = [...recipients];
+    for (const p of parts) {
+      if (looksLikeEmail(p) && !next.includes(p)) next.push(p);
+    }
+    setRecipients(next);
+    setDraft('');
+    return next;
+  };
+
+  const handleDraftKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',' || e.key === ';') {
+      e.preventDefault();
+      commitDraft();
+      return;
+    }
+    // Backspace on an empty box removes the last pill — standard chip behaviour.
+    if (e.key === 'Backspace' && draft === '' && recipients.length > 0) {
+      setRecipients(recipients.slice(0, -1));
+    }
+  };
 
   const handleCopyLink = async () => {
     if (!shareUrl) return;
@@ -94,13 +185,46 @@ export function ApprovalSharePanel({
     }
   };
 
-  const handleSendInvite = () => {
-    const email = clientEmail.trim();
-    if (!setId || !email) {
-      toast.error('Enter the client email to send an invite.');
+  /**
+   * Send to every pill, then move the lane. Both steps are awaited so nothing
+   * closes on a failure — and the lane move runs only after the send succeeded,
+   * so a set never reports "sent" when no email went out.
+   */
+  const send = async (thenClose: boolean) => {
+    const list = commitDraft();
+    if (list.length === 0) {
+      toast.error('Add at least one recipient.');
+      draftRef.current?.focus();
       return;
     }
-    shareMutation.mutate({ id: setId, email, message: clientMessage.trim() });
+
+    setBusy(true);
+    try {
+      await shareMutation.mutateAsync({
+        id: setId,
+        emails: list,
+        message: clientMessage.trim(),
+      });
+
+      if (laneAfterSend !== NO_MOVE) {
+        await statusMutation.mutateAsync({ id: setId, status: laneAfterSend });
+      }
+
+      approvalSetsCache.invalidate();
+      setInviteSent(true);
+      toast.success(
+        list.length === 1
+          ? 'Invite sent to the client.'
+          : `Invite sent to ${list.length} recipients.`
+      );
+
+      if (thenClose) onSaveAndClose?.();
+      else onSaved?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send the invite.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -130,34 +254,49 @@ export function ApprovalSharePanel({
         <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
           Or email the link to your client
         </span>
-        <div className="flex items-center gap-2">
-          <Input
+
+        {/* Recipients — every committed address becomes a removable pill. */}
+        <div
+          className="flex flex-wrap items-center gap-1.5 rounded-md border p-1.5"
+          style={{ background: colors.bgSurface, borderColor: colors.border }}
+          onClick={() => draftRef.current?.focus()}
+        >
+          {recipients.map((address) => (
+            <span
+              key={address}
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
+              style={{ background: colors.borderLight, color: colors.text }}
+            >
+              {address}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRecipients(recipients.filter((r) => r !== address));
+                  setInviteSent(false);
+                }}
+                aria-label={`Remove ${address}`}
+                className="opacity-60 transition-opacity hover:opacity-100"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          <input
+            ref={draftRef}
             type="email"
-            value={clientEmail}
+            value={draft}
             onChange={(e) => {
-              setClientEmail(e.target.value);
+              setDraft(e.target.value);
               setInviteSent(false);
             }}
-            placeholder="client@company.com"
-            className="text-sm shrink"
-            style={{ background: colors.bgSurface }}
-            disabled={shareMutation.isLoading}
+            onKeyDown={handleDraftKeyDown}
+            onBlur={() => commitDraft()}
+            placeholder={recipients.length === 0 ? 'client@company.com' : 'Add another…'}
+            className="min-w-[160px] flex-1 border-0 bg-transparent p-0.5 text-sm outline-none"
+            disabled={busy}
+            aria-label="Add recipient email"
           />
-          <Button
-            onClick={handleSendInvite}
-            className="shrink-0 gap-2"
-            style={{ background: colors.primary }}
-            disabled={shareMutation.isLoading || !clientEmail.trim() || inviteSent}
-          >
-            {shareMutation.isLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : inviteSent ? (
-              <Check className="w-4 h-4" />
-            ) : (
-              <Mail className="w-4 h-4" />
-            )}
-            {inviteSent ? 'Sent' : 'Send'}
-          </Button>
         </div>
 
         {/* Editable invite message — prefilled with a default; the sender
@@ -175,12 +314,63 @@ export function ApprovalSharePanel({
           placeholder="Write a short note to your client…"
           className="text-sm"
           style={{ background: colors.bgSurface }}
-          disabled={shareMutation.isLoading}
+          disabled={busy}
         />
+
+        {/* Where the set goes once this is sent. Options come from the consumer's
+            lane registry — never a list literal here. */}
+        {laneOptions.length > 0 && (
+          <>
+            <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
+              Move to lane after sending
+            </span>
+            <Select value={laneAfterSend} onValueChange={setLaneAfterSend} disabled={busy}>
+              <SelectTrigger className="bg-card" aria-label="Move to lane after sending">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_MOVE}>Leave where it is</SelectItem>
+                {laneOptions.map((lane) => (
+                  <SelectItem key={lane.id} value={lane.id}>
+                    {lane.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
+        )}
 
         <p style={{ fontSize: typography.xs, color: colors.textMuted }}>
           Sends a professional invite via your Brevo integration. Requires a Brevo API key and sender email in Settings.
         </p>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+          {onCancel && (
+            <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
+              Cancel
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void send(false)}
+            disabled={busy}
+            className="gap-2"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : inviteSent ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+            Save
+          </Button>
+          <Button
+            type="button"
+            onClick={() => void send(true)}
+            disabled={busy}
+            className="gap-2"
+            style={{ background: colors.primary }}
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            Save and Close
+          </Button>
+        </div>
       </div>
     </div>
   );

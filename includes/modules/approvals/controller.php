@@ -637,19 +637,36 @@ class PCM_REST_Approvals extends PCM_REST_Base
         $pcm_user = $this->get_current_pcm_user();
         $id       = (int) $request->get_param('id');
         $params   = $request->get_json_params() ?: array();
-        $email    = sanitize_email($params['email'] ?? '');
         // Optional custom invite message (editable in the share dialog). Multi-line
         // plain text — sanitized, then escaped + nl2br'd in the email template.
         $message  = isset($params['message']) ? sanitize_textarea_field((string) $params['message']) : '';
 
-        if ($id <= 0 || $email === '' || !is_email($email)) {
+        // One or many recipients: `emails` is the list the share step sends;
+        // `email` is the original single-recipient shape, still accepted.
+        $raw = array();
+        if (isset($params['emails']) && is_array($params['emails'])) {
+            $raw = $params['emails'];
+        } elseif (isset($params['email'])) {
+            $raw = array($params['email']);
+        }
+
+        $emails = array();
+        foreach ($raw as $candidate) {
+            $clean = sanitize_email((string) $candidate);
+            if ($clean !== '' && is_email($clean) && !in_array($clean, $emails, true)) {
+                $emails[] = $clean;
+            }
+        }
+
+        // Never a silent no-send: nothing valid in the list is a named error.
+        if ($id <= 0 || empty($emails)) {
             return $this->error('A valid email is required.');
         }
 
         require_once __DIR__ . '/service.php';
 
         try {
-            $set = PCM_Approvals_Service::share_set($id, (int) $pcm_user->id, $email, $message);
+            $set = PCM_Approvals_Service::share_set($id, (int) $pcm_user->id, $emails, $message);
             if ($set === false) {
                 return $this->not_found('Approval Set');
             }

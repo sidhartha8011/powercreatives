@@ -70,7 +70,7 @@ export function CreateApprovalSetDialog({
   const [targetSet, setTargetSet] = useState<AppendableSet | null>(null);
 
   // Projects the set can belong to; deliveries feed the project→delivery link.
-  const { projects: projectOptions, deliveries } = useProjectPickerData();
+  const { projects: projectOptions, deliveries, brands } = useProjectPickerData();
 
   const createProjectMutation = trpc.assets.createProject.useMutation();
   const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation();
@@ -92,11 +92,11 @@ export function CreateApprovalSetDialog({
       setClientMessage(buildDefaultInviteMessage(brandName));
       setMode('create');
       setTargetSet(null);
-      setProject(
-        projectId != null
-          ? { projectId: Number(projectId), newProjectName: null, newProjectDeliveryId: null }
-          : EMPTY_PROJECT_PICK
-      );
+      setProject({
+        ...EMPTY_PROJECT_PICK,
+        projectId: projectId != null ? Number(projectId) : null,
+        brandId: brandId != null ? Number(brandId) : null,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -197,7 +197,8 @@ export function CreateApprovalSetDialog({
       effProjectId = await resolveProjectId(
         project,
         createProjectMutation.mutateAsync,
-        setProjectDeliveryMutation.mutateAsync
+        setProjectDeliveryMutation.mutateAsync,
+        projectOptions
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create the project.');

@@ -1258,21 +1258,40 @@ class PCM_Approvals_Service
     }
 
     /**
-     * Share a set with a client: store the recipient email and dispatch the
-     * invite event (Brevo email). Ownership-scoped.
+     * Share a set with one or more clients: store the recipient, dispatch the
+     * invite email to EVERY recipient, and fire the "sent to client" trigger
+     * ONCE. Ownership-scoped.
      *
-     * @param int    $set_id  Set id.
-     * @param int    $user_id PCM user id (owner).
-     * @param string $email   Recipient email.
-     * @param string $message Optional custom invite message (already sanitized).
-     * @return object|false Updated set, or false if not found / invalid email.
+     * Multi-recipient is one share EVENT with N emails — not N shares. The
+     * trigger drives the seeded "move to Sent to Client" rule and any user
+     * webhook, so firing it per recipient would run those N times; the invite
+     * email is the only thing that is legitimately per-person.
+     *
+     * `clientEmail` on the set (and the brand's remembered address) stay
+     * single-valued on purpose: they answer "who is this set with", which is the
+     * first recipient. Multi-send is an action, not new state.
+     *
+     * @param int             $set_id  Set id.
+     * @param int             $user_id PCM user id (owner).
+     * @param string|string[] $email   Recipient email, or a list of them.
+     * @param string          $message Optional custom invite message (already sanitized).
+     * @return object|false Updated set, or false if not found / no valid email.
      */
-    public static function share_set(int $set_id, int $user_id, string $email, string $message = ''): object|false
+    public static function share_set(int $set_id, int $user_id, string|array $email, string $message = ''): object|false
     {
-        $email = sanitize_email($email);
-        if ($email === '' || !is_email($email)) {
+        // Normalise to a de-duplicated list of valid addresses, order preserved.
+        $recipients = array();
+        foreach ((is_array($email) ? $email : array($email)) as $candidate) {
+            $clean = sanitize_email((string) $candidate);
+            if ($clean !== '' && is_email($clean) && !in_array($clean, $recipients, true)) {
+                $recipients[] = $clean;
+            }
+        }
+        if (empty($recipients)) {
             return false;
         }
+        // The set's own record of "who is this with" — the first recipient.
+        $email = $recipients[0];
 
         $set = self::get_set_by_id($set_id, $user_id);
         if (!$set) {
@@ -1334,11 +1353,19 @@ class PCM_Approvals_Service
             );
         }
 
-        PCM_Automation_Engine::dispatch(
-            PCM_Automation_Events::APPROVAL_SET_SHARED,
-            self::build_event_context($set, array('customMessage' => $message)),
-            $user_id
-        );
+        // The invite email is the one thing that is per-person: dispatch once per
+        // recipient, overriding the address the email channel reads
+        // (render_email_for_event() takes it from context['clientEmail']).
+        foreach ($recipients as $recipient) {
+            PCM_Automation_Engine::dispatch(
+                PCM_Automation_Events::APPROVAL_SET_SHARED,
+                self::build_event_context($set, array(
+                    'customMessage' => $message,
+                    'clientEmail'   => $recipient,
+                )),
+                $user_id
+            );
+        }
 
         return self::get_set_by_id($set_id, $user_id);
     }
