@@ -51,7 +51,7 @@ the card. Progress is derived and internal-only.
 | F13 | A platform-user registry exists and is listable: `GET /users` (`manage_options:coadmin`), wired as **`users.list`**. So an assignee picker needs no new endpoint. | `users/controller.php:43` · `trpc-routes.ts:1169` |
 | F14 | `PCM_DB_VERSION` is **1.45.0**; adding a column means a `dbDelta` entry plus a `version_compare` gate in `maybe_upgrade()` and a bump. | `power-creatives.php:39` |
 | F15 | An in-app notification action already exists (`notifications.create`) and is driven by editable automation rules — so "notify the owner" needs a **trigger**, not a new channel. | `automations/class-pcm-automation-seeds.php` |
-| F16 | Tiptap task lists are supported by the shared extension set the card editor already uses, so checkboxes need no new dependency. | `components/shared/editorExtensions.ts` |
+| ~~F16~~ | ❌ **CORRECTED 2026-08-04 — this claim was FALSE.** I wrote that Tiptap task lists were already supported "so checkboxes need no new dependency". Verified since: `TaskList`/`TaskItem` appear **nowhere** in `editorExtensions.ts`, and `@tiptap/extension-task-list` / `-task-item` are **not in `package.json`**. Checkboxes therefore **do** require two new dependencies (Tiptap 3.x family — the project is on `^3.19–3.22`). This was the one assertion in this document I had not checked, and it was wrong. See D0. | `components/shared/editorExtensions.ts` · `app/package.json` |
 | F17 | The client surface is a **separate component** (`ClientReviewPage`), so hiding progress/owner/assignee from clients is structural, not a conditional — the client page simply never renders them. | `ClientReviewPage.tsx` |
 | F18 | Board filters are declarative — a new filter is one row in `setFilters.ts` plus one dropdown, exactly like Brand/Delivery/Project. | `kanban/setFilters.ts` · `kanban/SetsBoard.tsx` |
 
@@ -78,7 +78,12 @@ the card. Progress is derived and internal-only.
 - [ ] C5 REST: accept `assigneeId` on create + a PATCH to change it; validate the user exists; return it in `list_sets_by_user`'s column list.
 
 ### D — Progress from the document, internal only
-- [ ] D1 Enable Tiptap task-list checkboxes in the card editor (F16).
+- [ ] D0 **DECISION REQUIRED (was a false premise):** checkboxes need
+      `@tiptap/extension-task-list` + `-task-item` at the 3.x line the project already runs.
+      Two first-party packages from a vendor already in the tree — but it is still a
+      dependency change, so it is named here rather than slipped in. The alternative is to
+      ship C/E/F first and defer checkboxes entirely.
+- [ ] D1 Enable Tiptap task-list checkboxes in the card editor (after D0).
 - [ ] D2 Derive "N of M done" from the document — never stored, so it cannot drift.
 - [ ] D3 Show it on the board card and in the dialog. **Never** on `ClientReviewPage` (F17).
 
