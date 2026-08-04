@@ -827,7 +827,10 @@
 .pcm-notion-overlay {
   --pcm-notion-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji";
-  --pcm-notion-ink: #37352f;
+  /* Document ink comes from --pcm-doc-ink (index.css), declared on :root as
+     well as #pcm-root precisely so it reaches this overlay, which portals to
+     document.body. There was a second --pcm-notion-ink here holding the SAME
+     #37352f — one colour, two names, two files. */
   position: fixed; inset: 0; z-index: 9999;
   /* Scrim PLUS blur. It was a flat scrim, so the page behind stayed sharp and
      the document never separated from it - the single biggest reason the opened
@@ -912,7 +915,7 @@
   font-family: var(--pcm-notion-font);
   font-size: var(--pcm-doc-title-size); line-height: var(--pcm-doc-title-leading); font-weight: var(--pcm-doc-title-weight);
   letter-spacing: -0.018em;
-  color: var(--pcm-notion-ink);
+  color: var(--pcm-doc-ink);
   margin: 34px 0 6px;
   word-break: break-word;
 }
@@ -926,12 +929,12 @@
   font-family: var(--pcm-notion-font); font-size: 14px; line-height: 1.5;
 }
 .pcm-notion-prop-label { flex: 0 0 128px; color: rgba(55,53,47,0.5); }
-.pcm-notion-prop-value { color: var(--pcm-notion-ink); }
+.pcm-notion-prop-value { color: var(--pcm-doc-ink); }
 
 /* Notion typography for the rendered (Tiptap) document body. */
 .pcm-notion-prose {
   font-family: var(--pcm-notion-font);
-  color: var(--pcm-notion-ink);
+  color: var(--pcm-doc-ink);
   font-size: var(--pcm-doc-size); line-height: var(--pcm-doc-leading);
 }
 .pcm-notion-prose .ProseMirror { outline: none; }
@@ -939,7 +942,7 @@
 .pcm-notion-prose h2,
 .pcm-notion-prose h3,
 .pcm-notion-prose h4 {
-  color: var(--pcm-notion-ink); font-weight: 600; line-height: 1.3; margin: 1.4em 0 2px;
+  color: var(--pcm-doc-ink); font-weight: 600; line-height: 1.3; margin: 1.4em 0 2px;
 }
 .pcm-notion-prose h1 { font-size: 1.875em; }
 .pcm-notion-prose h2 { font-size: 1.5em; }
@@ -963,7 +966,7 @@
 .pcm-notion-prose strong { font-weight: 600; }
 .pcm-notion-prose blockquote {
   margin: 8px 0; padding-left: 14px;
-  border-left: 3px solid rgba(55,53,47,0.85); color: var(--pcm-notion-ink);
+  border-left: 3px solid rgba(55,53,47,0.85); color: var(--pcm-doc-ink);
 }
 .pcm-notion-prose hr { border: none; border-top: 1px solid rgba(55,53,47,0.16); margin: 14px 0; }
 .pcm-notion-prose img { max-width: 100%; height: auto; border-radius: 4px; margin: 6px 0; }

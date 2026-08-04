@@ -218,6 +218,10 @@ class PCM_Admin
             'deliveryTypePresets' => class_exists('PCM_Deliveries_Service')
                 ? PCM_Deliveries_Service::type_presets()
                 : array(),
+            // Approvals client review window, in days. 0 = show no deadline.
+            // The client board reads this; it was previously read from a key
+            // NOTHING emitted, so the due date could never render at all.
+            'approvalsReviewWindowDays' => (int) PCM_Settings::get('approvals_review_window_days', 0),
             // Plugin version
             'version' => PCM_VERSION,
         );

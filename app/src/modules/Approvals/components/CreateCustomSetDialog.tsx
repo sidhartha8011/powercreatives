@@ -50,15 +50,8 @@ import { toast } from 'sonner';
 import { escapeAstralDeep } from '@/lib/escapeAstral';
 
 import { CustomCardEditor } from './CustomCardEditor';
-import { setColumns } from '../kanban/setColumns';
+import { laneOptions } from '../kanban/setColumns';
 import { APPROVAL_STATUSES, type ApprovalStatus } from '../types';
-
-/**
- * Lane choices for Row 1 and for the share step's "move after sending" — both
- * read the ONE registry, so adding a lane stays a one-line change in
- * setColumns.ts and can never disagree between the two dropdowns.
- */
-const laneOptions = setColumns.map((c) => ({ value: c.id as string, label: c.label }));
 
 function uid(): string {
   try { return crypto.randomUUID(); } catch { /* older browsers */ }
@@ -279,7 +272,7 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
                     setId={created.id}
                     shareUrl={created.shareUrl}
                     defaultMessage={buildDefaultInviteMessage(null)}
-                    lanes={laneOptions.map((l) => ({ id: l.value, label: l.label }))}
+                    lanes={laneOptions}
                     defaultLaneAfterSend="client"
                     // Send = sent + moved, close THIS step only; the editor stays.
                     onSaved={() => setShareOpen(false)}
@@ -329,8 +322,13 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
             </div>
           </div>
 
-          {/* Row 2 — the mapping. Any one narrows the other two. */}
-          <div className="grid gap-3 sm:grid-cols-2">
+          {/* Row 2 — the mapping. Any one narrows the other two.
+              THREE columns, because ProjectPicker returns exactly three children:
+              Project · Delivery · Brand. Commit 57ad9cb changed Row 1 AND this row
+              from 3 to 2 in one commit; Row 1's change was right (the email field
+              had gone), this one was collateral and pushed Brand onto a third line.
+              Rows 1 and 2 are deliberately different widths — keep them that way. */}
+          <div className="grid gap-3 sm:grid-cols-3">
             <ProjectPicker
               projects={projects}
               deliveries={deliveries}

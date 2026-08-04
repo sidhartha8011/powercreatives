@@ -76,11 +76,17 @@ path a single time.
 
 ## CHECKLIST
 
-- [ ] C1 `shareSet` transform → `body: input` (V1)
-- [ ] C2 Audit every transform I touched this session for the same shape (V1)
-- [ ] C3 Delete `toNamedRows`; the board consumes `useProjectPickerData` (V2)
-- [ ] C4 One shared lane-option shape; no inline re-mapping (V3)
-- [ ] C5 Document `looksLikeEmail` as a deliberate client-side pre-check
+- [x] C1 `shareSet` transform → `body: input` (V1) — verified `trpc-routes.ts:1162`
+- [ ] **C2 STILL OPEN** — audit every transform touched this session (V1). **65** hand-built
+      bodies remain in `trpc-routes.ts`. This was never done and never reached the handover's
+      open list; see `GAP-ANALYSIS-HANDOVER-FACTCHECK-20260804.md` D6.
+- [x] C3 Delete `toNamedRows`; the board consumes `useProjectPickerData` (V2) — verified
+- [x] C4 One shared lane-option shape; no inline re-mapping (V3) — **DONE 2026-08-04.** It had
+      never landed. `laneOptions` now lives in `setColumns.ts` in the shared
+      `SearchableSelectOption` shape; `ShareLaneOption` aliases it. The registry was being
+      mapped `{value,label}` → `{id,label}` at the call site and **back** to `{value,label}`
+      inside the panel — two conversions, both now gone. (Fact-check D5.)
+- [x] C5 Document `looksLikeEmail` as a deliberate client-side pre-check — `ApprovalSharePanel.tsx:64`
 - [ ] C6 Execute and record: create a set · send to a real address · open a card · filter the
       board · clear a filter (V4)
 - [ ] V `php -l` where touched · harness 88/88 · tsc 59 ZERO new · build · changelog ·

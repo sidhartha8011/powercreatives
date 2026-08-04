@@ -8,7 +8,7 @@ measurement. Every "MUST BE" line is the target. Nothing is left as "tidy up lat
 
 | # | TODAY (verified) | MUST BE |
 |---|---|---|
-| 1.1 | Overlay is a flat scrim — `background: rgba(15,15,15,0.55)` with **no `backdrop-filter`** (`client-review.css:827-837`). The page behind stays sharp, so the document never separates from it. | A real backdrop: scrim **plus** blur, so the page recedes and the document is the subject. |
+| 1.1 | ~~Overlay is a flat scrim with **no `backdrop-filter`**~~ **RESOLVED by `88f3cf4`** — `client-review.css:835-837` now carries `rgba(15,15,15,0.48)` **plus** `backdrop-filter: blur(12px) saturate(120%)`. Note the blur only ever appeared trapped because the admin *preview* iframes the page; the real client surface (`App.tsx:21-26`) has no iframe. See `GAP-ANALYSIS-HANDOVER-FACTCHECK-20260804.md` D3/D4. | Done. |
 | 1.2 | Modal is `width: min(977px, 94vw)`, `align-items: flex-start`, `padding: 4vh 16px`, radius 10px (`:838-844`) — it hangs from the top edge with a hard band above it. | Page-like placement and a shell that reads as paper, not a panel. |
 | 1.3 | The **card tile** carries heavy glass — `backdrop-filter: blur(30px) saturate(180%)`, translucent white, inset highlight, 16px radius (`:467-479`) — while the **opened document** carries none. The cheap-looking surface is the one you actually read in. | The document is the most considered surface in the module; the tile is quieter than it. |
 | 1.4 | Content column `708px`, title `40px/1.2/700`, prose `16px/1.5` (`:878-930`) — correct numbers, but they live in `client-review.css`, which **only `ClientReviewPage` imports** (`ClientReviewPage.tsx:13`). | One document definition both surfaces reach — see §2. |
@@ -39,7 +39,7 @@ measurement. Every "MUST BE" line is the target. Nothing is left as "tidy up lat
 | 4.2 | `users.list` route exists (`users/controller.php:43`, `trpc-routes.ts:1169`). | Assignee picker uses it; no new endpoint. |
 | 4.3 | Board filters are declarative (`setFilters.ts`). | Owner filter = one row + one dropdown. |
 | 4.4 | `notifications.create` action exists, rule-driven. | Assign fires a **trigger**; no new channel. |
-| 4.5 | Task-list packages **absent** from `editorExtensions.ts` and `package.json`. | ⛔ Blocked on the dependency decision. |
+| 4.5 | ~~Task-list packages **absent**~~ **WRONG.** Only the TipTap **v2** names are absent. `@tiptap/extension-list@3.22.3` is already installed via `@tiptap/starter-kit` and exports `TaskList` + `TaskItem` (`./task-list`, `./task-item`). | ✅ **Not blocked.** Register both in `editorExtensions.ts`. No install, no owner decision. See fact-check D1. |
 
 ## 5. TECHNICAL DEBT FOUND IN THE SWEEP — all of it fixed in this round
 
@@ -49,7 +49,7 @@ measurement. Every "MUST BE" line is the target. Nothing is left as "tidy up lat
 | 5.2 | **8 hardcoded `z-index` literals** in the same file (incl. `9999`, and `100000` in the inspector lightbox). | A named layer scale; no magic numbers competing. |
 | 5.3 | **1 `!important`.** | Removed by fixing the specificity that made it necessary. |
 | 5.4 | **17 hardcoded Swedish strings** across `ClientReviewPage` (3), `ClientStatusToolbar` (11), `CreativeAssetCard` (3) — sitting beside English "Approve/Comment/Awaiting" on the same screen. | English only, per the standing UI law. |
-| 5.5 | Hardcoded **4-day client deadline** (`REVIEW_PERIOD_MS`, `ClientStatusToolbar.tsx:478`) shown to clients as real. | Hub-controlled data, or removed — never a literal. |
+| 5.5 | Hardcoded **4-day client deadline** shown to clients as real. The literal was removed, but the replacement read `pcmConfig.approvalsReviewWindowDays`, **a key no config builder emitted** — so the value was always 0 and the deadline could never render on any surface, while the comment claimed it read hub data (fact-check **D2**). | **DONE 2026-08-04**: `approvals_review_window_days` added to `PCM_Settings::$defaults` (merge pattern reaches old installs) and emitted by **both** `PCM_Admin::get_js_config()` and `PCM_Shortcode`. Default **0** = no deadline shown, on purpose: a date nobody agreed to is an invented promise. |
 | 5.6 | `submit_review` is **not idempotent** — re-submitting re-fires the webhook; only the client UI guards it. | Server-side guard, like `approve_assets` already has. |
 | 5.7 | `reviewFeedback` isn't in the list query, so the **"View client feedback" chip can never appear**. | Ship what the chip needs, or delete the chip. |
 | 5.8 | **66 hand-built tRPC bodies** app-wide carry the allow-list trap that silently broke sending. | Audited; pass-through where the handler takes the whole input. |

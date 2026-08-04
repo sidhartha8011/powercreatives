@@ -208,7 +208,8 @@ export function BrandsModule() {
   const formatDate = (date: Date | string | null) => {
     if (!date) return "—";
     const d = new Date(date);
-    return d.toLocaleDateString("sv-SE", {
+    // English-only surface (standing UI law) — this was "sv-SE".
+    return d.toLocaleDateString("en-GB", {
       year: "numeric",
       month: "short",
       day: "numeric",

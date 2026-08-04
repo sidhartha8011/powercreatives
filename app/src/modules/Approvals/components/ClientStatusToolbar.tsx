@@ -70,7 +70,10 @@ export function ClientStatusToolbar({
       const today = new Date();
       
       // Dynamic date formatting
-      const formatter = new Intl.DateTimeFormat('sv-SE', { month: 'short', day: 'numeric' });
+      // English-only surface (standing UI law). This was 'sv-SE', which survived
+      // the Swedish-strings cleanup because it is a locale, not a string, and
+      // rendered Swedish-formatted dates to every client.
+      const formatter = new Intl.DateTimeFormat('en-GB', { month: 'short', day: 'numeric' });
       const formattedDueDate = `Due ${formatter.format(dueDate)}`;
       
       // Calculate day difference

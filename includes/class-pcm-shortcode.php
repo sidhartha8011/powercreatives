@@ -536,6 +536,11 @@ class PCM_Shortcode
             'deliveryTypePresets' => class_exists('PCM_Deliveries_Service')
                 ? PCM_Deliveries_Service::type_presets()
                 : array(),
+            // Approvals client review window, in days. 0 = show no deadline.
+            // MUST mirror PCM_Admin::get_js_config() — the public client board
+            // renders under THIS config, so omitting it here is what made the
+            // due date permanently invisible to the people it is meant for.
+            'approvalsReviewWindowDays' => (int) PCM_Settings::get('approvals_review_window_days', 0),
             'version' => PCM_VERSION,
         );
     }

@@ -126,9 +126,20 @@ Before touching the uncommitted edit:
 
 ## 7. OPEN WORK, IN THE OWNER'S PRIORITY ORDER
 
+> ⚠ **CORRECTED 2026-08-04 by fact-check** — see
+> `docs/GAP-ANALYSIS-HANDOVER-FACTCHECK-20260804.md`. Three items below were wrong and are
+> struck through in place. The file:line facts in this handover were re-checked and are exact.
+
 **The opened card (his live complaint):**
-- The blur cannot work where it is — the viewer runs inside `PreviewDialog`'s **iframe**, and
-  an iframe cannot blur its host page. Architectural decision required.
+- ~~The blur cannot work where it is — the viewer runs inside `PreviewDialog`'s **iframe**~~
+  **WRONG (D3).** `ClientReviewPage` has two render paths. `App.tsx:21-26` renders it as the
+  whole page whenever `?pcm_public_token=` is present — **no iframe** — and that is the real
+  client surface, where the blur at `client-review.css:836` already covers the viewport.
+  `PreviewDialog` (`SetsBoard.tsx:513` → `PreviewDialog.tsx:61-66`) iframes it for the admin
+  preview only, where confining the blur to the frame is arguably correct. **No architectural
+  decision required.**
+- ~~The blur is missing~~ **ALREADY DONE (D4).** `88f3cf4` added
+  `backdrop-filter: blur(12px) saturate(120%)` at `client-review.css:836-837`.
 - White corners around the modal.
 - Remove the top-left crumb icon — `CreativeAssetCard.tsx:95-98`.
 - Move Approve into a sticky header — currently `:147-155`, bottom of the document.
@@ -142,14 +153,33 @@ Before touching the uncommitted edit:
   Gate: `grep -c "type === '"` → 0. Plans `14eea01`, `c0765fa`.
 
 **Task system:** `assigneeId` column (DB 1.45.0 → 1.46.0), owner = existing `userId`,
-assignee from `users.list`, owner filter, notify-on-assign trigger. Checkboxes **blocked**:
-`@tiptap/extension-task-list` + `-task-item` are not installed — owner decision required.
+assignee from `users.list`, owner filter, notify-on-assign trigger.
+~~Checkboxes **blocked**: `@tiptap/extension-task-list` + `-task-item` are not installed~~
+**WRONG (D1) — NOTHING IS BLOCKED.** Those are the TipTap **v2** package names.
+`@tiptap/extension-list@3.22.3` is **already installed** (a direct dependency of
+`@tiptap/starter-kit`, itself a direct dependency) and exports `TaskList`, `TaskItem` and
+`toggleTaskList()` via the `./task-list` and `./task-item` subpaths. The checklist ships from
+the installed tree — no install, no owner decision.
 
-**Debt, measured:** 53 raw hex colours, 8 z-index literals, 1 `!important` in
-`client-review.css`; `data-id` attributes persisted into saved document content; 66
-hand-built tRPC bodies; the dead "View client feedback" chip (`reviewFeedback` not selected);
-document edits not persisted after save; the 15–30 s share click (server measured ~120 ms,
-payload <1 KB — cause is browser/transport, needs a Network trace).
+**Debt, re-measured 2026-08-04 (the earlier figures counted one file, hex only):**
+- `client-review.css`: 53 raw hex **+ 128 `rgb()/rgba()` literals = 181 colour literals**,
+  8 z-index literals, 1 `!important`.
+- `modules/Approvals/*.tsx`: **34 further raw hex** and **49 inline `style={{}}` blocks, 38 of
+  which set colour/size/spacing** (RULE 1). Worst: `setColumns.ts` 15 hex (duplicating the
+  `statusColors` token layer), `CreativeAssetCard.tsx` 26 inline.
+- `CreativeAssetCard.tsx` is **729 lines** with **11 lines** carrying `type === '`
+  (`:251, :400, :401, :415, :439, :511, :556, :659, :714, :717, :720`) — the stated gate
+  `grep -c → 0` needs 11 removed, not 4.
+- **65** hand-built tRPC bodies (was 66; C1 fixed one).
+- `data-id` persisted into saved content (`editorExtensions.ts:167-170`, `UniqueID`).
+- The dead "View client feedback" chip — confirmed unreachable: `service.php:74` omits
+  `reviewFeedback` from the list query, `SetCard.tsx:164` gates the chip on it.
+- Document edits not persisted after save (`CreativeAssetCard.tsx:66` `editable: false`).
+- The 15–30 s share click — **still unproven**; needs a browser Network trace.
+
+**Carried forward from the self-audit, never done (D5/D6):**
+- ~~C4~~ **DONE 2026-08-04**: one lane-option shape in `setColumns.ts`; both re-maps deleted.
+- **C2 still open**: audit the transforms touched that session — 65 hand-built bodies remain.
 
 ---
 

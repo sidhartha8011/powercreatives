@@ -30,7 +30,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { trpc } from '@/lib/trpc';
 import { copyToClipboard } from '@/lib/utils';
 
-import { SearchableSelect } from './SearchableSelect';
+import { SearchableSelect, type SearchableSelectOption } from './SearchableSelect';
 import { useApprovalSetsCache } from './approvalSets';
 
 /**
@@ -44,11 +44,16 @@ export function buildDefaultInviteMessage(brandName?: string | null): string {
   );
 }
 
-/** A lane the set can be moved to after sending. Supplied by the consumer. */
-export interface ShareLaneOption {
-  id: string;
-  label: string;
-}
+/**
+ * A lane the set can be moved to after sending. Supplied by the consumer.
+ *
+ * This is the shared SearchableSelect option shape, deliberately — the panel
+ * feeds these straight to that control. It used to be `{ id, label }`, so the
+ * caller converted the registry's `{ value, label }` on the way in and this
+ * file converted it back on the way out: one registry, two vocabularies, two
+ * conversions.
+ */
+export type ShareLaneOption = SearchableSelectOption;
 
 /** Sentinel for "leave the set where it is". */
 const NO_MOVE = '__stay__';
@@ -314,7 +319,7 @@ export function ApprovalSharePanel({
                 "leave the set where it is". A plain Select had no clear
                 affordance, so a pre-selected lane could never be un-chosen. */}
             <SearchableSelect
-              options={laneOptions.map((lane) => ({ value: lane.id, label: lane.label }))}
+              options={laneOptions}
               value={laneAfterSend === NO_MOVE ? null : laneAfterSend}
               onChange={(next) => setLaneAfterSend(next ?? NO_MOVE)}
               placeholder="Leave where it is"

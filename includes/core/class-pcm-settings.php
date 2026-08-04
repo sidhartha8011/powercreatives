@@ -81,6 +81,14 @@ class PCM_Settings
         // (matched by the firing event's `module.` prefix) send from its own verified
         // Brevo sender; modules without an entry fall back to automations_from_email.
         'module_email_senders' => array(),
+
+        // ── Approvals module ────────────────────────────────────────
+        // Review window in DAYS shown to the client as a due date on the public
+        // board. 0 = no deadline is displayed at all, which is the default on
+        // purpose: a date nobody agreed to is an invented promise. This replaced
+        // a hardcoded 4-day literal in ClientStatusToolbar; the frontend reads it
+        // as pcmConfig.approvalsReviewWindowDays and renders nothing when it is 0.
+        'approvals_review_window_days' => 0,
     );
 
     /**
