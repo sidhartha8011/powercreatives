@@ -122,9 +122,18 @@ class PCM_REST_Approvals extends PCM_REST_Base
             return $this->not_found('Delivery');
         }
 
+        // Optional target lane (the board's lane "+" creates straight into it).
+        // Absent = 'draft', exactly as before. An unrecognised value is a named
+        // error, never a silent demotion to draft.
+        $status = isset($params['status']) ? sanitize_text_field((string) $params['status']) : '';
+        if ($status !== '' && !in_array($status, PCM_Approvals_Service::STATUSES, true)) {
+            return $this->error('Invalid status: ' . $status);
+        }
+
         try {
             $set_id = PCM_Approvals_Service::create_set((int)$pcm_user->id, array(
                 'name'       => sanitize_text_field($params['name']),
+                'status'     => $status !== '' ? $status : null,
                 'brandId'    => !empty($params['brandId']) ? (int)$params['brandId'] : null,
                 'projectId'  => !empty($params['projectId']) ? (int)$params['projectId'] : null,
                 'deliveryId' => $delivery_id,

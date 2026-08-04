@@ -86,6 +86,35 @@
   white-space: nowrap;
 }
 
+/* "Create in this lane" — sits at the far right of the header, quiet until the
+ * lane is hovered or the button itself is focused. Opacity (not display) so it
+ * keeps its space and the header never reflows. */
+.columnCreate {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--pck-radius-pill);
+  background: transparent;
+  color: var(--pck-pill-text);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
+.column:hover .columnCreate,
+.columnCreate:focus-visible {
+  opacity: 1;
+}
+
+.columnCreate:hover {
+  background: var(--pck-pill-bg);
+}
+
 .columnList {
   list-style: none;
   padding: 0;

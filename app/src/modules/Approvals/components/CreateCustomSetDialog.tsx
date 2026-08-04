@@ -34,6 +34,7 @@ import {
   ProjectPicker,
   resolveProjectId,
   EMPTY_PROJECT_PICK,
+  useProjectPickerData,
   type ProjectPickerValue,
 } from '@/components/shared/ProjectPicker';
 import {
@@ -55,8 +56,21 @@ function uid(): string {
 interface CreateCustomSetDialogProps {
   open: boolean;
   onClose: () => void;
-  /** Create-from-delivery preset: pre-selects brand/project/delivery (still overridable). */
-  preset?: { brandId: number | null; projectId: number; deliveryId: number };
+  /**
+   * Pre-selection carried in from wherever the create was started — a delivery
+   * card's "+", or a board lane's "+" with the active filters. Every field is a
+   * hint the user can still change.
+   *
+   * `status` = the lane the set is born in (the board's lane "+"); omitted means
+   * 'draft', the server's default. `deliveryId` never lands on the set — it only
+   * seeds the project→delivery link (the set maps to a project and nothing else).
+   */
+  preset?: {
+    brandId?: number | null;
+    projectId?: number | null;
+    deliveryId?: number | null;
+    status?: string | null;
+  };
 }
 
 export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSetDialogProps) {
@@ -69,15 +83,10 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
   // Set once created — switches the dialog from authoring to the share panel.
   const [created, setCreated] = useState<{ id: number; shareUrl: string } | null>(null);
 
-  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
-  const projects: { id: number; name: string }[] = Array.isArray(projectsRaw)
-    ? (projectsRaw as any[]).map((p) => ({ id: Number(p.id), name: String(p.name) })) : [];
-
-  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
-  const deliveries: { id: number; name: string }[] = Array.isArray(deliveriesRaw)
-    ? (deliveriesRaw as any[]).map((d) => ({ id: Number(d.id), name: String(d.name) })) : [];
+  const { projects, deliveries } = useProjectPickerData();
 
   const createProjectMutation = trpc.assets.createProject.useMutation();
+  const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation();
   const approvalSetsCache = useApprovalSetsCache();
 
   // Fresh canvas + fields every time it opens, so a cancelled draft never leaks into the next one.
@@ -121,7 +130,11 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     // saved with a real project id — or not saved at all if that fails.
     let effProjectId: number | null;
     try {
-      effProjectId = await resolveProjectId(project, createProjectMutation.mutateAsync);
+      effProjectId = await resolveProjectId(
+        project,
+        createProjectMutation.mutateAsync,
+        setProjectDeliveryMutation.mutateAsync
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create the project.');
       return;
@@ -144,6 +157,8 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     createMutation.mutate({
       name: setName,
       brandId: preset?.brandId ?? null,
+      // The lane it was created in (board "+"); omitted → the server's 'draft'.
+      status: preset?.status ?? null,
       // The set's ONE mapping. Delivery + brand are derived live from this
       // project server-side (PCM_Hierarchy) — never stored on the set.
       projectId: effProjectId,
@@ -223,15 +238,24 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
               projects={projects}
               deliveries={deliveries}
               value={project}
-              onChange={(next) =>
+              onChange={(next) => {
+                // Started from a delivery's "+", or with a Delivery filter on?
+                // Seed that delivery the moment a project needs one — whether it
+                // is being created or is an existing one with no link yet. Still
+                // changeable, and clearing it back to "No delivery" sticks.
+                const startedNewProject =
+                  next.newProjectName !== null && project.newProjectName === null;
+                const pickedUnlinkedProject =
+                  next.projectId != null &&
+                  next.projectId !== project.projectId &&
+                  projects.find((p) => p.id === next.projectId)?.deliveryId == null;
+
                 setProject(
-                  // Came from a delivery's "+" and you're creating a project?
-                  // Seed that delivery — you can still change or clear it.
-                  next.newProjectName !== null && project.newProjectName === null
+                  startedNewProject || pickedUnlinkedProject
                     ? { ...next, newProjectDeliveryId: preset?.deliveryId ?? null }
                     : next
-                )
-              }
+                );
+              }}
               disabled={busy}
             />
             <div className="space-y-1.5">

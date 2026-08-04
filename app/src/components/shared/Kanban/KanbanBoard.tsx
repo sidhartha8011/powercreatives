@@ -46,6 +46,7 @@ export function KanbanBoard<T extends { id: string | number }>({
   error = null,
   onItemMove,
   onColumnReorder,
+  onColumnCreate,
   className,
   style,
   ariaLabel = 'Kanban board',
@@ -115,6 +116,7 @@ export function KanbanBoard<T extends { id: string | number }>({
           renderCard={renderCard}
           dndEnabled={dndEnabled}
           onColumnReorder={onColumnReorder}
+          onColumnCreate={onColumnCreate}
         />
       ))}
     </div>
@@ -139,6 +141,7 @@ interface KanbanColumnProps<T extends { id: string | number }> {
   renderCard: (item: T, ctx: RenderCardContext) => ReactNode;
   dndEnabled: boolean;
   onColumnReorder?: (fromColumnId: string, toColumnId: string) => void;
+  onColumnCreate?: (columnId: string) => void;
 }
 
 /** Custom MIME type so lane drops never react to foreign drags. */
@@ -150,6 +153,7 @@ function KanbanColumn<T extends { id: string | number }>({
   renderCard,
   dndEnabled,
   onColumnReorder,
+  onColumnCreate,
 }: KanbanColumnProps<T>) {
   const pillStyle = {
     background: column.accentColor ?? undefined,
@@ -205,6 +209,28 @@ function KanbanColumn<T extends { id: string | number }>({
       >
         <span className={styles.columnHeaderLabel}>{column.label}</span>
       </span>
+
+      {onColumnCreate && (
+        <button
+          type="button"
+          className={styles.columnCreate}
+          // Native drag on the header would otherwise start from the button too.
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+          onClick={() => onColumnCreate(column.id)}
+          aria-label={`Create in ${column.label}`}
+          title={`Create in ${column.label}`}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+            <path
+              d="M7 2.5v9M2.5 7h9"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      )}
     </header>
   );
 

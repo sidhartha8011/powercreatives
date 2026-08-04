@@ -18,12 +18,19 @@ import { useMemo } from 'react';
 
 import { CreatableCombobox } from '@/components/ui/creatable-combobox';
 import { Label } from '@/components/ui/label';
+import { trpc } from '@/lib/trpc';
 
 import { SearchableSelect, type SearchableSelectOption } from './SearchableSelect';
 
 export interface ProjectOption {
   id: number;
   name: string;
+  /**
+   * The delivery this project already belongs to, or null when it has none.
+   * `GET /assets/projects` returns it, so "does this project need linking?" is
+   * answerable without another call.
+   */
+  deliveryId?: number | null;
 }
 
 export interface DeliveryOption {
@@ -37,7 +44,11 @@ export interface ProjectPickerValue {
   projectId: number | null;
   /** Name of a project to create on submit. */
   newProjectName: string | null;
-  /** Delivery for the project being created (null = deliberately no delivery). */
+  /**
+   * Delivery to attach to the project on submit — for one being CREATED, or for
+   * a chosen existing project that has none. `null` = no delivery, which is a
+   * first-class answer: the set saves fine without it.
+   */
   newProjectDeliveryId: number | null;
 }
 
@@ -46,6 +57,43 @@ export const EMPTY_PROJECT_PICK: ProjectPickerValue = {
   newProjectName: null,
   newProjectDeliveryId: null,
 };
+
+/**
+ * The two lists this picker runs on, normalised once. Every create dialog needed
+ * the identical `Array.isArray(raw) ? raw.map(Number(id), String(name)) : []`
+ * pair — three copies of the same boundary code, which is three chances for one
+ * of them to forget a field (deliveryId was exactly that field).
+ *
+ * wpdb serialises BIGINT columns as strings, hence the Number() coercion.
+ */
+export function useProjectPickerData(): {
+  projects: ProjectOption[];
+  deliveries: DeliveryOption[];
+} {
+  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
+  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
+
+  const projects = useMemo<ProjectOption[]>(
+    () =>
+      (Array.isArray(projectsRaw) ? (projectsRaw as any[]) : []).map((p) => ({
+        id: Number(p.id),
+        name: String(p.name ?? ''),
+        deliveryId: p.deliveryId != null ? Number(p.deliveryId) : null,
+      })),
+    [projectsRaw]
+  );
+
+  const deliveries = useMemo<DeliveryOption[]>(
+    () =>
+      (Array.isArray(deliveriesRaw) ? (deliveriesRaw as any[]) : []).map((d) => ({
+        id: Number(d.id),
+        name: String(d.name ?? ''),
+      })),
+    [deliveriesRaw]
+  );
+
+  return { projects, deliveries };
+}
 
 /**
  * Build unique combobox labels. Two projects may legitimately share a name, so a
@@ -101,6 +149,24 @@ export function ProjectPicker({
   const comboValue =
     value.newProjectName ?? (value.projectId != null ? byId.get(value.projectId) ?? null : null);
 
+  /** The picked existing project, when one is picked. */
+  const pickedProject =
+    value.projectId != null ? projects.find((p) => p.id === value.projectId) ?? null : null;
+
+  /**
+   * Offer the delivery row when the project is being CREATED, or when the picked
+   * one has no delivery yet. A project that already has one is left alone —
+   * re-pointing it belongs to the Projects registry, not to a create dialog.
+   */
+  const offerDeliveryLink =
+    value.newProjectName !== null ||
+    (pickedProject !== null && pickedProject.deliveryId == null);
+
+  const deliveryRowLabel =
+    value.newProjectName !== null
+      ? `Delivery for “${value.newProjectName}”`
+      : `Link “${pickedProject?.name ?? ''}” to a delivery (optional)`;
+
   const handleComboChange = (next: string | null) => {
     if (next === null) {
       onChange(EMPTY_PROJECT_PICK);
@@ -128,9 +194,9 @@ export function ProjectPicker({
         className="w-full bg-card"
       />
 
-      {value.newProjectName !== null && (
+      {offerDeliveryLink && (
         <div className="space-y-1.5 pt-1">
-          <Label htmlFor="pcm-project-delivery">Delivery for “{value.newProjectName}”</Label>
+          <Label htmlFor="pcm-project-delivery">{deliveryRowLabel}</Label>
           <SearchableSelect
             options={deliveryOptions}
             value={
@@ -154,20 +220,39 @@ export function ProjectPicker({
 }
 
 /**
- * Turn a picker value into the projectId to store on the set, creating the
- * project first when the user typed a new name. Throws on failure so the caller
- * aborts instead of quietly saving a set with no project.
+ * Turn a picker value into the projectId to store on the set — the ONE
+ * choke-point every create dialog goes through, so none of them learns the rules:
+ *
+ *   - typed a new name  → create the project (with its delivery, if chosen);
+ *   - picked an existing project + chose a delivery → attach it to that project;
+ *   - chose no delivery → nothing happens, and that is a valid outcome.
+ *
+ * Creation failure throws, so the caller aborts rather than quietly saving a set
+ * with no project. Attaching a delivery to an EXISTING project does not throw:
+ * the project is real and the set is about to be valid either way, so a failed
+ * link is surfaced to the caller as a rejected promise ONLY for the create case.
  *
  * @param createProject `trpc.assets.createProject.mutateAsync`
+ * @param setProjectDelivery `trpc.assets.setProjectDelivery.mutateAsync`
  */
 export async function resolveProjectId(
   value: ProjectPickerValue,
   createProject: (input: {
     name: string;
     deliveryId: number | null;
-  }) => Promise<unknown>
+  }) => Promise<unknown>,
+  setProjectDelivery?: (input: { id: number; deliveryId: number | null }) => Promise<unknown>
 ): Promise<number | null> {
-  if (value.newProjectName === null) return value.projectId;
+  if (value.newProjectName === null) {
+    // Existing project: attach the delivery the user picked for it, if any.
+    if (value.projectId != null && value.newProjectDeliveryId != null && setProjectDelivery) {
+      await setProjectDelivery({
+        id: value.projectId,
+        deliveryId: value.newProjectDeliveryId,
+      });
+    }
+    return value.projectId;
+  }
 
   const created = (await createProject({
     name: value.newProjectName,

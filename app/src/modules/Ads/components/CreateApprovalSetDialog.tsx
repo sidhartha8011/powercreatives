@@ -24,6 +24,7 @@ import {
   ProjectPicker,
   resolveProjectId,
   EMPTY_PROJECT_PICK,
+  useProjectPickerData,
   type ProjectPickerValue,
 } from '@/components/shared/ProjectPicker';
 import type { MediaSlot, TextSlot } from '../types';
@@ -68,18 +69,11 @@ export function CreateApprovalSetDialog({
   const [mode, setMode] = useState<'create' | 'append'>('create');
   const [targetSet, setTargetSet] = useState<AppendableSet | null>(null);
 
-  // Projects the set can belong to; deliveries only feed the "new project" row.
-  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
-  const projectOptions: { id: number; name: string }[] = Array.isArray(projectsRaw)
-    ? (projectsRaw as any[]).map((p) => ({ id: Number(p.id), name: String(p.name) }))
-    : [];
-
-  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
-  const deliveries: { id: number; name: string }[] = Array.isArray(deliveriesRaw)
-    ? (deliveriesRaw as any[]).map((d) => ({ id: Number(d.id), name: String(d.name) }))
-    : [];
+  // Projects the set can belong to; deliveries feed the project→delivery link.
+  const { projects: projectOptions, deliveries } = useProjectPickerData();
 
   const createProjectMutation = trpc.assets.createProject.useMutation();
+  const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation();
   const approvalSetsCache = useApprovalSetsCache();
 
   // Reset to defaults ONLY when the dialog opens — depending on the brand props
@@ -200,7 +194,11 @@ export function CreateApprovalSetDialog({
     // saved with a real project id — or not saved at all if that fails.
     let effProjectId: number | null;
     try {
-      effProjectId = await resolveProjectId(project, createProjectMutation.mutateAsync);
+      effProjectId = await resolveProjectId(
+        project,
+        createProjectMutation.mutateAsync,
+        setProjectDeliveryMutation.mutateAsync
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create the project.');
       return;

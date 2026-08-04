@@ -234,8 +234,15 @@ class PCM_Approvals_Service
     /**
      * Create a new approval set.
      *
+     * `status` is optional and defaults to 'draft' — the board's lane "+" passes the
+     * lane it was clicked in, so the set is born there in ONE insert. Deliberately
+     * NOT create-then-update_status: that would write a phantom Draft row and fire
+     * `approvals.set_status_changed`, which would run user rules keyed to a lane
+     * (e.g. the seeded "Notify team on Launch") for a set that was merely CREATED
+     * there. A creation is not a lane change. The caller validates the value.
+     *
      * @param int   $user_id User ID.
-     * @param array $data    Set fields (name, brandId, projectId, snapshot).
+     * @param array $data    Set fields (name, brandId, projectId, snapshot, status?).
      * @return int|false New Set ID or false.
      */
     public static function create_set(int $user_id, array $data): int|false
@@ -249,20 +256,30 @@ class PCM_Approvals_Service
         // Format snapshot
         $snapshot = is_string($data['snapshot']) ? $data['snapshot'] : wp_json_encode($data['snapshot']);
 
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $result = $wpdb->insert(
-            $table,
-            array(
-                'userId'     => $user_id,
-                'brandId'    => $data['brandId'] ?? null,
-                'projectId'  => $data['projectId'] ?? null,
-                'deliveryId' => $data['deliveryId'] ?? null,
-                'name'       => $data['name'],
-                'token'      => $token,
-                'status'     => 'draft',
-                'snapshot'   => $snapshot,
-            )
+        $status = isset($data['status']) && in_array($data['status'], self::STATUSES, true)
+            ? (string) $data['status']
+            : 'draft';
+
+        $row = array(
+            'userId'     => $user_id,
+            'brandId'    => $data['brandId'] ?? null,
+            'projectId'  => $data['projectId'] ?? null,
+            'deliveryId' => $data['deliveryId'] ?? null,
+            'name'       => $data['name'],
+            'token'      => $token,
+            'status'     => $status,
+            'snapshot'   => $snapshot,
         );
+
+        // Born directly in the client lane? Stamp the same anchor update_status()
+        // stamps — the pending-client reminder scanner reads clientSentAt, so
+        // without this those sets would never be reminded about.
+        if ($status === 'client') {
+            $row['clientSentAt'] = current_time('mysql');
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $result = $wpdb->insert($table, $row);
 
         return $result ? $wpdb->insert_id : false;
     }

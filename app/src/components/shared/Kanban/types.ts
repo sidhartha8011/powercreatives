@@ -97,6 +97,14 @@ export interface KanbanBoardProps<T extends { id: string | number }> {
    */
   onColumnReorder?: (fromColumnId: string, toColumnId: string) => void;
 
+  /**
+   * Optional "create in this lane": when set, every column header gets a "+"
+   * on its right. Called with the lane's id — which for status-keyed boards IS
+   * the status the new item should be born in. The consumer owns the dialog and
+   * anything else that should be carried over (e.g. the active filters).
+   */
+  onColumnCreate?: (columnId: string) => void;
+
   className?: string;
   style?: CSSProperties;
   ariaLabel?: string;

@@ -127,7 +127,28 @@ type PendingDelete =
   | { kind: 'bulk'; ids: ReadonlyArray<number> }
   | null;
 
-export function SetsBoard() {
+/**
+ * What a lane's "+" carries into the create dialog: the lane it was clicked in,
+ * plus whatever the filters are currently narrowed to.
+ *
+ * `deliveryId` is deliberately NOT a set field — it only seeds the
+ * project→delivery link inside the dialog. The set maps to a project and
+ * nothing else, and `brandId` is overwritten by the live chain the moment a
+ * project is chosen.
+ */
+export interface CreateInLaneContext {
+  status: ApprovalStatus;
+  brandId: number | null;
+  deliveryId: number | null;
+  projectId: number | null;
+}
+
+export interface SetsBoardProps {
+  /** Called by a lane's "+" with the lane + active filters. */
+  onCreateInLane?: (ctx: CreateInLaneContext) => void;
+}
+
+export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
   const {
     sets,
     isLoading,
@@ -283,6 +304,21 @@ export function SetsBoard() {
     ]
   );
 
+  // Lane "+" → hand the lane and the live filter values up to the dialog owner.
+  const handleColumnCreate = useCallback(
+    (columnId: string) => {
+      if (!onCreateInLane || !isApprovalStatus(columnId)) return;
+      const asId = (v: string | null) => (v != null ? Number(v) : null);
+      onCreateInLane({
+        status: columnId,
+        brandId: asId(brandValue),
+        deliveryId: asId(deliveryValue),
+        projectId: asId(projectValue),
+      });
+    },
+    [onCreateInLane, brandValue, deliveryValue, projectValue]
+  );
+
   const handleMove = useCallback(
     (event: KanbanMoveEvent) => {
       if (!isApprovalStatus(event.toColumnId)) return;
@@ -429,6 +465,7 @@ export function SetsBoard() {
             getColumnId={getColumnId}
             renderCard={renderCard}
             onItemMove={handleMove}
+            onColumnCreate={onCreateInLane ? handleColumnCreate : undefined}
             isLoading={isLoading}
             error={error}
             ariaLabel="Approval sets pipeline"
