@@ -26,8 +26,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
-} from '@/components/ui/select';
+  ProjectPicker,
+  resolveProjectId,
+  EMPTY_PROJECT_PICK,
+  type ProjectPickerValue,
+} from '@/components/shared/ProjectPicker';
 import { Send, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { escapeAstralDeep } from '@/lib/escapeAstral';
@@ -50,12 +53,19 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
   const [content, setContent] = useState('<p></p>');
   const [overlay, setOverlay] = useState<string | null>(null);
   const [name, setName] = useState('');
-  const [projectSel, setProjectSel] = useState<string>('');
+  // The set's ONE mapping: a project (existing, or created on submit).
+  const [project, setProject] = useState<ProjectPickerValue>(EMPTY_PROJECT_PICK);
   const [clientEmail, setClientEmail] = useState('');
 
   const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
   const projects: { id: number; name: string }[] = Array.isArray(projectsRaw)
     ? (projectsRaw as any[]).map((p) => ({ id: Number(p.id), name: String(p.name) })) : [];
+
+  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
+  const deliveries: { id: number; name: string }[] = Array.isArray(deliveriesRaw)
+    ? (deliveriesRaw as any[]).map((d) => ({ id: Number(d.id), name: String(d.name) })) : [];
+
+  const createProjectMutation = trpc.assets.createProject.useMutation();
 
   // Fresh canvas + fields every time it opens, so a cancelled draft never leaks into the next one.
   useEffect(() => {
@@ -63,7 +73,11 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     setContent('<p></p>');
     setOverlay(null);
     setName('');
-    setProjectSel(preset?.projectId ? String(preset.projectId) : '');
+    setProject(
+      preset?.projectId
+        ? { projectId: preset.projectId, newProjectName: null, newProjectDeliveryId: null }
+        : EMPTY_PROJECT_PICK
+    );
     setClientEmail('');
   }, [open, preset?.projectId]);
 
@@ -77,9 +91,19 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     onError: (err: any) => toast.error(err?.message || 'Failed to create the approval set.'),
   }) as any;
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const setName = name.trim();
     if (!setName) { toast.error('Please enter an approval set name.'); return; }
+
+    // Create the project first when the user typed a new name, so the set is
+    // saved with a real project id — or not saved at all if that fails.
+    let effProjectId: number | null;
+    try {
+      effProjectId = await resolveProjectId(project, createProjectMutation.mutateAsync);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create the project.');
+      return;
+    }
 
     const now = new Date().toISOString();
     const card = {
@@ -98,8 +122,9 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     createMutation.mutate({
       name: setName,
       brandId: preset?.brandId ?? null,
-      projectId: projectSel ? Number(projectSel) : (preset?.projectId ?? null),
-      deliveryId: preset?.deliveryId ?? null,
+      // The set's ONE mapping. Delivery + brand are derived live from this
+      // project server-side (PCM_Hierarchy) — never stored on the set.
+      projectId: effProjectId,
       // When present the SERVER shares on create (moves the set to the client lane AND emails
       // the invite) — one request, nothing for the browser to miss.
       clientEmail: inviteEmail || null,
@@ -112,7 +137,9 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     });
   };
 
-  const busy = createMutation.isPending ?? createMutation.isLoading ?? false;
+  const busy =
+    (createMutation.isPending ?? createMutation.isLoading ?? false) ||
+    (createProjectMutation.isPending ?? createProjectMutation.isLoading ?? false);
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
@@ -152,20 +179,15 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
                 className="bg-card"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="set-project">Project</Label>
-              <Select value={projectSel || 'none'} onValueChange={(v) => setProjectSel(v === 'none' ? '' : v)}>
-                <SelectTrigger id="set-project" className="w-full bg-card">
-                  <SelectValue placeholder="No project" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No project</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* The set's ONE mapping. Search the list or type a new name to create
+                the project; delivery + brand follow from it. */}
+            <ProjectPicker
+              projects={projects}
+              deliveries={deliveries}
+              value={project}
+              onChange={setProject}
+              disabled={busy}
+            />
             <div className="space-y-1.5">
               <Label htmlFor="set-email">Client email</Label>
               <Input

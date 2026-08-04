@@ -26,6 +26,12 @@ import styles from './setCard.module.css';
 
 export interface SetCardProps {
   set: ApprovalSet;
+  /**
+   * Brand name resolved by the board from the brands registry. The list endpoint
+   * deliberately doesn't ship the (longtext) snapshot, so `set.snapshot.brandName`
+   * is empty here — this prop is the card's only source for the brand prefix.
+   */
+  brandName?: string | null;
   onCopyLink: (token: string) => void;
   onOpenFeedback: (set: ApprovalSet) => void;
   /** Opens the in-app preview dialog (iframe of the public board). */
@@ -43,6 +49,7 @@ export interface SetCardProps {
 
 export function SetCard({
   set,
+  brandName,
   onCopyLink,
   onOpenFeedback,
   onOpenPreview,
@@ -104,7 +111,7 @@ export function SetCard({
     [stop, onRequestDelete, set]
   );
 
-  const brand = set.snapshot.brandName?.trim();
+  const brand = (brandName ?? set.snapshot.brandName)?.trim();
 
   return (
     <article

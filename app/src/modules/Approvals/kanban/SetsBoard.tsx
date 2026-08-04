@@ -15,8 +15,8 @@
  *   - DnD column moves → status mutation via useApprovalSets.
  */
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { KanbanSquare, Search, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { KanbanSquare, Trash2, X } from 'lucide-react';
 
 import { trpc } from '@/lib/trpc';
 import { useApp } from '@/contexts/AppContext';
@@ -32,7 +32,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -40,6 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/shared';
 import {
   DefaultEmptyState,
   KanbanBoard,
@@ -61,9 +61,6 @@ import {
   type ApprovalStatus,
 } from '../types';
 
-/** Sentinel value used by single-select dropdowns to represent "no filter". */
-const ALL_VALUE = '__all__';
-
 /** Sentinel value used by the sort dropdown to represent "no sort". */
 const NO_SORT_VALUE = '__none__';
 
@@ -71,30 +68,54 @@ function isApprovalStatus(value: string): value is ApprovalStatus {
   return (APPROVAL_STATUSES as ReadonlyArray<string>).includes(value);
 }
 
-/** Stable, sorted, de-duplicated list of values for a single-select dropdown. */
-function uniqueValues(
-  items: ReadonlyArray<ApprovalSet>,
-  accessor: (s: ApprovalSet) => string | null | undefined
-): string[] {
-  const set = new Set<string>();
-  for (const item of items) {
-    const v = accessor(item);
-    if (v) set.add(v);
+/** A registry row reduced to what a dropdown needs. */
+type NamedRow = { id: number; name: string };
+
+/** Normalize a registry response (wpdb serializes ids as strings) to id + name. */
+function toNamedRows(raw: unknown): NamedRow[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r) => {
+      const row = r as { id?: unknown; name?: unknown };
+      return { id: Number(row.id), name: String(row.name ?? '') };
+    })
+    .filter((r) => Number.isFinite(r.id) && r.name !== '');
+}
+
+function nameMap(rows: ReadonlyArray<NamedRow>): Map<number, string> {
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+/**
+ * Dropdown options for one link: only ids that actually occur on the board, each
+ * labelled from its registry. Narrowing to present ids means every choice returns
+ * at least one card — no dead options. An id with no registry row (deleted brand,
+ * project outside the caller's scope) is labelled honestly rather than hidden, so
+ * the card it belongs to stays reachable.
+ */
+function linkOptions(
+  sets: ReadonlyArray<ApprovalSet>,
+  accessor: (s: ApprovalSet) => number | null | undefined,
+  names: Map<number, string>,
+  unknownLabel: string
+): SearchableSelectOption[] {
+  const present = new Set<number>();
+  for (const s of sets) {
+    const id = accessor(s);
+    if (id != null) present.add(Number(id));
   }
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
+  return Array.from(present)
+    .map((id) => ({ value: String(id), label: names.get(id) ?? `${unknownLabel} #${id}` }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function readSearch(state: FilterState): string {
-  const v = state['search'];
-  return v?.kind === 'text' ? v.query : '';
-}
-
-function readSelect(state: FilterState, filterId: string): string {
+/** Currently-selected value of a searchable filter, or null when unset. */
+function readSelect(state: FilterState, filterId: string): string | null {
   const v = state[filterId];
   if (v?.kind === 'searchableSelect' && v.selected.length > 0) {
     return v.selected[0];
   }
-  return ALL_VALUE;
+  return null;
 }
 
 /**
@@ -129,36 +150,31 @@ export function SetsBoard() {
     clearSelection,
   } = useApprovalSets();
 
-  // Resolve delivery names onto the set rows (sets only carry deliveryId) so
-  // the Delivery filter + search work on human-readable names.
+  // The three dropdowns filter by ID and read their labels from the registries
+  // that own those names — the set row carries only the ids.
+  const { data: brandsRaw } = trpc.brands.list.useQuery();
   const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
-  const deliveryNameById = useMemo(() => {
-    const m = new Map<number, string>();
-    (Array.isArray(deliveriesRaw) ? deliveriesRaw : []).forEach((d: any) =>
-      m.set(Number(d.id), String(d.name))
-    );
-    return m;
-  }, [deliveriesRaw]);
-  const setsWithDelivery = useMemo<ApprovalSet[]>(
-    () =>
-      sets.map((s) => ({
-        ...s,
-        deliveryName:
-          s.deliveryId != null ? deliveryNameById.get(s.deliveryId) ?? null : null,
-      })),
-    [sets, deliveryNameById]
-  );
+  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
 
-  const listState = useListState<ApprovalSet>(setsWithDelivery, setFilters, setSorts, {
-    persistKey: 'pcm.approvals.sets',
+  const brandNameById = useMemo(() => nameMap(toNamedRows(brandsRaw)), [brandsRaw]);
+  const deliveryNameById = useMemo(() => nameMap(toNamedRows(deliveriesRaw)), [deliveriesRaw]);
+  const projectNameById = useMemo(() => nameMap(toNamedRows(projectsRaw)), [projectsRaw]);
+
+  const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
+    // `.v2`: the 2026-08-04 bar dropped the `search` + `set` filters. applyFilters
+    // ignores state with no matching definition, but activeFilterCount counts raw
+    // state — a leftover key would strand "Clear filters" visible forever. A new
+    // key abandons the old state instead of migrating it.
+    persistKey: 'pcm.approvals.sets.v2',
     defaultSortId: DEFAULT_SET_SORT,
   });
 
-  // Notification → Approvals: consume the one-shot focus request and apply the
-  // existing Set filter so only that card shows (Clear filters resets).
-  // Depends on the PENDING VALUE itself (not just sets.length) so the jump
-  // also works when the board is already mounted — clicking the panel button
-  // while ON the Approvals tab changes no module and loads no new sets.
+  // Notification → Approvals: consume the one-shot focus request and open that
+  // set's preview card directly (owner decision 2026-08-04 — it used to pin the
+  // `set` filter, which no longer exists). Depends on the PENDING VALUE itself
+  // (not just sets.length) so the jump also works when the board is already
+  // mounted — clicking the panel button while ON the Approvals tab changes no
+  // module and loads no new sets.
   const { consumePendingApprovalSetId, state: appState } = useApp();
   const pendingFocusId = appState.pendingApprovalSetId;
   useEffect(() => {
@@ -167,57 +183,33 @@ export function SetsBoard() {
     if (focusId === null) return;
     // Number(): notification setIds arrive as strings (wpdb BIGINT JSON).
     const target = sets.find((s) => Number(s.id) === Number(focusId));
-    if (target) {
-      listState.setFilterValue('set', {
-        kind: 'searchableSelect',
-        selected: [target.name],
-      });
-    }
+    if (target) openPreview(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingFocusId, sets.length]);
 
   const brandOptions = useMemo(
-    () => uniqueValues(sets, (s) => s.snapshot.brandName),
-    [sets]
-  );
-  const projectOptions = useMemo(
-    () => uniqueValues(sets, (s) => s.snapshot.projectName),
-    [sets]
-  );
-  const setNameOptions = useMemo(
-    () => uniqueValues(sets, (s) => s.name),
-    [sets]
+    () => linkOptions(sets, (s) => s.brandId, brandNameById, 'Brand'),
+    [sets, brandNameById]
   );
   const deliveryOptions = useMemo(
-    () => uniqueValues(setsWithDelivery, (s) => s.deliveryName ?? undefined),
-    [setsWithDelivery]
+    () => linkOptions(sets, (s) => s.deliveryId, deliveryNameById, 'Delivery'),
+    [sets, deliveryNameById]
+  );
+  const projectOptions = useMemo(
+    () => linkOptions(sets, (s) => s.projectId, projectNameById, 'Project'),
+    [sets, projectNameById]
   );
 
-  const searchQuery = readSearch(listState.filterState);
   const brandValue = readSelect(listState.filterState, 'brand');
-  const projectValue = readSelect(listState.filterState, 'project');
   const deliveryValue = readSelect(listState.filterState, 'delivery');
-  const setValue = readSelect(listState.filterState, 'set');
+  const projectValue = readSelect(listState.filterState, 'project');
   const sortValue = listState.sortId ?? NO_SORT_VALUE;
 
-  const handleSearchChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const next = event.target.value;
-      listState.setFilterValue(
-        'search',
-        next.trim() ? { kind: 'text', query: next } : undefined
-      );
-    },
-    [listState]
-  );
-
   const handleSelectChange = useCallback(
-    (filterId: string, value: string) => {
+    (filterId: string, value: string | null) => {
       listState.setFilterValue(
         filterId,
-        value === ALL_VALUE
-          ? undefined
-          : { kind: 'searchableSelect', selected: [value] }
+        value === null ? undefined : { kind: 'searchableSelect', selected: [value] }
       );
     },
     [listState]
@@ -267,6 +259,9 @@ export function SetsBoard() {
     (s: ApprovalSet) => (
       <SetCard
         set={s}
+        // Resolved from the brands registry: the list endpoint doesn't ship the
+        // snapshot, so the card's own snapshot.brandName is always empty.
+        brandName={s.brandId != null ? brandNameById.get(s.brandId) ?? null : null}
         onCopyLink={copyShareLink}
         onOpenFeedback={openFeedback}
         onOpenPreview={openPreview}
@@ -284,6 +279,7 @@ export function SetsBoard() {
       handleToggleSelect,
       isSelected,
       hasSelection,
+      brandNameById,
     ]
   );
 
@@ -339,96 +335,38 @@ export function SetsBoard() {
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-3 mb-6 bg-slate-50/50 p-2 rounded-lg border border-slate-100">
-          <div className="relative flex-1 min-w-[200px] max-w-[300px]">
-            <Search
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <Input
-              placeholder="Search approval sets..."
-              value={searchQuery}
-              onChange={handleSearchChange}
-              className="pl-9 h-9 bg-white"
-              aria-label="Search approval sets"
-            />
-          </div>
-
-          <Select
+          <SearchableSelect
+            options={brandOptions}
             value={brandValue}
-            onValueChange={(v) => handleSelectChange('brand', v)}
-          >
-            <SelectTrigger className="w-[160px] h-9 bg-white" aria-label="Brand">
-              <SelectValue placeholder="Brand" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>All brands</SelectItem>
-              {brandOptions.map((b) => (
-                <SelectItem key={b} value={b}>
-                  {b}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={(v) => handleSelectChange('brand', v)}
+            placeholder="Brand"
+            allLabel="All brands"
+            searchPlaceholder="Search brands…"
+            emptyLabel="No brands match"
+            className="w-[180px]"
+          />
 
-          <Select
-            value={projectValue}
-            onValueChange={(v) => handleSelectChange('project', v)}
-          >
-            <SelectTrigger
-              className="w-[160px] h-9 bg-white"
-              aria-label="Project"
-            >
-              <SelectValue placeholder="Project" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>All projects</SelectItem>
-              {projectOptions.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {p}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
+          <SearchableSelect
+            options={deliveryOptions}
             value={deliveryValue}
-            onValueChange={(v) => handleSelectChange('delivery', v)}
-          >
-            <SelectTrigger
-              className="w-[160px] h-9 bg-white"
-              aria-label="Delivery"
-            >
-              <SelectValue placeholder="Delivery" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>All deliveries</SelectItem>
-              {deliveryOptions.map((d) => (
-                <SelectItem key={d} value={d}>
-                  {d}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={(v) => handleSelectChange('delivery', v)}
+            placeholder="Delivery"
+            allLabel="All deliveries"
+            searchPlaceholder="Search deliveries…"
+            emptyLabel="No deliveries match"
+            className="w-[180px]"
+          />
 
-          <Select
-            value={setValue}
-            onValueChange={(v) => handleSelectChange('set', v)}
-          >
-            <SelectTrigger
-              className="w-[160px] h-9 bg-white"
-              aria-label="Approval set"
-            >
-              <SelectValue placeholder="Approval set" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>All sets</SelectItem>
-              {setNameOptions.map((n) => (
-                <SelectItem key={n} value={n}>
-                  {n}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            options={projectOptions}
+            value={projectValue}
+            onChange={(v) => handleSelectChange('project', v)}
+            placeholder="Project"
+            allLabel="All projects"
+            searchPlaceholder="Search projects…"
+            emptyLabel="No projects match"
+            className="w-[180px]"
+          />
 
           {hasActiveFilter && (
             <Button

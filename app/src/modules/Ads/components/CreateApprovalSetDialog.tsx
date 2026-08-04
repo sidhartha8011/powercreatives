@@ -20,6 +20,12 @@ import { colors, typography, shadows } from '@/components/shared/design-tokens';
 import { trpc } from '@/lib/trpc';
 import { buildDefaultInviteMessage } from '@/components/shared/SendToApprovalSetDialog';
 import { ApprovalSetPicker, type AppendableSet } from '@/components/shared/ApprovalSetPicker';
+import {
+  ProjectPicker,
+  resolveProjectId,
+  EMPTY_PROJECT_PICK,
+  type ProjectPickerValue,
+} from '@/components/shared/ProjectPicker';
 import type { MediaSlot, TextSlot } from '../types';
 
 interface CreateApprovalSetDialogProps {
@@ -57,22 +63,24 @@ export function CreateApprovalSetDialog({
   const [clientEmail, setClientEmail] = useState('');
   const [clientMessage, setClientMessage] = useState('');
   const [inviteSent, setInviteSent] = useState(false);
-  // '' = none — Select values are strings; converted to number|null on submit.
-  const [deliveryId, setDeliveryId] = useState('');
+  // The set's ONE mapping: a project (existing, or created on submit).
+  const [project, setProject] = useState<ProjectPickerValue>(EMPTY_PROJECT_PICK);
   // 'create' = new set (existing flow); 'append' = add to an open set.
   const [mode, setMode] = useState<'create' | 'append'>('create');
   const [targetSet, setTargetSet] = useState<AppendableSet | null>(null);
 
-  // Deliveries for the linkage picker (stored on the set → Approvals Delivery
-  // filter + webhook enrichment).
-  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
-  const deliveries: { id: number; name: string; brandId: number | null }[] = Array.isArray(deliveriesRaw)
-    ? deliveriesRaw.map((d: any) => ({
-        id: Number(d.id),
-        name: String(d.name),
-        brandId: d.brandId != null ? Number(d.brandId) : null,
-      }))
+  // Projects the set can belong to; deliveries only feed the "new project" row.
+  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
+  const projectOptions: { id: number; name: string }[] = Array.isArray(projectsRaw)
+    ? (projectsRaw as any[]).map((p) => ({ id: Number(p.id), name: String(p.name) }))
     : [];
+
+  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
+  const deliveries: { id: number; name: string }[] = Array.isArray(deliveriesRaw)
+    ? (deliveriesRaw as any[]).map((d) => ({ id: Number(d.id), name: String(d.name) }))
+    : [];
+
+  const createProjectMutation = trpc.assets.createProject.useMutation();
 
   // Reset to defaults ONLY when the dialog opens — depending on the brand props
   // here would re-run the effect if async brand context resolves while open,
@@ -92,11 +100,11 @@ export function CreateApprovalSetDialog({
       setInviteSent(false);
       setMode('create');
       setTargetSet(null);
-      // Pre-pick the delivery linked to the current brand, when there is one.
-      const brandDelivery = brandId
-        ? deliveries.find((d) => d.brandId === Number(brandId))
-        : undefined;
-      setDeliveryId(brandDelivery ? String(brandDelivery.id) : '');
+      setProject(
+        projectId != null
+          ? { projectId: Number(projectId), newProjectName: null, newProjectDeliveryId: null }
+          : EMPTY_PROJECT_PICK
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -205,7 +213,7 @@ export function CreateApprovalSetDialog({
     appendMutation.mutate({ id: targetSet.id, snapshot: { media, copy } });
   }, [targetSet, buildBuckets, appendMutation]);
 
-  const handleGenerateLink = useCallback(() => {
+  const handleGenerateLink = useCallback(async () => {
     if (!setName.trim()) {
       toast.error('Please enter an approval set name.');
       return;
@@ -213,11 +221,22 @@ export function CreateApprovalSetDialog({
 
     const { media: selectedMedia, copy: selectedCopy } = buildBuckets();
 
+    // Create the project first when the user typed a new name, so the set is
+    // saved with a real project id — or not saved at all if that fails.
+    let effProjectId: number | null;
+    try {
+      effProjectId = await resolveProjectId(project, createProjectMutation.mutateAsync);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create the project.');
+      return;
+    }
+
     createMutation.mutate({
       name: setName.trim(),
       brandId: brandId || null,
-      projectId: projectId || null,
-      deliveryId: deliveryId ? Number(deliveryId) : null,
+      // The set's ONE mapping. Delivery + brand are derived live from this
+      // project server-side (PCM_Hierarchy) — never stored on the set.
+      projectId: effProjectId,
       snapshot: {
         media: selectedMedia,
         copy: selectedCopy,
@@ -225,7 +244,7 @@ export function CreateApprovalSetDialog({
         brandLogoUrl: brandLogoUrl || null,
       },
     });
-  }, [setName, buildBuckets, brandId, projectId, deliveryId, brandName, brandLogoUrl, createMutation]);
+  }, [setName, buildBuckets, brandId, project, brandName, brandLogoUrl, createMutation, createProjectMutation]);
 
   const handleCopyLink = useCallback(() => {
     if (!shareableLink) return;
@@ -352,26 +371,15 @@ export function CreateApprovalSetDialog({
                     disabled={createMutation.isLoading}
                   />
 
-                  <label
-                    style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}
-                  >
-                    Delivery (optional)
-                  </label>
-                  <Select
-                    value={deliveryId || 'none'}
-                    onValueChange={(v) => setDeliveryId(v === 'none' ? '' : v)}
-                    disabled={createMutation.isLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="No delivery linked" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No delivery</SelectItem>
-                      {deliveries.map((d) => (
-                        <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {/* The set's ONE mapping. Search the list or type a new name to
+                      create the project; delivery + brand follow from it. */}
+                  <ProjectPicker
+                    projects={projectOptions}
+                    deliveries={deliveries}
+                    value={project}
+                    onChange={setProject}
+                    disabled={createMutation.isLoading || createProjectMutation.isLoading}
+                  />
                 </>
               )}
             </div>

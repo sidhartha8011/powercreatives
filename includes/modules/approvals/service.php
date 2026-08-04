@@ -66,7 +66,12 @@ class PCM_Approvals_Service
         // their own plus sets in their granted brand/project scope, so a
         // teammate's work on a shared engagement is visible to everyone with
         // that access (and notification jumps resolve on both sides).
-        $cols = "id, userId, brandId, projectId, name, token, status, clientEmail, createdAt, updatedAt";
+        // deliveryId is selected so the board's Delivery dropdown has something to
+        // filter on for legacy sets that carry it directly; for sets with a project,
+        // format_set_row() overwrites it with the LIVE chain value.
+        // `snapshot`/`reviewFeedback` stay OUT on purpose — both are longtext and can
+        // carry embedded images; the board resolves names from the registries instead.
+        $cols = "id, userId, brandId, projectId, deliveryId, name, token, status, clientEmail, createdAt, updatedAt";
         if (class_exists('PCM_Access') && PCM_Access::is_admin($user_id)) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $rows = $wpdb->get_results("SELECT {$cols} FROM {$table} ORDER BY createdAt DESC");
@@ -634,14 +639,15 @@ class PCM_Approvals_Service
         $row->reviewFeedback = !empty($row->reviewFeedback) ? json_decode($row->reviewFeedback, true) : null;
         // Brand → Delivery → Project: derive brand + delivery LIVE from the set's project so the
         // displayed scope follows the project, never the value stored at creation time.
+        // When the set HAS a project the chain is the whole truth — including its NULLs, so a
+        // project deliberately left with no delivery (or a delivery with no brand) reports
+        // exactly that instead of falling back to a stale value stored at creation time.
+        // Sets with no project keep their stored ids (legacy rows created before the
+        // project-only mapping).
         if (class_exists('PCM_Hierarchy') && !empty($row->projectId)) {
             $chain = PCM_Hierarchy::for_project((int) $row->projectId);
-            if (!empty($chain['brandId'])) {
-                $row->brandId = (int) $chain['brandId'];
-            }
-            if (!empty($chain['deliveryId'])) {
-                $row->deliveryId = (int) $chain['deliveryId'];
-            }
+            $row->brandId    = !empty($chain['brandId']) ? (int) $chain['brandId'] : null;
+            $row->deliveryId = !empty($chain['deliveryId']) ? (int) $chain['deliveryId'] : null;
         }
         return $row;
     }
