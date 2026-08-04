@@ -102,18 +102,21 @@
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: var(--pck-radius-pill);
-  background: var(--pck-column-accent-bg, var(--pck-pill-bg));
+  /* NO background — the glyph alone. It read as a filled chip before, which is
+   * not what a lane affordance should be. */
+  background: none;
+  /* The lane's own text accent, so the plus belongs to its lane rather than
+   * being one neutral grey across all six. */
   color: var(--pck-column-accent-text, var(--pck-pill-text));
   cursor: pointer;
-  opacity: 0.75;
-  transition: opacity 120ms ease, filter 120ms ease;
+  /* Quiet by default — present, but not competing with the lane label. */
+  opacity: 0.3;
+  transition: opacity 120ms ease;
 }
 
 .columnCreate:hover,
 .columnCreate:focus-visible {
   opacity: 1;
-  filter: brightness(0.94);
 }
 
 .columnList {

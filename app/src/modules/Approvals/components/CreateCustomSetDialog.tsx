@@ -43,6 +43,7 @@ import {
 } from '@/components/shared/ApprovalSharePanel';
 import { buildPublicBoardUrl, useApprovalSetsCache } from '@/components/shared/approvalSets';
 import { SearchableSelect } from '@/components/shared/SearchableSelect';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Send, Loader2, Check, Link as LinkIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { escapeAstralDeep } from '@/lib/escapeAstral';
@@ -243,22 +244,62 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
             {/* Generate Share Link: saves the set and reveals the link WITHOUT
                 closing anything. Once saved it reports that, and the panel below
                 owns copying and sending. */}
-            <Button
-              type="button"
-              variant={created ? 'secondary' : 'default'}
-              onClick={() => (created ? setShareOpen((v) => !v) : void handleCreate())}
-              disabled={busy || !name.trim()}
-              className="shrink-0 gap-1.5"
-            >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : created ? (
-                <Check className="h-4 w-4" />
-              ) : (
-                <LinkIcon className="h-4 w-4" />
+            {/* The share step is a real floating Popover anchored to this button —
+                it must never expand the dialog body. Before Generate Share Link
+                has run there is nothing to share, so the button just creates. */}
+            <Popover open={shareOpen} onOpenChange={setShareOpen}>
+              <PopoverAnchor asChild>
+                <Button
+                  type="button"
+                  variant={created ? 'secondary' : 'default'}
+                  onClick={() => (created ? setShareOpen((v) => !v) : void handleCreate())}
+                  disabled={busy || !name.trim()}
+                  className="shrink-0 gap-1.5"
+                >
+                  {busy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : created ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <LinkIcon className="h-4 w-4" />
+                  )}
+                  {created ? 'Share link' : 'Generate Share Link'}
+                </Button>
+              </PopoverAnchor>
+
+              {created && (
+                <PopoverContent
+                  align="end"
+                  sideOffset={8}
+                  className="w-[min(30rem,calc(100vw-3rem))] p-4"
+                  // The WP media frame and the annotator portal to <body>; without
+                  // this, interacting with them would dismiss the share step.
+                  onInteractOutside={(e) => {
+                    const t = e.target as HTMLElement | null;
+                    if (t?.closest?.('.media-modal, .media-frame, .media-modal-backdrop, .wp-core-ui, [data-pcm-annotator]')) {
+                      e.preventDefault();
+                    }
+                  }}
+                >
+                  <ApprovalSharePanel
+                    setId={created.id}
+                    shareUrl={created.shareUrl}
+                    defaultEmail={clientEmail}
+                    defaultMessage={buildDefaultInviteMessage(null)}
+                    // An email entered before saving was already sent by the server
+                    // (create_set → share_set → client_invite) — don't invite a resend.
+                    alreadySent={clientEmail.trim() !== ''}
+                    lanes={laneOptions.map((l) => ({ id: l.value, label: l.label }))}
+                    defaultLaneAfterSend="client"
+                    // Save = sent + moved, close THIS step only; the editor stays.
+                    onSaved={() => setShareOpen(false)}
+                    // Save and Close = sent + moved, everything closes.
+                    onSaveAndClose={onClose}
+                    onCancel={() => setShareOpen(false)}
+                  />
+                </PopoverContent>
               )}
-              {created ? (shareOpen ? 'Saved' : 'Share link') : 'Generate Share Link'}
-            </Button>
+            </Popover>
           </div>
         </DialogHeader>
 
@@ -323,25 +364,6 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
 
           {/* The link + send step, revealed by Generate Share Link. The editor
               stays mounted below it — nothing is lost by sharing. */}
-          {created && shareOpen && (
-            <ApprovalSharePanel
-              setId={created.id}
-              shareUrl={created.shareUrl}
-              defaultEmail={clientEmail}
-              defaultMessage={buildDefaultInviteMessage(null)}
-              // An email entered before saving was already sent by the server
-              // (create_set → share_set → client_invite) — don't invite a resend.
-              alreadySent={clientEmail.trim() !== ''}
-              lanes={laneOptions.map((l) => ({ id: l.value, label: l.label }))}
-              defaultLaneAfterSend="client"
-              // Save = sent + moved, close THIS step only; the editor stays.
-              onSaved={() => setShareOpen(false)}
-              // Save and Close = sent + moved, everything closes.
-              onSaveAndClose={onClose}
-              onCancel={() => setShareOpen(false)}
-            />
-          )}
-
           <CustomCardEditor content={content} onChange={setContent} overlay={overlay} onOverlayChange={setOverlay} />
         </div>
 

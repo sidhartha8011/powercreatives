@@ -90,9 +90,17 @@ export function useApprovalSetsCache(): ApprovalSetsCache {
   const registerCreated = useCallback(
     (row: CreatedSetRow) => {
       addCreatedSet(row);
-      invalidate();
+      // Mark stale WITHOUT refetching now. The row is already spliced in, so a
+      // refetch adds nothing the user can see — it only fires another REST call
+      // into the same moment the user clicked, and this box runs two PHP workers,
+      // so that request queues behind the one still finishing. The list
+      // re-fetches on its next mount/observer instead.
+      void queryClient.invalidateQueries({
+        queryKey: APPROVAL_SETS_QUERY_KEY,
+        refetchType: 'none',
+      });
     },
-    [addCreatedSet, invalidate]
+    [addCreatedSet, queryClient]
   );
 
   return { addCreatedSet, invalidate, registerCreated };

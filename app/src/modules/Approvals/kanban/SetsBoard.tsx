@@ -363,11 +363,11 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
           layout below never shifts. */}
       {selectMode ? (
         <div
-          className="flex flex-wrap items-center gap-3 mb-6 bg-blue-50 p-2 rounded-lg border border-blue-200"
+          className="flex flex-wrap items-center gap-3 mb-6 bg-accent p-2 rounded-lg border border-border"
           role="region"
           aria-label="Bulk actions"
         >
-          <div className="text-sm font-medium text-blue-900 pl-2">
+          <div className="text-sm font-medium text-accent-foreground pl-2">
             {selectedIds.size} selected
           </div>
           <Button
@@ -385,14 +385,14 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
             variant="ghost"
             size="sm"
             onClick={toggleSelectMode}
-            className="h-9 ml-auto text-slate-600"
+            className="h-9 ml-auto text-muted-foreground"
           >
             <X className="w-4 h-4 mr-1" aria-hidden="true" />
             Done
           </Button>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-3 mb-6 bg-slate-50/50 p-2 rounded-lg border border-slate-100">
+        <div className="flex flex-wrap items-center gap-3 mb-6 bg-muted/40 p-2 rounded-lg border border-border">
           <SearchableSelect
             options={brandOptions}
             value={brandValue}
@@ -426,20 +426,24 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
             className="w-[180px]"
           />
 
-          {hasActiveFilter && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={listState.clearAll}
-              className="h-9 px-2 text-slate-500"
-            >
-              <X className="w-4 h-4 mr-1" aria-hidden="true" />
-              Clear filters
-            </Button>
-          )}
-
+          {/* Clear-filters lives in the RIGHT-HAND group, not mid-row. Rendering
+              it between the dropdowns inserted an element into a flex-wrap row,
+              which could wrap the bar to a second line and push the board down
+              the moment a filter was chosen. Here the bar's height is constant
+              whether or not a filter is active. */}
           <div className="ml-auto flex items-center gap-3">
-            <div className="text-xs text-slate-500 font-medium">
+            {hasActiveFilter && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={listState.clearAll}
+                className="h-9 px-2 text-muted-foreground"
+              >
+                <X className="w-4 h-4 mr-1" aria-hidden="true" />
+                Clear filters
+              </Button>
+            )}
+            <div className="text-xs text-muted-foreground font-medium">
               Showing {listState.filteredItems.length} set
               {listState.filteredItems.length === 1 ? '' : 's'}
             </div>
@@ -484,12 +488,12 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
       ) : (
         <div className="flex-1 min-h-0 overflow-auto flex flex-col">
           {isFilterEmpty && (
-            <div className="flex items-center gap-2 text-sm text-slate-500 mb-3 shrink-0">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3 shrink-0">
               <span>No sets match your filters.</span>
               <button
                 type="button"
                 onClick={listState.clearAll}
-                className="text-slate-700 underline underline-offset-2 hover:text-slate-900"
+                className="text-foreground underline underline-offset-2 hover:text-foreground/80"
               >
                 Clear filters
               </button>

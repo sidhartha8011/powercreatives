@@ -97,34 +97,44 @@ export function SearchableSelect({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          ref={triggerRef}
-          type="button"
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          aria-label={ariaLabel ?? placeholder}
-          disabled={disabled}
-          className={cn(
-            'h-9 justify-between gap-2 bg-card px-3 text-sm font-normal',
-            !selected && 'text-muted-foreground',
-            className
-          )}
-        >
-          <span className="flex-1 truncate text-left">{selected?.label ?? placeholder}</span>
-          <span className="flex shrink-0 items-center gap-0.5">
-            {selected && !disabled && (
-              <X
-                className="h-3.5 w-3.5 cursor-pointer opacity-50 transition-opacity hover:opacity-100"
-                onClick={handleClear}
-                aria-hidden="true"
-              />
+      {/* The clear button is a SIBLING of the trigger, not a child of it.
+          Radix toggles the popover on pointerdown, so an X nested inside the
+          trigger opened the list before its own click handler ran — the clear
+          looked dead. A separate control also matches what it is: clearing the
+          value is not "open the list". */}
+      <div className={cn('relative inline-flex items-center', className)}>
+        <PopoverTrigger asChild>
+          <Button
+            ref={triggerRef}
+            type="button"
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            aria-label={ariaLabel ?? placeholder}
+            disabled={disabled}
+            className={cn(
+              'h-9 w-full justify-between gap-2 bg-card px-3 text-sm font-normal',
+              !selected && 'text-muted-foreground',
+              selected && !disabled && 'pr-14'
             )}
+          >
+            <span className="flex-1 truncate text-left">{selected?.label ?? placeholder}</span>
             <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" aria-hidden="true" />
-          </span>
-        </Button>
-      </PopoverTrigger>
+          </Button>
+        </PopoverTrigger>
+
+        {selected && !disabled && (
+          <button
+            type="button"
+            onClick={handleClear}
+            aria-label={`Clear ${ariaLabel ?? placeholder}`}
+            title="Clear"
+            className="absolute right-8 inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        )}
+      </div>
 
       <PopoverContent
         className="p-0"

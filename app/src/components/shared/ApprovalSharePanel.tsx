@@ -34,7 +34,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { colors, typography } from '@/components/shared/design-tokens';
 import { trpc } from '@/lib/trpc';
 import { copyToClipboard } from '@/lib/utils';
 
@@ -228,44 +227,38 @@ export function ApprovalSharePanel({
   };
 
   return (
-    <div
-      className="space-y-3 rounded-lg p-4"
-      style={{ background: colors.bgPage, border: `1px solid ${colors.border}` }}
-    >
-      <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
+    <div className="space-y-3">
+      <span className="text-xs font-semibold text-muted-foreground">
         Generated Shareable Client Board Link
       </span>
       <div className="flex items-center gap-2">
         <Input
           value={shareUrl}
           readOnly
-          className="font-mono text-xs select-all shrink"
-          style={{ background: colors.bgSurface }}
+          className="font-mono text-xs select-all shrink bg-card"
         />
-        <Button size="icon" onClick={handleCopyLink} className="shrink-0" style={{ background: colors.primary }}>
+        <Button size="icon" onClick={handleCopyLink} className="shrink-0">
           {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
         </Button>
       </div>
-      <p style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '8px' }}>
+      <p className="mt-2 text-xs text-muted-foreground">
         Your client can open this link in any browser, see dynamic platform mockups, granularly comment, and approve each asset.
       </p>
 
-      <div className="space-y-2 pt-2" style={{ borderTop: `1px solid ${colors.border}` }}>
-        <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
+      <div className="space-y-2 border-t border-border pt-3">
+        <span className="text-xs font-semibold text-muted-foreground">
           Or email the link to your client
         </span>
 
         {/* Recipients — every committed address becomes a removable pill. */}
         <div
-          className="flex flex-wrap items-center gap-1.5 rounded-md border p-1.5"
-          style={{ background: colors.bgSurface, borderColor: colors.border }}
+          className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-card p-1.5"
           onClick={() => draftRef.current?.focus()}
         >
           {recipients.map((address) => (
             <span
               key={address}
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
-              style={{ background: colors.borderLight, color: colors.text }}
+              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-foreground"
             >
               {address}
               <button
@@ -301,7 +294,7 @@ export function ApprovalSharePanel({
 
         {/* Editable invite message — prefilled with a default; the sender
             can rewrite it before sending. Blank → standard template. */}
-        <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
+        <span className="text-xs font-semibold text-muted-foreground">
           Message to client
         </span>
         <Textarea
@@ -312,8 +305,7 @@ export function ApprovalSharePanel({
           }}
           rows={4}
           placeholder="Write a short note to your client…"
-          className="text-sm"
-          style={{ background: colors.bgSurface }}
+          className="text-sm bg-card"
           disabled={busy}
         />
 
@@ -321,7 +313,7 @@ export function ApprovalSharePanel({
             lane registry — never a list literal here. */}
         {laneOptions.length > 0 && (
           <>
-            <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
+            <span className="text-xs font-semibold text-muted-foreground">
               Move to lane after sending
             </span>
             <Select value={laneAfterSend} onValueChange={setLaneAfterSend} disabled={busy}>
@@ -340,7 +332,7 @@ export function ApprovalSharePanel({
           </>
         )}
 
-        <p style={{ fontSize: typography.xs, color: colors.textMuted }}>
+        <p className="text-xs text-muted-foreground">
           Sends a professional invite via your Brevo integration. Requires a Brevo API key and sender email in Settings.
         </p>
 
@@ -365,7 +357,6 @@ export function ApprovalSharePanel({
             onClick={() => void send(true)}
             disabled={busy}
             className="gap-2"
-            style={{ background: colors.primary }}
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             Save and Close
