@@ -19,7 +19,7 @@
  *   />
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check, ChevronsUpDown, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -78,16 +78,27 @@ export function SearchableSelect({
   const [search, setSearch] = useState('');
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  // Reset the query when the popover closes, so re-opening starts clean.
-  useEffect(() => {
-    if (!open) setSearch('');
-  }, [open]);
-
   const selected = value != null ? options.find((o) => o.value === value) ?? null : null;
+
+  /**
+   * Open/close, resetting the query IN THE SAME UPDATE as the close.
+   *
+   * This used to be a `useEffect` on [open] that cleared the search after the
+   * fact. An effect runs after the commit, so closing produced TWO renders: the
+   * first began the exit animation with the list still filtered, the second
+   * re-rendered that same still-visible list unfiltered — the full option set
+   * flashed back before it faded out. That double paint is what read as the
+   * dropdown "blinking" on every selection. Batched into one update, there is
+   * exactly one render and nothing flashes.
+   */
+  const setOpenState = (next: boolean) => {
+    if (!next) setSearch('');
+    setOpen(next);
+  };
 
   const handleSelect = (next: string | null) => {
     onChange(next);
-    setOpen(false);
+    setOpenState(false);
   };
 
   const handleClear = (e: React.MouseEvent) => {
@@ -96,7 +107,7 @@ export function SearchableSelect({
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpenState}>
       {/* The clear button is a SIBLING of the trigger, not a child of it.
           Radix toggles the popover on pointerdown, so an X nested inside the
           trigger opened the list before its own click handler ran — the clear
@@ -113,9 +124,13 @@ export function SearchableSelect({
             aria-label={ariaLabel ?? placeholder}
             disabled={disabled}
             className={cn(
-              'h-9 w-full justify-between gap-2 bg-card px-3 text-sm font-normal',
-              !selected && 'text-muted-foreground',
-              selected && !disabled && 'pr-14'
+              // pr-14 is UNCONDITIONAL: it reserves room for the chevron and the
+              // clear button whether or not a value is set. It used to be applied
+              // only when something was selected, so picking a value shrank the
+              // label's width by 56px and re-laid-out the text in the same instant
+              // the clear button mounted — a second visible jump per selection.
+              'h-9 w-full justify-between gap-2 bg-card pl-3 pr-14 text-sm font-normal',
+              !selected && 'text-muted-foreground'
             )}
           >
             <span className="flex-1 truncate text-left">{selected?.label ?? placeholder}</span>

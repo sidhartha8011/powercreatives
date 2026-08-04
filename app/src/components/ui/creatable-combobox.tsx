@@ -19,7 +19,7 @@
 
 import { cn } from "@/lib/utils";
 import { Check, ChevronsUpDown, Plus, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "./button";
 import {
   Command,
@@ -65,10 +65,19 @@ export function CreatableCombobox({
   const [search, setSearch] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  // Reset search when popover closes
-  useEffect(() => {
-    if (!open) setSearch("");
-  }, [open]);
+  /**
+   * Open/close, clearing the query IN THE SAME UPDATE as the close.
+   *
+   * This was a `useEffect` on [open]. An effect runs after the commit, so a
+   * close produced two renders: the first started the exit animation with the
+   * list still filtered, the second re-rendered that still-visible list
+   * unfiltered — the full option set flashed back before fading. Batching the
+   * two state changes gives one render and no flash.
+   */
+  const setOpenState = (next: boolean) => {
+    if (!next) setSearch("");
+    setOpen(next);
+  };
 
   // Determine if the typed text is a new value (not in options)
   const trimmedSearch = search.trim();
@@ -79,12 +88,12 @@ export function CreatableCombobox({
 
   const handleSelect = (selected: string) => {
     onChange(selected);
-    setOpen(false);
+    setOpenState(false);
   };
 
   const handleCreate = () => {
     onChange(trimmedSearch);
-    setOpen(false);
+    setOpenState(false);
   };
 
   const handleClear = (e: React.MouseEvent) => {
@@ -93,7 +102,7 @@ export function CreatableCombobox({
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpenState}>
       {/* The clear button is a SIBLING of the trigger, not nested inside it.
           Radix toggles the popover on pointerdown, so an X inside the trigger
           opened the list before its own click handler ran — the clear read as
@@ -110,7 +119,9 @@ export function CreatableCombobox({
               "w-full justify-between font-normal bg-transparent",
               compact ? "h-8 text-xs px-2 gap-1" : "h-9 text-sm px-3 gap-2",
               !value && "text-muted-foreground",
-              value && !disabled && (compact ? "pr-11" : "pr-14")
+              // Unconditional: reserves room for the chevron AND the clear
+              // button, so picking a value never re-lays-out the label.
+              compact ? "pr-11" : "pr-14"
             )}
           >
             <span className="truncate flex-1 text-left">
