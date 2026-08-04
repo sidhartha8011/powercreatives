@@ -38,16 +38,32 @@ export function ClientStatusToolbar({
   isSaving = false
 }: ClientStatusToolbarProps) {
   
-  /** Review period in milliseconds (4 days) */
-  const REVIEW_PERIOD_MS = 4 * 24 * 60 * 60 * 1000;
+  /**
+   * Review window, in days, before the client board shows a due date.
+   *
+   * This was a hardcoded 4-day literal presented to the client as a real
+   * deadline nobody had agreed to — a business rule living in a component.
+   * It now reads a hub-supplied value and only renders a deadline when one is
+   * actually configured: no setting, no invented promise.
+   */
+  const reviewWindowDays = Number(
+    (window as unknown as { pcmConfig?: { approvalsReviewWindowDays?: number } })
+      .pcmConfig?.approvalsReviewWindowDays ?? 0
+  );
+  const REVIEW_PERIOD_MS = reviewWindowDays * 24 * 60 * 60 * 1000;
 
   // Calculate dynamic due date and countdown
   const { formattedDueDate, remainingDaysText, urgencyClass } = useMemo(() => {
     try {
+      // No configured window → no deadline is shown at all. Silence is honest;
+      // an invented date is not.
+      if (!Number.isFinite(reviewWindowDays) || reviewWindowDays <= 0) {
+        return { formattedDueDate: '', remainingDaysText: '', urgencyClass: '' };
+      }
       const cleanDateStr = typeof createdAt === 'string' ? createdAt.replace(' ', 'T') : createdAt;
       const createdDate = new Date(cleanDateStr);
       if (isNaN(createdDate.getTime())) {
-        return { formattedDueDate: 'Ingen deadline', remainingDaysText: '', urgencyClass: '' };
+        return { formattedDueDate: '', remainingDaysText: '', urgencyClass: '' };
       }
       
       const dueDate = new Date(createdDate.getTime() + REVIEW_PERIOD_MS);
@@ -55,7 +71,7 @@ export function ClientStatusToolbar({
       
       // Dynamic date formatting
       const formatter = new Intl.DateTimeFormat('sv-SE', { month: 'short', day: 'numeric' });
-      const formattedDueDate = `Deadline ${formatter.format(dueDate)}`;
+      const formattedDueDate = `Due ${formatter.format(dueDate)}`;
       
       // Calculate day difference
       const d1 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -67,21 +83,21 @@ export function ClientStatusToolbar({
       let urgencyClass = '';
       
       if (diffDays > 1) {
-        remainingDaysText = `· ${diffDays} dagar kvar`;
+        remainingDaysText = `· ${diffDays} days left`;
       } else if (diffDays === 1) {
-        remainingDaysText = `· 1 dag kvar`;
+        remainingDaysText = `· 1 day left`;
         urgencyClass = 'is-urgent';
       } else if (diffDays === 0) {
-        remainingDaysText = `· Idag`;
+        remainingDaysText = `· Today`;
         urgencyClass = 'is-urgent';
       } else {
-        remainingDaysText = `· Försenad`;
+        remainingDaysText = `· Overdue`;
         urgencyClass = 'is-overdue';
       }
       
       return { formattedDueDate, remainingDaysText, urgencyClass };
     } catch {
-      return { formattedDueDate: 'Ingen deadline', remainingDaysText: '', urgencyClass: '' };
+      return { formattedDueDate: 'No deadline', remainingDaysText: '', urgencyClass: '' };
     }
   }, [createdAt]);
 
@@ -99,10 +115,10 @@ export function ClientStatusToolbar({
             .map((filter) => {
             const isActive = activeFilter === filter;
             const labelMap = {
-              images: `Bilder · ${counts.images}`,
+              images: `Images · ${counts.images}`,
               videos: `Video · ${counts.videos}`,
-              copy: `Text · ${counts.copy}`,
-              articles: `Artiklar · ${counts.articles}`,
+              copy: `Copy · ${counts.copy}`,
+              articles: `Articles · ${counts.articles}`,
               custom: `Custom · ${counts.custom}`,
             };
 
@@ -127,19 +143,19 @@ export function ClientStatusToolbar({
         {/* Right Panel elements */}
         <div className="pcm-toolbar-right w-full md:w-auto">
           {/* Deadline countdown */}
-          <span className={`pcm-bar-deadline ${urgencyClass}`} title="Response deadline">
-            <b>{formattedDueDate}</b>
-            <span className="countdown">{remainingDaysText}</span>
-          </span>
+          {formattedDueDate && (
+            <span className={`pcm-bar-deadline ${urgencyClass}`} title="Response deadline">
+              <b>{formattedDueDate}</b>
+              <span className="countdown">{remainingDaysText}</span>
+            </span>
+          )}
 
           <span className="pcm-bar-divider" aria-hidden="true" />
 
           {/* Approve All / Confirm Submit — hidden in read-only mode */}
           {isReadOnly ? (
             <span className="pcm-bar-completed">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Klar
-            </span>
+              <CheckCircle2 className="w-3.5 h-3.5" />Done</span>
           ) : isAllApproved ? (
             <button
               type="button"
@@ -148,9 +164,9 @@ export function ClientStatusToolbar({
               className="pcm-confirm-btn cursor-pointer select-none"
             >
               {isConfirmPending ? (
-                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Skickar...</>
+                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending...</>
               ) : (
-                <><CheckCircle2 className="w-3.5 h-3.5" /> Bekräfta</>
+                <><CheckCircle2 className="w-3.5 h-3.5" /> Confirm</>
               )}
             </button>
           ) : (
@@ -161,7 +177,7 @@ export function ClientStatusToolbar({
               className="pcm-approve-all cursor-pointer select-none"
             >
               <Check className="w-3.5 h-3.5" />
-              Godkänn alla
+              Approve all
             </button>
           )}
         </div>

@@ -454,7 +454,7 @@ export function CreativeAssetCard({
                 content={editedBody}
                 editable={true}
                 onChange={setEditedBody}
-                placeholder="Skriv brödtext..."
+                placeholder="Write body text..."
                 className="pcm-inline-editor"
               />
             </div>
@@ -475,7 +475,7 @@ export function CreativeAssetCard({
                     value={editedHeadline}
                     onChange={(e) => setEditedHeadline(e.target.value)}
                     className="pcm-copy-headline pcm-edit-input"
-                    placeholder="Skriv rubrik..."
+                    placeholder="Write headline..."
                     rows={1}
                   />
                   {/* Description — textarea for multi-line support matching <p> view mode */}
@@ -484,7 +484,7 @@ export function CreativeAssetCard({
                     value={editedDescription}
                     onChange={(e) => setEditedDescription(e.target.value)}
                     className="pcm-copy-text pcm-edit-input mt-1"
-                    placeholder="Skriv beskrivning..."
+                    placeholder="Write description..."
                     rows={1}
                   />
                 </div>
@@ -547,7 +547,7 @@ export function CreativeAssetCard({
 
           {/* Click hint */}
           <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: 'auto', paddingTop: '0.5rem' }}>
-            Klicka för att läsa hela artikeln →
+            Read the full article →
           </span>
         </div>
       )}

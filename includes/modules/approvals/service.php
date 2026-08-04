@@ -454,6 +454,16 @@ class PCM_Approvals_Service
             return false;
         }
 
+        // IDEMPOTENCY GUARD. A submitted set is already past client review, so a
+        // second submit — a refresh, a double click, a replayed request — must not
+        // re-fire the outbound webhook. `approve_assets()` has always had this
+        // guard; `submit_review()` did not, and the client UI was the only thing
+        // standing between a reload and a duplicate dispatch. Returning true keeps
+        // the caller's "it worked" contract: the set IS submitted.
+        if (in_array($set->status, self::POST_SUBMIT_STATUSES, true)) {
+            return true;
+        }
+
         // Tidy feedback arrays
         $sanitized_feedback = array(
             'approvedVisualIds'  => array_map('sanitize_text_field', $feedback['approvedVisualIds'] ?? array()),
