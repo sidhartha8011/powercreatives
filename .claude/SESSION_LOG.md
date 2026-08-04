@@ -11993,3 +11993,66 @@ This task's work: chips label count 1 (Automations only — Templates strip gone
 present (arrow-key fix), useSlashVariables x3 (row + dialog), and one token sampled per module
 vocabulary incl. the writer spaced form. Earlier work intact: guard TRUE, logo object-cover TRUE,
 logo demotion TRUE, writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-05 — "/" was hiding 34 real variables; all five vocabularies completed
+Reported: the "/" list is not showing all the variables.
+
+CONFIRMED AND QUANTIFIED — the lists were not wrong, they were SHORT. Each module substitutes at
+SEVERAL call sites with different maps, and the lists had captured only one site apiece:
+  writer     9 -> 10  (+title, from build_image_prompt() — a writer template reused as a
+                       strategy's image prompt)
+  seo       24 -> 40  (+16 from seo/prompts.php section prompts and seo/local.php GBP pages:
+                       area_*, corpus*, facts, key_pages, *_bullet, name, output_format,
+                       page.type, site_name, topic, why)
+  copy      14 -> 23  (+9: anglesPerAudience audiences brandName count description product
+                       referenceAds researchContext tone)
+  image     14 -> 14  (already complete)
+  optimizer  2 -> 10  (+8 from the interlink/mention teachers and the compile site)
+  video      0        (unchanged — no substitution engine exists there)
+Total 63 -> 97. No stale entries: nothing previously listed was wrong.
+
+TWO TOKENS DELIBERATELY EXCLUDED after checking their context rather than trusting the grep:
+  - {{primary_kw}} — seo/prompts.php:118 is a COMMENT recording it as a typo already corrected to
+    {{primary_keyword}}. Advertising it would have shipped a known-dead token.
+  - {{key}} {{placeholder}} {{placeholders}} {{var}} {{variable}} — these appear only in DOCBLOCKS
+    describing the substitution mechanism.
+
+TEST HAD THE SAME BLIND SPOT AS THE CODE. template_vars_test.php checked each module against ONE php
+file (seo -> ai.php only, optimizer -> service.php only), which is precisely why the short lists passed.
+Rewritten to concatenate the module's WHOLE directory and to accept a literal {{token}} in a default
+prompt as proof the token resolves. Because that opens the door to a docblock vouching for a fake
+variable, added a DOC_ONLY blacklist asserting none of the five doc placeholders (or primary_kw) is ever
+advertised. 32 -> 39 checks.
+
+VERIFIED
+- template_vars_test.php 39/39: every one of the 97 tokens traced to its module's PHP, no doc-only
+  placeholder advertised, video still empty, token FORM still per-resolver (writer spaced, rest tight).
+- NEGATIVE CONTROL: injected {{business.email}} (invented) and {{placeholders}} (doc-only) into
+  SEO_VARS — both guards failed, exit 1; restored -> 39/39. The doc-only guard rejected {{placeholders}}
+  even though it DOES appear literally in the PHP, which is the point of the blacklist.
+- tsc 59 = baseline, no errors in the Templates files. Build 22.45s.
+- Bundle spot-check: the new tokens present, {{primary_kw}} and {{variable}} absent. ({{placeholders}}
+  shows once in the bundle but from Settings/PromptEditorSection.tsx:417, unrelated.)
+- Full suite 10/10 PASS. Zip rebuilt (3.47 MB, 682 files).
+- NOT verified visually.
+
+PROCESS NOTE: my first attempt rewrote the lists with a regex whose optional leading-docblock group
+(`(?:/\*\*.*?\*/\s*)?` under re.S) matched across the whole file and ate four of the five lists plus the
+module docblock. Caught immediately by reading the file back. Rewrote the file wholesale with Write
+instead. Regex surgery on a file with repeated docblock+const shapes is not worth it.
+
+SCOPE: lists stay MODULE-SCOPED rather than showing every module's tokens everywhere — a copy token
+typed into an SEO prompt stays literal and reaches the model as raw text. Say the word if you want the
+union regardless.
+
+## 2026-08-05 — Zip build 02:39 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.47 MB, 682 files. Folder had been emptied again.
+dist current (02:33:28).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Completed vocabularies present (writer {{ title }}, seo area_serves_clause + page.type, copy
+anglesPerAudience + researchContext, optimizer gsc_preference_note + ranksfor_note) and the two
+deliberately-excluded tokens absent ({{primary_kw}}, {{variable}}).
+"/" machinery: caretOffset x2, fixed positioning, scrollIntoView (arrow-key fix), useSlashVariables x3;
+chips label count 1 = Automations only, confirming the Templates strip stays removed.
+Earlier work intact: guard TRUE, logo object-cover TRUE, logo demotion TRUE, writable_owner_id x9,
+0 caller-scoped writes.

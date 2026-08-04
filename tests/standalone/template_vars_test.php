@@ -48,21 +48,50 @@ function ts_list(string $s, string $name): array {
 /** `{{ x }}` → `x`. */
 function key_of(string $token): string { return trim(str_replace(array('{{', '}}'), '', $token)); }
 
-/** Every quoted array key and $vars['key'] mentioned in a PHP file. */
-function php_keys(string $file): array {
-    if (!is_file($file)) return array();
-    $s = file_get_contents($file);
-    preg_match_all("/'([a-zA-Z_][a-zA-Z0-9_.|]*)'\s*=>/", $s, $a);
-    preg_match_all("/\\\$(?:vars|prompt_vars)\['([a-zA-Z_][a-zA-Z0-9_]*)'\]/", $s, $b);
-    return array_values(array_unique(array_merge($a[1], $b[1])));
+/** Concatenated PHP of a module — EVERY file, not just its service.php. */
+function module_php(string $dir): string {
+    if (!is_dir($dir)) return '';
+    $out = '';
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir));
+    foreach ($it as $f) {
+        if ($f->isFile() && strtolower($f->getExtension()) === 'php') {
+            $out .= file_get_contents($f->getPathname()) . "\n";
+        }
+    }
+    return $out;
 }
 
+/**
+ * Every quoted array key, $vars['key'], and literal {{token}} in a module.
+ *
+ * A module substitutes at SEVERAL sites — seo alone spans ai.php (the field-var
+ * map), prompts.php (per-section prompts) and local.php (GBP pages) — so scanning
+ * one file per module is what let the vocabulary be short in the first place.
+ * Literal {{token}}s count because a DEFAULT prompt shipping a token is proof
+ * that the token resolves.
+ */
+function php_keys(string $php): array {
+    if ($php === '') return array();
+    preg_match_all("/'([a-zA-Z_][a-zA-Z0-9_.|]*)'\s*=>/", $php, $a);
+    preg_match_all("/\\\$(?:vars|prompt_vars)\['([a-zA-Z_][a-zA-Z0-9_]*)'\]/", $php, $b);
+    preg_match_all("/\{\{([a-zA-Z_][a-zA-Z0-9_.|]*)\}\}/", $php, $c);
+    return array_values(array_unique(array_merge($a[1], $b[1], $c[1])));
+}
+
+/**
+ * Tokens that only ever appear in DOCBLOCKS explaining the mechanism, plus one
+ * real typo. None may be advertised: matching a literal {{token}} would otherwise
+ * let a comment vouch for a variable that does not exist.
+ * `primary_kw` is recorded in seo/prompts.php as corrected to `primary_keyword`.
+ */
+const DOC_ONLY = array('key', 'placeholder', 'placeholders', 'var', 'variable', 'primary_kw');
+
 $MODULES = array(
-    'writer'    => array('WRITER_VARS',    'includes/modules/strategy/service.php'),
-    'seo'       => array('SEO_VARS',       'includes/modules/seo/ai.php'),
-    'copy'      => array('COPY_VARS',      'includes/modules/copy/service.php'),
-    'image'     => array('IMAGE_VARS',     'includes/modules/image/service.php'),
-    'optimizer' => array('OPTIMIZER_VARS', 'includes/modules/optimizer/service.php'),
+    'writer'    => array('WRITER_VARS',    'includes/modules/strategy'),
+    'seo'       => array('SEO_VARS',       'includes/modules/seo'),
+    'copy'      => array('COPY_VARS',      'includes/modules/copy'),
+    'image'     => array('IMAGE_VARS',     'includes/modules/image'),
+    'optimizer' => array('OPTIMIZER_VARS', 'includes/modules/optimizer'),
 );
 
 echo "\n1. Every advertised token is a key its module's PHP substitutes\n";
@@ -71,18 +100,27 @@ foreach ($MODULES as $mod => $cfg) {
     $tokens = ts_list($src, $const);
     check("$mod: list is non-empty", count($tokens) > 0, count($tokens));
 
-    $keys = php_keys($ROOT . '/' . $php);
-    // The writer resolver is whitespace-tolerant and its tokens appear as bare
-    // words in prompt text rather than as array keys, so match the raw source.
-    $writer_src = $mod === 'writer' ? file_get_contents($ROOT . '/' . $php) : '';
+    $module_src = module_php($ROOT . '/' . $php);
+    $keys = php_keys($module_src);
 
     $unknown = array();
     foreach ($tokens as $t) {
         $k = key_of($t);
-        $known = $mod === 'writer' ? str_contains($writer_src, $k) : in_array($k, $keys, true);
+        // The writer resolver is whitespace-tolerant and its names appear as bare
+        // map keys/words rather than literal {{tokens}}, so fall back to a raw
+        // source match for that module only.
+        $known = in_array($k, $keys, true)
+            || ($mod === 'writer' && str_contains($module_src, "'" . $k . "'"));
         if (!$known) { $unknown[] = $t; }
     }
     check("$mod: no invented token", $unknown === array(), $unknown);
+
+    // A docblock must never be able to vouch for a variable.
+    $doc = array();
+    foreach ($tokens as $t) {
+        if (in_array(key_of($t), DOC_ONLY, true)) { $doc[] = $t; }
+    }
+    check("$mod: no doc-only placeholder advertised", $doc === array(), $doc);
 }
 
 echo "\n2. Video offers nothing, because nothing substitutes there\n";
