@@ -234,11 +234,12 @@ class PCM_REST_Brands extends PCM_REST_Base
         if (!$existing) {
             return $this->not_found('Brand');
         }
-        // get_brand_by_id also returns brands GRANTED to the caller via a
-        // delivery assignment (view + use). Editing the brand record stays
-        // owner-only — reject a non-owner rather than no-op + return success.
-        if ((int) $existing->userId !== (int) $user->id) {
-            return $this->error('You can view this brand but not edit it.', 403, 'pcm_forbidden');
+        // get_brand_by_id also returns brands GRANTED to the caller via a delivery
+        // assignment (view + use), and brands an ADMIN can see for team-wide
+        // oversight. Grantees still may not edit; admins may.
+        $owner_id = $this->writable_owner_id($existing, $user);
+        if ($owner_id === null) {
+            return $this->brand_read_only();
         }
 
         $update = array();
@@ -274,7 +275,7 @@ class PCM_REST_Brands extends PCM_REST_Base
         }
 
         if (!empty($update)) {
-            PCM_DB::update_brand($id, $user->id, $update);
+            PCM_DB::update_brand($id, $owner_id, $update);
         }
 
         return $this->success(array('success' => true));
@@ -341,6 +342,53 @@ class PCM_REST_Brands extends PCM_REST_Base
         return $this->success(array('created' => $created));
     }
 
+    /**
+     * The user id a brand must be WRITTEN as, or null when the caller may not write it.
+     *
+     * PCM_DB::get_brand_by_id() admits three kinds of caller: the owner, an ADMIN
+     * (team-wide oversight, same rule PCM_Access documents), and a delivery grantee
+     * (view + use). Only the first two may write — a grantee was given the brand to
+     * USE, not to edit.
+     *
+     * Returns the OWNER's id, never the caller's, because every write path ends in
+     * PCM_DB::update_brand() whose WHERE is `id AND userId`. An admin writing under
+     * their own id matches zero rows, and $wpdb->update() returning 0 is reported as
+     * success — so the API answered 200/201 having saved nothing. Writing as the owner
+     * makes the row match and keeps that owner's list-cache invalidation correct.
+     *
+     * @param object $brand Brand row (already access-checked by get_brand_by_id).
+     * @param object $user  Current PCM user.
+     *
+     * @return int|null Owner id to write as, or null if the caller may not write.
+     */
+    private function writable_owner_id(object $brand, object $user): ?int
+    {
+        $owner  = (int) ($brand->userId ?? 0);
+        $caller = (int) ($user->id ?? 0);
+
+        // Both ids must be real. An unresolved caller is id 0, and a brand row with no
+        // owner is id 0 — without this they would match each other and authorise a
+        // write. A 0 owner is also useless downstream: update_brand() would scope to
+        // `userId = 0`, match nothing, and report success anyway.
+        if ($owner <= 0 || $caller <= 0) {
+            return null;
+        }
+
+        if ($owner === $caller) {
+            return $owner;
+        }
+        if (class_exists('PCM_Access') && PCM_Access::is_admin($caller)) {
+            return $owner;
+        }
+        return null;
+    }
+
+    /** Standard refusal for a caller who can read a brand but not modify it. */
+    private function brand_read_only(): WP_Error
+    {
+        return $this->error('You can view this brand but not edit it.', 403, 'pcm_forbidden');
+    }
+
     // =========================================================================
     // ASSET MANAGEMENT
     // =========================================================================
@@ -356,6 +404,11 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->not_found('Brand');
         }
 
+        $owner_id = $this->writable_owner_id($brand, $user);
+        if ($owner_id === null) {
+            return $this->brand_read_only();
+        }
+
         $role = sanitize_text_field($request->get_param('role') ?? '');
 
         // Two wire formats, because the app and API clients disagree:
@@ -368,7 +421,7 @@ class PCM_REST_Brands extends PCM_REST_Base
 
         try {
             if (!empty($files['file'])) {
-                $asset = $this->service->upload_asset($files['file'], $id, $user->id, $brand, $role);
+                $asset = $this->service->upload_asset($files['file'], $id, $owner_id, $brand, $role);
             }
             elseif (is_string($file_data) && $file_data !== '') {
                 $asset = $this->service->add_asset_from_data(
@@ -376,7 +429,7 @@ class PCM_REST_Brands extends PCM_REST_Base
                     sanitize_file_name((string) $request->get_param('filename')),
                     sanitize_text_field((string) $request->get_param('mimeType')),
                     $id,
-                    $user->id,
+                    $owner_id,
                     $brand,
                     $role
                 );
@@ -407,6 +460,11 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->not_found('Brand');
         }
 
+        $owner_id = $this->writable_owner_id($brand, $user);
+        if ($owner_id === null) {
+            return $this->brand_read_only();
+        }
+
         if (empty($url)) {
             return $this->error('Image URL is required.');
         }
@@ -414,7 +472,7 @@ class PCM_REST_Brands extends PCM_REST_Base
         $role = sanitize_text_field($request->get_param('role') ?? '');
 
         try {
-            $asset = $this->service->add_asset_from_url($url, $id, $user->id, $brand, $role);
+            $asset = $this->service->add_asset_from_url($url, $id, $owner_id, $brand, $role);
             return $this->success($asset, 201);
         }
         catch (\InvalidArgumentException $e) {
@@ -437,6 +495,11 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->not_found('Brand');
         }
 
+        $owner_id = $this->writable_owner_id($brand, $user);
+        if ($owner_id === null) {
+            return $this->brand_read_only();
+        }
+
         if (empty($url)) {
             $url = $brand->website ?? '';
         }
@@ -447,7 +510,7 @@ class PCM_REST_Brands extends PCM_REST_Base
 
         try {
             // Stores what it finds — the caller reads `added`, not just `images`.
-            $result = $this->service->fetch_and_store_website_assets($url, $id, $user->id, $brand);
+            $result = $this->service->fetch_and_store_website_assets($url, $id, $owner_id, $brand);
             return $this->success($result);
         }
         catch (\RuntimeException $e) {
@@ -467,7 +530,12 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->not_found('Brand');
         }
 
-        $this->service->remove_asset($id, $user->id, $brand, $file_key);
+        $owner_id = $this->writable_owner_id($brand, $user);
+        if ($owner_id === null) {
+            return $this->brand_read_only();
+        }
+
+        $this->service->remove_asset($id, $owner_id, $brand, $file_key);
 
         return $this->success(array('success' => true));
     }
@@ -488,7 +556,12 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->not_found('Brand');
         }
 
-        $this->service->reorder_assets($id, $user->id, $brand, $file_keys);
+        $owner_id = $this->writable_owner_id($brand, $user);
+        if ($owner_id === null) {
+            return $this->brand_read_only();
+        }
+
+        $this->service->reorder_assets($id, $owner_id, $brand, $file_keys);
 
         return $this->success(array('success' => true));
     }
@@ -510,7 +583,12 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->not_found('Brand');
         }
 
-        $this->service->set_asset_as_logo($id, $user->id, $brand, $file_key);
+        $owner_id = $this->writable_owner_id($brand, $user);
+        if ($owner_id === null) {
+            return $this->brand_read_only();
+        }
+
+        $this->service->set_asset_as_logo($id, $owner_id, $brand, $file_key);
 
         return $this->success(array('success' => true));
     }
@@ -535,9 +613,14 @@ class PCM_REST_Brands extends PCM_REST_Base
             return $this->not_found('Brand');
         }
 
+        $owner_id = $this->writable_owner_id($brand, $user);
+        if ($owner_id === null) {
+            return $this->brand_read_only();
+        }
+
         $validated = $this->service->validate_colors($colors);
 
-        PCM_DB::update_brand($id, $user->id, array(
+        PCM_DB::update_brand($id, $owner_id, array(
             'colors' => wp_json_encode($validated),
         ));
 

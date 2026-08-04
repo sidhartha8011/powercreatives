@@ -39,7 +39,8 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { SourceVarsHint } from "./SourceVarsHint";
+import { TemplateVarChips, templateVarsFor } from "./TemplateVarChips";
+import { SlashVariableMenu, useSlashVariables } from "./SlashVariableMenu";
 import { TableRow, TableCell } from "@/components/ui/table";
 import {
   Tooltip,
@@ -213,6 +214,15 @@ export function TemplateRow({
   const [isEditingValue, setIsEditingValue] = useState(false);
   const [editValueText, setEditValueText] = useState(value);
   const valueTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // "/" typeahead over the same variable list the chips below the textarea show.
+  // Empty vars (any module/category without a substituting builder) disables it.
+  const slashVars = useSlashVariables({
+    vars: templateVarsFor(template.module, subtype),
+    value: editValueText,
+    setValue: setEditValueText,
+    textareaRef: valueTextareaRef,
+  });
 
   // Sync local state when props change
   useEffect(() => {
@@ -445,17 +455,24 @@ export function TemplateRow({
             <Textarea
               ref={valueTextareaRef}
               value={editValueText}
-              onChange={(e) => setEditValueText(e.target.value)}
+              onChange={slashVars.onChange}
               className="text-sm min-h-[80px] resize-y"
               rows={4}
               onKeyDown={(e) => {
+                // The menu claims ↑/↓/Enter/Tab/Esc while it is open. Escape in
+                // particular must dismiss the list WITHOUT cancelling the edit.
+                if (slashVars.onKeyDown(e)) return;
                 if (e.key === "Escape") handleCancelValue();
               }}
             />
-            {/* Same hint the Add/Edit dialog shows — editing the prompt inline
-                here is the faster path, and without this the {{ post_* }}
-                variables are invisible to anyone who never opens the dialog. */}
-            <SourceVarsHint module={template.module} category={subtype} />
+            <SlashVariableMenu state={slashVars} />
+            {/* Click-to-copy chips, same affordance as the Automations webhook
+                editor. These replaced the SourceVarsHint prose block that used to
+                sit here: in a table cell it was several paragraphs deep and pushed
+                the Save/Cancel buttons off screen. The chips carry the same
+                discoverability in one line. The full explanation still lives in
+                the Add/Edit dialog, which has room for it. */}
+            <TemplateVarChips module={template.module} category={subtype} />
             <div className="flex items-center gap-1">
               <Button
                 variant="default"

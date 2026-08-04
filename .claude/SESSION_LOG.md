@@ -11591,3 +11591,350 @@ Verified from inside the archive: single root `powerplatform/` (the whole point 
 root installs as a separate inactive plugin), main plugin file present, 0 app/src, 0 vendor,
 guard TRUE, `type: "button"` = 298 vs 287 on the site, uploadError x6, saveScrapedImages x3,
 and all four brands/service.php changes.
+
+## 2026-08-04 — Admins can edit brands on the public SPA (wp-admin vs shortcode split)
+Reported: "You can view this brand but not edit it." on https://create.widgetify.co/ while
+/wp-admin worked, as the same admin.
+
+ROOT CAUSE — the two contexts are DIFFERENT PCM users, and three layers disagreed about admins:
+  - wp-admin: get_current_pcm_user() resolves the WP user (`wp_<ID>`), which OWNS those brands.
+  - shortcode page: the visitor is gate-authed, so the same person resolves to their PLATFORM user
+    row instead (base-controller.php:219-235 lets a platform admin through the manage_options route
+    with `PCM_Access::is_admin(...) -> return true`).
+  - PCM_DB::get_brand_by_id() ALREADY grants an admin read on any brand (team-wide oversight,
+    class-pcm-db.php:503) — which is why viewing worked.
+  - update_item() then rejected every non-owner, admins included. Its comment had considered the
+    delivery-grantee case and missed the admin case that the very same read helper allows.
+
+SECOND, WORSE LAYER — the other 7 brand-mutating handlers had no owner check at all; they wrote via
+PCM_DB::update_brand($id, $user->id, ...) whose WHERE is `id AND userId`. For an admin (or a delivery
+grantee) that matches ZERO rows, and update_brand returns true whenever $wpdb->update() !== false.
+So uploading a logo / colours / reordering as a front-end admin answered 200/201 having saved NOTHING.
+Fixing only the 403 would have swapped a clear error for a silent one.
+
+FIX (one file, includes/modules/brands/controller.php)
+  - New `writable_owner_id(brand, user): ?int` — allows OWNER or ADMIN, still refuses delivery
+    grantees (they get view + use, not edit), and returns the OWNER's id, never the caller's, so the
+    WHERE matches and the owner's list-cache invalidation stays correct.
+  - New `brand_read_only()` for the shared 403 (message/code/status unchanged).
+  - Gate applied to all 8 write paths; every `$user->id` write scope replaced with `$owner_id`.
+
+VERIFIED
+- NEW tests/standalone/brand_admin_edit_test.php — 16/16. Uses Reflection to call the REAL private
+  method (not a transcription). Covers owner, admin-writes-as-owner, grantee refused, string/int id
+  comparison, degenerate rows, live admin demotion, the 403 shape, and a source scan asserting 8 gates
+  / 8 refusals / 0 writes still scoped to the caller.
+- The test CAUGHT a bug I introduced: caller id 0 matched a userId-0 row and authorised a write.
+  Both ids must now be > 0.
+- NEGATIVE CONTROL: removing the admin branch fails exactly the two intended checks (exit 1); restored
+  → 16/16.
+- php -l clean; full standalone suite 7/7 PASS.
+- Zip rebuilt via scripts/build_zip.py; verified inside the archive: root `powerplatform/`,
+  writable_owner_id x9, brand_read_only x9, 0 writes scoped to the caller.
+- NOT verified: no live WordPress. The gate-auth path specifically has not been exercised end to end.
+
+DELIBERATELY NOT CHANGED: delete_brand / bulk delete stay owner-only. Extending admin rights to
+destructive operations is a separate decision — flagged to the user, not taken unasked.
+
+## 2026-08-04 — Zip build 16:34 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.46 MB, 680 files.
+Content identical to the 16:32 build; nothing shippable changed since (only .claude/, which the
+script excludes). Confirmed before building: no source newer than dist (14:04:04).
+Verified inside the archive: root `powerplatform/`, main plugin file present, 0 app/src, 0 vendor,
+writable_owner_id x9, brand_read_only x9, 0 caller-scoped writes, all four brands/service.php fixes,
+bundle guard TRUE and `type: "button"` = 298 (site last reported 287).
+
+## 2026-08-04 — Brand logo preview: wide wordmarks were shrunk to a sliver
+Reported: the logo shows as a faint horizontal line instead of "viewed fully".
+
+CAUSE — nothing was cropped and nothing was broken. The preview was a 64x64 square
+(`w-16 h-16`) with `object-contain`, which fits the LONGEST edge. A wide wordmark (≈5.5:1)
+scaled to 64px of width paints at 64x12 — a sliver. Square marks looked fine, which is why
+this only shows on wordmark logos.
+
+FIX (BrandLogoSection.tsx, one block)
+- Preview box `w-16 h-16` -> `w-full h-24`; wrapper `relative inline-block` -> `relative w-full`
+  (the right-hand panel is w-[280px], so a square was throwing away ~200px of usable width).
+- Added `p-2` so artwork does not touch the border, and `bg-muted` -> `bg-card` (white): brand
+  marks are usually dark artwork on transparency and all but vanish on grey.
+- Dropped `hover:scale-105` — fine on a 64px chip, wrong on a full-width panel element.
+
+VERIFIED
+- Measured the geometry in a real browser rather than eyeballing it: same aspect-ratio logo in
+  both variants, `object-contain` scale computed from the live content boxes —
+  OLD 64x64 box -> painted 64x12; NEW 262x78 box -> painted 262x47. 3.9x taller, 4.1x wider.
+- `npx tsc --noEmit` -> 59 = baseline, no errors in the file. `npm run build` -> 26.31s.
+- Bundle: new box class x1, `bg-card p-2` x2, OLD `w-16 h-16` box 0, OLD `hover:scale-105` 0.
+  index.css carries `.h-24`.
+- Standalone tests re-run: 3/3 PASS. Zip rebuilt (3.46 MB, 680 files).
+- NOT verified: not seen in the live app — no dev server for this WP-embedded SPA, and the
+  Browser pane could not screenshot (pane not displayed), so the proof is measured geometry,
+  not a picture of the real dialog.
+
+NOTE: `h-24` (96px) is a fixed height chosen to suit wordmarks. A very tall/portrait logo now
+letterboxes horizontally instead of vertically — acceptable, but if portrait marks turn up,
+`aspect-[16/6]` with `max-h` would adapt better.
+
+## 2026-08-04 — Zip build 16:47 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.46 MB, 680 files.
+Content identical to the 16:46 build; nothing shippable changed since (only .claude/, excluded).
+The previous copies had been moved out of ~/Desktop/powercreatives again — rebuilt in place.
+Confirmed dist current (16:46:07, no source newer) before packaging.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor;
+logo fix (`w-full h-24` x1, `bg-card p-2` x2, OLD `w-16 h-16` box 0); guard TRUE,
+`type: "button"` 298, uploadError x6; writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-04 — REVERTED the brand-logo container change (rejected)
+User: "make the logo container like it was before ... this correction was totally wrong."
+Reverted BrandLogoSection.tsx to the exact prior markup: `relative inline-block` wrapper,
+`w-16 h-16 rounded-lg overflow-hidden transition-all`, `hover:scale-105`, `bg-muted` — and removed
+all four of my additions (`relative w-full`, `w-full h-24`, `bg-card p-2`, the explanatory comment).
+Verified 4/4 original markers present and 4/4 additions gone in source, and in the rebuilt bundle
+(w-16 h-16 box x1, hover:scale-105 x1, w-full h-24 x0).
+Note: a bundle grep for `border border-border bg-card p-2` returns 1 — that is Sites/index.tsx:602
+(a pre-existing textarea), NOT a leftover. My grep pattern was too generic; checked the source to confirm.
+tsc 59 = baseline; build 37.75s; zip rebuilt.
+
+STILL OPEN: "the logo should be visible properly" inside the restored 64x64 square. With object-contain
+a ~5.5:1 wordmark can only paint 64x12 — making it bigger inside the same box REQUIRES cropping
+(object-cover). Asked the user which they want rather than guessing a second time; it is also possible
+the image simply is not loading, which would be a different fix entirely.
+
+## 2026-08-04 — Brand logo: container restored, image switched to object-cover
+Follow-up to the revert above. User chose "fill the square, crop the edges".
+
+Container left EXACTLY as it originally was (`relative inline-block`, `w-16 h-16 rounded-lg
+overflow-hidden transition-all`, `hover:scale-105`, `bg-muted`). The only change is the <img>:
+`object-contain` -> `object-cover`, with a comment recording that the crop is deliberate so nobody
+"fixes" it back — contain is what made a wide wordmark paint ~64x12 and read as a blank tile.
+
+VERIFIED
+- Source: 4/4 original container markers intact, object-cover x1, object-contain x0.
+- Bundle: the compiled <img> carries `className: "w-full h-full object-cover"` (read out of
+  dist/index-writer.js).
+- tsc 59 = baseline; build 29.52s; standalone tests 3/3 PASS; zip rebuilt (3.46 MB, 680 files).
+- NOT verified visually in the live app (no dev server for this WP-embedded SPA).
+
+LESSON: I changed the container geometry on my own initiative to solve a display complaint and it was
+rejected. The measurement I did proved the CAUSE but not that the user wanted a bigger box — for a
+visual change with several valid resolutions, ask which one before implementing.
+
+## 2026-08-04 — Zip build 17:05 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.46 MB, 680 files. Folder had been emptied again;
+rebuilt in place. Confirmed dist current (16:58:08, no source newer) before packaging.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor;
+original 64x64 logo box x1 and reverted `w-full h-24` x0; guard TRUE, `type: "button"` 298,
+uploadError x6, saveScrapedImages x3; writable_owner_id x9, 0 caller-scoped writes.
+Note: a bundle count of `w-full h-full object-cover` returns 14 — that class pair is shared by other
+components, so the count alone proves nothing. Pinpointed the Brand logo <img> by its
+`alt: "Brand logo"` marker instead: object-cover True, object-contain False.
+
+## 2026-08-04 — "Available variables" chips in the Templates value editors (Writer + SEO)
+Requested: the Automations webhook editor's click-to-copy variable chips, below the textarea when
+editing a template's Value column, for the Writer tab and the SEO tab.
+
+NEW app/src/modules/Templates/TemplateVarChips.tsx — markup/classes copied from
+Automations/index.tsx:542-568 so the two read identically (same label, same chip styling, same
+"Copied!" state, same copyToClipboard() which falls back to execCommand because the SPA runs in
+wp-admin and the async Clipboard API is unavailable on plain-HTTP installs).
+
+TWO VOCABULARIES, and the token FORM differs — this was the real trap:
+  - Writer  → PCM_Strategy_Service::build_prompt(), documented lowercase + whitespace-tolerant
+              (service.php:3347), so `{{ post_title }}` resolves. Spaced form used, matching what
+              SourceVarsHint already shows.
+  - SEO     → PCM_SEO_AI::substitute_vars() is a LITERAL str_replace('{{' . $key . '}}') with NO
+              whitespace tolerance. A spaced SEO token would silently never resolve, so SEO chips
+              are emitted tight.
+SEO list is the key set from PCM_SEO_AI::build_field_vars() + `current_value` (added by the caller
+before substituting) — i.e. what a custom SEO prompt can actually reference, NOT merely the tokens the
+default prompts in prompts.php happen to use.
+
+Rendered in BOTH value editors — TemplateRow (the inline Value cell the user named) and TemplateDialog.
+SourceVarsHint was deliberately extracted so those two paths cannot drift; adding chips to only one
+would have recreated exactly that. Gated on category === 'prompt'; varsFor() is an allow-list, so
+copy/image/video/optimizer get nothing rather than borrowing the Writer set.
+Note SourceVarsHint stays silent for SEO by design (its wording is Writer-specific) — so before this,
+SEO prompts had NO way to discover their variables at all.
+
+VERIFIED
+- NEW tests/standalone/template_var_chips_test.php — 14/14. Parses the lists out of the TSX and pins
+  them against the PHP: every SEO chip must be a build_field_vars() key, no SEO token may contain
+  spaces, every Writer chip must appear in strategy/service.php, vocabularies stay separate, both
+  editors render the component, and the prompt-category gate exists.
+- NEGATIVE CONTROL: injected `{{business.email}}` (unknown key) and `{{ title }}` (spaced) — both
+  intended checks failed, exit 1; restored -> 14/14.
+- tsc 59 = baseline, no errors in the three Templates files. Build 35.45s.
+- Bundle: label string x2 (both editors), `{{business.website|hostname}}` x1, `{{ brand_language }}` x3.
+- Full standalone suite 8/8 PASS. Zip rebuilt (3.47 MB, 681 files).
+- NOT verified visually — no dev server for this WP-embedded SPA.
+
+## 2026-08-04 — Removed the SourceVarsHint prose from the Templates Value cell
+Requested: remove the multi-paragraph {{ variable }} explainer from the Writer tab's Value column.
+
+Removed `<SourceVarsHint>` (and its now-dead import) from TemplateRow's inline Value editor. The
+TemplateVarChips strip added earlier stays, so discoverability in the cell survives in one line.
+SourceVarsHint itself is untouched and still rendered by TemplateDialog, which has room for the prose.
+Refreshed two comments that the removal made false (TemplateDialog's "the two paths must teach the
+same thing" and TemplateVarChips' "complements rather than replaces").
+
+SCOPE — did exactly what was asked, no more:
+  - The Add/Edit DIALOG still shows the prose. The request named the Value column; flagged to the user
+    rather than removed unilaterally.
+  - The block was rendered for any `prompt`-category row whose module is not video/seo/optimizer, so
+    copy/image prompt rows lose it too. It is one shared block in one place — there is no
+    writer-only variant to remove. Those tokens are writer/strategy-specific anyway, so showing them
+    on a copy template was arguably wrong; flagged, not silently reworked.
+
+VERIFIED
+- Bundle: the prose string ("For RSS / Social strategies you can place the source post") appears ONCE
+  = dialog only; the chips label appears TWICE = row + dialog. That is the exact intended split.
+- tsc 59 = baseline; no errors in TemplateRow/TemplateDialog/TemplateVarChips (the Templates/index.tsx
+  errors are pre-existing baseline entries in a file not touched here).
+- Build 41.35s. Full standalone suite 8/8 PASS. Zip rebuilt (3.47 MB, 681 files).
+- NOT verified visually — no dev server for this WP-embedded SPA.
+
+## 2026-08-04 — Zip build 17:55 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.47 MB, 681 files. dist current (17:53:22).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Templates work: chips label x2 (row + dialog), SourceVarsHint prose x1 (dialog only — the intended
+split after removing it from the Value cell), SEO token `{{business.website|hostname}}` x1.
+Also present: guard TRUE, brand-logo img object-cover TRUE, writable_owner_id x9, 0 caller-scoped writes.
+
+⚠ THE DEPLOY-CHECK NUMBER MOVED: `type: "button"` is now **299**, not 298 — TemplateVarChips adds one
+chip button. Anyone re-running the console one-liner should expect 299 from this build onward; 287 still
+means the old pre-fix bundle. Told the user so a correct install is not misread as a failed one.
+
+## 2026-08-04 — Replacing a brand logo did nothing visible (duplicate role='logo')
+Reported: upload a new logo in Edit Brand — success shown, image unchanged.
+
+ROOT CAUSE — `append_asset()` pushed the new asset onto the END of the array and never touched the
+incumbent, so the brand ended up with TWO entries carrying role='logo'. The frontend resolves the logo
+with `assets.find(a => a.role === 'logo')` (app/shared/brandAssetResolver.ts:26) — the FIRST match in
+array order — so the OLD logo kept winning. The write really did succeed; only the resolution was wrong,
+which is exactly why it "said it changed" while the image stayed.
+`set_asset_as_logo()` already enforced the singular-logo invariant when PROMOTING an existing asset;
+ADDING one never did.
+
+FIX (one method) — append_asset() now demotes every existing role='logo' to 'reference' before pushing
+a new logo. Demote, not delete, matching set_asset_as_logo(): the previous logo stays usable as a
+reference image. Only 2 call sites (upload_asset, store_asset_bytes) and all four add-paths —
+multipart, base64, from-URL, website scrape — funnel through them, so one change covers everything.
+
+SELF-HEALING: the loop clears EVERY incumbent, not just the first, so a brand already carrying 2+ logos
+from before the fix is repaired by the next logo upload. No migration needed.
+
+VERIFIED
+- brand_asset_upload_test.php extended 40 -> 52 checks, all pass. New sections 9/10/11 transcribe the
+  frontend resolver and assert getBrandLogo() returns the NEW url, the old logo is demoted not deleted,
+  a non-logo upload leaves the logo alone, and 3 stale logos collapse to 1.
+- NEGATIVE CONTROL: with the demotion removed the test reproduces the report precisely — roles
+  ['logo','reference','logo'] and getBrandLogo() -> 'https://x/old.png'. Restored -> 52/52.
+- php -l clean. Full standalone suite 8/8 PASS. Zip rebuilt (3.47 MB, 681 files); demotion verified
+  inside the archive.
+- NOT verified against live WordPress.
+
+## 2026-08-04 — Zip build 18:08 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.47 MB, 681 files. Folder had been emptied again.
+dist unchanged at 17:53:22 and still current — the logo-demotion fix was PHP-only, so no rebuild needed.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor;
+logo demotion present (singular-role comment + demote-to-reference); writable_owner_id x9,
+0 caller-scoped writes; add_asset_from_data / fetch_and_store_website_assets / store_asset_bytes /
+ASSET_MIME_EXT all present; bundle guard TRUE, `type: "button"` = 299, chips label x2,
+SourceVarsHint prose x1 (dialog only), brand-logo img object-cover TRUE.
+
+## 2026-08-04 — "/" variable typeahead in the Templates Value textarea
+Requested: type "/" in the Value column textarea and get the available-variables list, like a
+slash-command palette.
+
+NEW app/src/modules/Templates/SlashVariableMenu.tsx — `useSlashVariables()` hook + menu.
+"/" opens, further typing filters, ↑/↓ move, Enter or Tab inserts, Esc dismisses. The typed "/query"
+is REPLACED by the token, so nothing needs cleaning up by hand.
+
+TWO DESIGN CONSTRAINTS worth recording:
+1. The list renders in NORMAL FLOW under the textarea, not as a floating popup. The inline editor sits
+   in `<TableCell className="max-w-0 overflow-hidden">`, so an absolutely-positioned dropdown would be
+   CLIPPED by the cell; a portalled Radix Popover would instead steal focus, which a typeahead cannot
+   afford. In-flow avoids both.
+2. Escape is CONSUMED by the menu (stopPropagation) — the textarea's own Escape cancels the whole edit,
+   so dismissing the list must not also discard what the author wrote. onKeyDown returns a boolean and
+   TemplateRow only runs its handler when the menu did not claim the key.
+
+Trigger is deliberately conservative: "/" only opens at the start of a line or after whitespace, and the
+query dies at the first whitespace — "and/or", "24/7", "https://…", "a/b/c" never open it.
+Vocabulary comes from the new exported `templateVarsFor(module, category)` in TemplateVarChips, so the
+chips and the typeahead cannot offer different lists.
+
+SCOPE: wired into the Value column textarea (TemplateRow) as asked. TemplateDialog's textarea does NOT
+have it — flagged to the user rather than added unasked.
+
+VERIFIED
+- NEW tests/standalone/slash_variable_menu_test.mjs — 30/30. Trigger cases, the four prose "/" cases
+  that must NOT open it, caret-not-text-end, filtering by name across dotted/piped SEO tokens, and
+  insertion replacing the query while preserving text after the caret. Section 6 reads the real TSX back
+  and asserts the rules are still literally present, so a drifting transcription fails loudly.
+- NEGATIVE CONTROL: replaced the trigger guard with `if (true)` — section 6 failed, exit 1; restored → 30/30.
+- template_var_chips_test caught my refactor: it asserted the exact string `import { TemplateVarChips }`,
+  which broke when TemplateRow started importing templateVarsFor too. That was an over-specific
+  assertion, not a regression — rewritten to match the MODULE plus the render, and re-verified it still
+  fails when the render is actually removed.
+- tsc 59 = baseline, no errors in the touched files. Build 22.54s. Bundle carries the menu hint,
+  useSlashVariables x2, and the trigger scan.
+- Full standalone suite 9/9 PASS. Zip rebuilt (3.47 MB, 682 files).
+- NOT verified visually — no dev server for this WP-embedded SPA, so the keyboard flow has not been
+  exercised in a real browser.
+
+## 2026-08-04 — Zip build 19:01 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.47 MB, 682 files. dist current (18:58:32).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+"/" typeahead present (menu hint x1, useSlashVariables x2, trigger scan x1); chips label x2,
+SourceVarsHint x1 (dialog only); guard TRUE, logo object-cover TRUE, logo demotion TRUE,
+writable_owner_id x9, 0 caller-scoped writes.
+
+⚠ DEPLOY-CHECK NUMBER MOVED AGAIN: `type: "button"` is now **300** (was 299, before that 298) — the
+"/" menu items are buttons. Expect 300 from this build. 287 still means the pre-fix bundle. This counter
+shifts whenever a button is added, so treat `guard: true` as the reliable signal and the count as
+secondary.
+
+## 2026-08-04 — "/" menu now floats under the slash instead of sitting below the textarea
+Requested: make the variable list absolute, anchored exactly below where the "/" was typed.
+
+This reverses the in-flow decision from the previous entry. That decision was made to dodge the
+`<TableCell className="max-w-0 overflow-hidden">` clip; the correct answer to the clip is a PORTAL, not
+giving up on positioning.
+
+HOW
+- Menu is `createPortal(..., document.body)` with `position: fixed`, so no ancestor's overflow can clip
+  it and no stacking context traps it (z-50).
+- A textarea exposes no caret geometry, so `caretOffset(ta, index)` measures it with a hidden mirror div
+  copying the textarea's text-layout styles (font/padding/border/width/wrapping) and reads back a marker
+  span's offsetLeft/offsetTop. Kept local — no dependency added.
+- Viewport position = textarea's border-box rect + caret offset − the textarea's own scroll, then hung
+  one line-height below the slash. Flips above when short of room, clamped to the viewport on both axes.
+- Re-measures on scroll (capture, so ancestor scrolling counts) and resize; listeners cleaned up.
+  Measured in useLayoutEffect so it never paints one frame at the wrong spot.
+- Mirror div is removed after every measurement — otherwise each keystroke would leak a node into <body>.
+
+VERIFIED — and this time the MATH was checked, not just the source strings
+- Ran caretOffset() verbatim in a real browser against a textarea with padding 8 / border 1 /
+  line-height 20:
+    index 0            -> left 8,  top 9      (inside the padding box, as it must be)
+    after 7 chars      -> left 62             (advances)
+    after 11 chars     -> left 93             (advances further)
+    after 1 newline    -> top 29  = +1 line height exactly
+    after 2 newlines   -> top 49  = +2 line heights exactly
+    x resets to origin on a new line; 0 mirror nodes leaked
+- MY FIRST ASSERTION WAS WRONG, not the code: I checked `top === 0`, but the offsets are added to
+  getBoundingClientRect() (the BORDER box), so they MUST include the padding inset — top 9 is correct
+  and top 0 would have been the bug. Re-checked against the element's real computed insets.
+- slash_variable_menu_test.mjs extended 30 -> 41: portal, fixed, caret anchoring, below-the-line offset,
+  flip, viewport clamping, scroll/resize listeners + cleanup, pre-paint measurement, mirror cleanup.
+- tsc 59 = baseline; build 18.22s; bundle carries caretOffset x2, fixed positioning, mirror cleanup.
+- Full suite 9/9 PASS. Zip rebuilt (3.47 MB, 682 files).
+- NOT verified: the menu has not been seen rendering inside the real Templates table.
+
+## 2026-08-04 — Zip build 19:15 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.47 MB, 682 files. dist current (19:13:01).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+"/" menu positioning present (caretOffset x2, fixed positioning, mirror cleanup, menu hint);
+chips label x2, SourceVarsHint x1 (dialog only); guard TRUE, logo object-cover TRUE,
+logo demotion TRUE, writable_owner_id x9, 0 caller-scoped writes.

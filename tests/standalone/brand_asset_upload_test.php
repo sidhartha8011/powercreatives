@@ -256,6 +256,77 @@ check('one dead image does not cost the good one',
 
 PCM_DB::$state = null;
 
+echo "\n9. Uploading a replacement logo demotes the incumbent\n";
+// The reported bug: "upload a new logo, it says it changed, the image stays as it
+// is." append_asset() pushed the new logo onto the END while the frontend resolves
+// the logo as assets.find(a => a.role === 'logo') — the FIRST match — so the OLD
+// logo kept winning and the preview never updated.
+/** The frontend resolver, transcribed from app/shared/brandAssetResolver.ts. */
+$get_brand_logo = function (array $assets) {
+    foreach ($assets as $a) { if (($a['role'] ?? '') === 'logo') { return $a; } }
+    return null;
+};
+
+PCM_DB::$written = array();
+$with_logo = (object) array(
+    'assets' => json_encode(array(
+        array('fileKey' => 'brand_9_OLDLOGO', 'role' => 'logo',      'url' => 'https://x/old.png'),
+        array('fileKey' => 'brand_9_ref',     'role' => 'reference', 'url' => 'https://x/ref.png'),
+    )),
+    'colors' => json_encode(array()),
+);
+
+$new_logo = $svc->add_asset_from_data($PNG_B64, 'new-logo.png', 'image/png', 9, 3, $with_logo, 'logo');
+$after = json_decode(end(PCM_DB::$written)['assets'], true);
+
+$logos = array_values(array_filter($after, fn($a) => ($a['role'] ?? '') === 'logo'));
+check('exactly one asset carries role logo', count($logos) === 1, array_column($after, 'role'));
+check('the surviving logo is the NEW upload',
+    ($logos[0]['fileKey'] ?? null) === ($new_logo['fileKey'] ?? '!'), $logos[0] ?? null);
+
+// The assertion that maps directly onto what the user saw.
+$resolved = $get_brand_logo($after);
+check('getBrandLogo() now resolves to the new image',
+    ($resolved['url'] ?? null) === ($new_logo['url'] ?? '!'), $resolved['url'] ?? null);
+check('...and no longer to the old one',
+    ($resolved['fileKey'] ?? null) !== 'brand_9_OLDLOGO', $resolved['fileKey'] ?? null);
+
+$old = array_values(array_filter($after, fn($a) => ($a['fileKey'] ?? '') === 'brand_9_OLDLOGO'));
+check('old logo demoted, not deleted', count($old) === 1 && $old[0]['role'] === 'reference', $old[0] ?? null);
+check('unrelated reference asset untouched',
+    count(array_filter($after, fn($a) => ($a['fileKey'] ?? '') === 'brand_9_ref' && $a['role'] === 'reference')) === 1,
+    $after);
+check('nothing was dropped', count($after) === 3, count($after));
+
+echo "\n10. Adding a NON-logo asset leaves the logo alone\n";
+PCM_DB::$written = array();
+$svc->add_asset_from_data($PNG_B64, 'ref.png', 'image/png', 9, 3, $with_logo, 'reference');
+$after2 = json_decode(end(PCM_DB::$written)['assets'], true);
+$logos2 = array_values(array_filter($after2, fn($a) => ($a['role'] ?? '') === 'logo'));
+check('existing logo still the logo', count($logos2) === 1 && $logos2[0]['fileKey'] === 'brand_9_OLDLOGO', $logos2);
+
+echo "\n11. A brand ALREADY holding several logos is healed by the next upload\n";
+// Anyone who hit this bug before the fix has a brand carrying 2+ role='logo'
+// entries. The demotion loop clears EVERY incumbent, not just the first, so the
+// next logo upload repairs the row — no migration needed.
+PCM_DB::$written = array();
+$corrupted = (object) array(
+    'assets' => json_encode(array(
+        array('fileKey' => 'brand_9_L1', 'role' => 'logo'),
+        array('fileKey' => 'brand_9_L2', 'role' => 'logo'),
+        array('fileKey' => 'brand_9_L3', 'role' => 'logo'),
+    )),
+    'colors' => json_encode(array()),
+);
+$fresh = $svc->add_asset_from_data($PNG_B64, 'fixed.png', 'image/png', 9, 3, $corrupted, 'logo');
+$healed = json_decode(end(PCM_DB::$written)['assets'], true);
+$healed_logos = array_values(array_filter($healed, fn($a) => ($a['role'] ?? '') === 'logo'));
+check('3 stale logos collapse to 1', count($healed_logos) === 1, array_column($healed, 'role'));
+check('the survivor is the new upload',
+    ($healed_logos[0]['fileKey'] ?? null) === ($fresh['fileKey'] ?? '!'), $healed_logos[0] ?? null);
+check('getBrandLogo() resolves to it', ($get_brand_logo($healed)['fileKey'] ?? null) === ($fresh['fileKey'] ?? '!'));
+check('all four assets retained', count($healed) === 4, count($healed));
+
 // ── Cleanup ──
 foreach (glob($TMP . '/*') as $f) { @unlink($f); }
 @rmdir($TMP);

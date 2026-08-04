@@ -54,6 +54,7 @@ import {
 import { useEffect, useState } from "react";
 import { CreatableCombobox } from "@/components/ui/creatable-combobox";
 import { SourceVarsHint } from "./SourceVarsHint";
+import { TemplateVarChips } from "./TemplateVarChips";
 
 // ============================================
 // Types
@@ -722,6 +723,10 @@ export function TemplateDialog({
             {/* Source variables — shared with the list's inline Value editor
                 (TemplateRow) so both paths teach the same thing. */}
             <SourceVarsHint module={module} category={selectedCategory} />
+            {/* Same chips as the inline Value editor. The prose hint above stays
+                HERE only — the dialog has room for it; in the list's Value cell it
+                ran several paragraphs and pushed Save/Cancel out of view. */}
+            <TemplateVarChips module={module} category={selectedCategory} />
 
             {/* Add / Update button */}
             <div className="flex items-center gap-2">

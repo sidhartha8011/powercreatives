@@ -200,7 +200,12 @@ export function BrandLogoSection({
                 <img
                   src={logoAsset.url}
                   alt="Brand logo"
-                  className="w-full h-full object-contain"
+                  // cover, NOT contain — deliberate. object-contain fits the longest
+                  // edge, so a wide wordmark in this 64px square painted ~64x12 and
+                  // read as a blank tile. Filling the square keeps the mark legible;
+                  // the trade is that a wide logo's ends are cropped in the preview.
+                  // The full image is always intact in the asset itself.
+                  className="w-full h-full object-cover"
                 />
               ) : (
                 <ImageIcon size={20} className="text-muted-foreground" />

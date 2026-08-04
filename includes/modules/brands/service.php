@@ -745,6 +745,8 @@ class PCM_Brands_Service
     /**
      * Append an asset to a brand's asset list and persist.
      *
+     * Enforces the singular-`logo` invariant: adding a logo demotes the incumbent.
+     *
      * @param int    $brand_id Brand ID.
      * @param int    $user_id  PCM user ID.
      * @param object $brand    Brand DB row.
@@ -755,6 +757,26 @@ class PCM_Brands_Service
     private function append_asset(int $brand_id, int $user_id, object $brand, array $asset): void
     {
         $existing_assets = json_decode($brand->assets ?? '[]', true) ?: array();
+
+        // 'logo' is a SINGULAR role. getBrandLogo() resolves it as
+        // assets.find(a => a.role === 'logo') — the FIRST match in array order — and
+        // new assets append to the END. So without demoting the incumbent, uploading
+        // a replacement left TWO role='logo' entries and the resolver kept returning
+        // the OLD one: the request succeeded, the toast said so, and the preview
+        // never changed. set_asset_as_logo() already enforces this when PROMOTING an
+        // existing asset; adding a new one has to enforce it too.
+        //
+        // Demote rather than delete, matching set_asset_as_logo(): the previous logo
+        // stays available as a reference image instead of being destroyed.
+        if (($asset['role'] ?? '') === 'logo') {
+            foreach ($existing_assets as &$existing) {
+                if (($existing['role'] ?? '') === 'logo') {
+                    $existing['role'] = 'reference';
+                }
+            }
+            unset($existing);
+        }
+
         $existing_assets[] = $asset;
 
         PCM_DB::update_brand($brand_id, $user_id, array(
