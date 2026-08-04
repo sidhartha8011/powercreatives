@@ -12,24 +12,40 @@ No other claim in the gap rests on an unchecked premise.
 
 ---
 
-## STEP 1 — Make the card editable (gap A) · unblocks the owner today
-- [ ] 1.1 Custom cards: title + document editable in place for logged-in team members,
-      saved through the existing `updateSnapshotAsset` (server already supports the bucket).
-- [ ] 1.2 Article cards: same, via the fields that endpoint already accepts
-      (`title`, `content`, `metaTitle`, `metaDescription`).
-- [ ] 1.3 Gate on `pcmConfig.user.isLoggedIn` only — **never** on lane. A client without a
-      login keeps the read-only viewer.
-- [ ] 1.4 Saving updates the card in place (cache write, no reload).
-- **Verify:** tsc 59 pre-existing ZERO new · build · edit a custom card and a copy card.
+## ⚠ SEQUENCING CORRECTED — STEPS 1 AND 2 MERGE INTO ONE PASS
 
-## STEP 2 — The card-type registry (gap B) · so STEP 1 cannot silently regress
-- [ ] 2.1 `cardTypes/` — one file per type (`media`, `copy`, `article`, `custom`) declaring
-      `{ id, label, render, editable, save }`.
-- [ ] 2.2 `CreativeAssetCard` becomes a thin host that looks the type up; the four inline
-      `type ===` branches and the nested `ArticleViewerDialog` move out of the 729-line file.
-- [ ] 2.3 Adding a type = one new file + one registry line, never a branch in the host.
-- **Verify:** tsc ZERO new · build · all four types still render and approve · `grep -c
-      "type === '" CreativeAssetCard.tsx` → 0.
+The original order was A (make it editable) → B (registry, so A cannot regress). That order
+**creates technical debt on purpose**: it adds a fifth `type ===` branch to a 729-line
+component and then rewrites that same code in the next step. Two writes, two reviews, and a
+window where the file is worse than it is today.
+
+Since the standing bar is *no technical debt*, editability lands **as a property of the
+registry**, not as another branch. Structure first, behaviour inside it. Same total work,
+written once.
+
+## STEP 1+2 (MERGED) — Card-type registry, with editability as one of its properties
+
+- [ ] 1.1 `cardTypes/types.ts` — the contract every type implements:
+      `{ id, label, render(ctx), editable: boolean, editFields, save(patch) }`.
+- [ ] 1.2 One file per type, moved **verbatim** out of the host so behaviour cannot drift in
+      the same commit that moves it: `media.tsx`, `copy.tsx`, `article.tsx`, `custom.tsx`.
+- [ ] 1.3 `copy` declares `editable: true` with its existing inline-edit behaviour intact
+      (it is the one type that already worked — it must come through unchanged).
+- [ ] 1.4 `custom` declares `editable: true` — title + document — saving through
+      `updateSnapshotAsset`, which already accepts that bucket server-side.
+- [ ] 1.5 `article` declares `editable: true` — title, content, metaTitle, metaDescription —
+      the exact fields that endpoint already accepts.
+- [ ] 1.6 `media` declares `editable: false` (its `name` is the only writable field; not in
+      scope, and saying so in the registry is the point).
+- [ ] 1.7 Editing is gated on `pcmConfig.user.isLoggedIn` **only** — never on lane. A client
+      without a login keeps the read-only viewer.
+- [ ] 1.8 `CreativeAssetCard` becomes a thin host: look up the type, render it, and own only
+      the shared chrome (approve / comment / status). The nested `ArticleViewerDialog` moves
+      into the types that use it.
+- [ ] 1.9 Saving updates the card in place — cache write, no reload.
+- **Verify:** `grep -c "type === '" CreativeAssetCard.tsx` → **0** · tsc 59 pre-existing ZERO
+  new · build · all four types render, approve and comment · a custom card and a copy card
+  both edit and persist.
 
 ## STEP 3 — Owner and assignee (gap C)
 - [ ] 3.1 Schema: `approval_sets.assigneeId int(11) NULL`, `dbDelta` + `version_compare`
