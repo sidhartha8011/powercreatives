@@ -224,6 +224,7 @@ export function useSlashVariables({
 export function SlashVariableMenu({ state }: { state: SlashVariables }) {
   const { open, textareaRef, start } = state;
   const boxRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
   // Measure before paint so the menu never shows at the wrong spot for a frame.
@@ -270,6 +271,17 @@ export function SlashVariableMenu({ state }: { state: SlashVariables }) {
     };
   }, [open, start, textareaRef, state.matches.length]);
 
+  // Keep the highlighted row visible. The list is capped at max-h-40 and scrolls,
+  // but ↑/↓ only move an index — without this the selection walks off the bottom
+  // and the menu looks frozen on the last visible item.
+  // 'nearest' scrolls the minimum needed and, critically, does NOT scroll the page
+  // or the table behind the portalled menu.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const item = listRef.current?.children[state.active] as HTMLElement | undefined;
+    item?.scrollIntoView({ block: 'nearest' });
+  }, [open, state.active]);
+
   if (!open) return null;
 
   return createPortal(
@@ -289,7 +301,7 @@ export function SlashVariableMenu({ state }: { state: SlashVariables }) {
       <p className="border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
         ↑↓ to move · Enter to insert · Esc to dismiss
       </p>
-      <ul className="max-h-40 overflow-y-auto py-0.5">
+      <ul ref={listRef} className="max-h-40 overflow-y-auto py-0.5">
         {state.matches.map((token, i) => (
           <li key={token}>
             <button

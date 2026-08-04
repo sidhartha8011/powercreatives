@@ -39,7 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { TemplateVarChips, templateVarsFor } from "./TemplateVarChips";
+import { templateVarsFor } from "./templateVars";
 import { SlashVariableMenu, useSlashVariables } from "./SlashVariableMenu";
 import { TableRow, TableCell } from "@/components/ui/table";
 import {
@@ -215,7 +215,7 @@ export function TemplateRow({
   const [editValueText, setEditValueText] = useState(value);
   const valueTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // "/" typeahead over the same variable list the chips below the textarea show.
+  // "/" typeahead — the only variable affordance now that the chip strip is gone.
   // Empty vars (any module/category without a substituting builder) disables it.
   const slashVars = useSlashVariables({
     vars: templateVarsFor(template.module, subtype),
@@ -466,13 +466,6 @@ export function TemplateRow({
               }}
             />
             <SlashVariableMenu state={slashVars} />
-            {/* Click-to-copy chips, same affordance as the Automations webhook
-                editor. These replaced the SourceVarsHint prose block that used to
-                sit here: in a table cell it was several paragraphs deep and pushed
-                the Save/Cancel buttons off screen. The chips carry the same
-                discoverability in one line. The full explanation still lives in
-                the Add/Edit dialog, which has room for it. */}
-            <TemplateVarChips module={template.module} category={subtype} />
             <div className="flex items-center gap-1">
               <Button
                 variant="default"

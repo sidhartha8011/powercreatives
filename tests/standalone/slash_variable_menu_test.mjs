@@ -154,6 +154,16 @@ check('listeners are cleaned up',
 check('measured before paint', src.includes('useLayoutEffect('), 'not pre-paint');
 // The mirror div must be removed or every keystroke leaks a node into <body>.
 check('mirror div is removed after measuring', src.includes('document.body.removeChild(mirror)'), 'mirror leaks');
+
+console.log('\n8. Arrow keys keep the highlighted row visible');
+// The list is capped (max-h-40) and scrolls. ↑/↓ only move an index, so without
+// an explicit scroll the selection walks off the bottom and the menu looks stuck
+// on the last visible row — the reported bug.
+check('list has a ref to scroll', src.includes('listRef'), 'no list ref');
+check('active row is scrolled into view', src.includes("scrollIntoView({ block: 'nearest' })"), 'no scrollIntoView');
+check("uses 'nearest' so the page behind does not jump", !src.includes("block: 'center'") && !src.includes('scrollIntoView(true)'), 'wrong scroll mode');
+check('re-runs when the active index changes', src.includes('[open, state.active]'), 'not keyed on active');
+check('the list is the scroll container', src.includes('max-h-40 overflow-y-auto'), 'list not scrollable');
 check('vocabulary comes from the shared source',
   readFileSync(join(ROOT, 'app/src/modules/Templates/TemplateRow.tsx'), 'utf8').includes('templateVarsFor(template.module, subtype)'),
   'TemplateRow does not feed the shared list in');

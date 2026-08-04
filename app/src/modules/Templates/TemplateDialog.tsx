@@ -51,10 +51,11 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CreatableCombobox } from "@/components/ui/creatable-combobox";
 import { SourceVarsHint } from "./SourceVarsHint";
-import { TemplateVarChips } from "./TemplateVarChips";
+import { templateVarsFor } from "./templateVars";
+import { SlashVariableMenu, useSlashVariables } from "./SlashVariableMenu";
 
 // ============================================
 // Types
@@ -387,6 +388,15 @@ export function TemplateDialog({
   const [groupName, setGroupName] = useState<string | null>(null);
   const [entryLabel, setEntryLabel] = useState("");
   const [entryValue, setEntryValue] = useState("");
+  const entryValueRef = useRef<HTMLTextAreaElement>(null);
+
+  // "/" variable typeahead, identical to the list's inline Value editor.
+  const entrySlashVars = useSlashVariables({
+    vars: templateVarsFor(module, selectedCategory),
+    value: entryValue,
+    setValue: setEntryValue,
+    textareaRef: entryValueRef,
+  });
 
   // Batch list (create mode): each item becomes a unique template
   const [pendingTemplates, setPendingTemplates] = useState<PendingTemplate[]>(
@@ -711,22 +721,23 @@ export function TemplateDialog({
               />
             </div>
 
-            {/* Value textarea */}
+            {/* Value textarea — same "/" variable typeahead as the list's inline
+                editor, so the shortcut works wherever a value is authored. */}
             <Textarea
+              ref={entryValueRef}
               value={entryValue}
-              onChange={(e) => setEntryValue(e.target.value)}
+              onChange={entrySlashVars.onChange}
+              onKeyDown={(e) => { entrySlashVars.onKeyDown(e); }}
               placeholder={getValuePlaceholder(selectedCategory, module, type)}
               className="text-sm min-h-[80px] resize-y"
               rows={selectedCategory === "reference_ad" ? 5 : 3}
             />
+            <SlashVariableMenu state={entrySlashVars} />
 
-            {/* Source variables — shared with the list's inline Value editor
-                (TemplateRow) so both paths teach the same thing. */}
+            {/* Prose explanation of what the variables DO. It stays here only —
+                the dialog has room; in the list's Value cell it ran several
+                paragraphs and pushed Save/Cancel out of view. */}
             <SourceVarsHint module={module} category={selectedCategory} />
-            {/* Same chips as the inline Value editor. The prose hint above stays
-                HERE only — the dialog has room for it; in the list's Value cell it
-                ran several paragraphs and pushed Save/Cancel out of view. */}
-            <TemplateVarChips module={module} category={selectedCategory} />
 
             {/* Add / Update button */}
             <div className="flex items-center gap-2">

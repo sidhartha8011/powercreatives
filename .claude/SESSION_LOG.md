@@ -11938,3 +11938,58 @@ Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src,
 "/" menu positioning present (caretOffset x2, fixed positioning, mirror cleanup, menu hint);
 chips label x2, SourceVarsHint x1 (dialog only); guard TRUE, logo object-cover TRUE,
 logo demotion TRUE, writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-04 — Chips removed, "/" typeahead extended to every module, arrow-key scroll fixed
+Three asks: drop the "Available variables — click one to copy:" strip, make "/" work in every tab,
+fix the dropdown not scrolling with the arrow keys.
+
+1. CHIPS REMOVED — deleted TemplateVarChips.tsx entirely and its render in both editors. The vocabulary
+   it held moved to a new pure module `app/src/modules/Templates/templateVars.ts` (no UI), which is now
+   the single source for the "/" menu. Automations keeps its own strip — that is the thing being
+   mirrored, not something to delete; the test asserts it survives.
+
+2. "/" IN EVERY TAB — previously writer + seo only, and only in the row editor. Now:
+     writer 9 · seo 24 · copy 14 · image 14 · optimizer 2 · video 0
+   and wired into BOTH value editors (TemplateRow's inline cell AND TemplateDialog's textarea).
+   Every list was traced to the PHP that substitutes it, not guessed:
+     copy      → the ads/organic map (~copy/service.php:1800) that module=copy TEMPLATE rows flow
+                 through. I FIRST extracted build_generation_context() and got a completely different
+                 14 keys — copy has TWO var maps and I nearly shipped the wrong one. The test now
+                 accepts the union, which is what caught it.
+     image     → build_image_context() + brief/style added at the call sites
+     optimizer → render_prompt_vars at the single 'compile' site — exactly 2 tokens
+     video     → DELIBERATELY EMPTY. video/service.php has no {{ }} engine at all, so a token typed
+                 there would stay literal. Offering nothing is the honest answer; "every tab" cannot
+                 mean inventing a vocabulary.
+   Form matters: only the writer resolver is whitespace-tolerant, so every other module's tokens are
+   emitted tight — a spaced token would never resolve.
+
+3. ARROW-KEY SCROLL — the real bug. The list is `max-h-40 overflow-y-auto` and ↑/↓ only moved an index,
+   so the highlight walked off the bottom and the menu looked frozen. Added a listRef +
+   scrollIntoView({block:'nearest'}) keyed on the active index. 'nearest' specifically, so the page and
+   the table behind the portalled menu do not jump.
+
+VERIFIED
+- NEW tests/standalone/template_vars_test.php (replaces template_var_chips_test.php) — 34/34. Pins each
+  module's list against its PHP, asserts video stays empty AND that video really has no resolver,
+  no spaced tokens outside writer, the prompt-category gate, chips gone from both editors, Automations
+  strip intact, and "/" wired into both editors.
+- NEGATIVE CONTROL: injected `{{totally_made_up}}` into optimizer and `{{ spaced_seo }}` into seo —
+  both flagged, exit 1; restored → 34/34.
+- slash_variable_menu_test.mjs 41 → 46 with the scroll assertions. NEGATIVE CONTROL: removing the
+  scrollIntoView call failed the check, exit 1; restored → 46/46.
+- tsc 59 = baseline, no errors in the four touched files. Build 15.10s.
+- Bundle: chips label count is 1 (Automations only — proof the Templates strip is gone), scrollIntoView
+  present, and one token sampled per new module vocabulary.
+- Full suite 9/9. Zip rebuilt (3.47 MB, 682 files).
+- NOT verified visually — no dev server, so the arrow-key scroll has not been exercised in a browser.
+
+## 2026-08-05 — Zip build 01:11 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.47 MB, 682 files. dist current (01:08:26).
+NOTE: the clock rolled past midnight, so the dated copy is now `power-creatives-2026-08-05.zip`;
+yesterday's `power-creatives-2026-08-04.zip` is still sitting in that folder and is STALE.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+This task's work: chips label count 1 (Automations only — Templates strip gone), scrollIntoView
+present (arrow-key fix), useSlashVariables x3 (row + dialog), and one token sampled per module
+vocabulary incl. the writer spaced form. Earlier work intact: guard TRUE, logo object-cover TRUE,
+logo demotion TRUE, writable_owner_id x9, 0 caller-scoped writes.
