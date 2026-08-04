@@ -1,75 +1,94 @@
 # GAP ANALYSIS — the opened card does not read as a document
 **Date:** 2026-08-04 · **Owner report:** "it doesn't look like a Notion card… a small,
-unworked card". Facts first, at file:line.
+unworked card". **Rewritten after the owner called out an assumption — see §0.**
 
 ---
 
-## 1. THE KEY FACT: THERE ARE TWO SURFACES FOR THE SAME DOCUMENT, AND THEY DISAGREE
+## 0. WHAT I ASSUMED, AND WHAT IS ACTUALLY TRUE
 
-| | **Viewer** (read-only, client board) | **Editor** (authoring, create dialog) |
+**The assumption:** the first version of this document assumed "opening a card" meant the
+authoring editor, and proposed pointing it at the viewer's `.pcm-notion-*` styles.
+
+**Verified since — there are THREE distinct open-a-card surfaces, not one:**
+
+| # | Surface | Where it is rendered | DOM context |
+|---|---|---|---|
+| S1 | `ArticleViewerDialog` — read-only document | `CreativeAssetCard.tsx:715`; that card's **only** consumer is `ClientReviewPage` | `createPortal(…, document.body)` (`:85`) — **outside `#pcm-root`** |
+| S2 | `PreviewDialog` — the admin board's "open" | `SetsBoard.tsx:518` | an **`<iframe>` of the public URL** — i.e. it renders S1 inside a frame |
+| S3 | `CustomCardEditor` — authoring | `CreateCustomSetDialog.tsx:346` | **inside `#pcm-root`** |
+
+**And the fact that breaks the original proposal:** `client-review.css` is imported by
+**`ClientReviewPage` only** (`ClientReviewPage.tsx:13`). The `.pcm-notion-*` rules therefore
+**do not exist on the admin side at all**. The authoring editor cannot "just use them".
+
+**A second constraint the original missed:** `index.css` resets with
+`#pcm-root :where(p|h1|h2|h3…)` — specificity **(1,0,1)**. A plain `.pcm-notion-prose p`
+is **(0,2,0)** and would **lose** inside `#pcm-root`. S1 only escapes this because it is
+portalled out of the root. Any document styling used by S3 must clear that bar — which is
+precisely why `.pcm-card-editor` already ships as a two-branch selector
+(`#pcm-root .pcm-card-editor` **and** bare `.pcm-card-editor`), documented in `index.css`.
+
+⇒ The fix is **not** "point S3 at S1's classes". It is: define the document scale **once, at
+a specificity that survives `#pcm-root`, in a stylesheet both surfaces load** — and have S1
+and S3 consume that one definition.
+
+---
+
+## 1. HOW THE THREE SURFACES ACTUALLY DIFFER TODAY
+
+| | S1 / S2 (viewer) | S3 (editor) |
 |---|---|---|
-| Component | `ArticleViewerDialog` in `CreativeAssetCard.tsx` | `CustomCardEditor.tsx` |
-| Shell | `.pcm-notion-modal` — **977px** wide, 10px radius, own top bar | shadcn `Dialog`, editor inside a **bordered form box** (`rounded-lg border bg-card`) |
-| Column | `.pcm-notion-col` — **max-width 708px**, centred, 24px gutters | full dialog width, `p-4`, `max-h-[72vh]` scroll |
-| Title | `.pcm-notion-title` — **40px / 1.2 / 700** | no document title at all — the set's Name field stands in |
-| Body | `.pcm-notion-prose` — **16px / 1.5**, h1 1.875em → h4 1.05em, Notion list/marker/quote treatment | `.pcm-card-editor` — **11px / 1.7** |
-| Page | `.pcm-notion-page` — 22vh bottom breathing room | none |
+| Shell | `.pcm-notion-modal` — 977px, own top bar | shadcn `Dialog`; editor in a **bordered box** (`rounded-lg border bg-card`) |
+| Measure | `.pcm-notion-col` — **708px** centred, 24px gutters | full dialog width, `p-4`, `max-h-[72vh]` |
+| Title | `.pcm-notion-title` — **40px / 1.2 / 700** | none — you name the *set*, never the *page* |
+| Body | `.pcm-notion-prose` — **16px / 1.5**, h1 1.875em → h4 1.05em | `.pcm-card-editor` — **11px / 1.7** |
+| Bottom space | `.pcm-notion-page` — 22vh | none |
+| Toolbar | none | always-on strip |
 
-**Source:** `modules/Approvals/client-review.css:838–960` · `index.css` (`.pcm-card-editor`)
+**Source:** `client-review.css:838–960` · `index.css` (`.pcm-card-editor`, `#pcm-root :where`)
 · `CustomCardEditor.tsx`.
-
-**Conclusion: the *viewer* is already a proper Notion page — 977/708/40px/16px with the full
-heading scale.** The *editor* is a compact admin form field at 11px. Same document, two
-identities, and the one you author in is the wrong one.
 
 ## 2. AND THE EDITOR GOT SMALLER BECAUSE OF ME
 
-Earlier today I unified the card editor onto the Writer canvas's scale
-(`--pcm-prose-*`, **11px/1.7**), taking it from 13px → 11px. That fixed the *drift* the owner
-reported but bound it to the **wrong source**: the Writer canvas documents its own 11px as
-*"compact fit with admin UI"*. A document surface is not admin chrome. The correct shared
-source for this surface is the one that already renders these documents correctly — the
-viewer's Notion scale.
-
-⇒ **The prose scale stays ONE source, but the card editor moves onto the document scale
-(16px/708px), not the admin-compact one.** The Writer keeps its own; nothing about it changes.
-
-## 3. WHAT ELSE THE EDITOR LACKS THAT THE VIEWER HAS
-
-| # | Fact |
-|---|---|
-| F1 | No centred measure — text runs the full dialog width instead of a 708px column. |
-| F2 | Visible chrome — a border, a toolbar strip and a background box frame the writing surface; the viewer has none. |
-| F3 | No document title — you name the *set*, never the *page*, so the authoring view has no H1 to anchor it. |
-| F4 | No bottom breathing room (`22vh` in the viewer) — the caret sits against the box edge. |
-| F5 | Toolbar is always-on; the Writer/viewer pattern is a selection bubble (`WriterBubbleMenu`, already used here with `selectionOnly`). |
+Earlier today I unified the card editor onto the Writer canvas's `--pcm-prose-*` scale,
+taking it 13px → **11px**. That fixed the drift the owner reported but bound it to the
+**wrong source**: the Writer documents its own 11px as *"compact fit with admin UI"*, and a
+document surface is not admin chrome. One shared source was right; that source was not.
 
 ---
 
-## 4. CHECKLIST
+## 3. CHECKLIST
 
-### A — One document scale, correctly sourced
-- [ ] A1 Card editor adopts the **document** scale (16px/1.5 + the viewer's heading ramp), not the admin-compact Writer scale.
-- [ ] A2 Keep it a single source: promote the viewer's `.pcm-notion-prose` values to shared custom properties consumed by **both** viewer and editor, so authoring and reading are byte-identical by construction.
-- [ ] A3 Writer canvas untouched — its 11px is deliberate and documented.
+### A — Define the document scale once, where both surfaces can reach it
+- [ ] A1 Move the document scale into **`index.css`** (loaded by both admin and client), as
+      custom properties, using the **two-branch** `#pcm-root …` + bare selector pattern so it
+      survives the `:where()` resets (§0).
+- [ ] A2 `.pcm-notion-prose` (S1) and the card editor (S3) both consume **that one
+      definition** — neither keeps its own numbers.
+- [ ] A3 Writer canvas untouched: its 11px is deliberate and documented.
+- [ ] A4 Delete the card editor's binding to `--pcm-prose-*` (my mis-sourced change).
 
-### B — The editor becomes a page, not a field
-- [ ] B1 Centred **708px** measure, matching the viewer.
-- [ ] B2 Remove the border/box framing; the writing surface sits on the page.
+### B — The editor becomes a page, not a form field
+- [ ] B1 Centred **708px** measure, matching S1.
+- [ ] B2 No border/box framing around the writing surface.
 - [ ] B3 Bottom breathing room so the caret is never against an edge.
-- [ ] B4 A real document **title** input styled as the 40px H1 — the page's own name.
-- [ ] B5 Image/annotate/draw actions move off the always-on strip into the existing selection bubble + a quiet insert affordance.
+- [ ] B4 A real document **title**, styled as the 40px H1.
+- [ ] B5 Image/annotate/draw move off the always-on strip into the selection bubble already
+      imported in that file (`WriterBubbleMenu … selectionOnly`).
 
-### C — Prove it is one surface, not two lookalikes
-- [ ] C1 The same document rendered in editor and viewer must resolve to the **same** computed font-size, line-height and measure.
-- [ ] C2 `grep` shows no second prose scale defined for cards.
+### C — Prove it is ONE surface, not two lookalikes
+- [ ] C1 The same document must resolve to the **same computed** font-size, line-height and
+      measure in S1 and S3.
+- [ ] C2 `grep` shows exactly **one** document-scale definition, in `index.css`.
+- [ ] C3 S2 needs no work — it is an iframe of S1 and inherits whatever S1 becomes.
 
 ### D — Verify
-- [ ] D1 tsc 59 pre-existing ZERO new · build · changelog · AFTER commit **LOCAL ONLY**. Never push.
+- [ ] D1 tsc 59 pre-existing ZERO new · build · changelog · AFTER commit **LOCAL ONLY**.
 
-## 5. ORDER
-A (the scale, and it is my correction to make) → B (the page shell) → C (prove one surface).
+## 4. ORDER
+A (the scale — my correction to make, and the constraint the first draft missed) → B (the
+page shell) → C (prove one surface).
 
-## 6. CARRIED
-Card-type registry + editable cards (plan `14eea01`) — this redesign lands **inside** that
-registry's `custom`/`article` types, not as a separate patch on the monolith.
+## 5. CARRIED
+This lands **inside** the card-type registry's `custom`/`article` types (plan `14eea01`), not
+as a separate patch on the 729-line monolith.
