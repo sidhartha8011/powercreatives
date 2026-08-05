@@ -49,7 +49,6 @@ import {
   type KanbanMoveEvent,
 } from '@/components/shared/Kanban';
 
-import { CardDocumentView } from '../components/CardDocumentView';
 import { ApprovalSetModal } from '../components/ApprovalSetModal';
 import { FeedbackDialog } from './FeedbackDialog';
 import { SetCard } from './SetCard';
@@ -547,28 +546,21 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
           (does it hold a custom document?), never a maintained list of set kinds.
           Read-only: approving belongs to the client, and the admin holds no
           public token, so no Approve action is passed. */}
-      {previewSet && previewLoading ? (
-        /* The shell opens IMMEDIATELY on click, carrying the name the board row
-           already knows, and says it is loading. Rendering nothing here made a
-           click look like it had missed — the fetch measured 1.4-2.9 s on this
-           host, where PHP-FPM runs 2 workers. */
-        <CardDocumentView
-          content=""
-          title={previewSet.name || 'Untitled Document'}
-          isLoading
-          onClose={closePreview}
-        />
-      ) : previewSet && fullPreviewSet ? (
-        /* A card opens as THE CARD — the client view of everything inside it.
-           It used to open `snapshot.custom[0]` as a Notion page, which showed a
-           document and silently hid every other asset in the same card. A
-           document is a sub-item; it is never the card. */
+      {/* A card opens as THE CARD — the client view of everything inside it,
+          from the first frame. ONE component covers both the waiting state and
+          the loaded state, because they were previously two: the wait rendered
+          `CardDocumentView`, the Notion page, so on this host — where the fetch
+          takes tens of seconds — clicking a card showed a document view for the
+          whole time and looked like nothing had changed. A document is a
+          sub-item of a card; it is never the card. */}
+      {previewSet && (
         <ApprovalSetModal
-          set={fullPreviewSet}
+          row={previewSet}
+          set={previewLoading ? undefined : fullPreviewSet}
           onClose={closePreview}
           onChanged={refetchPreviewSet}
         />
-      ) : null}
+      )}
 
       {/* Delete confirmation — used for both single and bulk. The
           AlertDialog primitive blocks interaction until confirmed or
