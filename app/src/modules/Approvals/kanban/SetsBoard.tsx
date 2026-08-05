@@ -51,7 +51,7 @@ import {
   type KanbanMoveEvent,
 } from '@/components/shared/Kanban';
 
-import { ApprovalSetModal } from '../components/ApprovalSetModal';
+import { PreviewDialog } from './PreviewDialog';
 import { FeedbackDialog } from './FeedbackDialog';
 import { SetCard } from './SetCard';
 import { setColumns } from './setColumns';
@@ -621,15 +621,21 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
           takes tens of seconds — clicking a card showed a document view for the
           whole time and looked like nothing had changed. A document is a
           sub-item of a card; it is never the card. */}
-      {previewSet && (
-        <ApprovalSetModal
-          row={previewSet}
-          set={previewLoading ? undefined : fullPreviewSet}
-          onClose={closePreview}
-          onChanged={handleCardChanged}
-          focusAssetId={focusAssetId}
-        />
-      )}
+      {/* Clicking a card opens the CLIENT VIEW — the iframe of the real public
+          board. This is what worked before 9a637a0, when I replaced it with a
+          document view and spent a day fixing the consequences. Restored
+          verbatim from c5eae13.
+
+          The collection modal (ApprovalSetModal) is not wired here: its
+          sub-cards are rendered by a component that hardcodes every asset type,
+          so documents render as a snippet, their copy button reads a field they
+          do not have, and they cannot be edited. It goes back only when the
+          type registry makes those work. */}
+      <PreviewDialog
+        set={previewSet}
+        url={previewSet ? getPublicBoardUrl(previewSet.token) : null}
+        onClose={closePreview}
+      />
 
       {/* Delete confirmation — used for both single and bulk. The
           AlertDialog primitive blocks interaction until confirmed or
