@@ -1653,6 +1653,22 @@ class PCM_Approvals_Service
                     if (isset($updates['images']) && is_array($updates['images'])) {
                         $item['images'] = array_map('esc_url_raw', $updates['images']);
                     }
+                    // Freehand draw layer. It could only be set at CREATE time before
+                    // this, so drawing on an already-shared card lost the strokes on
+                    // save. Not run through esc_url_raw: WP's allowed protocols exclude
+                    // `data:`, so that would blank every overlay. Validated against the
+                    // exact shape the draw layer produces instead — a base64 PNG — and
+                    // anything else is rejected rather than stored.
+                    if (array_key_exists('overlay', $updates)) {
+                        $overlay = $updates['overlay'];
+                        if ($overlay === null || $overlay === '') {
+                            unset($item['overlay']);
+                        } elseif (is_string($overlay)
+                            && preg_match('#^data:image/png;base64,[A-Za-z0-9+/]+={0,2}$#', $overlay)
+                        ) {
+                            $item['overlay'] = $overlay;
+                        }
+                    }
                     // Annotation metadata is stored opaque (Phase 2) — passed through as-is.
                     if (array_key_exists('annotation', $updates)) {
                         $item['annotation'] = $updates['annotation'];

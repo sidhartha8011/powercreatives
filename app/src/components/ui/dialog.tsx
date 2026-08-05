@@ -94,9 +94,20 @@ function DialogContent({
   children,
   showCloseButton = true,
   onEscapeKeyDown,
+  container,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  /**
+   * Where the dialog is portalled. Defaults to `document.body` (Radix's
+   * default), which is right for almost every dialog.
+   *
+   * Pass `#pcm-root` when the dialog renders content styled by rules scoped to
+   * `#pcm-root …` — otherwise those rules simply do not apply and the content
+   * renders unstyled. Extending the shared component rather than each caller
+   * re-implementing a portal, per the shared-component law.
+   */
+  container?: HTMLElement | null;
 }) {
   const { isComposing } = useDialogComposition();
 
@@ -119,7 +130,7 @@ function DialogContent({
   );
 
   return (
-    <DialogPortal data-slot="dialog-portal">
+    <DialogPortal data-slot="dialog-portal" container={container ?? undefined}>
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"

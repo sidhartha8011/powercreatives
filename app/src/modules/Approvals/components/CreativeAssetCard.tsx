@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon, Download, Copy, FileText } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon, Download, Copy, FileText, Tag, FolderOpen, CalendarDays, Type, AlignLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
@@ -132,31 +132,60 @@ export function CreativeAssetCard({
    */
   const documentProperties = useMemo<CardDocumentProperty[]>(() => {
     const rows: CardDocumentProperty[] = [];
-    const push = (label: string, value?: string | null) => {
+    const push = (
+      label: string,
+      value: string | null | undefined,
+      icon: CardDocumentProperty['icon'],
+      pill = false
+    ) => {
       const clean = typeof value === 'string' ? value.trim() : '';
-      if (clean) rows.push({ label, value: clean });
+      if (clean) rows.push({ label, value: clean, icon, pill });
     };
 
     if (type === 'article') {
       // Unchanged for articles — these are the fields that surface actually has.
-      push('Meta title', asset.metaTitle);
-      push('Meta description', asset.metaDescription);
+      push('Meta title', asset.metaTitle, Type);
+      push('Meta description', asset.metaDescription, AlignLeft);
       return rows;
     }
 
-    push('Brand', setBrandName);
-    push('Project', setProjectName);
+    // Brand reads as a tag in the reference layout, so it renders as a chip.
+    push('Brand', setBrandName, Tag, true);
+    push('Project', setProjectName, FolderOpen);
     const created = typeof asset.createdAt === 'string' ? asset.createdAt : '';
     if (created) {
       const d = new Date(created.replace(' ', 'T'));
       if (!Number.isNaN(d.getTime())) {
         push('Created', new Intl.DateTimeFormat('en-GB', {
           year: 'numeric', month: 'short', day: 'numeric',
-        }).format(d));
+        }).format(d), CalendarDays);
       }
     }
     return rows;
   }, [type, asset.metaTitle, asset.metaDescription, asset.createdAt, setBrandName, setProjectName]);
+
+  /**
+   * "Edited 4 minutes ago" — the grey line above the title.
+   *
+   * Built from `updatedAt` only. When the snapshot carries no timestamp the line
+   * is absent rather than guessed: a card that claims it was edited just now
+   * because we had nothing to print is worse than a card with no line.
+   */
+  const documentMeta = useMemo<string | undefined>(() => {
+    const raw = typeof asset.updatedAt === 'string' ? asset.updatedAt : '';
+    if (!raw) return undefined;
+    const then = new Date(raw.replace(' ', 'T'));
+    if (Number.isNaN(then.getTime())) return undefined;
+
+    const mins = Math.round((Date.now() - then.getTime()) / 60000);
+    const rtf = new Intl.RelativeTimeFormat('en-GB', { numeric: 'auto' });
+    const ago =
+      mins < 1 ? 'just now'
+      : mins < 60 ? rtf.format(-mins, 'minute')
+      : mins < 1440 ? rtf.format(-Math.round(mins / 60), 'hour')
+      : rtf.format(-Math.round(mins / 1440), 'day');
+    return `Edited ${ago}`;
+  }, [asset.updatedAt]);
 
   // Text Inline Edits state
   const [isEditingText, setIsEditingText] = useState(false);
@@ -271,6 +300,29 @@ export function CreativeAssetCard({
       setIsEditingText(true);
     }
   }, [isTeamMember, isEditingText]);
+
+  /**
+   * Persist the opened document — body and draw layer, in one request.
+   *
+   * Same token-scoped route as the inline copy edits: `update_snapshot_asset`
+   * already accepted `content` for the `articles` and `custom` buckets, so no
+   * new endpoint. Ticking a checkbox is an edit of `content` like any other —
+   * Tiptap writes the state onto `data-checked` on the `<li>`, which
+   * `wp_kses_post` keeps.
+   */
+  const handleSaveDocument = useCallback((doc: { content: string; overlay: string | null }) => {
+    if (!publicToken) {
+      toast.error('Cannot save — this card has no share token.');
+      return;
+    }
+    updateMutation.mutate(
+      { token: publicToken, assetId: asset.id, content: doc.content, overlay: doc.overlay },
+      {
+        onSuccess: () => { onAssetUpdate?.(); },
+        onError: () => { toast.error('Failed to save document.'); },
+      }
+    );
+  }, [publicToken, asset.id, updateMutation, onAssetUpdate]);
 
   // Save inline text edits to snapshot and DB
   const handleSaveTextEdits = useCallback(async () => {
@@ -670,9 +722,15 @@ export function CreativeAssetCard({
           content={asset.content || ''}
           title={asset.title || (type === 'custom' ? 'Untitled Document' : 'Untitled Article')}
           properties={documentProperties}
+          meta={documentMeta}
           overlay={type === 'custom' ? asset.overlay : undefined}
           isApproved={isApproved}
           isSubmitted={isSubmitted}
+          /* Same gate as the inline copy editor above: the team writes, the
+             client reads. Without this the document was hardcoded read-only,
+             so its task-list checkboxes rendered and then ignored every click. */
+          canEdit={isTeamMember}
+          onSave={handleSaveDocument}
           onApprove={handleToggleApprove}
           onClose={() => setShowArticleViewer(false)}
         />

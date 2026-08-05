@@ -34,6 +34,12 @@ export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
       <DialogContent
         className="sm:max-w-[95vw] w-[95vw] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden"
         showCloseButton
+        /* Portalled into #pcm-root, not document.body. The client view's styles
+           are 73 rules scoped to `#pcm-root .pcm-…`; outside that element none
+           of them apply and the asset cards render as unstyled markup — which
+           is why Approve and Comment stacked instead of sitting on one line.
+           The iframe hid this: it had its own document with its own #pcm-root. */
+        container={typeof document !== 'undefined' ? document.getElementById('pcm-root') : null}
       >
         {/* Visible header removed per UX. Title + description kept in
             sr-only form because Radix UI's Dialog requires both for

@@ -852,10 +852,11 @@
   background: rgba(15, 15, 15, 0.48);
   backdrop-filter: blur(12px) saturate(120%);
   -webkit-backdrop-filter: blur(12px) saturate(120%);
-  /* `stretch`, not `flex-start`: the sheet takes the full height it is given so
-     it reads as a PAGE in a window. It used to hang 4vh from the top with a
-     hard band above and below and a 92vh cap, which is a card on a tray. */
-  display: flex; align-items: stretch; justify-content: center;
+  /* `center`, not `stretch`. Stretch forced the sheet to the full 94vh whatever
+     it contained, so a three-line document rendered as a strip of text on top of
+     an acre of white — the void. The sheet now takes the height of its content
+     and is capped, so a short document is a short sheet. */
+  display: flex; align-items: center; justify-content: center;
   padding: 3vh 16px;
   cursor: default;
   animation: pcmFadeIn .15s ease;
@@ -864,8 +865,9 @@
   position: relative;
   background: #ffffff;
   width: min(977px, 94vw);
-  /* No max-height — height comes from the overlay's stretch (100vh - 2*3vh).
-     Only this box scrolls, so the topbar stays put over a long document. */
+  /* Cap, not a fixed height: grow to the content, then scroll. Only this box
+     scrolls, so the topbar stays put over a long document. */
+  max-height: 94vh;
   overflow-y: auto;
   border-radius: 12px;
   box-shadow: 0 0 0 1px rgba(15,15,15,0.05), 0 24px 70px rgba(15,15,15,0.26);
@@ -897,7 +899,9 @@
 }
 .pcm-notion-iconbtn:hover { background: rgba(55,53,47,0.08); color: rgba(55,53,47,0.9); }
 
-.pcm-notion-page { padding: 6px 0 22vh; }
+/* 22vh of trailing space was Notion's click-to-append area. On a sheet that no
+   longer stretches it is just the void again, measured in viewport units. */
+.pcm-notion-page { padding: 6px 0 72px; }
 .pcm-notion-col { max-width: var(--pcm-doc-measure); margin: 0 auto; padding: 0 24px; }
 
 /* An opened CARD holds a grid of assets, not a column of prose, so it uses the
@@ -937,22 +941,55 @@
   pointer-events: none;
 }
 
+/* The grey line above the title — "Edited 4 minutes ago". Small, quiet, and it
+   sits ABOVE the title exactly as in the reference, so the eye lands on the
+   title and not on chrome. */
+.pcm-notion-meta {
+  font-family: var(--pcm-notion-font);
+  font-size: 12px; line-height: 1.4;
+  color: rgba(55,53,47,0.45);
+  margin: 30px 0 0;
+}
+
 .pcm-notion-title {
   font-family: var(--pcm-notion-font);
   font-size: var(--pcm-doc-title-size); line-height: var(--pcm-doc-title-leading); font-weight: var(--pcm-doc-title-weight);
   letter-spacing: -0.018em;
   color: var(--pcm-doc-ink);
-  margin: 34px 0 6px;
+  margin: 6px 0 6px;
   word-break: break-word;
 }
+/* Without a meta line the title keeps its own top margin, so the two layouts
+   have the same rhythm rather than one of them starting flush against the bar. */
+.pcm-notion-meta + .pcm-notion-title { margin-top: 4px; }
+.pcm-notion-topbar + .pcm-notion-page .pcm-notion-title:first-child { margin-top: 34px; }
 
+/* Property rows: icon + label on the left, value on the right, and a divider
+   closing the block off from the body. This was a bare two-span flex row with a
+   128px label — the reference has an icon per row, a wider label gutter, and a
+   value that behaves like a control (hover surface, padding) rather than text
+   floating next to a caption. */
 .pcm-notion-props {
-  display: flex; flex-direction: column; gap: 7px;
-  margin: 4px 0 18px;
+  display: flex; flex-direction: column; gap: 1px;
+  margin: 10px 0 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(55,53,47,0.09);
 }
 .pcm-notion-prop {
-  display: flex; align-items: flex-start; gap: 10px;
+  display: flex; align-items: center; gap: 0;
   font-family: var(--pcm-notion-font); font-size: 14px; line-height: 1.5;
+  min-height: 30px;
+}
+.pcm-notion-prop-icon {
+  width: 16px; height: 16px; flex-shrink: 0;
+  color: rgba(55,53,47,0.45);
+}
+.pcm-notion-pill {
+  display: inline-flex; align-items: center;
+  height: 20px; padding: 0 8px; border-radius: 4px;
+  background: rgba(55,53,47,0.08);
+  font-size: 13px; line-height: 1;
+  color: var(--pcm-doc-ink);
 }
 /* State line while the document is being fetched. A state statement, not
    instructional chrome — it says what is happening, then goes away. */
@@ -962,8 +999,19 @@
   color: rgba(55, 53, 47, 0.45);
   margin: 4px 0 18px;
 }
-.pcm-notion-prop-label { flex: 0 0 128px; color: rgba(55,53,47,0.5); }
-.pcm-notion-prop-value { color: var(--pcm-doc-ink); }
+.pcm-notion-prop-label {
+  flex: 0 0 152px;
+  display: inline-flex; align-items: center; gap: 7px;
+  color: rgba(55,53,47,0.5);
+  padding: 3px 6px; border-radius: 4px;
+}
+.pcm-notion-prop-value {
+  color: var(--pcm-doc-ink);
+  min-width: 0;
+  padding: 3px 8px; border-radius: 4px;
+  transition: background .1s ease;
+}
+.pcm-notion-prop-value:hover { background: rgba(55,53,47,0.06); }
 
 /* Notion typography for the rendered (Tiptap) document body. */
 .pcm-notion-prose {

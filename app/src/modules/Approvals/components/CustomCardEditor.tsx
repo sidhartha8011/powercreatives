@@ -36,6 +36,15 @@ interface CustomCardEditorProps {
   overlay?: string | null;
   /** Emitted when the draw layer is committed/cleared. */
   onOverlayChange?: (url: string | null) => void;
+  /**
+   * Drop this editor's own card chrome — its border, background and inner
+   * scroll box — because the surface it is placed on already provides them.
+   *
+   * Used by the opened approval card, which renders this editor on the Notion
+   * sheet: with the chrome on it reads as a card inside a card, and the inner
+   * `max-h` box makes a second scrollbar next to the sheet's own.
+   */
+  bare?: boolean;
 }
 
 function ToolbarButton({ onClick, active, title, children }: {
@@ -56,7 +65,7 @@ function ToolbarButton({ onClick, active, title, children }: {
   );
 }
 
-export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange }: CustomCardEditorProps) {
+export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange, bare = false }: CustomCardEditorProps) {
   // Image to annotate. `pos` is the document position of an EXISTING image (paint bakes back
   // into it in place); `pos: null` means a freshly picked image that gets inserted at the cursor.
   const [annotate, setAnnotate] = useState<{ url: string; pos: number | null } | null>(null);
@@ -185,10 +194,10 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   if (!editor) return null;
 
   return (
-    <div className="rounded-lg border border-border bg-card">
+    <div className={bare ? '' : 'rounded-lg border border-border bg-card'}>
       {/* Top settings bar — IMAGE + PAINT tools only. All text formatting lives in the
           contextual bubble menu, which appears when the user selects text. */}
-      <div className="flex flex-wrap items-center gap-1 border-b border-border p-1.5">
+      <div className={`flex flex-wrap items-center gap-1 p-1.5 ${bare ? '' : 'border-b border-border'}`}>
         <ToolbarButton title="Insert image" onClick={insertImage}><ImageIcon className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title="Annotate an image — select an image (or double-click it) to paint directly on it" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title={drawing ? 'Stop drawing' : 'Draw on the whole card'} active={drawing} onClick={toggleDraw}><Brush className="h-4 w-4" /></ToolbarButton>
@@ -205,7 +214,7 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
           <ListChecks className="h-4 w-4" />
         </ToolbarButton>
       </div>
-      <div className="max-h-[72vh] overflow-y-auto p-4">
+      <div className={bare ? '' : 'max-h-[72vh] overflow-y-auto p-4'}>
         {/* Positioned wrapper so the draw layer + overlay align with the content. */}
         <div ref={contentBoxRef} className="relative">
           <EditorContent editor={editor} />
