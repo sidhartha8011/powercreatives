@@ -78,6 +78,10 @@ class PCM_REST_Approvals extends PCM_REST_Base
             // Append assets to an in-review set (id is numeric, so it can't
             // collide with the token-based public asset route below).
             array('POST',  '/approvals/sets/(?P<id>\d+)/assets', 'append_assets', array(), 'edit_posts'),
+            // Remove ONE item from a card. Numeric id, so it cannot collide with
+            // the token-based public asset route below — the same distinction the
+            // append route above relies on.
+            array('DELETE', '/approvals/sets/(?P<id>\d+)/assets/(?P<asset_id>[A-Za-z0-9_-]+)', 'remove_asset', array(), 'edit_posts'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/assets/(?P<asset_id>[a-zA-Z0-9_-]+)', 'update_snapshot_asset', array(), 'public'),
         );
     }
@@ -202,6 +206,49 @@ class PCM_REST_Approvals extends PCM_REST_Base
             return $this->success($result);
         } catch (\Throwable $e) {
             return $this->error('Failed to append to approval set: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Remove one item from an approval card.
+     *
+     * DELETE /approvals/sets/{id}/assets/{assetId}
+     *
+     * Ownership-scoped and refused once the card is past client review or fully
+     * approved — the same law `append_assets` obeys, because adding and removing
+     * an item are the same operation in opposite directions. A card the client
+     * has signed off must not lose an item underneath them.
+     */
+    public function remove_asset(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $id       = absint($request->get_param('id'));
+        $asset_id = sanitize_text_field((string) $request->get_param('asset_id'));
+
+        if ($id <= 0 || $asset_id === '') {
+            return $this->error('A set id and an asset id are required.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $result = PCM_Approvals_Service::remove_asset($id, (int) $pcm_user->id, $asset_id);
+            if ($result === 'not_found') {
+                return $this->not_found('Approval set');
+            }
+            if ($result === 'locked') {
+                return $this->error(
+                    __('This set is past client review — items can no longer be removed.', 'power-creatives'),
+                    409,
+                    'pcm_set_locked'
+                );
+            }
+            if ($result === 'missing') {
+                return $this->not_found('Asset');
+            }
+            return $this->success($result);
+        } catch (\Throwable $e) {
+            return $this->error('Failed to remove the asset: ' . $e->getMessage(), 500);
         }
     }
 

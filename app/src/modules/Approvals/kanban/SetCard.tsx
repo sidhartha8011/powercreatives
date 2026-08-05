@@ -46,6 +46,10 @@ export interface SetCardProps {
   /** True when ANY card is selected — drives select-mode visuals
    *  (checkbox stays visible on every card, hover-only chips hidden). */
   selectMode: boolean;
+  /** Open the card focused on one of its sub-assets. */
+  onOpenItem: (set: ApprovalSet, assetId: string) => void;
+  /** Remove one sub-asset. The parent owns the request and the undo. */
+  onDeleteItem: (set: ApprovalSet, assetId: string) => void;
 }
 
 export function SetCard({
@@ -58,6 +62,8 @@ export function SetCard({
   onToggleSelect,
   isSelected,
   selectMode,
+  onOpenItem,
+  onDeleteItem,
 }: SetCardProps) {
   // Total feedback = sum of all comment entries across all asset threads
   // (comments are Record<assetId, CommentEntry[]>). Only used to gate the
@@ -234,10 +240,26 @@ export function SetCard({
             const def = assetType(item.type);
             return (
               <li key={item.id} className={styles.item}>
-                <span className={styles.itemLabel}>{def.label}</span>
-                {item.title ? (
-                  <span className={styles.itemTitle}>{item.title}</span>
-                ) : null}
+                <button
+                  type="button"
+                  className={styles.itemOpen}
+                  onClick={(e) => { stop(e); onOpenItem(set, item.id); }}
+                  title={`Open ${def.label.toLowerCase()}`}
+                >
+                  <span className={styles.itemLabel}>{def.label}</span>
+                  {item.title ? (
+                    <span className={styles.itemTitle}>{item.title}</span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  className={styles.itemDelete}
+                  onClick={(e) => { stop(e); onDeleteItem(set, item.id); }}
+                  aria-label={`Remove ${def.label.toLowerCase()}${item.title ? ` ${item.title}` : ''}`}
+                  title="Remove"
+                >
+                  <Trash2 className={styles.itemDeleteIcon} aria-hidden="true" />
+                </button>
               </li>
             );
           })}

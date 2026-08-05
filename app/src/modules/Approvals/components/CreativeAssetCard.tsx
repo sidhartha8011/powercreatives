@@ -328,6 +328,10 @@ export function CreativeAssetCard({
   return (
     <div 
       ref={containerRef} 
+      // Anchor for "open this sub-asset" — the board can scroll straight to one
+      // item in a card that may hold many. An attribute rather than a wrapper
+      // div, so the grid's children stay the cards themselves.
+      data-asset-id={asset.id}
       className={`pcm-card ${isApproved ? 'approved' : ''} ${type === 'copy' ? 'copy' : ''} relative`}
       onClick={type === 'copy' ? handleCardClick : undefined}
     >

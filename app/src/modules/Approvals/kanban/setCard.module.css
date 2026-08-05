@@ -280,6 +280,62 @@
   line-height: 1.4;
 }
 
+/* The row is the way IN to an asset; the trash chip is the only other action,
+   and it stays hidden until the row is hovered so a list of items reads as a
+   list, not as a row of controls. */
+.itemOpen {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: var(--pck-bg-chip);
+}
+
+.itemDelete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--pck-radius-sm);
+  background: transparent;
+  color: var(--pck-text-faint);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--pck-transition-fast), color var(--pck-transition-fast);
+}
+
+.item:hover .itemDelete,
+.item:focus-within .itemDelete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.itemDelete:hover {
+  color: #b91c1c;
+  background: rgba(185, 28, 28, 0.08);
+}
+
+.itemDeleteIcon {
+  width: 12px;
+  height: 12px;
+}
+
 .itemLabel {
   flex: 0 0 auto;
   color: var(--pck-text-faint);

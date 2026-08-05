@@ -239,6 +239,85 @@ class PCM_Approvals_Service
      * @param array $add  Incoming { media?, copy?, articles? } buckets.
      * @return array Merged snapshot.
      */
+    /**
+     * Remove ONE item from a card.
+     *
+     * Deliberately mirrors `append_to_set()`: the same scoped read, the same
+     * refusal once the card is past client review or fully approved, the same
+     * single write. Adding and removing an item are the same operation in
+     * opposite directions, so they must obey the same law — a card the client
+     * has already signed off cannot quietly lose an item underneath them.
+     *
+     * Buckets come from `ITEM_BUCKETS`, the constant the board summary already
+     * reads, so there is no second hardcoded list of what a card can hold.
+     *
+     * @return object|string The updated set, or 'not_found' | 'locked' | 'missing'.
+     */
+    public static function remove_asset(int $set_id, int $user_id, string $asset_id): object|string
+    {
+        $set = self::get_set_scoped($set_id, $user_id);
+        if (!$set) {
+            return 'not_found';
+        }
+
+        $snapshot = is_array($set->snapshot) ? $set->snapshot : array();
+        if (in_array($set->status, self::POST_SUBMIT_STATUSES, true)
+            || self::is_fully_approved($snapshot, self::feedback_struct($set))
+        ) {
+            return 'locked';
+        }
+
+        // Capture WHAT was removed, and from which bucket, so the caller can put
+        // it back verbatim. Undo cannot be reconstructed from the board's item
+        // summary — that carries only {id, type, title} — and re-fetching the
+        // whole snapshot to enable an undo would cost seconds on this host.
+        $removed_item   = null;
+        $removed_bucket = null;
+
+        foreach (array_keys(self::ITEM_BUCKETS) as $bucket) {
+            if (empty($snapshot[$bucket]) || !is_array($snapshot[$bucket])) {
+                continue;
+            }
+            $kept = array();
+            foreach ($snapshot[$bucket] as $item) {
+                if (is_array($item) && isset($item['id']) && (string) $item['id'] === $asset_id) {
+                    $removed_item   = $item;
+                    $removed_bucket = $bucket;
+                    continue;
+                }
+                $kept[] = $item;
+            }
+            // Re-index so the stored array stays a JSON array, never an object.
+            $snapshot[$bucket] = array_values($kept);
+        }
+
+        if ($removed_item === null) {
+            return 'missing';
+        }
+
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+        // Ownership already established by the scoped read above.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update(
+            $table,
+            array(
+                'snapshot'  => wp_json_encode($snapshot),
+                'updatedAt' => current_time('mysql'),
+            ),
+            array('id' => $set_id),
+            array('%s', '%s'),
+            array('%d')
+        );
+
+        $set->snapshot = $snapshot;
+        // Handed back so an undo can re-append the exact item. `merge_snapshot`
+        // dedupes by id, so restoring twice cannot duplicate it.
+        $set->removedAsset  = $removed_item;
+        $set->removedBucket = $removed_bucket;
+        return $set;
+    }
+
     public static function merge_snapshot(array $base, array $add): array
     {
         foreach (array('media', 'copy', 'articles', 'custom') as $bucket) {

@@ -40,6 +40,8 @@ import {
 } from '@/components/ui/select';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/shared';
 import { useProjectPickerData } from '@/components/shared/ProjectPicker';
+import { toast } from 'sonner';
+
 import { trpc } from '@/lib/trpc';
 import {
   DefaultEmptyState,
@@ -171,6 +173,7 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
     isSelected,
     toggleSelection,
     clearSelection,
+    refetch: refetchSets,
   } = useApprovalSets();
 
   // The three dropdowns filter by ID and read their labels from the registries
@@ -214,6 +217,69 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
     { token: previewSet?.token ?? '' },
     { enabled: !!previewSet?.token }
   ) as { data?: ApprovalSet; isLoading: boolean; refetch: () => void };
+
+  /** Which sub-asset to scroll to when the card opens (set by an item row). */
+  const [focusAssetId, setFocusAssetId] = useState<string | null>(null);
+
+  /**
+   * Anything that changes a card refreshes BOTH queries.
+   *
+   * The opened set and the board's lanes are separate queries. Approving the
+   * last asset advances the set to `launch` server-side — observed live — and
+   * refetching only the opened set left the card sitting in its old lane until a
+   * reload. Two sources of truth for one change is exactly how a board goes
+   * stale without anyone noticing.
+   */
+  const handleCardChanged = useCallback(() => {
+    refetchPreviewSet();
+    refetchSets();
+  }, [refetchPreviewSet, refetchSets]);
+
+  /** Open a card focused on one of its items, from the expanded row. */
+  const handleOpenItem = useCallback((set: ApprovalSet, assetId: string) => {
+    setFocusAssetId(assetId);
+    openPreview(set);
+  }, [openPreview]);
+
+  const removeAssetMutation = trpc.approvals.removeAsset.useMutation({
+    onSuccess: () => handleCardChanged(),
+    onError: (err: any) => toast.error(err?.message || 'Could not remove that item.'),
+  });
+
+  /**
+   * Remove one item, immediately, with an undo.
+   *
+   * The server is the authority on whether this is allowed — it refuses once the
+   * card is past client review — so the toast never claims success the server
+   * has not given. Undo re-appends the exact item through `appendToSet`, which
+   * dedupes by id, so a double-undo cannot duplicate it.
+   */
+  const appendAssetMutation = trpc.approvals.appendToSet.useMutation({
+    onSuccess: () => handleCardChanged(),
+    onError: (err: any) => toast.error(err?.message || 'Could not restore that item.'),
+  });
+
+  const handleDeleteItem = useCallback((set: ApprovalSet, assetId: string) => {
+    removeAssetMutation.mutate(
+      { id: set.id, assetId },
+      {
+        onSuccess: (data: any) => {
+          // The server hands back exactly what it removed, and from which
+          // bucket, so undo restores the real item rather than a summary of it.
+          const item = data?.removedAsset;
+          const bucket = data?.removedBucket;
+          toast.success('Item removed', {
+            action: item && bucket
+              ? {
+                  label: 'Undo',
+                  onClick: () => appendAssetMutation.mutate({ id: set.id, snapshot: { [bucket]: [item] } }),
+                }
+              : undefined,
+          });
+        },
+      }
+    );
+  }, [removeAssetMutation, appendAssetMutation]);
 
   const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
     // `.v2`: the 2026-08-04 bar dropped the `search` + `set` filters. applyFilters
@@ -334,6 +400,8 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
         onOpenPreview={openPreview}
         onRequestDelete={requestSingleDelete}
         onToggleSelect={handleToggleSelect}
+        onOpenItem={handleOpenItem}
+        onDeleteItem={handleDeleteItem}
         isSelected={isSelected(s.id)}
         selectMode={selectMode}
       />
@@ -558,7 +626,8 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
           row={previewSet}
           set={previewLoading ? undefined : fullPreviewSet}
           onClose={closePreview}
-          onChanged={refetchPreviewSet}
+          onChanged={handleCardChanged}
+          focusAssetId={focusAssetId}
         />
       )}
 

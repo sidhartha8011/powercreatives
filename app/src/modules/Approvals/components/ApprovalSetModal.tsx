@@ -51,11 +51,17 @@ export interface ApprovalSetModalProps {
   onClose: () => void;
   /** Re-read the set after a mutation. */
   onChanged?: () => void;
+  /**
+   * Scroll to and highlight one asset once the contents land — set when the card
+   * was opened from a sub-asset row, so "click the item" lands ON the item
+   * rather than at the top of a card that may hold twenty.
+   */
+  focusAssetId?: string | null;
 }
 
 const laneOptions = setColumns.map((c) => ({ value: c.id as string, label: c.label }));
 
-export function ApprovalSetModal({ row, set, onClose, onChanged }: ApprovalSetModalProps) {
+export function ApprovalSetModal({ row, set, onClose, onChanged, focusAssetId }: ApprovalSetModalProps) {
   const isLoading = !set;
   const { mediaAssets, copyAssets, allMergedAssets, primaryMediaUrl } = useSetAssets(set, isVideoAsset);
 
@@ -134,6 +140,19 @@ export function ApprovalSetModal({ row, set, onClose, onChanged }: ApprovalSetMo
   const handleThreadChange = useCallback((assetId: string, thread: CommentEntry[]) => {
     setComments((prev) => ({ ...prev, [assetId]: thread }));
   }, []);
+
+  /**
+   * Bring the requested asset into view once the contents have rendered.
+   *
+   * Runs only after loading finishes, because the element does not exist before
+   * then. `block: 'center'` rather than the default so the asset lands where the
+   * eye already is, not jammed against the top edge of the scroll container.
+   */
+  useEffect(() => {
+    if (isLoading || !focusAssetId) return;
+    const el = document.querySelector(`[data-asset-id="${CSS.escape(focusAssetId)}"]`);
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [isLoading, focusAssetId, allMergedAssets.length]);
 
   const shareUrl = useMemo(() => buildPublicBoardUrl(row.token), [row.token]);
 

@@ -1094,6 +1094,14 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `approvals/sets/${input.id}/assets`, body: { snapshot: input.snapshot } }),
     },
+    // Remove ONE item from a card. Ownership-scoped and lock-guarded server-side
+    // (409 pcm_set_locked once the card is past client review) — the UI must not
+    // be the only thing preventing it.
+    "approvals.removeAsset": {
+        endpoint: "approvals/sets",
+        method: "DELETE",
+        transform: (input: any) => ({ url: `approvals/sets/${input.id}/assets/${input.assetId}` }),
+    },
     "approvals.getPublicSet": {
         endpoint: "approvals/sets",
         method: "GET",
