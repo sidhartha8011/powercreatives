@@ -17,7 +17,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Share2, X } from 'lucide-react';
+import { ExternalLink, Plus, Share2, X } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ApprovalSharePanel } from '@/components/shared/ApprovalSharePanel';
@@ -154,12 +155,56 @@ export function ApprovalSetModal({ row, set, onClose, onChanged, focusAssetId }:
     if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [isLoading, focusAssetId, allMergedAssets.length]);
 
+  const appendMutation = trpc.approvals.appendToSet.useMutation({
+    onSuccess: () => onChanged?.(),
+    onError: (err: any) => toast.error(err?.message || 'Could not add that item.'),
+  });
+
+  /**
+   * Add a copy item to this card.
+   *
+   * DELIBERATELY copy, and only copy. A copy asset has a real in-place editor
+   * (`CreativeAssetCard`'s headline/body/description fields), which works from
+   * the admin now that the token comes from the host — so "add" produces
+   * something you can immediately fill in. Media and articles are packaged FROM
+   * their own modules through the existing send-to-set flow, and a blank
+   * document would be un-editable until the `save(patch, ctx)` contract lands
+   * (9b/D7). Offering an "add" that creates something you cannot then fill in
+   * would be a worse answer than not offering it yet.
+   *
+   * `append_to_set` is ownership-scoped and refuses once the card is past client
+   * review, so the button is hidden on a locked card AND the server refuses it.
+   */
+  const handleAddCopy = useCallback(() => {
+    const id = (() => {
+      try { return crypto.randomUUID(); } catch { /* older browsers */ }
+      return 'copy_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    })();
+    appendMutation.mutate({
+      id: row.id,
+      snapshot: { copy: [{ id, headline: '', body: '', description: '' }] },
+    });
+  }, [row.id, appendMutation]);
+
   const shareUrl = useMemo(() => buildPublicBoardUrl(row.token), [row.token]);
 
   return createPortal(
     <div className="pcm-notion-overlay" onClick={onClose} role="dialog" aria-label={`${row.name} — approval card`}>
       <div className="pcm-notion-modal" onClick={(e) => e.stopPropagation()}>
         <div className="pcm-notion-topbar">
+          {!isLoading && !isLocked && (
+            <button
+              type="button"
+              className="pcm-notion-iconbtn"
+              onClick={handleAddCopy}
+              disabled={appendMutation.isPending ?? false}
+              aria-label="Add a copy item to this card"
+              title="Add copy"
+            >
+              <Plus className="w-[16px] h-[16px]" />
+            </button>
+          )}
+
           <Popover>
             <PopoverTrigger asChild>
               <button type="button" className="pcm-notion-iconbtn" aria-label="Share this approval card">
@@ -178,6 +223,22 @@ export function ApprovalSetModal({ row, set, onClose, onChanged, focusAssetId }:
               />
             </PopoverContent>
           </Popover>
+
+          {/* Preview as the client sees it. This existed as the DEFAULT before a
+              card opened as itself; I removed its only consumer and orphaned the
+              component rather than deferring it, which lost the capability
+              outright. It is now an explicit choice instead of the default. */}
+          <a
+            href={shareUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="pcm-notion-iconbtn"
+            aria-label="Preview as the client sees it"
+            title="Preview as client"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ExternalLink className="w-[16px] h-[16px]" />
+          </a>
 
           <button type="button" className="pcm-notion-iconbtn" onClick={onClose} aria-label="Close">
             <X className="w-[18px] h-[18px]" />
@@ -233,6 +294,22 @@ export function ApprovalSetModal({ row, set, onClose, onChanged, focusAssetId }:
         />
       )}
     </div>,
-    document.body
+    /**
+     * Portalled into `#pcm-root`, NOT `document.body`.
+     *
+     * `client-review.css` scopes 73 rules to `#pcm-root .pcm-…` — the asset
+     * cards, their action pills, status chips, the lot. Portalling to
+     * `document.body` put this modal outside that scope, so every one of those
+     * rules stopped applying and the cards rendered as unstyled markup: that is
+     * why the Approve/Comment pills wrapped instead of sitting on one line.
+     *
+     * `CardDocumentView` portals to `body` for the opposite reason — it runs on
+     * the public page and needs to ESCAPE the `#pcm-root` resets. This modal is
+     * admin-only and needs to inherit them. Duplicating 73 selectors to a bare
+     * branch would have been the wrong fix for a mis-chosen portal target.
+     *
+     * Falls back to `document.body` so it can never fail to render.
+     */
+    document.getElementById('pcm-root') ?? document.body
   );
 }
