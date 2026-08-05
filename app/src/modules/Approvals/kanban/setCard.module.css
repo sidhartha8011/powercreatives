@@ -8,7 +8,19 @@
  * the card is selected / select-mode is active on the board).
  */
 
+/* The card is now a COLUMN: the clickable row, and the sub-asset list it can
+   reveal beneath it. `.row` carries `position: relative` so the absolutely
+   positioned checkbox and action overlay anchor to the ROW — anchoring them to
+   the whole card would centre them against the expanded list too. */
 .card {
+  position: relative;
+  display: block;
+  outline: none;
+  transition: box-shadow var(--pck-transition-fast),
+              background var(--pck-transition-fast);
+}
+
+.row {
   position: relative;
   display: flex;
   align-items: center;
@@ -16,18 +28,18 @@
   padding: var(--pck-card-pad-y) var(--pck-card-pad-x);
   cursor: pointer;
   outline: none;
-  transition: box-shadow var(--pck-transition-fast),
-              background var(--pck-transition-fast);
 }
 
-.card:focus-visible {
+.row:focus-visible {
   box-shadow: 0 0 0 2px var(--pck-border-focus);
   border-radius: var(--pck-radius-card);
 }
 
 /* Selected card: subtle blue tint + ring. Stays visible even when not
  * hovered, since selection is a persistent state. */
-.card[data-selected] {
+/* Scoped to the ROW, not the card: an expanded card would otherwise tint its
+   whole sub-asset list as though every item were selected. */
+.card[data-selected] .row {
   background: rgba(59, 106, 216, 0.08);
   box-shadow: inset 0 0 0 1px rgba(59, 106, 216, 0.45);
   border-radius: var(--pck-radius-card);
@@ -182,12 +194,102 @@
   height: 14px;
 }
 
+/* ─── Disclosure: how many items, and the way in ───
+ * Sits at the end of the title line. Quiet by default — it is information the
+ * eye can skip — and only firms up on hover. The chevron rotates rather than
+ * swapping glyphs so the control never changes shape.
+ */
+.disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 1px 5px 1px 2px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pck-text-faint);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  transition: color var(--pck-transition-fast), background var(--pck-transition-fast);
+}
+
+.disclosure:hover {
+  color: var(--pck-text-muted);
+  background: var(--pck-bg-chip);
+}
+
+.disclosureIcon {
+  width: 12px;
+  height: 12px;
+  transition: transform var(--pck-transition-fast);
+}
+
+.card[data-expanded] .disclosureIcon {
+  transform: rotate(90deg);
+}
+
+.disclosureCount {
+  font-weight: 500;
+}
+
+/* ─── Sub-assets ───
+ * The card's contents, rendered from the summary already on the row — no
+ * request is made to open this. Indented to sit under the title, never
+ * competing with the card itself.
+ */
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--pck-card-pad-x) var(--pck-card-pad-y);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 6px 3px 8px;
+  border-radius: var(--pck-radius-sm);
+  color: var(--pck-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.itemIcon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  opacity: 0.65;
+}
+
+.itemLabel {
+  flex: 0 0 auto;
+  color: var(--pck-text-faint);
+}
+
+.itemTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pck-text-muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .actions,
   .actionBtn,
   .checkbox,
   .title,
-  .card {
+  .card,
+  .disclosure,
+  .disclosureIcon {
     transition: none;
   }
 }

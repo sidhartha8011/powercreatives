@@ -17,10 +17,11 @@
  * the drag handle props the board spreads on the wrapper.
  */
 
-import { useCallback, useMemo, type KeyboardEvent, type MouseEvent } from 'react';
-import { Check, Copy, MessageSquare, Trash2 } from 'lucide-react';
+import { useCallback, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { Check, ChevronRight, Copy, MessageSquare, Trash2 } from 'lucide-react';
 
 import type { ApprovalSet } from '../types';
+import { assetType } from '../assetTypes';
 
 import styles from './setCard.module.css';
 
@@ -116,22 +117,42 @@ export function SetCard({
   // `?? set.snapshot.brandName` fallback was dead here and would now throw.
   const brand = brandName?.trim();
 
+  /**
+   * Sub-assets, straight off the row.
+   *
+   * The list query ships `items[]` as an SQL-extracted summary, so expanding
+   * costs ZERO network — which is the whole point: on this host a per-card
+   * fetch measures seconds, and a disclosure that stalls is worse than none.
+   */
+  const [expanded, setExpanded] = useState(false);
+  const items = set.items ?? [];
+  const itemCount = set.itemCount ?? items.length;
+
+  const toggleExpanded = useCallback(
+    (e: MouseEvent) => { stop(e); setExpanded((v) => !v); },
+    [stop]
+  );
+
   return (
     <article
       className={styles.card}
       data-selected={isSelected || undefined}
       data-select-mode={selectMode || undefined}
-      role="link"
-      tabIndex={0}
-      aria-label={
-        selectMode
-          ? `${isSelected ? 'Deselect' : 'Select'} ${set.name}`
-          : `Open preview for ${set.name}`
-      }
-      aria-pressed={selectMode ? isSelected : undefined}
-      onClick={handleCardClick}
-      onKeyDown={handleKeyDown}
+      data-expanded={expanded || undefined}
     >
+      <div
+        className={styles.row}
+        role="link"
+        tabIndex={0}
+        aria-label={
+          selectMode
+            ? `${isSelected ? 'Deselect' : 'Select'} ${set.name}`
+            : `Open preview for ${set.name}`
+        }
+        aria-pressed={selectMode ? isSelected : undefined}
+        onClick={handleCardClick}
+        onKeyDown={handleKeyDown}
+      >
       <button
         type="button"
         className={styles.checkbox}
@@ -151,6 +172,23 @@ export function SetCard({
           </>
         ) : null}
         <span>{set.name}</span>
+
+        {/* What is inside, and the way in. Always present when the card holds
+            anything, because it is information rather than an action — the
+            hover-only chips to the right are the actions. */}
+        {itemCount > 0 && (
+          <button
+            type="button"
+            className={styles.disclosure}
+            onClick={toggleExpanded}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? 'Hide' : 'Show'} the ${itemCount} item${itemCount === 1 ? '' : 's'} in ${set.name}`}
+            tabIndex={-1}
+          >
+            <ChevronRight className={styles.disclosureIcon} aria-hidden="true" />
+            <span className={styles.disclosureCount}>{itemCount}</span>
+          </button>
+        )}
       </div>
 
       <div className={styles.actions} role="group" aria-label="Set actions">
@@ -186,6 +224,25 @@ export function SetCard({
           <Trash2 className={styles.actionIcon} aria-hidden="true" />
         </button>
       </div>
+      </div>
+
+      {expanded && items.length > 0 && (
+        <ul className={styles.items}>
+          {items.map((item) => {
+            const def = assetType(item.type);
+            const Icon = def.icon;
+            return (
+              <li key={item.id} className={styles.item}>
+                <Icon className={styles.itemIcon} aria-hidden="true" />
+                <span className={styles.itemLabel}>{def.label}</span>
+                {item.title ? (
+                  <span className={styles.itemTitle}>{item.title}</span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </article>
   );
 }
