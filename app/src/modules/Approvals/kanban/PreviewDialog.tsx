@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 
 import type { ApprovalSet } from '../types';
+import { ClientReviewPage } from '../components/ClientReviewPage';
 
 export interface PreviewDialogProps {
   set: ApprovalSet | null;
@@ -61,13 +62,24 @@ export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
           Open in new tab
         </a>
 
-        <div className="flex-1 min-h-0 bg-muted/30">
-          <iframe
-            src={url}
-            title={`Preview: ${set.name}`}
-            className="w-full h-full border-0"
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-          />
+        {/* The client view rendered DIRECTLY, not through an iframe.
+
+            It used to be `<iframe src={url}>`. An iframe is a separate document,
+            so anything opened inside it — the asset viewer and its
+            `backdrop-filter` — is bounded by the iframe's rectangle. That is why
+            the blur covered only the frame instead of the screen: not a CSS
+            value to tune, but a containment boundary that should not have been
+            there.
+
+            It also loaded the entire SPA a second time inside the modal, over
+            HTTP, on a host where a page load takes ~45s.
+
+            `ClientReviewPage` is already a component that takes a token and
+            renders the client's view. Rendering it here shows exactly what the
+            iframe showed, minus the nested document — so the viewer portals to
+            the real page and the blur covers everything behind it. */}
+        <div className="flex-1 min-h-0 overflow-y-auto bg-muted/30">
+          <ClientReviewPage token={set.token} />
         </div>
       </DialogContent>
     </Dialog>
