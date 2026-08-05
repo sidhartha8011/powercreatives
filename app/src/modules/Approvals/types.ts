@@ -76,6 +76,12 @@ export interface CustomAsset {
   /** URLs of images embedded in the document (for previews / counts). */
   images?: string[];
   /**
+   * Whole-card freehand draw layer (transparent PNG data-URL), rendered over the
+   * document. Written by CreateCustomSetDialog at creation; it was carried at
+   * runtime without being declared here.
+   */
+  overlay?: string;
+  /**
    * Image-annotation metadata (Phase 2). Keyed by the embedded image's id: the
    * editable drawing doc + a flattened export rendered on the (runtime-free)
    * review page. Reserved now; populated when the annotation lib lands.

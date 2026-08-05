@@ -564,6 +564,10 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
                   onApprove={handleToggleApprove}
                   brandLogoUrl={set.snapshot.brandLogoUrl}
                   brandName={brandName}
+                  // RAW, unresolved — the opened document's property rows must
+                  // never print the 'Client Board' display fallback as a fact.
+                  setBrandName={set.snapshot.brandName}
+                  setProjectName={set.snapshot.projectName}
                   pairedMediaUrl={pairedMediaUrl}
                   isSubmitted={isLocked || submitMutation.isPending}
                   isTeamMember={isTeamMember}

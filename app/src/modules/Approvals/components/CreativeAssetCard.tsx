@@ -9,8 +9,7 @@ import { TiptapBodyEditor } from '@/components/shared/TiptapBodyEditor';
 import { escapeAstral } from '@/lib/escapeAstral';
 import { useAutoResizeTextarea } from '@/hooks/useAutoResizeTextarea';
 import { trpc } from '@/lib/trpc';
-import { useEditor, EditorContent } from '@tiptap/react';
-import { getEditorExtensions } from '@/components/shared/editorExtensions';
+import { CardDocumentView, type CardDocumentProperty } from './CardDocumentView';
 
 export interface CreativeAsset {
   id: string;
@@ -44,124 +43,6 @@ export interface CreativeAsset {
   [key: string]: unknown;
 }
 
-/** Read-only article viewer using the full shared Tiptap extension set */
-function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overlay, isApproved, isSubmitted, onApprove, onClose }: {
-  content: string;
-  title: string;
-  metaTitle?: string;
-  metaDescription?: string;
-  /** Persistent freehand draw layer rendered on top of the content (custom cards). */
-  overlay?: string;
-  /** Current approval state — drives the in-dialog Approve button label/colour. */
-  isApproved: boolean;
-  /** When submitted (locked lane), approval is disabled — mirrors the grid card. */
-  isSubmitted?: boolean;
-  /** Toggle approval for this asset (same action as the grid card's Approve). */
-  onApprove: () => void;
-  onClose: () => void;
-}) {
-  const editor = useEditor({
-    extensions: getEditorExtensions({ placeholder: '' }),
-    content: content || '<p></p>',
-    editable: false,
-    editorProps: {
-      attributes: { class: 'outline-none' },
-    },
-  });
-
-  // Close on Escape + prevent body scroll
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handleKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', handleKey);
-      document.body.style.overflow = '';
-    };
-  }, [onClose]);
-
-  // Notion-style document modal: borderless top bar (breadcrumb + close), a single
-  // centred 708px column, large title, optional "properties", then the rendered body.
-  return createPortal(
-    <div
-      className="pcm-notion-overlay"
-      onClick={onClose}
-      role="dialog"
-      aria-label="Document preview"
-    >
-      <div className="pcm-notion-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Top bar — icons only, no border (Notion peek) */}
-        <div className="pcm-notion-topbar">
-          <span className="pcm-notion-crumb">
-            <FileText className="w-[15px] h-[15px]" style={{ opacity: 0.55, flexShrink: 0 }} />
-            {title}
-          </span>
-          <button
-            type="button"
-            className="pcm-notion-iconbtn"
-            onClick={onClose}
-            aria-label="Close preview"
-          >
-            <X className="w-[18px] h-[18px]" />
-          </button>
-        </div>
-
-        {/* Page */}
-        <div className="pcm-notion-page">
-          <div className="pcm-notion-col">
-            <h1 className="pcm-notion-title">{title}</h1>
-
-            {/* Properties (article meta) — Notion property rows */}
-            {(metaTitle || metaDescription) && (
-              <div className="pcm-notion-props">
-                {metaTitle && (
-                  <div className="pcm-notion-prop">
-                    <span className="pcm-notion-prop-label">Meta title</span>
-                    <span className="pcm-notion-prop-value">{metaTitle}</span>
-                  </div>
-                )}
-                {metaDescription && (
-                  <div className="pcm-notion-prop">
-                    <span className="pcm-notion-prop-label">Meta description</span>
-                    <span className="pcm-notion-prop-value">{metaDescription}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Tiptap read-only rendered content (+ persistent draw layer on top) */}
-            <div className="pcm-notion-prose" style={{ position: 'relative' }}>
-              {editor && <EditorContent editor={editor} />}
-              {overlay && (
-                <img
-                  src={overlay}
-                  alt=""
-                  aria-hidden
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-                />
-              )}
-            </div>
-
-            {/* Approve action below the content — lets the client sign off from the opened
-                document, not only from the grid card. Same toggle + lock behaviour. */}
-            <div className="pcm-notion-actions">
-              <button
-                type="button"
-                disabled={isSubmitted}
-                className={`pcm-notion-approve ${isApproved ? 'is-approved' : ''}`}
-                onClick={onApprove}
-              >
-                <CheckCircle2 style={{ width: 15, height: 15 }} />
-                {isApproved ? 'Approved' : 'Approve'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>,
-    document.body
-  );
-}
 
 interface CreativeAssetCardProps {
   asset: CreativeAsset;
@@ -173,6 +54,16 @@ interface CreativeAssetCardProps {
   onApprove: (id: string) => void;
   brandLogoUrl?: string | null;
   brandName?: string;
+  /**
+   * RAW set mapping for the opened document's property rows.
+   *
+   * Deliberately separate from `brandName`: that one carries a display fallback
+   * ('Client Board' at the page level, 'Brand' here) which is fine as chrome but
+   * would print as a fact in a property row. These two are unresolved — absent
+   * means the row is not rendered at all.
+   */
+  setBrandName?: string | null;
+  setProjectName?: string | null;
   pairedMediaUrl?: string | null;
   isSubmitted?: boolean;
   isTeamMember?: boolean;
@@ -191,6 +82,8 @@ export function CreativeAssetCard({
   onApprove,
   brandLogoUrl,
   brandName = 'Brand',
+  setBrandName,
+  setProjectName,
   pairedMediaUrl,
   isSubmitted = false,
   isTeamMember = false,
@@ -217,6 +110,44 @@ export function CreativeAssetCard({
     const text = asset.content.replace(/<[^>]*>/g, '').trim();
     return text.length > 120 ? text.slice(0, 120) + '…' : text;
   }, [type, asset.content]);
+
+  /**
+   * Notion property rows for the opened document.
+   *
+   * A `custom` document has no meta fields — `CustomAsset` is
+   * `{ id, type, title, content, images, annotation, createdAt, updatedAt }` —
+   * so the old `metaTitle || metaDescription` gate was ALWAYS false and the
+   * property area never rendered anything on a custom card. These rows are our
+   * own information instead: who it is for, what it belongs to, when it was made.
+   * Only rows with a real value are emitted; nothing is invented to fill space.
+   */
+  const documentProperties = useMemo<CardDocumentProperty[]>(() => {
+    const rows: CardDocumentProperty[] = [];
+    const push = (label: string, value?: string | null) => {
+      const clean = typeof value === 'string' ? value.trim() : '';
+      if (clean) rows.push({ label, value: clean });
+    };
+
+    if (type === 'article') {
+      // Unchanged for articles — these are the fields that surface actually has.
+      push('Meta title', asset.metaTitle);
+      push('Meta description', asset.metaDescription);
+      return rows;
+    }
+
+    push('Brand', setBrandName);
+    push('Project', setProjectName);
+    const created = typeof asset.createdAt === 'string' ? asset.createdAt : '';
+    if (created) {
+      const d = new Date(created.replace(' ', 'T'));
+      if (!Number.isNaN(d.getTime())) {
+        push('Created', new Intl.DateTimeFormat('en-GB', {
+          year: 'numeric', month: 'short', day: 'numeric',
+        }).format(d));
+      }
+    }
+    return rows;
+  }, [type, asset.metaTitle, asset.metaDescription, asset.createdAt, setBrandName, setProjectName]);
 
   // Text Inline Edits state
   const [isEditingText, setIsEditingText] = useState(false);
@@ -710,13 +641,12 @@ export function CreativeAssetCard({
         document.body
       )}
 
-      {/* ─── ARTICLE / CUSTOM VIEWER DIALOG (full read-only Tiptap) ─── */}
+      {/* ─── ARTICLE / CUSTOM DOCUMENT VIEW (full read-only Tiptap) ─── */}
       {showArticleViewer && (type === 'article' || type === 'custom') && (
-        <ArticleViewerDialog
+        <CardDocumentView
           content={asset.content || ''}
           title={asset.title || (type === 'custom' ? 'Untitled Document' : 'Untitled Article')}
-          metaTitle={asset.metaTitle}
-          metaDescription={asset.metaDescription}
+          properties={documentProperties}
           overlay={type === 'custom' ? asset.overlay : undefined}
           isApproved={isApproved}
           isSubmitted={isSubmitted}

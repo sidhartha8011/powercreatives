@@ -48,6 +48,7 @@ import {
   type KanbanMoveEvent,
 } from '@/components/shared/Kanban';
 
+import { CardDocumentView, type CardDocumentProperty } from '../components/CardDocumentView';
 import { FeedbackDialog } from './FeedbackDialog';
 import { PreviewDialog } from './PreviewDialog';
 import { SetCard } from './SetCard';
@@ -185,6 +186,53 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
     () => new Map(brandRows.map((b) => [b.id, b.name])),
     [brandRows]
   );
+
+  const projectNameById = useMemo(
+    () => new Map(projectRows.map((p) => [p.id, p.name])),
+    [projectRows]
+  );
+
+  /**
+   * The opened set, WHEN IT IS A DOCUMENT.
+   *
+   * A set authored through "Add Approval Set" carries its Notion document in
+   * `snapshot.custom`. Opening such a set used to show `PreviewDialog` — an
+   * iframe of the whole public client board — so the document the owner had just
+   * written was never reachable as a document from the admin at all.
+   *
+   * The branch is read off the set's own data. There is no list of "kinds of set
+   * that open as documents" to keep in step with anything.
+   *
+   * Property rows are built from the registries the board already loaded, and
+   * only from values that actually resolve — an unresolved id renders no row
+   * rather than an id or a placeholder.
+   */
+  const openDocument = useMemo(() => {
+    const doc = previewSet?.snapshot?.custom?.[0];
+    if (!previewSet || !doc) return null;
+
+    const properties: CardDocumentProperty[] = [];
+    const push = (label: string, value?: string | null) => {
+      const clean = typeof value === 'string' ? value.trim() : '';
+      if (clean) properties.push({ label, value: clean });
+    };
+
+    push('Brand', previewSet.brandId != null ? brandNameById.get(Number(previewSet.brandId)) : null);
+    push('Project', previewSet.projectId != null ? projectNameById.get(Number(previewSet.projectId)) : null);
+    push('Lane', setColumns.find((c) => c.id === previewSet.status)?.label);
+
+    const created = doc.createdAt || previewSet.createdAt;
+    if (created) {
+      const d = new Date(String(created).replace(' ', 'T'));
+      if (!Number.isNaN(d.getTime())) {
+        push('Created', new Intl.DateTimeFormat('en-GB', {
+          year: 'numeric', month: 'short', day: 'numeric',
+        }).format(d));
+      }
+    }
+
+    return { set: previewSet, doc, properties };
+  }, [previewSet, brandNameById, projectNameById]);
 
   const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
     // `.v2`: the 2026-08-04 bar dropped the `search` + `set` filters. applyFilters
@@ -510,11 +558,28 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
       )}
 
       <FeedbackDialog set={feedbackSet} onClose={closeFeedback} />
-      <PreviewDialog
-        set={previewSet}
-        url={previewSet ? getPublicBoardUrl(previewSet.token) : null}
-        onClose={closePreview}
-      />
+
+      {/* A set authored as a document opens AS that document — the Notion page,
+          in the admin, at full size. Everything else keeps the iframe preview of
+          the client board, unchanged. The branch is read off the set's own data
+          (does it hold a custom document?), never a maintained list of set kinds.
+          Read-only: approving belongs to the client, and the admin holds no
+          public token, so no Approve action is passed. */}
+      {openDocument ? (
+        <CardDocumentView
+          content={openDocument.doc.content || ''}
+          title={openDocument.doc.title || openDocument.set.name || 'Untitled Document'}
+          properties={openDocument.properties}
+          overlay={openDocument.doc.overlay}
+          onClose={closePreview}
+        />
+      ) : (
+        <PreviewDialog
+          set={previewSet}
+          url={previewSet ? getPublicBoardUrl(previewSet.token) : null}
+          onClose={closePreview}
+        />
+      )}
 
       {/* Delete confirmation — used for both single and bulk. The
           AlertDialog primitive blocks interaction until confirmed or

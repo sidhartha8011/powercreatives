@@ -838,8 +838,11 @@
   background: rgba(15, 15, 15, 0.48);
   backdrop-filter: blur(12px) saturate(120%);
   -webkit-backdrop-filter: blur(12px) saturate(120%);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 4vh 16px;
+  /* `stretch`, not `flex-start`: the sheet takes the full height it is given so
+     it reads as a PAGE in a window. It used to hang 4vh from the top with a
+     hard band above and below and a 92vh cap, which is a card on a tray. */
+  display: flex; align-items: stretch; justify-content: center;
+  padding: 3vh 16px;
   cursor: default;
   animation: pcmFadeIn .15s ease;
 }
@@ -847,10 +850,11 @@
   position: relative;
   background: #ffffff;
   width: min(977px, 94vw);
-  max-height: 92vh;
+  /* No max-height — height comes from the overlay's stretch (100vh - 2*3vh).
+     Only this box scrolls, so the topbar stays put over a long document. */
   overflow-y: auto;
-  border-radius: 10px;
-  box-shadow: 0 0 0 1px rgba(15,15,15,0.05), 0 20px 60px rgba(15,15,15,0.22);
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px rgba(15,15,15,0.05), 0 24px 70px rgba(15,15,15,0.26);
   animation: pcmNotionIn .18s cubic-bezier(.2,.7,.3,1);
 }
 @keyframes pcmNotionIn {
@@ -858,21 +862,17 @@
   to   { opacity: 1; transform: none; }
 }
 
+/* Actions only, right-aligned. This bar used to hold a FileText icon plus the
+   title on the left — the icon the owner called a crappy document, and a title
+   that already renders at 40px directly below it. Both are gone; `flex-end`
+   replaces the `space-between` that only existed to push them apart. */
 .pcm-notion-topbar {
   position: sticky; top: 0; z-index: 3;
   height: 45px;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 10px 0 14px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 0 10px;
   background: rgba(255,255,255,0.86);
   backdrop-filter: blur(6px);
-}
-.pcm-notion-crumb {
-  display: inline-flex; align-items: center; gap: 7px;
-  font-family: var(--pcm-notion-font);
-  font-size: 14px; font-weight: 500;
-  color: rgba(55,53,47,0.65);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 72%;
 }
 .pcm-notion-iconbtn {
   appearance: none; border: none; background: transparent;
@@ -887,16 +887,12 @@
 .pcm-notion-col { max-width: var(--pcm-doc-measure); margin: 0 auto; padding: 0 24px; }
 @media (min-width: 820px) { .pcm-notion-col { padding: 0; } }
 
-/* Approve action inside the opened document (client peek view). The client asked
-   to approve directly from here, not only from the grid card. Colors are inlined —
-   this modal portals to <body>, outside the .pcm-client-review token scope — and
-   mirror the grid's dark→green approve pill. Sits inside .pcm-notion-col, so width
-   and side padding come from the column. */
-.pcm-notion-actions {
-  display: flex; align-items: center; gap: 10px;
-  margin-top: 28px; padding-top: 18px;
-  border-top: 1px solid rgba(55, 53, 47, 0.09);
-}
+/* Approve action for the opened document. It lived in a `.pcm-notion-actions`
+   block AFTER the prose, inside the scrolling column, so on any document of real
+   length it scrolled out of reach. It now sits in the sticky topbar and follows
+   the reader down. Colors stay inlined here — this modal portals to <body>,
+   outside the .pcm-client-review token scope — and mirror the grid's dark→green
+   approve pill. */
 .pcm-notion-approve {
   appearance: none; border: none; cursor: pointer;
   font-family: var(--pcm-notion-font);
@@ -910,6 +906,16 @@
 .pcm-notion-approve.is-approved { background: #18a957; }
 .pcm-notion-approve.is-approved:hover { background: #159c4f; }
 .pcm-notion-approve:disabled { opacity: .5; cursor: default; }
+.pcm-notion-approve-icon { width: 15px; height: 15px; flex-shrink: 0; }
+
+/* Draw layer sits over the prose. These two carried inline `style={{…}}` for
+   position and size, which the UI hard rule keeps out of components. */
+.pcm-notion-prose-wrap { position: relative; }
+.pcm-notion-draw {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+}
 
 .pcm-notion-title {
   font-family: var(--pcm-notion-font);
