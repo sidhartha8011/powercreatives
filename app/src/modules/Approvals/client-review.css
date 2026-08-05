@@ -934,6 +934,14 @@
   display: flex; align-items: flex-start; gap: 10px;
   font-family: var(--pcm-notion-font); font-size: 14px; line-height: 1.5;
 }
+/* State line while the document is being fetched. A state statement, not
+   instructional chrome — it says what is happening, then goes away. */
+.pcm-notion-loading {
+  font-family: var(--pcm-notion-font);
+  font-size: 14px;
+  color: rgba(55, 53, 47, 0.45);
+  margin: 4px 0 18px;
+}
 .pcm-notion-prop-label { flex: 0 0 128px; color: rgba(55,53,47,0.5); }
 .pcm-notion-prop-value { color: var(--pcm-doc-ink); }
 

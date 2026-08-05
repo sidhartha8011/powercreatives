@@ -41,6 +41,16 @@ export interface CardDocumentViewProps {
   title: string;
   /** Property rows. Empty or omitted renders no property block at all. */
   properties?: ReadonlyArray<CardDocumentProperty>;
+  /**
+   * The document is still being fetched. Renders the page shell with a state
+   * line instead of content.
+   *
+   * This exists because the Approvals board cannot know a set is a document
+   * without fetching it (the list query omits `snapshot` by design), and on this
+   * host that fetch measured 1.4-2.9 s under PHP-FPM's 2 workers. Without a
+   * visible state the click looked like it had done nothing at all.
+   */
+  isLoading?: boolean;
   /** Persistent freehand draw layer rendered on top of the content (custom cards). */
   overlay?: string;
   /** Current approval state — drives the header Approve button's label/colour. */
@@ -60,6 +70,7 @@ export function CardDocumentView({
   content,
   title,
   properties,
+  isLoading = false,
   overlay,
   isApproved,
   isSubmitted,
@@ -128,7 +139,11 @@ export function CardDocumentView({
           <div className="pcm-notion-col">
             <h1 className="pcm-notion-title">{title}</h1>
 
-            {rows.length > 0 && (
+            {isLoading && (
+              <p className="pcm-notion-loading">Opening document…</p>
+            )}
+
+            {!isLoading && rows.length > 0 && (
               <div className="pcm-notion-props">
                 {rows.map((row) => (
                   <div className="pcm-notion-prop" key={row.label}>
@@ -141,7 +156,7 @@ export function CardDocumentView({
 
             {/* Tiptap read-only rendered content (+ persistent draw layer on top) */}
             <div className="pcm-notion-prose pcm-notion-prose-wrap">
-              {editor && <EditorContent editor={editor} />}
+              {!isLoading && editor && <EditorContent editor={editor} />}
               {overlay && (
                 <img src={overlay} alt="" aria-hidden className="pcm-notion-draw" />
               )}

@@ -1019,11 +1019,20 @@
    and the bare `.pcm-card-editor` (0,1,0) is what applies inside a portal, where
    the reset never runs. The two DOM contexts are disjoint, so the branches never
    fight and the values stay identical in both. */
+/* OWNER DIRECTION 2026-08-05: the authoring surface must read like the Writer's
+   A4 pad, not like its own thing. It was bound to --pcm-doc-* (16px/1.5) while
+   .writer-editor reads --pcm-prose-* (11px/1.7) — measured 1.45x larger in the
+   browser, which is exactly what he reported as "the font is big". It now reads
+   the SAME variables the Writer pad reads: one definition, one owner.
+   NOTE: the client-facing VIEWER (.pcm-notion-prose) deliberately stays on the
+   document scale — 708px / 40px / 16px are the Notion metrics he approved for
+   the opened card. Authoring and reading are therefore different sizes BY
+   DECISION, not by drift. */
 #pcm-root .pcm-card-editor,
 .pcm-card-editor {
-  font-size: var(--pcm-doc-size);
-  line-height: var(--pcm-doc-leading);
-  color: var(--pcm-doc-ink);
+  font-size: var(--pcm-prose-size);
+  line-height: var(--pcm-prose-leading);
+  color: var(--pcm-prose-color);
   font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
   /* A page, not a form field: a centred measure the text actually reads at. */
   max-width: var(--pcm-doc-measure);
@@ -1050,3 +1059,57 @@
 #pcm-root .pcm-card-editor img, .pcm-card-editor img { max-width: 100%; height: auto; border-radius: 6px; margin: 0.5em 0; }
 #pcm-root .pcm-card-editor a, .pcm-card-editor a { color: #2563eb; text-decoration: underline; }
 #pcm-root .pcm-card-editor hr, .pcm-card-editor hr { margin: 1em 0; border: 0; border-top: 1px solid rgba(0, 0, 0, 0.1); }
+
+/* ── Checklist ─────────────────────────────────────────────────────────────
+   Selected on the ATTRIBUTE TipTap emits, not on a surface class, so ONE
+   definition serves every editor and every viewer — including the card viewer,
+   which portals to document.body outside #pcm-root (hence the bare branch).
+   Tailwind's base reset sets `ul { list-style: none }` and the shared editors
+   restore markers per surface; a task list must opt back OUT of markers or it
+   renders a bullet beside every checkbox. */
+#pcm-root ul[data-type="taskList"], ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.5em 0;
+}
+#pcm-root ul[data-type="taskList"] li, ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55em;
+  margin: 0.15em 0;
+}
+#pcm-root ul[data-type="taskList"] li > label, ul[data-type="taskList"] li > label {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  /* Aligns the box to the first text line at any of our scales. */
+  height: 1.5em;
+  user-select: none;
+  cursor: pointer;
+}
+#pcm-root ul[data-type="taskList"] li > div, ul[data-type="taskList"] li > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+#pcm-root ul[data-type="taskList"] li > div > p, ul[data-type="taskList"] li > div > p {
+  margin: 0;
+}
+#pcm-root ul[data-type="taskList"] input[type="checkbox"], ul[data-type="taskList"] input[type="checkbox"] {
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--pcm-doc-ink);
+}
+/* A ticked item reads as done without vanishing. */
+#pcm-root ul[data-type="taskList"] li[data-checked="true"] > div,
+ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+/* Nested checklists indent, and never re-inherit a marker. */
+#pcm-root ul[data-type="taskList"] ul[data-type="taskList"],
+ul[data-type="taskList"] ul[data-type="taskList"] {
+  padding-left: 1.5em;
+  margin: 0.15em 0;
+}

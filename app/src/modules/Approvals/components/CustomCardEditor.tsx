@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
-import { Image as ImageIcon, PenLine, Brush } from 'lucide-react';
+import { Image as ImageIcon, PenLine, Brush, ListChecks } from 'lucide-react';
 
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
 import { WriterBubbleMenu } from '@/modules/Writer/components/WriterBubbleMenu';
@@ -98,7 +98,12 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
       // `pcm-card-editor` carries the compact document typography (index.css). NOTE: the
       // Tailwind `prose` classes used before were inert — the typography plugin isn't loaded,
       // so content rendered at unstyled browser defaults (oversized, bloaty).
-      attributes: { class: 'pcm-card-editor outline-none max-w-none min-h-[460px] focus:outline-none' },
+      // `max-w-none` REMOVED. Tailwind is imported with the `important` flag
+      // (index.css:8), so `.max-w-none { max-width: none !important }` beat
+      // `.pcm-card-editor { max-width: var(--pcm-doc-measure) }` and the centred
+      // measure never applied — MEASURED in the browser as max-width "none" on a
+      // 739px-wide editor. The measure now actually takes effect.
+      attributes: { class: 'pcm-card-editor outline-none min-h-[460px] focus:outline-none' },
       // Double-click an image to paint directly ON it. Strokes are flattened INTO the image
       // (ImageAnnotator), so the annotation stays attached and scales with the image — it never
       // stretches or drifts when the layout reflows, unlike the whole-card draw overlay.
@@ -187,6 +192,18 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
         <ToolbarButton title="Insert image" onClick={insertImage}><ImageIcon className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title="Annotate an image — select an image (or double-click it) to paint directly on it" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title={drawing ? 'Stop drawing' : 'Draw on the whole card'} active={drawing} onClick={toggleDraw}><Brush className="h-4 w-4" /></ToolbarButton>
+        {/* Checklist. The node type ships in @tiptap/extension-list, already in
+            the tree via starter-kit — it was simply never registered, which is
+            why a checklist could not be made at all. Typing "[ ] " also works
+            (TipTap's input rule), so the interaction reveals itself; this button
+            is the discoverable route, not a hint. */}
+        <ToolbarButton
+          title="Checklist"
+          active={editor?.isActive('taskList')}
+          onClick={() => editor?.chain().focus().toggleTaskList().run()}
+        >
+          <ListChecks className="h-4 w-4" />
+        </ToolbarButton>
       </div>
       <div className="max-h-[72vh] overflow-y-auto p-4">
         {/* Positioned wrapper so the draw layer + overlay align with the content. */}

@@ -40,6 +40,7 @@ import {
 } from '@/components/ui/select';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/shared';
 import { useProjectPickerData } from '@/components/shared/ProjectPicker';
+import { trpc } from '@/lib/trpc';
 import {
   DefaultEmptyState,
   KanbanBoard,
@@ -193,6 +194,25 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
   );
 
   /**
+   * The full set for the one being opened.
+   *
+   * THE BOARD ROW DOES NOT CARRY `snapshot`. `list_sets_by_user` selects an
+   * explicit column list and leaves `snapshot`/`reviewFeedback` out on purpose
+   * (`approvals/service.php:74`) because both are longtext and can hold embedded
+   * images. So a board row can never tell us whether a set is a document — the
+   * first version of this branch read `previewSet.snapshot.custom` and was
+   * therefore dead on arrival, silently falling through to the iframe every time.
+   *
+   * Fetching the one set being opened, by the token the row already carries, is
+   * strictly CHEAPER than what it replaces: the iframe preview loaded this exact
+   * payload plus the entire client page around it.
+   */
+  const { data: fullPreviewSet, isLoading: previewLoading } = trpc.approvals.getPublicSet.useQuery(
+    { token: previewSet?.token ?? '' },
+    { enabled: !!previewSet?.token }
+  ) as { data?: ApprovalSet; isLoading: boolean };
+
+  /**
    * The opened set, WHEN IT IS A DOCUMENT.
    *
    * A set authored through "Add Approval Set" carries its Notion document in
@@ -208,7 +228,7 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
    * rather than an id or a placeholder.
    */
   const openDocument = useMemo(() => {
-    const doc = previewSet?.snapshot?.custom?.[0];
+    const doc = fullPreviewSet?.snapshot?.custom?.[0];
     if (!previewSet || !doc) return null;
 
     const properties: CardDocumentProperty[] = [];
@@ -232,7 +252,7 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
     }
 
     return { set: previewSet, doc, properties };
-  }, [previewSet, brandNameById, projectNameById]);
+  }, [previewSet, fullPreviewSet, brandNameById, projectNameById]);
 
   const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
     // `.v2`: the 2026-08-04 bar dropped the `search` + `set` filters. applyFilters
@@ -565,7 +585,18 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
           (does it hold a custom document?), never a maintained list of set kinds.
           Read-only: approving belongs to the client, and the admin holds no
           public token, so no Approve action is passed. */}
-      {openDocument ? (
+      {previewSet && previewLoading ? (
+        /* The shell opens IMMEDIATELY on click, carrying the name the board row
+           already knows, and says it is loading. Rendering nothing here made a
+           click look like it had missed — the fetch measured 1.4-2.9 s on this
+           host, where PHP-FPM runs 2 workers. */
+        <CardDocumentView
+          content=""
+          title={previewSet.name || 'Untitled Document'}
+          isLoading
+          onClose={closePreview}
+        />
+      ) : openDocument ? (
         <CardDocumentView
           content={openDocument.doc.content || ''}
           title={openDocument.doc.title || openDocument.set.name || 'Untitled Document'}
