@@ -38,7 +38,11 @@ export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
             sr-only form because Radix UI's Dialog requires both for
             accessibility (screen-reader announcement + WCAG compliance). */}
         <DialogTitle className="sr-only">
-          {set.snapshot.brandName ? `${set.snapshot.brandName} / ` : ''}
+          {/* Optional-chained: a BOARD row carries no `snapshot` at all. The list
+              query omits it deliberately (longtext, embedded images), and it no
+              longer ships a misleading empty one either — so an unguarded
+              `set.snapshot.brandName` throws on every card click. */}
+          {set.snapshot?.brandName ? `${set.snapshot.brandName} / ` : ''}
           {set.name}
         </DialogTitle>
         <DialogDescription className="sr-only">
