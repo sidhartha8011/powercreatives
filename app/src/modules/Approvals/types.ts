@@ -124,6 +124,12 @@ export interface ApprovalSet {
   token: string;
   status: ApprovalStatus;
   /**
+   * Last client address this card was shared with. The server has always sent
+   * it (it is in the list query's column set); it was simply never declared.
+   * Seeds the share popover so a re-share does not start from an empty field.
+   */
+  clientEmail?: string | null;
+  /**
    * How many items the card holds, and a light summary of them.
    *
    * Present on BOARD rows (the list query computes them in SQL) and absent on a

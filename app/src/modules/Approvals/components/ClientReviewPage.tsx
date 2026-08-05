@@ -14,7 +14,8 @@ import '../client-review.css';
 
 // Import newly created reusable component modules
 import { ClientStatusToolbar } from './ClientStatusToolbar';
-import { CreativeAssetCard } from './CreativeAssetCard';
+import { ApprovalSetContents } from './ApprovalSetContents';
+import { useSetAssets } from '../hooks/useSetAssets';
 import { ClientCommentInspector, type CommentEntry } from './ClientCommentInspector';
 
 interface ClientReviewPageProps {
@@ -333,44 +334,16 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     utils.approvals.getPublicSet.invalidate({ token });
   }, [utils, token]);
 
-  // Combined asset lists & counts
-  const mediaAssets = useMemo(() => set?.snapshot?.media || [], [set]);
-  const copyAssets = useMemo(() => set?.snapshot?.copy || [], [set]);
-  const articleAssets = useMemo(() => set?.snapshot?.articles || [], [set]);
-  const customAssets = useMemo(() => set?.snapshot?.custom || [], [set]);
-
-  const counts = useMemo(() => {
-    const videos = mediaAssets.filter((item: any) => isVideoAsset(item)).length;
-    const images = mediaAssets.length - videos;
-    const copy = copyAssets.length;
-    const articles = articleAssets.length;
-    const custom = customAssets.length;
-    return { all: mediaAssets.length + copy + articles + custom, images, videos, copy, articles, custom };
-  }, [mediaAssets, copyAssets, articleAssets, customAssets]);
-
-  const allMergedAssets = useMemo(() => {
-    const media = mediaAssets.map((item: any) => ({
-      id: item.id,
-      type: 'media' as const,
-      data: item
-    }));
-    const copy = copyAssets.map((item: any) => ({
-      id: item.id,
-      type: 'copy' as const,
-      data: item
-    }));
-    const articles = articleAssets.map((item: any) => ({
-      id: item.id,
-      type: 'article' as const,
-      data: item
-    }));
-    const custom = customAssets.map((item: any) => ({
-      id: item.id,
-      type: 'custom' as const,
-      data: item
-    }));
-    return [...media, ...copy, ...articles, ...custom];
-  }, [mediaAssets, copyAssets, articleAssets, customAssets]);
+  // What is inside this card — derived ONCE, shared with the admin modal.
+  // This used to be four inline useMemos plus a merge, duplicated in spirit by
+  // anything else that needed a card's contents.
+  const {
+    mediaAssets,
+    copyAssets,
+    allMergedAssets,
+    counts,
+    primaryMediaUrl,
+  } = useSetAssets(set, isVideoAsset);
 
   const activeAssetForComment = useMemo(() => {
     if (!activeAssetIdForComment) return null;
@@ -441,7 +414,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // can still open asset threads and continue the conversation after approval.
   // A banner (rendered below) communicates the locked/approved state.
 
-  const primaryMediaUrl = mediaAssets[0]?.url || '';
   const brandName = set.snapshot.brandName || 'Client Board';
   const campaignName = set.name || 'Creative Review';
   const studioName = set.snapshot.studioName || 'Studio';
@@ -523,67 +495,30 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         isSaving={saveDraftMutation.isPending}
       />
 
-      {/* Grid container */}
+      {/* Grid container — the SHARED renderer. The admin modal renders this
+          exact component, so the team sees the client view rather than a
+          lookalike that can drift away from it. */}
       <main className="max-w-[1280px] w-full mx-auto px-7 mt-4">
-        {filteredAssets.length === 0 ? (
-          <div className="pcm-empty-state">
-            <p>No assets found in this category.</p>
-          </div>
-        ) : (
-          <div className="pcm-grid transition-all duration-300">
-            {filteredAssets.map((item) => {
-              const isApproved = item.type === 'media'
-                ? approvedVisualIds.includes(item.id)
-                : item.type === 'article'
-                  ? approvedArticleIds.includes(item.id)
-                  : item.type === 'custom'
-                    ? approvedCustomIds.includes(item.id)
-                    : approvedCopyIds.includes(item.id);
-              const threadForAsset = comments[item.id] || [];
-              const userRole = isTeamMember ? 'team' : 'client';
-              const hasNewComment = threadForAsset.some(c => {
-                const isAuthorTeam = c.author === 'Team';
-                const isCurrentTeam = isTeamMember;
-                const isSelf = (isCurrentTeam && isAuthorTeam) || (!isCurrentTeam && !isAuthorTeam);
-                if (isSelf) return false;
-                return !c.readBy?.includes(userRole);
-              });
-
-              // Pair copy card with corresponding media item
-              let pairedMediaUrl = null;
-              if (item.type === 'copy') {
-                const copyIndex = copyAssets.findIndex((c: any) => c.id === item.id);
-                pairedMediaUrl = (mediaAssets.length > 0 && copyIndex !== -1)
-                  ? mediaAssets[copyIndex % mediaAssets.length]?.url
-                  : primaryMediaUrl;
-              }
-
-              return (
-                <CreativeAssetCard
-                  key={item.id}
-                  asset={item.data}
-                  type={item.type}
-                  isApproved={isApproved}
-                  commentCount={threadForAsset.length}
-                  hasNewComment={hasNewComment}
-                  onApprove={handleToggleApprove}
-                  brandLogoUrl={set.snapshot.brandLogoUrl}
-                  brandName={brandName}
-                  // RAW, unresolved — the opened document's property rows must
-                  // never print the 'Client Board' display fallback as a fact.
-                  setBrandName={set.snapshot.brandName}
-                  setProjectName={set.snapshot.projectName}
-                  pairedMediaUrl={pairedMediaUrl}
-                  isSubmitted={isLocked || submitMutation.isPending}
-                  isTeamMember={isTeamMember}
-                  onAssetUpdate={handleAssetUpdate}
-                  onOpenComments={(id) => setActiveAssetIdForComment(id)}
-                  copyIndex={item.type === 'copy' ? copyAssets.findIndex((c: any) => c.id === item.id) : undefined}
-                />
-              );
-            })}
-          </div>
-        )}
+        <ApprovalSetContents
+          assets={filteredAssets}
+          approvedVisualIds={approvedVisualIds}
+          approvedCopyIds={approvedCopyIds}
+          approvedArticleIds={approvedArticleIds}
+          approvedCustomIds={approvedCustomIds}
+          comments={comments}
+          isTeamMember={isTeamMember}
+          isSubmitted={isLocked || submitMutation.isPending}
+          brandName={brandName}
+          brandLogoUrl={set.snapshot?.brandLogoUrl}
+          setBrandName={set.snapshot?.brandName}
+          setProjectName={set.snapshot?.projectName}
+          copyAssets={copyAssets}
+          mediaAssets={mediaAssets}
+          primaryMediaUrl={primaryMediaUrl}
+          onApprove={handleToggleApprove}
+          onAssetUpdate={handleAssetUpdate}
+          onOpenComments={(id) => setActiveAssetIdForComment(id)}
+        />
       </main>
 
       {/* Floating Comment Inspector Drawer panel */}

@@ -885,6 +885,12 @@
 
 .pcm-notion-page { padding: 6px 0 22vh; }
 .pcm-notion-col { max-width: var(--pcm-doc-measure); margin: 0 auto; padding: 0 24px; }
+
+/* An opened CARD holds a grid of assets, not a column of prose, so it uses the
+   modal's full width rather than the 708px document measure. Same shell, same
+   size — the owner's instruction was that the modal must not get bigger. */
+.pcm-set-modal-body { padding: 0 28px; }
+.pcm-set-modal-body .pcm-notion-title { margin: 18px 0 14px; }
 @media (min-width: 820px) { .pcm-notion-col { padding: 0; } }
 
 /* Approve action for the opened document. It lived in a `.pcm-notion-actions`

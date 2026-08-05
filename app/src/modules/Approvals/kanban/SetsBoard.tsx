@@ -49,9 +49,9 @@ import {
   type KanbanMoveEvent,
 } from '@/components/shared/Kanban';
 
-import { CardDocumentView, type CardDocumentProperty } from '../components/CardDocumentView';
+import { CardDocumentView } from '../components/CardDocumentView';
+import { ApprovalSetModal } from '../components/ApprovalSetModal';
 import { FeedbackDialog } from './FeedbackDialog';
-import { PreviewDialog } from './PreviewDialog';
 import { SetCard } from './SetCard';
 import { setColumns } from './setColumns';
 import { setFilters } from './setFilters';
@@ -207,52 +207,14 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
    * strictly CHEAPER than what it replaces: the iframe preview loaded this exact
    * payload plus the entire client page around it.
    */
-  const { data: fullPreviewSet, isLoading: previewLoading } = trpc.approvals.getPublicSet.useQuery(
+  const {
+    data: fullPreviewSet,
+    isLoading: previewLoading,
+    refetch: refetchPreviewSet,
+  } = trpc.approvals.getPublicSet.useQuery(
     { token: previewSet?.token ?? '' },
     { enabled: !!previewSet?.token }
-  ) as { data?: ApprovalSet; isLoading: boolean };
-
-  /**
-   * The opened set, WHEN IT IS A DOCUMENT.
-   *
-   * A set authored through "Add Approval Set" carries its Notion document in
-   * `snapshot.custom`. Opening such a set used to show `PreviewDialog` — an
-   * iframe of the whole public client board — so the document the owner had just
-   * written was never reachable as a document from the admin at all.
-   *
-   * The branch is read off the set's own data. There is no list of "kinds of set
-   * that open as documents" to keep in step with anything.
-   *
-   * Property rows are built from the registries the board already loaded, and
-   * only from values that actually resolve — an unresolved id renders no row
-   * rather than an id or a placeholder.
-   */
-  const openDocument = useMemo(() => {
-    const doc = fullPreviewSet?.snapshot?.custom?.[0];
-    if (!previewSet || !doc) return null;
-
-    const properties: CardDocumentProperty[] = [];
-    const push = (label: string, value?: string | null) => {
-      const clean = typeof value === 'string' ? value.trim() : '';
-      if (clean) properties.push({ label, value: clean });
-    };
-
-    push('Brand', previewSet.brandId != null ? brandNameById.get(Number(previewSet.brandId)) : null);
-    push('Project', previewSet.projectId != null ? projectNameById.get(Number(previewSet.projectId)) : null);
-    push('Lane', setColumns.find((c) => c.id === previewSet.status)?.label);
-
-    const created = doc.createdAt || previewSet.createdAt;
-    if (created) {
-      const d = new Date(String(created).replace(' ', 'T'));
-      if (!Number.isNaN(d.getTime())) {
-        push('Created', new Intl.DateTimeFormat('en-GB', {
-          year: 'numeric', month: 'short', day: 'numeric',
-        }).format(d));
-      }
-    }
-
-    return { set: previewSet, doc, properties };
-  }, [previewSet, fullPreviewSet, brandNameById, projectNameById]);
+  ) as { data?: ApprovalSet; isLoading: boolean; refetch: () => void };
 
   const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
     // `.v2`: the 2026-08-04 bar dropped the `search` + `set` filters. applyFilters
@@ -596,21 +558,17 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
           isLoading
           onClose={closePreview}
         />
-      ) : openDocument ? (
-        <CardDocumentView
-          content={openDocument.doc.content || ''}
-          title={openDocument.doc.title || openDocument.set.name || 'Untitled Document'}
-          properties={openDocument.properties}
-          overlay={openDocument.doc.overlay}
+      ) : previewSet && fullPreviewSet ? (
+        /* A card opens as THE CARD — the client view of everything inside it.
+           It used to open `snapshot.custom[0]` as a Notion page, which showed a
+           document and silently hid every other asset in the same card. A
+           document is a sub-item; it is never the card. */
+        <ApprovalSetModal
+          set={fullPreviewSet}
           onClose={closePreview}
+          onChanged={refetchPreviewSet}
         />
-      ) : (
-        <PreviewDialog
-          set={previewSet}
-          url={previewSet ? getPublicBoardUrl(previewSet.token) : null}
-          onClose={closePreview}
-        />
-      )}
+      ) : null}
 
       {/* Delete confirmation — used for both single and bulk. The
           AlertDialog primitive blocks interaction until confirmed or
