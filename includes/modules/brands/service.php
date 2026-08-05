@@ -57,12 +57,17 @@ class PCM_Brands_Service
      *
      * Returns a merged result with both DOM-parsed and LLM-enriched data.
      *
-     * @param string      $url   Website URL to scrape.
-     * @param string|null $model LLM model ID for enrichment (null = skip LLM).
+     * The DOM half always stands on its own: if enrichment cannot run, or the
+     * model errors, the caller still gets name/summary/language/colours/images
+     * plus an `enrichmentNotice` explaining what is missing and why.
+     *
+     * @param string      $url     Website URL to scrape.
+     * @param string|null $model   LLM model ID for enrichment (null = auto-resolve).
+     * @param int         $user_id PCM user ID, used to resolve a usable model.
      * @return array Unified scrape result.
-     * @throws \RuntimeException On fetch failure.
+     * @throws \RuntimeException Only when the page itself cannot be fetched.
      */
-    public function scrape_and_prepare(string $url, ?string $model = null): array
+    public function scrape_and_prepare(string $url, ?string $model = null, int $user_id = 0): array
     {
         // 1. Always: HTML/CSS parsing (no LLM needed)
         $scraped = PCM_Website_Scraper::scrape($url);
@@ -77,13 +82,73 @@ class PCM_Brands_Service
             'colors' => $scraped['colors'],
         );
 
-        // 2. Optional: LLM enrichment for deeper business info
-        if (!empty($model)) {
-            try {
-                $copy_service = new PCM_Copy_Service();
-                $llm_data = $copy_service->extract_business_info($url, $model);
+        // The page declares its own language in <html lang>, so fill it WITHOUT an
+        // LLM. The enrichment below still overrides it if the model returns one.
+        if (!empty($scraped['lang'])) {
+            $result['businessInfo']['language'] = $scraped['lang'];
+        }
 
-                if (!empty($llm_data)) {
+        // No model passed? Fall back to the configured default before giving up.
+        // Only the Brands wizard forwards Settings.defaultTextModel; ContextPanel
+        // and the SEO business card call this endpoint too, and every caller that
+        // forgot silently lost niche/location/phone.
+        if (empty($model) && class_exists('PCM_Settings')) {
+            $configured = PCM_Settings::get('defaultTextModel');
+            if (is_string($configured) && $configured !== '') {
+                $model = $configured;
+            }
+        }
+
+        // Build a CANDIDATE LIST, not a single pick. One model failing must not end
+        // the story when the list has others: model rows accumulate retired ids
+        // (gemini-2.5-flash, 404) and preview ones with per-model quirks
+        // (antigravity-preview rejects system instructions with a 400), and any
+        // single choice can hit one of those. The explicitly-passed/configured
+        // model stays first so a deliberate choice is still honoured.
+        $candidates = array();
+        if (!empty($model)) {
+            $candidates[] = (string) $model;
+        }
+        foreach ($this->usable_text_models($user_id) as $m) {
+            $candidates[] = $m;
+        }
+        $candidates = array_slice(array_values(array_unique($candidates)), 0, 3);
+
+        // niche / location / phone have no DOM source — they exist only if a model
+        // extracts them. Report when that could not run, so a half-filled form reads
+        // as a setup problem rather than a broken fetch. Empty here means no
+        // provider is connected at all, not merely that no default was chosen.
+        $result['enriched'] = !empty($candidates);
+        if (empty($candidates)) {
+            $result['enrichmentNotice'] = 'No AI provider is connected, so niche, location and phone could not be detected. Add a provider API key in Settings → Providers.';
+        }
+
+        // 2. Optional: LLM enrichment — first candidate that answers wins.
+        if (!empty($candidates)) {
+            $copy_service = new PCM_Copy_Service();
+            $llm_data = null;
+            $last_error = '';
+            foreach ($candidates as $candidate) {
+                try {
+                    $llm_data = $copy_service->extract_business_info($url, $candidate);
+                    break;
+                }
+                catch (\Throwable $e) {
+                    // DEGRADE, never discard. The DOM half — name, summary,
+                    // language, colours, images — already succeeded; a per-model
+                    // failure just moves on to the next candidate.
+                    error_log('[PCM] Brand scrape LLM failed (' . $candidate . '): ' . $e->getMessage());
+                    $last_error = $e->getMessage();
+                }
+            }
+
+            if ($llm_data === null) {
+                $result['enriched'] = false;
+                $result['enrichmentNotice'] = 'Fetched the page, but niche, location and phone could not be detected: '
+                    . $last_error;
+            }
+
+            if (!empty($llm_data)) {
                     // LLM data overrides DOM-parsed data where present
                     if (!empty($llm_data['business_name'])) {
                         $result['businessInfo']['business_name'] = $llm_data['business_name'];
@@ -121,11 +186,6 @@ class PCM_Brands_Service
                         }
                         $result['colors'] = $merged_colors;
                     }
-                }
-            }
-            catch (\Throwable $e) {
-                error_log('[PCM] Brand scrape LLM failed: ' . $e->getMessage());
-                throw new \RuntimeException('LLM enrichment failed: ' . $e->getMessage(), 0, $e);
             }
         }
 
@@ -430,6 +490,89 @@ class PCM_Brands_Service
         $asset['extractedColors'] = $new_colors;
 
         return $asset;
+    }
+
+    /**
+     * A text model that is actually usable right now.
+     *
+     * Last-resort model resolution for the scrape enrichment.
+     *
+     * Reads the user's OWN model rows (`pcm_models`) first — the list Integrations
+     * builds and keeps in sync, carrying `canGenerateText` plus live `isEnabled` /
+     * `isAvailable` flags. The provider registry's `knownModels` is only a
+     * hardcoded fallback for when an API listing fails, and it goes stale: it still
+     * offers `gemini-2.5-flash`, which Google has since retired for new projects,
+     * so picking from it produced a 404 at generation time.
+     *
+     * Only after the user's list yields nothing does this fall back to
+     * `knownModels`, and even then only for a provider that has a key.
+     *
+     * @param int $pcm_user_id PCM user id, for the model rows.
+     * @return string Model id, or '' when nothing is usable.
+     */
+    private function first_available_text_model(int $pcm_user_id = 0): string
+    {
+        $models = $this->usable_text_models($pcm_user_id);
+        return $models[0] ?? '';
+    }
+
+    /**
+     * Every usable text model, in preference order — the retry pool behind
+     * first_available_text_model(). Same sources, same filters; the caller walks
+     * this list so one model's per-model failure (retired id, preview quirk)
+     * falls through to the next instead of ending the enrichment.
+     *
+     * @param int $pcm_user_id PCM user id, for the model rows.
+     * @return string[] Model ids, best first. Empty when nothing is usable.
+     */
+    private function usable_text_models(int $pcm_user_id = 0): array
+    {
+        $wp_user_id = function_exists('get_current_user_id') ? (int) get_current_user_id() : 0;
+        $out = array();
+
+        // 1. The user's configured, enabled, available text models.
+        if ($pcm_user_id > 0 && class_exists('PCM_DB') && method_exists('PCM_DB', 'get_user_models')) {
+            foreach ((array) PCM_DB::get_user_models($pcm_user_id) as $row) {
+                if (empty($row->modelId) || empty($row->canGenerateText)) {
+                    continue;
+                }
+                // A row explicitly turned off or marked unavailable is exactly the
+                // kind that 404s — skip it rather than discover that mid-request.
+                if (isset($row->isEnabled) && !$row->isEnabled) {
+                    continue;
+                }
+                if (isset($row->isAvailable) && !$row->isAvailable) {
+                    continue;
+                }
+                $provider = (string) ($row->provider ?? '');
+                if ($provider !== '' && class_exists('PCM_LLM')
+                    && !PCM_LLM::has_api_key($provider, $wp_user_id)) {
+                    continue;
+                }
+                $out[] = (string) $row->modelId;
+            }
+        }
+
+        // 2. The registry's static list as the tail — reached when the user has no
+        // usable rows, and also the safety net behind rows that all fail live.
+        if (class_exists('PCM_Providers') && class_exists('PCM_LLM')) {
+            foreach (PCM_Providers::get_all() as $provider) {
+                $pid = (string) ($provider['id'] ?? '');
+                if ($pid === '' || empty($provider['knownModels']) || !is_array($provider['knownModels'])) {
+                    continue;
+                }
+                if (!PCM_LLM::has_api_key($pid, $wp_user_id)) {
+                    continue;
+                }
+                foreach ($provider['knownModels'] as $m) {
+                    if (($m['type'] ?? '') === 'text' && !empty($m['id'])) {
+                        $out[] = (string) $m['id'];
+                    }
+                }
+            }
+        }
+
+        return array_values(array_unique($out));
     }
 
     /**

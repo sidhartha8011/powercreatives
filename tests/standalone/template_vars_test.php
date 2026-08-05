@@ -39,11 +39,26 @@ check('the chips component is gone',
 
 $src = file_get_contents($vars_ts);
 
-/** Pull a `const NAME = [ '…' ];` array out of the TS. */
+/**
+ * Pull the TOKENS out of a `const NAME: Record<string, string> = { '…': '…' };`.
+ *
+ * Matches only quoted strings followed by a colon, i.e. the map KEYS. A blanket
+ * "every quoted string" would also sweep up the descriptions and report them as
+ * variables.
+ */
 function ts_list(string $s, string $name): array {
-    if (!preg_match('/const\s+' . preg_quote($name, '/') . '\s*=\s*\[(.*?)\];/s', $s, $m)) return array();
-    preg_match_all("/'([^']+)'/", $m[1], $i);
+    if (!preg_match('/const\s+' . preg_quote($name, '/') . '\s*(?::[^=]*)?=\s*\{(.*?)\n\};/s', $s, $m)) return array();
+    preg_match_all("/'([^']+)'\s*:/", $m[1], $i);
     return $i[1];
+}
+
+/** Token => description for a module's map, so the prose can be checked too. */
+function ts_map(string $s, string $name): array {
+    if (!preg_match('/const\s+' . preg_quote($name, '/') . '\s*(?::[^=]*)?=\s*\{(.*?)\n\};/s', $s, $m)) return array();
+    preg_match_all("/'([^']+)'\s*:\s*'((?:[^'\\\\]|\\\\.)*)'/", $m[1], $i, PREG_SET_ORDER);
+    $out = array();
+    foreach ($i as $pair) { $out[$pair[1]] = $pair[2]; }
+    return $out;
 }
 /** `{{ x }}` → `x`. */
 function key_of(string $token): string { return trim(str_replace(array('{{', '}}'), '', $token)); }
@@ -144,8 +159,43 @@ check('writer side documents its whitespace tolerance',
     str_contains(file_get_contents($ROOT . '/includes/modules/strategy/service.php'), 'whitespace-tolerant'));
 
 echo "\n4. Gating\n";
-check('only prompt-category entries get variables', str_contains($src, "category === 'prompt'"));
-check('varsFor is an allow-list with an empty default', str_contains($src, 'default: return [];'));
+// Assert the RULE, not one spelling of it: `=== 'prompt'` and `!== 'prompt'`
+// are the same gate, and the empty default is `[]` or `{}` depending on whether
+// the vocabulary is stored as a list or a token=>description map.
+check('only prompt-category entries get variables',
+    (bool) preg_match("/category\s*[!=]==\s*'prompt'/", $src));
+check('varsFor is an allow-list with an empty default',
+    (bool) preg_match('/default:\s*return\s*(\[\]|\{\});/', $src));
+
+echo "\n4b. Every variable carries a usable description\n";
+// The menu shows the description beside the token; a blank or stub one is worse
+// than none because it takes up a row and teaches nothing.
+$desc_problems = array();
+$total_desc = 0;
+foreach ($MODULES as $mod => $cfg) {
+    foreach (ts_map($src, $cfg[0]) as $token => $desc) {
+        $total_desc++;
+        $d = trim($desc);
+        if ($d === '')                       { $desc_problems[] = "$mod $token: empty"; }
+        elseif (strlen($d) < 12)             { $desc_problems[] = "$mod $token: too short (\"$d\")"; }
+        elseif (rtrim($d, '.') === trim(key_of($token))) { $desc_problems[] = "$mod $token: just restates the token"; }
+    }
+}
+check('every token has a real description', $desc_problems === array(), $desc_problems);
+check('description count matches token count', $total_desc === 97, $total_desc);
+
+echo "\n4c. The menu renders the description and can scroll sideways\n";
+$menu = file_get_contents($ROOT . '/app/src/modules/Templates/SlashVariableMenu.tsx');
+check('row renders the description', str_contains($menu, '{description}'), 'not rendered');
+check('description also offered as a tooltip', str_contains($menu, 'title={description}'), 'no title attr');
+// One line + a horizontally scrollable track is what lets a long sentence be read
+// by scrolling instead of wrapping every row and burying the list.
+check('rows stay on one line', str_contains($menu, 'whitespace-nowrap'), 'rows would wrap');
+check('list scrolls both ways', str_contains($menu, 'overflow-auto'), 'no horizontal scroll');
+check('rows share the widest row’s width', str_contains($menu, 'w-max min-w-full'), 'ragged highlight');
+// li must be a DIRECT child of the ul, or the arrow-key scrollIntoView lookup
+// (children[active]) points at a wrapper instead of the highlighted row.
+check('no wrapper between ul and li', !preg_match('/<ul[^>]*>\s*\{?\s*<div/', $menu), 'wrapper breaks children[active]');
 
 echo "\n5. The chip strip is gone from the Templates module\n";
 foreach (array('TemplateRow.tsx', 'TemplateDialog.tsx') as $f) {

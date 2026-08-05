@@ -136,6 +136,18 @@ export function BrandDialog({
   /** Fetch URL → advance to logo step or form (if no images) */
   const handleFetch = useCallback(async () => {
     const result = await fetchHook.handleFetchBrand();
+
+    // The logo picker belongs to the CREATE wizard, where there is no logo yet.
+    // In edit mode "Fetch Brand" means "refresh my fields" — hijacking the open
+    // Edit Brand dialog with a Select Logo step (over a brand that usually already
+    // has a logo) is why it looked like a popup appearing out of nowhere. The
+    // scraped images are still saved as reference assets by the fetch itself, and
+    // the logo can be changed from the panel on the right.
+    if (editBrand) {
+      setCurrentStep("form");
+      return;
+    }
+
     if (result && result.images.length > 0) {
       setWizardData((prev) => ({
         ...prev,
@@ -148,7 +160,7 @@ export function BrandDialog({
       // No images found — go directly to form
       setCurrentStep("form");
     }
-  }, [fetchHook]);
+  }, [fetchHook, editBrand]);
 
   /** Logo selected → save as asset with role:'logo' → return extracted logo colors.
    *  No reorder needed: logo is resolved by role, not position. */

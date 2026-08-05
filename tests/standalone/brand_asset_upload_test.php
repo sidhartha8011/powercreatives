@@ -65,6 +65,9 @@ function add_filter(...$a) {}
  */
 class PCM_DB {
     public static array $written = array();
+    /** Rows for get_user_models(), the live per-user model list. */
+    public static array $models = array();
+    public static function get_user_models($uid) { return self::$models; }
     /** Column => value, as it would be on disk. Null disables get_brand_by_id(). */
     public static ?array $state = null;
     public static function update_brand($id, $uid, array $data) {
@@ -99,6 +102,42 @@ class PCM_Image_Utils {
     public static function rasterize_svg_to_png($p, $d = null) { return false; }
     public static function extract_dominant_colors($p, $n) { return array('#112233', '#445566'); }
     public static function filter_new_colors($ex, $exist) { return array_values(array_diff($ex, $exist)); }
+}
+
+/** Provider registry + key checks, for the scrape enrichment's model fallback. */
+class PCM_Providers {
+    public static array $registry = array();
+    public static function get_all(): array { return self::$registry; }
+}
+class PCM_LLM {
+    /** Provider ids that have a working key. */
+    public static array $keyed = array();
+    public static function has_api_key($provider, $user_id) { return in_array($provider, self::$keyed, true); }
+}
+function get_current_user_id() { return 1; }
+
+/** Fixed scrape result — the DOM half that must survive any model failure. */
+class PCM_Website_Scraper {
+    public static function scrape($url) {
+        return array('title' => 'T', 'description' => 'D', 'h1' => 'H',
+                     'lang' => 'sv', 'images' => array(), 'colors' => array('#111111'), 'url' => $url);
+    }
+}
+/** Scriptable extractor: model id => array result, or 'THROW:<msg>'. */
+class PCM_Copy_Service {
+    public static array $script = array();
+    public static array $calls = array();
+    public function extract_business_info($url, $model) {
+        self::$calls[] = $model;
+        $behaviour = self::$script[$model] ?? 'THROW:unscripted model ' . $model;
+        if (is_string($behaviour) && str_starts_with($behaviour, 'THROW:')) {
+            throw new \RuntimeException(substr($behaviour, 6));
+        }
+        return $behaviour;
+    }
+}
+class PCM_Settings {
+    public static function get($key, $default = null) { return $default; }
 }
 
 $ROOT = dirname(__DIR__, 2);
@@ -326,6 +365,142 @@ check('the survivor is the new upload',
     ($healed_logos[0]['fileKey'] ?? null) === ($fresh['fileKey'] ?? '!'), $healed_logos[0] ?? null);
 check('getBrandLogo() resolves to it', ($get_brand_logo($healed)['fileKey'] ?? null) === ($fresh['fileKey'] ?? '!'));
 check('all four assets retained', count($healed) === 4, count($healed));
+
+echo "
+12. Scrape enrichment picks a model when none is configured
+";
+// "Fetch Brand" fills niche/location/phone only when a model runs. Rather than
+// warning the user to go and choose a default, fall back to any provider that
+// already has a key — enrichment is read-only and cheap.
+$pick = new ReflectionMethod('PCM_Brands_Service', 'first_available_text_model');
+$pick->setAccessible(true);
+// Default to a real user id: the live-model-row lookup needs one, and a 0
+// (unresolved caller) deliberately skips straight to the static registry.
+$first = fn(int $uid = 1) => $pick->invoke($svc, $uid);
+
+PCM_Providers::$registry = array(
+    'noKey'  => array('id' => 'noKey',  'knownModels' => array(array('id' => 'nk-text', 'type' => 'text'))),
+    'imgOnly'=> array('id' => 'imgOnly','knownModels' => array(array('id' => 'io-img', 'type' => 'image'))),
+    'good'   => array('id' => 'good',   'knownModels' => array(
+        array('id' => 'g-img',  'type' => 'image'),
+        array('id' => 'g-text', 'type' => 'text'),
+        array('id' => 'g-text2','type' => 'text'),
+    )),
+);
+
+PCM_LLM::$keyed = array('good');
+check('picks the first TEXT model of a keyed provider', $first() === 'g-text', $first());
+
+PCM_LLM::$keyed = array('imgOnly', 'good');
+check('skips a provider with no text model', $first() === 'g-text', $first());
+
+PCM_LLM::$keyed = array('noKey', 'good');
+check('a keyed provider earlier in the registry wins', $first() === 'nk-text', $first());
+
+PCM_LLM::$keyed = array();
+check('no keyed provider -> empty, so the notice fires', $first() === '', $first());
+
+PCM_LLM::$keyed = array('good');
+PCM_Providers::$registry['good']['knownModels'] = array();
+check('a keyed provider with no models is skipped', $first() === '', $first());
+
+echo "\n13. The model picker prefers the user's LIVE model rows\n";
+// The provider registry's knownModels is a hardcoded fallback and goes stale — it
+// still lists gemini-2.5-flash, which Google retired, and picking it produced a
+// 404 mid-request. The user's own pcm_models rows carry canGenerateText plus live
+// isEnabled/isAvailable flags, so they win.
+$mk = fn($id, $prov, $text = 1, $enabled = 1, $avail = 1) => (object) array(
+    'modelId' => $id, 'provider' => $prov,
+    'canGenerateText' => $text, 'isEnabled' => $enabled, 'isAvailable' => $avail,
+);
+
+PCM_Providers::$registry = array(
+    'google' => array('id' => 'google', 'knownModels' => array(
+        array('id' => 'stale-from-registry', 'type' => 'text'),
+    )),
+);
+PCM_LLM::$keyed = array('google');
+
+PCM_DB::$models = array($mk('live-text', 'google'));
+check('a live model row beats the registry', $first() === 'live-text', $first());
+
+PCM_DB::$models = array($mk('img-only', 'google', 0), $mk('live-text', 'google'));
+check('skips rows that cannot generate text', $first() === 'live-text', $first());
+
+PCM_DB::$models = array($mk('turned-off', 'google', 1, 0), $mk('live-text', 'google'));
+check('skips a disabled model', $first() === 'live-text', $first());
+
+// An unavailable row is exactly the kind that 404s — the reported failure.
+PCM_DB::$models = array($mk('retired', 'google', 1, 1, 0), $mk('live-text', 'google'));
+check('skips a model flagged unavailable', $first() === 'live-text', $first());
+
+PCM_DB::$models = array($mk('no-key-model', 'unkeyed'), $mk('live-text', 'google'));
+check('skips a row whose provider has no key', $first() === 'live-text', $first());
+
+// Only with nothing usable in the user's list does the static registry apply.
+PCM_DB::$models = array();
+check('falls back to the registry when no rows exist', $first() === 'stale-from-registry', $first());
+
+PCM_DB::$models = array($mk('live-text', 'google'));
+check('an unresolved caller (uid 0) skips the row lookup', $first(0) === 'stale-from-registry', $first(0));
+
+PCM_DB::$models = array();
+PCM_LLM::$keyed = array();
+check('nothing keyed at all -> empty', $first() === '', $first());
+
+// Leave the stubs clean for anything after this.
+PCM_DB::$models = array();
+
+echo "\n14. Enrichment walks the candidate list instead of dying on the first model\n";
+// The reported 400 ("Developer instruction is not enabled for
+// models/antigravity-preview-05-2026") came from the FIRST usable row. With more
+// rows available, one model's quirk must not cost the enrichment.
+PCM_Providers::$registry = array(
+    'google' => array('id' => 'google', 'knownModels' => array(
+        array('id' => 'registry-tail', 'type' => 'text'),
+    )),
+);
+PCM_LLM::$keyed = array('google');
+PCM_DB::$models = array($mk('antigravity-preview', 'google'), $mk('good-model', 'google'));
+
+PCM_Copy_Service::$script = array(
+    'antigravity-preview' => 'THROW:LLM API error 400: Developer instruction is not enabled',
+    'good-model'          => array('niche' => 'Film Production', 'location' => 'London, UK'),
+);
+PCM_Copy_Service::$calls = array();
+
+$r = $svc->scrape_and_prepare('https://example.test/', null, 1);
+check('failed model is retried with the next candidate',
+    PCM_Copy_Service::$calls === array('antigravity-preview', 'good-model'), PCM_Copy_Service::$calls);
+check('enrichment succeeds via the second model', ($r['enriched'] ?? null) === true, $r['enriched'] ?? null);
+check('niche filled by the surviving model', ($r['businessInfo']['niche'] ?? null) === 'Film Production');
+check('no notice when a candidate succeeded', !isset($r['enrichmentNotice']), $r['enrichmentNotice'] ?? null);
+check('DOM language still present', ($r['businessInfo']['language'] ?? null) === 'sv');
+
+echo "\n15. An explicitly passed model is tried FIRST, then the pool\n";
+PCM_Copy_Service::$script = array(
+    'explicit-choice' => array('niche' => 'Chosen'),
+);
+PCM_Copy_Service::$calls = array();
+$r = $svc->scrape_and_prepare('https://example.test/', 'explicit-choice', 1);
+check('explicit model consulted first and wins',
+    PCM_Copy_Service::$calls === array('explicit-choice'), PCM_Copy_Service::$calls);
+check('its answer is used', ($r['businessInfo']['niche'] ?? null) === 'Chosen');
+
+echo "\n16. Every candidate failing degrades with the LAST error, DOM intact\n";
+PCM_Copy_Service::$script = array();  // everything throws "unscripted"
+PCM_Copy_Service::$calls = array();
+$r = $svc->scrape_and_prepare('https://example.test/', null, 1);
+check('tried up to the 3-candidate cap', count(PCM_Copy_Service::$calls) === 3, PCM_Copy_Service::$calls);
+check('enriched false after exhausting the pool', ($r['enriched'] ?? null) === false);
+check('notice carries the last error',
+    str_contains((string) ($r['enrichmentNotice'] ?? ''), 'unscripted model'), $r['enrichmentNotice'] ?? null);
+check('DOM result survives total failure',
+    ($r['businessInfo']['business_name'] ?? null) === 'H' && ($r['businessInfo']['language'] ?? null) === 'sv');
+
+// Leave the stubs clean.
+PCM_DB::$models = array();
+PCM_Copy_Service::$script = array();
 
 // ── Cleanup ──
 foreach (glob($TMP . '/*') as $f) { @unlink($f); }

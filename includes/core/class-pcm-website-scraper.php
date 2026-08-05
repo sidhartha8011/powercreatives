@@ -93,6 +93,7 @@ class PCM_Website_Scraper
             'title'          => $text_data['title'],
             'description'    => $text_data['description'],
             'h1'             => $text_data['h1'],
+            'lang'           => $text_data['lang'],
             'images'         => $images,
             'colors'         => $colors,
             'url'            => $url,
@@ -108,7 +109,7 @@ class PCM_Website_Scraper
      *
      * @param \DOMDocument $dom   Parsed DOM.
      * @param \DOMXPath    $xpath XPath query engine.
-     * @return array { title, description, h1 }
+     * @return array { title, description, h1, lang }
      */
     private static function extract_text_data(\DOMDocument $dom, \DOMXPath $xpath): array
     {
@@ -133,10 +134,34 @@ class PCM_Website_Scraper
             $h1 = trim($h1_nodes->item(0)->textContent);
         }
 
+        // Page language — `<html lang>` first, then `<meta property="og:locale">`.
+        // This is the site's own declaration, so it is both free and more reliable
+        // than asking a model to guess from the copy. Reduced to the ISO 639-1
+        // primary subtag ("sv-SE" -> "sv") to match what the LLM path returns and
+        // what the brand's language field stores.
+        $lang = '';
+        $html_nodes = $dom->getElementsByTagName('html');
+        if ($html_nodes->length > 0) {
+            $lang = trim($html_nodes->item(0)->getAttribute('lang'));
+        }
+        if ($lang === '') {
+            $locale_nodes = $xpath->query('//meta[@property="og:locale"]');
+            if ($locale_nodes && $locale_nodes->length > 0) {
+                $lang = trim($locale_nodes->item(0)->getAttribute('content'));
+            }
+        }
+        if ($lang !== '') {
+            $lang = strtolower(substr(str_replace('_', '-', $lang), 0, 2));
+            if (!preg_match('/^[a-z]{2}$/', $lang)) {
+                $lang = '';
+            }
+        }
+
         return array(
             'title'       => $title,
             'description' => $description,
             'h1'          => $h1,
+            'lang'        => $lang,
         );
     }
 

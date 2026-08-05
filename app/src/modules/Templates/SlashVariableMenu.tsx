@@ -28,9 +28,10 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
+import type { TemplateVar } from './templateVars';
 
 /** Menu box, used for viewport clamping before the real height is known. */
-const MENU_WIDTH = 260;
+const MENU_WIDTH = 460;
 const MENU_MAX_HEIGHT = 200;
 const VIEWPORT_PAD = 8;
 
@@ -86,8 +87,8 @@ function tokenName(token: string): string {
 export interface SlashVariables {
   /** Whether the menu is currently showing. */
   open: boolean;
-  /** Tokens matching what has been typed after "/". */
-  matches: string[];
+  /** Variables matching what has been typed after "/". */
+  matches: TemplateVar[];
   /** Index of the highlighted match. */
   active: number;
   /** Wire to the textarea's onChange — updates the value AND the trigger state. */
@@ -104,8 +105,8 @@ export interface SlashVariables {
 }
 
 interface UseSlashVariablesArgs {
-  /** Tokens on offer (empty disables the feature entirely). */
-  vars: string[];
+  /** Variables on offer (empty disables the feature entirely). */
+  vars: TemplateVar[];
   /** Current textarea value. */
   value: string;
   /** Setter for the textarea value. */
@@ -128,7 +129,9 @@ export function useSlashVariables({
   const matches = useMemo(() => {
     if (query === null || vars.length === 0) return [];
     const q = query.toLowerCase();
-    return q === '' ? vars : vars.filter((v) => tokenName(v).includes(q));
+    // Match the token NAME only. Descriptions are prose and would make short
+    // queries match almost everything.
+    return q === '' ? vars : vars.filter((v) => tokenName(v.token).includes(q));
   }, [vars, query]);
 
   const open = query !== null && matches.length > 0;
@@ -202,7 +205,7 @@ export function useSlashVariables({
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        insert(matches[active] ?? matches[0]);
+        insert((matches[active] ?? matches[0]).token);
         return true;
       }
       if (e.key === 'Escape') {
@@ -301,9 +304,16 @@ export function SlashVariableMenu({ state }: { state: SlashVariables }) {
       <p className="border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
         ↑↓ to move · Enter to insert · Esc to dismiss
       </p>
-      <ul ref={listRef} className="max-h-40 overflow-y-auto py-0.5">
-        {state.matches.map((token, i) => (
-          <li key={token}>
+      {/* overflow-auto (not just -y): descriptions are a full sentence and are
+          kept on ONE line, so a long one is read by scrolling sideways rather
+          than by wrapping every row to three lines and burying the list.
+          w-max min-w-full on the inner track makes every row as wide as the
+          widest one, so the highlight is a clean full-width bar instead of a
+          ragged edge. */}
+      <div className="max-h-40 overflow-auto">
+        <ul ref={listRef} className="w-max min-w-full py-0.5">
+          {state.matches.map(({ token, description }, i) => (
+            <li key={token}>
             <button
               type="button"
               // Keep focus in the textarea: a blur would move the caret and the
@@ -311,18 +321,28 @@ export function SlashVariableMenu({ state }: { state: SlashVariables }) {
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => state.insert(token)}
               onMouseEnter={() => state.setActive(i)}
+              title={description}
               className={cn(
-                'block w-full px-2 py-1 text-left font-mono text-[11px] transition-colors',
+                'flex w-full items-baseline gap-2 whitespace-nowrap px-2 py-1 text-left transition-colors',
                 i === state.active
                   ? 'bg-accent text-accent-foreground'
                   : 'text-muted-foreground hover:bg-muted',
               )}
             >
-              {token}
+              <span className="font-mono text-[11px]">{token}</span>
+              <span
+                className={cn(
+                  'text-[10px]',
+                  i === state.active ? 'text-accent-foreground/80' : 'text-muted-foreground/70',
+                )}
+              >
+                {description}
+              </span>
             </button>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>,
     document.body,
   );

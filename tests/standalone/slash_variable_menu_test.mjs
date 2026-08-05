@@ -43,17 +43,23 @@ function trigger(text, caret) {
   return null;
 }
 
+// Variables are {token, description} objects — the menu shows the description
+// beside the token. Matching stays on the TOKEN only: descriptions are prose, so
+// a two-letter query would otherwise match nearly everything.
 const filter = (vars, query) => {
   const q = query.toLowerCase();
-  return q === '' ? vars : vars.filter((v) => tokenName(v).includes(q));
+  return q === '' ? vars : vars.filter((v) => tokenName(v.token).includes(q));
 };
 
 /** Replace the typed "/query" with the token. */
 const insert = (value, start, caret, token) =>
   value.slice(0, start) + token + value.slice(caret);
 
-const WRITER = ['{{ post_title }}', '{{ post_content }}', '{{ post_link }}', '{{ keyword }}', '{{ brand_context }}'];
-const SEO = ['{{title}}', '{{primary_keyword}}', '{{business.name}}', '{{business.website|hostname}}'];
+const v = (token) => ({ token, description: 'what it resolves to' });
+/** Comma-joined tokens of a match list, for terse assertions. */
+const toks = (list) => list.map((m) => m.token).join();
+const WRITER = ['{{ post_title }}', '{{ post_content }}', '{{ post_link }}', '{{ keyword }}', '{{ brand_context }}'].map(v);
+const SEO = ['{{title}}', '{{primary_keyword}}', '{{business.name}}', '{{business.website|hostname}}'].map(v);
 
 console.log('\n1. "/" opens the menu where a command would be expected');
 for (const [text, why] of [
@@ -87,10 +93,10 @@ console.log('\n4. Filtering matches the variable NAME, not its punctuation');
 check('empty query lists everything', filter(WRITER, '').length === WRITER.length);
 check('"post" narrows to the post_* tokens', filter(WRITER, 'post').length === 3, filter(WRITER, 'post'));
 check('braces/spaces are ignored when matching',
-  filter(WRITER, 'post_title').join() === '{{ post_title }}', filter(WRITER, 'post_title'));
+  toks(filter(WRITER, 'post_title')) === '{{ post_title }}', filter(WRITER, 'post_title'));
 check('case-insensitive', filter(SEO, 'BUSINESS').length === 2, filter(SEO, 'BUSINESS'));
-check('matches a dotted SEO name', filter(SEO, 'business.name').join() === '{{business.name}}');
-check('matches a piped SEO name', filter(SEO, 'hostname').join() === '{{business.website|hostname}}');
+check('matches a dotted SEO name', toks(filter(SEO, 'business.name')) === '{{business.name}}');
+check('matches a piped SEO name', toks(filter(SEO, 'hostname')) === '{{business.website|hostname}}');
 check('no match yields nothing (menu stays shut)', filter(WRITER, 'zzz').length === 0);
 
 console.log('\n5. Inserting replaces the typed "/query", not just appends');
@@ -121,6 +127,14 @@ check('start-or-whitespace trigger present', src.includes("(slash === 0 || /\\s/
 check('whitespace ends the query', src.includes("!/\\s/.test(typed)"), 'rule missing');
 check('insert splices at the slash index', src.includes('value.slice(0, start) + token + value.slice(caret)'), 'rule missing');
 check('tokenName strips braces', src.includes("token.replace(/[{}]/g, '')"), 'rule missing');
+// The transcription above filters {token, description} objects. When the vars
+// became objects the real code changed to v.token while this file still filtered
+// bare strings — it kept passing because it only ever tested itself. Pin the
+// actual expression so that drift fails here instead of going unnoticed.
+check('filters on v.token, matching the transcription',
+  src.includes('tokenName(v.token).includes(q)'), 'filter shape drifted');
+check('Enter inserts the token string, not the object',
+  src.includes('.token)') && src.includes('matches[active] ?? matches[0]'), 'insert shape drifted');
 // Escape must be swallowed, or dismissing the list would also cancel the edit
 // and discard the author's work.
 check('Escape is consumed by the menu', src.includes('e.stopPropagation()'), 'rule missing');
@@ -163,7 +177,13 @@ check('list has a ref to scroll', src.includes('listRef'), 'no list ref');
 check('active row is scrolled into view', src.includes("scrollIntoView({ block: 'nearest' })"), 'no scrollIntoView');
 check("uses 'nearest' so the page behind does not jump", !src.includes("block: 'center'") && !src.includes('scrollIntoView(true)'), 'wrong scroll mode');
 check('re-runs when the active index changes', src.includes('[open, state.active]'), 'not keyed on active');
-check('the list is the scroll container', src.includes('max-h-40 overflow-y-auto'), 'list not scrollable');
+// Height-capped and scrollable. The axis is deliberately BOTH now: descriptions
+// sit beside each token on one line, so a long one is read by scrolling sideways.
+// Assert the cap + auto-overflow rather than one exact class string.
+check('the list is height-capped and scrollable',
+  /max-h-40 overflow-(auto|y-auto)/.test(src), 'list not scrollable');
+check('horizontal scrolling is available for long descriptions',
+  src.includes('overflow-auto') && src.includes('whitespace-nowrap'), 'no sideways reading');
 check('vocabulary comes from the shared source',
   readFileSync(join(ROOT, 'app/src/modules/Templates/TemplateRow.tsx'), 'utf8').includes('templateVarsFor(template.module, subtype)'),
   'TemplateRow does not feed the shared list in');

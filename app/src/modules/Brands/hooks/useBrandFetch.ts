@@ -138,6 +138,14 @@ export function useBrandFetch({
       let filledCount = 0;
       const updated = { ...form };
 
+      // niche / location / phone can only come from a model. Without one the
+      // scrape still returns a name, summary, colours and images, so the form
+      // looks half-filled for no visible reason — say why instead.
+      const enrichmentNotice = (scraped as any)?.enrichmentNotice as string | undefined;
+      if (enrichmentNotice) {
+        toast.warning(enrichmentNotice, { duration: 8000 });
+      }
+
       // Map unified businessInfo fields to form fields using centralized utilities
       const mappedFields = mapScrapedToFormValues(info);
       const brandKeys = mapFormValuesToBrandKeys(mappedFields);

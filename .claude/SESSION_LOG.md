@@ -12056,3 +12056,242 @@ deliberately-excluded tokens absent ({{primary_kw}}, {{variable}}).
 chips label count 1 = Automations only, confirming the Templates strip stays removed.
 Earlier work intact: guard TRUE, logo object-cover TRUE, logo demotion TRUE, writable_owner_id x9,
 0 caller-scoped writes.
+
+## 2026-08-05 — "/" menu now explains each variable, with sideways reading
+Requested: show what each variable means beside it in the "/" list, and let a long one be read by
+scrolling horizontally.
+
+DATA — templateVars.ts's five lists became `Record<token, description>` maps, so `templateVarsFor()`
+now returns `{token, description}[]`. Descriptions are written FROM THE PHP, not invented: either the
+label the token carries in its default prompt ("Primary Keyword: {{primary_keyword}}", "Site name:
+{{site_name}}") or the expression it is assigned from. That mattered for the conditional ones — the
+*_bullet / *_note / *Instruction tokens resolve to a whole ready-made instruction sentence when their
+source data exists and to NOTHING when it does not, which the description now says outright. Per-module
+maps rather than one global lookup because {{count}}, {{brief}} and {{business.name}} genuinely mean
+different things in different modules.
+
+UI — each row is `{{token}}  description` on ONE line (whitespace-nowrap), inside a
+`max-h-40 overflow-auto` container: vertical scroll for the list, horizontal for a long description,
+which is what "scroll sideways to read it" asks for and avoids every row wrapping to three lines.
+`w-max min-w-full` on the <ul> makes every row as wide as the widest, so the highlight is a clean bar
+instead of a ragged edge. MENU_WIDTH 260 -> 460. Description also set as `title=` for a hover tooltip.
+Kept the <li> as a DIRECT child of the <ul>: my first attempt wrapped them in a <div>, which is invalid
+inside a list AND would have broken the arrow-key `children[active]` lookup. There is now a test for it.
+
+Filtering still matches the TOKEN only — descriptions are prose and a two-letter query would match
+nearly everything.
+
+VERIFIED
+- template_vars_test.php 39 -> 47 checks. New: every token has a real description (non-empty, >=12
+  chars, not just restating the token), description count == 97, and the menu renders it / stays on one
+  line / scrolls both ways / shares the widest row's width / has no wrapper between <ul> and <li>.
+  Its parser also had to change: the old `'([^']+)'` swept up descriptions as if they were tokens, so it
+  now matches only quoted strings followed by a colon (the map KEYS).
+- slash_variable_menu_test.mjs 41 -> 49. THE TRANSCRIPTION HAD SILENTLY DRIFTED: the real filter moved
+  to `v.token` while the test still filtered bare strings and kept passing, because it only ever tested
+  itself. Fixed, and added a source assertion pinning `tokenName(v.token).includes(q)` so the same drift
+  fails loudly next time. Negative control: reverting the filter to strings fails that check, exit 1.
+- Two more over-specific assertions repaired rather than worked around: `category === 'prompt'` (the
+  gate is now spelled `!==`) and `max-h-40 overflow-y-auto` (now `overflow-auto`). Both rewritten to
+  assert the RULE via regex instead of one spelling. Same brittleness class as the earlier
+  `import { TemplateVarChips }` failure.
+- tsc 59 = baseline, no errors in the Templates files. Build 16.09s.
+- Bundle: descriptions present, and the compiled row carries `title: description`, `whitespace-nowrap`,
+  `max-h-40 overflow-auto`, `w-max min-w-full`.
+- Full suite 10/10 PASS. Zip rebuilt (3.48 MB, 682 files).
+- NOT verified visually — the 460px menu and the horizontal scrollbar have not been seen in the app.
+
+## 2026-08-05 — Zip build 16:15 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.48 MB, 682 files. Folder had been emptied again.
+dist current (16:13:00).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+This task's work present: variable descriptions (writer/seo-conditional/copy/optimizer samples), rows
+kept on one line (whitespace-nowrap), `max-h-40 overflow-auto` for sideways reading, `w-max min-w-full`
+for the full-width highlight, and `title: description` as the hover tooltip.
+Earlier work intact: caretOffset x2, fixed positioning, scrollIntoView, useSlashVariables x3, chips
+label count 1 (Automations only), guard TRUE, logo object-cover TRUE, logo demotion TRUE,
+writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-05 — Fetch Brand: location / language / niche were never filled
+Reported: clicking Fetch Brand fills name and summary but not location, language or niche.
+
+ROOT CAUSE — those three have NO DOM source. `PCM_Website_Scraper::scrape()` returns only
+title/description/h1/images/colors/url, so name+summary+colours+images always worked. niche, location,
+phone and language came ONLY from the optional LLM enrichment in `scrape_and_prepare()`, which runs
+`if (!empty($model))`. The Brands wizard passes a model only when `settings.defaultTextModel` is set —
+and AppContext defaults it to **null**. With no default model configured the enrichment is skipped
+ENTIRELY and SILENTLY: the form comes back half-filled with no error, which reads as a broken fetch.
+(The Copy module's equivalent endpoint hard-errors in this case, copy/controller.php:683 — Brands just
+said nothing.)
+
+FIX — three parts, smallest first:
+1. LANGUAGE no longer needs a model at all. `extract_text_data()` now reads `<html lang>`, falling back
+   to `<meta property="og:locale">`, reduced to the ISO 639-1 primary subtag ("sv-SE"/"en_US" -> sv/en)
+   to match what the LLM path returns. This is the site's own declaration — free, and more reliable
+   than asking a model to guess from the copy. The LLM value still overrides it when there is one.
+2. A missing model now falls back to `PCM_Settings::get('defaultTextModel')` server-side. Only the
+   Brands wizard ever forwarded that setting; ContextPanel and the SEO business card call the same
+   endpoint and silently lost niche/location/phone.
+3. When enrichment genuinely cannot run, the response carries `enriched: false` +
+   `enrichmentNotice`, and useBrandFetch shows it as a warning toast naming the setting to change.
+   niche and location cannot be derived from HTML, so the honest fix for those is to say why.
+
+VERIFIED
+- NEW tests/standalone/brand_fetch_fields_test.php — 25/25. Drives the REAL private
+  `extract_text_data()` via Reflection over HTML snippets: sv / sv-SE / en_US / DE, og:locale fallback,
+  `<html lang>` winning over og:locale, and four junk cases resolving to '' rather than garbage. Then
+  pins the wiring: scrape() forwards 'lang', the service seeds it BEFORE the LLM override (ordering
+  asserted by string position, not by eye), the model fallback exists, the notice exists and the hook
+  shows it, and all three fields are still in the shared form-key map.
+- NEGATIVE CONTROL: disabling the `<html lang>` read fails all four language cases, exit 1; restored
+  -> 25/25.
+- php -l clean on both PHP files. tsc 59 = baseline, no errors in useBrandFetch. Build 17.91s.
+- Bundle carries enrichmentNotice. Full suite 11/11 PASS. Zip rebuilt (3.48 MB, 683 files).
+- NOT verified against a live site: no WordPress here, so the enrichment path itself (does the model
+  actually return niche/location for a given URL) is untested end to end.
+
+HONEST LIMIT: if the user has no text model configured, niche and location STILL will not fill — there
+is nowhere to get them from. What changes is that the UI now says so instead of looking broken.
+
+## 2026-08-06 — Zip build 02:40 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.48 MB, 683 files. dist current (02:35:15).
+NOTE: past midnight again, so the dated copy is now `power-creatives-2026-08-06.zip`; the 08-05 file
+still in that folder is STALE.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Fetch Brand fix present end to end — `<html lang>` read, og:locale fallback, scrape() forwards 'lang',
+the service seeds businessInfo.language, the defaultTextModel fallback, and enrichmentNotice in both
+the PHP and the bundle (x4).
+Earlier work intact: "/" descriptions, `max-h-40 overflow-auto` sideways reading, caretOffset x2,
+guard TRUE, logo demotion TRUE, writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-06 — Fetch Brand: killed the "configure a model" nag + the surprise logo popup
+Two reports, one pass.
+
+1. THE WARNING TOAST. My previous fix made the silent failure visible, but the right default was never
+   "go and configure something". `scrape_and_prepare()` now falls back, in order: the model the caller
+   passed -> Settings.defaultTextModel -> NEW `first_available_text_model()`, which walks
+   PCM_Providers::get_all() and returns the first `type: 'text'` entry from a provider that already has
+   an API key (PCM_LLM::has_api_key). Enrichment is read-only and cheap, so any working provider beats a
+   warning. The notice now only fires when NO provider is connected at all, and points at
+   Settings -> Providers rather than the default-model setting.
+
+2. THE POPUP THAT "APPEARED BY ITSELF". Not a popup — `handleFetch()` unconditionally ran
+   `setCurrentStep("logo")` after a fetch, so in EDIT mode the already-open Edit Brand dialog swapped
+   its body for the Select Logo step a few seconds later (the delay was just the scrape). That step
+   belongs to the CREATE wizard, where there is no logo yet. Edit mode now returns to the form; the
+   scraped images are still stored as reference assets by the fetch itself, and the logo is changeable
+   from the right-hand panel. Create mode still walks the wizard.
+
+VERIFIED
+- brand_asset_upload_test.php 52 -> 57: drives the REAL private first_available_text_model() via
+  Reflection against a stubbed provider registry — first text model of a keyed provider, skips
+  providers with no key, skips image/video-only providers, empty when nothing is connected, empty when
+  a keyed provider has no models.
+- NEGATIVE CONTROL: disabling the has_api_key() check fails 4 of those 5, exit 1; restored -> 57/57.
+- brand_fetch_fields_test.php 25 -> 30: asserts the provider fallback is wired, the notice wording no
+  longer names the default-model setting, the edit-mode guard exists with editBrand in the deps, and
+  create mode still reaches the logo step.
+- php -l clean. tsc 59 = baseline, no BrandDialog errors. Build 17.21s.
+- Read the compiled handleFetch out of the bundle: the `if (editBrand) { setCurrentStep("form"); return; }`
+  guard sits ahead of the logo branch.
+- Full suite 11/11 PASS. Zip rebuilt (3.48 MB, 683 files).
+- NOT verified live: whether the auto-picked model actually returns good niche/location for a given URL.
+
+SEPARATE OBSERVATION, not fixed: the logo picker in the screenshot offered KIA / Sony / Prime Video /
+Absolut logos — the scrape pulled every logo off a page that happens to show other brands. That is
+scrape QUALITY, not this bug; flagged rather than folded in.
+
+## 2026-08-06 — Zip build 02:56 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.48 MB, 683 files. Folder had been emptied again.
+dist current (02:54:48).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+This task's two fixes present: first_available_text_model() provider fallback, notice pointing at
+Settings -> Providers (and no longer at the default-model setting), the `if (editBrand)` guard sitting
+ahead of the logo branch in the compiled handleFetch, and the create wizard's logo step still intact.
+Carried forward: <html lang> language extraction, "/" descriptions, sideways reading, submit guard,
+logo demotion, writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-06 — Fetch Brand died on a retired model; now degrades and picks a live one
+Reported via screenshot: "LLM enrichment failed: LLM API error 404: models/gemini-2.5-flash is no
+longer available to new users."
+
+TWO DEFECTS, the second worse than the first.
+
+1. THE MODEL PICKER WAS READING A STALE HARDCODED LIST. Yesterday's fallback walked
+   PCM_Providers::get_all()'s `knownModels`, which the registry itself documents as a "fallback if API
+   parse fails" — and it still advertises `gemini-2.5-flash`, which Google has retired for new projects.
+   Rewrote first_available_text_model() to read the user's OWN `pcm_models` rows first
+   (PCM_DB::get_user_models): they carry `canGenerateText` plus live `isEnabled` / `isAvailable`, which
+   is exactly the signal that would have excluded the retired model. knownModels is now only reached
+   when the user has no rows at all. Threaded the PCM user id from the controller to make that lookup
+   possible (scrape_and_prepare gained a third param, defaulted to 0 so other callers are unaffected).
+
+2. A FAILED ENRICHMENT DISCARDED THE ENTIRE SCRAPE. The catch rethrew as a RuntimeException, so a bad
+   model id turned "Fetch Brand" into a hard failure and threw away the DOM half that had ALREADY
+   succeeded — name, summary, language, colours, images. It now degrades: keep the DOM result, set
+   `enriched: false`, and put the provider's own message in `enrichmentNotice`. The page fetch itself
+   still throws, because that one genuinely is fatal.
+
+VERIFIED
+- brand_asset_upload_test.php 57 -> 65: drives the real private picker against stubbed model rows —
+  a live row beats the registry, non-text rows skipped, disabled skipped, UNAVAILABLE skipped (the
+  reported failure mode), rows whose provider has no key skipped, registry only as the last resort,
+  and uid 0 documented as skipping the row lookup.
+- brand_fetch_fields_test.php 30 -> 37: enrichment failure is caught not rethrown, the DOM result is
+  kept, the page-fetch path still throws, and the live-row resolution + user-id threading are wired.
+- NEGATIVE CONTROL: restoring the rethrow fails "caught, not rethrown", exit 1; restored -> 37/37.
+- One assertion I had to loosen: it pinned `first_available_text_model()` with empty parens, which
+  broke the moment the method took an argument. Same over-specific-string class as the earlier
+  `import { TemplateVarChips }` and `overflow-y-auto` failures — matched on the call, not its arity.
+- php -l clean on both files. tsc 59 = baseline. Build 21.95s. Full suite 11/11 PASS.
+- Zip rebuilt (3.48 MB, 683 files); all five behaviours verified INSIDE the archive.
+- NOT verified live: which model the picker lands on for this user, and whether it returns good
+  niche/location for a given URL.
+
+## 2026-08-06 — Zip build 03:11 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.48 MB, 683 files. dist current (03:07:57).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+This task's fixes present — live `pcm_models` rows consulted with canGenerateText/isEnabled/isAvailable,
+the PCM user id threaded into scrape_and_prepare, the enrichment rethrow gone, and the degraded notice.
+Carried forward: edit-mode fetch guard, `<html lang>` language, "/" descriptions + sideways scroll,
+submit guard, logo demotion, writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-06 — Enrichment now retries the next model instead of stopping at the first failure
+Reported: "Fetched the page, but niche, location and phone could not be detected: LLM API error 400:
+Developer instruction is not enabled for models/antigravity-preview-05-2026".
+
+The degrade shipped previously WORKED (the fetch survived, DOM data kept) — but the picker's first
+usable row was a preview model that rejects system instructions, and one model's quirk ended the whole
+enrichment. Model rows accumulate retired ids (404) and preview ids with per-model quirks (this 400),
+so any single pick can lose.
+
+FIX — scrape_and_prepare() now builds a CANDIDATE LIST: the explicitly-passed/configured model first
+(a deliberate choice is still honoured), then `usable_text_models()` — the pluralised picker, same
+sources and filters as before (live pcm_models rows with canGenerateText/isEnabled/isAvailable, then
+the registry tail), deduped, capped at 3. Enrichment walks the list; the first model that answers wins.
+Only when EVERY candidate fails does it degrade, with the LAST error in the notice.
+first_available_text_model() now delegates to usable_text_models()[0], so all existing callers and
+tests kept their exact behaviour — 102 pre-existing checks passed untouched after the refactor.
+
+VERIFIED
+- brand_asset_upload_test.php 65 -> 76. New sections drive the REAL scrape_and_prepare() end to end
+  with a scriptable PCM_Copy_Service stub: section 14 reproduces the reported antigravity 400 on the
+  first candidate and asserts the SECOND model fills niche (calls = [antigravity-preview, good-model],
+  no notice); section 15 asserts an explicit model is consulted first; section 16 exhausts all three
+  candidates and asserts enriched=false, the notice carries the LAST error, and the DOM half survives.
+- NEGATIVE CONTROL: adding `break` after the first failure fails 4 checks of section 14 — reproducing
+  the user's report exactly (notice = the antigravity 400) — exit 1; restored -> 76/76.
+- php -l clean. Full suite 11/11 PASS. No frontend change (dist untouched).
+- Zip rebuilt (3.49 MB, 683 files); candidate walk, cap, and per-model logging verified inside the
+  archive.
+- NOT verified live: whether the user's SECOND model actually succeeds. If every row in their list is
+  broken the notice still appears — but now it means all three candidates failed, not one.
+
+## 2026-08-06 — Zip build 03:20 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.49 MB, 683 files. Folder had been emptied again.
+dist unchanged at 03:07:57 and still current — the model-retry fix was PHP-only.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Model-retry fix present: candidate walk, usable_text_models x3, 3-candidate cap, per-model failure
+logging, degraded notice, live pcm_models rows with capability/live flags, user id threaded.
+Carried forward: edit-mode fetch guard, submit guard, logo demotion, writable_owner_id x9,
+0 caller-scoped writes.

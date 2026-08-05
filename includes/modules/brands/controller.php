@@ -652,7 +652,8 @@ class PCM_REST_Brands extends PCM_REST_Base
         $model = sanitize_text_field($request->get_param('model') ?? '');
 
         try {
-            $result = $this->service->scrape_and_prepare($url, $model ?: null);
+            $user = $this->get_current_pcm_user();
+            $result = $this->service->scrape_and_prepare($url, $model ?: null, (int) $user->id);
             return $this->success($result);
         } catch (\RuntimeException $e) {
             return $this->error($e->getMessage());
