@@ -473,7 +473,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       {/* Hero Header */}
       <section className="pcm-hero max-w-[1280px] w-full mx-auto px-7 pt-12 pb-5 select-none">
         <div className="pcm-hero-eyebrow">
-          {campaignName} · Granskning
+          {/* English-only law. This was "Granskning" and it survived TWO passes:
+              the 2026-08-04 cleanup that converted 17 Swedish strings, and my own
+              fact-check that reported zero Swedish left — because both searched
+              for å/ä/ö and this word has none. It was found by rendering the page
+              in a browser and reading what it actually said. */}
+          {campaignName} · Review
         </div>
         <h1 className="pcm-hero-title">
           {totalCount} asset{totalCount !== 1 ? "s" : ""} <em>for your sign-off.</em>
