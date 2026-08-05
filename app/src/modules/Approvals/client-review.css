@@ -93,7 +93,21 @@
  * All component classes reference these tokens — never hardcode colors.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-.pcm-client-review {
+/* ONE definition of the review palette, listed against every surface that needs
+   it. It was declared here and then RE-DECLARED twice more — on the comment
+   inspector and the state wrapper — each time because that surface sits outside
+   `.pcm-client-review`. The admin card modal would have been a fourth copy.
+   Three copies of a palette is three chances for them to drift.
+
+   `.pcm-notion-modal` is on this list because the modal renders inside
+   `#pcm-root`, NOT inside `.pcm-client-review` — so without it every token
+   resolved to nothing and `.pcm-btn-approve` (background: var(--ink); color:
+   white) rendered white-on-nothing. The Approve button was there the whole
+   time, and invisible. */
+.pcm-client-review,
+.pcm-inspector-backdrop,
+#pcm-root .pcm-state-wrapper,
+.pcm-notion-modal {
   /* ── Ink scale (warm dark tones) ── */
   --ink:   #1d1d1f;
   --ink-2: #4a4239;
@@ -1013,12 +1027,8 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Inherit the ink palette from .pcm-client-review */
-  --ink: #1d1d1f;
-  --ink-2: #4a4239;
-  --ink-3: #6f6a64;
-  --ink-4: #8a7d6d;
-  --line: rgba(0,0,0,0.06);
+  /* Palette comes from the ONE declaration at the top of this file, which now
+     lists this selector. It used to re-declare the tokens here. */
 }
 
 /* Drawer panel */
@@ -1309,12 +1319,8 @@
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Tokens (needed since state wrappers don't have .pcm-client-review parent) */
-  --ink: #1d1d1f;
-  --ink-2: #4a4239;
-  --ink-3: #6f6a64;
-  --ink-4: #8a7d6d;
-  --line: rgba(0,0,0,0.06);
+  /* Palette comes from the ONE declaration at the top of this file, which now
+     lists this selector. It used to re-declare the tokens here. */
 }
 
 /* Centered content area */

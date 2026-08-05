@@ -35,7 +35,7 @@ interface PcmConfigLike {
  *
  * Mirrors PCM_Approvals_Service::build_share_url() on the server.
  */
-export function buildPublicBoardUrl(token: string): string {
+export function buildPublicBoardUrl(token: string, assetId?: string | null): string {
   const cfg = (window as unknown as { pcmConfig?: PcmConfigLike }).pcmConfig;
   const explicit = cfg?.shortcodePageUrl;
   // Documented dev fallback — not a silent band-aid.
@@ -44,7 +44,16 @@ export function buildPublicBoardUrl(token: string): string {
       ? explicit
       : `${window.location.origin}/`;
   const separator = baseUrl.includes('?') ? '&' : '?';
-  return `${baseUrl}${separator}pcm_public_token=${token}`;
+  const url = `${baseUrl}${separator}pcm_public_token=${token}`;
+  /**
+   * Optional deep link to ONE asset within the set.
+   *
+   * A DEEP LINK, not an access grant: the recipient still opens the whole set
+   * under the same token and can see everything in it. Scoping access to a
+   * single asset would need a per-asset token and its own storage — a different
+   * feature, and not what "share this item" means here.
+   */
+  return assetId ? `${url}&pcm_asset=${encodeURIComponent(assetId)}` : url;
 }
 
 /** Minimum shape the board needs from a created set row. */

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Check, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -350,6 +350,26 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     const found = allMergedAssets.find((a) => a.id === activeAssetIdForComment);
     return found ? found : null;
   }, [activeAssetIdForComment, allMergedAssets]);
+
+  /**
+   * Honour `&pcm_asset=<id>` — the per-asset share link.
+   *
+   * Runs once the assets exist, because the element cannot be scrolled to before
+   * it is rendered. Guarded on a ref so it fires ONCE: without that, every
+   * re-render (an approval, a comment) would yank the page back to the linked
+   * asset while the client was reading something else.
+   */
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (deepLinkDone.current || allMergedAssets.length === 0) return;
+    const wanted = new URLSearchParams(window.location.search).get('pcm_asset');
+    if (!wanted) { deepLinkDone.current = true; return; }
+    const el = document.querySelector(`[data-asset-id="${CSS.escape(wanted)}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      deepLinkDone.current = true;
+    }
+  }, [allMergedAssets.length]);
 
   const filteredAssets = useMemo(() => {
     if (activeFilter === 'all') return allMergedAssets;
