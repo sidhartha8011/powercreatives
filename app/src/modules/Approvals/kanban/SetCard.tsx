@@ -229,11 +229,11 @@ export function SetCard({
       {expanded && items.length > 0 && (
         <ul className={styles.items}>
           {items.map((item) => {
+            // The type LABEL is what distinguishes items; a per-type glyph beside
+            // it was noise, and the generic document icon read as an artefact.
             const def = assetType(item.type);
-            const Icon = def.icon;
             return (
               <li key={item.id} className={styles.item}>
-                <Icon className={styles.itemIcon} aria-hidden="true" />
                 <span className={styles.itemLabel}>{def.label}</span>
                 {item.title ? (
                   <span className={styles.itemTitle}>{item.title}</span>

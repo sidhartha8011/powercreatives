@@ -199,32 +199,50 @@
  * eye can skip — and only firms up on hover. The chevron rotates rather than
  * swapping glyphs so the control never changes shape.
  */
+/* Hidden until you look at the card. A card at rest is just its name — the
+   count was never asked for and had no business sitting there permanently.
+   It stays visible while expanded, so it does not vanish out from under the
+   cursor that opened it. */
 .disclosure {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   flex: 0 0 auto;
-  margin-left: 6px;
-  padding: 1px 5px 1px 2px;
+  margin-left: 5px;
+  padding: 0 2px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--pck-radius-sm);
   background: transparent;
   color: var(--pck-text-faint);
   cursor: pointer;
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 10px;
+  line-height: 1.3;
   font-variant-numeric: tabular-nums;
-  transition: color var(--pck-transition-fast), background var(--pck-transition-fast);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--pck-transition-fast), color var(--pck-transition-fast);
+}
+
+.card:hover .disclosure,
+.card:focus-within .disclosure,
+.card[data-expanded] .disclosure {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .disclosure:hover {
   color: var(--pck-text-muted);
-  background: var(--pck-bg-chip);
+}
+
+/* Hidden in select-mode, like the action chips — selection takes precedence. */
+.card[data-select-mode] .disclosure {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .disclosureIcon {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   transition: transform var(--pck-transition-fast);
 }
 
@@ -260,13 +278,6 @@
   color: var(--pck-text-muted);
   font-size: 12px;
   line-height: 1.4;
-}
-
-.itemIcon {
-  width: 12px;
-  height: 12px;
-  flex: 0 0 auto;
-  opacity: 0.65;
 }
 
 .itemLabel {
