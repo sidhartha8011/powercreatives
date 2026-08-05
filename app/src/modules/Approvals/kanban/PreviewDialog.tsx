@@ -38,7 +38,7 @@ export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
             sr-only form because Radix UI's Dialog requires both for
             accessibility (screen-reader announcement + WCAG compliance). */}
         <DialogTitle className="sr-only">
-          {set.snapshot.brandName ? `${set.snapshot.brandName} / ` : ''}
+          {set.snapshot?.brandName ? `${set.snapshot.brandName} / ` : ''}
           {set.name}
         </DialogTitle>
         <DialogDescription className="sr-only">

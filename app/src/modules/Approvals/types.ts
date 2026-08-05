@@ -123,7 +123,21 @@ export interface ApprovalSet {
   name: string;
   token: string;
   status: ApprovalStatus;
-  snapshot: {
+  /**
+   * How many items the card holds, and a light summary of them.
+   *
+   * Present on BOARD rows (the list query computes them in SQL) and absent on a
+   * single fetched set, which carries the full `snapshot` instead. This is what
+   * lets a card show its contents and expand WITHOUT a per-card request.
+   */
+  itemCount?: number;
+  items?: Array<{ id: string; type: string; title: string }>;
+  /**
+   * OPTIONAL on purpose. The board's list query omits `snapshot` — it is
+   * longtext and can carry embedded base64 images — so a board row genuinely
+   * does not have it. Only a single fetched set does.
+   */
+  snapshot?: {
     brandName?: string;
     brandLogoUrl?: string;
     projectName?: string;

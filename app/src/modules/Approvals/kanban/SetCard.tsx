@@ -111,7 +111,10 @@ export function SetCard({
     [stop, onRequestDelete, set]
   );
 
-  const brand = (brandName ?? set.snapshot.brandName)?.trim();
+  // Board rows carry NO snapshot — the list query omits it (approvals/service.php)
+  // and no longer ships a misleading empty one, so the old
+  // `?? set.snapshot.brandName` fallback was dead here and would now throw.
+  const brand = brandName?.trim();
 
   return (
     <article

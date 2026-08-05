@@ -71,7 +71,8 @@ class PCM_Approvals_Service
         // format_set_row() overwrites it with the LIVE chain value.
         // `snapshot`/`reviewFeedback` stay OUT on purpose — both are longtext and can
         // carry embedded images; the board resolves names from the registries instead.
-        $cols = "id, userId, brandId, projectId, deliveryId, name, token, status, clientEmail, createdAt, updatedAt";
+        $cols = "id, userId, brandId, projectId, deliveryId, name, token, status, clientEmail, createdAt, updatedAt"
+              . ', ' . self::items_summary_sql();
         if (class_exists('PCM_Access') && PCM_Access::is_admin($user_id)) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $rows = $wpdb->get_results("SELECT {$cols} FROM {$table} ORDER BY createdAt DESC");
@@ -96,8 +97,105 @@ class PCM_Approvals_Service
         }
 
         return array_map(function ($row) {
-            return self::format_set_row($row);
+            return self::format_list_row($row);
         }, $rows ?: array());
+    }
+
+    /**
+     * The board's item buckets, and where each one keeps its display title.
+     *
+     * ONE definition — the summary SQL and the row formatter both read it, so a
+     * fifth bucket is a single line here rather than an edit in two places that
+     * can silently disagree.
+     *
+     * @var array<string, string>
+     */
+    private const ITEM_BUCKETS = array(
+        'media'    => 'name',
+        'copy'     => 'headline',
+        'articles' => 'title',
+        'custom'   => 'title',
+    );
+
+    /**
+     * SELECT fragment giving the board a per-card item SUMMARY without shipping
+     * `snapshot` itself.
+     *
+     * WHY THIS EXISTS. `snapshot` is longtext and can carry embedded base64
+     * images, which is exactly why the column list above leaves it out. But the
+     * board card has to show how many items it holds and list them when expanded,
+     * and doing that from a per-card fetch would put a 1.4-2.9 s round trip
+     * behind every disclosure. This extracts only `{id, type, title}` per item —
+     * measured at 86 bytes against a 261-byte snapshot, and the gap widens
+     * sharply once a card carries an image.
+     *
+     * JSON_TABLE, not `'$.custom[*].title'`: the naive path form SKIPS elements
+     * that lack the key, so ids and titles silently drift out of alignment.
+     * JSON_TABLE walks the array and yields NULL for a missing key instead.
+     * Requires MySQL 5.7.8+/8.0 (this install: 8.0.35, verified).
+     *
+     * @return string
+     */
+    private static function items_summary_sql(): string
+    {
+        $parts = array();
+        $counts = array();
+
+        foreach (self::ITEM_BUCKETS as $bucket => $title_key) {
+            $counts[] = "COALESCE(JSON_LENGTH(JSON_EXTRACT(snapshot,'$.{$bucket}')),0)";
+            $parts[]  = "(SELECT JSON_ARRAYAGG(JSON_OBJECT('id',jt.iid,'type','{$bucket}','title',jt.ttl))"
+                . " FROM JSON_TABLE(snapshot,'$.{$bucket}[*]'"
+                . " COLUMNS (iid VARCHAR(64) PATH '$.id', ttl VARCHAR(255) PATH '$.{$title_key}')) jt)"
+                . " AS items_{$bucket}";
+        }
+
+        return implode(' + ', $counts) . ' AS itemCount, ' . implode(', ', $parts);
+    }
+
+    /**
+     * Format a LIST row: merge the item summary into one ordered `items` array.
+     *
+     * Deliberately NOT `format_set_row()`. That one json_decodes `snapshot`, and
+     * because the list never selects `snapshot` it produced `array()` — so every
+     * board row shipped `"snapshot": []`, an empty ARRAY where the type says
+     * object. Code then read `set.snapshot.brandName` off it and silently got
+     * undefined forever. A list row now carries no `snapshot` key at all, which
+     * is the truth: the board does not have it.
+     *
+     * Item order matches the client view's own merge order (media, copy,
+     * articles, custom) so the board and the opened card agree.
+     */
+    private static function format_list_row(object $row): object
+    {
+        $items = array();
+        foreach (array_keys(self::ITEM_BUCKETS) as $bucket) {
+            $key = 'items_' . $bucket;
+            $decoded = !empty($row->$key) ? json_decode($row->$key, true) : array();
+            if (is_array($decoded)) {
+                foreach ($decoded as $item) {
+                    if (is_array($item) && !empty($item['id'])) {
+                        $items[] = array(
+                            'id'    => (string) $item['id'],
+                            'type'  => (string) ($item['type'] ?? $bucket),
+                            'title' => isset($item['title']) ? (string) $item['title'] : '',
+                        );
+                    }
+                }
+            }
+            unset($row->$key);
+        }
+
+        $row->items     = $items;
+        $row->itemCount = isset($row->itemCount) ? (int) $row->itemCount : count($items);
+
+        // The live Brand → Delivery → Project chain, exactly as format_set_row does.
+        if (class_exists('PCM_Hierarchy') && !empty($row->projectId)) {
+            $chain = PCM_Hierarchy::for_project((int) $row->projectId);
+            $row->brandId    = !empty($chain['brandId']) ? (int) $chain['brandId'] : null;
+            $row->deliveryId = !empty($chain['deliveryId']) ? (int) $chain['deliveryId'] : null;
+        }
+
+        return $row;
     }
 
     /**

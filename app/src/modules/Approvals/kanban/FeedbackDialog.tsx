@@ -53,7 +53,7 @@ export function FeedbackDialog({ set, onClose }: FeedbackDialogProps) {
         <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1 min-h-0">
           <FeedbackSection
             label="Media Asset Approvals & Comments"
-            items={set.snapshot.media ?? []}
+            items={set.snapshot?.media ?? []}
             approvedIds={approvedVisual}
             comments={comments}
             renderPreview={(m) => (
@@ -75,7 +75,7 @@ export function FeedbackDialog({ set, onClose }: FeedbackDialogProps) {
 
           <FeedbackSection
             label="Ad Copy Approvals & Comments"
-            items={set.snapshot.copy ?? []}
+            items={set.snapshot?.copy ?? []}
             approvedIds={approvedCopy}
             comments={comments}
             renderPreview={() => null}
