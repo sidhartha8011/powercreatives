@@ -42,6 +42,12 @@ export interface ApprovalSetContentsProps {
   onOpenComments: (id: string) => void;
   /** Shown when the active filter matches nothing. */
   emptyLabel?: string;
+  /**
+   * The set's share token. Passed down because the asset-update route is
+   * token-scoped and no card may read it from the URL — that only ever worked
+   * on the public page.
+   */
+  publicToken?: string;
 }
 
 export function ApprovalSetContents({
@@ -64,6 +70,7 @@ export function ApprovalSetContents({
   onAssetUpdate,
   onOpenComments,
   emptyLabel = 'No assets found in this category.',
+  publicToken,
 }: ApprovalSetContentsProps) {
   if (assets.length === 0) {
     return (
@@ -119,6 +126,7 @@ export function ApprovalSetContents({
             pairedMediaUrl={pairedMediaUrl}
             isSubmitted={isSubmitted}
             isTeamMember={isTeamMember}
+            publicToken={publicToken}
             onAssetUpdate={onAssetUpdate}
             onOpenComments={onOpenComments}
             copyIndex={copyIndex}

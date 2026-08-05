@@ -111,10 +111,10 @@ class PCM_Approvals_Service
      * @var array<string, string>
      */
     private const ITEM_BUCKETS = array(
-        'media'    => 'name',
-        'copy'     => 'headline',
-        'articles' => 'title',
-        'custom'   => 'title',
+        'media'    => array('title' => 'name',     'approvalKey' => 'approvedVisualIds'),
+        'copy'     => array('title' => 'headline', 'approvalKey' => 'approvedCopyIds'),
+        'articles' => array('title' => 'title',    'approvalKey' => 'approvedArticleIds'),
+        'custom'   => array('title' => 'title',    'approvalKey' => 'approvedCustomIds'),
     );
 
     /**
@@ -136,12 +136,33 @@ class PCM_Approvals_Service
      *
      * @return string
      */
+    /**
+     * bucket => approval-id-list, derived from the ONE bucket definition.
+     *
+     * This mapping was previously written out twice — in `bucket_for_asset()`
+     * and again in `is_fully_approved()` — so "which approval list belongs to
+     * which bucket" was asserted in two places and could drift apart without
+     * anything failing loudly. Approvals landing in the wrong list is not a
+     * cosmetic bug, so it gets one owner.
+     *
+     * @return array<string, string>
+     */
+    private static function approval_key_map(): array
+    {
+        $map = array();
+        foreach (self::ITEM_BUCKETS as $bucket => $meta) {
+            $map[$bucket] = $meta['approvalKey'];
+        }
+        return $map;
+    }
+
     private static function items_summary_sql(): string
     {
         $parts = array();
         $counts = array();
 
-        foreach (self::ITEM_BUCKETS as $bucket => $title_key) {
+        foreach (self::ITEM_BUCKETS as $bucket => $meta) {
+            $title_key = $meta['title'];
             $counts[] = "COALESCE(JSON_LENGTH(JSON_EXTRACT(snapshot,'$.{$bucket}')),0)";
             $parts[]  = "(SELECT JSON_ARRAYAGG(JSON_OBJECT('id',jt.iid,'type','{$bucket}','title',jt.ttl))"
                 . " FROM JSON_TABLE(snapshot,'$.{$bucket}[*]'"
@@ -1259,13 +1280,10 @@ class PCM_Approvals_Service
      */
     private static function bucket_for_asset(array $snapshot, string $asset_id): ?string
     {
-        $map = array(
-            'media'    => 'approvedVisualIds',
-            'copy'     => 'approvedCopyIds',
-            'articles' => 'approvedArticleIds',
-            'custom'   => 'approvedCustomIds',
-        );
-        foreach ($map as $key => $bucket) {
+        // ONE definition — see ITEM_BUCKETS. This map used to be written out here
+        // AND again in is_fully_approved(), so which approval list belonged to
+        // which bucket was asserted twice and could drift apart silently.
+        foreach (self::approval_key_map() as $key => $bucket) {
             if (!empty($snapshot[$key]) && is_array($snapshot[$key])) {
                 foreach ($snapshot[$key] as $item) {
                     if (isset($item['id']) && (string) $item['id'] === $asset_id) {
@@ -1286,12 +1304,7 @@ class PCM_Approvals_Service
      */
     private static function is_fully_approved(array $snapshot, array $feedback): bool
     {
-        $checks = array(
-            'media'    => 'approvedVisualIds',
-            'copy'     => 'approvedCopyIds',
-            'articles' => 'approvedArticleIds',
-            'custom'   => 'approvedCustomIds',
-        );
+        $checks = self::approval_key_map();
 
         $total = 0;
         foreach ($checks as $key => $bucket) {

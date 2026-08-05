@@ -67,6 +67,14 @@ interface CreativeAssetCardProps {
   pairedMediaUrl?: string | null;
   isSubmitted?: boolean;
   isTeamMember?: boolean;
+  /**
+   * The set's share token, supplied by the host.
+   *
+   * The asset-update route is token-scoped. Reading the token from the URL only
+   * worked on the public client page; in wp-admin the parameter does not exist,
+   * so admin edits sent an empty token and failed.
+   */
+  publicToken?: string;
   onAssetUpdate?: () => void;
   onOpenComments: (id: string) => void;
   /** Zero-based index for copy card numbering ("Copy 1", "Copy 2", etc.) */
@@ -87,6 +95,7 @@ export function CreativeAssetCard({
   pairedMediaUrl,
   isSubmitted = false,
   isTeamMember = false,
+  publicToken,
   onAssetUpdate,
   onOpenComments,
   copyIndex
@@ -276,8 +285,18 @@ export function CreativeAssetCard({
     }
 
     setIsSavingEdits(true);
-    // Retrieve token from query string
-    const token = new URLSearchParams(window.location.search).get('pcm_public_token') || '';
+
+    // The HOST supplies the token. This used to read it from
+    // window.location.search, which exists on the public client page and NOT in
+    // wp-admin — so an edit made from the admin card sent an empty token and the
+    // save failed silently. A component that reaches for the URL only works on
+    // the one surface it was written for.
+    if (!publicToken) {
+      setIsSavingEdits(false);
+      toast.error('Cannot save — this card has no share token.');
+      return;
+    }
+    const token = publicToken;
 
     updateMutation.mutate(
       {
@@ -302,7 +321,7 @@ export function CreativeAssetCard({
         }
       }
     );
-  }, [editedHeadline, editedBody, editedDescription, asset.headline, asset.body, asset.description, asset.id, onAssetUpdate, updateMutation]);
+  }, [editedHeadline, editedBody, editedDescription, asset.headline, asset.body, asset.description, asset.id, onAssetUpdate, updateMutation, publicToken]);
 
   // Handle click outside container card to trigger autosave
   useEffect(() => {

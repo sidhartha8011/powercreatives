@@ -210,6 +210,7 @@ export function ApprovalSetModal({ row, set, onClose, onChanged, focusAssetId }:
                 onApprove={handleToggleApprove}
                 onAssetUpdate={onChanged}
                 onOpenComments={setActiveAssetId}
+                publicToken={row.token}
                 emptyLabel="This card has no assets yet."
               />
             )}

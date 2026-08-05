@@ -518,6 +518,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           onApprove={handleToggleApprove}
           onAssetUpdate={handleAssetUpdate}
           onOpenComments={(id) => setActiveAssetIdForComment(id)}
+          publicToken={token}
         />
       </main>
 
