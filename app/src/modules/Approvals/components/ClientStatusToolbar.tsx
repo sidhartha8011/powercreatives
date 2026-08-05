@@ -43,11 +43,20 @@ export function ClientStatusToolbar({
    *
    * This was a hardcoded 4-day literal presented to the client as a real
    * deadline nobody had agreed to — a business rule living in a component.
-   * It now reads a hub-supplied value and only renders a deadline when one is
-   * actually configured: no setting, no invented promise.
+   * It reads a hub-supplied value (`approvals_review_window_days`, emitted by
+   * BOTH PCM_Admin::get_js_config() and PCM_Shortcode) and only renders a
+   * deadline when one is actually configured: no setting, no invented promise.
+   *
+   * Typed `string | number` because that is what actually arrives:
+   * `wp_localize_script` stringifies every TOP-LEVEL scalar, so the PHP
+   * `(int)` cast lands here as `"0"`. Verified by reading window.pcmConfig off
+   * the live page. The `Number()` wrapper is therefore load-bearing, not
+   * defensive — do not remove it, and do not "correct" the type back to number.
+   * (Nested values like `user` survive as real types; only top-level scalars
+   * are stringified.)
    */
   const reviewWindowDays = Number(
-    (window as unknown as { pcmConfig?: { approvalsReviewWindowDays?: number } })
+    (window as unknown as { pcmConfig?: { approvalsReviewWindowDays?: string | number } })
       .pcmConfig?.approvalsReviewWindowDays ?? 0
   );
   const REVIEW_PERIOD_MS = reviewWindowDays * 24 * 60 * 60 * 1000;
