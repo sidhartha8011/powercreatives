@@ -9,7 +9,7 @@ import { TiptapBodyEditor } from '@/components/shared/TiptapBodyEditor';
 import { escapeAstral } from '@/lib/escapeAstral';
 import { useAutoResizeTextarea } from '@/hooks/useAutoResizeTextarea';
 import { trpc } from '@/lib/trpc';
-import { CardDocumentView, type CardDocumentProperty } from './CardDocumentView';
+import { CardDocumentView, type CardDocumentProperty, type CardDocumentDraft } from './CardDocumentView';
 
 export interface CreativeAsset {
   id: string;
@@ -309,26 +309,30 @@ export function CreativeAssetCard({
   }, [isTeamMember, isEditingText]);
 
   /**
-   * Persist the opened document — body and draw layer, in one request.
+   * Persist the opened document — title, body and draw layer, in one request.
    *
    * Same token-scoped route as the inline copy edits: `update_snapshot_asset`
-   * already accepted `content` for the `articles` and `custom` buckets, so no
+   * already accepted all three for the `articles` and `custom` buckets, so no
    * new endpoint. Ticking a checkbox is an edit of `content` like any other —
-   * Tiptap writes the state onto `data-checked` on the `<li>`, which
-   * `wp_kses_post` keeps.
+   * Tiptap writes the state onto `data-checked` on the `<li>`.
+   *
+   * Returns the promise. The card's autosave awaits it, so "Saved" means the
+   * server answered and closing mid-save waits for the write rather than
+   * abandoning it.
    */
-  const handleSaveDocument = useCallback((doc: { title: string; content: string; overlay: string | null }) => {
+  const handleSaveDocument = useCallback(async (doc: CardDocumentDraft) => {
     if (!publicToken) {
       toast.error('Cannot save — this card has no share token.');
-      return;
+      throw new Error('Missing share token');
     }
-    updateMutation.mutate(
-      { token: publicToken, assetId: asset.id, title: doc.title, content: doc.content, overlay: doc.overlay },
-      {
-        onSuccess: () => { onAssetUpdate?.(); },
-        onError: () => { toast.error('Failed to save document.'); },
-      }
-    );
+    await updateMutation.mutateAsync({
+      token: publicToken,
+      assetId: asset.id,
+      title: doc.title,
+      content: doc.content,
+      overlay: doc.overlay,
+    });
+    onAssetUpdate?.();
   }, [publicToken, asset.id, updateMutation, onAssetUpdate]);
 
   // Save inline text edits to snapshot and DB

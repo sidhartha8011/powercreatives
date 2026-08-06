@@ -52,11 +52,12 @@ export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
         ref={setContentEl}
-        /* Full viewport, and NOT centred by transform. A `position: fixed` child
-           resolves against the nearest transformed ancestor, so the sheet would
-           have been trapped inside a 95vw x 90vh box and its full-screen blur
-           with it. Filling the viewport keeps `fixed` meaning what it says. */
-        className="sm:max-w-none w-screen h-screen max-w-none translate-x-0 translate-y-0 top-0 left-0 p-0 flex flex-col gap-0 overflow-hidden rounded-none border-0"
+        /* A POPUP. It was briefly made full-screen so that a `position: fixed`
+           child would resolve against the viewport rather than this box — and
+           that turned the preview into a full-screen takeover of the client
+           page, which is not what a preview is. The document sheet covers this
+           dialog instead (position: absolute), so the dialog stays a popup. */
+        className="sm:max-w-[95vw] w-[95vw] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden"
         showCloseButton
         /* Portalled into #pcm-root, not document.body. The client view's styles
            are 73 rules scoped to `#pcm-root .pcm-…`; outside that element none

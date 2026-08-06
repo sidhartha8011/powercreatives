@@ -899,6 +899,16 @@
 }
 .pcm-notion-iconbtn:hover { background: rgba(55,53,47,0.08); color: rgba(55,53,47,0.9); }
 
+/* Save state. Sits left of the actions, same quiet grey as the meta line, and
+   is absent entirely when there is nothing to report. */
+.pcm-notion-savestate {
+  margin-right: auto;
+  padding-left: 6px;
+  font-family: var(--pcm-notion-font);
+  font-size: 12px;
+  color: rgba(55,53,47,0.45);
+}
+
 /* 22vh of trailing space was Notion's click-to-append area. On a sheet that no
    longer stretches it is just the void again, measured in viewport units. */
 .pcm-notion-page { padding: 6px 0 72px; }

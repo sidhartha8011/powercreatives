@@ -19,7 +19,15 @@ import { useEffect, useRef, type ComponentType } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, X } from 'lucide-react';
 
+import { useDebouncedSave } from '@/hooks/useDebouncedSave';
 import { CustomCardEditor } from './CustomCardEditor';
+
+/** Everything on this sheet that is stored. One shape, one save. */
+export interface CardDocumentDraft {
+  title: string;
+  content: string;
+  overlay: string | null;
+}
 
 /**
  * One Notion property row — the "use our information simply" line.
@@ -84,7 +92,14 @@ export interface CardDocumentViewProps {
    * the same surface in the same sitting, and saving them through two callbacks
    * means two requests racing over one snapshot row.
    */
-  onSave?: (doc: { title: string; content: string; overlay: string | null }) => void;
+  /**
+   * Persist the document. MUST return a promise that settles when the write has
+   * actually landed — the autosave awaits it to report "Saved" truthfully, and
+   * `flush()` awaits it so closing mid-save cannot lose the last change. A
+   * fire-and-forget mutation here resolves instantly and the card claims to have
+   * saved work that never left the browser.
+   */
+  onSave?: (doc: CardDocumentDraft) => Promise<unknown>;
   /** Current approval state — drives the header Approve button's label/colour. */
   isApproved?: boolean;
   /** When submitted (locked lane), approval is disabled — mirrors the grid card. */
@@ -127,51 +142,66 @@ export function CardDocumentView({
   onClose,
   container,
 }: CardDocumentViewProps) {
-  // Close on Escape + prevent body scroll
+  // Close on Escape + prevent body scroll. Escape goes through the same
+  // save-then-close route as the X and the backdrop, so no exit loses work.
+  const closeRef = useRef<() => void>(() => {});
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeRef.current(); };
     document.addEventListener('keydown', handleKey);
     document.body.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', handleKey);
       document.body.style.overflow = '';
     };
-  }, [onClose]);
+  }, []);
 
   /**
-   * Live edit buffer. `CustomCardEditor` is uncontrolled after mount (it seeds
-   * from `content` once), so the current HTML is held here and written back on
-   * close.
-   */
-  const draft = useRef({ title, content, overlay: overlay ?? null });
-  useEffect(() => { draft.current = { title, content, overlay: overlay ?? null }; }, [title, content, overlay]);
-
-  /**
-   * Persist on the way out. Ticking a checkbox is an edit like any other, so it
-   * has to survive closing the card.
+   * Autosave, on the app-wide contract (`useDebouncedSave`) — the same one the
+   * Writer has always used.
    *
-   * The work is read through a ref and the effect runs ONCE, on unmount. With
-   * `onSave` in a dependency array the effect re-subscribes on every render —
-   * `useMutation` hands back a fresh object each time, so the callback is never
-   * identity-stable — and each re-subscribe runs the cleanup, i.e. a save per
-   * render instead of a save per close.
+   * This used to persist ONLY in an unmount cleanup, and that lost work: an
+   * image upload finishing 14 seconds after the card closed was handed to a
+   * destroyed editor while the card had already written its old content over
+   * itself (approval set 25, 2026-08-06). A document is saved while it is being
+   * written, not at the single instant it goes away.
    */
-  const saveRef = useRef<() => void>(() => {});
-  saveRef.current = () => {
-    if (!canEdit || !onSave) return;
-    const next = draft.current;
-    if (next.title !== title || next.content !== content || next.overlay !== (overlay ?? null)) {
-      onSave(next);
-    }
+  const doc = useRef({ title, content, overlay: overlay ?? null });
+
+  const saver = useDebouncedSave<CardDocumentDraft>({
+    enabled: canEdit && !!onSave,
+    save: async (value) => { await onSave?.(value); },
+  });
+
+  // Adopt what the host says is stored. On mount that is the loaded document;
+  // later it is the result of a refetch. `reset` marks it clean, so a refetch
+  // never looks like an edit and never bounces straight back to the server.
+  useEffect(() => {
+    doc.current = { title, content, overlay: overlay ?? null };
+    saver.reset(doc.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, content, overlay]);
+
+  /** One place every edit on this sheet flows through. */
+  const edit = (patch: Partial<CardDocumentDraft>) => {
+    doc.current = { ...doc.current, ...patch };
+    saver.change(doc.current);
   };
-  useEffect(() => () => saveRef.current(), []);
+
+  /**
+   * Land the last change before the sheet goes away.
+   *
+   * `flush` awaits anything already in flight, so closing mid-upload no longer
+   * writes stale content over the newer one.
+   */
+  const closeAfterSaving = () => { void saver.flush().finally(onClose); };
+  closeRef.current = closeAfterSaving;
 
   const rows = properties ?? [];
 
   return createPortal(
     <div
       className="pcm-notion-overlay"
-      onClick={onClose}
+      onClick={closeAfterSaving}
       role="dialog"
       aria-label="Document preview"
     >
@@ -179,6 +209,16 @@ export function CardDocumentView({
         {/* Top bar — actions only. It used to carry a FileText icon plus the
             title, which repeated the 40px title sitting directly below it. */}
         <div className="pcm-notion-topbar">
+          {/* Save state — a statement of what is happening, which then stops.
+              Not instructional chrome: it says nothing while there is nothing to
+              say, so the bar is empty on a document no one is editing. */}
+          {canEdit && saver.state !== 'idle' && (
+            <span className="pcm-notion-savestate" role="status">
+              {saver.state === 'error' ? 'Not saved — retrying'
+                : saver.state === 'saved' ? 'Saved'
+                : 'Saving…'}
+            </span>
+          )}
           {/* Approve lives HERE, in the sticky bar, so it follows on scroll.
               It used to sit after the prose, inside the scrolling column, and
               scrolled out of reach on any document of real length. */}
@@ -196,7 +236,7 @@ export function CardDocumentView({
           <button
             type="button"
             className="pcm-notion-iconbtn"
-            onClick={onClose}
+            onClick={closeAfterSaving}
             aria-label="Close preview"
           >
             <X className="w-[18px] h-[18px]" />
@@ -218,9 +258,7 @@ export function CardDocumentView({
               contentEditable={canEdit}
               suppressContentEditableWarning
               spellCheck={false}
-              onInput={(e) => {
-                draft.current = { ...draft.current, title: e.currentTarget.textContent ?? '' };
-              }}
+              onInput={(e) => edit({ title: e.currentTarget.textContent ?? '' })}
               /* Enter would insert a <br> in a heading. It means "done" here. */
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
             >
@@ -267,8 +305,8 @@ export function CardDocumentView({
                 editable={canEdit}
                 content={content}
                 overlay={overlay ?? null}
-                onChange={(html) => { draft.current = { ...draft.current, content: html }; }}
-                onOverlayChange={(url) => { draft.current = { ...draft.current, overlay: url }; }}
+                onChange={(html) => edit({ content: html })}
+                onOverlayChange={(url) => edit({ overlay: url })}
               />
             )}
           </div>
