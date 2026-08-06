@@ -117,9 +117,17 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   };
 
   const waitForPendingWork = async () => {
+    let firstFailure: unknown;
+    let hasFailure = false;
     while (pendingWork.current.size > 0) {
-      await Promise.allSettled([...pendingWork.current]);
+      const outcomes = await Promise.allSettled([...pendingWork.current]);
+      const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
+      if (!hasFailure && rejected?.status === 'rejected') {
+        hasFailure = true;
+        firstFailure = rejected.reason;
+      }
     }
+    if (hasFailure) throw firstFailure;
   };
 
   /**
@@ -305,7 +313,10 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     const toastId = toast.loading('Saving drawing…');
     const work = uploadDataUrl(dataUrl, `card-drawing-${Date.now()}.png`)
       .then((url) => { onOverlayChange(url); toast.success('Drawing saved', { id: toastId }); })
-      .catch(() => { toast.error('Could not save the drawing.', { id: toastId }); });
+      .catch((error) => {
+        toast.error('Could not save the drawing.', { id: toastId });
+        throw error;
+      });
     return trackPendingWork(work);
   };
 
@@ -414,7 +425,10 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
               }
               toast.success('Annotation saved', { id: toastId });
             })
-            .catch(() => { toast.error('Could not save the annotation.', { id: toastId }); });
+            .catch((error) => {
+              toast.error('Could not save the annotation.', { id: toastId });
+              throw error;
+            });
           trackPendingWork(work);
         }}
       />

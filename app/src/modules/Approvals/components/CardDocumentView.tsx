@@ -236,9 +236,10 @@ export function CardDocumentView({
           {/* Save state — a statement of what is happening, which then stops.
               Not instructional chrome: it says nothing while there is nothing to
               say, so the bar is empty on a document no one is editing. */}
-          {canEdit && saver.state !== 'idle' && (
+          {canEdit && (isClosing || saver.state !== 'idle') && (
             <span className="pcm-notion-savestate" role="status">
               {saver.state === 'error' ? 'Not saved — retrying'
+                : isClosing ? 'Saving…'
                 : saver.state === 'saved' ? 'Saved'
                 : 'Saving…'}
             </span>
