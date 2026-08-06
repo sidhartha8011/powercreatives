@@ -476,6 +476,16 @@
 @media (max-width: 1024px) { .pcm-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 640px)  { .pcm-grid { grid-template-columns: 1fr; } }
 
+/* The internal team preview is deliberately narrower than the public review
+   page. Size its asset grid from that preview container instead of the browser
+   viewport, and cap cards at a compact review-friendly width. Public review
+   cards retain the responsive rules above. */
+.pcm-internal-preview .pcm-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 240px));
+  gap: 16px;
+  justify-content: start;
+}
+
 
 /* ─── Cards ─── */
 .pcm-card {
@@ -867,13 +877,18 @@
 .pcm-notion-overlay--background-save {
   display: none;
 }
+.pcm-notion-modal,
+.pcm-internal-preview {
+  /* One width contract for a Notion-style document card and the internal
+     Approval preview that contains it. */
+  width: min(820px, calc(100vw - 80px));
+}
 .pcm-notion-modal {
   position: relative;
   background: #ffffff;
   /* A document is a CARD over the review page, not a second page taking over
      the viewport. Keep a deliberate frame around it at desktop/tablet sizes;
      the overlay still owns the full viewport for blur and outside-click. */
-  width: min(820px, calc(100vw - 80px));
   /* Cap, not a fixed height: grow to the content, then scroll. Only this box
      scrolls, so the topbar stays put over a long document. */
   max-height: 82vh;
@@ -883,10 +898,16 @@
   animation: pcmNotionIn .18s cubic-bezier(.2,.7,.3,1);
 }
 @media (max-width: 519px) {
-  .pcm-notion-modal {
+  .pcm-notion-modal,
+  .pcm-internal-preview {
     /* Preserve a usable editor on phones while retaining a visible edge. */
     width: calc(100vw - 32px);
+  }
+  .pcm-notion-modal {
     max-height: 88vh;
+  }
+  .pcm-internal-preview .pcm-grid {
+    grid-template-columns: 1fr;
   }
 }
 @keyframes pcmNotionIn {

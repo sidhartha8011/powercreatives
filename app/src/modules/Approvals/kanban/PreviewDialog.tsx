@@ -70,7 +70,7 @@ export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
            The iframe hid this: it had its own document with its own #pcm-root. */
         container={typeof document !== 'undefined' ? document.getElementById('pcm-root') : null}
       >
-        <div className="bg-background relative flex h-[90vh] w-[95vw] flex-col gap-0 overflow-hidden rounded-lg border p-0 shadow-lg">
+        <div className="pcm-internal-preview bg-background relative flex h-[90vh] flex-col gap-0 overflow-hidden rounded-lg border p-0 shadow-lg">
           {/* Visible header removed per UX. Title + description kept in
               sr-only form because Radix UI's Dialog requires both for
               accessibility (screen-reader announcement + WCAG compliance). */}
