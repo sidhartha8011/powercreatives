@@ -870,14 +870,24 @@
 .pcm-notion-modal {
   position: relative;
   background: #ffffff;
-  width: min(977px, 94vw);
+  /* A document is a CARD over the review page, not a second page taking over
+     the viewport. Keep a deliberate frame around it at desktop/tablet sizes;
+     the overlay still owns the full viewport for blur and outside-click. */
+  width: min(820px, calc(100vw - 80px));
   /* Cap, not a fixed height: grow to the content, then scroll. Only this box
      scrolls, so the topbar stays put over a long document. */
-  max-height: 94vh;
+  max-height: 82vh;
   overflow-y: auto;
   border-radius: 12px;
   box-shadow: 0 0 0 1px rgba(15,15,15,0.05), 0 24px 70px rgba(15,15,15,0.26);
   animation: pcmNotionIn .18s cubic-bezier(.2,.7,.3,1);
+}
+@media (max-width: 519px) {
+  .pcm-notion-modal {
+    /* Preserve a usable editor on phones while retaining a visible edge. */
+    width: calc(100vw - 32px);
+    max-height: 88vh;
+  }
 }
 @keyframes pcmNotionIn {
   from { opacity: 0; transform: translateY(8px) scale(.99); }
