@@ -86,7 +86,7 @@ export interface CardDocumentViewProps {
    * the same surface in the same sitting, and saving them through two callbacks
    * means two requests racing over one snapshot row.
    */
-  onSave?: (doc: { content: string; overlay: string | null }) => void;
+  onSave?: (doc: { title: string; content: string; overlay: string | null }) => void;
   /** Current approval state — drives the header Approve button's label/colour. */
   isApproved?: boolean;
   /** When submitted (locked lane), approval is disabled — mirrors the grid card. */
@@ -165,8 +165,8 @@ export function CardDocumentView({
    * from `content` once), so the current HTML is held here and written back on
    * close.
    */
-  const draft = useRef({ content, overlay: overlay ?? null });
-  useEffect(() => { draft.current = { content, overlay: overlay ?? null }; }, [content, overlay]);
+  const draft = useRef({ title, content, overlay: overlay ?? null });
+  useEffect(() => { draft.current = { title, content, overlay: overlay ?? null }; }, [title, content, overlay]);
 
   /**
    * Persist on the way out. Ticking a checkbox is an edit like any other, so it
@@ -182,7 +182,9 @@ export function CardDocumentView({
   saveRef.current = () => {
     if (!canEdit || !onSave) return;
     const next = draft.current;
-    if (next.content !== content || next.overlay !== (overlay ?? null)) onSave(next);
+    if (next.title !== title || next.content !== content || next.overlay !== (overlay ?? null)) {
+      onSave(next);
+    }
   };
   useEffect(() => () => saveRef.current(), []);
 
@@ -196,6 +198,14 @@ export function CardDocumentView({
    * and saw every click here as exactly that — so clicking away from the
    * document closed the document AND the card behind it. The viewer owns its own
    * dismissal; the dialog must not also act on it.
+   *
+   * BUBBLE PHASE ONLY. There was a second binding of this on
+   * `onPointerDownCapture`, and capture runs document → target: it discarded
+   * every pointerdown on this overlay BEFORE the event could descend into the
+   * sheet. ProseMirror sets the caret from that event and a task-list checkbox
+   * is an `<input>` activated by it, so the whole document went dead — no
+   * caret, no ticking. In the bubble phase the target has already handled the
+   * event and this still stops it short of `document`.
    */
   const stopDialogDismiss = (e: React.PointerEvent) => e.stopPropagation();
 
@@ -204,7 +214,6 @@ export function CardDocumentView({
       className="pcm-notion-overlay"
       onClick={onClose}
       onPointerDown={stopDialogDismiss}
-      onPointerDownCapture={stopDialogDismiss}
       role="dialog"
       aria-label="Document preview"
     >
@@ -240,7 +249,25 @@ export function CardDocumentView({
         <div className="pcm-notion-page">
           <div className="pcm-notion-col">
             {meta && <p className="pcm-notion-meta">{meta}</p>}
-            <h1 className="pcm-notion-title">{title}</h1>
+            {/* The title is edited in place, like the body. `update_snapshot_asset`
+                already accepted `title` for both buckets (service.php:1625, :1647),
+                so this is an affordance that was missing, not a capability.
+                Plain contentEditable rather than an input: an input would need a
+                second set of type rules to look like the 40px title it replaces,
+                and two definitions of one heading is how they drift. */}
+            <h1
+              className="pcm-notion-title"
+              contentEditable={canEdit}
+              suppressContentEditableWarning
+              spellCheck={false}
+              onInput={(e) => {
+                draft.current = { ...draft.current, title: e.currentTarget.textContent ?? '' };
+              }}
+              /* Enter would insert a <br> in a heading. It means "done" here. */
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+            >
+              {title}
+            </h1>
 
             {isLoading && (
               <p className="pcm-notion-loading">Opening document…</p>
@@ -272,6 +299,7 @@ export function CardDocumentView({
             {isLoading ? null : canEdit ? (
               <CustomCardEditor
                 bare
+                scale="document"
                 content={content}
                 overlay={overlay ?? null}
                 onChange={(html) => { draft.current = { ...draft.current, content: html }; }}

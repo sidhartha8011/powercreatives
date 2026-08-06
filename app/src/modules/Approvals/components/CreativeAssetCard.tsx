@@ -310,13 +310,13 @@ export function CreativeAssetCard({
    * Tiptap writes the state onto `data-checked` on the `<li>`, which
    * `wp_kses_post` keeps.
    */
-  const handleSaveDocument = useCallback((doc: { content: string; overlay: string | null }) => {
+  const handleSaveDocument = useCallback((doc: { title: string; content: string; overlay: string | null }) => {
     if (!publicToken) {
       toast.error('Cannot save — this card has no share token.');
       return;
     }
     updateMutation.mutate(
-      { token: publicToken, assetId: asset.id, content: doc.content, overlay: doc.overlay },
+      { token: publicToken, assetId: asset.id, title: doc.title, content: doc.content, overlay: doc.overlay },
       {
         onSuccess: () => { onAssetUpdate?.(); },
         onError: () => { toast.error('Failed to save document.'); },

@@ -29,8 +29,22 @@ export interface PreviewDialogProps {
 export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
   if (!set || !url) return null;
 
+  /*
+   * The Dialog below is NON-MODAL on purpose.
+   *
+   * A modal Radix dialog sets `trapFocus`, `disableOutsidePointerEvents` and
+   * `onFocusOutside: preventDefault` on its content (@radix-ui/react-dialog,
+   * DialogContentModal), and calls `hideOthers()` on the rest of the document.
+   * The opened document sheet portals to <body>, i.e. OUTSIDE that content — so
+   * it could be clicked but never focused, which is exactly "I can't edit it"
+   * and "the checkboxes don't tick".
+   *
+   * This dialog hosts another interactive layer, so it must not claim the whole
+   * document. Escape handling and body-scroll locking are already owned by the
+   * sheet itself (CardDocumentView), so nothing is lost by dropping modality.
+   */
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Dialog open modal={false} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
         className="sm:max-w-[95vw] w-[95vw] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden"
         showCloseButton

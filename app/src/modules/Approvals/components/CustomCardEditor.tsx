@@ -45,6 +45,19 @@ interface CustomCardEditorProps {
    * `max-h` box makes a second scrollbar next to the sheet's own.
    */
   bare?: boolean;
+  /**
+   * Which document scale this surface reads at.
+   *
+   * `pad` — the "New approval set" dialog, where the editor is the window and
+   * reads like the Writer's A4 pad (owner direction, index.css:1022).
+   * `document` — the opened approval card, where it is the body of a sheet and
+   * must read at the SAME size the client reads it at. Those were 11px and 16px
+   * on one sheet before this existed.
+   *
+   * The sizes themselves are in index.css, on `.pcm-card-editor--pad` and
+   * `.pcm-card-editor--document`. This prop names a scale; it never carries one.
+   */
+  scale?: 'pad' | 'document';
 }
 
 function ToolbarButton({ onClick, active, title, children }: {
@@ -65,7 +78,7 @@ function ToolbarButton({ onClick, active, title, children }: {
   );
 }
 
-export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange, bare = false }: CustomCardEditorProps) {
+export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange, bare = false, scale = 'pad' }: CustomCardEditorProps) {
   // Image to annotate. `pos` is the document position of an EXISTING image (paint bakes back
   // into it in place); `pos: null` means a freshly picked image that gets inserted at the cursor.
   const [annotate, setAnnotate] = useState<{ url: string; pos: number | null } | null>(null);
@@ -104,15 +117,28 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     content: content || '<p></p>',
     editable: true,
     editorProps: {
-      // `pcm-card-editor` carries the compact document typography (index.css). NOTE: the
-      // Tailwind `prose` classes used before were inert — the typography plugin isn't loaded,
-      // so content rendered at unstyled browser defaults (oversized, bloaty).
+      // `pcm-card-editor` carries the document typography (index.css); the
+      // `--pad` / `--document` modifier picks WHICH of the two scales.
+      // NOTE: the Tailwind `prose` classes used before were inert — the typography
+      // plugin isn't loaded, so content rendered at unstyled browser defaults
+      // (oversized, bloaty).
       // `max-w-none` REMOVED. Tailwind is imported with the `important` flag
       // (index.css:8), so `.max-w-none { max-width: none !important }` beat
       // `.pcm-card-editor { max-width: var(--pcm-doc-measure) }` and the centred
       // measure never applied — MEASURED in the browser as max-width "none" on a
       // 739px-wide editor. The measure now actually takes effect.
-      attributes: { class: 'pcm-card-editor outline-none min-h-[460px] focus:outline-none' },
+      //
+      // `min-h-[460px]` is the PAD's writing floor. On the sheet it reserved
+      // 460px of blank body under a two-line checklist, so it belongs to the
+      // scale, not to the editor.
+      attributes: {
+        class: [
+          'pcm-card-editor',
+          `pcm-card-editor--${scale}`,
+          'outline-none focus:outline-none',
+          scale === 'pad' ? 'min-h-[460px]' : '',
+        ].filter(Boolean).join(' '),
+      },
       // Double-click an image to paint directly ON it. Strokes are flattened INTO the image
       // (ImageAnnotator), so the annotation stays attached and scales with the image — it never
       // stretches or drifts when the layout reflows, unlike the whole-card draw overlay.
