@@ -932,15 +932,6 @@
 .pcm-notion-approve:disabled { opacity: .5; cursor: default; }
 .pcm-notion-approve-icon { width: 15px; height: 15px; flex-shrink: 0; }
 
-/* Draw layer sits over the prose. These two carried inline `style={{…}}` for
-   position and size, which the UI hard rule keeps out of components. */
-.pcm-notion-prose-wrap { position: relative; }
-.pcm-notion-draw {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  pointer-events: none;
-}
-
 /* The grey line above the title — "Edited 4 minutes ago". Small, quiet, and it
    sits ABOVE the title exactly as in the reference, so the eye lands on the
    title and not on chrome. */
@@ -1013,52 +1004,13 @@
 }
 .pcm-notion-prop-value:hover { background: rgba(55,53,47,0.06); }
 
-/* Notion typography for the rendered (Tiptap) document body. */
-.pcm-notion-prose {
-  font-family: var(--pcm-notion-font);
-  color: var(--pcm-doc-ink);
-  font-size: var(--pcm-doc-size); line-height: var(--pcm-doc-leading);
-}
-.pcm-notion-prose .ProseMirror { outline: none; }
-.pcm-notion-prose h1,
-.pcm-notion-prose h2,
-.pcm-notion-prose h3,
-.pcm-notion-prose h4 {
-  color: var(--pcm-doc-ink); font-weight: 600; line-height: 1.3; margin: 1.4em 0 2px;
-}
-.pcm-notion-prose h1 { font-size: 1.875em; }
-.pcm-notion-prose h2 { font-size: 1.5em; }
-.pcm-notion-prose h3 { font-size: 1.25em; }
-.pcm-notion-prose h4 { font-size: 1.05em; }
-.pcm-notion-prose p { margin: 1px 0; padding: 3px 0; }
-/* Tailwind's base reset sets `ul,ol { list-style: none }`; we dropped the `prose`
- * class, so restore the markers explicitly (disc/decimal + Notion's nested glyphs). */
-.pcm-notion-prose ul,
-.pcm-notion-prose ol { margin: 2px 0; padding-left: 1.7em; list-style-position: outside; }
-.pcm-notion-prose ul { list-style-type: disc; }
-.pcm-notion-prose ol { list-style-type: decimal; }
-.pcm-notion-prose ul ul { list-style-type: circle; }
-.pcm-notion-prose ul ul ul { list-style-type: square; }
-.pcm-notion-prose li { padding: 2px 0; }
-.pcm-notion-prose li::marker { color: rgba(55,53,47,0.5); }
-.pcm-notion-prose a {
-  color: inherit; text-decoration: underline;
-  text-decoration-color: rgba(55,53,47,0.35); text-underline-offset: 2px;
-}
-.pcm-notion-prose strong { font-weight: 600; }
-.pcm-notion-prose blockquote {
-  margin: 8px 0; padding-left: 14px;
-  border-left: 3px solid rgba(55,53,47,0.85); color: var(--pcm-doc-ink);
-}
-.pcm-notion-prose hr { border: none; border-top: 1px solid rgba(55,53,47,0.16); margin: 14px 0; }
-.pcm-notion-prose img { max-width: 100%; height: auto; border-radius: 4px; margin: 6px 0; }
-.pcm-notion-prose code {
-  background: rgba(135,131,120,0.15); color: #eb5757;
-  border-radius: 4px; padding: .2em .4em; font-size: 85%;
-  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
-}
-.pcm-notion-prose pre { background: #f7f6f3; border-radius: 6px; padding: 16px; overflow: auto; margin: 8px 0; }
-.pcm-notion-prose pre code { background: none; color: inherit; padding: 0; font-size: 85%; }
+/* The document body's typography is NOT here.
+ *
+ * `.pcm-notion-prose` and its 27 rules were the second, read-only renderer's
+ * type scale. That renderer is gone — the card now uses ONE editor in two modes
+ * (CustomCardEditor), so the body is styled by `.pcm-card-editor` in index.css
+ * for reader and writer alike. Two definitions of one document's typography is
+ * exactly how the two surfaces drifted apart. */
 
 
 /* ═══════════════════════════════════════════════════════════════════════════

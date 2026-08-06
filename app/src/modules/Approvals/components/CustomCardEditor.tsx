@@ -17,7 +17,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import { Image as ImageIcon, PenLine, Brush, ListChecks } from 'lucide-react';
+import { toast } from 'sonner';
 
+import { useImageUpload } from '@/hooks/useImageUpload';
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
 import { WriterBubbleMenu } from '@/modules/Writer/components/WriterBubbleMenu';
 import { ImageAnnotator } from './ImageAnnotator';
@@ -85,26 +87,63 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   const contentBoxRef = useRef<HTMLDivElement | null>(null);
   const overlayBeforeDraw = useRef<string | null>(null);
   const editorRef = useRef<Editor | null>(null);
+  /**
+   * The live canvas while drawing, held in memory only.
+   *
+   * `CardDrawLayer` emits after every stroke. Those emissions stay here and are
+   * uploaded ONCE when the session ends — a drawing is one file, not one per
+   * stroke. The strokes are visible the whole time because the canvas itself is
+   * on screen; nothing needs to round-trip to show them.
+   */
+  const pendingOverlay = useRef<string | null>(null);
 
-  // Insert pasted / dropped image files inline (as base64). Lets you paste an image
-  // straight from the clipboard onto the card. Uses a ref because the editor isn't
-  // created yet when these extensions are built.
+  /**
+   * The ONE route an image takes out of this editor and into storage.
+   *
+   * Shared with the Writer's canvas. Every image this card can produce — pasted,
+   * dropped, annotated, or drawn — goes through here, so a data URL can never
+   * reach the document again. `compress: false` on the data-URL path: canvas
+   * output is already a finished PNG and a second lossy pass would soften the
+   * strokes someone just drew.
+   */
+  const { uploadImage, uploadDataUrl } = useImageUpload();
+
+  /**
+   * Insert pasted / dropped images — UPLOADED, never embedded.
+   *
+   * These used to be read straight to base64 and dropped into the document. A
+   * card then weighed half a megabyte, and worse: WordPress strips `data:` from
+   * any `src` on save, so the image lost its source, Tiptap dropped the node,
+   * and the next save wrote the emptied document over the real one.
+   *
+   * They now go to the media library through the shared `useImageUpload` hook —
+   * the same route the Writer's canvas uses — and the document stores a URL.
+   * Uses a ref because the editor isn't created yet when the extensions build.
+   */
   const insertImageFiles = (files: File[]) => {
     const imageFiles = files.filter((f) => f.type.startsWith('image/'));
     if (imageFiles.length === 0) return;
-    // Read every file, then insert ALL images in ONE transaction. Block images are atom
-    // NodeSelections, so inserting them one-by-one makes each replace the previous; a single
-    // insertContent with an array adds them as a fragment so they all land in order.
-    Promise.all(imageFiles.map((file) => new Promise<{ src: string; alt: string } | null>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result ? { src: String(reader.result), alt: file.name || 'Pasted image' } : null);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(file);
-    }))).then((results) => {
+
+    const toastId = toast.loading(imageFiles.length > 1 ? 'Uploading images…' : 'Uploading image…');
+    // Upload all, then insert in ONE transaction. Block images are atom
+    // NodeSelections, so inserting them one-by-one makes each replace the
+    // previous; a single insertContent with an array keeps them in order.
+    Promise.all(imageFiles.map(async (file) => {
+      try {
+        return { src: await uploadImage(file), alt: file.name || 'Pasted image' };
+      } catch {
+        return null;
+      }
+    })).then((results) => {
       const nodes = results
         .filter((r): r is { src: string; alt: string } => r !== null)
         .map((r) => ({ type: 'image', attrs: { src: r.src, alt: r.alt } }));
-      if (nodes.length) editorRef.current?.chain().focus().insertContent(nodes).run();
+      if (nodes.length) {
+        editorRef.current?.chain().focus().insertContent(nodes).run();
+        toast.success(nodes.length > 1 ? `${nodes.length} images added` : 'Image added', { id: toastId });
+      } else {
+        toast.error('Could not upload the image.', { id: toastId });
+      }
     });
   };
 
@@ -204,11 +243,36 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     const box = contentBoxRef.current;
     if (box) setDrawDims({ w: box.offsetWidth, h: Math.max(box.scrollHeight, box.offsetHeight) });
     overlayBeforeDraw.current = overlay ?? null;
+    pendingOverlay.current = overlay ?? null;
     setDrawing(true);
   };
-  // Toggle paint mode. Clicking the active Brush button de-activates paint, keeping whatever was
-  // drawn (strokes are saved live via onOverlayChange, so this is the same as pressing "Done").
-  const toggleDraw = () => { if (drawing) setDrawing(false); else startDraw(); };
+  // Toggle paint mode. Clicking the active Brush button de-activates paint and keeps whatever was
+  // drawn — the same as pressing "Done", so the two routes out cannot disagree.
+  const toggleDraw = () => { if (drawing) finishDraw(); else startDraw(); };
+
+  /**
+   * The draw layer finished — upload the strokes and hand back a URL.
+   *
+   * `CardDrawLayer` emits canvas output (a data URL) live on every stroke. Only
+   * the FINAL layer is uploaded, on done/cancel, so a drawing session is one
+   * upload rather than one per stroke. `null` means the layer was cleared and
+   * passes straight through.
+   */
+  const commitOverlay = (dataUrl: string | null) => {
+    if (!onOverlayChange) return;
+    if (!dataUrl) { onOverlayChange(null); return; }
+    if (!dataUrl.startsWith('data:')) { onOverlayChange(dataUrl); return; } // already hosted
+    const toastId = toast.loading('Saving drawing…');
+    uploadDataUrl(dataUrl, `card-drawing-${Date.now()}.png`)
+      .then((url) => { onOverlayChange(url); toast.success('Drawing saved', { id: toastId }); })
+      .catch(() => toast.error('Could not save the drawing.', { id: toastId }));
+  };
+
+  /** Leave paint mode, keeping the strokes. One upload, at the end. */
+  const finishDraw = () => {
+    commitOverlay(pendingOverlay.current);
+    setDrawing(false);
+  };
 
   if (!editor) return null;
 
@@ -255,34 +319,46 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
               width={drawDims.w}
               height={drawDims.h}
               initial={overlayBeforeDraw.current}
-              onChange={(url) => onOverlayChange?.(url)}
-              onDone={() => setDrawing(false)}
+              /* Buffered, not saved. The canvas is on screen, so the strokes are
+                 already visible; uploading here would mean one file per stroke. */
+              onChange={(url) => { pendingOverlay.current = url; }}
+              onDone={finishDraw}
               onCancel={() => { onOverlayChange?.(overlayBeforeDraw.current); setDrawing(false); }}
             />
           )}
         </div>
       </div>
 
-      {/* Annotation: draw on the picked image, then insert the flattened PNG. */}
+      {/* Annotation: draw on the picked image, upload the flattened PNG, insert its URL.
+          The annotator hands back canvas output — a data URL. That must not reach
+          the document: WordPress strips `data:` from `src` on save, which left the
+          image source-less and then emptied the card. It is uploaded first, and
+          only the hosted URL is written into the document. */}
       <ImageAnnotator
         open={!!annotate}
         imageUrl={annotate?.url ?? null}
         onCancel={() => setAnnotate(null)}
         onInsert={(dataUrl) => {
           const pos = annotate?.pos ?? null;
-          if (pos != null) {
-            // Replace the annotated image IN PLACE (same document position) so the baked-in
-            // strokes stay attached to that image — no duplicate inserted at the cursor.
-            editor.chain().focus().command(({ tr }) => {
-              const node = tr.doc.nodeAt(pos);
-              if (!node || node.type.name !== 'image') return false;
-              tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: dataUrl, alt: 'Annotated image' });
-              return true;
-            }).run();
-          } else {
-            editor.chain().focus().setImage({ src: dataUrl, alt: 'Annotated image' }).run();
-          }
           setAnnotate(null);
+          const toastId = toast.loading('Saving annotation…');
+          uploadDataUrl(dataUrl, `annotated-${Date.now()}.png`)
+            .then((src) => {
+              if (pos != null) {
+                // Replace the annotated image IN PLACE (same document position) so the baked-in
+                // strokes stay attached to that image — no duplicate inserted at the cursor.
+                editor.chain().focus().command(({ tr }) => {
+                  const node = tr.doc.nodeAt(pos);
+                  if (!node || node.type.name !== 'image') return false;
+                  tr.setNodeMarkup(pos, undefined, { ...node.attrs, src, alt: 'Annotated image' });
+                  return true;
+                }).run();
+              } else {
+                editor.chain().focus().setImage({ src, alt: 'Annotated image' }).run();
+              }
+              toast.success('Annotation saved', { id: toastId });
+            })
+            .catch(() => toast.error('Could not save the annotation.', { id: toastId }));
         }}
       />
     </div>

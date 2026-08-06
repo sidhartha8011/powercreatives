@@ -1019,20 +1019,22 @@
    and the bare `.pcm-card-editor` (0,1,0) is what applies inside a portal, where
    the reset never runs. The two DOM contexts are disjoint, so the branches never
    fight and the values stay identical in both. */
-/* OWNER DIRECTION 2026-08-05: the authoring surface must read like the Writer's
-   A4 pad, not like its own thing. It was bound to --pcm-doc-* (16px/1.5) while
-   .writer-editor reads --pcm-prose-* (11px/1.7) — measured 1.45x larger in the
-   browser, which is exactly what he reported as "the font is big". It now reads
-   the SAME variables the Writer pad reads: one definition, one owner.
-   NOTE: the client-facing VIEWER (.pcm-notion-prose) deliberately stays on the
-   document scale — 708px / 40px / 16px are the Notion metrics he approved for
-   the opened card. Authoring and reading are therefore different sizes BY
-   DECISION, not by drift. */
+/* OWNER DECISION 2026-08-06 — supersedes the 2026-08-05 direction below.
+   The card is a DOCUMENT: written by the team, read by the client, on a wide
+   centred sheet. It reads at the document scale, and the client's read-only
+   view of the very same words reads at that scale too — so opening a card to
+   edit it no longer resizes it. ONE scale for the card, declared here only.
+
+   History, so this is not "corrected" back by accident: on 2026-08-05 this was
+   bound to --pcm-prose-* (11px) to match the Writer's A4 pad. In the sheet that
+   measured too small to read and the owner rejected it. The WRITER pad keeps
+   --pcm-prose-* — that is an admin work surface in a narrow panel, a different
+   job. Two scales, each on the surface it belongs to. */
 #pcm-root .pcm-card-editor,
 .pcm-card-editor {
-  font-size: var(--pcm-prose-size);
-  line-height: var(--pcm-prose-leading);
-  color: var(--pcm-prose-color);
+  font-size: var(--pcm-doc-size);
+  line-height: var(--pcm-doc-leading);
+  color: var(--pcm-doc-ink);
   font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
   /* A page, not a form field: a centred measure the text actually reads at. */
   max-width: var(--pcm-doc-measure);

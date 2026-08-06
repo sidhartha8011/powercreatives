@@ -1571,6 +1571,61 @@ class PCM_Approvals_Service
     }
 
     /**
+     * Sanitise a document body WITHOUT destroying its embedded images.
+     *
+     * `wp_kses_post()` drops any `src` whose scheme is not in
+     * `wp_allowed_protocols()` — and that list has no `data:`. A card whose
+     * images are inline base64 therefore came back with every image stripped of
+     * its source; the editor then dropped the source-less nodes, and the next
+     * save wrote the resulting EMPTY document over the real one. That is how
+     * approval set 26 lost 489,939 bytes of content on 2026-08-06.
+     *
+     * `data:` is added for the duration of this one call and removed again, so
+     * nothing else in the request gains a protocol it should not have. The
+     * payload still goes through the full kses tag/attribute filter — this
+     * widens exactly one scheme, on exactly one field.
+     *
+     * @param string $html Raw document HTML from the editor.
+     * @return string Sanitised HTML with inline images intact.
+     */
+    private static function sanitize_document_html(string $html): string
+    {
+        $allow_data = static function (array $protocols): array {
+            $protocols[] = 'data';
+            return $protocols;
+        };
+
+        add_filter('kses_allowed_protocols', $allow_data);
+        $clean = wp_kses_post($html);
+        remove_filter('kses_allowed_protocols', $allow_data);
+
+        return $clean;
+    }
+
+    /**
+     * Would this write empty a document that currently has content?
+     *
+     * A save is an edit, never an erasure. An editor that failed to hydrate, a
+     * dropped node, or a half-mounted view all produce the same thing: an empty
+     * paragraph. Storing that destroys work no one asked to delete, so it is
+     * refused and the stored content is kept.
+     *
+     * Deliberately narrow — it only blocks EMPTYING. Deleting every word by hand
+     * still leaves the paragraph the editor emits, so this cannot be worked
+     * around by intent; clearing a card is what removing the card is for.
+     *
+     * @param string $incoming Sanitised HTML about to be stored.
+     * @param string $stored   HTML currently in the snapshot.
+     */
+    private static function would_erase_document(string $incoming, string $stored): bool
+    {
+        if (trim(wp_strip_all_tags($stored)) === '' && stripos($stored, '<img') === false) {
+            return false; // Nothing to lose.
+        }
+        return trim(wp_strip_all_tags($incoming)) === '' && stripos($incoming, '<img') === false;
+    }
+
+    /**
      * Update an asset (e.g. ad copy text) inside the approval set's snapshot and propagate it.
      */
     public static function update_snapshot_asset(string $token, string $asset_id, array $updates): bool
@@ -1626,7 +1681,10 @@ class PCM_Approvals_Service
                         $item['title'] = sanitize_text_field($updates['title']);
                     }
                     if (isset($updates['content'])) {
-                        $item['content'] = wp_kses_post($updates['content']);
+                        $clean = self::sanitize_document_html((string) $updates['content']);
+                        if (!self::would_erase_document($clean, (string) ($item['content'] ?? ''))) {
+                            $item['content'] = $clean;
+                        }
                     }
                     if (isset($updates['metaTitle'])) {
                         $item['metaTitle'] = sanitize_text_field($updates['metaTitle']);
@@ -1648,7 +1706,10 @@ class PCM_Approvals_Service
                         $item['title'] = sanitize_text_field($updates['title']);
                     }
                     if (isset($updates['content'])) {
-                        $item['content'] = wp_kses_post($updates['content']);
+                        $clean = self::sanitize_document_html((string) $updates['content']);
+                        if (!self::would_erase_document($clean, (string) ($item['content'] ?? ''))) {
+                            $item['content'] = $clean;
+                        }
                     }
                     if (isset($updates['images']) && is_array($updates['images'])) {
                         $item['images'] = array_map('esc_url_raw', $updates['images']);
