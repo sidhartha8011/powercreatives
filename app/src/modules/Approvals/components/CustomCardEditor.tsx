@@ -57,6 +57,11 @@ interface CustomCardEditorProps {
    * renders in read-only mode; only the tools to change it are gone.
    */
   editable?: boolean;
+  /**
+   * Registers the editor's close barrier. The host awaits it before flushing
+   * the document so asynchronous media work cannot outlive the editor.
+   */
+  registerClosePreparation?: (prepare: (() => Promise<void>) | null) => void;
 }
 
 function ToolbarButton({ onClick, active, title, children }: {
@@ -77,7 +82,7 @@ function ToolbarButton({ onClick, active, title, children }: {
   );
 }
 
-export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange, bare = false, editable = true }: CustomCardEditorProps) {
+export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange, bare = false, editable = true, registerClosePreparation }: CustomCardEditorProps) {
   // Image to annotate. `pos` is the document position of an EXISTING image (paint bakes back
   // into it in place); `pos: null` means a freshly picked image that gets inserted at the cursor.
   const [annotate, setAnnotate] = useState<{ url: string; pos: number | null } | null>(null);
@@ -87,6 +92,8 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   const contentBoxRef = useRef<HTMLDivElement | null>(null);
   const overlayBeforeDraw = useRef<string | null>(null);
   const editorRef = useRef<Editor | null>(null);
+  /** Becomes true only after initial editor construction/hydration has painted. */
+  const acceptsUserUpdates = useRef(false);
   /**
    * The live canvas while drawing, held in memory only.
    *
@@ -96,6 +103,24 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
    * on screen; nothing needs to round-trip to show them.
    */
   const pendingOverlay = useRef<string | null>(null);
+  /** Upload work that must settle before the containing document can close. */
+  const pendingWork = useRef<Set<Promise<void>>>(new Set());
+
+  const trackPendingWork = (work: Promise<void>) => {
+    let tracked: Promise<void>;
+    tracked = work.finally(() => { pendingWork.current.delete(tracked); });
+    pendingWork.current.add(tracked);
+    // The initiating toolbar/paste path remains non-blocking; close preparation
+    // still retains and awaits the original tracked promise.
+    void tracked.catch(() => undefined);
+    return tracked;
+  };
+
+  const waitForPendingWork = async () => {
+    while (pendingWork.current.size > 0) {
+      await Promise.allSettled([...pendingWork.current]);
+    }
+  };
 
   /**
    * The ONE route an image takes out of this editor and into storage.
@@ -128,7 +153,7 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     // Upload all, then insert in ONE transaction. Block images are atom
     // NodeSelections, so inserting them one-by-one makes each replace the
     // previous; a single insertContent with an array keeps them in order.
-    Promise.all(imageFiles.map(async (file) => {
+    const work = Promise.all(imageFiles.map(async (file) => {
       try {
         return { src: await uploadImage(file), alt: file.name || 'Pasted image' };
       } catch {
@@ -145,6 +170,7 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
         toast.error('Could not upload the image.', { id: toastId });
       }
     });
+    trackPendingWork(work);
   };
 
   const editor = useEditor({
@@ -178,15 +204,29 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
         return false;
       },
     },
-    onUpdate: ({ editor }: { editor: Editor }) => onChange(editor.getHTML()),
+    onUpdate: ({ editor }: { editor: Editor }) => {
+      if (acceptsUserUpdates.current) onChange(editor.getHTML());
+    },
   });
 
   // Hydrate once the editor is ready (edit mode passes existing content).
   useEffect(() => {
+    acceptsUserUpdates.current = false;
     editorRef.current = editor; // keep the ref current for paste/drop image inserts
     if (editor && content && editor.getHTML() !== content) {
-      editor.commands.setContent(content);
+      // Hydration is not an edit. Emitting Tiptap's update event here caused an
+      // unchanged document to autosave merely because someone opened it.
+      editor.commands.setContent(content, { emitUpdate: false });
     }
+    // Extension normalization can dispatch its own transactions during editor
+    // construction. Only updates after the first interactive frame are edits.
+    const frame = window.requestAnimationFrame(() => {
+      acceptsUserUpdates.current = true;
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      acceptsUserUpdates.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
 
@@ -258,21 +298,37 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
    * upload rather than one per stroke. `null` means the layer was cleared and
    * passes straight through.
    */
-  const commitOverlay = (dataUrl: string | null) => {
-    if (!onOverlayChange) return;
-    if (!dataUrl) { onOverlayChange(null); return; }
-    if (!dataUrl.startsWith('data:')) { onOverlayChange(dataUrl); return; } // already hosted
+  const commitOverlay = (dataUrl: string | null): Promise<void> => {
+    if (!onOverlayChange) return Promise.resolve();
+    if (!dataUrl) { onOverlayChange(null); return Promise.resolve(); }
+    if (!dataUrl.startsWith('data:')) { onOverlayChange(dataUrl); return Promise.resolve(); } // already hosted
     const toastId = toast.loading('Saving drawing…');
-    uploadDataUrl(dataUrl, `card-drawing-${Date.now()}.png`)
+    const work = uploadDataUrl(dataUrl, `card-drawing-${Date.now()}.png`)
       .then((url) => { onOverlayChange(url); toast.success('Drawing saved', { id: toastId }); })
-      .catch(() => toast.error('Could not save the drawing.', { id: toastId }));
+      .catch(() => { toast.error('Could not save the drawing.', { id: toastId }); });
+    return trackPendingWork(work);
   };
 
   /** Leave paint mode, keeping the strokes. One upload, at the end. */
   const finishDraw = () => {
-    commitOverlay(pendingOverlay.current);
+    void commitOverlay(pendingOverlay.current);
     setDrawing(false);
   };
+
+  // Give the document host one barrier for all asynchronous editor work. If a
+  // draw session is still open, its final canvas is committed before the same
+  // pending-work set is drained.
+  useEffect(() => {
+    if (!registerClosePreparation) return;
+    registerClosePreparation(async () => {
+      if (drawing) {
+        await commitOverlay(pendingOverlay.current);
+        setDrawing(false);
+      }
+      await waitForPendingWork();
+    });
+    return () => registerClosePreparation(null);
+  }, [drawing, registerClosePreparation]);
 
   if (!editor) return null;
 
@@ -342,7 +398,7 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
           const pos = annotate?.pos ?? null;
           setAnnotate(null);
           const toastId = toast.loading('Saving annotation…');
-          uploadDataUrl(dataUrl, `annotated-${Date.now()}.png`)
+          const work = uploadDataUrl(dataUrl, `annotated-${Date.now()}.png`)
             .then((src) => {
               if (pos != null) {
                 // Replace the annotated image IN PLACE (same document position) so the baked-in
@@ -358,7 +414,8 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
               }
               toast.success('Annotation saved', { id: toastId });
             })
-            .catch(() => toast.error('Could not save the annotation.', { id: toastId }));
+            .catch(() => { toast.error('Could not save the annotation.', { id: toastId }); });
+          trackPendingWork(work);
         }}
       />
     </div>

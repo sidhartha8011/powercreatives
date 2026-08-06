@@ -11,15 +11,21 @@
  * in client-review.css. Those numbers are already the Notion reference and are
  * deliberately untouched — the gap was chrome and placement, not type.
  *
- * It portals to `document.body`, i.e. OUTSIDE `#pcm-root`, which is why
- * `--pcm-doc-*` is declared on `:root` as well as `#pcm-root`.
+ * It uses the shared Radix dialog primitive and portals to the host-provided
+ * container when nested inside the client preview. The public review surface
+ * has no parent modal and uses Radix's `document.body` default.
  */
 
-import { useEffect, useRef, type ComponentType } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { CheckCircle2, X } from 'lucide-react';
 
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { CustomCardEditor } from './CustomCardEditor';
 
 /** Everything on this sheet that is stored. One shape, one save. */
@@ -142,19 +148,6 @@ export function CardDocumentView({
   onClose,
   container,
 }: CardDocumentViewProps) {
-  // Close on Escape + prevent body scroll. Escape goes through the same
-  // save-then-close route as the X and the backdrop, so no exit loses work.
-  const closeRef = useRef<() => void>(() => {});
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeRef.current(); };
-    document.addEventListener('keydown', handleKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', handleKey);
-      document.body.style.overflow = '';
-    };
-  }, []);
-
   /**
    * Autosave, on the app-wide contract (`useDebouncedSave`) — the same one the
    * Writer has always used.
@@ -166,6 +159,12 @@ export function CardDocumentView({
    * written, not at the single instant it goes away.
    */
   const doc = useRef({ title, content, overlay: overlay ?? null });
+  const [isClosing, setIsClosing] = useState(false);
+  const closingRef = useRef<Promise<void> | null>(null);
+  const prepareEditorCloseRef = useRef<(() => Promise<void>) | null>(null);
+  const registerClosePreparation = useCallback((prepare: (() => Promise<void>) | null) => {
+    prepareEditorCloseRef.current = prepare;
+  }, []);
 
   const saver = useDebouncedSave<CardDocumentDraft>({
     enabled: canEdit && !!onSave,
@@ -190,22 +189,47 @@ export function CardDocumentView({
   /**
    * Land the last change before the sheet goes away.
    *
-   * `flush` awaits anything already in flight, so closing mid-upload no longer
-   * writes stale content over the newer one.
+   * Every close path joins the same promise. A failed write keeps the sheet
+   * open; only a confirmed write may invoke the host's `onClose`.
    */
-  const closeAfterSaving = () => { void saver.flush().finally(onClose); };
-  closeRef.current = closeAfterSaving;
+  const closeAfterSaving = () => {
+    if (closingRef.current) return;
+
+    setIsClosing(true);
+    let request: Promise<void>;
+    request = (async () => {
+      await prepareEditorCloseRef.current?.();
+      await saver.flush();
+      onClose();
+    })()
+      .catch(() => { setIsClosing(false); })
+      .finally(() => {
+        if (closingRef.current === request) closingRef.current = null;
+      });
+    closingRef.current = request;
+  };
 
   const rows = properties ?? [];
 
-  return createPortal(
-    <div
-      className="pcm-notion-overlay"
-      onClick={closeAfterSaving}
-      role="dialog"
-      aria-label="Document preview"
-    >
-      <div className="pcm-notion-modal" onClick={(e) => e.stopPropagation()}>
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) closeAfterSaving(); }}>
+      <DialogContent
+        container={container}
+        overlayClassName="pcm-notion-overlay"
+        unstyled
+        showCloseButton={false}
+        className="fixed inset-0 z-[10000] flex items-center justify-center p-[3vh_16px] outline-none"
+        onClick={closeAfterSaving}
+        aria-label="Document preview"
+      >
+        <DialogTitle className="sr-only">{title || 'Document preview'}</DialogTitle>
+        <DialogDescription className="sr-only">
+          Review and edit this approval document.
+        </DialogDescription>
+        <div
+          className="pcm-notion-modal pointer-events-auto"
+          onClick={(event) => event.stopPropagation()}
+        >
         {/* Top bar — actions only. It used to carry a FileText icon plus the
             title, which repeated the 40px title sitting directly below it. */}
         <div className="pcm-notion-topbar">
@@ -255,7 +279,7 @@ export function CardDocumentView({
                 and two definitions of one heading is how they drift. */}
             <h1
               className="pcm-notion-title"
-              contentEditable={canEdit}
+              contentEditable={canEdit && !isClosing}
               suppressContentEditableWarning
               spellCheck={false}
               onInput={(e) => edit({ title: e.currentTarget.textContent ?? '' })}
@@ -302,17 +326,18 @@ export function CardDocumentView({
             {isLoading ? null : (
               <CustomCardEditor
                 bare
-                editable={canEdit}
+                editable={canEdit && !isClosing}
                 content={content}
                 overlay={overlay ?? null}
                 onChange={(html) => edit({ content: html })}
                 onOverlayChange={(url) => edit({ overlay: url })}
+                registerClosePreparation={registerClosePreparation}
               />
             )}
           </div>
         </div>
-      </div>
-    </div>,
-    container ?? document.body
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

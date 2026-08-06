@@ -95,9 +95,18 @@ function DialogContent({
   showCloseButton = true,
   onEscapeKeyDown,
   container,
+  overlayClassName,
+  unstyled = false,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  /** Additional styling for this dialog instance's viewport overlay. */
+  overlayClassName?: string;
+  /**
+   * Skip the shared centred-panel classes when the caller supplies its own
+   * content shell. Radix still owns modality, dismissal and focus management.
+   */
+  unstyled?: boolean;
   /**
    * Where the dialog is portalled. Defaults to `document.body` (Radix's
    * default), which is right for almost every dialog.
@@ -131,11 +140,11 @@ function DialogContent({
 
   return (
     <DialogPortal data-slot="dialog-portal" container={container ?? undefined}>
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
+          !unstyled && "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
           className
         )}
         onEscapeKeyDown={handleEscapeKeyDown}

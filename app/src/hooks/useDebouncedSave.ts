@@ -67,8 +67,15 @@ export function useDebouncedSave<T>({
   const latestRef = useRef<T | null>(null);
   /** Serialised form of what is known to be stored — the dirty check. */
   const savedRef = useRef<string | null>(null);
-  /** In-flight write, so `flush` can await a save already under way. */
-  const inFlightRef = useRef<Promise<unknown> | null>(null);
+  /** Mirrors `isDirty` for callbacks that must make a synchronous decision. */
+  const dirtyRef = useRef(false);
+  /**
+   * The one active drain. Every caller joins this promise, so saves can never
+   * overlap and a newer value is written only after the older request settles.
+   */
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  /** Used by the retry timer without giving the drain callback a self-dependency. */
+  const writeRef = useRef<() => Promise<void>>(async () => undefined);
 
   // Read through refs so the identity of `save` never restarts a timer. A
   // mutation object is a new identity on every render; a dependency on it would
@@ -78,54 +85,106 @@ export function useDebouncedSave<T>({
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
 
-  const write = useCallback(async (): Promise<void> => {
-    if (!enabledRef.current) return;
-    const value = latestRef.current;
-    if (value === null) return;
+  const write = useCallback((): Promise<void> => {
+    if (!enabledRef.current) return Promise.resolve();
+    if (inFlightRef.current) return inFlightRef.current;
 
-    const serialised = JSON.stringify(value);
-    if (serialised === savedRef.current) return; // Nothing changed.
+    let drain: Promise<void>;
+    drain = (async () => {
+      while (enabledRef.current) {
+        const value = latestRef.current;
+        if (value === null) return;
 
-    setState('saving');
-    const promise = saveRef.current(value);
-    inFlightRef.current = promise;
-    try {
-      await promise;
-      // Only mark clean if nothing newer arrived while the write was running.
-      if (JSON.stringify(latestRef.current) === serialised) {
+        const serialised = JSON.stringify(value);
+        if (serialised === savedRef.current) {
+          dirtyRef.current = false;
+          setIsDirty(false);
+          return;
+        }
+
+        setState('saving');
+        try {
+          await saveRef.current(value);
+        } catch (error) {
+          dirtyRef.current = true;
+          setIsDirty(true);
+          setState('error');
+
+          // Keep the existing UI contract truthful: an autosave failure is
+          // retried after the normal cadence, while an explicit flush still
+          // rejects so its caller never closes over an unsaved document.
+          if (timerRef.current) clearTimeout(timerRef.current);
+          timerRef.current = setTimeout(() => {
+            timerRef.current = null;
+            void writeRef.current().catch(() => undefined);
+          }, delayMs);
+          throw error;
+        }
+
+        // This exact value is now stored. If the user changed it during the
+        // request, loop and write the newer value after this one—not beside it.
         savedRef.current = serialised;
-        setIsDirty(false);
-        setState('saved');
+        if (JSON.stringify(latestRef.current) === serialised) {
+          if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+          }
+          dirtyRef.current = false;
+          setIsDirty(false);
+          setState('saved');
+          return;
+        }
+
+        dirtyRef.current = true;
+        setIsDirty(true);
       }
-    } catch {
-      // Silent by contract: an autosave failure must not interrupt writing.
-      // The value stays dirty, so the next change retries it.
-      setState('error');
-    } finally {
-      if (inFlightRef.current === promise) inFlightRef.current = null;
-    }
-  }, []);
+    })();
+
+    inFlightRef.current = drain;
+    const clearInFlight = () => {
+      if (inFlightRef.current === drain) inFlightRef.current = null;
+    };
+    void drain.then(clearInFlight, clearInFlight);
+    return drain;
+  }, [delayMs]);
+  writeRef.current = write;
 
   const change = useCallback((value: T) => {
     latestRef.current = value;
     if (!enabledRef.current) return;
-    if (JSON.stringify(value) === savedRef.current) return; // Back to stored.
+    const isStored = JSON.stringify(value) === savedRef.current;
+    if (isStored && !inFlightRef.current) {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      dirtyRef.current = false;
+      setIsDirty(false);
+      return;
+    }
 
+    dirtyRef.current = true;
     setIsDirty(true);
     setState('pending');
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => { void write(); }, delayMs);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      void write().catch(() => undefined);
+    }, delayMs);
   }, [delayMs, write]);
 
   const flush = useCallback(async (): Promise<void> => {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-    if (inFlightRef.current) await inFlightRef.current.catch(() => undefined);
     await write();
   }, [write]);
 
   const reset = useCallback((value: T) => {
+    // A query refetch can resolve after the user has typed something newer.
+    // Never let that older server echo replace a dirty or in-flight draft.
+    if (dirtyRef.current || inFlightRef.current) return;
     latestRef.current = value;
     savedRef.current = JSON.stringify(value);
+    dirtyRef.current = false;
     setIsDirty(false);
     setState('idle');
   }, []);
