@@ -110,6 +110,24 @@ export function CreativeAssetCard({
   // isExpanded state removed — copy cards are always fully expanded now
   const [showLightbox, setShowLightbox] = useState(false);
   const [showArticleViewer, setShowArticleViewer] = useState(false);
+  // The viewer remains mounted after visual dismissal until asynchronous image
+  // work and the final document write settle. This lets the user continue on
+  // the board without destroying the editor that owns the pending media patch.
+  const [articleViewerMounted, setArticleViewerMounted] = useState(false);
+
+  const openArticleViewer = useCallback(() => {
+    setArticleViewerMounted(true);
+    setShowArticleViewer(true);
+  }, []);
+
+  const finishArticleViewer = useCallback(() => {
+    // Refetch only after the retained editor has drained every revision and is
+    // ready to unmount. Invalidating after each intermediate autosave can feed
+    // an older server echo back into the still-open editor while a newer local
+    // revision is pending.
+    setArticleViewerMounted(false);
+    onAssetUpdate?.();
+  }, [onAssetUpdate]);
 
   // Extract first image URL from article/custom HTML content for thumbnail preview
   const articleThumbnail = useMemo(() => {
@@ -332,8 +350,7 @@ export function CreativeAssetCard({
       content: doc.content,
       overlay: doc.overlay,
     });
-    onAssetUpdate?.();
-  }, [publicToken, asset.id, updateMutation, onAssetUpdate]);
+  }, [publicToken, asset.id, updateMutation]);
 
   // Save inline text edits to snapshot and DB
   const handleSaveTextEdits = useCallback(async () => {
@@ -531,7 +548,7 @@ export function CreativeAssetCard({
           style={{ cursor: 'pointer' }}
           role="button"
           tabIndex={0}
-          onClick={() => setShowArticleViewer(true)}
+          onClick={openArticleViewer}
         >
           {/* Thumbnail or icon */}
           {articleThumbnail ? (
@@ -576,7 +593,7 @@ export function CreativeAssetCard({
           style={{ cursor: 'pointer', position: 'relative' }}
           role="button"
           tabIndex={0}
-          onClick={() => setShowArticleViewer(true)}
+          onClick={openArticleViewer}
         >
           {articleThumbnail ? (
             <div className="pcm-card-media select-none" style={{ height: '150px', overflow: 'hidden' }}>
@@ -728,8 +745,9 @@ export function CreativeAssetCard({
       )}
 
       {/* ─── ARTICLE / CUSTOM DOCUMENT VIEW (full read-only Tiptap) ─── */}
-      {showArticleViewer && (type === 'article' || type === 'custom') && (
+      {articleViewerMounted && (type === 'article' || type === 'custom') && (
         <CardDocumentView
+          visible={showArticleViewer}
           content={asset.content || ''}
           title={asset.title || (type === 'custom' ? 'Untitled Document' : 'Untitled Article')}
           properties={documentProperties}
@@ -743,7 +761,9 @@ export function CreativeAssetCard({
           canEdit={isTeamMember}
           onSave={handleSaveDocument}
           onApprove={handleToggleApprove}
-          onClose={() => setShowArticleViewer(false)}
+          onDismiss={() => setShowArticleViewer(false)}
+          onRestore={() => setShowArticleViewer(true)}
+          onClose={finishArticleViewer}
           container={documentContainer}
         />
       )}

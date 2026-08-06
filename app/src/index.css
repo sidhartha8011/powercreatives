@@ -1080,15 +1080,17 @@
 #pcm-root ul[data-type="taskList"] li, ul[data-type="taskList"] li {
   display: flex;
   align-items: flex-start;
-  gap: 0.55em;
-  margin: 0.15em 0;
+  gap: 8px;
+  margin: 1px 0;
 }
 #pcm-root ul[data-type="taskList"] li > label, ul[data-type="taskList"] li > label {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  /* Aligns the box to the first text line at any of our scales. */
-  height: 1.5em;
+  justify-content: center;
+  /* Match the document's 24px line box so the control centres on line one. */
+  width: 16px;
+  height: 24px;
   user-select: none;
   cursor: pointer;
 }
@@ -1100,11 +1102,34 @@
   margin: 0;
 }
 #pcm-root ul[data-type="taskList"] input[type="checkbox"], ul[data-type="taskList"] input[type="checkbox"] {
-  width: 1em;
-  height: 1em;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
   margin: 0;
+  border: 1px solid rgba(55, 53, 47, 0.38);
+  border-radius: 3px;
+  background-color: #ffffff;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 11px 11px;
   cursor: pointer;
-  accent-color: var(--pcm-doc-ink);
+  transition: background-color 80ms ease, border-color 80ms ease, box-shadow 80ms ease;
+}
+#pcm-root ul[data-type="taskList"] input[type="checkbox"]:hover,
+ul[data-type="taskList"] input[type="checkbox"]:hover {
+  background-color: rgba(55, 53, 47, 0.06);
+}
+#pcm-root ul[data-type="taskList"] input[type="checkbox"]:focus-visible,
+ul[data-type="taskList"] input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(35, 131, 226, 0.22);
+}
+#pcm-root ul[data-type="taskList"] input[type="checkbox"]:checked,
+ul[data-type="taskList"] input[type="checkbox"]:checked {
+  border-color: #2383e2;
+  background-color: #2383e2;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.25 6.15 4.85 8.6 9.8 3.55' fill='none' stroke='%23fff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 /* A ticked item reads as done without vanishing. */
 #pcm-root ul[data-type="taskList"] li[data-checked="true"] > div,

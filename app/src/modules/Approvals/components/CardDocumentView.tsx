@@ -11,21 +11,17 @@
  * in client-review.css. Those numbers are already the Notion reference and are
  * deliberately untouched — the gap was chrome and placement, not type.
  *
- * It uses the shared Radix dialog primitive and portals to the host-provided
- * container when nested inside the client preview. The public review surface
- * has no parent modal and uses Radix's `document.body` default.
+ * It uses a stable portal shell and portals to the host-provided container when
+ * nested inside the client preview. The public review surface has no parent
+ * modal and uses `document.body`.
  */
 
-import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
+import { useCallback, useEffect, useRef, type ComponentType } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircle2, X } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { CustomCardEditor } from './CustomCardEditor';
 
 /** Everything on this sheet that is stored. One shape, one save. */
@@ -59,6 +55,8 @@ export interface CardDocumentProperty {
 }
 
 export interface CardDocumentViewProps {
+  /** Whether the sheet is visible. Hidden sheets stay mounted only while a background save drains. */
+  visible: boolean;
   /** Tiptap HTML of the document body. */
   content: string;
   title: string;
@@ -116,6 +114,11 @@ export interface CardDocumentViewProps {
    * an Approve button on the agency's own screen would let us sign off for them.
    */
   onApprove?: () => void;
+  /** Hide the sheet immediately so the user can continue elsewhere. */
+  onDismiss: () => void;
+  /** Restore the retained sheet when its background save fails. */
+  onRestore: () => void;
+  /** Unmount the retained sheet after its background work has safely completed. */
   onClose: () => void;
   /**
    * Where this sheet is portalled. Defaults to `document.body`.
@@ -134,6 +137,7 @@ export interface CardDocumentViewProps {
 }
 
 export function CardDocumentView({
+  visible,
   content,
   title,
   properties,
@@ -145,6 +149,8 @@ export function CardDocumentView({
   canEdit = false,
   onSave,
   onApprove,
+  onDismiss,
+  onRestore,
   onClose,
   container,
 }: CardDocumentViewProps) {
@@ -159,12 +165,16 @@ export function CardDocumentView({
    * written, not at the single instant it goes away.
    */
   const doc = useRef({ title, content, overlay: overlay ?? null });
-  const [isClosing, setIsClosing] = useState(false);
+  const visibleRef = useRef(visible);
   const closingRef = useRef<Promise<void> | null>(null);
   const prepareEditorCloseRef = useRef<(() => Promise<void>) | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const registerClosePreparation = useCallback((prepare: (() => Promise<void>) | null) => {
     prepareEditorCloseRef.current = prepare;
   }, []);
+
+  useEffect(() => { visibleRef.current = visible; }, [visible]);
 
   const saver = useDebouncedSave<CardDocumentDraft>({
     enabled: canEdit && !!onSave,
@@ -175,10 +185,15 @@ export function CardDocumentView({
   // later it is the result of a refetch. `reset` marks it clean, so a refetch
   // never looks like an edit and never bounces straight back to the server.
   useEffect(() => {
+    // A completed older write invalidates the query while a newer local edit
+    // may already be queued. Its refetch acknowledges the older revision; it
+    // must not replace the newer draft held in `doc`. `reset` applies the same
+    // dirty guard inside the saver, so keep both sources of truth aligned.
+    if (saver.isDirty) return;
     doc.current = { title, content, overlay: overlay ?? null };
     saver.reset(doc.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, content, overlay]);
+  }, [title, content, overlay, saver.isDirty]);
 
   /** One place every edit on this sheet flows through. */
   const edit = (patch: Partial<CardDocumentDraft>) => {
@@ -187,59 +202,98 @@ export function CardDocumentView({
   };
 
   /**
-   * Land the last change before the sheet goes away.
-   *
-   * Every close path joins the same promise. A failed write keeps the sheet
-   * open; only a confirmed write may invoke the host's `onClose`.
+   * Dismiss immediately, then drain media work and the document save while the
+   * editor remains mounted but non-modal. Keeping the editor alive is essential:
+   * annotation uploads finish by replacing a Tiptap image node with the hosted
+   * URL. Unmounting here would destroy that editor and lose the replacement.
    */
-  const closeAfterSaving = () => {
+  const closeInBackground = () => {
+    visibleRef.current = false;
+    onDismiss();
     if (closingRef.current) return;
 
-    setIsClosing(true);
+    const toastId = toast.loading('Saving changes in the background…');
     let request: Promise<void>;
     request = (async () => {
       await prepareEditorCloseRef.current?.();
       await saver.flush();
-      onClose();
+      toast.success('Changes saved', { id: toastId });
+      if (!visibleRef.current) onClose();
     })()
-      .catch(() => { setIsClosing(false); })
+      .catch(() => {
+        toast.error('Could not save. The document has been reopened.', { id: toastId });
+        visibleRef.current = true;
+        onRestore();
+      })
       .finally(() => {
         if (closingRef.current === request) closingRef.current = null;
       });
     closingRef.current = request;
   };
 
+  const closeInBackgroundRef = useRef(closeInBackground);
+  closeInBackgroundRef.current = closeInBackground;
+
+  // The retained background editor cannot use a modal primitive: changing a
+  // modal dialog into a non-modal one remounts its content and destroys the
+  // exact Tiptap instance whose pending image work must survive. Preserve the
+  // visible dialog's Escape and scroll-lock behaviour without changing that
+  // component identity during dismissal.
+  useEffect(() => {
+    if (!visible) return;
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const overlayElement = overlayRef.current;
+    const isolatedSiblings = overlayElement?.parentElement
+      ? Array.from(overlayElement.parentElement.children)
+        .filter((element): element is HTMLElement => element instanceof HTMLElement && element !== overlayElement)
+        .map((element) => ({ element, inert: element.inert }))
+      : [];
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        event.preventDefault();
+        closeInBackgroundRef.current();
+      }
+    };
+    isolatedSiblings.forEach(({ element }) => { element.inert = true; });
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    closeButtonRef.current?.focus();
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      isolatedSiblings.forEach(({ element, inert }) => { element.inert = inert; });
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [visible]);
+
   const rows = properties ?? [];
 
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open) closeAfterSaving(); }}>
-      <DialogContent
-        container={container}
-        overlayClassName="pcm-notion-overlay"
-        unstyled
-        showCloseButton={false}
-        className="fixed inset-0 z-[10000] flex items-center justify-center p-[3vh_16px] outline-none"
-        onClick={closeAfterSaving}
-        aria-label="Document preview"
+  return createPortal(
+    <div
+      ref={overlayRef}
+      className={`pcm-notion-overlay ${visible ? '' : 'pcm-notion-overlay--background-save'}`}
+      aria-hidden={!visible}
+      onClick={closeInBackground}
+    >
+      <div
+        role={visible ? 'dialog' : undefined}
+        aria-modal={visible ? true : undefined}
+        aria-label={title || 'Document preview'}
+        className="pcm-notion-modal pointer-events-auto"
+        onClick={(event) => event.stopPropagation()}
       >
-        <DialogTitle className="sr-only">{title || 'Document preview'}</DialogTitle>
-        <DialogDescription className="sr-only">
-          Review and edit this approval document.
-        </DialogDescription>
-        <div
-          className="pcm-notion-modal pointer-events-auto"
-          onClick={(event) => event.stopPropagation()}
-        >
         {/* Top bar — actions only. It used to carry a FileText icon plus the
             title, which repeated the 40px title sitting directly below it. */}
         <div className="pcm-notion-topbar">
           {/* Save state — a statement of what is happening, which then stops.
               Not instructional chrome: it says nothing while there is nothing to
               say, so the bar is empty on a document no one is editing. */}
-          {canEdit && (isClosing || saver.state !== 'idle') && (
+          {canEdit && saver.state !== 'idle' && (
             <span className="pcm-notion-savestate" role="status">
               {saver.state === 'error' ? 'Not saved — retrying'
-                : isClosing ? 'Saving…'
                 : saver.state === 'saved' ? 'Saved'
                 : 'Saving…'}
             </span>
@@ -259,9 +313,10 @@ export function CardDocumentView({
             </button>
           )}
           <button
+            ref={closeButtonRef}
             type="button"
             className="pcm-notion-iconbtn"
-            onClick={closeAfterSaving}
+            onClick={closeInBackground}
             aria-label="Close preview"
           >
             <X className="w-[18px] h-[18px]" />
@@ -280,7 +335,7 @@ export function CardDocumentView({
                 and two definitions of one heading is how they drift. */}
             <h1
               className="pcm-notion-title"
-              contentEditable={canEdit && !isClosing}
+              contentEditable={canEdit && visible}
               suppressContentEditableWarning
               spellCheck={false}
               onInput={(e) => edit({ title: e.currentTarget.textContent ?? '' })}
@@ -327,7 +382,7 @@ export function CardDocumentView({
             {isLoading ? null : (
               <CustomCardEditor
                 bare
-                editable={canEdit && !isClosing}
+                editable={canEdit}
                 content={content}
                 overlay={overlay ?? null}
                 onChange={(html) => edit({ content: html })}
@@ -337,8 +392,8 @@ export function CardDocumentView({
             )}
           </div>
         </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>,
+    container ?? document.body
   );
 }

@@ -861,6 +861,12 @@
   cursor: default;
   animation: pcmFadeIn .15s ease;
 }
+/* The document editor stays mounted only long enough to finish asynchronous
+   media work and its final save. During that drain it must have no backdrop,
+   pointer interception, focus trap, or visible chrome. */
+.pcm-notion-overlay--background-save {
+  display: none;
+}
 .pcm-notion-modal {
   position: relative;
   background: #ffffff;
