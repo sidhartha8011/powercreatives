@@ -921,6 +921,90 @@
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
+
+/* Slash-command palette. It shares the selection menu's portal boundary but
+   uses a list surface because block insertion needs names and descriptions,
+   not a row of ambiguous icons. */
+.pcm-slash-menu {
+  z-index: 130;
+  width: min(320px, calc(100vw - 32px));
+  padding: 6px;
+  color: var(--pcm-doc-ink);
+  background: rgba(255,255,255,0.99);
+  border: 1px solid rgba(15,15,15,0.10);
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(15,15,15,0.18), 0 2px 6px rgba(15,15,15,0.08);
+  font-family: var(--pcm-doc-font);
+  -webkit-font-smoothing: antialiased;
+}
+.pcm-slash-menu__header,
+.pcm-slash-menu__group {
+  color: var(--pcm-doc-ink-faint);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+.pcm-slash-menu__header { padding: 4px 8px 6px; }
+.pcm-slash-menu__items {
+  max-height: min(360px, calc(100vh - 80px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.pcm-slash-menu__group { padding: 8px 8px 3px; }
+.pcm-slash-menu__item {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.pcm-slash-menu__item:hover,
+.pcm-slash-menu__item.is-selected { background: rgba(55,53,47,0.08); }
+.pcm-slash-menu__icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(55,53,47,0.12);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--pcm-doc-ink-muted);
+}
+.pcm-slash-menu__icon svg { width: 17px; height: 17px; stroke-width: 1.65; }
+.pcm-slash-menu__copy { min-width: 0; display: flex; flex-direction: column; }
+.pcm-slash-menu__label {
+  color: var(--pcm-doc-ink);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 19px;
+}
+.pcm-slash-menu__description {
+  overflow: hidden;
+  color: var(--pcm-doc-ink-faint);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pcm-slash-menu__empty {
+  padding: 12px 8px;
+  color: var(--pcm-doc-ink-faint);
+  font-size: 13px;
+  line-height: 18px;
+}
 @media (max-width: 519px) {
   .pcm-notion-modal,
   .pcm-internal-preview {
@@ -1022,7 +1106,7 @@
 #pcm-root .pcm-notion-title,
 .pcm-notion-title {
   font-family: var(--pcm-notion-font);
-  font-size: var(--pcm-doc-title-size); line-height: var(--pcm-doc-title-leading); font-weight: var(--pcm-doc-title-weight);
+  font-size: clamp(32px, 5vw, var(--pcm-doc-title-size)); line-height: var(--pcm-doc-title-leading); font-weight: var(--pcm-doc-title-weight);
   letter-spacing: -0.018em;
   color: var(--pcm-doc-ink);
   margin: 6px 0 6px;
@@ -1033,22 +1117,20 @@
 .pcm-notion-meta + .pcm-notion-title { margin-top: 4px; }
 .pcm-notion-topbar + .pcm-notion-page .pcm-notion-title:first-child { margin-top: 34px; }
 
-/* Property rows: icon + label on the left, value on the right, and a divider
-   closing the block off from the body. This was a bare two-span flex row with a
-   128px label — the reference has an icon per row, a wider label gutter, and a
-   value that behaves like a control (hover surface, padding) rather than text
-   floating next to a caption. */
+/* Property rows: icon + label on the left and value on the right. The reference
+   separates this block from the document with deliberate whitespace, not a
+   form-style rule. */
 .pcm-notion-props {
-  display: flex; flex-direction: column; gap: 1px;
-  margin: 10px 0 14px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid rgba(55,53,47,0.09);
+  display: flex; flex-direction: column; gap: 2px;
+  margin: 12px 0 38px;
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 .pcm-notion-prop {
   display: flex; align-items: center; gap: 0;
   font-family: var(--pcm-notion-font); font-size: var(--pcm-doc-property-size); line-height: var(--pcm-doc-property-leading);
   font-weight: var(--pcm-doc-weight);
-  min-height: 30px;
+  min-height: 36px;
 }
 .pcm-notion-prop-icon {
   width: 16px; height: 16px; flex-shrink: 0;
@@ -1073,12 +1155,14 @@
   margin: 4px 0 18px;
 }
 .pcm-notion-prop-label {
-  flex: 0 0 152px;
+  flex: 0 1 152px;
+  min-width: 100px;
   display: inline-flex; align-items: center; gap: 7px;
   color: var(--pcm-doc-ink-subtle);
   padding: 3px 6px; border-radius: 4px;
 }
 .pcm-notion-prop-value {
+  flex: 1 1 auto;
   color: var(--pcm-doc-ink);
   min-width: 0;
   padding: 3px 8px; border-radius: 4px;

@@ -7,11 +7,12 @@
  * the Writer component while reusing every existing formatting command.
  */
 
-import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { Editor } from '@tiptap/react';
 import type { BubbleMenuProps } from '@tiptap/react/menus';
 
 import { WriterBubbleMenu } from '@/modules/Writer/components/WriterBubbleMenu';
+import { useApprovalEditorMenuPortal } from './useApprovalEditorMenuPortal';
 
 interface ApprovalSelectionMenuProps {
   editor: Editor;
@@ -19,23 +20,7 @@ interface ApprovalSelectionMenuProps {
 }
 
 export function ApprovalSelectionMenu({ editor, onOpenImagePicker }: ApprovalSelectionMenuProps) {
-  const [scrollTarget, setScrollTarget] = useState<HTMLElement | null>(null);
-
-  /* The editor DOM is created before React attaches it to the modal. Resolve
-     the scroll owner after that attachment; resolving during render returns
-     null and leaves Floating UI listening to the window instead. */
-  useLayoutEffect(() => {
-    setScrollTarget(editor.view.dom.closest<HTMLElement>('.pcm-notion-modal'));
-  }, [editor]);
-
-  /* BubbleMenu calls appendTo when it becomes visible, by which time the view
-     is mounted. Keeping this as a function avoids capturing the pre-mount null
-     and ensures the popover sits outside the modal's clipping scroll box. */
-  const appendTo = useCallback(() => (
-    editor.view.dom.closest<HTMLElement>('.pcm-notion-overlay')
-      ?? editor.view.dom.parentElement
-      ?? document.body
-  ), [editor]);
+  const { appendTo, scrollTarget } = useApprovalEditorMenuPortal(editor);
 
   const floatingOptions = useMemo<BubbleMenuProps['options']>(() => ({
     strategy: 'fixed',
@@ -45,7 +30,7 @@ export function ApprovalSelectionMenu({ editor, onOpenImagePicker }: ApprovalSel
     shift: { padding: 12 },
     inline: true,
     // The opened document scrolls inside the modal rather than the window.
-    scrollTarget: scrollTarget ?? window,
+    scrollTarget,
   }), [scrollTarget]);
 
   return (
@@ -54,6 +39,7 @@ export function ApprovalSelectionMenu({ editor, onOpenImagePicker }: ApprovalSel
       onOpenImagePicker={onOpenImagePicker}
       selectionOnly
       compact
+      showImageAction={false}
       appendTo={appendTo}
       floatingOptions={floatingOptions}
     />

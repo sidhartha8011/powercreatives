@@ -588,23 +588,23 @@
   --pcm-doc-measure: 708px;
   --pcm-doc-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji";
-  --pcm-doc-size: 16px;
-  --pcm-doc-leading: 1.5;
+  --pcm-doc-size: 15px;
+  --pcm-doc-leading: 1.6;
   --pcm-doc-line-box: 24px;
   --pcm-doc-weight: 400;
   --pcm-doc-ink: #37352f;
-  --pcm-doc-ink-muted: rgba(55, 53, 47, 0.65);
-  --pcm-doc-ink-subtle: rgba(55, 53, 47, 0.5);
-  --pcm-doc-ink-faint: rgba(55, 53, 47, 0.45);
+  --pcm-doc-ink-muted: rgba(55, 53, 47, 0.68);
+  --pcm-doc-ink-subtle: rgba(55, 53, 47, 0.60);
+  --pcm-doc-ink-faint: rgba(55, 53, 47, 0.50);
   --pcm-doc-title-size: 40px;
   --pcm-doc-title-leading: 1.2;
   --pcm-doc-title-weight: 700;
-  --pcm-doc-meta-size: 12px;
-  --pcm-doc-meta-leading: 1.4;
+  --pcm-doc-meta-size: 13px;
+  --pcm-doc-meta-leading: 1.5;
   --pcm-doc-property-size: 14px;
   --pcm-doc-property-leading: 1.5;
   --pcm-doc-control-size: 13.5px;
-  --pcm-doc-check-size: 16px;
+  --pcm-doc-check-size: 14px;
   --pcm-doc-check-radius: 2px;
   --pcm-doc-check-border: rgba(55, 53, 47, 0.42);
   --pcm-doc-check-accent: #2383e2;
@@ -1062,10 +1062,10 @@
      checklist. 12vh belonged to the full-window dialog only. */
   padding-bottom: 64px;
 }
-#pcm-root .pcm-card-editor h1, .pcm-card-editor h1 { font-size: 1.5em; font-weight: 700; line-height: 1.3; margin: 1em 0 0.4em; }
-#pcm-root .pcm-card-editor h2, .pcm-card-editor h2 { font-size: 1.3em; font-weight: 650; line-height: 1.35; margin: 0.9em 0 0.35em; }
-#pcm-root .pcm-card-editor h3, .pcm-card-editor h3 { font-size: 1.12em; font-weight: 600; line-height: 1.4; margin: 0.8em 0 0.3em; }
-#pcm-root .pcm-card-editor h4, .pcm-card-editor h4 { font-size: 1em; font-weight: 600; line-height: 1.4; margin: 0.7em 0 0.3em; }
+#pcm-root .pcm-card-editor h1, .pcm-card-editor h1 { font-size: 24px; font-weight: 700; line-height: 1.3; margin: 24px 0 6px; letter-spacing: -0.012em; }
+#pcm-root .pcm-card-editor h2, .pcm-card-editor h2 { font-size: 20px; font-weight: 650; line-height: 1.35; margin: 22px 0 5px; letter-spacing: -0.008em; }
+#pcm-root .pcm-card-editor h3, .pcm-card-editor h3 { font-size: 17px; font-weight: 600; line-height: 1.4; margin: 20px 0 4px; }
+#pcm-root .pcm-card-editor h4, .pcm-card-editor h4 { font-size: 15px; font-weight: 600; line-height: 1.6; margin: 18px 0 3px; }
 #pcm-root .pcm-card-editor p, .pcm-card-editor p {
   /* The app-wide admin reset assigns every paragraph 0.7em / 1.3. A document
      paragraph is content, not helper copy, so restore the document contract on

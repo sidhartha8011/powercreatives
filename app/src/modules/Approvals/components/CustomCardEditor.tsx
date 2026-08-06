@@ -14,9 +14,8 @@
  *     a transparent PNG overlay and rendered on top of the content here and on review.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
-import { Image as ImageIcon, PenLine, Brush, ListChecks } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useImageUpload } from '@/hooks/useImageUpload';
@@ -24,6 +23,7 @@ import { getEditorExtensions } from '@/components/shared/editorExtensions';
 import { ImageAnnotator } from './ImageAnnotator';
 import { CardDrawLayer } from './CardDrawLayer';
 import { ApprovalSelectionMenu } from './ApprovalSelectionMenu';
+import { ApprovalSlashMenu } from './ApprovalSlashMenu';
 
 // WordPress media library global (wp_enqueue_media() runs in class-pcm-admin.php).
 declare const wp: any;
@@ -49,7 +49,7 @@ interface CustomCardEditorProps {
   bare?: boolean;
   /**
    * Whether the document can be changed. `false` renders the same document with
-   * the toolbar, the bubble menu and the annotation tools withheld.
+   * the contextual menus and annotation tools withheld.
    *
    * ONE instance serving both modes, rather than a second read-only Tiptap
    * component beside this one — that is how the surfaces drift apart, and it is
@@ -62,24 +62,6 @@ interface CustomCardEditorProps {
    * the document so asynchronous media work cannot outlive the editor.
    */
   registerClosePreparation?: (prepare: (() => Promise<void>) | null) => void;
-}
-
-function ToolbarButton({ onClick, active, title, children }: {
-  onClick: () => void; active?: boolean; title: string; children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={onClick}
-      title={title}
-      className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-        active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-      }`}
-    >
-      {children}
-    </button>
-  );
 }
 
 export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange, bare = false, editable = true, registerClosePreparation }: CustomCardEditorProps) {
@@ -294,10 +276,6 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     pendingOverlay.current = overlay ?? null;
     setDrawing(true);
   };
-  // Toggle paint mode. Clicking the active Brush button de-activates paint and keeps whatever was
-  // drawn — the same as pressing "Done", so the two routes out cannot disagree.
-  const toggleDraw = () => { if (drawing) finishDraw(); else startDraw(); };
-
   /**
    * The draw layer finished — upload the strokes and hand back a URL.
    *
@@ -345,41 +323,25 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
 
   return (
     <div className={bare ? '' : 'rounded-lg border border-border bg-card'}>
-      {/* Top settings bar — IMAGE + PAINT tools only. All text formatting lives in the
-          contextual bubble menu, which appears when the user selects text.
-          Withheld entirely when the document may not be changed: a disabled row
-          of buttons is chrome that explains nothing. */}
-      {editable && (
-      <div className={`flex flex-wrap items-center gap-1 p-1.5 ${bare ? '' : 'border-b border-border'}`}>
-        <ToolbarButton title="Insert image" onClick={insertImage}><ImageIcon className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title="Annotate an image — select an image (or double-click it) to paint directly on it" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title={drawing ? 'Stop drawing' : 'Draw on the whole card'} active={drawing} onClick={toggleDraw}><Brush className="h-4 w-4" /></ToolbarButton>
-        {/* Checklist. The node type ships in @tiptap/extension-list, already in
-            the tree via starter-kit — it was simply never registered, which is
-            why a checklist could not be made at all. Typing "[ ] " also works
-            (TipTap's input rule), so the interaction reveals itself; this button
-            is the discoverable route, not a hint. */}
-        <ToolbarButton
-          title="Checklist"
-          active={editor?.isActive('taskList')}
-          onClick={() => editor?.chain().focus().toggleTaskList().run()}
-        >
-          <ListChecks className="h-4 w-4" />
-        </ToolbarButton>
-      </div>
-      )}
       <div className={bare ? '' : 'max-h-[72vh] overflow-y-auto p-4'}>
         {/* Positioned wrapper so the draw layer + overlay align with the content. */}
         <div ref={contentBoxRef} className="relative">
           <EditorContent editor={editor} />
-          {/* Floating formatting toolbar — the same contextual bubble menu as the Writer canvas,
-              but `selectionOnly` so it appears ONLY when the user selects text (never on empty
-              lines). Image button reuses the picker; drawing mode hides it to avoid overlap. */}
+          {/* Selected text gets the shared formatter; typing `/` gets Approval's
+              block/media menu. Drawing mode hides both to avoid canvas overlap. */}
           {editable && !drawing && (
-            <ApprovalSelectionMenu
-              editor={editor}
-              onOpenImagePicker={insertImage}
-            />
+            <>
+              <ApprovalSelectionMenu
+                editor={editor}
+                onOpenImagePicker={insertImage}
+              />
+              <ApprovalSlashMenu
+                editor={editor}
+                onInsertImage={insertImage}
+                onAnnotateImage={annotateImage}
+                onStartDrawing={startDraw}
+              />
+            </>
           )}
           {/* Saved draw layer, shown on top of the content while not actively drawing. */}
           {overlay && !drawing && (

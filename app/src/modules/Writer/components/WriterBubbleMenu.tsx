@@ -48,6 +48,8 @@ interface WriterBubbleMenuProps {
    * mode so the same commands remain available in a true selection popover.
    */
   compact?: boolean;
+  /** Keep the shared Writer default; Approval cards move image insertion to `/`. */
+  showImageAction?: boolean;
   /** Optional Floating UI host supplied by a consuming surface. */
   appendTo?: BubbleMenuProps['appendTo'];
   /** Optional Tiptap v3 Floating UI configuration supplied by a consumer. */
@@ -97,6 +99,7 @@ export function WriterBubbleMenu({
   onOpenImagePicker,
   selectionOnly = false,
   compact = false,
+  showImageAction = true,
   appendTo,
   floatingOptions,
 }: WriterBubbleMenuProps) {
@@ -340,12 +343,14 @@ export function WriterBubbleMenu({
       <Divider />
 
       {/* ── Group 5: Rich elements ── */}
-      <MenuButton
-        onClick={onOpenImagePicker}
-        title="Insert Image"
-      >
-        <ImageIcon className={iconSize} />
-      </MenuButton>
+      {showImageAction && (
+        <MenuButton
+          onClick={onOpenImagePicker}
+          title="Insert Image"
+        >
+          <ImageIcon className={iconSize} />
+        </MenuButton>
+      )}
       <MenuButton
         onClick={openLinkInput}
         isActive={editor.isActive('link')}
