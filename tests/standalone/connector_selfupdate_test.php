@@ -92,5 +92,79 @@ $evLoss    = PCM_SEOHub_Service::connector_effective_version();
 $buildLoss = (int) substr($evLoss, strrpos($evLoss, '.') + 1);
 check('after option loss the build floors to the day-clock (never resets to 1)', $buildLoss === $floor && $floor > 30, array('build' => $buildLoss, 'floor' => $floor));
 
+// ── The update OBJECT WordPress actually consumes ────────────────────────────
+// Everything above proves the VERSION advances. This proves core can act on it:
+// wp_update_plugins() stores whatever the update_plugins_<host> filter returns
+// straight into $updates->response[$plugin_file], and then the Plugins screen,
+// WP_Automatic_Updater::should_update() and Plugin_Upgrader all read ->new_version.
+// Returning only 'version' left new_version UNSET — core held an update object it
+// could not act on, so nothing auto-updated and /update-now reported an empty 'to'.
+echo "\n-- the update object handed to WordPress --\n";
+
+$baked = (function () {
+    $m = new ReflectionMethod('PCM_SEOHub_Service', 'connector_php_simple');
+    $m->setAccessible(true);
+    return (string) $m->invoke(null, '', '', '');
+})();
+
+// Pull the registered filter out of the BAKED connector and run it for real.
+$GLOBALS['__filters'] = array();
+if (!function_exists('add_filter')) {
+    function add_filter($hook, $cb, $prio = 10, $args = 1) { $GLOBALS['__filters'][$hook] = $cb; return true; }
+}
+if (!function_exists('is_wp_error')) { function is_wp_error($t) { return $t instanceof WP_Error_Stub; } }
+if (!class_exists('WP_Error_Stub')) { class WP_Error_Stub {} }
+if (!function_exists('wp_remote_get')) { function wp_remote_get($u, $a = array()) { return $GLOBALS['__manifest_response']; } }
+if (!function_exists('wp_remote_retrieve_response_code')) { function wp_remote_retrieve_response_code($r) { return $r['code'] ?? 200; } }
+if (!function_exists('wp_remote_retrieve_body')) { function wp_remote_retrieve_body($r) { return $r['body'] ?? ''; } }
+
+preg_match('/^\s*\*\s*Update URI:\s*(\S+)/m', $baked, $u);
+$host = (string) parse_url($u[1] ?? '', PHP_URL_HOST);
+check('baked Update URI yields a host', $host !== '', $u[1] ?? '(missing)');
+
+if (!defined('PCM_CONN_FILE'))     { define('PCM_CONN_FILE', 'pcm-connector/pcm-connector.php'); }
+if (!defined('PCM_CONN_MANIFEST')) { define('PCM_CONN_MANIFEST', 'https://hub.example/manifest'); }
+if (!defined('PCM_CONN_HOST'))     { define('PCM_CONN_HOST', $host); }
+
+// Eval ONLY the add_filter(...) statement for the manifest hook, verbatim.
+if (preg_match("/add_filter\('update_plugins_[^']+',\s*function.*?\n\}, 10, 3\);/s", $baked, $blk)) {
+    eval($blk[0]);
+}
+$hook = 'update_plugins_' . $host;
+check('the filter registers under the header host', isset($GLOBALS['__filters'][$hook]), array_keys($GLOBALS['__filters']));
+
+$GLOBALS['__manifest_response'] = array('code' => 200, 'body' => json_encode(array(
+    'version' => '3.0.8.999', 'package' => 'https://hub.example/pkg.zip',
+    'sha256' => str_repeat('a', 64), 'url' => 'https://hub.example/', 'tested' => '6.9',
+)));
+
+$cb  = $GLOBALS['__filters'][$hook] ?? null;
+$out = $cb ? $cb(false, array('Version' => '3.0.8.1'), PCM_CONN_FILE) : null;
+
+check('an offer is returned when the manifest is newer', is_array($out), $out);
+// THE regression: without this key core has nothing to compare or install.
+check('carries new_version (the key core reads)', ($out['new_version'] ?? null) === '3.0.8.999', $out['new_version'] ?? null);
+check('new_version and version agree', ($out['new_version'] ?? 1) === ($out['version'] ?? 2), $out);
+check('carries the package URL', ($out['package'] ?? '') === 'https://hub.example/pkg.zip', $out['package'] ?? null);
+check('names the plugin file core is updating', ($out['plugin'] ?? '') === PCM_CONN_FILE, $out['plugin'] ?? null);
+check('carries an id', !empty($out['id']), $out['id'] ?? null);
+check('sha256 stored for the pre-download check',
+    ($GLOBALS['__opts']['pcm_conn_expected_sha256'] ?? '') === str_repeat('a', 64),
+    $GLOBALS['__opts']['pcm_conn_expected_sha256'] ?? null);
+
+// Same version installed -> no offer, or WordPress would reinstall forever.
+$out2 = $cb ? $cb(false, array('Version' => '3.0.8.999'), PCM_CONN_FILE) : null;
+check('no offer when already up to date', $out2 === false, $out2);
+// A newer local build than the hub must not be downgraded.
+$out3 = $cb ? $cb(false, array('Version' => '3.0.9.0'), PCM_CONN_FILE) : null;
+check('never offers a downgrade', $out3 === false, $out3);
+// Another plugin's update must pass straight through untouched.
+$out4 = $cb ? $cb(false, array('Version' => '1.0'), 'other/other.php') : null;
+check('ignores other plugins', $out4 === false, $out4);
+
+// /update-now reads ->new_version, which is why the empty 'to' was the tell.
+check('/update-now reads the same key', str_contains($baked, '->new_version'), 'not read');
+check('auto_update_plugin opts this plugin in', str_contains($baked, "add_filter('auto_update_plugin'"), 'no opt-in');
+
 echo "\n" . ($FAIL === 0 ? "ALL GREEN" : "FAILURES: $FAIL") . " — $PASS passed, $FAIL failed\n";
 exit($FAIL === 0 ? 0 : 1);

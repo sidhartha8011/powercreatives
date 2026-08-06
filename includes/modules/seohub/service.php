@@ -676,14 +676,27 @@ add_filter('update_plugins___PCM_CONN_UPDATE_HOST__', function ($update, $plugin
     if (!is_array($info) || empty($info['version']) || empty($info['package'])) { return $update; }
     if (version_compare((string) $info['version'], (string) ($plugin_data['Version'] ?? '0'), '<=')) { return $update; }
     update_option('pcm_conn_expected_sha256', isset($info['sha256']) ? (string) $info['sha256'] : '', false);
+    // KEY NAME MATTERS: WordPress stores whatever this returns straight into
+    // $updates->response[$plugin_file] and then reads ->new_version everywhere —
+    // the Plugins-screen update row, WP_Automatic_Updater::should_update(), and
+    // Plugin_Upgrader. Returning only 'version' left new_version UNSET, so core
+    // saw an update object it could not act on: no update row, no auto-update,
+    // and /update-now below reported an empty 'to' (it reads ->new_version too).
+    // 'version' is kept alongside it purely for anything reading the old key.
     return array(
+        'id'           => PCM_CONN_HOST . '/pcm-connector',
         'slug'         => 'pcm-connector',
         'plugin'       => PCM_CONN_FILE,
+        'new_version'  => (string) $info['version'],
         'version'      => (string) $info['version'],
         'url'          => isset($info['url']) ? (string) $info['url'] : '',
         'package'      => (string) $info['package'],
         'requires'     => isset($info['requires']) ? (string) $info['requires'] : '',
         'requires_php' => isset($info['requires_php']) ? (string) $info['requires_php'] : '',
+        'tested'       => isset($info['tested']) ? (string) $info['tested'] : '',
+        'icons'        => array(),
+        'banners'      => array(),
+        'banners_rtl'  => array(),
     );
 }, 10, 3);
 

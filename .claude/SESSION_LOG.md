@@ -12387,3 +12387,46 @@ and the title-derived niche; plus generic-type rejection, scrape() returning the
 service seeding them, and the gap-only notice.
 Carried forward: candidate retry walk, live pcm_models rows, edit-mode fetch guard, logo demotion,
 writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-06 — Connector auto-update: the update object was missing `new_version`
+Reported: Sites → connector auto-update not working.
+
+Checked the whole chain first and found it SOUND — version scheme (11/11 green), placeholder baking
+(no leftovers), Update URI header host == the registered `update_plugins_<host>` filter name, manifest
+and package routes both `public`, all three zip builders using the same `pcm-connector/pcm-connector.php`
+path. So the failure was not where the previous work had been.
+
+ROOT CAUSE — the filter returned `'version'`. WordPress stores whatever that filter returns straight
+into `$updates->response[$plugin_file]` and then reads **`->new_version`** everywhere: the Plugins-screen
+update row, WP_Automatic_Updater::should_update(), and Plugin_Upgrader. With `new_version` unset core
+held an update object it could not act on — no update row, no auto-update, and nothing to install.
+The tell was already in our own code: the connector's `/update-now` reads
+`$u->response[PCM_CONN_FILE]->new_version`, so it always reported `to: ''` even on a "successful" run.
+
+FIX (connector template, seohub/service.php) — the filter now returns the documented shape:
+`new_version` (plus `version` retained for anything reading the old key), `id`, `tested`, and empty
+`icons`/`banners`/`banners_rtl`. One template change, so connector_build_number() bumps the effective
+version on its own and every connected site is offered the new build.
+
+VERIFIED
+- connector_selfupdate_test.php 11 -> 25. The new section EXECUTES the real filter: it extracts the
+  `add_filter('update_plugins_<host>', …)` block from the BAKED connector, evals it with stubs, and
+  calls it. Asserts new_version present and equal to version, package/plugin/id present, the sha256
+  recorded for the pre-download check, no offer when already current, no downgrade, other plugins
+  untouched, and that /update-now reads the same key.
+- NEGATIVE CONTROL: removing the `new_version` key fails exactly 2 checks, exit 1; restored -> 25/25.
+- php -l clean on the file AND on the connector NOWDOC extracted standalone. run.php connector parity
+  still passes. Full suite 13/13.
+- Zip rebuilt (3.50 MB, 684 files); the key verified inside the archive.
+- NOT verified live: a real WordPress install performing the update. Also unchanged: a connector
+  predating the self-update block still needs ONE manual reinstall to bootstrap (sites/controller.php:163
+  already says so).
+
+## 2026-08-06 — Zip build 15:29 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.50 MB, 684 files. Folder had been emptied again.
+dist unchanged at 03:07:57 and still current — the connector fix was PHP-only.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Connector auto-update fix present: `new_version` key, `id`, /update-now reading the same key,
+auto_update_plugin opt-in, sha256 pre-download guard.
+Carried forward: all four scraper markup sources, model retry walk, live pcm_models rows,
+logo demotion, writable_owner_id x9, 0 caller-scoped writes.
