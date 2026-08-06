@@ -849,8 +849,7 @@
  * and define their own font var. Faithful to Notion's page peek: borderless top
  * bar, a single centred 708px text column, 40px title, warm near-black ink. */
 .pcm-notion-overlay {
-  --pcm-notion-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji";
+  --pcm-notion-font: var(--pcm-doc-font);
   /* Document ink comes from --pcm-doc-ink (index.css), declared on :root as
      well as #pcm-root precisely so it reaches this overlay, which portals to
      document.body. There was a second --pcm-notion-ink here holding the SAME
@@ -870,6 +869,17 @@
   padding: 3vh 16px;
   cursor: default;
   animation: pcmFadeIn .15s ease;
+}
+/* The app shell deliberately forces Inter onto every form control with
+   `!important`. A document sheet is an isolated reading/writing surface, and
+   its controls must use the same system stack as its title, properties and
+   prose. Keep the necessary override at the sheet boundary so it cannot alter
+   controls elsewhere in the admin SPA. */
+@layer base {
+  #pcm-root .pcm-notion-overlay :where(button, input, textarea, select),
+  .pcm-notion-overlay :where(button, input, textarea, select) {
+    font-family: var(--pcm-doc-font) !important;
+  }
 }
 /* The document editor stays mounted only long enough to finish asynchronous
    media work and its final save. During that drain it must have no backdrop,
@@ -952,12 +962,15 @@
 
 /* Save state. Sits left of the actions, same quiet grey as the meta line, and
    is absent entirely when there is nothing to report. */
+#pcm-root .pcm-notion-savestate,
 .pcm-notion-savestate {
   margin-right: auto;
   padding-left: 6px;
   font-family: var(--pcm-notion-font);
-  font-size: 12px;
-  color: rgba(55,53,47,0.45);
+  font-size: var(--pcm-doc-meta-size);
+  line-height: var(--pcm-doc-meta-leading);
+  font-weight: var(--pcm-doc-weight);
+  color: var(--pcm-doc-ink-faint);
 }
 
 /* 22vh of trailing space was Notion's click-to-append area. On a sheet that no
@@ -978,10 +991,11 @@
    the reader down. Colors stay inlined here — this modal portals to <body>,
    outside the .pcm-client-review token scope — and mirror the grid's dark→green
    approve pill. */
+#pcm-root .pcm-notion-approve,
 .pcm-notion-approve {
   appearance: none; border: none; cursor: pointer;
   font-family: var(--pcm-notion-font);
-  font-size: 13.5px; font-weight: 600; letter-spacing: -0.005em;
+  font-size: var(--pcm-doc-control-size); font-weight: 600; line-height: 1.25; letter-spacing: -0.005em;
   color: #fff; background: #1d1d1f;
   padding: 9px 16px; border-radius: 99px;
   display: inline-flex; align-items: center; gap: 6px;
@@ -996,13 +1010,16 @@
 /* The grey line above the title — "Edited 4 minutes ago". Small, quiet, and it
    sits ABOVE the title exactly as in the reference, so the eye lands on the
    title and not on chrome. */
+#pcm-root .pcm-notion-meta,
 .pcm-notion-meta {
   font-family: var(--pcm-notion-font);
-  font-size: 12px; line-height: 1.4;
-  color: rgba(55,53,47,0.45);
+  font-size: var(--pcm-doc-meta-size); line-height: var(--pcm-doc-meta-leading);
+  font-weight: var(--pcm-doc-weight);
+  color: var(--pcm-doc-ink-faint);
   margin: 30px 0 0;
 }
 
+#pcm-root .pcm-notion-title,
 .pcm-notion-title {
   font-family: var(--pcm-notion-font);
   font-size: var(--pcm-doc-title-size); line-height: var(--pcm-doc-title-leading); font-weight: var(--pcm-doc-title-weight);
@@ -1029,7 +1046,8 @@
 }
 .pcm-notion-prop {
   display: flex; align-items: center; gap: 0;
-  font-family: var(--pcm-notion-font); font-size: 14px; line-height: 1.5;
+  font-family: var(--pcm-notion-font); font-size: var(--pcm-doc-property-size); line-height: var(--pcm-doc-property-leading);
+  font-weight: var(--pcm-doc-weight);
   min-height: 30px;
 }
 .pcm-notion-prop-icon {
@@ -1045,16 +1063,19 @@
 }
 /* State line while the document is being fetched. A state statement, not
    instructional chrome — it says what is happening, then goes away. */
+#pcm-root .pcm-notion-loading,
 .pcm-notion-loading {
   font-family: var(--pcm-notion-font);
-  font-size: 14px;
-  color: rgba(55, 53, 47, 0.45);
+  font-size: var(--pcm-doc-property-size);
+  line-height: var(--pcm-doc-property-leading);
+  font-weight: var(--pcm-doc-weight);
+  color: var(--pcm-doc-ink-faint);
   margin: 4px 0 18px;
 }
 .pcm-notion-prop-label {
   flex: 0 0 152px;
   display: inline-flex; align-items: center; gap: 7px;
-  color: rgba(55,53,47,0.5);
+  color: var(--pcm-doc-ink-subtle);
   padding: 3px 6px; border-radius: 4px;
 }
 .pcm-notion-prop-value {
