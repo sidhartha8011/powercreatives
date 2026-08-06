@@ -19,7 +19,7 @@
 
 declare const wp: any;
 
-import { BubbleMenu } from '@tiptap/react/menus';
+import { BubbleMenu, type BubbleMenuProps } from '@tiptap/react/menus';
 import type { Editor } from '@tiptap/react';
 import {
   Heading1, Heading2, Heading3, Heading4,
@@ -42,6 +42,16 @@ interface WriterBubbleMenuProps {
    * the Approvals custom-card editor turns it on so the popup is strictly selection-driven.
    */
   selectionOnly?: boolean;
+  /**
+   * Compact, responsive presentation for bounded document cards. The Writer
+   * keeps its existing full-width presentation; Approval cards opt into this
+   * mode so the same commands remain available in a true selection popover.
+   */
+  compact?: boolean;
+  /** Optional Floating UI host supplied by a consuming surface. */
+  appendTo?: BubbleMenuProps['appendTo'];
+  /** Optional Tiptap v3 Floating UI configuration supplied by a consumer. */
+  floatingOptions?: BubbleMenuProps['options'];
 }
 
 /** Shared button style — active state uses design system accent */
@@ -82,9 +92,23 @@ function Divider() {
 
 const iconSize = 'h-[15px] w-[15px]';
 
-export function WriterBubbleMenu({ editor, onOpenImagePicker, selectionOnly = false }: WriterBubbleMenuProps) {
+export function WriterBubbleMenu({
+  editor,
+  onOpenImagePicker,
+  selectionOnly = false,
+  compact = false,
+  appendTo,
+  floatingOptions,
+}: WriterBubbleMenuProps) {
   const [showLinkInput, setShowLinkInput] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
+
+  const menuClassName = compact
+    ? 'pcm-selection-popover pcm-selection-popover--compact flex flex-wrap items-center justify-center gap-0.5 rounded-lg border border-border bg-popover p-1 shadow-lg'
+    : 'pcm-selection-popover flex items-center gap-0.5 rounded-lg border border-border bg-popover p-1 shadow-lg';
+  const linkMenuClassName = compact
+    ? 'pcm-selection-popover pcm-selection-popover--compact flex items-center gap-1 rounded-lg border border-border bg-popover p-1.5 shadow-lg'
+    : 'pcm-selection-popover flex items-center gap-1 rounded-lg border border-border bg-popover p-1.5 shadow-lg';
 
   // ── Custom shouldShow Logic ──
   // Shows on a text selection, and (unless selectionOnly) also on an empty paragraph.
@@ -147,7 +171,9 @@ export function WriterBubbleMenu({ editor, onOpenImagePicker, selectionOnly = fa
       <BubbleMenu
         editor={editor}
         shouldShow={shouldShow}
-        className="flex items-center gap-1 rounded-lg border border-border bg-popover p-1.5 shadow-lg"
+        appendTo={appendTo}
+        options={floatingOptions}
+        className={linkMenuClassName}
       >
         <input
           type="url"
@@ -175,8 +201,9 @@ export function WriterBubbleMenu({ editor, onOpenImagePicker, selectionOnly = fa
     <BubbleMenu
       editor={editor}
       shouldShow={shouldShow}
-      className="flex items-center gap-0.5 rounded-lg border border-border bg-popover p-1 shadow-lg"
-      tippyOptions={{ maxWidth: 'none' }}
+      appendTo={appendTo}
+      options={floatingOptions}
+      className={menuClassName}
     >
       {/* ── Group 1: Headings ── */}
       <MenuButton

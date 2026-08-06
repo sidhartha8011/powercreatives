@@ -21,9 +21,9 @@ import { toast } from 'sonner';
 
 import { useImageUpload } from '@/hooks/useImageUpload';
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
-import { WriterBubbleMenu } from '@/modules/Writer/components/WriterBubbleMenu';
 import { ImageAnnotator } from './ImageAnnotator';
 import { CardDrawLayer } from './CardDrawLayer';
+import { ApprovalSelectionMenu } from './ApprovalSelectionMenu';
 
 // WordPress media library global (wp_enqueue_media() runs in class-pcm-admin.php).
 declare const wp: any;
@@ -375,7 +375,12 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
           {/* Floating formatting toolbar — the same contextual bubble menu as the Writer canvas,
               but `selectionOnly` so it appears ONLY when the user selects text (never on empty
               lines). Image button reuses the picker; drawing mode hides it to avoid overlap. */}
-          {editable && !drawing && <WriterBubbleMenu editor={editor} onOpenImagePicker={insertImage} selectionOnly />}
+          {editable && !drawing && (
+            <ApprovalSelectionMenu
+              editor={editor}
+              onOpenImagePicker={insertImage}
+            />
+          )}
           {/* Saved draw layer, shown on top of the content while not actively drawing. */}
           {overlay && !drawing && (
             <img src={overlay} alt="" aria-hidden className="pointer-events-none absolute inset-x-0 top-0 w-full" />
