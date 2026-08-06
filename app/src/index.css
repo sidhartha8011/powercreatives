@@ -1028,14 +1028,6 @@
    document scale — 708px / 40px / 16px are the Notion metrics he approved for
    the opened card. Authoring and reading are therefore different sizes BY
    DECISION, not by drift. */
-/* The BASE is the PAD scale — the surface this editor has always rendered on,
-   with the values it has always had (owner direction 2026-08-05, note above).
-   `--document` below overrides it for the opened approval card.
-   The base MUST stay complete. It was briefly reduced to font-family and
-   measure only, with both scales as required modifiers, and that made a missing
-   modifier fatal: cached JS emitting a bare `pcm-card-editor` against fresh CSS
-   got no size, no leading and no colour, i.e. raw browser defaults. A modifier
-   is additive; the thing it modifies has to stand on its own. */
 #pcm-root .pcm-card-editor,
 .pcm-card-editor {
   font-size: var(--pcm-prose-size);
@@ -1045,30 +1037,11 @@
   /* A page, not a form field: a centred measure the text actually reads at. */
   max-width: var(--pcm-doc-measure);
   margin-inline: auto;
-  /* The caret is never against the bottom edge of the pad. */
-  padding-bottom: 12vh;
-}
-
-/* PAD scale — the "New approval set" dialog, where this editor IS the window.
-   Named for the call site's benefit; the values are the base's, so this rule
-   deliberately adds nothing. It exists so `scale="pad"` is explicit in the
-   markup rather than implied by the absence of anything. */
-
-/* DOCUMENT scale — the opened approval card, where the editor is the body of a
-   sheet that already has its own chrome and its own scroll.
-   It reads at the SAME size the client reads it at (`.pcm-notion-prose`), so
-   opening a document to edit does not resize it: those were 11px and 16px on
-   one sheet, a 1.45x jump on the same words. No bottom padding and no minimum
-   height here — the sheet grows to its content, and 460px + 12vh of reserved
-   emptiness under a two-line checklist was the blank half of the card. */
-#pcm-root .pcm-card-editor--document,
-.pcm-card-editor--document {
-  font-size: var(--pcm-doc-size);
-  line-height: var(--pcm-doc-leading);
-  color: var(--pcm-doc-ink);
-  /* The sheet supplies its own trailing space (.pcm-notion-page); the pad's
-     12vh on top of it was the blank lower half of the card. */
-  padding-bottom: 0;
+  /* The caret is never against the bottom edge. Kept modest: on the opened
+     card this sits inside a sheet that supplies its own trailing space, and a
+     viewport-relative value there reserved a blank lower half under a two-line
+     checklist. 12vh belonged to the full-window dialog only. */
+  padding-bottom: 64px;
 }
 #pcm-root .pcm-card-editor h1, .pcm-card-editor h1 { font-size: 1.5em; font-weight: 700; line-height: 1.3; margin: 1em 0 0.4em; }
 #pcm-root .pcm-card-editor h2, .pcm-card-editor h2 { font-size: 1.3em; font-weight: 650; line-height: 1.35; margin: 0.9em 0 0.35em; }

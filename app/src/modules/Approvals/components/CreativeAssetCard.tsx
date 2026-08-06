@@ -79,6 +79,12 @@ interface CreativeAssetCardProps {
   onOpenComments: (id: string) => void;
   /** Zero-based index for copy card numbering ("Copy 1", "Copy 2", etc.) */
   copyIndex?: number;
+  /**
+   * Where the opened document sheet is portalled. Passed straight through to
+   * `CardDocumentView`; see its `container` prop for why a modal host must
+   * supply its own content element.
+   */
+  documentContainer?: HTMLElement | null;
 }
 
 export function CreativeAssetCard({
@@ -98,7 +104,8 @@ export function CreativeAssetCard({
   publicToken,
   onAssetUpdate,
   onOpenComments,
-  copyIndex
+  copyIndex,
+  documentContainer
 }: CreativeAssetCardProps) {
   // isExpanded state removed — copy cards are always fully expanded now
   const [showLightbox, setShowLightbox] = useState(false);
@@ -733,6 +740,7 @@ export function CreativeAssetCard({
           onSave={handleSaveDocument}
           onApprove={handleToggleApprove}
           onClose={() => setShowArticleViewer(false)}
+          container={documentContainer}
         />
       )}
     </div>

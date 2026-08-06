@@ -8,6 +8,7 @@
  * mutations possible from this dialog).
  */
 
+import { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 
 import {
@@ -27,26 +28,35 @@ export interface PreviewDialogProps {
 }
 
 export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
+  /**
+   * The dialog's own content element, handed to the document sheet as its
+   * portal target.
+   *
+   * `useState` rather than `useRef` on purpose: a ref does not re-render, so the
+   * children below would mount on the very first pass with `null` and never
+   * learn the element. State makes the container arrive as a normal prop update.
+   *
+   * Why it is needed: a modal Radix dialog applies `trapFocus`,
+   * `disableOutsidePointerEvents` and `hideOthers()` to everything outside this
+   * element. The sheet used to portal to `document.body`, i.e. outside — so it
+   * could not be clicked, could not hold a caret, and was hidden from screen
+   * readers. Portalling a nested overlay INTO the dialog content is the
+   * documented Radix/shadcn answer, and it replaces three separate patches that
+   * each fought one symptom.
+   */
+  const [contentEl, setContentEl] = useState<HTMLElement | null>(null);
+
   if (!set || !url) return null;
 
-  /*
-   * The Dialog below is NON-MODAL on purpose.
-   *
-   * A modal Radix dialog sets `trapFocus`, `disableOutsidePointerEvents` and
-   * `onFocusOutside: preventDefault` on its content (@radix-ui/react-dialog,
-   * DialogContentModal), and calls `hideOthers()` on the rest of the document.
-   * The opened document sheet portals to <body>, i.e. OUTSIDE that content — so
-   * it could be clicked but never focused, which is exactly "I can't edit it"
-   * and "the checkboxes don't tick".
-   *
-   * This dialog hosts another interactive layer, so it must not claim the whole
-   * document. Escape handling and body-scroll locking are already owned by the
-   * sheet itself (CardDocumentView), so nothing is lost by dropping modality.
-   */
   return (
-    <Dialog open modal={false} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
-        className="sm:max-w-[95vw] w-[95vw] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden"
+        ref={setContentEl}
+        /* Full viewport, and NOT centred by transform. A `position: fixed` child
+           resolves against the nearest transformed ancestor, so the sheet would
+           have been trapped inside a 95vw x 90vh box and its full-screen blur
+           with it. Filling the viewport keeps `fixed` meaning what it says. */
+        className="sm:max-w-none w-screen h-screen max-w-none translate-x-0 translate-y-0 top-0 left-0 p-0 flex flex-col gap-0 overflow-hidden rounded-none border-0"
         showCloseButton
         /* Portalled into #pcm-root, not document.body. The client view's styles
            are 73 rules scoped to `#pcm-root .pcm-…`; outside that element none
@@ -99,7 +109,7 @@ export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
             iframe showed, minus the nested document — so the viewer portals to
             the real page and the blur covers everything behind it. */}
         <div className="flex-1 min-h-0 overflow-y-auto bg-muted/30">
-          <ClientReviewPage token={set.token} />
+          <ClientReviewPage token={set.token} documentContainer={contentEl} />
         </div>
       </DialogContent>
     </Dialog>

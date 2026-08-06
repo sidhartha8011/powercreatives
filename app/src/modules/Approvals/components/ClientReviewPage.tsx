@@ -20,6 +20,16 @@ import { ClientCommentInspector, type CommentEntry } from './ClientCommentInspec
 
 interface ClientReviewPageProps {
   token: string;
+  /**
+   * Where an opened document sheet is portalled.
+   *
+   * The public client page renders this at top level and leaves it undefined —
+   * the sheet then portals to `document.body`, unchanged. The admin board hosts
+   * this page inside a MODAL dialog and must pass that dialog's content element,
+   * or the sheet lands outside the dialog's focus trap and pointer-event lock
+   * and becomes completely inert. See `CardDocumentView`'s `container` prop.
+   */
+  documentContainer?: HTMLElement | null;
 }
 
 /**
@@ -73,7 +83,7 @@ function clearDraft(token: string) {
   }
 }
 
-export function ClientReviewPage({ token }: ClientReviewPageProps) {
+export function ClientReviewPage({ token, documentContainer }: ClientReviewPageProps) {
   // Fetch public set data by token
   const { data: set, isLoading, error } = trpc.approvals.getPublicSet.useQuery({ token }) as any;
 
@@ -539,6 +549,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
           onAssetUpdate={handleAssetUpdate}
           onOpenComments={(id) => setActiveAssetIdForComment(id)}
           publicToken={token}
+          documentContainer={documentContainer}
         />
       </main>
 

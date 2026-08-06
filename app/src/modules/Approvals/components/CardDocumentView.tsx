@@ -18,9 +18,7 @@
 import { useEffect, useRef, type ComponentType } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, X } from 'lucide-react';
-import { useEditor, EditorContent } from '@tiptap/react';
 
-import { getEditorExtensions } from '@/components/shared/editorExtensions';
 import { CustomCardEditor } from './CustomCardEditor';
 
 /**
@@ -98,41 +96,20 @@ export interface CardDocumentViewProps {
    */
   onApprove?: () => void;
   onClose: () => void;
-}
-
-/**
- * The document rendered for READING.
- *
- * Its own component so its editor is built ONLY when it is shown. As a branch
- * inside the parent it could not be: hooks do not take conditions, so a
- * read-only Tiptap instance was constructed on every open and then thrown away
- * unrendered whenever the document was opened for editing.
- *
- * Tiptap rather than raw HTML because `wp_kses_post` strips `<input>` on save —
- * a checklist's boxes are re-drawn by the task-item node view from
- * `data-checked`, which does survive.
- *
- * The typography here is `.pcm-notion-prose`, the document scale. The EDITING
- * surface reads at the Writer pad scale instead. That difference is the owner's
- * decision of 2026-08-05, recorded at index.css:1022 — authoring and reading are
- * deliberately not the same size, so these two must not be collapsed into one.
- */
-function CardDocumentProse({ content, overlay }: { content: string; overlay?: string }) {
-  const editor = useEditor({
-    extensions: getEditorExtensions({ placeholder: '' }),
-    content: content || '<p></p>',
-    editable: false,
-    editorProps: {
-      attributes: { class: 'outline-none' },
-    },
-  });
-
-  return (
-    <div className="pcm-notion-prose pcm-notion-prose-wrap">
-      {editor && <EditorContent editor={editor} />}
-      {overlay && <img src={overlay} alt="" aria-hidden className="pcm-notion-draw" />}
-    </div>
-  );
+  /**
+   * Where this sheet is portalled. Defaults to `document.body`.
+   *
+   * A host that is itself a MODAL dialog must pass its own content element.
+   * A modal Radix dialog sets `trapFocus`, `disableOutsidePointerEvents` and
+   * `hideOthers()` against everything outside its content — so a sheet living
+   * in `document.body` could not be clicked, could not take keyboard focus and
+   * was hidden from screen readers. Being a DOM descendant of the dialog puts
+   * it inside all three, which is what the Radix and shadcn docs prescribe for
+   * a nested overlay: portal it to the dialog content, not to the body.
+   *
+   * The public client page has no dialog around it and keeps the default.
+   */
+  container?: HTMLElement | null;
 }
 
 export function CardDocumentView({
@@ -148,6 +125,7 @@ export function CardDocumentView({
   onSave,
   onApprove,
   onClose,
+  container,
 }: CardDocumentViewProps) {
   // Close on Escape + prevent body scroll
   useEffect(() => {
@@ -190,30 +168,10 @@ export function CardDocumentView({
 
   const rows = properties ?? [];
 
-  /**
-   * Stop the parent dialog closing when you click this viewer's backdrop.
-   *
-   * This portals to `document.body`, so it sits OUTSIDE the Radix Dialog that
-   * hosts the client view. Radix detects dismissal on pointerdown-outside-itself
-   * and saw every click here as exactly that — so clicking away from the
-   * document closed the document AND the card behind it. The viewer owns its own
-   * dismissal; the dialog must not also act on it.
-   *
-   * BUBBLE PHASE ONLY. There was a second binding of this on
-   * `onPointerDownCapture`, and capture runs document → target: it discarded
-   * every pointerdown on this overlay BEFORE the event could descend into the
-   * sheet. ProseMirror sets the caret from that event and a task-list checkbox
-   * is an `<input>` activated by it, so the whole document went dead — no
-   * caret, no ticking. In the bubble phase the target has already handled the
-   * event and this still stops it short of `document`.
-   */
-  const stopDialogDismiss = (e: React.PointerEvent) => e.stopPropagation();
-
   return createPortal(
     <div
       className="pcm-notion-overlay"
       onClick={onClose}
-      onPointerDown={stopDialogDismiss}
       role="dialog"
       aria-label="Document preview"
     >
@@ -296,22 +254,27 @@ export function CardDocumentView({
                 second editor, no second set of extensions, no second toolbar.
                 `bare` drops its own card chrome because the Notion sheet around
                 it already IS the surface. */}
-            {isLoading ? null : canEdit ? (
+            {/* ONE editor, two modes.
+                This is `CustomCardEditor` — the same surface the "New approval
+                set" dialog authors on, which is itself the Writer's editor: the
+                shared Tiptap extensions and the Writer's bubble menu. A client
+                gets the identical component with `editable={false}`, so reading
+                and writing can never drift apart. There used to be a second,
+                read-only Tiptap component beside it doing the same job. */}
+            {isLoading ? null : (
               <CustomCardEditor
                 bare
-                scale="document"
+                editable={canEdit}
                 content={content}
                 overlay={overlay ?? null}
                 onChange={(html) => { draft.current = { ...draft.current, content: html }; }}
                 onOverlayChange={(url) => { draft.current = { ...draft.current, overlay: url }; }}
               />
-            ) : (
-              <CardDocumentProse content={content} overlay={overlay} />
             )}
           </div>
         </div>
       </div>
     </div>,
-    document.body
+    container ?? document.body
   );
 }

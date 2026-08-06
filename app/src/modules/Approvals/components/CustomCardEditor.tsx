@@ -46,18 +46,15 @@ interface CustomCardEditorProps {
    */
   bare?: boolean;
   /**
-   * Which document scale this surface reads at.
+   * Whether the document can be changed. `false` renders the same document with
+   * the toolbar, the bubble menu and the annotation tools withheld.
    *
-   * `pad` — the "New approval set" dialog, where the editor is the window and
-   * reads like the Writer's A4 pad (owner direction, index.css:1022).
-   * `document` — the opened approval card, where it is the body of a sheet and
-   * must read at the SAME size the client reads it at. Those were 11px and 16px
-   * on one sheet before this existed.
-   *
-   * The sizes themselves are in index.css, on `.pcm-card-editor--pad` and
-   * `.pcm-card-editor--document`. This prop names a scale; it never carries one.
+   * ONE instance serving both modes, rather than a second read-only Tiptap
+   * component beside this one — that is how the surfaces drift apart, and it is
+   * the pattern every Notion-style editor uses. The saved draw layer still
+   * renders in read-only mode; only the tools to change it are gone.
    */
-  scale?: 'pad' | 'document';
+  editable?: boolean;
 }
 
 function ToolbarButton({ onClick, active, title, children }: {
@@ -78,7 +75,7 @@ function ToolbarButton({ onClick, active, title, children }: {
   );
 }
 
-export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange, bare = false, scale = 'pad' }: CustomCardEditorProps) {
+export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange, bare = false, editable = true }: CustomCardEditorProps) {
   // Image to annotate. `pos` is the document position of an EXISTING image (paint bakes back
   // into it in place); `pos: null` means a freshly picked image that gets inserted at the cursor.
   const [annotate, setAnnotate] = useState<{ url: string; pos: number | null } | null>(null);
@@ -115,10 +112,9 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     // imageActions: false → plain images, no Edit/Regenerate hover overlay in this editor.
     extensions: getEditorExtensions({ placeholder: placeholder ?? 'Write your document…', imageActions: false, onImageFiles: insertImageFiles }),
     content: content || '<p></p>',
-    editable: true,
+    editable,
     editorProps: {
       // `pcm-card-editor` carries the document typography (index.css); the
-      // `--pad` / `--document` modifier picks WHICH of the two scales.
       // NOTE: the Tailwind `prose` classes used before were inert — the typography
       // plugin isn't loaded, so content rendered at unstyled browser defaults
       // (oversized, bloaty).
@@ -128,17 +124,10 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
       // measure never applied — MEASURED in the browser as max-width "none" on a
       // 739px-wide editor. The measure now actually takes effect.
       //
-      // `min-h-[460px]` is the PAD's writing floor. On the sheet it reserved
-      // 460px of blank body under a two-line checklist, so it belongs to the
-      // scale, not to the editor.
-      attributes: {
-        class: [
-          'pcm-card-editor',
-          `pcm-card-editor--${scale}`,
-          'outline-none focus:outline-none',
-          scale === 'pad' ? 'min-h-[460px]' : '',
-        ].filter(Boolean).join(' '),
-      },
+      // NO `min-h-[460px]`. It was a writing floor for the full-window dialog,
+      // and on the opened card it reserved 460px of blank body under a two-line
+      // checklist. The surface grows to its content on both.
+      attributes: { class: 'pcm-card-editor outline-none focus:outline-none' },
       // Double-click an image to paint directly ON it. Strokes are flattened INTO the image
       // (ImageAnnotator), so the annotation stays attached and scales with the image — it never
       // stretches or drifts when the layout reflows, unlike the whole-card draw overlay.
@@ -161,6 +150,10 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
+
+  // Flip the mode in place. Remounting would rebuild the whole document and
+  // throw away the caret, so the same instance changes what it allows.
+  useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);
 
   // Open the WordPress media library and hand the chosen image URL to a callback.
   // Open the WordPress media library. With `multiple`, the user can pick several images
@@ -222,7 +215,10 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   return (
     <div className={bare ? '' : 'rounded-lg border border-border bg-card'}>
       {/* Top settings bar — IMAGE + PAINT tools only. All text formatting lives in the
-          contextual bubble menu, which appears when the user selects text. */}
+          contextual bubble menu, which appears when the user selects text.
+          Withheld entirely when the document may not be changed: a disabled row
+          of buttons is chrome that explains nothing. */}
+      {editable && (
       <div className={`flex flex-wrap items-center gap-1 p-1.5 ${bare ? '' : 'border-b border-border'}`}>
         <ToolbarButton title="Insert image" onClick={insertImage}><ImageIcon className="h-4 w-4" /></ToolbarButton>
         <ToolbarButton title="Annotate an image — select an image (or double-click it) to paint directly on it" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
@@ -240,6 +236,7 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
           <ListChecks className="h-4 w-4" />
         </ToolbarButton>
       </div>
+      )}
       <div className={bare ? '' : 'max-h-[72vh] overflow-y-auto p-4'}>
         {/* Positioned wrapper so the draw layer + overlay align with the content. */}
         <div ref={contentBoxRef} className="relative">
@@ -247,7 +244,7 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
           {/* Floating formatting toolbar — the same contextual bubble menu as the Writer canvas,
               but `selectionOnly` so it appears ONLY when the user selects text (never on empty
               lines). Image button reuses the picker; drawing mode hides it to avoid overlap. */}
-          {!drawing && <WriterBubbleMenu editor={editor} onOpenImagePicker={insertImage} selectionOnly />}
+          {editable && !drawing && <WriterBubbleMenu editor={editor} onOpenImagePicker={insertImage} selectionOnly />}
           {/* Saved draw layer, shown on top of the content while not actively drawing. */}
           {overlay && !drawing && (
             <img src={overlay} alt="" aria-hidden className="pointer-events-none absolute inset-x-0 top-0 w-full" />

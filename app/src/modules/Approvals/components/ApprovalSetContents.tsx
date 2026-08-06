@@ -48,6 +48,12 @@ export interface ApprovalSetContentsProps {
    * on the public page.
    */
   publicToken?: string;
+  /**
+   * Where an opened document sheet is portalled. The admin modal supplies its
+   * own content element; the public client page leaves it undefined and the
+   * sheet portals to `document.body` as before.
+   */
+  documentContainer?: HTMLElement | null;
 }
 
 export function ApprovalSetContents({
@@ -71,6 +77,7 @@ export function ApprovalSetContents({
   onOpenComments,
   emptyLabel = 'No assets found in this category.',
   publicToken,
+  documentContainer,
 }: ApprovalSetContentsProps) {
   if (assets.length === 0) {
     return (
@@ -130,6 +137,7 @@ export function ApprovalSetContents({
             onAssetUpdate={onAssetUpdate}
             onOpenComments={onOpenComments}
             copyIndex={copyIndex}
+            documentContainer={documentContainer}
           />
         );
       })}

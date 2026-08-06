@@ -860,12 +860,6 @@
   padding: 3vh 16px;
   cursor: default;
   animation: pcmFadeIn .15s ease;
-  /* A modal Radix Dialog sets `pointer-events: none` on <body> and re-enables
-     it only inside its own content. This sheet portals to <body>, i.e. OUTSIDE
-     that content, so it inherited "ignore every click" — the checkboxes, the
-     text and the backdrop were all inert for one reason. It owns its own
-     dismissal and its own editor, so it takes its pointer events back. */
-  pointer-events: auto;
 }
 .pcm-notion-modal {
   position: relative;
