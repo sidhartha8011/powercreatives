@@ -82,10 +82,16 @@ class PCM_Brands_Service
             'colors' => $scraped['colors'],
         );
 
-        // The page declares its own language in <html lang>, so fill it WITHOUT an
-        // LLM. The enrichment below still overrides it if the model returns one.
-        if (!empty($scraped['lang'])) {
-            $result['businessInfo']['language'] = $scraped['lang'];
+        // Everything the MARKUP already states — language from <html lang>, and
+        // niche/location/phone from JSON-LD, business meta tags, <address> and tel:
+        // links. Filling these without a model is the difference between "the
+        // fetch found what the page says" and "the fetch found nothing because a
+        // provider was down". The enrichment below still overrides any of them.
+        foreach (array('lang' => 'language', 'niche' => 'niche',
+                       'location' => 'location', 'phone' => 'phone') as $from => $to) {
+            if (!empty($scraped[$from])) {
+                $result['businessInfo'][$to] = $scraped[$from];
+            }
         }
 
         // No model passed? Fall back to the configured default before giving up.
@@ -114,13 +120,26 @@ class PCM_Brands_Service
         }
         $candidates = array_slice(array_values(array_unique($candidates)), 0, 3);
 
-        // niche / location / phone have no DOM source — they exist only if a model
-        // extracts them. Report when that could not run, so a half-filled form reads
-        // as a setup problem rather than a broken fetch. Empty here means no
-        // provider is connected at all, not merely that no default was chosen.
+        // Warn only about what is ACTUALLY still missing. The markup pass above may
+        // already have supplied niche/location/phone, and telling someone to go and
+        // connect a provider for fields that are sitting filled in front of them is
+        // noise — the warning has to describe the form, not the pipeline.
+        $missing = static function (array $r): array {
+            $out = array();
+            foreach (array('niche', 'location', 'phone') as $f) {
+                if (empty($r['businessInfo'][$f])) {
+                    $out[] = $f;
+                }
+            }
+            return $out;
+        };
+
         $result['enriched'] = !empty($candidates);
-        if (empty($candidates)) {
-            $result['enrichmentNotice'] = 'No AI provider is connected, so niche, location and phone could not be detected. Add a provider API key in Settings → Providers.';
+        $gaps = $missing($result);
+        if (empty($candidates) && !empty($gaps)) {
+            $result['enrichmentNotice'] = 'No AI provider is connected, so '
+                . implode(', ', $gaps)
+                . ' could not be detected. Add a provider API key in Settings → Providers.';
         }
 
         // 2. Optional: LLM enrichment — first candidate that answers wins.
@@ -144,8 +163,13 @@ class PCM_Brands_Service
 
             if ($llm_data === null) {
                 $result['enriched'] = false;
-                $result['enrichmentNotice'] = 'Fetched the page, but niche, location and phone could not be detected: '
-                    . $last_error;
+                // Silent when the markup already covered it — every model failing is
+                // only worth a toast if the user is actually short a field.
+                $gaps = $missing($result);
+                if (!empty($gaps)) {
+                    $result['enrichmentNotice'] = 'Fetched the page, but '
+                        . implode(', ', $gaps) . ' could not be detected: ' . $last_error;
+                }
             }
 
             if (!empty($llm_data)) {

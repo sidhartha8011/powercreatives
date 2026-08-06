@@ -83,21 +83,335 @@ class PCM_Website_Scraper
 
         // Extract all data categories
         $text_data = self::extract_text_data($dom, $xpath);
+        $business  = self::extract_business_data($dom, $xpath);
         $images = self::extract_images($dom, $xpath, $base_url);
         $colors = self::extract_colors($dom, $xpath, $html, $url);
 
         // Debug: log extraction results (controlled via WP_DEBUG_LOG)
-        error_log('[PCM] Scraper: url=' . $url . ' | images=' . count($images) . ' | colors=' . count($colors));
+        error_log('[PCM] Scraper: url=' . $url . ' | images=' . count($images) . ' | colors=' . count($colors)
+            . ' | niche=' . ($business['niche'] !== '' ? 'y' : 'n')
+            . ' | location=' . ($business['location'] !== '' ? 'y' : 'n')
+            . ' | phone=' . ($business['phone'] !== '' ? 'y' : 'n'));
 
         return array(
             'title'          => $text_data['title'],
             'description'    => $text_data['description'],
             'h1'             => $text_data['h1'],
             'lang'           => $text_data['lang'],
+            'niche'          => $business['niche'],
+            'location'       => $business['location'],
+            'phone'          => $business['phone'],
             'images'         => $images,
             'colors'         => $colors,
             'url'            => $url,
         );
+    }
+
+    // =========================================================================
+    // BUSINESS DATA EXTRACTION (niche / location / phone, no AI)
+    // =========================================================================
+
+    /**
+     * Niche, location and phone straight out of the markup.
+     *
+     * These three used to exist ONLY if an LLM returned them, so a missing key, a
+     * retired model or a provider quirk left the fields blank on a page that
+     * plainly states its address in the footer. Sites publish this in
+     * machine-readable form; reading it costs nothing and cannot fail.
+     *
+     * Sources, best first:
+     *   1. JSON-LD (schema.org) — `address`, `telephone`, and `@type`, which names
+     *      the business category outright ("Dentist", "MovieTheater").
+     *   2. Open Graph / business meta tags — og:locality, og:region, og:country-name.
+     *   3. The <address> element, and a tel: link for the phone.
+     *   4. <meta name="keywords"> first term as a last-resort niche hint.
+     *
+     * The LLM still overrides anything it returns — this is the floor, not a cap.
+     *
+     * @param \DOMDocument $dom   Parsed DOM.
+     * @param \DOMXPath    $xpath XPath query engine.
+     * @return array{niche: string, location: string, phone: string}
+     */
+    private static function extract_business_data(\DOMDocument $dom, \DOMXPath $xpath): array
+    {
+        $niche = '';
+        $location = '';
+        $phone = '';
+
+        // ── 1. JSON-LD ──
+        foreach ($xpath->query('//script[@type="application/ld+json"]') ?: array() as $node) {
+            $data = json_decode(trim($node->textContent), true);
+            if (!is_array($data)) {
+                continue;
+            }
+            foreach (self::flatten_json_ld($data) as $entity) {
+                if (!is_array($entity)) {
+                    continue;
+                }
+                if ($niche === '') {
+                    $niche = self::niche_from_json_ld($entity);
+                }
+                if ($location === '' && !empty($entity['address'])) {
+                    $location = self::format_postal_address($entity['address']);
+                }
+                if ($phone === '' && !empty($entity['telephone']) && is_string($entity['telephone'])) {
+                    $phone = trim($entity['telephone']);
+                }
+            }
+        }
+
+        // ── 2. Meta tags ──
+        if ($location === '') {
+            $parts = array();
+            foreach (array('business:contact_data:locality', 'og:locality') as $p) {
+                $v = self::meta_content($xpath, $p);
+                if ($v !== '') { $parts[] = $v; break; }
+            }
+            foreach (array('business:contact_data:region', 'og:region') as $p) {
+                $v = self::meta_content($xpath, $p);
+                if ($v !== '') { $parts[] = $v; break; }
+            }
+            foreach (array('business:contact_data:country_name', 'og:country-name') as $p) {
+                $v = self::meta_content($xpath, $p);
+                if ($v !== '') { $parts[] = $v; break; }
+            }
+            $location = implode(', ', array_unique(array_filter($parts)));
+        }
+        if ($phone === '') {
+            $phone = self::meta_content($xpath, 'business:contact_data:phone_number');
+        }
+
+        // ── 3. <address> and tel: links ──
+        if ($location === '') {
+            $nodes = $dom->getElementsByTagName('address');
+            if ($nodes->length > 0) {
+                // Collapse the whitespace a multi-line address block carries.
+                $location = trim(preg_replace('/\s+/', ' ', $nodes->item(0)->textContent) ?? '');
+            }
+        }
+        if ($phone === '') {
+            $tel = $xpath->query('//a[starts-with(@href, "tel:")]/@href');
+            if ($tel && $tel->length > 0) {
+                $phone = trim(str_replace('tel:', '', rawurldecode($tel->item(0)->nodeValue)));
+            }
+        }
+
+        // ── 4. Keywords, as a niche of last resort ──
+        if ($niche === '') {
+            $kw = self::meta_content($xpath, 'keywords');
+            if ($kw !== '') {
+                $first = trim(explode(',', $kw)[0]);
+                // A keyword list often opens with the brand name; only take it when
+                // it reads like a category rather than a single proper noun.
+                if ($first !== '' && str_word_count($first) >= 2) {
+                    $niche = $first;
+                }
+            }
+        }
+
+        // ── 5. The <title>, which almost every site uses to state its trade ──
+        // "Film Production & Video Production UK | Creative Film Agency" describes
+        // the business plainly, and plenty of sites carry no JSON-LD, no keywords
+        // and no meta description at all — leaving Niche permanently blank for them.
+        if ($niche === '') {
+            $niche = self::niche_from_title($dom);
+        }
+
+        // Guard against a runaway <address> or keyword blob reaching a form field.
+        return array(
+            'niche'    => self::clip($niche, 100),
+            'location' => self::clip($location, 200),
+            'phone'    => self::clip($phone, 40),
+        );
+    }
+
+    /**
+     * A niche from the page <title>.
+     *
+     * Titles are conventionally "<what we do> | <Brand>" or "<Brand> | <what we
+     * do>", so the descriptive half is usually sitting right there. This splits on
+     * the usual separators, throws away the half that repeats the brand (matched
+     * against the <h1>, the best available brand name), and keeps a segment only if
+     * it reads like a category — 2 to 6 words, no sentence punctuation.
+     *
+     * The LAST qualifying segment wins: a trailing descriptor ("… | Creative Film
+     * Agency") is a tighter category than a leading headline, which tends to carry
+     * marketing words and place names.
+     *
+     * @param \DOMDocument $dom Parsed DOM.
+     * @return string Niche, or '' when the title says nothing useful.
+     */
+    private static function niche_from_title(\DOMDocument $dom): string
+    {
+        $titles = $dom->getElementsByTagName('title');
+        if ($titles->length === 0) {
+            return '';
+        }
+        $title = trim(preg_replace('/\s+/', ' ', $titles->item(0)->textContent) ?? '');
+        if ($title === '') {
+            return '';
+        }
+
+        // The <h1> is the closest thing to a brand name available here.
+        $brand = '';
+        $h1s = $dom->getElementsByTagName('h1');
+        if ($h1s->length > 0) {
+            $brand = strtolower(trim(preg_replace('/\s+/', ' ', $h1s->item(0)->textContent) ?? ''));
+        }
+
+        $best = '';
+        foreach (preg_split('/\s*[|\x{2013}\x{2014}\x{00B7}\x{2022}]\s*|\s+[-–—]\s+/u', $title) ?: array() as $segment) {
+            $segment = trim($segment);
+            if ($segment === '') {
+                continue;
+            }
+            // A segment echoing the brand describes WHO, not WHAT.
+            if ($brand !== '' && (str_contains(strtolower($segment), $brand) || str_contains($brand, strtolower($segment)))) {
+                continue;
+            }
+            // Sentence punctuation means it is a tagline, not a category.
+            if (preg_match('/[.!?,:;]/', $segment)) {
+                continue;
+            }
+            $words = str_word_count($segment);
+            if ($words < 2 || $words > 6) {
+                continue;
+            }
+            $best = $segment;
+        }
+
+        return $best;
+    }
+
+    /**
+     * Flatten a JSON-LD payload into a list of entities.
+     *
+     * A document may be a single object, a bare array, or an `@graph` wrapper, and
+     * the useful entity is often nested inside — so all three shapes are walked.
+     *
+     * @param mixed $data  Decoded JSON-LD.
+     * @param int   $depth Recursion guard.
+     * @return array List of entity arrays.
+     */
+    private static function flatten_json_ld($data, int $depth = 0): array
+    {
+        if (!is_array($data) || $depth > 4) {
+            return array();
+        }
+        $out = array();
+        if (isset($data['@type']) || isset($data['address']) || isset($data['telephone'])) {
+            $out[] = $data;
+        }
+        foreach (array('@graph', 'itemListElement', 'mainEntity', 'publisher', 'provider', 'author') as $key) {
+            if (!empty($data[$key])) {
+                $out = array_merge($out, self::flatten_json_ld($data[$key], $depth + 1));
+            }
+        }
+        // A bare list of entities.
+        if (array_keys($data) === range(0, count($data) - 1)) {
+            foreach ($data as $item) {
+                $out = array_merge($out, self::flatten_json_ld($item, $depth + 1));
+            }
+        }
+        return $out;
+    }
+
+    /** Schema.org types that describe the SITE, not the business behind it. */
+    private const GENERIC_LD_TYPES = array(
+        'website', 'webpage', 'webside', 'organization', 'thing', 'article',
+        'blogposting', 'breadcrumblist', 'itemlist', 'searchaction', 'person',
+        'imageobject', 'sitenavigationelement', 'collectionpage', 'aboutpage',
+        'contactpage', 'localbusiness', 'corporation',
+    );
+
+    /**
+     * A readable niche from a JSON-LD entity.
+     *
+     * Prefers an explicit category field, then `@type` — but only when the type is
+     * SPECIFIC. "Organization" or "WebSite" says nothing about the trade, so those
+     * are skipped rather than written into the Niche box.
+     *
+     * @param array $entity JSON-LD entity.
+     * @return string Niche, or '' when nothing specific is known.
+     */
+    private static function niche_from_json_ld(array $entity): string
+    {
+        foreach (array('knowsAbout', 'industry', 'category') as $key) {
+            $v = $entity[$key] ?? null;
+            if (is_array($v)) { $v = reset($v); }
+            if (is_string($v) && trim($v) !== '') {
+                return trim($v);
+            }
+        }
+
+        $types = $entity['@type'] ?? '';
+        foreach ((array) $types as $type) {
+            if (!is_string($type) || $type === '') {
+                continue;
+            }
+            if (in_array(strtolower($type), self::GENERIC_LD_TYPES, true)) {
+                continue;
+            }
+            // "MovieTheater" / "HVACBusiness" → "Movie Theater" / "HVAC Business".
+            $spaced = preg_replace('/(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/', ' ', $type);
+            return trim($spaced ?? $type);
+        }
+
+        return '';
+    }
+
+    /**
+     * Render a schema.org PostalAddress as one human line.
+     *
+     * @param mixed $address JSON-LD address (string or PostalAddress array).
+     * @return string
+     */
+    private static function format_postal_address($address): string
+    {
+        if (is_string($address)) {
+            return trim(preg_replace('/\s+/', ' ', $address) ?? '');
+        }
+        if (!is_array($address)) {
+            return '';
+        }
+        // A site may attach several; the first is the primary one.
+        if (isset($address[0]) && is_array($address[0])) {
+            $address = $address[0];
+        }
+        $parts = array();
+        foreach (array('streetAddress', 'addressLocality', 'addressRegion', 'postalCode', 'addressCountry') as $key) {
+            $v = $address[$key] ?? '';
+            if (is_array($v)) {
+                // addressCountry is sometimes a nested Country entity.
+                $v = $v['name'] ?? '';
+            }
+            if (is_string($v) && trim($v) !== '') {
+                $parts[] = trim($v);
+            }
+        }
+        return implode(', ', array_unique($parts));
+    }
+
+    /**
+     * Content of a <meta> tag, matched on either `property` or `name`.
+     *
+     * @param \DOMXPath $xpath XPath engine.
+     * @param string    $key   Property/name to look up.
+     * @return string
+     */
+    private static function meta_content(\DOMXPath $xpath, string $key): string
+    {
+        $nodes = $xpath->query(
+            '//meta[@property="' . $key . '" or @name="' . $key . '"]/@content'
+        );
+        return ($nodes && $nodes->length > 0) ? trim($nodes->item(0)->nodeValue) : '';
+    }
+
+    /** Trim a scraped value to a sane length for a single form field. */
+    private static function clip(string $value, int $max): string
+    {
+        $value = trim($value);
+        return strlen($value) > $max ? rtrim(substr($value, 0, $max)) : $value;
     }
 
     // =========================================================================

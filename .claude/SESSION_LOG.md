@@ -12295,3 +12295,95 @@ Model-retry fix present: candidate walk, usable_text_models x3, 3-candidate cap,
 logging, degraded notice, live pcm_models rows with capability/live flags, user id threaded.
 Carried forward: edit-mode fetch guard, submit guard, logo demotion, writable_owner_id x9,
 0 caller-scoped writes.
+
+## 2026-08-06 — niche / location / phone now come from the MARKUP, not only the LLM
+Reported: "the niche and location fields are still not filled up — it can scrape the website and at
+least find these two, right?" Correct, and the design was the problem, not the model.
+
+ROOT CAUSE — those three fields had NO DOM source at all. PCM_Website_Scraper::scrape() returned only
+title/description/h1/lang/images/colors, so niche/location/phone existed solely if an LLM returned them.
+Every model fix so far (live rows, retry pool, graceful degrade) made the pipeline more robust but left
+the fields hostage to it. A page that publishes its address in the footer and its trade in schema.org
+markup still came back blank.
+
+FIX — new PCM_Website_Scraper::extract_business_data(), read in this order:
+  1. JSON-LD (schema.org): `address` (PostalAddress assembled into one line), `telephone`, and `@type`
+     for the niche. @graph / nested entities are walked; CamelCase types are spaced ("MovieTheater" ->
+     "Movie Theater"). GENERIC_LD_TYPES (Organization, WebSite, WebPage, Person, LocalBusiness…) are
+     REJECTED — they name the page, not the trade, and would just fill the box with a word to delete.
+  2. Open Graph / business:contact_data meta tags.
+  3. The <address> element (whitespace collapsed) and a tel: link.
+  4. <meta name="keywords"> first term, only when multi-word — a single proper noun is the brand name.
+  Values clipped (niche 100 / location 200 / phone 40) so a runaway block never reaches a form field.
+scrape_and_prepare() seeds all four markup fields via a from=>to map before enrichment; the LLM still
+overrides anything it returns.
+
+ALSO — the notice now lists ONLY the fields still empty, and is suppressed entirely when the markup
+covered them. Telling someone to connect a provider for fields sitting filled in front of them is noise.
+
+VERIFIED
+- NEW tests/standalone/scraper_business_data_test.php — 28/28. Drives the REAL private extractor via
+  Reflection against real HTML: full JSON-LD, string address, @graph nesting, all five generic types
+  rejected, a specific type winning alongside a generic one, meta fallback, <address> + tel:, the
+  keyword single-vs-multi-word rule, empty page, MALFORMED JSON-LD (skipped, not fatal), and clipping.
+- NEGATIVE CONTROL: disabling only the JSON-LD branch fails 8 checks, exit 1; restored -> 28/28.
+- Two assertions in brand_fetch_fields_test.php pinned the old single-line `['language'] = $scraped['lang']`
+  which is now a from=>to map — rewritten to assert the mapping. Same over-specific-string class as the
+  earlier `first_available_text_model()` and `overflow-y-auto` failures.
+- php -l clean on both files. Full suite 12/12 PASS. No frontend change (dist untouched).
+- Zip rebuilt (3.49 MB, 684 files); extractor, JSON-LD parsing, generic-type rejection, fallbacks and
+  the service seeding all verified inside the archive.
+- NOT verified live: whether birthgiverfilmproductions.com publishes any of these. If it ships no
+  JSON-LD, no business meta, no <address> and no tel: link, there is genuinely nothing in the markup to
+  read and the LLM remains the only route for that particular site.
+
+## 2026-08-06 — Zip build 13:23 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.49 MB, 684 files.
+dist unchanged at 03:07:57 and still current — the markup-extraction work was PHP-only.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Markup extraction present: extract_business_data, JSON-LD + @graph walk, postal-address builder,
+generic-type rejection, <address>/tel: fallbacks, the service seeding, and the gap-only notice.
+Carried forward: candidate retry walk, live pcm_models rows, user id threaded, edit-mode fetch guard,
+logo demotion, writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-06 — Niche now derived from <title>; confirmed the site against the real page
+Reported: only Language fills, niche/location/phone still empty.
+
+STOPPED GUESSING AND FETCHED THE ACTUAL SITE (WebFetch on birthgiverfilmproductions.com). It publishes:
+  - NO JSON-LD, NO business meta tags, NO keywords, NO meta description
+  - an <address>: "Seymour Road London, UK N8 0BH"
+  - a tel: link: +44 7776 842718
+  - <title>: "Film Production & Video Production UK | Creative Film Agency"
+Ran the REAL extractor against that exact markup: it already returned location and phone correctly.
+So the shipped code was fine — the running build simply predates extract_business_data (13:23 zip);
+the Language fix landed earlier, which is exactly why that one field filled and the others did not.
+
+STILL A GENUINE GAP: niche came back ''. With no JSON-LD, no keywords and no meta description there was
+nothing left to read — yet the title states the trade outright. Added niche_from_title():
+splits on | – — · • and spaced hyphens, drops the segment echoing the <h1> (that half names WHO, not
+WHAT), rejects anything carrying sentence punctuation (a tagline, not a category) or outside 2–6 words,
+and takes the LAST qualifying segment because a trailing descriptor is tighter than a leading headline.
+Structured data still outranks it. For this site: "Creative Film Agency".
+
+Verified against the real markup: niche='Creative Film Agency', location='Seymour Road London, UK N8 0BH',
+phone='+447776842718' — all three, no AI involved.
+
+VERIFIED
+- scraper_business_data_test.php 28 -> 39. New section 7b uses this site's ACTUAL markup shape, plus the
+  brand-half skip, tagline rejection, both length bounds, three separator forms, and JSON-LD still
+  outranking the title.
+- NEGATIVE CONTROL: disabling niche_from_title fails 4 checks, exit 1; restored -> 39/39.
+- php -l clean. Full suite 12/12 PASS. No frontend change.
+- Zip rebuilt (3.49 MB, 684 files); extractor, both fallbacks and the title rule verified inside it.
+- NOTE FOR NEXT TIME: fetching the user's actual page settled in one call what three rounds of
+  reasoning could not. Do that first when a scrape "finds nothing".
+
+## 2026-08-06 — Zip build 13:52 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.49 MB, 684 files. Folder had been emptied again.
+dist unchanged at 03:07:57 and still current — all recent work was PHP-only.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+All FOUR markup sources present: JSON-LD (+@graph walk), business meta tags, <address>/tel: fallbacks,
+and the title-derived niche; plus generic-type rejection, scrape() returning the three fields, the
+service seeding them, and the gap-only notice.
+Carried forward: candidate retry walk, live pcm_models rows, edit-mode fetch guard, logo demotion,
+writable_owner_id x9, 0 caller-scoped writes.

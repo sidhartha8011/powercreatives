@@ -93,10 +93,13 @@ check("scrape() returns 'lang'", (bool) preg_match("/'lang'\s*=>\s*\\\$text_data
 
 echo "\n6. scrape_and_prepare() uses it, and stops failing silently\n";
 $svc = file_get_contents($ROOT . '/includes/modules/brands/service.php');
-check('DOM language seeds businessInfo',
-    str_contains($svc, "\$result['businessInfo']['language'] = \$scraped['lang']"), 'not wired');
+// The DOM seed is a MAP now — lang plus the markup-derived business fields —
+// so assert the mapping, not one hand-written assignment line.
+check('DOM values seed businessInfo',
+    (bool) preg_match("/'lang'\s*=>\s*'language'/", $svc)
+        && str_contains($svc, "\$result['businessInfo'][\$to] = \$scraped[\$from]"), 'not wired');
 // Ordering matters: the model's answer should still win when there is one.
-$dom_at = strpos($svc, "= \$scraped['lang']");
+$dom_at = strpos($svc, "\$result['businessInfo'][\$to] = \$scraped[\$from]");
 $llm_at = strpos($svc, "= \$llm_data['language']");
 check('LLM language still overrides the DOM one', $dom_at !== false && $llm_at !== false && $dom_at < $llm_at,
     array('dom' => $dom_at, 'llm' => $llm_at));
