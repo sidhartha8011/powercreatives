@@ -189,7 +189,7 @@ export function RemoteBusinessCard({ siteId }: { siteId: number }) {
         />
         {card.brandId > 0 && card.units.length > 1 && (
           <Select value={String(card.unitId || card.units.find((u) => u.isPrimary)?.unitId || '')} onValueChange={(v) => void mapBrand(card.brandId, Number(v))}>
-            <SelectTrigger className="h-8 w-44 text-xs"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
             <SelectContent>
               {card.units.map((u) => (
                 <SelectItem key={u.unitId} value={String(u.unitId)}>

@@ -413,7 +413,7 @@ export function ModelRegistryTable({
           </div>
           
           <Select value={providerFilter} onValueChange={setProviderFilter}>
-            <SelectTrigger className="w-[140px] h-9">
+            <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Provider" />
             </SelectTrigger>
             <SelectContent>
@@ -427,7 +427,7 @@ export function ModelRegistryTable({
           </Select>
           
           <Select value={capabilityFilter} onValueChange={setCapabilityFilter}>
-            <SelectTrigger className="w-[150px] h-9">
+            <SelectTrigger className="w-[150px]">
               <SelectValue placeholder="Capability" />
             </SelectTrigger>
             <SelectContent>
@@ -441,7 +441,7 @@ export function ModelRegistryTable({
           </Select>
           
           <Select value={tierFilter} onValueChange={setTierFilter}>
-            <SelectTrigger className="w-[120px] h-9">
+            <SelectTrigger className="w-[120px]">
               <SelectValue placeholder="Tier" />
             </SelectTrigger>
             <SelectContent>

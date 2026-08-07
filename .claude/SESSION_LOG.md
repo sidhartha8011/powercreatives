@@ -12859,3 +12859,49 @@ VERIFIED
   excluded) + site.lang resolution all verified INSIDE the archive.
 - NOT verifiable here: actual model output in Swedish. This is a prompt-contract fix — worth spot-
   checking one rewrite on a Swedish page after install.
+
+## 2026-08-08 — Every dropdown looks the same: the base component reclaims the style
+Asked: "in every module work with the ui every dropdown should look same in terms of style/css."
+
+MEASURED FIRST (129 SelectTrigger call sites): 4 heights (h-7 x14, h-8 x27, h-9 x23, h-10 x1),
+2 font sizes (text-xs x49, text-sm x11), 5 backgrounds (bg-card x31, bg-white x11, bg-transparent x4,
+bg-slate-50, bg-background), plus 6 files passing no className at all.
+
+THE MECHANISM — why a shared component existed and still drifted: cn() runs tailwind-merge, so a
+class passed at the CALL SITE beats the base. selectTriggerVariants had a perfectly good `variant`
+API, but every local `h-9 bg-white` silently outranked it, so the shared style had no authority.
+Fixing the base alone would have changed NOTHING; the call sites had to stop competing with it.
+
+FIX — base owns the look, call sites own layout:
+  - selectTriggerVariants canon = h-8 / text-xs / bg-card. Chosen as the PLURALITY of what was
+    already in the tree on all three axes, so it is the least disruptive of the sizes in play
+    (Strategies moves h-7 -> h-8 as a result — slightly taller than last round's deliberate h-7,
+     which was matched to its own module rather than to the app).
+  - SelectItem base text-sm -> text-xs so the OPEN LIST matches the closed trigger (19 call sites
+    were already patching this locally — the smell that proved the base was wrong).
+  - New `variant="ghost"` for the 4 deliberately chromeless triggers (embedded in a table cell /
+    inline), previously 4 slightly different hand-rolled spellings of border-0+bg-transparent+
+    shadow-none+focus:ring-0.
+  - New `size="auto"`: the canonical heights are attribute-prefixed (`data-[size=…]:h-8`), which
+    outranks a plain `h-full` on SPECIFICITY — so container-fitting triggers needed a real opt-out,
+    not a class they could never win with. h-auto/h-full are treated as LAYOUT and preserved.
+  - Codemod (dry-run reviewed before applying): 94 call sites in 45 files stripped to layout-only,
+    19 SelectItem font overrides removed. Widths/flex/min-w untouched — content-driven, not style.
+  - ONE JUDGEMENT CALL, flagged: SEO/index.tsx had a `rounded-full` pill trigger shaped to match
+    adjacent PillButtons. Normalised per the explicit instruction; it now matches every other
+    dropdown but no longer matches the pills beside it. One line to revert if that reads wrong.
+
+VERIFIED
+- NEW tests/standalone/select_style_consistency_test.mjs (12 checks): base owns height/font/surface/
+  ghost/auto, the open list matches the trigger, and a SWEEP of every .tsx asserting no trigger or
+  item re-declares height/font/background/border/shadow/ring — while widths and h-full/h-auto survive.
+- NEGATIVE CONTROL 7/7: re-adding a local h-9/bg-white, a text-sm, a drifting SelectItem, and
+  breaking each base token all turn it red; restored -> 12/12.
+- strategy_card_layout_test.mjs section 4 SUPERSEDED (39->42): it required `h-7 text-xs` ON each
+  trigger, which is precisely the drift removed here. Now asserts the inverse (layout only), with a
+  comment recording why. A test asserting the old rule failing is the correct signal, not a bug.
+- tsc 59 = baseline. FULL SUITE 23/23 files. Build clean. Zip 3.53 MB / 693 files; canon + ghost
+  verified in the bundle, and the ABSENCE of overrides asserted against SOURCE (bundle-wide string
+  checks are invalid — other components legitimately use those classes).
+- UNVERIFIED VISUALLY — no dev server. Token-level only; worth an eyeball on a dense table row and
+  a dialog, the two contexts now sharing one size.

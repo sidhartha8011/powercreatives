@@ -340,7 +340,7 @@ export function ProjectsModule() {
               value={selectedProject.deliveryId != null ? String(selectedProject.deliveryId) : 'none'}
               onValueChange={(v) => handleSetProjectDelivery(v === 'none' ? null : Number(v))}
             >
-              <SelectTrigger className="h-9 w-[220px] text-xs bg-white"><SelectValue placeholder="No delivery" /></SelectTrigger>
+              <SelectTrigger className="w-[220px]"><SelectValue placeholder="No delivery" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">No delivery</SelectItem>
                 {deliveries.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>)}
@@ -352,7 +352,7 @@ export function ProjectsModule() {
               value={selectedProject.siteId != null ? String(selectedProject.siteId) : 'none'}
               onValueChange={(v) => handleSetProjectSite(v === 'none' ? null : Number(v))}
             >
-              <SelectTrigger className="h-9 w-[220px] text-xs bg-white"><SelectValue placeholder="Not connected" /></SelectTrigger>
+              <SelectTrigger className="w-[220px]"><SelectValue placeholder="Not connected" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">Not connected</SelectItem>
                 {sites.map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
@@ -630,7 +630,7 @@ export function ProjectsModule() {
         </div>
         
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[160px] h-9 bg-white">
+          <SelectTrigger className="w-[160px]">
             <SelectValue placeholder="Project Type" />
           </SelectTrigger>
           <SelectContent>

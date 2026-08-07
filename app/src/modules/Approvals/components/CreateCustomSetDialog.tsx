@@ -155,7 +155,7 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
             <div className="space-y-1.5">
               <Label htmlFor="set-project">Project</Label>
               <Select value={projectSel || 'none'} onValueChange={(v) => setProjectSel(v === 'none' ? '' : v)}>
-                <SelectTrigger id="set-project" className="w-full bg-card">
+                <SelectTrigger id="set-project" className="w-full">
                   <SelectValue placeholder="No project" />
                 </SelectTrigger>
                 <SelectContent>

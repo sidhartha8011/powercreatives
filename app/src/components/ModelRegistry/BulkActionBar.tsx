@@ -124,7 +124,7 @@ export function BulkActionBar({
               onValueChange={(val) => onBulkChangeTier(val as CostTier)}
               disabled={isProcessing}
             >
-              <SelectTrigger className="h-8 w-[110px] text-xs">
+              <SelectTrigger className="w-[110px]">
                 <SelectValue placeholder="Set Tier" />
               </SelectTrigger>
               <SelectContent>
@@ -146,7 +146,7 @@ export function BulkActionBar({
               }}
               disabled={isProcessing}
             >
-              <SelectTrigger className="h-8 w-[140px] text-xs">
+              <SelectTrigger className="w-[140px]">
                 <SelectValue placeholder="Module" />
               </SelectTrigger>
               <SelectContent>

@@ -213,7 +213,6 @@ export function ReviewEditorToolbar({
         {/* Model dropdown — pulls available models from Integrations, defaults from Settings */}
         <Select value={selectedModelId} onValueChange={setSelectedModelId}>
           <SelectTrigger
-            className="bg-white"
             style={{
               height: 28,
               fontSize: typography.xs,

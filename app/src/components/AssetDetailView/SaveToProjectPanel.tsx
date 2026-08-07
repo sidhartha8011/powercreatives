@@ -87,7 +87,7 @@ export function SaveToProjectPanel({
               onValueChange={setSelectedProjectId}
               disabled={isLoading}
             >
-              <SelectTrigger className="flex-1 text-sm">
+              <SelectTrigger className="flex-1">
                 <SelectValue placeholder="Select project..." />
               </SelectTrigger>
               <SelectContent>

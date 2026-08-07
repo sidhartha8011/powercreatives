@@ -152,7 +152,7 @@ export function BulkSaveToProject({ selectedAssets, onComplete }: BulkSaveToProj
             <div className="space-y-2">
               <div className="flex gap-2">
                 <Select value={selectedProjectId} onValueChange={setSelectedProjectId} disabled={isSaving}>
-                  <SelectTrigger className="flex-1 text-xs h-8">
+                  <SelectTrigger className="flex-1">
                     <SelectValue placeholder="Select project..." />
                   </SelectTrigger>
                   <SelectContent>

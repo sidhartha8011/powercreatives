@@ -397,7 +397,7 @@ export function SitesModule() {
             disabled={busy}
             onValueChange={(v) => setGscProperty(site, v === 'auto' ? '' : v)}
           >
-            <SelectTrigger className="h-7 w-full text-xs bg-card" title={current
+            <SelectTrigger className="w-full" title={current
               ? `Stats are pulled from ${current}`
               : 'Auto — matched from the site URL. Pick a property to pin it.'}>
               <SelectValue placeholder="Auto" />
@@ -551,10 +551,10 @@ export function SitesModule() {
               <Input value={search} onChange={onSearch} placeholder="Search sites…" className="h-9 pl-9 text-xs bg-slate-50" />
             </div>
             <Select value={statusValue} onValueChange={onStatus}>
-              <SelectTrigger className="h-9 w-[150px] text-xs bg-slate-50"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectTrigger className="w-[150px]"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_STATUS} className="text-xs">All statuses</SelectItem>
-                {statusOptions.map((s) => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
+                <SelectItem value={ALL_STATUS}>All statuses</SelectItem>
+                {statusOptions.map((s) => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}
               </SelectContent>
             </Select>
             {list.activeFilterCount > 0 && (
@@ -696,11 +696,11 @@ export function SitesModule() {
               <div>
                 <label style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>Frequency</label>
                 <Select value={schedFrequency} onValueChange={setSchedFrequency}>
-                  <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="daily" className="text-xs">Daily</SelectItem>
-                    <SelectItem value="weekly" className="text-xs">Weekly</SelectItem>
-                    <SelectItem value="monthly" className="text-xs">Monthly</SelectItem>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -710,20 +710,20 @@ export function SitesModule() {
               <div>
                 <label style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>Template</label>
                 <Select value={schedTemplateId} onValueChange={setSchedTemplateId}>
-                  <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pick a template…" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Pick a template…" /></SelectTrigger>
                   <SelectContent>
-                    {templates.map((t) => <SelectItem key={t.id} value={String(t.id)} className="text-xs">{t.name}</SelectItem>)}
+                    {templates.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div>
                 <label style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary }}>Publishing</label>
                 <Select value={schedMode} onValueChange={setSchedMode}>
-                  <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="draft" className="text-xs">Save as drafts</SelectItem>
-                    <SelectItem value="publish" className="text-xs">Publish immediately</SelectItem>
-                    <SelectItem value="schedule" className="text-xs">Spread on a schedule</SelectItem>
+                    <SelectItem value="draft">Save as drafts</SelectItem>
+                    <SelectItem value="publish">Publish immediately</SelectItem>
+                    <SelectItem value="schedule">Spread on a schedule</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

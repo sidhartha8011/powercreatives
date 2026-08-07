@@ -202,11 +202,11 @@ export function LlmInfoEditor({ data, isLoading, error, onBuild, onSave, onDetec
         )}
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={modelId || '__default__'} onValueChange={(v) => onModelChange(v === '__default__' ? '' : v)}>
-            <SelectTrigger className="h-8 w-auto min-w-[11rem] text-xs"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-auto min-w-[11rem]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="__default__" className="text-xs">Default model</SelectItem>
+              <SelectItem value="__default__">Default model</SelectItem>
               {models.map((m) => (
-                <SelectItem key={m.id} value={m.id} className="text-xs">
+                <SelectItem key={m.id} value={m.id}>
                   {m.name} <span className="text-muted-foreground">({m.provider})</span>
                 </SelectItem>
               ))}

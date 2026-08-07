@@ -155,7 +155,7 @@ export function DocumentQueuePanel({ isCollapsed = false, onToggleCollapse }: Pr
             onValueChange={(val) => setActiveProjectId(val === 'all' ? null : val)}
             disabled={projectsQuery.isLoading}
           >
-            <SelectTrigger className="w-full h-8 text-xs bg-white">
+            <SelectTrigger className="w-full">
               {projectsQuery.isLoading ? (
                 <div className="flex items-center gap-2 text-left w-full">
                   <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" style={{ color: colors.primary }} />

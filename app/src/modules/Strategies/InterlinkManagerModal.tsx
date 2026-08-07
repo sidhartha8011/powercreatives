@@ -302,7 +302,7 @@ export function InterlinkManagerModal({
                           value={rule.matchType}
                           onValueChange={(v) => updateRule(rule.id, 'matchType', v as MatchType)}
                         >
-                          <SelectTrigger className="w-28 h-8 text-sm bg-card">
+                          <SelectTrigger className="w-28">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>

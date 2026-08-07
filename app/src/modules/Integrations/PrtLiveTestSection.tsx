@@ -277,7 +277,7 @@ export function PrtLiveTestSection() {
       {!sitesQuery.isLoading && !sitesQuery.isError && (
         <div className="flex items-center gap-2">
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="h-8 text-xs flex-1">
+            <SelectTrigger className="flex-1">
               <SelectValue placeholder={sites.length ? `Select a site (${sites.length} tracked)` : 'No sites in this account'} />
             </SelectTrigger>
             <SelectContent>
@@ -289,7 +289,7 @@ export function PrtLiveTestSection() {
             </SelectContent>
           </Select>
           <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
-            <SelectTrigger className="h-8 text-xs w-[130px]">
+            <SelectTrigger className="w-[130px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

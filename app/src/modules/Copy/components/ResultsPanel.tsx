@@ -1114,7 +1114,7 @@ export function SaveToProjectDialog({
               <Label htmlFor="project-select" className="text-xs font-semibold text-slate-600">Choose Project</Label>
               <div className="flex gap-2">
                 <Select value={projectId} onValueChange={setProjectId} disabled={isSaving || projectsLoading}>
-                  <SelectTrigger id="project-select" className="flex-1 text-sm h-10">
+                  <SelectTrigger id="project-select" className="flex-1">
                     <SelectValue placeholder="Select a project..." />
                   </SelectTrigger>
                   <SelectContent>

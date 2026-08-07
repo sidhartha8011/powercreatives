@@ -161,7 +161,7 @@ export function ProjectsMockup() {
           </div>
           
           <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="w-[160px] h-9 bg-white">
+            <SelectTrigger className="w-[160px]">
               <SelectValue placeholder="Project Type" />
             </SelectTrigger>
             <SelectContent>

@@ -220,7 +220,7 @@ export function LogoOverlayPanel({
       <div className="space-y-1.5">
         <label className="text-xs text-muted-foreground">Position</label>
         <Select value={placement} onValueChange={(v) => setPlacement(v as Placement)}>
-          <SelectTrigger className="h-7 text-xs">
+          <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

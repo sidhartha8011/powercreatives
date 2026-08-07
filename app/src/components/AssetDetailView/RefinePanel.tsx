@@ -125,7 +125,7 @@ export function RefinePanel({ asset, isLoading, onRefine }: RefinePanelProps) {
           </p>
         ) : (
           <Select value={selectedModelId} onValueChange={setSelectedModelId}>
-            <SelectTrigger className="w-full text-sm">
+            <SelectTrigger className="w-full">
               <SelectValue placeholder="Select model..." />
             </SelectTrigger>
             <SelectContent>

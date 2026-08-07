@@ -105,7 +105,7 @@ export function ModuleEmailSenderRow({ moduleId }: { moduleId: string }) {
         <NoSenders />
       ) : (
         <Select value={map[moduleId]?.email || GLOBAL} onValueChange={pick} disabled={saving}>
-          <SelectTrigger className="h-9 w-[260px]">
+          <SelectTrigger className="w-[260px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -146,7 +146,7 @@ export function DefaultEmailSenderRow() {
         <NoSenders />
       ) : (
         <Select value={current || undefined} onValueChange={pick} disabled={saving}>
-          <SelectTrigger className="h-9 w-[260px]">
+          <SelectTrigger className="w-[260px]">
             <SelectValue placeholder="Choose a verified sender" />
           </SelectTrigger>
           <SelectContent>

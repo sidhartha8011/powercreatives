@@ -101,7 +101,7 @@ function FieldRenderer({
           value={selectValue}
           onValueChange={(v) => onChange(v === EMPTY_SENTINEL ? "" : v)}
         >
-          <SelectTrigger className="h-9 text-sm w-full">
+          <SelectTrigger className="w-full">
             <SelectValue placeholder="Select…" />
           </SelectTrigger>
           <SelectContent>

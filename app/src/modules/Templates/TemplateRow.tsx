@@ -389,7 +389,7 @@ export function TemplateRow({
           value={template.module}
           onValueChange={(v) => onUpdateModule(template.id, v)}
         >
-          <SelectTrigger className="h-8 w-full text-xs border-transparent hover:border-border transition-colors">
+          <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -408,7 +408,7 @@ export function TemplateRow({
           value={template.type}
           onValueChange={(v) => onUpdateType(template.id, v)}
         >
-          <SelectTrigger className="h-auto w-auto border-0 p-0 shadow-none focus:ring-0 bg-transparent">
+          <SelectTrigger variant="ghost" size="auto" className="h-auto w-auto">
             <TypePill type={template.type} />
           </SelectTrigger>
           <SelectContent>
@@ -434,7 +434,7 @@ export function TemplateRow({
               onUpdateSubtype(template.id, v as TemplateCategory)
             }
           >
-            <SelectTrigger className="h-8 w-full text-xs border-transparent hover:border-border transition-colors">
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

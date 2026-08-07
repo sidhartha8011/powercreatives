@@ -622,7 +622,7 @@ export function TemplatesModule() {
         {/* Niche filter dropdown */}
         {nicheOptions.length > 0 && (
           <Select value={nicheFilter} onValueChange={setNicheFilter}>
-            <SelectTrigger className="h-8 w-[180px] text-xs">
+            <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="All Niches" />
             </SelectTrigger>
             <SelectContent>

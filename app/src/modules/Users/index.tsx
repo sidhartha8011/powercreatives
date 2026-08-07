@@ -164,7 +164,7 @@ export function UsersModule() {
                         onValueChange={(v) => changeRole(u, v as 'admin' | 'user')}
                         disabled={roleMutation.isLoading}
                       >
-                        <SelectTrigger className="h-7 w-[104px] text-xs">
+                        <SelectTrigger className="w-[104px]">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>

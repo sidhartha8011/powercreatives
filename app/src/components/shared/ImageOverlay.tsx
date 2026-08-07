@@ -208,7 +208,7 @@ export function ImageOverlay({
                       value={selectedModel || imageModels[0]?.modelId}
                       onValueChange={onModelChange}
                     >
-                      <SelectTrigger className="h-8 text-xs">
+                      <SelectTrigger>
                         <SelectValue placeholder="Select model" />
                       </SelectTrigger>
                       <SelectContent>

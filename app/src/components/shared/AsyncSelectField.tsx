@@ -55,7 +55,7 @@ export function AsyncSelectField({
     <div className="space-y-2">
       <Label>{label}</Label>
       <Select value={value || UNSELECTED} onValueChange={onChange}>
-        <SelectTrigger className="w-full bg-background">
+        <SelectTrigger className="w-full">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>

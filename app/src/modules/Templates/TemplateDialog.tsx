@@ -619,7 +619,7 @@ export function TemplateDialog({
                   onValueChange={(v: TemplateModule) => setModule(v)}
                   disabled={isEditing}
                 >
-                  <SelectTrigger className="h-8 text-sm">
+                  <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -640,7 +640,7 @@ export function TemplateDialog({
                   onValueChange={setType}
                   disabled={isEditing}
                 >
-                  <SelectTrigger className="h-8 text-sm">
+                  <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -665,7 +665,7 @@ export function TemplateDialog({
                       setSelectedCategory(v)
                     }
                   >
-                    <SelectTrigger className="h-8 text-sm">
+                    <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

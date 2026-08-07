@@ -1037,7 +1037,7 @@ export function DeliveriesTable({ items, onEdit, onRequestDelete }: DeliveriesTa
         {selectedIds.size > 0 && (
           <>
             <Select onValueChange={(v) => void bulkSetStatus(v as DeliveryStatus)} disabled={bulkBusy}>
-              <SelectTrigger className="h-8 w-[150px] text-xs" aria-label="Set status for selected deliveries">
+              <SelectTrigger className="w-[150px]" aria-label="Set status for selected deliveries">
                 <SelectValue placeholder="Set status…" />
               </SelectTrigger>
               <SelectContent>

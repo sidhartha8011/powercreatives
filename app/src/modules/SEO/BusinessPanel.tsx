@@ -106,7 +106,7 @@ export function BusinessPanel() {
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Brand (client)</Label>
             <Select value={brandId} onValueChange={setBrandId}>
-              <SelectTrigger className="text-xs"><SelectValue placeholder="Select a brand" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Select a brand" /></SelectTrigger>
               <SelectContent>
                 {brands.map((b) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}
               </SelectContent>

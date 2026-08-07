@@ -484,7 +484,7 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
           onValueChange={(v) => handleSelectChange('client', v)}
         >
           <SelectTrigger
-            className="w-[180px] h-9 bg-white"
+            className="w-[180px]"
             aria-label="Client"
           >
             <SelectValue placeholder="Client" />
@@ -520,7 +520,7 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
               drop writes that value. Kanban view only. */}
           {view === 'kanban' && (
             <Select value={laneField} onValueChange={(v) => switchLaneField(v as LaneField)}>
-              <SelectTrigger className="w-[140px] h-9 bg-white" aria-label="Lanes by">
+              <SelectTrigger className="w-[140px]" aria-label="Lanes by">
                 <SelectValue placeholder="Lanes" />
               </SelectTrigger>
               <SelectContent>
@@ -536,7 +536,7 @@ export function DeliveriesBoard({ onCreate, onEdit }: DeliveriesBoardProps) {
               headers own sorting (two competing sort systems would fight). */}
           {view === 'kanban' && (
             <Select value={sortValue} onValueChange={handleSortChange}>
-              <SelectTrigger className="w-[170px] h-9 bg-white" aria-label="Sort">
+              <SelectTrigger className="w-[170px]" aria-label="Sort">
                 <SelectValue placeholder="Sort" />
               </SelectTrigger>
               <SelectContent>

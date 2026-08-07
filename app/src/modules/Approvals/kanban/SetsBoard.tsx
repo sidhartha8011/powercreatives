@@ -357,7 +357,7 @@ export function SetsBoard() {
             value={brandValue}
             onValueChange={(v) => handleSelectChange('brand', v)}
           >
-            <SelectTrigger className="w-[160px] h-9 bg-white" aria-label="Brand">
+            <SelectTrigger className="w-[160px]" aria-label="Brand">
               <SelectValue placeholder="Brand" />
             </SelectTrigger>
             <SelectContent>
@@ -375,7 +375,7 @@ export function SetsBoard() {
             onValueChange={(v) => handleSelectChange('project', v)}
           >
             <SelectTrigger
-              className="w-[160px] h-9 bg-white"
+              className="w-[160px]"
               aria-label="Project"
             >
               <SelectValue placeholder="Project" />
@@ -395,7 +395,7 @@ export function SetsBoard() {
             onValueChange={(v) => handleSelectChange('delivery', v)}
           >
             <SelectTrigger
-              className="w-[160px] h-9 bg-white"
+              className="w-[160px]"
               aria-label="Delivery"
             >
               <SelectValue placeholder="Delivery" />
@@ -415,7 +415,7 @@ export function SetsBoard() {
             onValueChange={(v) => handleSelectChange('set', v)}
           >
             <SelectTrigger
-              className="w-[160px] h-9 bg-white"
+              className="w-[160px]"
               aria-label="Approval set"
             >
               <SelectValue placeholder="Approval set" />
@@ -448,7 +448,7 @@ export function SetsBoard() {
               {listState.filteredItems.length === 1 ? '' : 's'}
             </div>
             <Select value={sortValue} onValueChange={handleSortChange}>
-              <SelectTrigger className="w-[170px] h-9 bg-white" aria-label="Sort">
+              <SelectTrigger className="w-[170px]" aria-label="Sort">
                 <SelectValue placeholder="Sort" />
               </SelectTrigger>
               <SelectContent>

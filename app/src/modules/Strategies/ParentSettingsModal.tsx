@@ -138,7 +138,7 @@ export function ParentSettingsModal({
           <div className="space-y-2">
             <Label>Content Hierarchy</Label>
             <Select value={hierarchyMode} onValueChange={setHierarchyMode}>
-              <SelectTrigger className="w-full bg-card">
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

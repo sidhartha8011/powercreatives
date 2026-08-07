@@ -29,7 +29,7 @@ export function TierSelector({ tier, onChange, disabled }: TierSelectorProps) {
       </SelectTrigger>
       <SelectContent>
         {ALL_COST_TIERS.map((t) => (
-          <SelectItem key={t} value={t} className="text-xs">
+          <SelectItem key={t} value={t}>
             {COST_TIER_LABELS[t]}
           </SelectItem>
         ))}

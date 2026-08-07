@@ -241,7 +241,7 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps): Re
           value={value.unit}
           onValueChange={(u) => emit({ unit: u as ScheduleRecurrence['unit'] })}
         >
-          <SelectTrigger className="h-8 w-28 text-xs bg-card">
+          <SelectTrigger className="w-28">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -292,7 +292,7 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps): Re
             value={String(value.byMonthDay || '')}
             onValueChange={(d) => emit({ byMonthDay: normalizeByMonthDay(d) })}
           >
-            <SelectTrigger className="h-8 w-44 text-xs bg-card">
+            <SelectTrigger className="w-44">
               <SelectValue placeholder="Monthly on start day" />
             </SelectTrigger>
             <SelectContent className="max-h-64">

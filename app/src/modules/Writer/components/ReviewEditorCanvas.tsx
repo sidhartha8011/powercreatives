@@ -305,7 +305,6 @@ export function ReviewEditorCanvas() {
         {/* Model dropdown */}
         <Select value={selectedModelId} onValueChange={setSelectedModelId}>
           <SelectTrigger
-            className="bg-white"
             style={{
               height: 28,
               fontSize: typography.xs,

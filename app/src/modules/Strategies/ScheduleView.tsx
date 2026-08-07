@@ -132,7 +132,7 @@ export function ScheduleView() {
           onChange={(e) => setSearch(e.target.value)}
         />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="h-8 w-36 text-xs bg-card">
+          <SelectTrigger className="w-36">
             <SelectValue placeholder="All statuses" />
           </SelectTrigger>
           <SelectContent>

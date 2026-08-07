@@ -155,13 +155,13 @@ export function RemoteSiteSettingsPanel({ siteId, siteName }: { siteId: number; 
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={genBrandId} onValueChange={setGenBrandId}>
-            <SelectTrigger className="h-9 w-[230px] text-xs" title="Brand for the business details">
+            <SelectTrigger className="w-[230px]" title="Brand for the business details">
               <SelectValue placeholder="Brand (business details)…" />
             </SelectTrigger>
             <SelectContent>
               {brands.length === 0
                 ? <div className="px-2 py-1.5 text-xs text-muted-foreground">No brands yet</div>
-                : brands.map((b) => <SelectItem key={b.id} value={String(b.id)} className="text-xs">{b.name}</SelectItem>)}
+                : brands.map((b) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}
             </SelectContent>
           </Select>
           <Button onClick={handleOptimize} disabled={busy} className="gap-1.5">

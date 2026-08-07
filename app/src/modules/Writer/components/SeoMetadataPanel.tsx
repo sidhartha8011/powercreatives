@@ -132,7 +132,7 @@ export function SeoMetadataPanel({ onCollapse }: SeoMetadataPanelProps) {
                   value={doc.schemaType}
                   onValueChange={(val: any) => updateDoc({ schemaType: val })}
                 >
-                  <SelectTrigger className="bg-white">
+                  <SelectTrigger>
                     <SelectValue placeholder="Select schema..." />
                   </SelectTrigger>
                   <SelectContent>

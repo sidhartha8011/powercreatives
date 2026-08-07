@@ -1018,7 +1018,7 @@ export function StrategiesModule() {
           />
           {/* Quick filters (Approvals parity): site, then delivery. */}
           <Select value={siteFilter} onValueChange={setSiteFilter}>
-            <SelectTrigger className="h-8 w-40 text-xs bg-card">
+            <SelectTrigger className="w-40">
               <SelectValue placeholder="All sites" />
             </SelectTrigger>
             <SelectContent>
@@ -1029,7 +1029,7 @@ export function StrategiesModule() {
             </SelectContent>
           </Select>
           <Select value={deliveryFilter} onValueChange={setDeliveryFilter}>
-            <SelectTrigger className="h-8 w-40 text-xs bg-card">
+            <SelectTrigger className="w-40">
               <SelectValue placeholder="All deliveries" />
             </SelectTrigger>
             <SelectContent>
@@ -1040,7 +1040,7 @@ export function StrategiesModule() {
             </SelectContent>
           </Select>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-8 w-36 text-xs bg-card">
+            <SelectTrigger className="w-36">
               <SelectValue placeholder="All statuses" />
             </SelectTrigger>
             <SelectContent>
@@ -1052,7 +1052,7 @@ export function StrategiesModule() {
             </SelectContent>
           </Select>
           <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="h-8 w-28 text-xs bg-card">
+            <SelectTrigger className="w-28">
               <SelectValue placeholder="Sort" />
             </SelectTrigger>
             <SelectContent>
@@ -1221,7 +1221,7 @@ export function StrategiesModule() {
                         value={strategy.publishingMode || 'draft'}
                         onValueChange={(value) => handlePublishingModeChange(strategy.id, value)}
                       >
-                        <SelectTrigger className="h-7 w-full text-xs bg-card">
+                        <SelectTrigger className="w-full">
                           <SelectValue placeholder="Draft" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1237,7 +1237,7 @@ export function StrategiesModule() {
                         w-40: hostnames like "massagegoteborg.nu" were truncating at w-32. */}
                     <div className="w-40 shrink-0" onClick={(e) => e.stopPropagation()}>
                       <Select value={siteIdValue} onValueChange={(value) => handleSiteChange(strategy.id, value)}>
-                        <SelectTrigger className="h-7 w-full text-xs bg-card">
+                        <SelectTrigger className="w-full">
                           <SelectValue placeholder="No site" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1290,7 +1290,7 @@ export function StrategiesModule() {
                         value={config.approvalMode || 'none'}
                         onValueChange={(value) => handleApprovalChange(strategy.id, value)}
                       >
-                        <SelectTrigger className="h-7 w-full text-xs bg-card">
+                        <SelectTrigger className="w-full">
                           <SelectValue placeholder="Approvals" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1514,7 +1514,7 @@ export function StrategiesModule() {
                       value={strategy.templateId ? String(strategy.templateId) : ''}
                       onValueChange={(value) => handleTemplateChange(strategy.id, value)}
                     >
-                      <SelectTrigger className="h-7 w-full text-xs bg-card">
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Template" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1539,7 +1539,7 @@ export function StrategiesModule() {
                       value={config.model ? String(config.model) : 'default'}
                       onValueChange={(value) => handleTextModelChange(strategy.id, value === 'default' ? '' : value)}
                     >
-                      <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model writes each article">
+                      <SelectTrigger className="w-full" title="Which AI model writes each article">
                         <SelectValue placeholder="Text model" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1562,7 +1562,7 @@ export function StrategiesModule() {
                       value={config.imageTemplateId ? String(config.imageTemplateId) : 'default'}
                       onValueChange={(value) => handleImageTemplateChange(strategy.id, value === 'default' ? '' : value)}
                     >
-                      <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which template writes the featured-image prompt">
+                      <SelectTrigger className="w-full" title="Which template writes the featured-image prompt">
                         <SelectValue placeholder="Image prompt" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1582,7 +1582,7 @@ export function StrategiesModule() {
                       value={config.imageModel ? String(config.imageModel) : 'default'}
                       onValueChange={(value) => handleImageModelChange(strategy.id, value === 'default' ? '' : value)}
                     >
-                      <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model generates the featured image">
+                      <SelectTrigger className="w-full" title="Which AI model generates the featured image">
                         <SelectValue placeholder="Image model" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1935,7 +1935,7 @@ export function StrategiesModule() {
                           value={itemConfig.templateId ? String(itemConfig.templateId) : 'inherit'}
                           onValueChange={(value) => handleItemOverrideChange(strategy.id, item.id, itemConfig, 'templateId', value)}
                         >
-                          <SelectTrigger className="h-7 w-40 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="inherit">Inherit</SelectItem>
                             {templates.map((t: any) => (
@@ -1949,7 +1949,7 @@ export function StrategiesModule() {
                           value={itemConfig.publishingMode ?? 'inherit'}
                           onValueChange={(value) => handleItemOverrideChange(strategy.id, item.id, itemConfig, 'publishingMode', value)}
                         >
-                          <SelectTrigger className="h-7 w-36 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {Object.entries(ITEM_MODE_LABELS).map(([value, label]) => (
                               <SelectItem key={value} value={value}>{label}</SelectItem>
@@ -1962,7 +1962,7 @@ export function StrategiesModule() {
                           value={itemConfig.approvalMode ?? 'inherit'}
                           onValueChange={(value) => handleItemOverrideChange(strategy.id, item.id, itemConfig, 'approvalMode', value)}
                         >
-                          <SelectTrigger className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {Object.entries(ITEM_APPROVAL_LABELS).map(([value, label]) => (
                               <SelectItem key={value} value={value}>{label}</SelectItem>
@@ -1986,7 +1986,7 @@ export function StrategiesModule() {
                           }}
                         >
                           <SelectTrigger
-                            className="h-7 w-32 text-xs"
+                            className="w-32"
                             title={item.articlePublishedPostId
                               ? 'Change this post’s status on the connected site'
                               : 'Available once this article is published to the site'}

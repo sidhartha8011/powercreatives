@@ -90,7 +90,7 @@ export function WriterPromptEditor({ value, onChange }: Props) {
         rightElement={
           <div className="w-48">
             <Select value={selectedTemplateId} onValueChange={handleSelect}>
-              <SelectTrigger className="h-7 text-xs" style={{ background: colors.bgSurface, borderColor: colors.borderLight }}>
+              <SelectTrigger style={{ background: colors.bgSurface, borderColor: colors.borderLight }}>
                 <SelectValue placeholder={isLoading ? "Loading…" : "Select prompt…"} />
               </SelectTrigger>
               <SelectContent>

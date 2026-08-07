@@ -780,7 +780,7 @@ export function CreateStrategyDialog({
               <div className="space-y-1.5">
                 <Label htmlFor="source-template">Template</Label>
                 <Select value={templateId} onValueChange={setTemplateId}>
-                  <SelectTrigger id="source-template" className="w-full bg-card">
+                  <SelectTrigger id="source-template" className="w-full">
                     <SelectValue placeholder="Select Template..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -815,7 +815,7 @@ export function CreateStrategyDialog({
                   Model
                 </Label>
                 <Select value={modelId} onValueChange={setModelId}>
-                  <SelectTrigger id="source-model" className="w-full bg-card">
+                  <SelectTrigger id="source-model" className="w-full">
                     <SelectValue placeholder={modelsLoading ? 'Loading models…' : 'Default (Gemini 2.5 Flash)'} />
                   </SelectTrigger>
                   <SelectContent>
@@ -1097,7 +1097,7 @@ export function CreateStrategyDialog({
                     Target Site
                   </Label>
                   <Select value={siteId} onValueChange={setSiteId}>
-                    <SelectTrigger id="target-site" className="w-full bg-card">
+                    <SelectTrigger id="target-site" className="w-full">
                       <SelectValue placeholder={sitesLoading ? 'Loading sites…' : 'Select a connected site...'} />
                     </SelectTrigger>
                     <SelectContent>
@@ -1118,7 +1118,7 @@ export function CreateStrategyDialog({
                 <div className="space-y-1.5">
                   <Label>Approvals</Label>
                   <Select value={approvalMode} onValueChange={setApprovalMode}>
-                    <SelectTrigger className="w-full bg-card">
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1228,7 +1228,7 @@ export function CreateStrategyDialog({
                           />
                           <span className="text-xs text-muted-foreground">posts per</span>
                           <Select value={rssCadenceUnit} onValueChange={setRssCadenceUnit}>
-                            <SelectTrigger className="h-8 w-24 text-xs bg-card">
+                            <SelectTrigger className="w-24">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -1336,7 +1336,7 @@ export function CreateStrategyDialog({
                     Image prompt
                   </Label>
                   <Select value={imageTemplateId || 'default'} onValueChange={(v) => setImageTemplateId(v === 'default' ? '' : v)}>
-                    <SelectTrigger id="image-prompt" className="w-full bg-card">
+                    <SelectTrigger id="image-prompt" className="w-full">
                       <SelectValue placeholder="Default image prompt" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1353,7 +1353,7 @@ export function CreateStrategyDialog({
                     Image AI model
                   </Label>
                   <Select value={imageModelId} onValueChange={setImageModelId}>
-                    <SelectTrigger id="image-model" className="w-full bg-card">
+                    <SelectTrigger id="image-model" className="w-full">
                       <SelectValue placeholder={imgModelsLoading ? 'Loading models…' : 'Default (DALL·E 3)'} />
                     </SelectTrigger>
                     <SelectContent>
@@ -1379,7 +1379,7 @@ export function CreateStrategyDialog({
                 <div className="space-y-1.5">
                   <Label>Content per Keyword</Label>
                   <Select value={structure} onValueChange={handleStructureChange}>
-                    <SelectTrigger className="w-full bg-card">
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1391,7 +1391,7 @@ export function CreateStrategyDialog({
                 <div className="space-y-1.5">
                   <Label>Content Hierarchy</Label>
                   <Select value={hierarchyMode} onValueChange={setHierarchyMode}>
-                    <SelectTrigger className="w-full bg-card">
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1485,7 +1485,7 @@ export function CreateStrategyDialog({
                     <div className="ml-6 flex items-center gap-3 text-sm">
                       <span className="font-medium text-muted-foreground">Type:</span>
                       <Select value={mediaType} onValueChange={setMediaType}>
-                        <SelectTrigger className="h-8 w-32 text-xs bg-card">
+                        <SelectTrigger className="w-32">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -1549,7 +1549,7 @@ export function CreateStrategyDialog({
                       <div className="flex items-center space-x-2">
                         <span className="font-medium text-muted-foreground">Anchor:</span>
                         <Select value={interlinkAnchorMode} onValueChange={setInterlinkAnchorMode}>
-                          <SelectTrigger className="h-8 w-40 text-xs bg-card">
+                          <SelectTrigger className="w-40">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -1627,7 +1627,7 @@ export function CreateStrategyDialog({
                     Research Model
                   </Label>
                   <Select value={researchModelId} onValueChange={setResearchModelId}>
-                    <SelectTrigger id="research-model" className="w-full bg-card">
+                    <SelectTrigger id="research-model" className="w-full">
                       <SelectValue placeholder={modelsLoading ? 'Loading models…' : 'Default (Gemini 2.5 Flash)'} />
                     </SelectTrigger>
                     <SelectContent>

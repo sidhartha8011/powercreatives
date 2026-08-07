@@ -1176,12 +1176,12 @@ export function SEOModule() {
         return (
           <TableCell key={key}>
             <Select value={row.status} onValueChange={(v) => saveCell(row.id, 'status', v)}>
-              <SelectTrigger className="h-full w-full border-0 rounded-none bg-transparent px-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
+              <SelectTrigger variant="ghost" size="auto" className="h-full w-full">
                 <Pill variant={statusPillVariant(row.status)} className="capitalize">{row.status}</Pill>
               </SelectTrigger>
               <SelectContent>
                 {(options?.statuses ?? ['publish', 'draft', 'pending', 'private', 'future']).map((s) => (
-                  <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+                  <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -1214,7 +1214,7 @@ export function SEOModule() {
               value={row.authorId ? String(row.authorId) : ''}
               onValueChange={(v) => saveCell(row.id, 'author', v)}
             >
-              <SelectTrigger className="h-full w-full border-0 rounded-none bg-transparent px-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
+              <SelectTrigger variant="ghost" size="auto" className="h-full w-full">
                 {/* Fall back to the stored NAME when the current author isn't in the list —
                     e.g. an author who has since lost edit_posts. Showing the raw id would be
                     worse than showing a name we already have. */}
@@ -1222,7 +1222,7 @@ export function SEOModule() {
               </SelectTrigger>
               <SelectContent>
                 {authors.map((a: { id: number; name: string }) => (
-                  <SelectItem key={a.id} value={String(a.id)} className="text-xs">{a.name}</SelectItem>
+                  <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>
                 ))}
                 {/* Create a new WordPress author without leaving the table. onSelect is
                     prevented so opening the dialog doesn't also commit a bogus selection —
@@ -1600,7 +1600,7 @@ export function SEOModule() {
             onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
           >
             <SelectTrigger
-              className="h-9 w-[190px] gap-1 rounded-full border border-border bg-card px-4 text-xs hover:bg-muted/50"
+              className="w-[190px] gap-1"
               title="Model used for AI generation"
             >
               <SelectValue
@@ -1608,9 +1608,9 @@ export function SEOModule() {
               />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__default__" className="text-xs">Default model</SelectItem>
+              <SelectItem value="__default__">Default model</SelectItem>
               {textModels.map((m) => (
-                <SelectItem key={m.id} value={m.id} className="text-xs">
+                <SelectItem key={m.id} value={m.id}>
                   {m.name} <span className="text-muted-foreground">({m.provider})</span>
                 </SelectItem>
               ))}

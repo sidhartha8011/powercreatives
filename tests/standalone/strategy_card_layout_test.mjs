@@ -74,16 +74,24 @@ check('the header row itself is not gated (it always renders)',
   header < identity && at('expandedId === strategy.id &&', header) > identity,
   'identity row is behind the gate');
 
-console.log('\n4. Design tokens match the per-item selects (h-7 / text-xs)');
+console.log('\n4. Design tokens come from the shared component, not from here');
+// SUPERSEDED 2026-08-08: this section used to require `h-7 text-xs` ON each
+// trigger. That is exactly the drift the app-wide dropdown unification removed
+// — height/font/background now live in selectTriggerVariants, and a class here
+// would BEAT the base (cn() runs tailwind-merge) and desynchronise this module
+// from every other one. The rule is now the inverse: carry layout only.
 const region = LINES.slice(controls, itemsGate - 1).join('\n');
-const triggers = region.match(/<SelectTrigger className="[^"]*"/g) ?? [];
-check('every SelectTrigger in the header is h-7', triggers.every((t) => t.includes('h-7')), triggers);
-check('every SelectTrigger in the header is text-xs', triggers.every((t) => t.includes('text-xs')), triggers);
+const triggers = region.match(/<SelectTrigger[^>]*className="[^"]*"/g) ?? [];
 check('found the expected number of selects', triggers.length >= 6, triggers.length);
-// The per-item override row is the reference the request pointed at.
-const itemRegion = SRC.slice(SRC.indexOf('Inline overrides row'));
-const itemTriggers = itemRegion.match(/<SelectTrigger className="h-7 w-\d+ text-xs"/g) ?? [];
-check('per-item reference selects still h-7/text-xs', itemTriggers.length >= 3, itemTriggers.length);
+check('no trigger here sets its own height',
+  triggers.every((t) => !/\bh-\d+\b/.test(t)), triggers.filter((t) => /\bh-\d+\b/.test(t)));
+check('no trigger here sets its own font size',
+  triggers.every((t) => !/\btext-(?:xs|sm|base)\b/.test(t)), triggers.filter((t) => /\btext-/.test(t)));
+check('no trigger here sets its own background',
+  triggers.every((t) => !/\bbg-\w/.test(t)), triggers.filter((t) => /\bbg-\w/.test(t)));
+// Widths are still this module's business — they were tuned against truncation.
+check('triggers still carry their per-context width',
+  triggers.every((t) => /\bw-/.test(t)), triggers.filter((t) => !/\bw-/.test(t)));
 
 console.log('\n5. Widths shrank, but not past the recorded truncation floors');
 check('no w-44 wrappers left (generation cluster trimmed)', !region.includes('w-44 shrink-0'), 'w-44 remains');

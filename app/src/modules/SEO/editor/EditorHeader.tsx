@@ -220,12 +220,12 @@ export function EditorHeader(p: EditorHeaderProps) {
                 order 2026-07-15). Sits right of the title by design. */}
             {!p.readOnly && pageStatus !== '' && (
               <Select value={pageStatus} onValueChange={pickStatus}>
-                <SelectTrigger className="h-auto w-auto shrink-0 border-0 bg-transparent p-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0">
+                <SelectTrigger variant="ghost" size="auto" className="h-auto w-auto shrink-0">
                   <Pill variant={statusPillVariant(pageStatus)} className="capitalize">{pageStatus}</Pill>
                 </SelectTrigger>
                 <SelectContent>
                   {['publish', 'draft', 'pending', 'private', 'future'].map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+                    <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

@@ -90,7 +90,7 @@ export function ThemeSelector({
                     value={seasonEvent || EMPTY_SENTINEL}
                     onValueChange={handleSeasonChange}
                 >
-                    <SelectTrigger className="h-9 text-sm w-full">
+                    <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select…" />
                     </SelectTrigger>
                     <SelectContent>
